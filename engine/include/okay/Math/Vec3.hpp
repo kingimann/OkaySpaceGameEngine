@@ -108,6 +108,14 @@ struct Vec3 {
         float theta = std::acos(d);
         float mag = ma + (mb - ma) * t;
         if (theta < 1e-4f) return Lerp(a, b, t);
+        if (theta > Mathf::PI - 1e-3f) {
+            // Opposite directions: sin(theta) ~ 0 and the blend below explodes, and
+            // every turning plane is equally short. Swing through a perpendicular.
+            Vec3 perp = Cross(na, Right);
+            if (perp.SqrMagnitude() < 1e-4f) perp = Cross(na, Up);
+            perp = perp.Normalized();
+            return (na * std::cos(t * Mathf::PI) + perp * std::sin(t * Mathf::PI)) * mag;
+        }
         float s = std::sin(theta);
         Vec3 dir = (na * (std::sin((1.0f - t) * theta) / s)) + (nb * (std::sin(t * theta) / s));
         return dir * mag;
@@ -132,7 +140,7 @@ struct Vec3 {
         Vec3 output = target + (change + temp) * exp;
         if (Dot(origTarget - current, output - origTarget) > 0.0f) {
             output = origTarget;
-            velocity = (output - origTarget) / deltaTime;
+            velocity = deltaTime > 0.0f ? (output - origTarget) / deltaTime : Vec3{};   // dt = 0 (paused): no 0/0
         }
         return output;
     }

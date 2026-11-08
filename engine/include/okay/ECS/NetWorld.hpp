@@ -52,16 +52,20 @@ public:
                 b.insert(b.end(), raw, raw + sizeof(T));
             }
         };
-        h.applyAll = [](World& w, const std::uint8_t*& cur, const std::uint8_t* end) {
-            w.clearPool<T>();
+        h.applyAll = [](World& w, const std::uint8_t*& cur, const std::uint8_t* end) -> bool {
             std::uint32_t n = GetU32(cur, end);
+            // A count the remaining bytes cannot hold is a damaged / hostile packet:
+            // leave the pool alone rather than loop for billions of entries.
+            if ((std::size_t)n > (std::size_t)(end - cur) / (4 + sizeof(T))) { cur = end; return false; }
+            w.clearPool<T>();
             for (std::uint32_t i = 0; i < n; ++i) {
                 Entity e = GetU32(cur, end);
                 T v{};
-                if (cur + sizeof(T) <= end) { std::memcpy(&v, cur, sizeof(T)); cur += sizeof(T); }
-                w.ensure(e);
+                std::memcpy(&v, cur, sizeof(T)); cur += sizeof(T);
+                if (w.ensure(e) == Null) continue;
                 w.add<T>(e, v);
             }
+            return true;
         };
         m_handlers.push_back(std::move(h));
     }
@@ -99,6 +103,9 @@ public:
         const std::uint8_t* end = cur + data.size();
         // Entities present in the snapshot.
         std::uint32_t n = GetU32(cur, end);
+        // Reject a count the packet cannot hold before touching the world (and before
+        // reserving memory for it).
+        if ((std::size_t)n > (std::size_t)(end - cur) / 4) return;
         std::vector<Entity> snap; snap.reserve(n);
         for (std::uint32_t i = 0; i < n; ++i) snap.push_back(GetU32(cur, end));
         // Destroy local entities the authority no longer has.
@@ -116,8 +123,7 @@ public:
             if (cur >= end) break;
             std::uint8_t id = *cur++;
             Handler* h = handlerFor(id);
-            if (h) h->applyAll(world, cur, end);
-            else break;   // unknown id: can't know its length, stop safely
+            if (!h || !h->applyAll(world, cur, end)) break;   // unknown id: can't know its length, stop safely
         }
     }
 
@@ -125,7 +131,7 @@ private:
     struct Handler {
         std::uint8_t id = 0;
         std::function<void(World&, std::vector<std::uint8_t>&)> writeAll;
-        std::function<void(World&, const std::uint8_t*&, const std::uint8_t*)> applyAll;
+        std::function<bool(World&, const std::uint8_t*&, const std::uint8_t*)> applyAll;
     };
     std::vector<Handler> m_handlers;
 

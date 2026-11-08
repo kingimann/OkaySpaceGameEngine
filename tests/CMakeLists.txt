@@ -1454,6 +1454,19 @@ add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)
 add_test(NAME script_batch1 COMMAND test_script_batch1)
 
+# Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
+# viewports, Layers names, DataAsset load, input binding persistence.
+add_executable(test_core_audit test_core_audit.cpp)
+target_link_libraries(test_core_audit PRIVATE okay::engine)
+add_test(NAME core_audit COMMAND test_core_audit)
+
+# Core audit: terminal input session (pty based, so POSIX only).
+if(UNIX)
+    add_executable(test_core_audit_input test_core_audit_input.cpp)
+    target_link_libraries(test_core_audit_input PRIVATE okay::engine)
+    add_test(NAME core_audit_input COMMAND test_core_audit_input)
+endif()
+
 # Visual-script nodes for music, camera and particles
 add_executable(test_vs_media test_vs_media.cpp)
 target_link_libraries(test_vs_media PRIVATE okay::engine)

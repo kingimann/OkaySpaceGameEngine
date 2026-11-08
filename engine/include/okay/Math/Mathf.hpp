@@ -49,10 +49,12 @@ struct Mathf {
     }
 
     static float Repeat(float t, float length) {
+        if (!(length > 0.0f)) return 0.0f;   // an empty range has one value (and 0/0 is NaN)
         return Clamp(t - Floor(t / length) * length, 0.0f, length);
     }
 
     static float PingPong(float t, float length) {
+        if (!(length > 0.0f)) return 0.0f;
         t = Repeat(t, length * 2.0f);
         return length - Abs(t - length);
     }
@@ -105,7 +107,7 @@ struct Mathf {
         // Prevent overshoot.
         if ((target - current > 0.0f) == (output > target)) {
             output = target;
-            velocity = (output - target) / deltaTime;
+            velocity = deltaTime > 0.0f ? (output - target) / deltaTime : 0.0f;   // dt = 0 (paused): no 0/0
         }
         return output;
     }

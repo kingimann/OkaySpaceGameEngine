@@ -31,6 +31,7 @@ public:
     std::vector<Entity> dense;     // entity id at each dense slot
     std::vector<T>      comps;     // component at each dense slot
     std::unordered_map<Entity, std::size_t> sparse;  // entity -> dense index
+    std::unique_ptr<T>  sink;      // scratch target for add() on a dead entity
 
     T& add(Entity e, const T& v) {
         auto it = sparse.find(e);
@@ -82,6 +83,9 @@ public:
     /// Make (or reuse) a specific entity id — used when mirroring a networked world
     /// so client and server share ids.
     Entity ensure(Entity e) {
+        // Null is never a live entity, and the top id would wrap the counter back to
+        // Null (these ids come off the network, so a bad one must not break create()).
+        if (e == Null || e == 0xFFFFFFFFu) return Null;
         if (e >= m_next) m_next = e + 1;
         m_alive[e] = true;
         return e;
@@ -100,7 +104,14 @@ public:
     }
     std::size_t count() const { return m_alive.size(); }
 
-    template <class T> T& add(Entity e, const T& v = T{}) { return pool<T>().add(e, v); }
+    /// Add (or overwrite) a component. A dead or null entity gets nothing stored:
+    /// a stale handle must not leave a component that queries still visit. The
+    /// returned reference then points at a scratch copy that is dropped.
+    template <class T> T& add(Entity e, const T& v = T{}) {
+        Pool<T>& p = pool<T>();
+        if (!alive(e)) { p.sink = std::make_unique<T>(v); return *p.sink; }
+        return p.add(e, v);
+    }
     template <class T> T* get(Entity e) { return pool<T>().get(e); }
     template <class T> bool has(Entity e) { return pool<T>().has(e); }
     template <class T> void remove(Entity e) { pool<T>().remove(e); }
@@ -113,18 +124,25 @@ public:
         return out;
     }
 
-    /// Run `fn(entity, T&)` for every entity that has a T.
+    /// Run `fn(entity, T&)` for every entity that has a T. The callback may destroy
+    /// or remove the entity it is given (the pool swaps its last entry into that
+    /// slot, which is then visited too).
     template <class T, class Fn> void each(Fn fn) {
         Pool<T>& p = pool<T>();
-        for (std::size_t i = 0; i < p.dense.size(); ++i) fn(p.dense[i], p.comps[i]);
+        for (std::size_t i = 0; i < p.dense.size();) {
+            const Entity e = p.dense[i];
+            fn(e, p.comps[i]);
+            if (i < p.dense.size() && p.dense[i] == e) ++i;
+        }
     }
     /// Run `fn(entity, A&, B&)` for every entity that has both A and B.
     template <class A, class B, class Fn> void each(Fn fn) {
         Pool<A>& pa = pool<A>();
         Pool<B>& pb = pool<B>();
-        for (std::size_t i = 0; i < pa.dense.size(); ++i) {
-            Entity e = pa.dense[i];
+        for (std::size_t i = 0; i < pa.dense.size();) {
+            const Entity e = pa.dense[i];
             if (B* b = pb.get(e)) fn(e, pa.comps[i], *b);
+            if (i < pa.dense.size() && pa.dense[i] == e) ++i;
         }
     }
 

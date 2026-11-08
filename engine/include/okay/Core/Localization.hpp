@@ -95,12 +95,13 @@ struct LocArg {
 
     LocArg(const std::string& v) : text(v) {}
     LocArg(const char* v) : text(v ? v : "") {}
-    LocArg(int v) : LocArg((double)v) {}
-    LocArg(long v) : LocArg((double)v) {}
-    LocArg(long long v) : LocArg((double)v) {}
-    LocArg(unsigned v) : LocArg((double)v) {}
-    LocArg(unsigned long v) : LocArg((double)v) {}
-    LocArg(unsigned long long v) : LocArg((double)v) {}
+    // Integers keep their exact digits (a double would round a 64-bit id).
+    LocArg(int v) : text(std::to_string(v)), number((double)v), isNumber(true) {}
+    LocArg(long v) : text(std::to_string(v)), number((double)v), isNumber(true) {}
+    LocArg(long long v) : text(std::to_string(v)), number((double)v), isNumber(true) {}
+    LocArg(unsigned v) : text(std::to_string(v)), number((double)v), isNumber(true) {}
+    LocArg(unsigned long v) : text(std::to_string(v)), number((double)v), isNumber(true) {}
+    LocArg(unsigned long long v) : text(std::to_string(v)), number((double)v), isNumber(true) {}
     LocArg(float v) : LocArg((double)v) {}
     LocArg(double v);
     /// A named argument: Localize("greet", LocArg::Named("player", name)).
@@ -187,14 +188,44 @@ public:
     // ---- Plurals ----
     enum class PluralForm { Zero, One, Two, Few, Many, Other };
     static const char* PluralName(PluralForm f);
-    /// The form a number takes in a language. Built in: "one" for exactly 1 (and
-    /// for 0 and 1 in French), no plural in Japanese, Chinese and Korean; other
-    /// languages use the same one / other rule unless SetPluralRule gives theirs.
+    /// The form a number takes in a language (CLDR categories, on the absolute
+    /// value). Built in: en, de, nl, sv, it... (one / other), fr and pt (0 and 1
+    /// are "one"; millions "many"), es (millions "many"), ru and uk (one / few /
+    /// many), pl (one / few / many), cs and sk (one / few / many for fractions),
+    /// ar (zero / one / two / few / many / other), and no plural (always other) for
+    /// ja, zh, ko, vi, th, id, ms. Other languages use one / other. SetPluralRule
+    /// overrides any of them.
     static PluralForm Plural(const std::string& lang, double n);
+    /// The plural form of a string-table key: looks up `key.one`, `key.few`...
+    /// (the form `count` takes in the current language) in the current language,
+    /// then `key.other`, then the same two in the default language, then `key` itself
+    /// as a {0, plural, ...} pattern. {count} and {0} are the number; `args` follow
+    /// as {1}, {2} and by name. A key with none of these is reported and shown as is.
+    static std::string PluralText(const std::string& key, double count, const std::vector<LocArg>& args = {});
     using PluralRule = std::function<PluralForm(double n)>;
     /// Install the rule for a language with more forms (Russian, Polish, Arabic...).
     /// A rule for "pt" also covers "pt-BR". Null removes it.
     static void SetPluralRule(const std::string& lang, PluralRule rule);
+
+    // ---- Locale-aware formatting ----
+    // `lang` is a language code ("fr", "pt-BR", "en_GB.UTF-8"; "" = the current
+    // language). Unknown languages format like English.
+    /// 1234567.891 with `decimals` places: "1,234,567.89" (en), "1.234.567,89" (de),
+    /// "1 234 567,89" (fr, narrow no-break space group). Negative numbers get "-".
+    static std::string FormatNumber(double value, int decimals = 0, const std::string& lang = "");
+    /// Money with its symbol placed as the language does it: "$1,234.50" (en),
+    /// "1.234,50 €" (de), "R$ 1.234,50" (pt-BR). `currency` is an
+    /// ISO code (USD, EUR, GBP, JPY, CNY, KRW, INR, RUB, PLN, BRL...); an unknown code is
+    /// shown as the code. Decimals follow the currency (JPY and KRW none).
+    static std::string FormatCurrency(double amount, const std::string& currency, const std::string& lang = "");
+    /// A fraction as a percentage: FormatPercent(0.256, 1) = "25.6%" ("25,6 %" in fr, de).
+    static std::string FormatPercent(double fraction, int decimals = 0, const std::string& lang = "");
+    enum class DateStyle { Short, Long };
+    /// A calendar date: Short "3/5/2025" (en), "05.03.2025" (de), "2025/3/5" (ja);
+    /// Long "March 5, 2025", "5 mars 2025", "2025年3月5日". An invalid date gives ISO text.
+    static std::string FormatDate(int year, int month, int day, DateStyle style = DateStyle::Short, const std::string& lang = "");
+    /// A time of day: "3:05 PM" (en-US), "15:05" elsewhere; 12 hour clock follows the language.
+    static std::string FormatTime(int hour, int minute, const std::string& lang = "");
 
     // ---- Changes ----
     /// Bumps on every language and table change: a text compares it with the

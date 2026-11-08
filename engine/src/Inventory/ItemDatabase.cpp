@@ -1,5 +1,7 @@
 #include "okay/Inventory/ItemDatabase.hpp"
 #include <algorithm>
+#include <cctype>
+#include <map>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -185,17 +187,45 @@ ItemDefinition* ItemDatabase::FindMutable(const std::string& id) {
     return nullptr;
 }
 
+namespace {
+std::string TrimCopy(const std::string& s) {
+    std::size_t a = 0, b = s.size();
+    while (a < b && std::isspace((unsigned char)s[a])) ++a;
+    while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
+    return s.substr(a, b - a);
+}
+std::string Fold(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+bool FoldMatch(const ItemDefinition& d, const std::string& fold) {
+    if (Fold(d.id) == fold || Fold(d.name) == fold) return true;
+    for (const auto& n : d.legacyNames) if (Fold(n) == fold) return true;
+    return false;
+}
+}
+
 std::string ItemDatabase::Resolve(const std::string& nameOrId) {
-    if (nameOrId.empty() || Find(nameOrId)) return nameOrId;
+    const std::string key = TrimCopy(nameOrId);
+    if (key.empty() || Find(key)) return key;
     for (const auto& d : m_items)
-        if (!d.loose && std::find(d.legacyNames.begin(), d.legacyNames.end(), nameOrId) != d.legacyNames.end()) return d.id;
+        if (!d.loose && std::find(d.legacyNames.begin(), d.legacyNames.end(), key) != d.legacyNames.end()) return d.id;
     for (const auto& d : m_items)
-        if (!d.loose && d.name == nameOrId) return d.id;
+        if (!d.loose && d.name == key) return d.id;
+    const std::string fold = Fold(key);
+    const ItemDefinition* hit = nullptr;
+    int hits = 0;
+    for (const auto& d : m_items) {
+        if (d.loose || !FoldMatch(d, fold)) continue;
+        hit = &d;
+        if (++hits > 1) break;
+    }
+    if (hits == 1) return hit->id;   // "WOOD" is the one item whose id is "wood"
     ItemDefinition loose;   // an item nobody defined: keep it working as-is
-    loose.id = nameOrId;
+    loose.id = key;
     loose.loose = true;
     m_items.push_back(loose);
-    return nameOrId;
+    return key;
 }
 
 const ItemDefinition* ItemDatabase::Def(const std::string& nameOrId) {
@@ -220,6 +250,17 @@ std::vector<std::string> ItemDatabase::DuplicateIds() const {
     std::set<std::string> seen, dup;
     for (const auto& d : m_items) if (!seen.insert(d.id).second) dup.insert(d.id);
     return std::vector<std::string>(dup.begin(), dup.end());
+}
+
+std::vector<std::string> ItemDatabase::CaseConflicts() const {
+    std::map<std::string, std::string> seen;
+    std::vector<std::string> out;
+    for (const auto& d : m_items) {
+        if (d.loose || d.id.empty()) continue;
+        auto it = seen.emplace(Fold(d.id), d.id).first;
+        if (it->second != d.id) out.push_back(d.id + " and " + it->second);
+    }
+    return out;
 }
 
 int ItemDatabase::StackLimit(const std::string& item, int container) const {

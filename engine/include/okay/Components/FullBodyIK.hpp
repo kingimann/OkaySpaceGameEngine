@@ -79,6 +79,8 @@ public:
         /// Seconds to swing over when the goal switches (another target object,
         /// object <-> point) or jumps; measured on the character, so moving it never trails.
         float       targetBlendTime = 0.15f;
+        /// An IK Target: land on the point when the arm or leg can reach it.
+        bool        exactReach = false;
     };
     enum Limb { LeftHand, RightHand, LeftFoot, RightFoot, LimbCount };
     Effector effectors[LimbCount];
@@ -116,6 +118,15 @@ public:
     Vec3        headForward{0, 0, 1};     ///< the head bone's local forward axis
     float       lookSmoothing = 10.0f;    ///< head swings toward a new look point (ease rate per second, 0 = snap)
 
+    /// Put this effector on its goal at once (an IK Target that has finished blending).
+    void SnapEffector(int l) {
+        if (l < 0 || l >= LimbCount) return;
+        Effector& e = effectors[l];
+        m_effW[l] = e.enabled ? e.positionWeight : 0.0f;
+        m_goal[l] = Goal(e);
+        m_goalOk[l] = m_goalValid[l] = Finite(m_goal[l]);
+        e.targetBlendTime = 0.0f;
+    }
     /// Weight an effector is applied with right now (eases toward its target weight).
     float EffectiveWeight(int l) const { return (l >= 0 && l < LimbCount) ? m_effW[l] : 0.0f; }
     /// True when the limb's end is within `tolerance` of its goal (enabled goals only).
@@ -367,11 +378,12 @@ private:
             // A goal beyond reach stretches the bones (up to `stretch`); a chain
             // moves its joints out along the bones by the same factor.
             float s = 1.0f;
-            if (stretch > 0.0f) {
-                const float dist = (goal - root).Magnitude();
-                if (dist > up + lo) s = std::min(dist / (up + lo), 1.0f + stretch);
-            }
-            SolveTwoBoneIKSoft(root, up * s, lo * s, goal, pole, softness * (up + lo) * s, mid, end, std::max(0.0f, minBend), 180.0f);
+            const float dist = (goal - root).Magnitude();
+            if (stretch > 0.0f && dist > up + lo) s = std::min(dist / (up + lo), 1.0f + stretch);
+            float soft = softness * (up + lo) * s;
+            float bend = std::max(0.0f, minBend);
+            if (e.exactReach && dist <= (up + lo) * s + 1e-3f) { soft = 0.0f; bend = 0.0f; }
+            SolveTwoBoneIKSoft(root, up * s, lo * s, goal, pole, soft, mid, end, bend, 180.0f);
             if (!Finite(mid) || !Finite(end)) return;
             m_restore.Touch(a); m_restore.Touch(b); m_restore.Touch(c);
             const bool limited = e.upperLimit.Active() || e.lowerLimit.Active();

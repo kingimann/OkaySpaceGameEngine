@@ -1,4 +1,6 @@
 #include <set>
+#include <type_traits>
+#include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -1557,6 +1559,7 @@ void AutoMapLocomotion(ModelAnimator* ma) {
         {"jump", "jumping", "leap"}, {"fall", "falling", "air", "inair", "drop"}, {"land", "landing"}};
     std::string* slot[6] = {&ma->idleClip, &ma->walkClip, &ma->runClip, &ma->jumpClip, &ma->fallClip, &ma->landClip};
     std::string* stanceSlot[5] = {&ma->crouchClip, &ma->crouchWalkClip, &ma->proneClip, &ma->crawlClip, &ma->getUpClip};
+    std::string* dirSlot[4] = {&ma->strafeLeftClip, &ma->strafeRightClip, &ma->walkBackClip, &ma->runBackClip};
     auto is = [&](int role, const std::string& w) {
         for (const std::string& k : kWords[role]) if (k == w) return true;
         return false;
@@ -1571,6 +1574,7 @@ void AutoMapLocomotion(ModelAnimator* ma) {
     for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {   // clips already given a state
         for (const std::string* sl : slot) if (*sl == ma->clips[ci].name) used[ci] = true;
         for (const std::string* sl : stanceSlot) if (*sl == ma->clips[ci].name) used[ci] = true;
+        for (const std::string* sl : dirSlot) if (*sl == ma->clips[ci].name) used[ci] = true;
     }
     // Crouch / prone clips, and changes between stances ("Crouch To Stand", "Get Up").
     auto crouchy = [&](std::size_t ci) { return any(words[ci], {"crouch", "crouched", "crouching", "sneak", "sneaking", "squat", "squatting"}); };
@@ -1582,6 +1586,9 @@ void AutoMapLocomotion(ModelAnimator* ma) {
         return (any(words[ci], {"up"}) && any(words[ci], {"get", "getting", "stand", "standing"})) ||
                (proney(ci) && any(words[ci], {"to"}) && any(words[ci], {"stand", "standing", "idle"}));
     };
+    // Back / left / right clips are kept out of the forward slots, unless the model turns
+    // out to have no directional clips: then it maps exactly as it did before they existed.
+    auto mapForward = [&](bool skipDir) {
     for (int pass = 0; pass < 2; ++pass)
         for (int role = 0; role < 6; ++role)
             for (std::size_t ci = 0; ci < ma->clips.size() && slot[role]->empty(); ++ci) {
@@ -1599,8 +1606,12 @@ void AutoMapLocomotion(ModelAnimator* ma) {
                 }
                 // A crouch walk, a drop to prone or a get-up is a stance clip (below).
                 const bool stance = crouchy(ci) || proney(ci) || getUp(ci);
-                if (hit && !stance && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
+                const bool backward = any(words[ci], {"back", "backward", "backwards"});
+                const bool sideways = any(words[ci], {"left", "right", "strafe", "strafing"});
+                if (hit && !stance && !(skipDir && (backward || sideways)) && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
             }
+    };
+    mapForward(true);
     const std::function<bool(std::size_t)> roles[5] = {
         [&](std::size_t ci) { return crouchy(ci) && !change(ci) && !moving(ci) && !any(words[ci], {"sneak", "sneaking"}); },
         [&](std::size_t ci) { return crouchy(ci) && !change(ci) && (moving(ci) || any(words[ci], {"sneak", "sneaking"})); },
@@ -1610,6 +1621,26 @@ void AutoMapLocomotion(ModelAnimator* ma) {
     for (int role = 0; role < 5; ++role)
         for (std::size_t ci = 0; ci < ma->clips.size() && stanceSlot[role]->empty(); ++ci)
             if (!used[ci] && roles[role](ci)) { *stanceSlot[role] = ma->clips[ci].name; used[ci] = true; }
+    // "Walk Back" / "Run Back" are locomotion. "Back Flip" and similar tricks are not.
+    auto locomotes = [&](std::size_t ci) { return any(words[ci], {"walk", "walking", "run", "running", "strafe", "strafing", "move", "moving"}); };
+    auto trick = [&](std::size_t ci) { return any(words[ci], {"flip", "flipping", "dodge", "roll", "rolling", "attack", "kick", "punch"}); };
+    auto back = [&](std::size_t ci) {
+        return any(words[ci], {"back", "backward", "backwards"}) && locomotes(ci) && !trick(ci);
+    };
+    auto left = [&](std::size_t ci) { return any(words[ci], {"left"}); };
+    auto right = [&](std::size_t ci) { return any(words[ci], {"right"}); };
+    auto runny = [&](std::size_t ci) { return any(words[ci], {"run", "running", "sprint", "sprinting"}); };
+    auto side = [&](std::size_t ci) { return any(words[ci], {"strafe", "strafing", "sidestep", "side", "walk", "walking"}); };
+    const std::function<bool(std::size_t)> dirRoles[4] = {
+        [&](std::size_t ci) { return left(ci) && side(ci) && !back(ci); },
+        [&](std::size_t ci) { return right(ci) && side(ci) && !back(ci); },
+        [&](std::size_t ci) { return back(ci) && !runny(ci); },
+        [&](std::size_t ci) { return back(ci) && runny(ci); },
+    };
+    for (int role = 0; role < 4; ++role)
+        for (std::size_t ci = 0; ci < ma->clips.size() && dirSlot[role]->empty(); ++ci)
+            if (!used[ci] && dirRoles[role](ci)) { *dirSlot[role] = ma->clips[ci].name; used[ci] = true; }
+    if (!ma->HasDirectionalClips()) mapForward(false);
 }
 
 // Switch a retargeted model's locomotion between its clips and the built-in
@@ -2370,6 +2401,51 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             look->chainNames.push_back(head->name);
             look->chain.clear();
             mapped += mapped.empty() ? "look-at IK on" : ", look-at IK on";
+        }
+    }
+
+    // The controllers' default 4.5 m/s "walk" is a jog: a downloaded walk clip is
+    // made for about 1.4 m/s, so at 4.5 the stride match picks the RUN clip for
+    // plain W and Shift plays it at its fastest. Bring a default speed down to
+    // the pace the file's clip can show (its playback rate stays inside the
+    // 0.6x-1.6x stride limits); speeds the user has already changed are kept.
+    // The fitted values are remembered per player: a later swap refits a speed
+    // still at them, and one the user set back to the default since is left alone.
+    if (ma && ma->strideMatch && !ma->rootMotion) {
+        static std::unordered_map<std::uint64_t, std::array<float, 2>> sFitted;  // {walk, run}; 0 = not fitted
+        const std::array<float, 2> prev = sFitted[player->InstanceId()];
+        std::array<float, 2> now = prev;
+        auto fit = [&](float& walk, float& run, float dWalk, float dRun) {
+            bool changed = false;
+            if (ma->SlotFilled(ModelAnimator::SlotWalk) && walk == (prev[0] > 0.0f ? prev[0] : dWalk)) {
+                walk = now[0] = 1.45f * ma->SlotClipSpeed(ModelAnimator::SlotWalk); changed = true;
+            }
+            if (ma->SlotFilled(ModelAnimator::SlotRun) && run == (prev[1] > 0.0f ? prev[1] : dRun)) {
+                run = now[1] = 1.25f * ma->SlotClipSpeed(ModelAnimator::SlotRun); changed = true;
+            }
+            return changed;
+        };
+        bool fitted = false;
+        // Each controller type's own defaults are the "untouched" speeds.
+        auto fitC = [&](auto* c) {
+            using T = std::remove_pointer_t<decltype(c)>;
+            if (c) { const T d; fitted = fit(c->walkSpeed, c->runSpeed, d.walkSpeed, d.runSpeed) || fitted; }
+        };
+        fitC(player->GetComponent<ThirdPersonController>());
+        fitC(player->GetComponent<ThirdPersonShooterController>());
+        fitC(player->GetComponent<FirstPersonController>());
+        fitC(player->GetComponent<ClickToMoveController>());
+        fitC(player->GetComponent<TopDownController>());
+        fitC(player->GetComponent<Platformer25DController>());
+        fitC(player->GetComponent<TopDownShooterController>());
+        sFitted[player->InstanceId()] = now;
+        if (fitted) {
+            mapped += mapped.empty() ? "move speeds fitted to the clips" : ", move speeds fitted to the clips";
+            // The clip-only path keys its walk/run blend to the controller speeds.
+            float w = 0.0f, r = 0.0f;
+            if (!wantRetarget && ControllerSpeeds(player, w, r) && w > 0.0f && r > w) {
+                ma->walkThreshold = w; ma->runThreshold = r;
+            }
         }
     }
 

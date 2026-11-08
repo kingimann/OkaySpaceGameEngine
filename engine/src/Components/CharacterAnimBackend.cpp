@@ -25,10 +25,16 @@ void MixIn(std::vector<Vec3>& pose, Vec3& root, float& total, const std::vector<
 }
 
 // The built-in `anim` number a state stands for, by its name ("Walk" = 2,
-// "Land" = 1, "Crawl" = 7), or -1.
+// "Land" = 1, "Crawl" = 7). Death, roll, sit and swim are 20..23: they are
+// not Character::anim values (those stay 1..19 for old peers) and travel as
+// the action id instead. -1 = not a published state.
 int StateNumber(const std::string& state) {
     if (state == "Land" || state == "GetUp") return 1;
     if (state == "Crawl" || state == "Drop") return 7;
+    if (state == "Death" || state == "DeadHold" || state.rfind("Death_", 0) == 0 || state.rfind("DeadHold_", 0) == 0) return 20;
+    if (state == "Roll" || state == "Dodge" || state == "Roll_F" || state.rfind("Dodge_", 0) == 0) return 21;
+    if (state == "Sit" || state == "SitDown" || state == "StandUp") return 22;
+    if (state == "Swim" || state.rfind("Swim_", 0) == 0) return 23;
     return Character::BuiltinAnimIndex(state);
 }
 } // namespace
@@ -285,10 +291,19 @@ void CharacterAnimBackend::Advance(float dt) {
     Character* ch = Body();
     if (!ch) return;
     if (m_have && ch->GetPoseSource() != this) ch->SetPoseSource(this);
-    // `anim` reads the state playing.
+    // `anim` reads the state playing. 1..19 are the built-in poses an old
+    // client already understands. 20..23 are actions: the legacy anim stays
+    // put, and the action id is what a new proxy plays.
     if (m_sm && !m_off) {
         const int n = StateNumber(m_sm->Current());
-        if (n > 0) ch->anim = n;
+        if (n > 0 && n <= 19) ch->anim = n;
+        const int action = n >= 20 ? n - 19 : 0;   // 1 death, 2 roll, 3 sit, 4 swim
+        if (m_sentAction < 0) m_sentAction = action;
+        else if (action != m_sentAction) {
+            m_sentAction = action;
+            ++ch->netActionSeq;
+        }
+        ch->netActionId = action;
         m_published = ch->anim;
     }
 }

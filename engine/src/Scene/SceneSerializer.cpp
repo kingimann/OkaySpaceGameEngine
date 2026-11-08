@@ -153,6 +153,9 @@
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/IKTarget.hpp"
+#include "okay/Components/AimOffset.hpp"
+#include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/RootMotion.hpp"
@@ -735,6 +738,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             !ma->crawlClip.empty() || !ma->getUpClip.empty())
             out << "  modelanimstance " << Quote(ma->crouchClip) << " " << Quote(ma->crouchWalkClip)
                 << " " << Quote(ma->proneClip) << " " << Quote(ma->crawlClip) << " " << Quote(ma->getUpClip) << "\n";
+        if (ma->HasDirectionalClips())
+            out << "  modelanimdir " << Quote(ma->strafeLeftClip) << " " << Quote(ma->strafeRightClip)
+                << " " << Quote(ma->walkBackClip) << " " << Quote(ma->runBackClip) << "\n";
+        if (ma->legsFollowTravel)
+            out << "  modelanimlegs 1\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
         if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty() || ma->rootMotionRotation || ma->rootMotionApplyTo)
@@ -873,6 +881,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (anyFb) {
             out << "  animsmfb " << asm2->states.size();
             for (const auto& st : asm2->states) out << " " << st.fullBodyIkWeight;
+            out << "\n";
+        }
+        // Look-At / Aim weight, where it stops following the foot weight.
+        bool anyLook = false;
+        for (const auto& st : asm2->states) anyLook = anyLook || st.lookWeight != 1.0f;
+        if (anyLook) {
+            out << "  animsmlk " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << st.lookWeight;
             out << "\n";
         }
         // Per-state IK weight curves (foot, then full-body). Written only when
@@ -1292,6 +1308,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << a->weight << " " << a->maxAngle
             << " " << a->target.x << " " << a->target.y << " " << a->target.z
             << " " << a->smoothing << "\n";
+    }
+    if (auto* t = go->GetComponent<IKTarget>()) {
+        out << "  iktarget " << t->limb << " " << Quote(t->characterName)
+            << " " << t->weight << " " << t->blendTime << "\n";
+    }
+    if (auto* ao = go->GetComponent<AimOffset>()) {
+        out << "  aimoffset " << (ao->useCamera ? 1 : 0) << " " << Quote(ao->targetName)
+            << " " << ao->weight << " " << ao->pitchClamp << " " << ao->yawClamp
+            << " " << ao->spineWeight << " " << ao->chestWeight << " " << ao->armWeight
+            << " " << ao->kick << " " << ao->recovery << "\n";
+    }
+    if (auto* pc = go->GetComponent<PoseCapture>()) {
+        out << "  posecap " << Quote(pc->clipName) << " " << pc->recordSeconds << "\n";
     }
     if (auto* l = go->GetComponent<LookAtIK>()) {
         out << "  lookatik " << Quote(l->targetName)
@@ -3904,6 +3933,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->proneClip      = ReadQuoted(in);
                     ma->crawlClip      = ReadQuoted(in);
                     ma->getUpClip      = ReadQuoted(in);
+                } else if (field == "modelanimdir") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    ma->strafeLeftClip  = ReadQuoted(in);
+                    ma->strafeRightClip = ReadQuoted(in);
+                    ma->walkBackClip    = ReadQuoted(in);
+                    ma->runBackClip     = ReadQuoted(in);
+                } else if (field == "modelanimlegs") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int lf = 0; in >> lf;
+                    ma->legsFollowTravel = (lf != 0);
                 } else if (field == "modelanimblend") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
@@ -4151,6 +4192,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long i = 0; i < n && in; ++i) {
                         float w = -1.0f; in >> w;
                         if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
+                } else if (field == "animsmlk") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        float w = -1.0f; in >> w;
+                        if (i < (long)sm2->states.size()) sm2->states[i].lookWeight = w;
                     }
                 } else if (field == "animsmfall") {
                     auto* sm2 = smFor();
@@ -4455,6 +4503,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     { std::string rest; std::getline(in, rest);
                       std::istringstream rs(rest); float sm;
                       if (rs >> sm) a->smoothing = sm; }
+                } else if (field == "iktarget") {
+                    auto* t = go->AddComponent<IKTarget>();
+                    in >> t->limb;
+                    t->characterName = ReadQuoted(in);
+                    in >> t->weight >> t->blendTime;
+                } else if (field == "aimoffset") {
+                    auto* ao = go->AddComponent<AimOffset>();
+                    int cam = 1;
+                    in >> cam;
+                    ao->useCamera = cam != 0;
+                    ao->targetName = ReadQuoted(in);
+                    in >> ao->weight >> ao->pitchClamp >> ao->yawClamp
+                       >> ao->spineWeight >> ao->chestWeight >> ao->armWeight
+                       >> ao->kick >> ao->recovery;
+                } else if (field == "posecap") {
+                    auto* pc = go->AddComponent<PoseCapture>();
+                    pc->clipName = ReadQuoted(in);
+                    in >> pc->recordSeconds;
                 } else if (field == "lookatik") {
                     auto* l = go->AddComponent<LookAtIK>();
                     l->targetName = ReadQuoted(in);

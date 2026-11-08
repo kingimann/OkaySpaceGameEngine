@@ -3,6 +3,12 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Animation/HumanoidLibrary.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
+#include "okay/Scene/SceneTemplates.hpp"
+#include "okay/Render/ModelImport.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include <algorithm>
 #include <cmath>
@@ -460,6 +466,114 @@ int main() {
             CHECK(info.source == 1 && info.builtinSlots == 0 && info.importedSlots == ModelAnimator::SlotCount);
             CHECK(std::string(CharacterAnimationSourceName(info.source)) == "Imported clips");
         }
+    }
+
+    // Death and wave have no clip on this rig, so the built-in pose is retargeted.
+    {
+        Loco L;
+        CHECK(L.rig && L.ma);
+        if (L.rig && L.ma) {
+            L.AddClip("Idle", 2.0f, 2.0f);
+            L.AddClip("Walking", 1.0f, 20.0f);
+            FixCharacterAnimations(*L.rig.scene, L.rig.player);
+            HumanoidLibrary::EnsureAnimator(L.rig.player);
+            Transform* hips = L.rig.Bone(0);
+            CHECK(hips);
+            if (hips) {
+                for (int i = 0; i < 10; ++i) L.rig.scene->Update(kDt);
+                CHECK(!L.ma->ActionPoseUncovered());   // idle locomotion: the new action-pose rule leaves ClipOverridesPose alone
+                const float standY = hips->Position().y;
+                const Quat standR = hips->Rotation();
+                HumanoidActions::RequestDeath(L.rig.player, 0, nullptr);
+                for (int i = 0; i < 60; ++i) L.rig.scene->Update(kDt);
+                const float drop = standY - hips->Position().y;
+                const float turned = Quat::Angle(standR, hips->Rotation());
+                CHECK(drop > 0.15f || turned > 25.0f);
+                CHECK(!L.ma->ClipOverridesPose());
+            }
+        }
+    }
+    {
+        Loco L;
+        CHECK(L.rig && L.ma);
+        if (L.rig && L.ma) {
+            L.AddClip("Idle", 2.0f, 2.0f);
+            L.AddClip("Walking", 1.0f, 20.0f);
+            FixCharacterAnimations(*L.rig.scene, L.rig.player);
+            HumanoidLibrary::EnsureAnimator(L.rig.player);
+            Transform* hand = L.rig.Bone(8);
+            CHECK(hand);
+            if (hand) {
+                for (int i = 0; i < 10; ++i) L.rig.scene->Update(kDt);
+                const float y0 = hand->Position().y;
+                CHECK(HumanoidActions::Play(L.rig.player, "Wave", 0.05f));
+                float peak = y0;
+                for (int i = 0; i < 45; ++i) {
+                    L.rig.scene->Update(kDt);
+                    peak = std::fmax(peak, hand->Position().y);
+                }
+                CHECK(peak > y0 + 0.12f);
+            }
+        }
+    }
+
+    // ---- The controller's own default speeds (4.5 walk / 8 run m/s): W must play the
+    // WALK clip and Shift the RUN clip. The stride match used to pick Run for plain W
+    // (a 1.4 m/s walk clip next to a 4.5 m/s "walk"), so the character ran when walking.
+    {
+        righarness::Rig R = righarness::PlayableFromFile("mixamo_t_cm_clips.glb");
+        CHECK(R.model != nullptr);
+        auto* tp = R.player ? R.player->GetComponent<ThirdPersonController>() : nullptr;
+        CHECK(tp != nullptr);
+        ModelAnimator* ma = nullptr;
+        if (R.model)
+            for (const auto& up : R.scene->Objects())
+                if (up->IsSelfOrDescendantOf(R.model) && (ma = up->GetComponent<ModelAnimator>())) break;
+        CHECK(ma != nullptr);
+        if (tp && ma) {
+            std::printf("  fitted speeds: walk %.2f, run %.2f m/s (clips made for %.2f / %.2f)\n", tp->walkSpeed, tp->runSpeed,
+                        ma->SlotClipSpeed(ModelAnimator::SlotWalk), ma->SlotClipSpeed(ModelAnimator::SlotRun));
+            CHECK(tp->walkSpeed < 4.5f && tp->runSpeed < 8.0f);
+            // The fitted pace is one the stride match can show: inside its rate limits.
+            CHECK(tp->walkSpeed / ma->SlotClipSpeed(ModelAnimator::SlotWalk) <= ModelAnimator::kStrideMaxRate);
+            CHECK(tp->runSpeed / ma->SlotClipSpeed(ModelAnimator::SlotRun) <= ModelAnimator::kStrideMaxRate);
+            R.Step(kDt, {}, 120);
+            R.Step(kDt, {'W'}, 120);
+            std::printf("  W: slot %s at stride rate %.2f\n", ModelAnimator::SlotName(ma->ActiveSlot()), ma->CurrentStrideRate());
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotWalk);
+            R.Step(kDt, {'W', 16}, 120);
+            std::printf("  W + Shift: slot %s at stride rate %.2f\n", ModelAnimator::SlotName(ma->ActiveSlot()), ma->CurrentStrideRate());
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotRun);
+            R.Step(kDt, {}, 120);
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotIdle);
+        }
+        // Speeds the user already changed are theirs: attaching a model leaves them.
+        Scene s("custom");
+        GameObject* p = Templates::AddThirdPersonPlayer(s, {0, 0, 0});
+        auto* c = p->GetComponent<ThirdPersonController>();
+        CHECK(c != nullptr);
+        if (c) {
+            c->walkSpeed = 3.0f;
+            AttachCharacterModel(s, p, righarness::RigPath("mixamo_t_cm_clips.glb"));
+            CHECK(c->walkSpeed == 3.0f);      // customised: kept
+            CHECK(c->runSpeed < 8.0f);        // still the default: fitted
+        }
+        // A shooter player is fitted too, against the shooter's own defaults.
+        Scene s2("shooter");
+        GameObject* sp = Templates::AddThirdPersonPlayer(s2, {0, 0, 0});
+        sp->RemoveComponent(sp->GetComponent<ThirdPersonController>());
+        auto* sh = sp->AddComponent<ThirdPersonShooterController>();
+        const float shWalk = sh->walkSpeed, shRun = sh->runSpeed;
+        AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
+        CHECK(sh->walkSpeed < shWalk && sh->runSpeed < shRun);
+        // Another model: the fitted speeds are refitted, not mistaken for the author's.
+        const float w1 = sh->walkSpeed;
+        AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
+        CHECK(sh->walkSpeed == w1 && sh->runSpeed < shRun);
+        // Set back to the default after the fit: that is the author's value now.
+        sh->walkSpeed = shWalk;
+        AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
+        CHECK(sh->walkSpeed == shWalk);
     }
 
     TEST_MAIN_RESULT();

@@ -100,6 +100,9 @@ public:
     float lean() const { return m_lean; }
 
     float yaw = 0.0f, pitch = 12.0f;
+    /// Orbit pitch at Start. Aim offset treats this as level, so the resting
+    /// downward look does not bend the chest.
+    float restPitch() const { return m_restPitch; }
 
     /// Crouch (Ctrl) and prone (Z): a smaller, slower body that eases between
     /// stances, the camera following it down; SetStance from scripts. No jumping
@@ -108,6 +111,7 @@ public:
     void SetStance(int s) { stanceControl.Set(s); }
 
     void Start() override {
+        m_restPitch = pitch;
         if (lockCursor) Cursor::Capture(true);
         if (footIK) AttachCharacterFootIK(gameObject);
         stanceControl.Start(gameObject);
@@ -354,6 +358,7 @@ private:
     SpringArm m_arm;                // camera collision
     Camera* m_claimedCam = nullptr; // the main camera last checked for a competing follow
     float m_lean = 0.0f;            // eased lean (-1..+1)
+    float m_restPitch = 12.0f;      // orbit pitch at Start (the camera's rest tilt)
     int   m_jumpsUsed = 0;         // jumps since last grounded (for double-jump)
     GroundLatch m_ground;         // apex of a jump is not ground
     float m_fireCooldown = 0.0f;

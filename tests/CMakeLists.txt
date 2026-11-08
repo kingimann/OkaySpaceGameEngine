@@ -1499,3 +1499,9 @@ add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
 add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
 target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
 add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
+
+# Property reflection: values and text round trips, registry paths, change hook,
+# snapshot / diff / copy, and a cross-check of every registered property against the scene serializer
+add_executable(test_property_registry test_property_registry.cpp)
+target_link_libraries(test_property_registry PRIVATE okay::engine)
+add_test(NAME property_registry COMMAND test_property_registry)

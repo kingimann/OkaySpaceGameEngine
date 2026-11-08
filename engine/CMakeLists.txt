@@ -390,3 +390,12 @@ endif()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
+
+# ---- Property reflection (docs/properties.md) ----
+# PropertyValue / PropertyDesc, the registry with path access and change hook,
+# snapshot / diff / copy, and the built-in component registrations.
+target_sources(okay_engine PRIVATE
+    src/Scene/Properties.cpp
+    src/Scene/PropertyRegistry.cpp
+    src/Scene/BuiltinProperties.cpp
+)

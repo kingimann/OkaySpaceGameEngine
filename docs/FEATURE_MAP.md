@@ -197,6 +197,7 @@ You can also say "area 5 but not Grok's parts" or "everything open in 1".
 | undo | 15.9 | water | 2.6 |
 | updater | 17.1, 18.5 | world space UI | 12.6 |
 | visual script | 14 | WebGL | 18.2 |
+| properties (reflection) | 1.3, 21, 22, 34 | property registry | 1.3 |
 
 ---
 
@@ -206,7 +207,7 @@ You can also say "area 5 but not Grok's parts" or "everything open in 1".
 |---|---|---|---|---|
 | 1.1 | Loop and time: Application, Game, Time, Random | `Core/Application`, `Game`, `Time`, `Random` | `making_a_game.md` | Fixed-step helper for gameplay code |
 | 1.2 | Timers and tweens: Scheduler, Tween, easing | `Core/Scheduler`, `Tween`, `Components/TweenAnimation` | - | Global scheduler PR in review |
-| 1.3 | Scene graph: Scene, GameObject, Transform, components, layers and tags | `Scene/Scene`, `GameObject`, `Transform`, `Component`, `Layers` | `making_a_game.md` | Layer collision matrix, named tags, component registry |
+| 1.3 | Scene graph: Scene, GameObject, Transform, components, layers and tags; property reflection (read, write, watch, snapshot and diff component fields by name) | `Scene/Scene`, `GameObject`, `Transform`, `Component`, `Layers`, `Scene/Properties`, `PropertyRegistry`, `PropertyBuilder` (registrations in `src/Scene/BuiltinProperties.cpp`) | `making_a_game.md`, `properties.md` | Layer collision matrix, named tags, component registry; property registry in review (branch claude/property-reflection: 26 built-in types registered, others still to do) |
 | 1.4 | Scene lifecycle: Start/Awake order, destroy, scene manager, load | `Scene/SceneManager`, `Scene` | `making_a_game.md` | Async load, unload, DontDestroyOnLoad, pooling (branches in review) |
 | 1.5 | Scene serializer (`okayscene 3`): load, merge, instantiate | `Scene/SceneSerializer` | - | Safe loading in review; stable object IDs; component serializer registry |
 | 1.6 | Prefabs and templates: prefab files, starter players and worlds | `Scene/SceneTemplates`, `UITemplates`, `UIStyles` | `making_a_game.md` | Prefab overrides |
@@ -459,8 +460,8 @@ Areas 20-35 are planned features you asked for. Each says what exists today
 | ID | Area (priority) | Exists today | Missing | Related |
 |---|---|---|---|---|
 | 20 | Asset management (Critical) | Project panel and marketplace asset manager (15.4); asset manager core in flight (typed handles, refcounts, async load, hot reload; PR #568); data layer in flight (branch claude/asset-guids-deps, `asset_database.md`): GUID meta files with move/rename/duplicate handling, dependency graph with closure, unused and missing reports, typed import settings with migration and a reimport signal, thumbnail cache, search/filter/page query | Asset browser window and thumbnails grid on top of that data layer, importers that read the import settings, GUID references inside scene files, wiring the build/export closure | 15.4, 3.6, 1.6, 21 |
-| 21 | Prefab system (Critical) | Prefab files and instantiate (1.6); stable object IDs, prefab overrides and re-apply in flight (branch claude/scene-ids-prefabs) | Nested prefabs, variants, override editor UI (apply, revert, per-field), prefab mode editing, unpack | 1.6, 15.2, 20 |
-| 22 | Undo/redo & recovery (Critical) | Undo is a full-scene text snapshot, 100 steps; autosave (15.9) | Command-based undo (cheap, per-property), undo across Play, crash recovery (restore after a crash), rolling backups and a restore UI | 15.9 |
+| 21 | Prefab system (Critical) | Prefab files and instantiate (1.6); stable object IDs, prefab overrides and re-apply in flight (branch claude/scene-ids-prefabs); property snapshot and diff by path in flight (branch claude/property-reflection, `properties.md`), the basis for per-field overrides | Nested prefabs, variants, override editor UI (apply, revert, per-field), prefab mode editing, unpack | 1.6, 15.2, 20 |
+| 22 | Undo/redo & recovery (Critical) | Undo is a full-scene text snapshot, 100 steps; autosave (15.9); property change hook with old and new values, snapshot and diff in flight (branch claude/property-reflection, `properties.md`), the basis for per-property undo | Command-based undo (cheap, per-property), undo across Play, crash recovery (restore after a crash), rolling backups and a restore UI | 15.9 |
 | 23 | Profiling & debugging (Critical) | Profiler with categories and trace export in review (PR #559); log file sink; editor console (15.9) | CPU and GPU timeline window, memory tracking by system, frame debugger (draw call list, state, step through), error console filters and links to the source object | 1.10, 2.1, 15.6 |
 | 24 | Plugin & extension system (Critical) | Editor plugin system and Plugins menu (15.8, `editor-plugins.md`) | C++ plugin ABI with versioning and a plugin SDK package, editor extension points (windows, inspectors, menus), custom nodes for visual scripting, plugin manager UI | 15.8, 14.4 |
 | 25 | Project management (High) | Templates (1.6), Create page (17.1), Build Settings (15.7) | Full project settings window, project migration across engine versions, dependency management (packages and versions) | 1.6, 17.1, 15.7 |
@@ -472,7 +473,7 @@ Areas 20-35 are planned features you asked for. Each says what exists today
 | 31 | Localization tools (Medium) | String tables, plurals and font fallback runtime (1.8); number and date formatting in flight | Translation table editor window, missing-key report, import and export (CSV), language preview in the Game view | 1.8 |
 | 32 | Accessibility (High) | Input actions and rebinding UI (8.3); extended keys, contexts and gamepad curves in flight | Full controller navigation of all UI, subtitles and captions system, colorblind filters and safe palettes, text scaling, remap everything including UI | 8.3, 12.4, 12.7 |
 | 33 | Automated testing (Critical) | About 330 unit tests, five CI jobs (19.2, 18.3) | Play-mode tests (run a scene headless and assert), scene validation (missing references, missing components), regression and golden-image tests, a test runner window | 19.2, 18.3 |
-| 34 | Live editing (High) | Editor Play mode (15.3) | Change properties during Play and keep or revert them, live object inspector for runtime-created objects, script hot reload without leaving Play | 15.2, 15.3, 13 |
+| 34 | Live editing (High) | Editor Play mode (15.3); set any property by name (runtime-only ones such as velocity included), snapshot and diff to keep or revert in flight (branch claude/property-reflection, `properties.md`) | Change properties during Play and keep or revert them, live object inspector for runtime-created objects, script hot reload without leaving Play | 15.2, 15.3, 13 |
 | 35 | Save game framework (High) | Durable saves: atomic writes, versioned and checksummed slots, backups, migration hook (merged, PR #552, `save_games.md`) | Checkpoints, save slot UI components, scene-object state saving (SaveableObject), cloud save hooks | 1.7, 12 |
 
 ---
@@ -486,4 +487,7 @@ Areas 20-35 are planned features you asked for. Each says what exists today
   load, pooling and RequireComponent (1.4); stable IDs, prefab overrides and
   serializer registry (1.5, 1.6); plural rules, number formatting, typed Prefs and
   fixed timestep (1.8, 1.7, 1.1).
+- Property reflection registry (branch claude/property-reflection, not yet a PR): named
+  access, change hook, snapshot and diff for 26 built-in component types (1.3, areas 21,
+  22, 34).
 - Animation and IK PRs (#535-#539, #548-#551, #554) belong to Grok's sessions.

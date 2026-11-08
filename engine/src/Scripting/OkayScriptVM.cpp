@@ -40,6 +40,8 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/AimOffset.hpp"
+#include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/UIButton.hpp"
@@ -6195,6 +6197,31 @@ struct OkayScriptVM::Impl {
             look->ikActive = true;
             if (a.size() > 1) look->weight = a[1].AsFloat();
             return Value{1.0f};
+        };
+        // recoil(strength) kicks an Aim Offset on this object or under it.
+        // capture_pose() saves one frame; capture_pose(seconds) records that long.
+        b["recoil"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g) return Value{0.0f};
+            const float strength = a.empty() ? 1.0f : a[0].AsFloat();
+            auto fire = [&](AimOffset* o) { if (o) { o->Recoil(strength); return true; } return false; };
+            if (fire(g->GetComponent<AimOffset>())) return Value{1.0f};
+            if (!g->scene()) return Value{0.0f};
+            for (const auto& up : g->scene()->Objects())
+                if (up && up->IsSelfOrDescendantOf(g) && fire(up->GetComponent<AimOffset>())) return Value{1.0f};
+            return Value{0.0f};
+        };
+        b["capture_pose"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g) return Value{0.0f};
+            PoseCapture* pc = g->GetComponent<PoseCapture>();
+            if (!pc && g->scene())
+                for (const auto& up : g->scene()->Objects())
+                    if (up && up->IsSelfOrDescendantOf(g) && (pc = up->GetComponent<PoseCapture>())) break;
+            if (!pc) pc = g->AddComponent<PoseCapture>();
+            if (!a.empty() && a[0].AsFloat() > 0.0f) { pc->StartRecord(a[0].AsFloat()); return Value{1.0f}; }
+            if (pc->IsRecording()) return Value{pc->StopRecord() >= 0 ? 1.0f : 0.0f};
+            return Value{pc->CaptureFrame() >= 0 ? 1.0f : 0.0f};
         };
         auto setStance = [selfObj](int s) {
             if (s < 0) s = 0;

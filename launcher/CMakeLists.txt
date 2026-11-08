@@ -56,6 +56,7 @@ if(WIN32)
     list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc)
 endif()
 add_executable(okayspace-launcher ${OKAY_LAUNCHER_SOURCES})
+okay_win_version(okayspace-launcher "OkaySpace Launcher" "OkaySpace.exe")
 target_compile_definitions(okayspace-launcher PRIVATE ${OKAY_VERSION_DEFINE})
 target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 # shared/ for the launcher's AppIcon, and the engine's public headers for the

@@ -6,6 +6,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 ## Get started
 - [making_a_game.md](making_a_game.md): make your first game, from an empty editor to a shipped one.
 - [editor.md](editor.md): the editor, its panels and Build Game.
+- [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.
 - [packaging.md](packaging.md): how a build is laid out for distribution.
 - [releasing.md](releasing.md): releasing an update to players.

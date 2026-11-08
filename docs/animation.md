@@ -999,7 +999,19 @@ character, and the bone stays over it.
   These are the parameters the player controllers already send.
 - **2D blend trees:** pick *2D (strafe)* on a blend tree. Motions sit on a map;
   drag them, and watch live weights in Play. The controllers send `moveX` / `moveZ`
-  (velocity in the body's frame) for strafing sets.
+  (velocity in the body's frame) for strafing sets. The body faces local -Z, so
+  forward is negative `moveZ` and strafing right is positive `moveX`.
+  **Locomotion setup** on an imported model builds that 2D blend when the file
+  has a strafe or a back clip. Names map by word: a left strafe or sidestep
+  walk (`left` plus `strafe` / `walk`), a right one, `Walk Back`, and `Run Back`.
+  Tricks such as Back Flip are not back-walks. With none of those clips,
+  locomotion stays the forward speed blend, exactly as before. Set
+  `legsFollowTravel` (off by default) and the hips ease
+  toward travel (up to 80 degrees, about 0.1 s), around world up in the hips'
+  parent space, with the spine twisting back by the same yaw so the chest stays
+  near the facing. A tilted armature does not tip the pelvis. With that option
+  on, or when strafe clips exist, backward movement with no back clip plays the
+  forward walk in reverse (with hysteresis around 100 degrees).
 - **Layers:** the **+** tab adds a layer, its own states playing over the base
   layer on part of the skeleton. Pick a **Mask bone** (e.g. the spine for
   upper-body actions) and a **Weight**. Layers share the base layer's parameters,

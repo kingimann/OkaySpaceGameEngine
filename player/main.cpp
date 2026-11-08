@@ -10,6 +10,7 @@
 
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Input/SdlKeys.hpp"      // F1-F12, nav keys, left / right modifiers
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Net/DedicatedServer.hpp"
@@ -1648,10 +1649,9 @@ int main(int argc, char** argv) {
     okay::Game::Reset();   // clear any stale pause/quit state from a prior scene
     scene.Start();
 
-    // Open the first connected game controller, if any.
-    SDL_GameController* pad = nullptr;
-    for (int i = 0; i < SDL_NumJoysticks(); ++i)
-        if (SDL_IsGameController(i)) { pad = SDL_GameControllerOpen(i); break; }
+    // Open every connected game controller (up to Input::kMaxGamepads, one per player).
+    okay::SdlGamepadSet pads;
+    pads.OpenAll();
 
     bool running = true;
 #ifdef OKAY_HAVE_OKAYUI
@@ -1780,12 +1780,8 @@ int main(int argc, char** argv) {
             }
             // A click in the window gives a released cursor back to the game.
             if (e.type == SDL_MOUSEBUTTONDOWN && cursorReleased) cursorReleased = false;
-            if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
-                pad = SDL_GameControllerOpen(e.cdevice.which);
-            if (e.type == SDL_CONTROLLERDEVICEREMOVED && pad &&
-                e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pad))) {
-                SDL_GameControllerClose(pad); pad = nullptr;
-            }
+            if (e.type == SDL_CONTROLLERDEVICEADDED) pads.Add(e.cdevice.which);
+            if (e.type == SDL_CONTROLLERDEVICEREMOVED) pads.Remove(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
             if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
             if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION || e.type == SDL_FINGERUP) {
@@ -1850,7 +1846,8 @@ int main(int argc, char** argv) {
         if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
         if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
-        FeedSdlGamepad(pad, down);   // first connected controller (sticks, triggers, buttons, rumble)
+        okay::AppendSdlExtendedKeys(ks, down);
+        pads.Feed(down);   // every controller (sticks, triggers, buttons, rumble); the first also types WASD / Space
         Input::FeedKeys(down);
 
         // An open inventory is modal: free the cursor (even in FPS/locked mode) so you

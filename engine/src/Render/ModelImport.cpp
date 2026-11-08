@@ -1,4 +1,6 @@
 #include <set>
+#include <type_traits>
+#include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -2407,21 +2409,36 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     // plain W and Shift plays it at its fastest. Bring a default speed down to
     // the pace the file's clip can show (its playback rate stays inside the
     // 0.6x-1.6x stride limits); speeds the user has already changed are kept.
+    // The fitted values are remembered per player: a later swap refits a speed
+    // still at them, and one the user set back to the default since is left alone.
     if (ma && ma->strideMatch && !ma->rootMotion) {
-        const float kDefaultWalk = 4.5f, kDefaultRun = 8.0f;
-        auto fit = [&](float& walk, float& run) {
+        static std::unordered_map<std::uint64_t, std::array<float, 2>> sFitted;  // {walk, run}; 0 = not fitted
+        const std::array<float, 2> prev = sFitted[player->InstanceId()];
+        std::array<float, 2> now = prev;
+        auto fit = [&](float& walk, float& run, float dWalk, float dRun) {
             bool changed = false;
-            if (ma->SlotFilled(ModelAnimator::SlotWalk) && walk == kDefaultWalk) {
-                walk = 1.45f * ma->SlotClipSpeed(ModelAnimator::SlotWalk); changed = true;
+            if (ma->SlotFilled(ModelAnimator::SlotWalk) && walk == (prev[0] > 0.0f ? prev[0] : dWalk)) {
+                walk = now[0] = 1.45f * ma->SlotClipSpeed(ModelAnimator::SlotWalk); changed = true;
             }
-            if (ma->SlotFilled(ModelAnimator::SlotRun) && run == kDefaultRun) {
-                run = 1.25f * ma->SlotClipSpeed(ModelAnimator::SlotRun); changed = true;
+            if (ma->SlotFilled(ModelAnimator::SlotRun) && run == (prev[1] > 0.0f ? prev[1] : dRun)) {
+                run = now[1] = 1.25f * ma->SlotClipSpeed(ModelAnimator::SlotRun); changed = true;
             }
             return changed;
         };
         bool fitted = false;
-        if (auto* c = player->GetComponent<ThirdPersonController>()) fitted = fit(c->walkSpeed, c->runSpeed) || fitted;
-        if (auto* c = player->GetComponent<FirstPersonController>()) fitted = fit(c->walkSpeed, c->runSpeed) || fitted;
+        // Each controller type's own defaults are the "untouched" speeds.
+        auto fitC = [&](auto* c) {
+            using T = std::remove_pointer_t<decltype(c)>;
+            if (c) { const T d; fitted = fit(c->walkSpeed, c->runSpeed, d.walkSpeed, d.runSpeed) || fitted; }
+        };
+        fitC(player->GetComponent<ThirdPersonController>());
+        fitC(player->GetComponent<ThirdPersonShooterController>());
+        fitC(player->GetComponent<FirstPersonController>());
+        fitC(player->GetComponent<ClickToMoveController>());
+        fitC(player->GetComponent<TopDownController>());
+        fitC(player->GetComponent<Platformer25DController>());
+        fitC(player->GetComponent<TopDownShooterController>());
+        sFitted[player->InstanceId()] = now;
         if (fitted) {
             mapped += mapped.empty() ? "move speeds fitted to the clips" : ", move speeds fitted to the clips";
             // The clip-only path keys its walk/run blend to the controller speeds.

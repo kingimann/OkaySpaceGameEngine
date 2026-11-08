@@ -725,7 +725,14 @@ idle. Every locomotion slot is filled on its own:
   is a jog, which a 1.4 m/s walk clip can't show. When a model with its own
   Walk (and Run) clip is attached, a Walk Speed or Run Speed still at the
   default is set to what the clip can show (about 2.0 and 5.0 m/s), so W
-  plays the walk and Shift the run. A speed you changed yourself is kept.
+  plays the walk and Shift the run. This covers the Third Person, Third
+  Person Shooter, First Person, Click To Move, Top Down, Top Down Shooter
+  and Platformer 2.5D controllers (each against its own defaults). A speed
+  you changed yourself is kept, and the fitted values are remembered while
+  the scene is loaded: attaching another model refits a speed still at the
+  fitted value, and a speed you set back to the default afterwards is left
+  alone. A speed deliberately set to exactly the default *before* the first
+  model is attached can't be told from an untouched one, and is fitted.
 - **Blends.** Between walk and run both clips are sampled at one shared
   normalized phase, so the feet stay in step through the blend; stepping
   off from a stand starts the walk on the same foot each time. Switching

@@ -1006,6 +1006,10 @@ target_link_libraries(test_make_playable PRIVATE okay::engine)
 target_compile_definitions(test_make_playable PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME make_playable COMMAND test_make_playable)
 
+add_executable(test_gait_continuity test_gait_continuity.cpp)
+target_link_libraries(test_gait_continuity PRIVATE okay::engine)
+add_test(NAME gait_continuity COMMAND test_gait_continuity)
+
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
 target_compile_definitions(test_rig_sweep PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

@@ -35,9 +35,7 @@ ray / unproject math, `DataPack` encode / decode.
 
 ## Not fixed (seen, not demonstrated or out of scope)
 
-- `ecs::World::each`: destroying an entity that was already visited (an earlier slot) still makes the pool move the last entry into that slot, which is then skipped. Needs deferred removal (a command buffer).
-- `ecs::World` also invalidates references when a callback adds to the pool it iterates.
-- `NetWorld::apply` is O(entities^2) (linear search per entity); fine for hundreds, slow for tens of thousands.
+- (Fixed, see `docs/ecs.md`: `each` under mutation, command buffer, O(n) `NetWorld::apply`, delta snapshots.)
 - `Application::Run` has no RAII around the terminal session: an exception from a script leaves the terminal in raw mode. It also ignores `Game::QuitRequested()`.
 - `Camera::Awake` makes any `main` camera the scene's main camera regardless of `depth`; the doc says the highest depth wins, which `Scene::ResolveMainCamera` does later (Scene.cpp was out of scope here).
 - `DataAsset::Cached` keeps a failed load forever (a file created later is never picked up), and `Save` writes multi-line values that `Load` reads back as extra fields.

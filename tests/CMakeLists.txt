@@ -1506,3 +1506,7 @@ add_test(NAME core_console COMMAND test_core_console)
 add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
 target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
 add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
+
+add_executable(test_ecs_commands test_ecs_commands.cpp)
+target_link_libraries(test_ecs_commands PRIVATE okay::engine)
+add_test(NAME ecs_commands COMMAND test_ecs_commands)

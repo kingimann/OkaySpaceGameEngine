@@ -470,6 +470,10 @@ add_executable(test_net_proxy_gait test_net_proxy_gait.cpp)
 target_link_libraries(test_net_proxy_gait PRIVATE okay::engine)
 add_test(NAME net_proxy_gait COMMAND test_net_proxy_gait)
 
+add_executable(test_net_anim_actions test_net_anim_actions.cpp)
+target_link_libraries(test_net_anim_actions PRIVATE okay::engine)
+add_test(NAME net_anim_actions COMMAND test_net_anim_actions)
+
 add_executable(test_net_spawn test_net_spawn.cpp)
 target_link_libraries(test_net_spawn PRIVATE okay::engine)
 add_test(NAME net_spawn COMMAND test_net_spawn)
@@ -892,6 +896,11 @@ add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)
 
+# IK Target, Aim Offset (recoil), and Pose Capture.
+add_executable(test_anim_ik_components test_anim_ik_components.cpp)
+target_link_libraries(test_anim_ik_components PRIVATE okay::engine)
+add_test(NAME anim_ik_components COMMAND test_anim_ik_components)
+
 # Look-At IK shares, clamp and eyes; Limb IK stretch.
 add_executable(test_ik_look_stretch test_ik_look_stretch.cpp)
 target_link_libraries(test_ik_look_stretch PRIVATE okay::engine)
@@ -1020,6 +1029,10 @@ add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
 target_compile_definitions(test_rig_sweep PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME rig_sweep COMMAND test_rig_sweep)
+
+add_executable(test_starter_script test_starter_script.cpp)
+target_link_libraries(test_starter_script PRIVATE okay::engine)
+add_test(NAME starter_script COMMAND test_starter_script)
 
 add_executable(test_mixamo_locomotion test_mixamo_locomotion.cpp)
 target_link_libraries(test_mixamo_locomotion PRIVATE okay::engine)
@@ -1375,3 +1388,8 @@ add_test(NAME behavior_tree COMMAND test_behavior_tree)
 add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
+
+# Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
+add_executable(test_script_batch1 test_script_batch1.cpp)
+target_link_libraries(test_script_batch1 PRIVATE okay::engine)
+add_test(NAME script_batch1 COMMAND test_script_batch1)

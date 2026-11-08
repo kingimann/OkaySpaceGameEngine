@@ -139,6 +139,12 @@ add_library(okay_engine
     src/Modeling/PolyOps.cpp
     src/Modeling/Modifiers.cpp
     src/Modeling/UVUnwrap.cpp
+    src/Testing/TestRegistry.cpp
+    src/Testing/PlayTest.cpp
+    src/Testing/ObjectPath.cpp
+    src/Testing/SceneValidator.cpp
+    src/Testing/Regression.cpp
+    src/Testing/GoldenImage.cpp
     third_party/ufbx/ufbx.c
 )
 

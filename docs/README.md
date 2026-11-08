@@ -20,6 +20,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [visual_scripting.md](visual_scripting.md): the visual scripting text format (OkayVS) and Action Lists.
 - [engine_api.md](engine_api.md): the engine API reference.
 - [core_logging_profiling.md](core_logging_profiling.md): logging (categories, file sink, OKAY_LOG) and the frame profiler (trace and CSV export).
+- [automated_testing.md](automated_testing.md): play-mode tests (`PlayTest`, `okay-playtest`), scene validation and golden-file / golden-image regression helpers.
 - [editor-plugins.md](editor-plugins.md): extend the editor with plugins.
 
 ## Characters and animation

@@ -76,6 +76,20 @@ public:
     /// `ElapsedTime()`, `DeltaTime()`, and `timeScale` work there too.
     static void Step(float unscaledDt) { Advance(unscaledDt); }
 
+    /// Put every clock back to its start-up state: zero elapsed time and frame
+    /// count, time scale 1, not frozen, no smoothing history. The automated test
+    /// runner (okay::testing::PlayTest) calls it so each test starts from the
+    /// same clock; a game has no reason to.
+    static void ResetForTesting() {
+        s_deltaTime = s_unscaledDeltaTime = 0.0f;
+        s_time = s_unscaledTime = 0.0;
+        s_timeScale = 1.0f; s_frozen = false;
+        s_fps = 0.0f; s_frameCount = 0;
+        s_rawDeltaTime = 0.0f; s_rawPending = -1.0f;
+        for (float& h : s_hist) h = 0.0f;
+        s_histAt = 0; s_histN = 0; s_carry = 0.0f;
+    }
+
 private:
     friend class Application;
     static void Advance(float unscaledDt) {

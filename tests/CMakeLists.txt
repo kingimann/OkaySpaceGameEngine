@@ -1504,3 +1504,43 @@ add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
 add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
 target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
 add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
+
+# ---- Automated testing (feature map area 33) --------------------------------
+# 33.1 play-mode tests: the registry / runner, then PlayTest (headless frame stepping,
+# input injection, log capture) on procedurally built scenes.
+add_executable(test_testing_registry test_testing_registry.cpp)
+target_link_libraries(test_testing_registry PRIVATE okay::engine)
+target_compile_definitions(test_testing_registry PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME testing_registry COMMAND test_testing_registry)
+
+add_executable(test_playtest test_playtest.cpp)
+target_link_libraries(test_playtest PRIVATE okay::engine)
+target_compile_definitions(test_playtest PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME playtest COMMAND test_playtest)
+
+# 33.2 scene validation: missing assets, cameras, duplicate names, scripts, references, transforms
+add_executable(test_scene_validator test_scene_validator.cpp)
+target_link_libraries(test_scene_validator PRIVATE okay::engine)
+target_compile_definitions(test_scene_validator PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME scene_validator COMMAND test_scene_validator)
+
+# 33.3 regression helpers: golden text/binary files, the scene digest, golden images
+# (the software renderer drawn into memory and compared with tests/golden/regression/cube.png;
+#  refresh it on purpose with OKAY_UPDATE_GOLDEN=1 test_regression).
+add_executable(test_regression test_regression.cpp)
+target_link_libraries(test_regression PRIVATE okay::engine)
+target_compile_definitions(test_regression PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+                                                  OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME regression COMMAND test_regression)
+
+# 33.1 the command-line runner: okay-playtest runs every OKAY_PLAYTEST linked into it. This one
+# carries the framework's own play-tests (tests/playtest/selftest_playtests.cpp); a game makes its
+# own by linking its tests with okay::engine and calling okay::testing::RunMain from main().
+add_executable(okay-playtest playtest/playtest_main.cpp playtest/selftest_playtests.cpp)
+target_link_libraries(okay-playtest PRIVATE okay::engine)
+target_compile_definitions(okay-playtest PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+set_target_properties(okay-playtest PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+add_test(NAME playtest_runner COMMAND okay-playtest --junit ${CMAKE_CURRENT_BINARY_DIR}/okay-playtest-junit.xml
+                                                      --text ${CMAKE_CURRENT_BINARY_DIR}/okay-playtest.txt)
+add_test(NAME playtest_runner_list COMMAND okay-playtest --list)
+set_tests_properties(playtest_runner_list PROPERTIES PASS_REGULAR_EXPRESSION "selftest\\.script_moves_object")

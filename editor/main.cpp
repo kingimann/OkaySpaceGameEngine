@@ -11559,7 +11559,7 @@ void DrawScriptDocs() {
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Complete reference — mirrors docs/SCRIPTING.md. Hover a name in the Script Editor for its doc.");
+    ImGui::TextDisabled("Complete reference — mirrors docs/scripting_reference.md. Hover a name in the Script Editor for its doc.");
     if (ImGui::Button("Close")) g_showScriptDocs = false;
     ImGui::End();
 }

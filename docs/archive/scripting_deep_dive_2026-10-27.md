@@ -1,3 +1,8 @@
+> **Archived snapshot (2026-10-27).** A findings report read against one commit.
+> Since then many of these items were fixed and `docs/SCRIPTING.md` was renamed to
+> [`docs/scripting_reference.md`](../scripting_reference.md). Check the current code
+> before acting on any item. Kept for history. All docs: [README](../README.md).
+
 # Scripting deep dive
 
 Read against `origin/main` at `f599d99e` (OkayScript VM, visual-script graph, script editor, ActionLists). This is the findings report before new syntax and nodes. Claude's open script PRs are left alone: #444 (lexer-accurate comment skipping) and #445 (undo of Format, Rename, Replace All, Reload).

@@ -1,6 +1,6 @@
 # Ragdolls and hit reactions
 
-Add **Ragdoll** (Add Component → Ragdoll) to a humanoid: the blocky
+Add **Ragdoll** (Add Component → Ragdoll (death + hit reactions)) to a humanoid: the blocky
 Character or an imported rig that maps as a humanoid. Nothing else is needed.
 
 - **Death**: when the body's HealthStat dies (or a script calls `die()`), the

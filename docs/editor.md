@@ -61,7 +61,7 @@ cmake -S . -B build-win-editor \
   -DCMAKE_FIND_ROOT_PATH=/path/to/SDL2-x.y.z/x86_64-w64-mingw32 \
   -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
 cmake --build build-win-editor -j
-# -> build-win-editor/bin/OkayEngine.exe  (a prebuilt copy is in dist/OkayEngine.exe)
+# -> build-win-editor/bin/OkayEngine.exe  (the release download ships it as Tools/OkayEngine.exe)
 ```
 
 ### Self-updating
@@ -296,7 +296,7 @@ Recent additions (v2.12–2.14):
   the menu), and **Find References in Scene** selects the objects that use an
   asset (texture, mesh, font, script) — the most-used Project action.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
-  (`.okayscene` text files), and **Build Game…** (Ctrl+B) to export a
+  (`.okayscene` text files), and **Build Settings…** (Ctrl+B) to export a
   standalone, double-clickable game.
 - **Toolbar** — **Play** runs the scene's real lifecycle (Awake/Start/Update +
   scripts, physics, etc.); **Stop** restores the exact pre-play edit state;
@@ -347,7 +347,7 @@ sprites, UI images).
 
 ### Building a standalone game
 
-**File → Build Game…** (Ctrl+B) exports the current scene as a self-contained
+**File → Build Settings…** (Ctrl+B) exports the current scene as a self-contained
 game you can ship. Give it a name and an output folder and it will:
 
 1. Serialize the open scene to `game.okayscene` in that folder, and

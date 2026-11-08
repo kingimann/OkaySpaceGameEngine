@@ -99,7 +99,7 @@ trap calling `Wound`, or a bandage button calling `Bandage`.
 - **Status Effects** — a generic timed buff/debuff layer. `Apply(name, duration,
   hpPerSecond)` ticks the health source each frame (negative = damage, positive =
   heal) and auto-expires; re-applying a name refreshes its timer. Broadcasts `<name>`
-  on apply and `<name>_expired` on end. Methods: `Apply`, `Remove`, `Clear`, `Has`,
+  on apply, `<name>_expired` when it runs out and `<name>_ended` when `Remove` stops it. Methods: `Apply`, `Remove`, `Clear`, `Has`,
   `Remaining`, `ActiveCount`. Code/trigger-driven (a fire applies `burning`, a potion
   applies `regen`).
 - **Survival Save / Load** — persists live values across sessions. With **Load on

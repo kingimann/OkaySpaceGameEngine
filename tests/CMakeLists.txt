@@ -1463,6 +1463,18 @@ add_executable(test_durable_saves test_durable_saves.cpp)
 target_link_libraries(test_durable_saves PRIVATE okay::engine)
 add_test(NAME durable_saves COMMAND test_durable_saves)
 
+# Save game framework: typed blocks, slot files + headers, migration chain, forward
+# compatibility, sync backends, menu model (no scene needed).
+add_executable(test_save_framework test_save_framework.cpp)
+target_link_libraries(test_save_framework PRIVATE okay::engine)
+add_test(NAME save_framework COMMAND test_save_framework)
+
+# Save framework on a Scene: Saveable capture/apply, dynamic spawn, destroyed objects,
+# checkpoints, quick save, autosave ring, continue.
+add_executable(test_save_scene test_save_scene.cpp)
+target_link_libraries(test_save_scene PRIVATE okay::engine)
+add_test(NAME save_scene COMMAND test_save_scene)
+
 # Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)

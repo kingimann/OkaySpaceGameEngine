@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,19 @@ struct SaveSlotInfo {
     float       playTime = 0.0f;   ///< seconds played up to the save
     bool        exists = false;
     int         version = 0;       ///< the save format the file was written in
+
+    // ---- Added by the save framework (SaveFramework.hpp). SaveGame leaves them at
+    // their defaults; SaveStore fills them in for its own slot files. ----
+    long long   savedAtMs = 0;     ///< milliseconds since 1970 (UTC); savedAt is this / 1000
+    std::string thumbnail;         ///< image the game stored for the slot (empty = none)
+    std::string gameVersion;       ///< the game's own version string when it was saved
+    std::string kind;              ///< "manual", "quick", "auto" or "checkpoint"
+    std::map<std::string, std::string> fields;   ///< custom text fields the game attached
+    long long   sizeBytes = 0;     ///< size of the slot file on disk
+    bool        corrupt = false;   ///< unreadable or failed its checks (see `error`)
+    bool        incompatible = false;   ///< written by a newer build: can't be loaded here
+    bool        fromBackup = false;     ///< the main file is damaged; these values come from its .bak
+    std::string error;             ///< why it is flagged (empty when it is fine)
 };
 
 /// Whole-game saves in named slots. A save holds the scene as it is right now

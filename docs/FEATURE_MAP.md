@@ -473,7 +473,7 @@ Areas 20-35 are planned features you asked for. Each says what exists today
 | 32 | Accessibility (High) | Input actions and rebinding UI (8.3); extended keys, contexts and gamepad curves in flight | Full controller navigation of all UI, subtitles and captions system, colorblind filters and safe palettes, text scaling, remap everything including UI | 8.3, 12.4, 12.7 |
 | 33 | Automated testing (Critical) | About 330 unit tests, five CI jobs (19.2, 18.3) | Play-mode tests (run a scene headless and assert), scene validation (missing references, missing components), regression and golden-image tests, a test runner window | 19.2, 18.3 |
 | 34 | Live editing (High) | Editor Play mode (15.3) | Change properties during Play and keep or revert them, live object inspector for runtime-created objects, script hot reload without leaving Play | 15.2, 15.3, 13 |
-| 35 | Save game framework (High) | Durable saves: atomic writes, versioned and checksummed slots, backups, migration hook (merged, PR #552, `save_games.md`) | Checkpoints, save slot UI components, scene-object state saving (SaveableObject), cloud save hooks | 1.7, 12 |
+| 35 | Save game framework (High) | Durable saves: atomic writes, versioned and checksummed slots, backups, migration hook (merged, PR #552, `save_games.md`); Saveable objects, checkpoints, quick save and autosave ring, slot headers, migration chain, sync hooks, menu model (`save_framework.md`) | Save slot UI components (the menu model has no rendering), scene-file record for the Saveable component, real cloud backends | 1.7, 12 |
 
 ---
 

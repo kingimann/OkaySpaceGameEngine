@@ -11571,6 +11571,8 @@ static const std::vector<std::string>& ScriptCompletions() {
         // object / scene
         "name","set_name","tag","set_tag","has_tag","set_active","self_active","destroy",
         "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
+        "child_count","get_child","parent_of","hurt","heal","add_xp","get_hp","get_max_hp","is_dead",
+        "set_light_intensity","set_light_range","set_light_angle","set_light_color",
         "npc_goto","npc_stop","npc_busy","npc_state",
         "nav_move_to","nav_stop","nav_arrived","nav_remaining",
         "bt_set","bt_get","bt_run","bt_stop",
@@ -11762,6 +11764,11 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"tag","tag()"}, {"set_tag","set_tag(\"tag\")"}, {"has_tag","has_tag(\"tag\")"},
         {"is_active","is_active()"}, {"set_active","set_active(on)"}, {"set_name","set_name(\"name\")"},
         {"has_parent","has_parent()"}, {"set_parent","set_parent(\"name\")"},
+        {"child_count","child_count(\"name\")"}, {"get_child","get_child(\"name\", index)"}, {"parent_of","parent_of(\"name\")"},
+        {"hurt","hurt(\"name\", amount)"}, {"heal","heal(\"name\", amount)"}, {"add_xp","add_xp(\"name\", amount)"},
+        {"get_hp","get_hp(\"name\")"}, {"get_max_hp","get_max_hp(\"name\")"}, {"is_dead","is_dead([\"name\"])"},
+        {"set_light_intensity","set_light_intensity(\"name\", v)"}, {"set_light_range","set_light_range(\"name\", v)"},
+        {"set_light_angle","set_light_angle(\"name\", degrees)"}, {"set_light_color","set_light_color(\"name\", r, g, b)"},
         {"cam_x","cam_x()"}, {"cam_y","cam_y()"}, {"cam_zoom","cam_zoom()"},
         // render / look
         {"set_color","set_color(r, g, b)"}, {"set_texture","set_texture(\"path\")"}, {"set_mesh","set_mesh(\"name\")"},

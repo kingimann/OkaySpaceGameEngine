@@ -1373,3 +1373,8 @@ add_test(NAME behavior_tree COMMAND test_behavior_tree)
 add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
+
+# Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
+add_executable(test_script_batch1 test_script_batch1.cpp)
+target_link_libraries(test_script_batch1 PRIVATE okay::engine)
+add_test(NAME script_batch1 COMMAND test_script_batch1)

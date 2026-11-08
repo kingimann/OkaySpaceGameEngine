@@ -21,6 +21,9 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/Stats.hpp"
+#include "okay/Components/SurvivalStats.hpp"
+#include "okay/Components/Light.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
@@ -747,6 +750,7 @@ struct Runtime {
         std::mutex m; std::condition_variable cv;
         bool coTurn = false, started = false, done = false, abort = false;
         float wait = 0.0f; bool nextFrame = false; int waitFor = 0;   // waitFor: a coroutine id
+        Value cond; bool condWhile = false; bool real = false;   // WaitUntil/WaitWhile lambda; real = ignore time scale
         long long yieldFrame = -1;
         std::vector<Environment> frames;
         std::size_t baseDepth = 0;
@@ -784,10 +788,11 @@ struct Runtime {
         currentCo = prev;
     }
     // Called on the coroutine's own thread by `yield return`.
-    void YieldCoroutine(float wait, bool nextFrame, int waitFor) {
+    void YieldCoroutine(float wait, bool nextFrame, int waitFor, Value cond = Value{}, bool condWhile = false, bool real = false) {
         Coroutine* co = currentCo;
         if (!co) throw ScriptError("'yield' only works inside a coroutine started with StartCoroutine()");
         co->wait = wait; co->nextFrame = nextFrame; co->waitFor = waitFor; co->yieldFrame = frame;
+        co->cond = std::move(cond); co->condWhile = condWhile; co->real = real;
         for (std::size_t i = co->baseDepth; i < scopes.size(); ++i) co->frames.push_back(std::move(scopes[i]));
         scopes.resize(co->baseDepth);
         std::unique_lock<std::mutex> lk(co->m);
@@ -831,7 +836,12 @@ struct Runtime {
             if (co->done || co->yieldFrame >= frame) continue;   // yielded this frame: wait for the next
             if (co->waitFor) { Coroutine* w = FindCo(co->waitFor); if (w && !w->done) continue; co->waitFor = 0; Resume(co); continue; }
             if (co->nextFrame) { Resume(co); continue; }
-            co->wait -= dt;
+            if (IsLambda(co->cond)) {   // WaitUntil(() => c) resumes when c is true; WaitWhile when it is false
+                std::vector<Value> none;
+                if (CallLambda(co->cond, none).AsBool() != co->condWhile) Resume(co);
+                continue;
+            }
+            co->wait -= co->real ? Time::UnscaledDeltaTime() : dt;
             if (co->wait <= 0.0f) Resume(co);
         }
         ReapCoroutines();
@@ -1738,7 +1748,10 @@ struct YieldStmt : Stmt {
     void Exec(Runtime& r) override {
         Value v = e ? e->Eval(r) : Value{};
         if (auto m = v.AsMap()) {
-            if (auto it = m->find("__wait"); it != m->end()) { r.YieldCoroutine(it->second.AsFloat(), false, 0); return; }
+            bool real = m->count("__real") > 0;
+            if (auto it = m->find("__wait"); it != m->end()) { r.YieldCoroutine(it->second.AsFloat(), false, 0, Value{}, false, real); return; }
+            if (auto it = m->find("__until"); it != m->end()) { r.YieldCoroutine(0.0f, false, 0, it->second, false); return; }
+            if (auto it = m->find("__while"); it != m->end()) { r.YieldCoroutine(0.0f, false, 0, it->second, true); return; }
             if (auto it = m->find("__co"); it != m->end()) { r.YieldCoroutine(0.0f, false, (int)it->second.AsFloat()); return; }
         }
         r.YieldCoroutine(0.0f, true, 0);   // null / WaitForEndOfFrame / anything else: next frame
@@ -3956,6 +3969,62 @@ struct OkayScriptVM::Impl {
             return Value{rt.host && rt.host->gameObject &&
                          rt.host->gameObject->transform->Parent() != nullptr};
         };
+        // Hierarchy queries by object name: child_count("Ship"), get_child("Ship", 0)
+        // (the child's name, "" if out of range) and parent_of("Gun") ("" if none).
+        b["child_count"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                return Value{(float)g->transform->ChildCount()};
+            return Value{0.0f};
+        };
+        b["get_child"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                int i = (int)a[1].AsFloat();
+                if (i >= 0 && i < g->transform->ChildCount() && g->transform->Children()[i]->gameObject)
+                    return Value{g->transform->Children()[i]->gameObject->name};
+            }
+            return Value{std::string{}};
+        };
+        b["parent_of"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (Transform* p = g->transform->Parent(); p && p->gameObject) return Value{p->gameObject->name};
+            return Value{std::string{}};
+        };
+        // RPG / survival stats on a named object: hurt("Orc", 12) (defense-mitigated,
+        // fires on_death), heal, add_xp (fires on_level_up), get_hp/get_max_hp. Work on a
+        // Stats or a SurvivalStats component, whichever the object has.
+        b["hurt"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* st = g->GetComponent<Stats>()) { st->TakeDamage(a[1].AsFloat()); return Value{true}; }
+                if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Damage(a[1].AsFloat()); return Value{true}; }
+            }
+            return Value{false};
+        };
+        b["heal"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* st = g->GetComponent<Stats>()) { st->Heal(a[1].AsFloat()); return Value{true}; }
+                if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Heal(a[1].AsFloat()); return Value{true}; }
+            }
+            return Value{false};
+        };
+        b["add_xp"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* st = g->GetComponent<Stats>()) { st->AddXP((int)a[1].AsFloat()); return Value{true}; }
+            return Value{false};
+        };
+        b["get_hp"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* st = g->GetComponent<Stats>()) return Value{st->health};
+                if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->health};
+            }
+            return Value{0.0f};
+        };
+        b["get_max_hp"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* st = g->GetComponent<Stats>()) return Value{st->maxHealth};
+                if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->maxHealth};
+            }
+            return Value{0.0f};
+        };
         // Read another object's world position by name (enemy AI chasing the
         // player, doors tracking a key, cameras following a target…).
         b["obj_x"] = [sceneOf](std::vector<Value>& a) -> Value {
@@ -4471,6 +4540,21 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["ambient"] = [](std::vector<Value>&) { return Value{SceneLight::Ambient()}; };
+        // Light component on a named object: set_light_intensity("Lamp", 2),
+        // set_light_range, set_light_angle (spot cone, degrees), set_light_color(name, r, g, b).
+        auto lightOf = [this](std::vector<Value>& a, size_t need) -> Light* {
+            if (a.size() < need || !rt.host || !rt.host->gameObject || !rt.host->gameObject->scene()) return nullptr;
+            GameObject* g = rt.host->gameObject->scene()->Find(a[0].AsString());
+            return g ? g->GetComponent<Light>() : nullptr;
+        };
+        b["set_light_intensity"] = [lightOf](std::vector<Value>& a) { if (auto* l = lightOf(a, 2)) l->intensity = a[1].AsFloat(); return Value{}; };
+        b["set_light_range"]     = [lightOf](std::vector<Value>& a) { if (auto* l = lightOf(a, 2)) l->range = a[1].AsFloat(); return Value{}; };
+        b["set_light_angle"]     = [lightOf](std::vector<Value>& a) { if (auto* l = lightOf(a, 2)) l->spotAngle = a[1].AsFloat(); return Value{}; };
+        b["set_light_color"]     = [lightOf](std::vector<Value>& a) {
+            if (auto* l = lightOf(a, 4)) l->color = Color(a[1].AsFloat(), a[2].AsFloat(), a[3].AsFloat());
+            return Value{};
+        };
+
         // Screen size in pixels (HUD layout, clamping, spawn-at-edge).
         b["screen_w"] = [](std::vector<Value>&) { return Value{UICanvas::Width()}; };
         b["screen_h"] = [](std::vector<Value>&) { return Value{UICanvas::Height()}; };
@@ -5874,7 +5958,16 @@ struct OkayScriptVM::Impl {
             HumanoidActions::RequestRevive(selfObj());
             return Value{};
         };
-        b["is_dead"] = [selfObj](std::vector<Value>&) {
+        // is_dead("Orc") also reads a named object's Stats / SurvivalStats.
+        b["is_dead"] = [selfObj](std::vector<Value>& a) {
+            if (!a.empty() && a[0].IsString()) {
+                GameObject* me = selfObj();
+                if (GameObject* g = me && me->scene() ? me->scene()->Find(a[0].AsString()) : nullptr) {
+                    if (auto* st = g->GetComponent<Stats>()) return Value{st->IsDead() ? 1.0f : 0.0f};
+                    if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->dead ? 1.0f : 0.0f};
+                }
+                return Value{0.0f};
+            }
             return Value{HumanoidActions::IsDead(selfObj()) ? 1.0f : 0.0f};
         };
         // Ragdoll: ragdoll() / ragdoll(0) goes limp / stands up; ragdoll_push(vx, vy, vz)
@@ -9574,7 +9667,16 @@ struct OkayScriptVM::Impl {
         b["WaitForSeconds"] = [](std::vector<Value>& a) {
             Value v = Value::MakeMap(); (*v.AsMap())["__wait"] = Value{a.empty() ? 0.0f : a[0].AsFloat()}; return v;
         };
-        alias("WaitForSecondsRealtime", "WaitForSeconds");
+        b["WaitForSecondsRealtime"] = [](std::vector<Value>& a) {   // ignores Time.timeScale
+            Value v = Value::MakeMap(); (*v.AsMap())["__wait"] = Value{a.empty() ? 0.0f : a[0].AsFloat()}; (*v.AsMap())["__real"] = Value{true}; return v;
+        };
+        // yield return new WaitUntil(() => cond) / WaitWhile(() => cond)
+        b["WaitUntil"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeMap(); (*v.AsMap())["__until"] = a.empty() ? Value{} : a[0]; return v;
+        };
+        b["WaitWhile"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeMap(); (*v.AsMap())["__while"] = a.empty() ? Value{} : a[0]; return v;
+        };
         b["WaitForEndOfFrame"] = [](std::vector<Value>&) { return Value{}; };
         alias("WaitForFixedUpdate", "WaitForEndOfFrame");
         b["StartCoroutine"] = [this](std::vector<Value>& a) {

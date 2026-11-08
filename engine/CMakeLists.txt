@@ -6,6 +6,7 @@ add_library(okay_engine
     src/Core/Tween.cpp
     src/Core/Prefs.cpp
     src/Core/DataAsset.cpp
+    src/Core/AssetManager.cpp
     src/Core/Localization.cpp
     src/Input/Input.cpp
     src/Input/InputActions.cpp

@@ -676,7 +676,7 @@ header tooltip and a one-line note saying what they do.
 | Component | Edit it? | What it does |
 |---|---|---|
 | **Character Model** panel (top of the Inspector) | Yes | Which clip fills each slot (Idle, Walk, Run, Jump, Fall, Land, Crouch...), imported or built-in, Stride Match, clip speeds, Body lean, **Fix animations** |
-| The controller (Third Person, First Person...) | Yes | How the player moves: speeds, jump, camera, **Set Character Model...** |
+| The Player Controller (or another controller) | Yes | How the player moves: speeds, jump, camera, **Set Character Model...** |
 | Model Animator (on the model) | Rarely | Holds the model's clips and switches them by how fast the player moves. The panel above edits its slots |
 | Humanoid Retarget | Rarely | Copies the built-in animation onto the model's bones for every empty slot. Weight and Re-Detect Bones live here |
 | Foot IK | Rarely | Plants the feet on slopes and steps |

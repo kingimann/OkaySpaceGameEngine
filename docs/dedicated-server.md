@@ -152,7 +152,7 @@ Hathora can start servers per match on demand.
    - ✅ Launcher integration: join friends, invites, server browser
      ([launcher-multiplayer.md](launcher-multiplayer.md))
 2. ✅ Server-side validation of player movement and important actions
-3. ✅ `game_servers` listing (`docs/sql/game_servers.sql`). Still to come: `matches` and an `allocate_match` Edge Function
+3. ✅ `game_servers` listing (`docs/sql/game_servers.sql`). Still to come: an `allocate_match` Edge Function (the `matches` tables are in `docs/sql/matches.sql`)
 4. ✅ Matchmaking queues: "Find match", skill/region grouping, a listed server or a player host (`docs/sql/matchmaking.sql`)
 5. ✅ "Dedicated server" export in Build Settings (Linux + Windows) + a one-command deploy script
 6. ✅ Match results → Supabase: stats, per-game leaderboards and "Recent players" (`docs/sql/matches.sql`)

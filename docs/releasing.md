@@ -57,7 +57,7 @@ from the launcher is refused and the tab says to run it.
 
 Then, signed in as an admin:
 
-1. In the editor: File > Build Game for Windows, into its own folder. Optional
+1. In the editor: File > Build Settings… (Windows), into its own folder. Optional
    extras in that folder: `cover.png` / `cover.jpg` and `VERSION.txt`.
 2. In the launcher: **Admin > Official game**. "Live now" shows the published
    version, its notes, size and file count.
@@ -90,7 +90,7 @@ The script needs a Supabase key (the service key, or a management token that
 fetches it), so only use it on a machine you trust:
 
 ```bash
-# 1. In the editor: File > Build Game for Windows, into its own folder.
+# 1. In the editor: File > Build Settings… (Windows), into its own folder.
 #    Optional extras in that folder: cover.png / cover.jpg (the card's picture)
 #    and VERSION.txt (the version, if you don't pass one).
 # 2. Upload it. Same keys as above, read from the environment only.

@@ -78,17 +78,17 @@ Mat4 ScaleMatrix(const Vec3& pivot, const AxisLock& lock, float factor) {
 
 namespace {
 bool RayPlane(const Ray& r, const Vec3& p, const Vec3& n, Vec3& hit) {
-    const float d = Vec3::Dot(r.dir, n);
+    const float d = Vec3::Dot(r.direction, n);
     if (std::fabs(d) < 1e-6f) return false;
     const float t = Vec3::Dot(p - r.origin, n) / d;
-    hit = r.origin + r.dir * t;
+    hit = r.origin + r.direction * t;
     return true;
 }
 // Parameter along the line (p, axis) of the point closest to the ray.
 bool RayLineParam(const Ray& r, const Vec3& p, const Vec3& axis, float& s) {
     const Vec3 w = p - r.origin;
-    const float a = Vec3::Dot(axis, axis), b = Vec3::Dot(axis, r.dir), c = Vec3::Dot(r.dir, r.dir);
-    const float d = Vec3::Dot(axis, w), e = Vec3::Dot(r.dir, w);
+    const float a = Vec3::Dot(axis, axis), b = Vec3::Dot(axis, r.direction), c = Vec3::Dot(r.direction, r.direction);
+    const float d = Vec3::Dot(axis, w), e = Vec3::Dot(r.direction, w);
     const float den = a * c - b * b;
     if (std::fabs(den) < 1e-8f) return false;   // looking straight down the axis
     s = (b * e - c * d) / den;

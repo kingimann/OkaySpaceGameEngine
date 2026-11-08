@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 namespace okay {
 
@@ -10,7 +11,10 @@ struct Mathf {
     static constexpr float Deg2Rad  = PI / 180.0f;
     static constexpr float Rad2Deg  = 180.0f / PI;
     static constexpr float Epsilon  = 1e-6f;
-    static constexpr float Infinity = 3.402823466e+38f;
+    /// A real IEEE infinity (so `x == Mathf::Infinity` and std::isinf behave as expected).
+    /// Use `MaxFloat` for the largest finite float.
+    static constexpr float Infinity = std::numeric_limits<float>::infinity();
+    static constexpr float MaxFloat = std::numeric_limits<float>::max();
 
     static float Abs(float v)             { return std::fabs(v); }
     static float Sqrt(float v)            { return std::sqrt(v); }
@@ -65,9 +69,11 @@ struct Mathf {
         return Clamp01((value - a) / (b - a));
     }
 
-    /// Hermite smoothstep between edges.
+    /// Hermite smoothstep between edges, returning 0..1. Edges may be given in either
+    /// order (from > to mirrors the curve, e.g. a fade-out); equal edges make a step.
     static float SmoothStep(float from, float to, float t) {
-        t = Clamp01((t - from) / (to - from > 0 ? (to - from) : 1.0f));
+        if (from == to) return t >= from ? 1.0f : 0.0f;
+        t = Clamp01((t - from) / (to - from));
         return t * t * (3.0f - 2.0f * t);
     }
 

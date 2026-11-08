@@ -277,6 +277,13 @@ std::string Lookup(const std::string& key, bool report, bool* found = nullptr) {
     if (lang == Localization::kPseudo) lang = def;
     if (found) *found = true;
     if (const std::string* v = t.Text(key, lang)) return *v;
+    // pt-BR falls back to pt (when the table has it) before the default language.
+    const std::string base = BaseOf(lang);
+    if (base != lang && base != def && t.FindLanguage(base))
+        if (const std::string* v = t.Text(key, base)) {
+            if (report) Report(lang, key, base);
+            return *v;
+        }
     if (def != lang)
         if (const std::string* v = t.Text(key, def)) {
             if (report) Report(lang, key, def);
@@ -757,15 +764,288 @@ Localization::PluralForm Localization::Plural(const std::string& lang, double n)
     auto it = rules.find(lang);
     if (it == rules.end()) it = rules.find(BaseOf(lang));
     if (it != rules.end() && it->second) return it->second(n);
+    using F = PluralForm;
+    const std::string norm = NormalizeLocale(lang);
     const std::string base = BaseOf(lang);
-    if (base == "ja" || base == "zh" || base == "ko") return PluralForm::Other;
-    if (base == "fr") return (n >= 0.0 && n < 2.0) ? PluralForm::One : PluralForm::Other;
-    return n == 1.0 ? PluralForm::One : PluralForm::Other;
+    if (std::isnan(n) || std::isinf(n)) return F::Other;
+    n = std::fabs(n);   // CLDR rules read the absolute value
+    const bool isInt = n == std::floor(n);
+    const double ip = std::floor(n);   // the integer part (CLDR "i")
+    auto mod = [](double v, double m) { return std::fmod(v, m); };
+    if (base == "ja" || base == "zh" || base == "ko" || base == "vi" || base == "th" ||
+        base == "id" || base == "ms") return F::Other;
+    if (base == "fr" || base == "pt") {
+        if (base == "pt" && norm == "pt-pt") {   // European Portuguese: only exactly 1
+            if (isInt && n == 1.0) return F::One;
+        } else if (ip == 0.0 || ip == 1.0) {
+            return F::One;
+        }
+        if (isInt && n != 0.0 && mod(n, 1000000.0) == 0.0) return F::Many;
+        return F::Other;
+    }
+    if (base == "es" || base == "it" || base == "ca") {
+        if (isInt && n == 1.0) return F::One;
+        if (isInt && n != 0.0 && mod(n, 1000000.0) == 0.0) return F::Many;
+        return F::Other;
+    }
+    if (base == "ru" || base == "uk" || base == "be") {
+        if (!isInt) return F::Other;
+        const double m10 = mod(n, 10.0), m100 = mod(n, 100.0);
+        if (m10 == 1.0 && m100 != 11.0) return F::One;
+        if (m10 >= 2.0 && m10 <= 4.0 && !(m100 >= 12.0 && m100 <= 14.0)) return F::Few;
+        return F::Many;
+    }
+    if (base == "pl") {
+        if (!isInt) return F::Other;
+        if (n == 1.0) return F::One;
+        const double m10 = mod(n, 10.0), m100 = mod(n, 100.0);
+        if (m10 >= 2.0 && m10 <= 4.0 && !(m100 >= 12.0 && m100 <= 14.0)) return F::Few;
+        return F::Many;
+    }
+    if (base == "cs" || base == "sk") {
+        if (!isInt) return F::Many;
+        if (n == 1.0) return F::One;
+        if (n >= 2.0 && n <= 4.0) return F::Few;
+        return F::Other;
+    }
+    if (base == "ar") {
+        if (!isInt) return F::Other;
+        const double m100 = mod(n, 100.0);
+        if (n == 0.0) return F::Zero;
+        if (n == 1.0) return F::One;
+        if (n == 2.0) return F::Two;
+        if (m100 >= 3.0 && m100 <= 10.0) return F::Few;
+        if (m100 >= 11.0 && m100 <= 99.0) return F::Many;
+        return F::Other;
+    }
+    return (isInt && n == 1.0) ? F::One : F::Other;
+}
+
+std::string Localization::PluralText(const std::string& key, double count, const std::vector<LocArg>& extra) {
+    const StringTable& t = S().table;
+    std::string lang = Language();
+    const std::string def = t.DefaultLanguage();
+    const bool pseudo = lang == kPseudo;
+    if (pseudo) lang = def;
+    const std::string form = PluralName(Plural(lang, count));
+    const std::string forms[2] = {key + "." + form, key + ".other"};
+    const std::string* text = nullptr;
+    std::string used = lang;
+    const std::string* const order[2] = {&lang, &def};
+    for (const std::string* l : order) {
+        for (const std::string& k : forms)
+            if ((text = t.Text(k, *l)) != nullptr) break;
+        if (text) { used = *l; break; }
+    }
+    std::vector<LocArg> args;
+    LocArg first(count);
+    first.name = "count";
+    args.push_back(first);
+    args.insert(args.end(), extra.begin(), extra.end());
+    std::string out;
+    if (text) {
+        if (used != lang) Report(lang, key, used);
+        out = Format(*text, args, lang);
+    } else {
+        // No `key.<form>` entries: the key's own text may be a {0, plural, ...} pattern.
+        out = Format(Lookup(key, true), args, lang);
+    }
+    return pseudo ? Pseudo(out) : out;
 }
 
 void Localization::SetPluralRule(const std::string& lang, PluralRule rule) {
     if (rule) S().plural[lang] = std::move(rule);
     else S().plural.erase(lang);
+}
+
+// ---- Locale-aware formatting ---------------------------------------------------------
+namespace {
+
+struct NumLocale {
+    const char* dec;     // decimal separator
+    const char* grp;     // group separator
+    int minGroup;        // digits before the first group separator needed (2: 1234 stays whole)
+    bool currencyAfter;  // "1.234,50 €" instead of "€1,234.50"
+    const char* curGap;  // between number and symbol
+    const char* pctGap;  // between number and %
+};
+
+std::string ResolveLang(const std::string& lang) {
+    std::string l = lang.empty() ? Localization::Language() : lang;
+    if (l == Localization::kPseudo) l = S().table.DefaultLanguage();
+    return NormalizeLocale(l);
+}
+
+NumLocale NumLocaleOf(const std::string& norm) {
+    const std::string base = BaseOf(norm);
+    const char* nbsp = "\xC2\xA0";
+    const char* nnbsp = "\xE2\x80\xAF";
+    if (base == "de" || base == "nl" || base == "id" || base == "tr" || base == "da" || base == "el")
+        return {",", ".", 1, true, nbsp, base == "de" ? nbsp : ""};
+    if (base == "it") return {",", ".", 2, true, nbsp, ""};
+    if (base == "es") return {",", ".", 2, true, nbsp, nbsp};
+    if (base == "pt") {
+        if (norm == "pt-pt") return {",", nbsp, 2, true, nbsp, ""};
+        return {",", ".", 1, false, nbsp, ""};
+    }
+    if (base == "fr") return {",", nnbsp, 1, true, nbsp, nnbsp};
+    if (base == "ru" || base == "uk" || base == "cs" || base == "sk" || base == "fi" || base == "sv" || base == "nb" || base == "no")
+        return {",", nbsp, 1, true, nbsp, nbsp};
+    if (base == "pl") return {",", nbsp, 2, true, nbsp, ""};
+    return {".", ",", 1, false, "", ""};   // en, ja, zh, ko, ar, the default
+}
+
+std::string GroupDigits(const std::string& digits, const NumLocale& L) {
+    if ((int)digits.size() < 3 + L.minGroup) return digits;
+    std::string out;
+    const std::size_t n = digits.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        out += digits[i];
+        const std::size_t left = n - 1 - i;
+        if (left > 0 && left % 3 == 0) out += L.grp;
+    }
+    return out;
+}
+
+// |value| as grouped text with `decimals` places; `neg` receives whether a "-" belongs in front.
+std::string NumberBody(double value, int decimals, const NumLocale& L, bool& neg) {
+    decimals = std::max(0, std::min(decimals, 15));
+    char buf[512];
+    // Nudged one step up so a tie (1234.5 -> 1,235) rounds away from zero, as people expect
+    // (printf alone rounds ties to even).
+    const double a = std::nextafter(std::fabs(value), HUGE_VAL);
+    std::snprintf(buf, sizeof(buf), "%.*f", decimals, a);
+    std::string s = buf;
+    std::string whole = s, frac;
+    const std::size_t dot = s.find('.');
+    if (dot != std::string::npos) { whole = s.substr(0, dot); frac = s.substr(dot + 1); }
+    // "-0.00" is not a thing: a value that rounds to zero is shown without the sign.
+    neg = value < 0.0 && s.find_first_not_of("0.") != std::string::npos;
+    std::string out = GroupDigits(whole, L);
+    if (!frac.empty()) out += std::string(L.dec) + frac;
+    return out;
+}
+
+const char* CurrencySymbol(const std::string& code, const std::string& base) {
+    if (code == "USD") return "$";
+    if (code == "EUR") return "\xE2\x82\xAC";
+    if (code == "GBP") return "\xC2\xA3";
+    if (code == "JPY") return base == "ja" ? "\xEF\xBF\xA5" : "\xC2\xA5";
+    if (code == "CNY") return base == "zh" ? "\xC2\xA5" : "CN\xC2\xA5";
+    if (code == "KRW") return "\xE2\x82\xA9";
+    if (code == "INR") return "\xE2\x82\xB9";
+    if (code == "RUB") return "\xE2\x82\xBD";
+    if (code == "PLN") return "z\xC5\x82";
+    if (code == "BRL") return "R$";
+    return nullptr;
+}
+
+int CurrencyDecimals(const std::string& code) {
+    if (code == "JPY" || code == "KRW" || code == "VND" || code == "CLP" || code == "ISK" || code == "HUF" || code == "UGX") return code == "HUF" ? 2 : 0;
+    if (code == "BHD" || code == "KWD" || code == "OMR" || code == "JOD" || code == "TND") return 3;
+    return 2;
+}
+
+const char* const kMonthsEn[12] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+const char* const kMonthsDe[12] = {"Januar", "Februar", "M\xC3\xA4rz", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"};
+const char* const kMonthsFr[12] = {"janvier", "f\xC3\xA9vrier", "mars", "avril", "mai", "juin", "juillet", "ao\xC3\xBBt", "septembre", "octobre", "novembre", "d\xC3\xA9" "cembre"};
+const char* const kMonthsEs[12] = {"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"};
+const char* const kMonthsPt[12] = {"janeiro", "fevereiro", "mar\xC3\xA7o", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"};
+const char* const kMonthsRu[12] = {"\xD1\x8F\xD0\xBD\xD0\xB2\xD0\xB0\xD1\x80\xD1\x8F", "\xD1\x84\xD0\xB5\xD0\xB2\xD1\x80\xD0\xB0\xD0\xBB\xD1\x8F", "\xD0\xBC\xD0\xB0\xD1\x80\xD1\x82\xD0\xB0", "\xD0\xB0\xD0\xBF\xD1\x80\xD0\xB5\xD0\xBB\xD1\x8F", "\xD0\xBC\xD0\xB0\xD1\x8F", "\xD0\xB8\xD1\x8E\xD0\xBD\xD1\x8F", "\xD0\xB8\xD1\x8E\xD0\xBB\xD1\x8F", "\xD0\xB0\xD0\xB2\xD0\xB3\xD1\x83\xD1\x81\xD1\x82\xD0\xB0", "\xD1\x81\xD0\xB5\xD0\xBD\xD1\x82\xD1\x8F\xD0\xB1\xD1\x80\xD1\x8F", "\xD0\xBE\xD0\xBA\xD1\x82\xD1\x8F\xD0\xB1\xD1\x80\xD1\x8F", "\xD0\xBD\xD0\xBE\xD1\x8F\xD0\xB1\xD1\x80\xD1\x8F", "\xD0\xB4\xD0\xB5\xD0\xBA\xD0\xB0\xD0\xB1\xD1\x80\xD1\x8F"};
+const char* const kMonthsPl[12] = {"stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca", "lipca", "sierpnia", "wrze\xC5\x9B" "nia", "pa\xC5\xBA" "dziernika", "listopada", "grudnia"};
+
+std::string Pad2(int v) { char b[16]; std::snprintf(b, sizeof(b), "%02d", v); return b; }
+
+bool ValidDate(int y, int m, int d) {
+    if (m < 1 || m > 12 || d < 1) return false;
+    static const int days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    const bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    return d <= (m == 2 && leap ? 29 : days[m - 1]);
+}
+
+} // namespace
+
+std::string Localization::FormatNumber(double value, int decimals, const std::string& lang) {
+    if (std::isnan(value)) return "NaN";
+    if (std::isinf(value)) return value < 0 ? "-\xE2\x88\x9E" : "\xE2\x88\x9E";
+    const NumLocale L = NumLocaleOf(ResolveLang(lang));
+    bool neg = false;
+    const std::string body = NumberBody(value, decimals, L, neg);
+    return neg ? "-" + body : body;
+}
+
+std::string Localization::FormatCurrency(double amount, const std::string& currencyIn, const std::string& lang) {
+    if (std::isnan(amount) || std::isinf(amount)) return FormatNumber(amount, 0, lang);
+    std::string code;
+    for (char c : currencyIn) code += (char)std::toupper((unsigned char)c);
+    const std::string norm = ResolveLang(lang);
+    const std::string base = BaseOf(norm);
+    NumLocale L = NumLocaleOf(norm);
+    // Money keeps its group separator from 4 digits in every language (es, pl, it, pt-PT
+    // group plain numbers only from 5 digits).
+    L.minGroup = 1;
+    bool neg = false;
+    const std::string body = NumberBody(amount, CurrencyDecimals(code), L, neg);
+    const char* sym = CurrencySymbol(code, base);
+    const std::string symbol = sym ? sym : code;
+    std::string out;
+    if (norm == "pt-br" || (base == "pt" && norm != "pt-pt")) out = symbol + "\xC2\xA0" + body;   // R$ 1.234,50
+    else if (L.currencyAfter) out = body + "\xC2\xA0" + symbol;
+    else out = (sym ? symbol : symbol + "\xC2\xA0") + body;
+    return neg ? "-" + out : out;
+}
+
+std::string Localization::FormatPercent(double fraction, int decimals, const std::string& lang) {
+    if (std::isnan(fraction) || std::isinf(fraction)) return FormatNumber(fraction, 0, lang);
+    const NumLocale L = NumLocaleOf(ResolveLang(lang));
+    bool neg = false;
+    const std::string body = NumberBody(fraction * 100.0, decimals, L, neg);
+    return (neg ? "-" : "") + body + L.pctGap + "%";
+}
+
+std::string Localization::FormatDate(int y, int m, int d, DateStyle style, const std::string& lang) {
+    if (!ValidDate(y, m, d)) {
+        char b[48];
+        std::snprintf(b, sizeof(b), "%04d-%02d-%02d", y, m, d);
+        return b;
+    }
+    const std::string norm = ResolveLang(lang);
+    const std::string base = BaseOf(norm);
+    const std::string ys = std::to_string(y), ms = std::to_string(m), ds = std::to_string(d);
+    const bool gb = norm == "en-gb" || norm == "en-au" || norm == "en-nz" || norm == "en-ie" || norm == "en-in";
+    if (style == DateStyle::Short) {
+        if (base == "en") return gb ? Pad2(d) + "/" + Pad2(m) + "/" + ys : ms + "/" + ds + "/" + ys;
+        if (base == "de" || base == "ru" || base == "pl" || base == "uk" || base == "cs" || base == "tr" || base == "fi" || base == "nb" || base == "no" || base == "da")
+            return Pad2(d) + "." + Pad2(m) + "." + ys;
+        if (base == "fr" || base == "pt" || base == "it" || base == "el") return Pad2(d) + "/" + Pad2(m) + "/" + ys;
+        if (base == "nl") return ds + "-" + ms + "-" + ys;
+        if (base == "es" || base == "ar") return ds + "/" + ms + "/" + ys;
+        if (base == "ja" || base == "zh") return ys + "/" + ms + "/" + ds;
+        if (base == "ko") return ys + ". " + ms + ". " + ds + ".";
+        return ys + "-" + Pad2(m) + "-" + Pad2(d);
+    }
+    if (base == "ja" || base == "zh") return ys + "\xE5\xB9\xB4" + ms + "\xE6\x9C\x88" + ds + "\xE6\x97\xA5";
+    if (base == "ko") return ys + "\xEB\x85\x84 " + ms + "\xEC\x9B\x94 " + ds + "\xEC\x9D\xBC";
+    if (base == "de") return ds + ". " + kMonthsDe[m - 1] + " " + ys;
+    if (base == "fr") return ds + " " + kMonthsFr[m - 1] + " " + ys;
+    if (base == "es" || base == "pt") return ds + " de " + (base == "es" ? kMonthsEs : kMonthsPt)[m - 1] + " de " + ys;
+    if (base == "ru") return ds + " " + kMonthsRu[m - 1] + " " + ys + " \xD0\xB3.";
+    if (base == "pl") return ds + " " + kMonthsPl[m - 1] + " " + ys;
+    if (base == "en") return gb ? ds + " " + kMonthsEn[m - 1] + " " + ys : std::string(kMonthsEn[m - 1]) + " " + ds + ", " + ys;
+    return ys + "-" + Pad2(m) + "-" + Pad2(d);
+}
+
+std::string Localization::FormatTime(int hour, int minute, const std::string& lang) {
+    hour = std::max(0, std::min(hour, 23));
+    minute = std::max(0, std::min(minute, 59));
+    const std::string norm = ResolveLang(lang);
+    const std::string base = BaseOf(norm);
+    const bool twelve = (base == "en" && norm != "en-gb" && norm != "en-ie") || base == "ko" || base == "ar" || base == "hi";
+    if (twelve) {
+        const int h12 = hour % 12 == 0 ? 12 : hour % 12;
+        return std::to_string(h12) + ":" + Pad2(minute) + (hour < 12 ? " AM" : " PM");
+    }
+    return (base == "es" ? std::to_string(hour) : Pad2(hour)) + ":" + Pad2(minute);
 }
 
 std::uint32_t Localization::Version() { return S().version; }

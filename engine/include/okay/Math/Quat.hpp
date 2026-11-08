@@ -32,7 +32,7 @@ struct Quat {
 
     Quat Normalized() const {
         float m = Magnitude();
-        if (m < Mathf::Epsilon) return Identity;
+        if (!(m >= Mathf::Epsilon)) return Identity;   // tiny, zero or NaN
         return {x / m, y / m, z / m, w / m};
     }
     void Normalize() { *this = Normalized(); }
@@ -150,7 +150,9 @@ struct Quat {
         // Rotation matrix terms (from the unit quaternion).
         float sinx = 2.0f * (w * x - y * z);
         Vec3 e;
-        if (sinx > 0.9999f || sinx < -0.9999f) {   // gimbal lock, looking straight up / down
+        // Gimbal lock only when pitch is within ~0.08 degrees of straight up / down
+        // (the threshold used to be 0.9999, which dropped the roll from 89.2 degrees).
+        if (sinx > 0.999999f || sinx < -0.999999f) {
             // Only yaw and roll together are defined: put it all in the yaw, which
             // (Y * X * Z) is the turn of the first column.
             e.x = sinx > 0.0f ? 90.0f : -90.0f;
@@ -193,6 +195,19 @@ struct Quat {
         float ang = Angle(from, to);
         if (ang < 1e-4f) return to;
         return Slerp(from, to, Mathf::Min(1.0f, maxDegrees / ang));
+    }
+
+    /// Decompose into a rotation angle (degrees, 0..360) about a unit axis; the inverse
+    /// of AngleAxis. Works on non-unit input (normalized first). The identity (or any
+    /// rotation too small to define an axis) returns angle 0 and axis +X.
+    void ToAngleAxis(float& degrees, Vec3& axis) const {
+        Quat n = Normalized();
+        if (n.w < 0.0f) n = {-n.x, -n.y, -n.z, -n.w};      // shortest representation
+        float w = Mathf::Clamp(n.w, -1.0f, 1.0f);
+        float s = Mathf::Sqrt(Mathf::Max(0.0f, 1.0f - w * w));
+        if (s < 1e-6f) { degrees = 0.0f; axis = Vec3{1.0f, 0.0f, 0.0f}; return; }
+        degrees = 2.0f * std::acos(w) * Mathf::Rad2Deg;
+        axis = Vec3{n.x / s, n.y / s, n.z / s};
     }
 
     static const Quat Identity;

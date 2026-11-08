@@ -65,6 +65,9 @@ void Scene::Clear() {
     vs::ForgetSceneVariables(this);   // a fresh scene (another level loaded) starts with none
     NextScriptVM::ForgetSceneStatics(this);   // ... and script statics start again
     ActionList::ForgetScene(this);    // action-list variables too — they belong to this scene
+    std::vector<std::function<void(bool)>> abandoned;   // callbacks of loads this Clear cancels
+    for (auto& r : m_loads) if (!r.finished && r.opts.onDone) abandoned.push_back(std::move(r.opts.onDone));
+    m_loads.clear();
     m_pending.clear();
     m_active.clear();
     m_destroyQueue.clear();
@@ -84,6 +87,7 @@ void Scene::Clear() {
     m_graveyard.clear();
     ++m_structureVersion;
     renderSettings = RenderSettings{};   // back to default sky/ambient
+    for (auto& d : abandoned) d(false);
 }
 
 void Scene::QueuePending(Component* component) {
@@ -99,6 +103,7 @@ void Scene::NotifyComponentRemoved(Component* component) {
     ++m_componentVersion;
     for (auto& c : m_active)  if (c == component) c = nullptr;
     for (auto& c : m_pending) if (c == component) c = nullptr;
+    for (auto& r : m_loads) for (auto& c : r.held) if (c == component) c = nullptr;
     if (static_cast<Component*>(mainCamera) == component) mainCamera = nullptr;
     for (auto* w : m_removalWatches) w->push_back(component);
 }
@@ -146,6 +151,50 @@ void Scene::StartComponent(Component* c) {
 void Scene::Start() {
     ActionList::UseScene(this);
     FlushPending();
+}
+
+void Scene::DetachKept(KeptState& k) {
+    std::vector<Transform*> stack;
+    for (GameObject* g : m_dontDestroy) if (g && g->transform) stack.push_back(g->transform);
+    while (!stack.empty()) {
+        Transform* t = stack.back(); stack.pop_back();
+        if (!t->gameObject || !k.keep.insert(t->gameObject).second) continue;
+        for (Transform* ch : t->Children()) stack.push_back(ch);
+    }
+    k.marked = m_dontDestroy;
+    if (k.keep.empty()) return;
+    for (const auto& up : m_objects) {   // a kept root must not hang off what is about to be freed
+        GameObject* g = up.get();
+        Transform* par = g->transform ? g->transform->Parent() : nullptr;
+        if (k.keep.count(g) && par && par->gameObject && !k.keep.count(par->gameObject))
+            g->transform->SetParent(nullptr, /*worldPositionStays=*/true);
+    }
+    for (auto it = m_objects.begin(); it != m_objects.end();) {
+        if (k.keep.count(it->get())) { k.objects.push_back(std::move(*it)); it = m_objects.erase(it); }
+        else ++it;
+    }
+    auto owned = [&](Component* c) { return c && c->gameObject && k.keep.count(c->gameObject); };
+    for (Component* c : m_active)  if (owned(c)) k.active.push_back(c);
+    for (Component* c : m_pending) if (owned(c)) k.pending.push_back(c);
+    m_active.erase(std::remove_if(m_active.begin(), m_active.end(), owned), m_active.end());
+    m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(), owned), m_pending.end());
+    if (mainCamera && k.keep.count(mainCamera->gameObject)) mainCamera = nullptr;
+    if (m_mouseHover && k.keep.count(m_mouseHover)) m_mouseHover = nullptr;
+    if (m_mousePress && k.keep.count(m_mousePress)) m_mousePress = nullptr;
+    ++m_structureVersion;
+}
+
+void Scene::ReattachKept(KeptState& k) {
+    if (k.objects.empty()) return;
+    for (auto& up : k.objects) m_objects.push_back(std::move(up));
+    m_dontDestroy = std::move(k.marked);
+    m_active.insert(m_active.end(), k.active.begin(), k.active.end());
+    m_pending.insert(m_pending.end(), k.pending.begin(), k.pending.end());
+    if (m_hasOrdered)
+        std::stable_sort(m_active.begin(), m_active.end(), [](const Component* a, const Component* b) {
+            return (a ? a->ExecutionOrder() : 0) < (b ? b->ExecutionOrder() : 0);
+        });
+    ++m_structureVersion;
 }
 
 void Scene::Update(float deltaTime) {
@@ -220,55 +269,15 @@ void Scene::Update(float deltaTime) {
 
         // Objects marked DontDestroyOnLoad (and their children) are taken out before the
         // old scene is cleared and put back after, as the same objects with the same ids.
-        std::unordered_set<const GameObject*> keep;
-        std::vector<Transform*> stack;
-        for (GameObject* g : m_dontDestroy) if (g && g->transform) stack.push_back(g->transform);
-        while (!stack.empty()) {
-            Transform* t = stack.back(); stack.pop_back();
-            if (!t->gameObject || !keep.insert(t->gameObject).second) continue;
-            for (Transform* ch : t->Children()) stack.push_back(ch);
-        }
-        std::vector<std::unique_ptr<GameObject>> keptObjects;
-        std::vector<Component*> keptActive, keptPending;
-        std::vector<GameObject*> keptMarked = m_dontDestroy;
-        if (!keep.empty()) {
-            for (const auto& up : m_objects) {   // a kept root must not hang off what is about to be freed
-                GameObject* g = up.get();
-                Transform* par = g->transform ? g->transform->Parent() : nullptr;
-                if (keep.count(g) && par && par->gameObject && !keep.count(par->gameObject))
-                    g->transform->SetParent(nullptr, /*worldPositionStays=*/true);
-            }
-            for (auto it = m_objects.begin(); it != m_objects.end();) {
-                if (keep.count(it->get())) { keptObjects.push_back(std::move(*it)); it = m_objects.erase(it); }
-                else ++it;
-            }
-            auto owned = [&](Component* c) { return c && c->gameObject && keep.count(c->gameObject); };
-            for (Component* c : m_active)  if (owned(c)) keptActive.push_back(c);
-            for (Component* c : m_pending) if (owned(c)) keptPending.push_back(c);
-            m_active.erase(std::remove_if(m_active.begin(), m_active.end(), owned), m_active.end());
-            m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(), owned), m_pending.end());
-            if (mainCamera && keep.count(mainCamera->gameObject)) mainCamera = nullptr;
-            if (m_mouseHover && keep.count(m_mouseHover)) m_mouseHover = nullptr;
-            if (m_mousePress && keep.count(m_mousePress)) m_mousePress = nullptr;
-            ++m_structureVersion;
-        }
+        KeptState kept;
+        DetachKept(kept);
         const bool loaded = SceneSerializer::LoadFromFile(*this, path);
-        if (!keptObjects.empty()) {   // back in, whether or not the load worked
-            for (auto& up : keptObjects) m_objects.push_back(std::move(up));
-            m_dontDestroy = std::move(keptMarked);
-            m_active.insert(m_active.end(), keptActive.begin(), keptActive.end());
-            m_pending.insert(m_pending.end(), keptPending.begin(), keptPending.end());
-            if (m_hasOrdered)
-                std::stable_sort(m_active.begin(), m_active.end(), [](const Component* a, const Component* b) {
-                    return (a ? a->ExecutionOrder() : 0) < (b ? b->ExecutionOrder() : 0);
-                });
-            ++m_structureVersion;
-        }
+        ReattachKept(kept);   // back in, whether or not the load worked
         if (loaded) {
             InventoryPersistence::AfterSceneLoad(*this);
             Start(); // run Awake/Start for the freshly loaded objects
         }
-        if (!keep.empty()) ResolveMainCamera();   // a kept camera may be the only one
+        if (!kept.keep.empty()) ResolveMainCamera();   // a kept camera may be the only one
         if (done) done(loaded);
     }
 
@@ -296,6 +305,8 @@ void Scene::Update(float deltaTime) {
             if (SceneSerializer::MergeFromFile(*this, m.first, m.second)) any = true;
         if (any) Start();
     }
+
+    StepAsyncLoads();
 }
 
 namespace {
@@ -568,6 +579,7 @@ void Scene::FlushDestroyed() {
         auto isOwned = [go](Component* c) { return !c || c->gameObject == go; };
         m_active.erase(std::remove_if(m_active.begin(), m_active.end(), isOwned), m_active.end());
         m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(), isOwned), m_pending.end());
+        for (auto& r : m_loads) r.held.erase(std::remove_if(r.held.begin(), r.held.end(), isOwned), r.held.end());
         if (mainCamera && mainCamera->gameObject == go) mainCamera = nullptr;
         if (m_mouseHover == go) m_mouseHover = nullptr;
         if (m_mousePress == go) m_mousePress = nullptr;
@@ -713,6 +725,125 @@ void Scene::ReorderSibling(GameObject* go, GameObject* anchor, bool after) {
     for (int i = 0; i < (int)m_objects.size(); ++i) if (m_objects[i].get() == anchor) { ai = i; break; }
     if (ai < 0) { m_objects.push_back(std::move(held)); return; }
     m_objects.insert(m_objects.begin() + (after ? ai + 1 : ai), std::move(held));
+}
+
+// ---- Incremental (multi-frame) scene loads ----------------------------------
+
+int Scene::BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts) {
+    std::string err;
+    auto job = SceneLoadJob::OpenFile(path, opts.additive, opts.offset, &err);
+    if (!job) {
+        if (opts.onDone) opts.onDone(false);
+        return 0;
+    }
+    LoadRecord r;
+    r.handle = m_nextLoadHandle++;
+    r.job = std::move(job);
+    r.opts = std::move(opts);
+    if (r.opts.objectsPerFrame < 1) r.opts.objectsPerFrame = 1;
+    m_loads.push_back(std::move(r));
+    return m_loads.back().handle;
+}
+
+Scene::LoadRecord* Scene::FindLoad(int handle) {
+    for (auto& r : m_loads) if (r.handle == handle) return &r;
+    return nullptr;
+}
+const Scene::LoadRecord* Scene::FindLoad(int handle) const {
+    for (const auto& r : m_loads) if (r.handle == handle) return &r;
+    return nullptr;
+}
+
+bool Scene::IsLoading(int handle) const {
+    const LoadRecord* r = FindLoad(handle);
+    return r && !r->finished;
+}
+bool Scene::IsLoaded(int handle) const {
+    const LoadRecord* r = FindLoad(handle);
+    return r && r->finished && r->ok;
+}
+bool Scene::AnyLoading() const {
+    for (const auto& r : m_loads) if (!r.finished) return true;
+    return false;
+}
+float Scene::LoadProgress(int handle) const {
+    const LoadRecord* r = FindLoad(handle);
+    if (!r) return 0.0f;
+    if (r->finished) return r->ok ? 1.0f : 0.0f;
+    return r->job->Progress();
+}
+
+void Scene::DestroyLoadedObjects(const std::vector<std::uint64_t>& ids) {
+    for (std::uint64_t id : ids) {
+        GameObject* go = GameObject::FromInstanceId(id);
+        if (go && go->scene() == this) Destroy(go);
+    }
+}
+
+bool Scene::UnloadAdditive(int handle) {
+    LoadRecord* r = FindLoad(handle);
+    if (!r) return false;
+    LoadRecord rec = std::move(*r);
+    m_loads.erase(m_loads.begin() + (r - m_loads.data()));
+    // Components still held back never started: drop them before their objects go.
+    rec.held.clear();
+    DestroyLoadedObjects(rec.finished ? rec.job->RootIds() : rec.job->AllIds());
+    if (!rec.finished && rec.opts.onDone) rec.opts.onDone(false);
+    return true;
+}
+
+void Scene::StepAsyncLoads() {
+    for (std::size_t i = 0; i < m_loads.size();) {
+        if (m_loads[i].finished) { ++i; continue; }
+        LoadRecord rec = std::move(m_loads[i]);   // out of the list: callbacks and Clear() can't invalidate it
+        const int handle = rec.handle;
+        m_loads.erase(m_loads.begin() + (long)i);
+
+        const bool first = !rec.job->Started();
+        KeptState kept;
+        if (first && !rec.opts.additive) {
+            m_pendingMerges.clear();
+            InventoryPersistence::BeforeSceneLoad(*this);
+            DetachKept(kept);
+        }
+        const std::size_t before = (first && !rec.opts.additive) ? 0 : m_pending.size();
+        std::string err;
+        const bool ok = rec.job->Step(*this, rec.opts.objectsPerFrame, &err);
+        // Hold what this step made until the whole scene is in: nothing Awakes against a
+        // half-built hierarchy.
+        const std::size_t from = std::min(before, m_pending.size());
+        for (std::size_t k = from; k < m_pending.size(); ++k) if (m_pending[k]) rec.held.push_back(m_pending[k]);
+        m_pending.resize(from);
+        if (first && !rec.opts.additive) ReattachKept(kept);
+
+        if (!ok) {
+            rec.held.clear();
+            DestroyLoadedObjects(rec.job->AllIds());
+            rec.finished = true; rec.ok = false;
+            auto done = std::move(rec.opts.onDone);
+            m_loads.insert(m_loads.begin() + (long)i, std::move(rec));
+            ++i;
+            if (done) done(false);
+            continue;
+        }
+        const bool finished = rec.job->Finished();
+        auto progress = rec.opts.onProgress;
+        const float p = finished ? 1.0f : rec.job->Progress();
+        if (finished) {
+            rec.finished = true; rec.ok = true;
+            for (Component* c : rec.held) m_pending.push_back(c);
+            rec.held.clear();
+            if (!rec.opts.additive) InventoryPersistence::AfterSceneLoad(*this);
+            Start();   // Awake / Start for everything that came in
+            if (!rec.opts.additive && !kept.keep.empty()) ResolveMainCamera();
+        }
+        auto done = finished ? std::move(rec.opts.onDone) : std::function<void(bool)>{};
+        m_loads.insert(m_loads.begin() + (long)i, std::move(rec));
+        ++i;
+        if (progress) progress(p);
+        if (done) done(true);
+        (void)handle;
+    }
 }
 
 } // namespace okay

@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Tween.hpp"
 #include "okay/Physics/Physics2D.hpp"
@@ -15,6 +16,7 @@
 namespace okay {
 
 class Component;
+class SceneLoadJob;
 class Camera;
 class IRenderer;
 
@@ -86,6 +88,35 @@ public:
     void RequestMerge(const std::string& path, const Vec3& offset = Vec3{0, 0, 0}) {
         m_pendingMerges.push_back({path, offset});
     }
+
+    // ---- Incremental scene loads ----------------------------------------
+    /// How BeginAsyncLoad brings a scene in.
+    struct AsyncLoadOptions {
+        /// true: merge into what is here (see RequestMerge); false: replace this scene's
+        /// contents, DontDestroyOnLoad objects excepted (as RequestLoad does).
+        bool  additive = false;
+        Vec3  offset{0, 0, 0};          // additive: moves the new top-level objects
+        int   objectsPerFrame = 64;    // GameObjects created per Update
+        std::function<void(float)> onProgress;   // 0..1, after each step
+        std::function<void(bool)>  onDone;       // once: true = loaded, false = failed / cancelled
+    };
+    /// Start loading a .okayscene over several frames: the file is read now and
+    /// `objectsPerFrame` objects are made at the end of each Update, so a loading
+    /// screen keeps running. Nothing in the new content Awakes or Starts until all of it
+    /// is in. Returns a handle (> 0), or 0 if the file could not be read (onDone(false)
+    /// has then run). RequestLoad / RequestMerge are unchanged and still load in one go.
+    int   BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts);
+    int   BeginAsyncLoad(const std::string& path) { return BeginAsyncLoad(path, AsyncLoadOptions()); }
+    bool  IsLoading(int handle) const;
+    /// Finished without error (and not unloaded yet).
+    bool  IsLoaded(int handle) const;
+    bool  AnyLoading() const;
+    /// 0..1 while loading, 1 once loaded, 0 for an unknown / failed handle.
+    float LoadProgress(int handle) const;
+    /// Remove what that load brought in (destroyed at the end of the frame), or stop it
+    /// half way and remove what it made. False for an unknown handle. For a replacing
+    /// (non-additive) load this does not bring the old scene back.
+    bool  UnloadAdditive(int handle);
 
     // ---- Queries -------------------------------------------------------
     GameObject* Find(const std::string& name) const;
@@ -355,6 +386,28 @@ private:
     void DispatchActivation();   // OnEnable / OnDisable for components switched on/off
     void StartComponent(Component* c);   // OnEnable (if owed), then Start
     void TickDelayedDestroys(float deltaTime);
+    void StepAsyncLoads();
+    void DestroyLoadedObjects(const std::vector<std::uint64_t>& ids);
+    /// DontDestroyOnLoad objects taken out of the scene while it is replaced.
+    struct KeptState {
+        std::unordered_set<const GameObject*> keep;
+        std::vector<std::unique_ptr<GameObject>> objects;
+        std::vector<Component*> active, pending;
+        std::vector<GameObject*> marked;
+    };
+    void DetachKept(KeptState& k);
+    void ReattachKept(KeptState& k);
+    struct LoadRecord {
+        int handle = 0;
+        std::unique_ptr<SceneLoadJob> job;
+        AsyncLoadOptions opts;
+        std::vector<Component*> held;   // made by the job, not yet adopted
+        bool finished = false, ok = false;
+    };
+    LoadRecord* FindLoad(int handle);
+    const LoadRecord* FindLoad(int handle) const;
+    std::vector<LoadRecord> m_loads;
+    int m_nextLoadHandle = 1;
 
     GameObject* m_mouseHover = nullptr;   // object the cursor was over last frame
     GameObject* m_mousePress = nullptr;   // object a press began on (for click)

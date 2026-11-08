@@ -3470,37 +3470,61 @@ static void CompleteViewToggle(Scene& scene, GameObject* go) {
     }
 }
 
-// Parse a document into `scene`, which the caller has already cleared if it is
-// a full load. If `clear` is false, objects are appended (used by Instantiate);
-// `firstNew` receives the first created GameObject. Unknown records are skipped
-// and named in `warnings`. This writes straight into `scene`, so ParseInto below
-// only runs it on a scene that a failure can't hurt.
-static bool ParseCore(Scene& scene, const std::string& text, bool clear,
-                      GameObject** firstNew, std::string* error,
-                      std::vector<std::string>* warnings) {
-    std::istringstream in(text);
-    std::string token;
-
-    if (!(in >> token) || token != "okayscene") {
-        if (error) *error = "missing 'okayscene' header";
-        return false;
-    }
+// State of a document being parsed, kept so a parse can pause between objects
+// and carry on later (multi-frame scene loads).
+struct ParseSession {
+    explicit ParseSession(std::string t) : text(std::move(t)), in(text) {}
+    std::string text;
+    std::istringstream in;
+    bool started = false;
     int version = 0;
-    if (!(in >> version) || version < 1) {
-        if (error) *error = "bad 'okayscene' version";
-        return false;
-    }
-    auto warn = [&](const std::string& what) { if (warnings) warnings->push_back(what); };
-    if (version > SceneSerializer::kSceneFormatVersion)
-        warn("scene is format version " + std::to_string(version) + ", newer than this build reads (" +
-             std::to_string(SceneSerializer::kSceneFormatVersion) + "); loading what is understood");
-    // Skip the rest of the current line: records are one per line, so an unknown
-    // one can be stepped over without knowing what its values mean.
-    auto skipLine = [&]() { std::string rest; std::getline(in, rest); };
-
     // file index -> created GameObject, plus deferred parent links.
     std::unordered_map<int, GameObject*> byIndex;
     std::vector<std::pair<int, int>> parentLinks; // child index -> parent index
+    GameObject* first = nullptr;                  // first object created
+    std::vector<std::string> warnings;            // unknown records skipped so far
+};
+
+// Parse (a slice of) a document into `scene`, which the caller has already
+// cleared if it is a full load. If `clear` is false, objects are appended (used
+// by Instantiate); `firstNew` receives the first created GameObject. Unknown
+// records are skipped and named in `warnings`. With `maxObjects` > 0 the parse
+// stops between objects after that many and sets `finished` false; call again
+// with the same session to continue. This writes straight into `scene`, so
+// ParseInto / SceneLoadJob only run it on a scene that a failure can't hurt (or
+// roll back what it made).
+static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
+                      GameObject** firstNew, std::string* error,
+                      std::vector<std::string>* warnings, int maxObjects = 0, bool* finished = nullptr) {
+    if (finished) *finished = true;
+    const std::string& text = S.text;
+    std::istringstream& in = S.in;
+    std::string token;
+
+    if (!S.started) {
+        if (!(in >> token) || token != "okayscene") {
+            if (error) *error = "missing 'okayscene' header";
+            return false;
+        }
+        int version = 0;
+        if (!(in >> version) || version < 1) {
+            if (error) *error = "bad 'okayscene' version";
+            return false;
+        }
+        S.version = version;
+        S.started = true;
+        if (version > SceneSerializer::kSceneFormatVersion)
+            S.warnings.push_back("scene is format version " + std::to_string(version) + ", newer than this build reads (" +
+                                 std::to_string(SceneSerializer::kSceneFormatVersion) + "); loading what is understood");
+    }
+    const int version = S.version;
+    auto warn = [&](const std::string& what) { S.warnings.push_back(what); };
+    // Skip the rest of the current line: records are one per line, so an unknown
+    // one can be stepped over without knowing what its values mean.
+    auto skipLine = [&]() { std::string rest; std::getline(in, rest); };
+    auto& byIndex = S.byIndex;
+    auto& parentLinks = S.parentLinks;
+    int madeObjects = 0;
 
     // Record validation. Counts are checked against the input still unread (each
     // element takes at least `minChars` characters), so a bogus count can't make a
@@ -3611,6 +3635,7 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
             if (!in) return bad("truncated gameobject header");
             if (byIndex.count(idx)) return bad("duplicate gameobject index " + std::to_string(idx));
             GameObject* go = scene.CreateGameObject(name);
+            if (!S.first) S.first = go;
             if (firstNew && !*firstNew) *firstNew = go;
             byIndex[idx] = go;
             // The state machine the animsm* records apply to (layers add more).
@@ -7881,6 +7906,10 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
             skipLine();
         }
         if (in.fail()) return bad("malformed or truncated '" + token + "' record");
+        if (token == "gameobject" && maxObjects > 0 && ++madeObjects >= maxObjects) {
+            if (finished) *finished = false;   // paused between objects
+            return true;
+        }
     }
 
     // Resolve parent links now that every object exists. A link that would make
@@ -7924,7 +7953,15 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
     // Make each loaded UIFrame the source of truth for its widget's fields now, so
     // a script that writes those fields in its Start moves the frame.
     for (auto& [idx, go] : byIndex) { (void)idx; if (go->GetComponent<UIFrame>()) GetUIRect(go); }
+    if (warnings) warnings->insert(warnings->end(), S.warnings.begin(), S.warnings.end());
     return true;
+}
+
+static bool ParseCore(Scene& scene, const std::string& text, bool clear,
+                      GameObject** firstNew, std::string* error,
+                      std::vector<std::string>* warnings) {
+    ParseSession S(text);
+    return ParseStep(scene, S, clear, firstNew, error, warnings);
 }
 
 // Parse `text` into `scene` or leave `scene` as it was. A full load (clear) is
@@ -7969,6 +8006,101 @@ bool SceneSerializer::Deserialize(Scene& scene, const std::string& text, std::st
                                   std::vector<std::string>* warnings) {
     return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
 }
+
+SceneLoadJob::~SceneLoadJob() = default;
+
+std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenText(std::string text, bool additive, const Vec3& offset) {
+    std::unique_ptr<SceneLoadJob> j(new SceneLoadJob());
+    j->m_size = text.empty() ? 1 : text.size();
+    j->m_session = std::make_unique<ParseSession>(std::move(text));
+    j->m_additive = additive;
+    j->m_offset = offset;
+    return j;
+}
+
+std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenFile(const std::string& path, bool additive,
+                                                     const Vec3& offset, std::string* error) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    std::string raw = ss.str();
+    std::string text = DataPack::Unpack(raw);
+    if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
+    auto j = OpenText(std::move(text), additive, offset);
+    const std::size_t slash = path.find_last_of("/\\");
+    j->m_dir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+    return j;
+}
+
+std::vector<std::uint64_t> SceneLoadJob::AllIds() const {
+    std::vector<std::uint64_t> ids;
+    if (m_session) for (auto& kv : m_session->byIndex) ids.push_back(kv.second->InstanceId());
+    return ids;
+}
+
+float SceneLoadJob::Progress() const {
+    if (m_finished) return m_failed ? 0.0f : 1.0f;
+    if (!m_session || !m_started) return 0.0f;
+    const std::streamoff at = m_session->in.rdbuf()->pubseekoff(0, std::ios::cur, std::ios::in);
+    if (at < 0) return 0.0f;
+    const float f = (float)((double)at / (double)m_size);
+    return f > 0.999f ? 0.999f : f;   // 1 only once the links are resolved
+}
+
+bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
+    if (m_finished) return !m_failed;
+    const std::string prevDir = g_loadingSceneDir;
+    g_loadingSceneDir = m_dir;
+    struct Restore { const std::string& d; ~Restore() { g_loadingSceneDir = d; } } restore{prevDir};
+    auto fail = [&]() {
+        m_finished = true; m_failed = true;
+        return false;
+    };
+    if (!m_started) {
+        m_started = true;
+        // A whole-scene load is checked in full first, in a throwaway scene, and the
+        // live scene is cleared only once that passed (the same all-or-nothing rule
+        // as Deserialize). One frame pays for this pass; the objects themselves are
+        // then made a few per frame.
+        if (!m_additive) {
+            Scene probe("probe");
+            ParseSession P(m_session->text);
+            if (!ParseStep(probe, P, true, nullptr, error, nullptr)) return fail();
+            scene.Clear();
+        }
+    }
+    bool done = true;
+    const bool ok = ParseStep(scene, *m_session, /*clear=*/!m_additive, nullptr, error, nullptr, maxObjects, &done);
+    m_created = (int)m_session->byIndex.size();
+    if (!ok) {
+        // An additive load stops half-way: take back what it made so the scene is
+        // left as it was (a whole-scene load cannot get here; the probe passed).
+        std::vector<GameObject*> made;
+        for (auto& kv : m_session->byIndex) made.push_back(kv.second);
+        for (GameObject* go : made) scene.Destroy(go);
+        scene.FlushDestroyed();
+        m_session->byIndex.clear();
+        m_created = 0;
+        return fail();
+    }
+    if (done) {
+        for (const auto& w : m_session->warnings) std::cerr << "[scene] warning: " << w << "\n";
+        std::vector<int> order;
+        for (auto& kv : m_session->byIndex) order.push_back(kv.first);
+        std::sort(order.begin(), order.end());
+        const bool shift = m_additive && (m_offset.x != 0.0f || m_offset.y != 0.0f || m_offset.z != 0.0f);
+        for (int idx : order) {
+            GameObject* go = m_session->byIndex[idx];
+            if (!go->transform || go->transform->Parent()) continue;
+            if (shift) go->transform->localPosition = go->transform->localPosition + m_offset;
+            m_roots.push_back(go->InstanceId());
+        }
+        m_finished = true;
+    }
+    return true;
+}
+
 
 std::string SceneSerializer::SerializeObject(const GameObject& root) {
     // Gather the object and all its descendants (depth-first).

@@ -1455,3 +1455,8 @@ add_test(NAME vs_media COMMAND test_vs_media)
 add_executable(test_script_nav test_script_nav.cpp)
 target_link_libraries(test_script_nav PRIVATE okay::engine)
 add_test(NAME script_nav COMMAND test_script_nav)
+
+# Multi-frame scene loads (progress, additive load + unload by handle), ObjectPool, RequireComponent rules
+add_executable(test_scene_load_pool test_scene_load_pool.cpp)
+target_link_libraries(test_scene_load_pool PRIVATE okay::engine)
+add_test(NAME scene_load_pool COMMAND test_scene_load_pool)

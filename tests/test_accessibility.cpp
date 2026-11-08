@@ -634,6 +634,55 @@ int main() {
         CHECK(!tog.Update(false, false));
     }
 
+    // ---- Wrapping and parsing whatever arrives ----------------------------------------------------------------------------------
+    {
+        std::uint32_t seed = 777;
+        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+        const char* const pieces[] = {"a", "bc", "def", "ghijkl", " ", "  ", "\n", "\xE6\x97\xA5", "\xE6\x9C\xAC", "e\xCC\x81", "-", "\xF0\x9F\x8C\x9F", "longwordwithoutanybreaks"};
+        for (int i = 0; i < 2000; ++i) {
+            std::string text;
+            for (std::size_t k = rnd() % 25; k > 0; --k) text += pieces[rnd() % (sizeof pieces / sizeof pieces[0])];
+            const int width = 4 + (int)(rnd() % 30);
+            const int indent = (int)(rnd() % 10);
+            const auto rows = CaptionManager::Wrap(text, width, indent);
+            CHECK(!rows.empty());
+            std::string kept, original;
+            bool tooWide = false;
+            for (std::size_t r = 0; r < rows.size(); ++r) {
+                if (CaptionManager::Cells(rows[r]) + (r == 0 && indent < width ? indent : 0) > width) tooWide = true;   // a label wider than the line stands alone
+                for (char c : rows[r]) if (c != ' ' && c != '\n') kept += c;
+            }
+            for (char c : text) if (c != ' ' && c != '\n') original += c;
+            CHECK(!tooWide);
+            CHECK(kept == original);                           // nothing lost, nothing added
+        }
+        SubtitleTrack t;
+        for (int i = 0; i < 1000; ++i) {
+            std::string junk;
+            for (std::size_t k = rnd() % 80; k > 0; --k) junk += "1 2:0,-> \n\r[]<>\xE6\x97\xA5:Ab"[rnd() % 22];
+            SubtitleTrack::ParseSrt(junk, t);
+            SubtitleTrack::ParseSrt("1\n00:00:01,000 --> 00:00:02,000\n" + junk, t);
+        }
+        // A caption manager under a storm of lines stays within its limits.
+        CaptionManager cm;
+        cm.settings.soundCaptions = true;
+        cm.settings.maxLines = 3;
+        cm.maxQueue = 5;
+        for (int i = 0; i < 3000; ++i) {
+            SubtitleLine l;
+            l.text = "line " + std::to_string(rnd() % 40);
+            l.kind = rnd() % 3 == 0 ? SubtitleKind::Sound : SubtitleKind::Speech;
+            l.speaker = rnd() % 2 ? "A" : "B";
+            l.priority = (int)(rnd() % 5) - 2;
+            l.duration = (float)(rnd() % 30) / 10.0f;
+            cm.Say(l);
+            if (rnd() % 3 == 0) cm.Update((float)(rnd() % 20) / 10.0f);
+            CHECK(cm.VisibleCount() <= 3 && cm.QueuedCount() <= 5);
+        }
+        cm.Update(100.0f);
+        CHECK(cm.Empty());
+    }
+
     Prefs::Clear();
     Accessibility::Reset();
     TEST_MAIN_RESULT();

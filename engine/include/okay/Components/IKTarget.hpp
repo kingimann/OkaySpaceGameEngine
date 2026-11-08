@@ -13,6 +13,7 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 namespace okay {
@@ -63,6 +64,12 @@ public:
 
     void LateUpdate(float dt) override { Apply(dt); }
 
+    // Put back what this target changed on the character (its goals, the pull,
+    // and any solver it had to add), so removing or switching one off leaves
+    // no limb reaching for a dead object.
+    void OnDisable() override { Release(); }
+    void OnDestroy() override { Release(); }
+
     /// Edit mode: set the goal and run the solver so the limb follows while the
     /// target object is moved. Play mode uses LateUpdate plus the solver's own tick.
     void Preview(float dt) {
@@ -82,6 +89,48 @@ private:
     float m_w = 0.0f;
     bool m_have = false;
     bool m_pullSet = false;
+
+    // What the character had before this target touched it.
+    std::uint64_t m_hostId = 0;          // looked up again on release: the character may be gone first
+    bool m_addedFB = false, m_addedLook = false, m_addedChain = false;
+    bool m_pullChanged = false;
+    int m_savedLimb = -1;
+    FullBodyIK::Effector m_savedEff;
+    Transform* m_savedLookTarget = nullptr;
+    std::string m_savedLookName;
+    bool m_savedAim = false, m_savedActive = true;
+    float m_savedLookWeight = 1.0f;
+
+    void Release() {
+        GameObject* host = m_hostId ? GameObject::FromInstanceId(m_hostId) : nullptr;
+        if (host && !host->IsDestroyed()) {
+            if (m_savedLimb == Head) {
+                if (LookAtIK* look = host->GetComponent<LookAtIK>()) {
+                    if (m_addedLook) host->RemoveComponent(look);
+                    else if (look->targetObject == transform) {
+                        look->targetObject = m_savedLookTarget;
+                        look->targetName = m_savedLookName;
+                        look->aimAtPoint = m_savedAim;
+                        look->ikActive = m_savedActive;
+                        look->weight = m_savedLookWeight;
+                        if (m_addedChain) { look->chain.clear(); look->chainNames.clear(); }
+                    }
+                }
+            } else if (m_savedLimb >= 0) {
+                if (FullBodyIK* fb = host->GetComponent<FullBodyIK>()) {
+                    if (m_addedFB) host->RemoveComponent(fb);
+                    else {
+                        FullBodyIK::Effector& e = fb->effectors[m_savedLimb];
+                        if (e.target == transform) e = m_savedEff;
+                        if (m_pullChanged && std::fabs(fb->bodyPull - 0.2f) < 1e-4f) fb->bodyPull = 0.6f;
+                    }
+                }
+            }
+        }
+        m_hostId = 0; m_savedLimb = -1;
+        m_addedFB = m_addedLook = m_addedChain = m_pullChanged = false;
+        m_pullSet = false; m_have = false; m_w = 0.0f;
+    }
 
     void Resolve() {
         if (character || characterName.empty() || !gameObject || !gameObject->scene()) return;
@@ -105,8 +154,17 @@ private:
 
     void ApplyHead(GameObject* host) {
         LookAtIK* look = host->GetComponent<LookAtIK>();
+        if (m_savedLimb < 0) {
+            m_hostId = host->InstanceId(); m_savedLimb = Head;
+            m_addedLook = look == nullptr;
+            if (look) {
+                m_savedLookTarget = look->targetObject; m_savedLookName = look->targetName;
+                m_savedAim = look->aimAtPoint; m_savedActive = look->ikActive; m_savedLookWeight = look->weight;
+            }
+        }
         if (!look) look = host->AddComponent<LookAtIK>();
         if (look->chain.empty() && look->chainNames.empty()) {
+            m_addedChain = true;
             if (Transform* head = FindClassified(host, FullBodyIK::Head)) {
                 look->chain.push_back(head);
                 if (head->gameObject) look->chainNames.push_back(head->gameObject->name);
@@ -121,19 +179,25 @@ private:
 
     void ApplyLimb(GameObject* host) {
         FullBodyIK* fb = host->GetComponent<FullBodyIK>();
-        if (!fb) {
-            fb = host->AddComponent<FullBodyIK>();
-            fb->MapBones(false);
-            fb->bodyPull = 0.2f;
-        } else if (!m_pullSet && std::fabs(fb->bodyPull - 0.6f) < 1e-4f) {
-            // The stock pull dips the whole body for a target just past the hand.
-            fb->bodyPull = 0.2f;
-        }
-        m_pullSet = true;
         const int li = limb == LeftHand ? FullBodyIK::LeftHand
                      : limb == RightHand ? FullBodyIK::RightHand
                      : limb == LeftFoot ? FullBodyIK::LeftFoot
                                         : FullBodyIK::RightFoot;
+        if (m_savedLimb < 0) {
+            m_hostId = host->InstanceId(); m_savedLimb = li;
+            m_addedFB = fb == nullptr;
+            if (fb) m_savedEff = fb->effectors[li];
+        }
+        if (!fb) {
+            fb = host->AddComponent<FullBodyIK>();
+            fb->MapBones(false);
+            fb->bodyPull = 0.2f;
+        } else if (!m_pullSet && !m_addedFB && std::fabs(fb->bodyPull - 0.6f) < 1e-4f) {
+            // The stock pull dips the whole body for a target just past the hand.
+            fb->bodyPull = 0.2f;
+            m_pullChanged = true;
+        }
+        m_pullSet = true;
         FullBodyIK::Effector& e = fb->effectors[li];
         e.target = transform;
         e.targetName = gameObject ? gameObject->name : std::string{};

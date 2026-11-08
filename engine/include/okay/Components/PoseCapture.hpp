@@ -291,9 +291,13 @@ private:
             const Vec3 p = up->transform->localPosition;
             const Quat q = up->transform->localRotation;
             const Vec3 s = up->transform->localScale;
-            node->clip.AddKey("position.x", time, p.x);
-            node->clip.AddKey("position.y", time, p.y);
-            node->clip.AddKey("position.z", time, p.z);
+            // The model's own position is where it stands, not part of the pose:
+            // a clip that keyed it would carry the model back to where it was captured.
+            if (up.get() != ma->gameObject) {
+                node->clip.AddKey("position.x", time, p.x);
+                node->clip.AddKey("position.y", time, p.y);
+                node->clip.AddKey("position.z", time, p.z);
+            }
             node->clip.AddKey("rotation.qx", time, q.x);
             node->clip.AddKey("rotation.qy", time, q.y);
             node->clip.AddKey("rotation.qz", time, q.z);

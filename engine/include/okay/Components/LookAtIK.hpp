@@ -238,7 +238,7 @@ private:
     IKFade m_fade;
     IKRestore m_restore;
 
-    /// A hand effector is reaching, on this object or a parent that owns the body.
+    /// A hand effector driven by an IK Target (exactReach) is reaching, on this object or a parent that owns the body.
     bool ArmReachActive() const {
         for (Transform* t = transform; t; t = t->Parent()) {
             if (!t->gameObject) continue;
@@ -246,7 +246,7 @@ private:
             if (!fb || !fb->ikActive || fb->weight <= 0.001f) continue;
             for (int l = FullBodyIK::LeftHand; l <= FullBodyIK::RightHand; ++l) {
                 const FullBodyIK::Effector& e = fb->effectors[l];
-                if (e.enabled && e.positionWeight > 0.01f) return true;
+                if (e.enabled && e.exactReach && e.positionWeight > 0.01f) return true;
             }
         }
         return false;

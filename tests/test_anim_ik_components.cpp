@@ -163,6 +163,107 @@ int main() {
         CHECK(Dist(hand->transform->Position(), tgt->transform->Position()) < 0.01f);
     }
 
+    // Removing an IK Target puts back what it changed; one that added the solver takes it away.
+    {
+        Scene sc;
+        GameObject* hero = sc.CreateGameObject("Hero");
+        GameObject* chest = Bone(sc, "Chest", hero, {0, 1.2f, 0});
+        GameObject* arm = Bone(sc, "LeftArm", chest, {0.2f, 0.1f, 0});
+        GameObject* fore = Bone(sc, "LeftForeArm", arm, {0.3f, 0, 0});
+        GameObject* hand = Bone(sc, "LeftHand", fore, {0.3f, 0, 0});
+        GameObject* head = Bone(sc, "Head", chest, {0, 0.25f, 0});
+        auto* fb = hero->AddComponent<FullBodyIK>();
+        fb->autoMap = false;
+        fb->bones[FullBodyIK::Chest] = chest->transform;
+        fb->bones[FullBodyIK::LUpperArm] = arm->transform;
+        fb->bones[FullBodyIK::LForeArm] = fore->transform;
+        fb->bones[FullBodyIK::LHand] = hand->transform;
+        auto* look = hero->AddComponent<LookAtIK>();
+        look->chain = {head->transform};
+        GameObject* other = sc.CreateGameObject("Other");
+        look->targetObject = other->transform;
+        look->targetName = "Other";
+        look->weight = 0.7f;
+        sc.Start();
+        CHECK_NEAR(fb->bodyPull, 0.6f, 1e-4f);
+
+        GameObject* tgt = IKTarget::Spawn(sc, hero, IKTarget::LeftHand);
+        GameObject* gaze = IKTarget::Spawn(sc, hero, IKTarget::Head);
+        tgt->GetComponent<IKTarget>()->LateUpdate(0.016f);
+        gaze->GetComponent<IKTarget>()->LateUpdate(0.016f);
+        CHECK_NEAR(fb->bodyPull, 0.2f, 1e-4f);
+        CHECK(fb->effectors[FullBodyIK::LeftHand].target == tgt->transform);
+        CHECK(look->targetObject == gaze->transform);
+
+        tgt->RemoveComponent(tgt->GetComponent<IKTarget>());
+        gaze->RemoveComponent(gaze->GetComponent<IKTarget>());
+        CHECK(!fb->effectors[FullBodyIK::LeftHand].enabled);
+        CHECK(fb->effectors[FullBodyIK::LeftHand].target == nullptr);
+        CHECK_NEAR(fb->bodyPull, 0.6f, 1e-4f);
+        CHECK(look->targetObject == other->transform && look->targetName == "Other");
+        CHECK_NEAR(look->weight, 0.7f, 1e-4f);
+
+        // A solver the target added itself goes with it.
+        Scene sc2;
+        GameObject* h2 = sc2.CreateGameObject("Hero");
+        Bone(sc2, "Head", h2, {0, 1.6f, 0});
+        sc2.Start();
+        GameObject* t2 = IKTarget::Spawn(sc2, h2, IKTarget::Head);
+        t2->GetComponent<IKTarget>()->LateUpdate(0.016f);
+        CHECK(h2->GetComponent<LookAtIK>() != nullptr);
+        t2->RemoveComponent(t2->GetComponent<IKTarget>());
+        CHECK(h2->GetComponent<LookAtIK>() == nullptr);
+    }
+
+    // With no IK Target, a hand effector does not stop LookAtIK turning the spine (as before).
+    {
+        Scene sc;
+        GameObject* hero = sc.CreateGameObject("Hero");
+        GameObject* spine = Bone(sc, "Spine", hero, {0, 1.0f, 0});
+        GameObject* odd = Bone(sc, "Torso9", spine, {0, 0.3f, 0});   // not a neck or head name
+        GameObject* arm = Bone(sc, "LeftArm", odd, {0.2f, 0, 0});
+        GameObject* fore = Bone(sc, "LeftForeArm", arm, {0.3f, 0, 0});
+        GameObject* hand = Bone(sc, "LeftHand", fore, {0.3f, 0, 0});
+        auto* fb = hero->AddComponent<FullBodyIK>();
+        fb->autoMap = false;
+        fb->bones[FullBodyIK::LUpperArm] = arm->transform;
+        fb->bones[FullBodyIK::LForeArm] = fore->transform;
+        fb->bones[FullBodyIK::LHand] = hand->transform;
+        GameObject* reach = sc.CreateGameObject("Reach");
+        reach->transform->SetPosition(arm->transform->Position() + Vec3{0.4f, 0, 0.1f});
+        auto& e = fb->effectors[FullBodyIK::LeftHand];
+        e.enabled = true; e.target = reach->transform; e.positionWeight = 1.0f;
+        auto* look = hero->AddComponent<LookAtIK>();
+        look->chain = {odd->transform};
+        look->weight = 1.0f; look->smoothing = 0.0f; look->clampAngle = 0.0f; look->maxAngle = 80.0f;
+        GameObject* seen = sc.CreateGameObject("Seen");
+        seen->transform->SetPosition(odd->transform->Position() + Vec3{3.0f, 0.0f, 0.0f});
+        look->targetObject = seen->transform;
+        look->aimAtPoint = true;
+        sc.Start();
+        const Quat before = odd->transform->Rotation();
+        look->LateUpdate(0.016f);
+        CHECK(std::fabs(Quat::Dot(odd->transform->Rotation(), before)) < 0.999f);
+    }
+
+    // A captured pose keeps the model's rotation but not where it stood.
+    {
+        Scene sc;
+        GameObject* hero = sc.CreateGameObject("Hero");
+        auto* ma = hero->AddComponent<ModelAnimator>();
+        hero->transform->localPosition = {5, 0, 3};
+        hero->transform->localRotation = Quat::Euler(0, 40, 0);
+        Bone(sc, "LeftArm", hero, {0.4f, 1.2f, 0.1f});
+        auto* cap = hero->AddComponent<PoseCapture>();
+        cap->clipName = "RootPose";
+        PoseCapture::SetAssetBaseDir("/tmp/okay-pose-capture-d5f6");
+        cap->CaptureFrame();
+        hero->transform->localPosition = {-9, 0, 7};
+        ma->SetTime(0.0f);
+        CHECK(Dist(hero->transform->localPosition, Vec3{-9, 0, 7}) < 1e-3f);
+        CHECK(std::fabs(Quat::Dot(hero->transform->localRotation, Quat::Euler(0, 40, 0))) > 0.999f);
+    }
+
     // ---- Aim Offset: the chest yaws toward a target, recoil kicks and recovers.
     {
         Scene sc;

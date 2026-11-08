@@ -620,7 +620,9 @@ model) and the machine watches the capsule's VERTICAL motion — launching
 plays Jump, past the apex Fall loops, and touchdown plays Land once before
 idle/walk/run resumes. It works with every controller, no wiring. In
 in-place mode the jump clip's own root rise is stripped too, so the
-controller's jump arc isn't doubled.
+controller's jump arc isn't doubled. An empty Jump slot does not block
+Fall: once the body is heading down, a filled Fall clip plays even when the
+rise never played a jump clip.
 
 ## Crouch and prone for imported characters
 
@@ -655,6 +657,12 @@ its rest stance aligned, so a T-pose rig stands and moves naturally.
   every locomotion slot the file has no clip for plays the built-in
   animation. The import log says which ("walking='Walking', built-in
   animations retargeted (15/15 bones)").
+- A state that is not a locomotion slot (Death, Wave, sit, roll, emotes)
+  uses that built-in pose when the state's clip, fallback, and blend
+  motions are not on this model, even if Idle or Walk is filled. Idle,
+  Walk, Run, Jump, Fall, Land, Crouch, Crouch Walk, Prone, Crawl, Get Up,
+  and a Locomotion blend that has any of idle, walk, or run, keep the
+  file's clip.
 - The **Humanoid Retarget** component (on the player, next to the
   Character) has a **Weight** slider (blend against the model's bind
   pose), a **Body lean** amount and a **Re-Detect Bones** button after a
@@ -804,9 +812,10 @@ and transitions. Beyond single conditions:
 - **IK weight curve** — under a state's IK weight, **Add curve** shapes foot planting
   over the clip (click to add a key, drag to move it, right-click to remove it).
   The curve is multiplied by the IK weight slider. Full Body IK can have its own
-  curve when it does not follow the foot weight. Foot IK and Full Body IK read
-  the sampled weight; their solvers are unchanged. `SampleIkCurve` evaluates a
-  curve the same way.
+  curve when it does not follow the foot weight. Look-At and Aim use the
+  state's look weight when that is set, and otherwise the same foot weight.
+  Limb IK and Chain IK follow the Full Body weight. The solvers themselves
+  are unchanged. `SampleIkCurve` evaluates a curve the same way.
 
 Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 `anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.
@@ -992,9 +1001,13 @@ character, and the bone stays over it.
   or leaves the state. It reaches `anim_event()` in scripts and the visual
   scripts' animation event handlers, like clip events. Use it for jump and land
   sounds or to open a hit window.
-- **IK weight:** how much Foot IK and Full Body IK apply in that state, eased
-  over the transition. Set it to 0 for jumps, rolls and falls so the feet aren't
-  pulled to the ground mid-air. Locomotion setup does this for Jump and Fall.
+- **IK weight:** how much Foot IK, Full Body IK, Limb IK, Chain IK, Look-At
+  and Aim apply in that state, eased over the transition. Look-At and Aim
+  follow this unless the state sets its own look weight. Set the weight to 0
+  for jumps, rolls and falls so the feet aren't pulled to the ground mid-air,
+  and for death, sit, swim and emotes so the head plays the action instead of
+  staying on a look target. Locomotion setup does this for Jump and Fall.
+  The built-in actions set the look weight to 0.
 - **Start at** on a transition starts the target part-way into its clip, to line
   up the feet between walk and run cycles.
 

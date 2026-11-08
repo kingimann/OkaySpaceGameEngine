@@ -153,6 +153,9 @@
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/IKTarget.hpp"
+#include "okay/Components/AimOffset.hpp"
+#include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/RootMotion.hpp"
@@ -1303,6 +1306,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << a->weight << " " << a->maxAngle
             << " " << a->target.x << " " << a->target.y << " " << a->target.z
             << " " << a->smoothing << "\n";
+    }
+    if (auto* t = go->GetComponent<IKTarget>()) {
+        out << "  iktarget " << t->limb << " " << Quote(t->characterName)
+            << " " << t->weight << " " << t->blendTime << "\n";
+    }
+    if (auto* ao = go->GetComponent<AimOffset>()) {
+        out << "  aimoffset " << (ao->useCamera ? 1 : 0) << " " << Quote(ao->targetName)
+            << " " << ao->weight << " " << ao->pitchClamp << " " << ao->yawClamp
+            << " " << ao->spineWeight << " " << ao->chestWeight << " " << ao->armWeight
+            << " " << ao->kick << " " << ao->recovery << "\n";
+    }
+    if (auto* pc = go->GetComponent<PoseCapture>()) {
+        out << "  posecap " << Quote(pc->clipName) << " " << pc->recordSeconds << "\n";
     }
     if (auto* l = go->GetComponent<LookAtIK>()) {
         out << "  lookatik " << Quote(l->targetName)
@@ -4480,6 +4496,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     { std::string rest; std::getline(in, rest);
                       std::istringstream rs(rest); float sm;
                       if (rs >> sm) a->smoothing = sm; }
+                } else if (field == "iktarget") {
+                    auto* t = go->AddComponent<IKTarget>();
+                    in >> t->limb;
+                    t->characterName = ReadQuoted(in);
+                    in >> t->weight >> t->blendTime;
+                } else if (field == "aimoffset") {
+                    auto* ao = go->AddComponent<AimOffset>();
+                    int cam = 1;
+                    in >> cam;
+                    ao->useCamera = cam != 0;
+                    ao->targetName = ReadQuoted(in);
+                    in >> ao->weight >> ao->pitchClamp >> ao->yawClamp
+                       >> ao->spineWeight >> ao->chestWeight >> ao->armWeight
+                       >> ao->kick >> ao->recovery;
+                } else if (field == "posecap") {
+                    auto* pc = go->AddComponent<PoseCapture>();
+                    pc->clipName = ReadQuoted(in);
+                    in >> pc->recordSeconds;
                 } else if (field == "lookatik") {
                     auto* l = go->AddComponent<LookAtIK>();
                     l->targetName = ReadQuoted(in);

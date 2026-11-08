@@ -4,12 +4,13 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-11-02 14:09 UTC_
+_Last updated: 2026-11-07 01:30 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.845.0 | VRoid, Character Creator and Daz characters animate; a Mixamo character with its own clips no longer stays low after a crouch; rig sweep test (#528) |
 | 2.844.0 | Animator graph keeps the built-in idle, run, jump and stride matching for walk-only models (#531); blocky character jump crouch, turn steps and lean (#532); Make Playable Character right-click, the Set Character Model crash fix, and the ik_look_at, crouch and stand script calls (#533); walk-only jump test |
 | 2.843.0 | In-game UI fixes: one press does one thing, clickable stretch widgets, a working Settings screen, menus and HUD that fit 16:9, 4:3 and 9:16, Quality High keeps the sky (#529) |
 | 2.842.0 | One Player Controller for first and third person (#523); stride-matched Mixamo locomotion, per-slot built-in fallback and the Character Model panel (#524); riders turn with rotating platforms (#526) |

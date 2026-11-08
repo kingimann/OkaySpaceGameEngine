@@ -194,6 +194,19 @@ struct Quat {
         return Slerp(from, to, Mathf::Min(1.0f, maxDegrees / ang));
     }
 
+    /// Decompose into a rotation angle (degrees, 0..360) about a unit axis; the inverse
+    /// of AngleAxis. Works on non-unit input (normalized first). The identity (or any
+    /// rotation too small to define an axis) returns angle 0 and axis +X.
+    void ToAngleAxis(float& degrees, Vec3& axis) const {
+        Quat n = Normalized();
+        if (n.w < 0.0f) n = {-n.x, -n.y, -n.z, -n.w};      // shortest representation
+        float w = Mathf::Clamp(n.w, -1.0f, 1.0f);
+        float s = Mathf::Sqrt(Mathf::Max(0.0f, 1.0f - w * w));
+        if (s < 1e-6f) { degrees = 0.0f; axis = Vec3{1.0f, 0.0f, 0.0f}; return; }
+        degrees = 2.0f * std::acos(w) * Mathf::Rad2Deg;
+        axis = Vec3{n.x / s, n.y / s, n.z / s};
+    }
+
     static const Quat Identity;
 };
 

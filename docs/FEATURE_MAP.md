@@ -14,7 +14,7 @@ Paths are under `engine/include/okay/` unless they start with `editor/`,
 
 | # | Area | Sub-areas |
 |---|---|---|
-| 1 | Core & scene | 1.1 Loop and time, 1.2 Timers and tweens, 1.3 Scene graph, 1.4 Scene lifecycle, 1.5 Scene serializer, 1.6 Prefabs and templates, 1.7 Saves and prefs, 1.8 Localization, 1.9 Events and ECS, 1.10 Logging and profiling |
+| 1 | Core & scene | 1.1 Loop and time, 1.2 Timers and tweens, 1.3 Scene graph, 1.4 Scene lifecycle, 1.5 Scene serializer, 1.6 Prefabs and templates, 1.7 Saves and prefs, 1.8 Localization, 1.9 Events and ECS, 1.10 Logging and profiling, 1.11 Math, geometry, noise, RNG |
 | 2 | Rendering & world | 2.1 Renderers, 2.2 Materials and textures, 2.3 Lighting and shadows, 2.4 Sky, fog and weather, 2.5 Post-processing, 2.6 Terrain and water, 2.7 Particles and lines, 2.8 Culling and skinning, 2.9 Fonts and images |
 | 3 | 3D modeling & import | 3.1 Edit mode, 3.2 Edge and loop tools, 3.3 Modifiers, 3.4 UV tools, 3.5 Mesh assets and primitives, 3.6 Model import, 3.7 Rigging and playable setup |
 | 4 | Characters & cameras | 4.1 Player Controller, 4.2 Stances and movement, 4.3 2D and 2.5D controllers, 4.4 Shooter and top-down, 4.5 Vehicles, 4.6 Third-person camera, 4.7 First-person camera and hands, 4.8 Virtual cameras and dollies, 4.9 Blocky Character and customization |
@@ -214,6 +214,7 @@ You can also say "area 5 but not Grok's parts" or "everything open in 1".
 | 1.8 | Localization: string tables, plurals, font fallback | `Core/Game` (runtime), `Components/*` consumers | `localization.md` | Number and date formatting, plural rules |
 | 1.9 | Events and ECS: EventBus, ECS World, SceneBridge | `Core/EventBus`, `ECS/World`, `ECS/SceneBridge`, `ECS/Systems` | - | ECS command buffer |
 | 1.10 | Logging and profiling | `Core/Log`, `Core/Profiler` | `core_logging_profiling.md` (in review) | Trace export in review |
+| 1.11 | Math, geometry, noise, RNG: Mat3, Decompose, Bounds/Ray/Plane/OBB/Capsule/ViewFrustum, Vec2i/Vec3i, noise, curves, colour spaces, `Rng` streams | `Math/*`, `Core/Rng` | `math_geometry.md` | Older private noise copies not yet migrated |
 
 Editor: Scene Manager panel (`editor/SceneManagerPanel.*`), Localization window.
 

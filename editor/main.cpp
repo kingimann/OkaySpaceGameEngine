@@ -40660,7 +40660,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 }
                 const Vec3 pivot = g_meModal.PivotWorld();
                 const mdl::Ray rayNow = mouseRay(io.MousePos);
-                const Vec3 viewDir = mouseRay(ImVec2(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f)).dir;
+                const Vec3 viewDir = mouseRay(ImVec2(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f)).direction;
                 const bool snap = g_snap || io.KeyCtrl;
                 ImVec2 ps; const bool psOk = toScreen(vp * Vec4{pivot, 1}, ps);
                 const mdl::AxisLock lock = g_meModal.lock;

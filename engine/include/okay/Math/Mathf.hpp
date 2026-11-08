@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 namespace okay {
 
@@ -10,7 +11,10 @@ struct Mathf {
     static constexpr float Deg2Rad  = PI / 180.0f;
     static constexpr float Rad2Deg  = 180.0f / PI;
     static constexpr float Epsilon  = 1e-6f;
-    static constexpr float Infinity = 3.402823466e+38f;
+    /// A real IEEE infinity (so `x == Mathf::Infinity` and std::isinf behave as expected).
+    /// Use `MaxFloat` for the largest finite float.
+    static constexpr float Infinity = std::numeric_limits<float>::infinity();
+    static constexpr float MaxFloat = std::numeric_limits<float>::max();
 
     static float Abs(float v)             { return std::fabs(v); }
     static float Sqrt(float v)            { return std::sqrt(v); }

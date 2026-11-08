@@ -137,21 +137,31 @@ public:
     // getting up from prone plays `getUpClip` once. A stance with no clips of
     // its own keeps the standing ones. Active only with driveByMovement.
     std::string crouchClip, crouchWalkClip, proneClip, crawlClip, getUpClip;
+    /// Optional directional locomotion. Empty slots keep the forward walk/run blend.
+    std::string strafeLeftClip, strafeRightClip, walkBackClip, runBackClip;
     /// The stance whose clips play (0 stand, 1 crouch, 2 prone).
     int StanceClips() const { return m_stance; }
 
     // ---- Locomotion slots: the named clip slots above, as one list ----
     enum Slot { SlotIdle, SlotWalk, SlotRun, SlotJump, SlotFall, SlotLand, SlotCrouch,
-                SlotCrouchWalk, SlotProne, SlotCrawl, SlotGetUp, SlotCount };
+                SlotCrouchWalk, SlotProne, SlotCrawl, SlotGetUp,
+                SlotStrafeLeft, SlotStrafeRight, SlotWalkBack, SlotRunBack, SlotCount };
     static const char* SlotName(int s) {
         static const char* const n[SlotCount] = {"Idle", "Walk", "Run", "Jump", "Fall", "Land", "Crouch",
-                                                 "Crouch Walk", "Prone", "Crawl", "Get Up"};
+                                                 "Crouch Walk", "Prone", "Crawl", "Get Up",
+                                                 "Strafe Left", "Strafe Right", "Walk Back", "Run Back"};
         return s >= 0 && s < SlotCount ? n[s] : "";
+    }
+    /// True when any strafe or backward clip is mapped. Otherwise locomotion stays
+    /// the forward speed blend.
+    bool HasDirectionalClips() const {
+        return !strafeLeftClip.empty() || !strafeRightClip.empty() || !walkBackClip.empty() || !runBackClip.empty();
     }
     /// The clip name a slot plays ("" = empty).
     std::string& SlotClip(int s) {
         std::string* p[SlotCount] = {&idleClip, &walkClip, &runClip, &jumpClip, &fallClip, &landClip,
-                                     &crouchClip, &crouchWalkClip, &proneClip, &crawlClip, &getUpClip};
+                                     &crouchClip, &crouchWalkClip, &proneClip, &crawlClip, &getUpClip,
+                                     &strafeLeftClip, &strafeRightClip, &walkBackClip, &runBackClip};
         static std::string none;
         if (s < 0 || s >= SlotCount) { none.clear(); return none; }
         return *p[s];
@@ -193,6 +203,9 @@ public:
     }
     /// The rate the playing locomotion clip is running at now (1 = authored pace).
     float CurrentStrideRate() const { return m_strideRate; }
+    /// +1 the walk plays forward, -1 it plays backward (no back clip, moving backward).
+    /// 0 while standing. A back or strafe clip playing as authored is +1.
+    int LocomotionSign() const { return m_appliedSign; }
 
     // ---- Built-in fallback: a slot with no clip uses the engine's own animation ----
     /// With a Character in external-rig mode on the player (a Humanoid Retarget
@@ -314,6 +327,17 @@ public:
         const bool airClip = m_inAir && (CurrentName() == jumpClip || CurrentName() == fallClip);
         // A graph (or its blend tree) already poses the model. The smooth blend
         // would pick clips on its own and fight that.
+        // Direction from the character: 0 forward, +90 right, 180 backward.
+        // Without a back clip, a forward walk played backward is a backpedal,
+        // not a moonwalk. A back or strafe clip plays as authored instead.
+        m_cycleSign = 1;
+        if (spd > 0.2f) {
+            float ang = 0.0f;
+            const bool backClip = SlotFilled(SlotWalkBack) || SlotFilled(SlotRunBack);
+            if (TravelDeg(ang) && std::fabs(ang) > 100.0f && !backClip) m_cycleSign = -1;
+        }
+        if (!graph && !externalDrive && spd >= 0.0f && !m_once && !airClip && !builtinNow && m_stance == 0 &&
+            HasDirectionalClips() && DirectionalBlendStep(dt, spd)) return;
         if (!graph && !externalDrive && spd >= 0.0f && smoothLocomotion && !m_once && !airClip && !builtinNow) {
             // Blend by the speed eased over ~0.1 s: a body stopped dead by a wall
             // (or a respawn) snapped from the walk to the idle in one frame.
@@ -327,7 +351,9 @@ public:
             float len = ClipLength(active);
             // Stride matching: the walk / run clips step at the pace the body moves.
             const float rate = (strideMatch && !rootMotion && spd >= 0.0f && !m_once && !m_inAir) ? m_strideRate : 1.0f;
-            float t0 = m_clock, t1 = m_clock + dt * speed * rate;
+            const float dir = (float)CycleSignFor(m_slot, m_slot);
+            m_appliedSign = spd > 0.2f ? (int)dir : 0;
+            float t0 = m_clock, t1 = m_clock + dt * speed * rate * dir;
             const bool first = m_fromStart && t1 > t0;
             if (t1 > t0) m_fromStart = false;
             // A jump clip holds its last frame when the body is still in the air.
@@ -351,7 +377,14 @@ public:
                 if (m_stateMirror) d.x = -d.x;
                 ApplyRootMotion(d, yaw, dt);
             }
-            m_clock = len > 0.0f ? (wrap ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
+            float clock = t1;
+            if (len > 0.0f) {
+                if (wrap) {
+                    clock = std::fmod(clock, len);
+                    if (clock < 0.0f) clock += len;
+                } else clock = std::fmin(std::fmax(clock, 0.0f), len);
+            }
+            m_clock = clock;
             if (len > 0.0f) m_phase = m_clock / len;   // a hand-over to the smooth blend keeps the step
             ApplyPose(active, m_clock);
             // A finished one-shot returns to the clip that was playing before it
@@ -404,6 +437,15 @@ public:
         const bool wasRun = m_slot == SlotRun, wasWalk = m_slot == SlotWalk || m_slot == SlotRun;
         float runAt  = wasRun ? RunSwitchSpeed() * 0.9f : RunSwitchSpeed();
         float walkAt = wasWalk ? WalkStartSpeed() * 0.9f : WalkStartSpeed();
+        if (m_stance == 0) {
+            float ang = 0.0f;
+            if (TravelDeg(ang)) {
+                if (std::fabs(ang) > 135.0f && (SlotFilled(SlotWalkBack) || SlotFilled(SlotRunBack)))
+                    return (spd >= runAt && SlotFilled(SlotRunBack)) ? SlotRunBack : SlotWalkBack;
+                if (ang > 50.0f && ang < 130.0f && SlotFilled(SlotStrafeRight)) return SlotStrafeRight;
+                if (ang < -50.0f && ang > -130.0f && SlotFilled(SlotStrafeLeft)) return SlotStrafeLeft;
+            }
+        }
         if (m_stance != 0) {
             const int a = m_stance == 2 ? SlotProne : SlotCrouch, b = m_stance == 2 ? SlotCrawl : SlotCrouchWalk;
             const bool moving = spd > walkAt * (m_stance == 1 ? 0.5f : 0.25f);
@@ -443,6 +485,7 @@ public:
     /// just wrote this frame (Update order between objects doesn't matter).
     void LateUpdate(float dt) override {
         CrossfadeStep(dt);
+        YawLowerBody();
         // Layers (and anything else that poses on top of the base pose) run
         // after the base pose and its crossfade are final.
         // (Owners unregister in their OnDestroy — RemoveComponent and object
@@ -460,6 +503,146 @@ public:
             if (m_postPose[i].owner == owner) { m_postPose.erase(m_postPose.begin() + i); return; }
     }
 
+    /// Turn the hips toward the way the body is moving when the clip itself doesn't
+    /// face that way. Moving backward with no back clip plays the walk in reverse
+    /// and the hips take only the leftover yaw, so the legs are not clamped to a
+    /// forward step. A strafe or back clip already faces the travel: leave it.
+    void YawLowerBody() {
+        if (!transform) return;
+        if (m_slot == SlotWalkBack || m_slot == SlotRunBack || m_slot == SlotStrafeLeft || m_slot == SlotStrafeRight) return;
+        float ang = 0.0f;
+        if (!TravelDeg(ang)) return;
+        Character* ch = nullptr;
+        for (Transform* t = transform; t && !ch; t = t->Parent())
+            if (t->gameObject) ch = t->gameObject->GetComponent<Character>();
+        if (!ch || ch->moveSpeed < 0.2f) return;
+        float yaw = std::fabs(ang) > 100.0f ? (ang > 0.0f ? ang - 180.0f : ang + 180.0f) : ang;
+        if (yaw > 80.0f) yaw = 80.0f;
+        if (yaw < -80.0f) yaw = -80.0f;
+        if (std::fabs(yaw) < 1.0f) return;
+        Transform* hips = NodeT("Hips");
+        if (!hips) hips = NodeT("mixamorig:Hips");
+        if (!hips) hips = NodeT("hip");
+        if (!hips) return;
+        // World up, written in the hips' parent space. Parent-space up is not
+        // vertical on a tilted armature, and yawing around it tips the pelvis.
+        // local' = AngleAxis(θ, parent⁻¹ · worldUp) · local is a pure world yaw.
+        Transform* parent = hips->Parent();
+        Vec3 axis = parent ? parent->Rotation().Inverse() * Vec3::Up : Vec3::Up;
+        if (axis.SqrMagnitude() < 1e-8f) axis = Vec3::Up;
+        // Positive moveAngle is toward the body's right (+X when facing -Z).
+        // A positive turn about up swings that facing toward -X, so the sign flips
+        // and the legs turn toward the travel instead of away from it.
+        hips->localRotation = (Quat::AngleAxis(-yaw, axis) * hips->localRotation).Normalized();
+        // The hip yaw turns the chest with the legs. Twist the spine back by the
+        // same world yaw so the upper body keeps facing the aim.
+        Transform* spine = NodeT("Spine");
+        if (!spine) spine = NodeT("mixamorig:Spine");
+        if (!spine) spine = NodeT("spine");
+        if (!spine) spine = NodeT("Chest");
+        if (!spine) spine = NodeT("mixamorig:Chest");
+        if (!spine) return;
+        Transform* sp = spine->Parent();
+        Vec3 saxis = sp ? sp->Rotation().Inverse() * Vec3::Up : Vec3::Up;
+        if (saxis.SqrMagnitude() < 1e-8f) saxis = Vec3::Up;
+        spine->localRotation = (Quat::AngleAxis(yaw, saxis) * spine->localRotation).Normalized();
+    }
+    /// Travel direction relative to facing, degrees, -180..180. False with no Character.
+    bool TravelDeg(float& out) const {
+        for (Transform* t = transform; t; t = t->Parent()) {
+            Character* ch = t->gameObject ? t->gameObject->GetComponent<Character>() : nullptr;
+            if (!ch) continue;
+            out = std::fmod(ch->moveAngle + 540.0f, 360.0f) - 180.0f;
+            return true;
+        }
+        return false;
+    }
+    /// Forward walk/run played backward when there is no back clip. Directional clips play forward.
+    int CycleSignFor(int slotA, int slotB) const {
+        if (m_cycleSign >= 0) return 1;
+        auto forward = [](int s) {
+            return s == SlotIdle || s == SlotWalk || s == SlotRun || s == SlotCrouchWalk || s == SlotCrawl;
+        };
+        return (forward(slotA) && forward(slotB)) ? -1 : 1;
+    }
+    /// Strafe and back clips: blend by move direction (right = +X, forward = -Z), not speed alone.
+    bool DirectionalBlendStep(float dt, float spd) {
+        if (!gameObject || !gameObject->scene()) return false;
+        float ang = 0.0f;
+        TravelDeg(ang);
+        // Strafe clips with no back clip: the back sector is the walk-only path,
+        // the forward walk played in reverse. The 2D blend has nothing behind it.
+        if (std::fabs(ang) > 100.0f && !SlotFilled(SlotWalkBack) && !SlotFilled(SlotRunBack)) {
+            m_cycleSign = -1;
+            m_appliedSign = spd > 0.2f ? -1 : 0;
+            return false;
+        }
+        const float rad = ang * 0.017453292f;
+        const float mx = spd * std::sin(rad);
+        const float mz = -spd * std::cos(rad);
+        const float wAt = std::fmax(0.2f, WalkStartSpeed());
+        const float rAt = std::fmax(wAt + 0.2f, RunSwitchSpeed());
+        struct Mot { int clip; float x, y; };
+        std::vector<Mot> mot;
+        auto add = [&](int slot, float x, float y) {
+            const int ci = FindClip(SlotClip(slot));
+            if (ci >= 0 && ClipLength(ci) > 0.0f) mot.push_back({ci, x, y});
+        };
+        add(SlotIdle, 0.0f, 0.0f);
+        add(SlotWalk, 0.0f, -wAt);
+        add(SlotRun, 0.0f, -rAt);
+        add(SlotStrafeLeft, -wAt, 0.0f);
+        add(SlotStrafeRight, wAt, 0.0f);
+        add(SlotWalkBack, 0.0f, wAt);
+        add(SlotRunBack, 0.0f, rAt);
+        if (mot.size() < 2) return false;
+        std::vector<float> w(mot.size(), 0.0f);
+        float sum = 0.0f;
+        for (std::size_t i = 0; i < mot.size(); ++i) {
+            float wi = 1.0f;
+            for (std::size_t j = 0; j < mot.size() && wi > 0.0f; ++j) {
+                if (i == j) continue;
+                const float vx = mot[j].x - mot[i].x, vy = mot[j].y - mot[i].y;
+                const float l2 = vx * vx + vy * vy;
+                if (l2 < 1e-8f) continue;
+                float h = 1.0f - ((mx - mot[i].x) * vx + (mz - mot[i].y) * vy) / l2;
+                if (h < 0.0f) h = 0.0f;
+                if (h > 1.0f) h = 1.0f;
+                wi = std::fmin(wi, h);
+            }
+            w[i] = wi; sum += wi;
+        }
+        int a = 0, b = 0;
+        if (sum <= 1e-6f) {
+            float best = 1e30f;
+            for (std::size_t i = 0; i < mot.size(); ++i) {
+                const float dx = mx - mot[i].x, dy = mz - mot[i].y, d = dx * dx + dy * dy;
+                if (d < best) { best = d; a = (int)i; }
+            }
+            b = a; w[a] = 1.0f;
+        } else {
+            float wa = -1.0f, wb = -1.0f;
+            for (std::size_t i = 0; i < w.size(); ++i) {
+                if (w[i] >= wa) { wb = wa; b = a; wa = w[i]; a = (int)i; }
+                else if (w[i] > wb) { wb = w[i]; b = (int)i; }
+            }
+        }
+        const float wa = w[a], wb = (a == b) ? 0.0f : w[b];
+        const float blend = (wa + wb) > 1e-4f ? wb / (wa + wb) : 0.0f;
+        const float rate = std::fmin(kStrideMaxRate, std::fmax(0.5f, spd / std::fmax(wAt, 0.2f)));
+        m_appliedSign = spd > 0.2f ? 1 : 0;
+        m_slot = a == b || blend < 0.5f ? SlotOfClip(mot[a].clip) : SlotOfClip(mot[b].clip);
+        m_prevSlot = m_slot;
+        m_strideRate = rate;
+        m_cycleSign = 1;
+        return BlendClips(dt * rate, mot[a].clip, mot[b].clip, blend);
+    }
+    int SlotOfClip(int ci) const {
+        if (ci < 0) return SlotIdle;
+        const std::string& n = clips[(std::size_t)ci].name;
+        for (int s = 0; s < SlotCount; ++s) if (SlotClip(s) == n) return s;
+        return SlotWalk;
+    }
     void CrossfadeStep(float dt) {
         if (m_blend.empty() || !gameObject) return;
         Scene* sc = gameObject->scene();
@@ -838,7 +1021,9 @@ public:
         m_slot = w < 0.5f ? slotA : slotB;
         m_prevSlot = m_slot;
         m_strideRate = rate;
-        const bool posed = BlendClips(dt * rate, A, B, w);
+        const int dir = CycleSignFor(slotA, slotB);
+        m_appliedSign = (slotA == SlotIdle && w < 0.15f) ? 0 : dir;
+        const bool posed = BlendClips(dt * rate * (float)dir, A, B, w);
         // Keep the single-clip clock on the blend's phase, so a hand-over to the discrete
         // path (a slot left to the built-in animation) carries on from the same step.
         if (posed && active >= 0 && active < (int)clips.size()) m_clock = m_phase * ClipLength(active);
@@ -1496,6 +1681,8 @@ private:
     float                    m_phase = 0.0f;  ///< shared normalized cycle for smooth locomotion
     float                    m_smoothW = 0.0f;      ///< last idle -> walk blend weight (a step-off restarts the walk cycle)
     float                    m_strideRate = 1.0f;   ///< playback rate that matches the clip's steps to the ground speed
+    int                      m_cycleSign = 1;       ///< -1: play the forward walk backward (no back clip)
+    int                      m_appliedSign = 0;     ///< what LocomotionSign reports
     bool                     m_builtinOwns = false; ///< the built-in animation (not a clip) poses the model
     int                      m_slot = SlotIdle;     ///< the locomotion slot showing (clip or built-in)
     int                      m_prevSlot = SlotIdle; ///< the slot before the last switch

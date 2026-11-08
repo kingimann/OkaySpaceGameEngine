@@ -735,6 +735,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             !ma->crawlClip.empty() || !ma->getUpClip.empty())
             out << "  modelanimstance " << Quote(ma->crouchClip) << " " << Quote(ma->crouchWalkClip)
                 << " " << Quote(ma->proneClip) << " " << Quote(ma->crawlClip) << " " << Quote(ma->getUpClip) << "\n";
+        if (ma->HasDirectionalClips())
+            out << "  modelanimdir " << Quote(ma->strafeLeftClip) << " " << Quote(ma->strafeRightClip)
+                << " " << Quote(ma->walkBackClip) << " " << Quote(ma->runBackClip) << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
         if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty() || ma->rootMotionRotation || ma->rootMotionApplyTo)
@@ -3912,6 +3915,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->proneClip      = ReadQuoted(in);
                     ma->crawlClip      = ReadQuoted(in);
                     ma->getUpClip      = ReadQuoted(in);
+                } else if (field == "modelanimdir") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    ma->strafeLeftClip  = ReadQuoted(in);
+                    ma->strafeRightClip = ReadQuoted(in);
+                    ma->walkBackClip    = ReadQuoted(in);
+                    ma->runBackClip     = ReadQuoted(in);
                 } else if (field == "modelanimblend") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();

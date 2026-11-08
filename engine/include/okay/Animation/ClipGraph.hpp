@@ -31,6 +31,9 @@ inline int Build(AnimStateMachine& sm, const ModelAnimator& ma) {
     const std::string jump = clip(ma.jumpClip), fall = clip(ma.fallClip), land = clip(ma.landClip);
     const std::string crouch = clip(ma.crouchClip), crouchWalk = clip(ma.crouchWalkClip);
     const std::string prone = clip(ma.proneClip), crawl = clip(ma.crawlClip), getUp = clip(ma.getUpClip);
+    const std::string strafeL = clip(ma.strafeLeftClip), strafeR = clip(ma.strafeRightClip);
+    const std::string walkBack = clip(ma.walkBackClip), runBack = clip(ma.runBackClip);
+    const bool directional = !strafeL.empty() || !strafeR.empty() || !walkBack.empty() || !runBack.empty();
     // The blend is fully "walk" at the walk threshold and fully "run" at the run
     // threshold: the speeds the importer measured on the player's controller.
     const float walkAt = ma.walkThreshold > 0.0f ? ma.walkThreshold : 1.5f;
@@ -43,6 +46,7 @@ inline int Build(AnimStateMachine& sm, const ModelAnimator& ma) {
     };
     param("speed", 0); param("verticalSpeed", 0); param("grounded", 1);
     param("crouch", 1); param("prone", 1); param("jump", 2);
+    param("moveX", 0); param("moveZ", 0);
 
     auto tr = [](const std::string& to, C c, const char* p, float v, float blend) {
         SM::Transition t; t.to = to; t.cond = c; t.param = p; t.value = v; t.blend = blend; return t;
@@ -66,6 +70,21 @@ inline int Build(AnimStateMachine& sm, const ModelAnimator& ma) {
     // Crouched and lying down the body moves slower: their moving clip is fully
     // on at half the walk speed.
     SM::State loco = moves("Locomotion", idle, walk, run, walkAt, 20, 140);
+    // Characters face local -Z, and AnimLink reports velocity in that frame, so
+    // moving forward is negative moveZ and strafing right is positive moveX.
+    if (directional && (!walk.empty() || !idle.empty())) {
+        loco.blendTree = true; loco.blendDims = 2;
+        loco.blendParam = "moveX"; loco.blendParamY = "moveZ";
+        loco.motions.clear();
+        const std::string& base = !idle.empty() ? idle : walk;
+        loco.motions.push_back({base, 0.0f, 0.0f});
+        if (!walk.empty() && walk != base) loco.motions.push_back({walk, 0.0f, -walkAt});
+        if (!run.empty()) loco.motions.push_back({run, 0.0f, -runAt});
+        if (!strafeL.empty()) loco.motions.push_back({strafeL, -walkAt, 0.0f});
+        if (!strafeR.empty()) loco.motions.push_back({strafeR, walkAt, 0.0f});
+        if (!walkBack.empty()) loco.motions.push_back({walkBack, 0.0f, walkAt});
+        if (!runBack.empty()) loco.motions.push_back({runBack, 0.0f, runAt});
+    }
     if (hasProne) loco.transitions.push_back(tr("Prone", C::BoolTrue, "prone", 0, 0.3f));
     if (hasCrouch) loco.transitions.push_back(tr("Crouch", C::BoolTrue, "crouch", 0, 0.25f));
     sm.states.push_back(loco);
@@ -121,6 +140,41 @@ inline int Build(AnimStateMachine& sm, const ModelAnimator& ma) {
         sm.states.push_back(l);
     }
     sm.entry = "Locomotion";
+    return (int)sm.states.size();
+}
+
+/// Put this model's locomotion blend into `sm` without removing the other states.
+/// An existing Locomotion state keeps its transitions; otherwise one is added.
+/// The Character's action graph (death, sit, gestures) stays.
+inline int InsertLocomotion(AnimStateMachine& sm, const ModelAnimator& ma) {
+    using SM = AnimStateMachine;
+    AnimStateMachine built;
+    if (Build(built, ma) <= 0) return (int)sm.states.size();
+    const SM::State* loco = nullptr;
+    for (const auto& st : built.states) if (st.name == "Locomotion") loco = &st;
+    if (!loco) return (int)sm.states.size();
+    for (const auto& p : built.params) {
+        bool have = false;
+        for (const auto& e : sm.params) if (e.name == p.name) have = true;
+        if (!have) sm.params.push_back(p);
+    }
+    for (auto& st : sm.states) if (st.name == "Locomotion") {
+        const auto transitions = st.transitions;
+        const float nx = st.nx, ny = st.ny;
+        st.blendTree = loco->blendTree;
+        st.blendDims = loco->blendDims;
+        st.blendParam = loco->blendParam;
+        st.blendParamY = loco->blendParamY;
+        st.motions = loco->motions;
+        st.clip = loco->clip;
+        st.transitions = transitions;
+        st.nx = nx; st.ny = ny;
+        return (int)sm.states.size();
+    }
+    SM::State add = *loco;
+    add.transitions.clear();
+    if (!sm.states.empty()) { add.nx = sm.states.front().nx + 220.0f; add.ny = sm.states.front().ny; }
+    sm.states.push_back(std::move(add));
     return (int)sm.states.size();
 }
 

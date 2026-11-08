@@ -9,7 +9,6 @@
 #include <functional>
 #include <iostream>
 #include <map>
-#include <mutex>
 #include <sstream>
 #include <string>
 
@@ -71,18 +70,18 @@ public:
 
     /// Override the threshold for one category (beats minLevel, both ways).
     static void SetCategoryLevel(const std::string& category, Level level) {
-        std::lock_guard<std::recursive_mutex> lk(St().mu);
+        RecGuard lk(St().mu);
         St().cats[category] = level;
         St().anyCats = true;
     }
     static void ClearCategoryLevels() {
-        std::lock_guard<std::recursive_mutex> lk(St().mu);
+        RecGuard lk(St().mu);
         St().cats.clear();
         St().anyCats = false;
     }
     /// The level a category currently logs at ("" or unknown = minLevel).
     static Level EffectiveLevel(const std::string& category) {
-        std::lock_guard<std::recursive_mutex> lk(St().mu);
+        RecGuard lk(St().mu);
         auto it = St().cats.find(category);
         return it != St().cats.end() ? it->second : minLevel;
     }
@@ -91,7 +90,7 @@ public:
     /// minLevel, name=level sets a category. Levels: trace, info, warn|warning,
     /// error (any case). Malformed entries are skipped. Returns entries applied.
     static int Configure(const std::string& spec) {
-        std::lock_guard<std::recursive_mutex> lk(St().mu);
+        RecGuard lk(St().mu);
         int applied = 0;
         std::size_t pos = 0;
         while (pos <= spec.size()) {
@@ -118,7 +117,7 @@ public:
     /// would push it past maxBytes: path -> path.1 -> path.2 ... keeping `keep`
     /// old files. Flushed on Warning and above. False if it cannot be opened.
     static bool OpenFile(const std::string& path, std::size_t maxBytes = 5u * 1024u * 1024u, int keep = 3) {
-        std::lock_guard<std::recursive_mutex> lk(St().mu);
+        RecGuard lk(St().mu);
         CloseFileLocked();
         std::error_code ec;
         std::uintmax_t sz = std::filesystem::file_size(path, ec);
@@ -131,17 +130,39 @@ public:
         return true;
     }
     static void CloseFile() {
-        std::lock_guard<std::recursive_mutex> lk(St().mu);
+        RecGuard lk(St().mu);
         CloseFileLocked();
     }
     static bool FileOpen() {
-        std::lock_guard<std::recursive_mutex> lk(St().mu);
+        RecGuard lk(St().mu);
         return St().file.is_open();
     }
 
 private:
+    // A small recursive lock built on std::atomic only. <mutex> and <thread> are not
+    // usable with MinGW's "win32" thread model, and this header is included everywhere.
+    struct RecLock {
+        std::atomic<const void*> owner{nullptr};
+        int depth = 0;
+        static const void* Me() { static thread_local char tag; return &tag; }
+        void lock() {
+            const void* me = Me();
+            if (owner.load(std::memory_order_relaxed) == me) { ++depth; return; }
+            const void* expected = nullptr;
+            while (!owner.compare_exchange_weak(expected, me, std::memory_order_acquire)) expected = nullptr;
+            depth = 1;
+        }
+        void unlock() { if (--depth == 0) owner.store(nullptr, std::memory_order_release); }
+    };
+    struct RecGuard {
+        RecLock& l;
+        explicit RecGuard(RecLock& lock) : l(lock) { l.lock(); }
+        ~RecGuard() { l.unlock(); }
+        RecGuard(const RecGuard&) = delete;
+        RecGuard& operator=(const RecGuard&) = delete;
+    };
     struct State {
-        std::recursive_mutex mu;     // recursive: a sink may itself log
+        RecLock mu;                  // recursive: a sink may itself log
         std::map<std::string, Level> cats;
         std::atomic<bool> anyCats{false};
         std::ofstream file;
@@ -177,7 +198,7 @@ private:
     static bool Enabled(Level level, const char* category) {
         EnsureInit();
         if (category && St().anyCats.load(std::memory_order_relaxed)) {
-            std::lock_guard<std::recursive_mutex> lk(St().mu);
+            RecGuard lk(St().mu);
             auto it = St().cats.find(category);
             if (it != St().cats.end()) return level >= it->second;
         }
@@ -241,7 +262,7 @@ private:
         (oss << ... << args);
         const std::string msg = oss.str();
 
-        std::lock_guard<std::recursive_mutex> lk(St().mu);
+        RecGuard lk(St().mu);
         std::string line;
         if (showTimestamps) line += Stamp();
         line += "[okay]["; line += tag; line += ']';

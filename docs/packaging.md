@@ -42,7 +42,7 @@ shown and writes `README.txt`. Zip `build-win-dist/` for release.
 
 ## Shipping a single *game* (not the toolset)
 
-When you export a game from the editor (**File → Build Game**), that output is its
+When you export a game from the editor (**File → Build Settings…**), that output is its
 own self-contained folder — `<YourGame>.exe` (a copy of the player runtime) +
 `SDL2.dll` + your assets. For Steam auto-updates, upload that folder as your depot
 (see [steam_release.md](steam_release.md)).

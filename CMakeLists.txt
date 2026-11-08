@@ -8,6 +8,7 @@ project(OkaySpaceGameEngine
 # The version string is only compiled into the editor and launcher (their targets
 # add OKAY_ENGINE_VERSION), so a version bump doesn't change every file's compile
 # flags and the release build's compiler cache keeps hitting.
+include(${CMAKE_SOURCE_DIR}/cmake/OkayWinVersion.cmake)   # okay_win_version(): Windows exe name / version / manifest
 set(OKAY_VERSION_DEFINE OKAY_ENGINE_VERSION="${PROJECT_VERSION}")
 
 # ---- Global settings --------------------------------------------------

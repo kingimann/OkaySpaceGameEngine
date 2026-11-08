@@ -10,6 +10,7 @@ _Last updated: 2026-11-08 17:30 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.848.0 | Speed fit for every player controller (#561); strafe blend (#537); IK follows state weight (#535); more script builtins, navmesh calls and music, camera, particle and inventory visual-script nodes (#556, #562, #563, #566); build-cost and refund fixes (#564) |
 | 2.847.0 | Imported characters with their own Walk and Run clips walk on W and run on Shift (#541); a new script starts as an empty Start and Update (#543); Windows exes carry their own name, description and version (#545); docs index, a README checked against the code and the feature map (#544, #546) |
 | 2.846.0 | Built-in walk: no more hip snap at every footfall, which was the leg jitter and head bob (#540) |
 | 2.845.0 | VRoid, Character Creator and Daz characters animate; a Mixamo character with its own clips no longer stays low after a crouch; rig sweep test (#528) |

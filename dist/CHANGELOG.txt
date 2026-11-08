@@ -1,5 +1,37 @@
 OkaySpace Game Engine — Changelog
 
+v2.848.0
+  Characters
+  - The speed fit from 2.847.0 now covers every player controller (third-person
+    shooter, click to move, top-down, top-down shooter, 2.5D platformer), not
+    only third-person and first-person. A Walk Speed or Run Speed still at that
+    controller's own default is set to a pace the model's clips can show (for
+    example about 2.0 and 5.0 m/s), so a default speed changes when you attach a
+    model with its own Walk and Run clips. A speed you set yourself is kept.
+    Attaching a different model refits (#561).
+  - Strafe blend: sideways and backward movement blend cleanly, legs follow the
+    travel direction only when you turn that on, and a missing locomotion clip
+    falls back to the built-in one (#537).
+  - IK follows an Animator state's weight, including look and aim; the look
+    weight defaults to fully on (#535).
+  Scripts and tools
+  - New script builtins: hurt, heal, add_xp, get_hp, get_max_hp, is_dead,
+    child_count, get_child, parent_of, light setters, WaitUntil and WaitWhile,
+    and a real WaitForSecondsRealtime (#556).
+  - New navmesh script calls: nav_path_exists, nav_path_length,
+    nav_point_walkable, nav_nearest_point, plus camera_follow (#566).
+  - New visual-script nodes: Music Play/Stop/Pause/Resume/Next, Camera Shake,
+    Set FOV, Camera Follow, Particle Play/Stop/Burst (#566), and Add Item,
+    Remove Item, Has Item, Item Count, Equip, Craft, Loot Roll and Spawn
+    Pickup for the inventory (#562).
+  - New per-kind IK and Animator script tools, and IK gizmos for the selected
+    object (#563).
+  Fixes
+  - Building, upgrading and repairing a structure no longer takes materials
+    when you can't afford it; a demolish refund that doesn't fit in the bag
+    drops as a pickup instead of vanishing; item names match ignoring case and
+    surrounding spaces (#564).
+
 v2.847.0
   Characters
   - A character model that comes with its own Walk and Run clips now walks

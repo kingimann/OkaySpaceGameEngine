@@ -113,7 +113,7 @@ Multiplayer is built in. From OkayScript, any player can host and others join:
 update(dt) {
   if (key_down("h")) net_host(45000)
   if (key_down("j")) net_join("127.0.0.1", 45000)
-  net_send("pos", x() + "," + y());          // tell everyone where you are
+  net_send("pos", pos_x() + "," + pos_y());          // tell everyone where you are
   while (net_poll()) {
     if (net_msg_channel() == "pos") { /* net_msg_data(), net_msg_from() */ }
   }
@@ -127,8 +127,8 @@ press Play. Players behind routers connect through the bundled relay. See
 
 ## Build from source
 
-Requirements: CMake 3.16 or newer and a C++17 compiler (tested with GCC 13 and
-Clang 18). The core build needs nothing else.
+Requirements: CMake 3.16 or newer and a C++17 compiler (CI builds with the
+compiler Ubuntu's `g++` package provides, and with MinGW for Windows). The core build needs nothing else.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -147,8 +147,7 @@ cmake --build build -j
 ```
 
 **The launcher** builds, updates and runs the game in one step:
-`./launch.sh` (Linux/macOS) or `launch.bat` (Windows). Flags: `--check-only`,
-`--no-update`, `--no-run`, `--game <name>`.
+`./launch.sh` (Linux/macOS) or `launch.bat` (Windows).
 
 **Windows builds** are cross-compiled from Linux with MinGW-w64:
 
@@ -169,7 +168,6 @@ launcher is the one thing to double-click and the rest sits in `Tools/`
 cmake -S . -B build \
   -DOKAY_WITH_LUA=ON \        # Lua scripting     (needs liblua dev)
   -DOKAY_WITH_CSHARP=ON \     # C# scripting      (needs Mono + mcs)
-  -DOKAY_WITH_PLAYFAB=ON \    # PlayFab REST      (needs libcurl)
   -DOKAY_WITH_STEAM=ON -DSTEAMWORKS_SDK_PATH=/path/to/sdk   # Steamworks
 ```
 

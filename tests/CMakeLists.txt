@@ -1422,3 +1422,7 @@ if(UNIX)
     target_link_libraries(test_core_audit_input PRIVATE okay::engine)
     add_test(NAME core_audit_input COMMAND test_core_audit_input)
 endif()
+
+add_executable(test_ecs_commands test_ecs_commands.cpp)
+target_link_libraries(test_ecs_commands PRIVATE okay::engine)
+add_test(NAME ecs_commands COMMAND test_ecs_commands)

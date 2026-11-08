@@ -1,5 +1,9 @@
 # OkayScript
 
+> New here? This page is the language guide. The per-area function list
+> (networking, Steam, JSON, collections, timers, physics events) is in
+> [scripting_reference.md](scripting_reference.md). All docs: [README.md](README.md).
+
 OkayScript is the engine's built-in scripting language — a small, dependency-free
 language that ships in every build (no Lua/C# toolchain required). It's its own
 tiny language, designed so you write almost nothing and still do a lot.

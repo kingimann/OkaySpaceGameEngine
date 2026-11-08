@@ -508,6 +508,8 @@ the rest join over LAN or a forwarded port.
 
 ## Documentation
 
+The full list, grouped by what you want to do, is in [`docs/README.md`](docs/README.md). The main pages:
+
 - [`docs/making_a_game.md`](docs/making_a_game.md) — **start here**: empty editor → shipped game.
 - [`docs/web_mobile.md`](docs/web_mobile.md) — build your game for the **web** (WASM) and **mobile**.
 - [`docs/editor.md`](docs/editor.md) — the desktop editor and **Build Game**.

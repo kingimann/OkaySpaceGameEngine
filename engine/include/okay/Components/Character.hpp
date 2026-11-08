@@ -431,6 +431,10 @@ public:
     // them (headTurnSpeed) so it moves smoothly instead of snapping.
     float lookYaw   = 0.0f;       // + turns the head to its right
     float lookPitch = 0.0f;       // + lifts the gaze up
+    /// Replicated action (0 none, 1 death, 2 roll, 3 sit, 4 swim). `netActionSeq`
+    /// bumps each time it changes so a proxy can replay it. Not saved.
+    int netActionId = 0;
+    int netActionSeq = 0;
     float headTurnSpeed = 9.0f;   // how fast the head eases toward the look target
     float HeadYaw()   const { return m_headYaw; }
     float HeadPitch() const { return m_headPitch; }

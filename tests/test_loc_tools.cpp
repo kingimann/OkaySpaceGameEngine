@@ -9,6 +9,7 @@
 #include "okay/Core/LocTable.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Utf8.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 
 #include <algorithm>
@@ -655,6 +656,64 @@ int main() {
             const LocFontReport rep2 = LocFontCoverage(t, chain);
             CHECK(!rep2.languages[2].warnings.empty() && rep2.languages[2].missing.size() == 3);
         }
+    }
+
+    // ---- Garbage in: nothing crashes or hangs, and the invariants hold ---------------------------------------------------
+    {
+        std::uint32_t seed = 12345;
+        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+        const char alphabet[] = "ab {}()[]<>,;\t\"\r\n\\#=:\xC3\xA9\xE6\x97\xA5\xF0\x9F\x8C\x9F\xFF\x80 0123456789.:-,pluralone other";
+        auto junk = [&](std::size_t len) {
+            std::string out;
+            for (std::size_t i = 0; i < len; ++i) out += alphabet[rnd() % (sizeof alphabet - 1)];
+            return out;
+        };
+        int imported = 0;
+        for (int i = 0; i < 1500; ++i) {
+            const std::string text = junk(rnd() % 120);
+            std::vector<std::vector<std::string>> rows;
+            LocParseCsv(text, rows);
+            LocTable csv;
+            if (csv.ImportCsv("key,en\r\n" + text).ok) ++imported;
+            LocTable json;
+            json.ImportJson(text);
+            json.ImportJson("{\"keys\": {" + text + "}}");
+            std::vector<LocNode> nodes;
+            LocParseMessage(text, nodes);
+            LocPlaceholders(text);
+            LocMessageWidth(text);
+            LocPseudoText(text, {});
+            const std::string mirrored = LocMirrorText(text);
+            CHECK(mirrored.size() == LocMirrorText(text).size());
+            std::vector<LocScanUse> uses;
+            LocScanText("a.okayscene", text, {}, uses);
+            LocScanText("a.okay", "loc(\"" + text, {}, uses);
+        }
+        CHECK(imported > 0);
+        // Mirroring plain text twice gives the text back.
+        for (int i = 0; i < 200; ++i) {
+            std::string plain;
+            const char* const bits[] = {"a", "b", " ", "(", "c", "d", ")", "[", "e", "]", "<", "f", ">", "\n", "\xC3\xA9", "\xE6\x97\xA5", "e\xCC\x81"};
+            for (std::size_t k = rnd() % 30; k > 0; --k) plain += bits[rnd() % (sizeof bits / sizeof bits[0])];
+            const std::string once = LocMirrorText(plain);
+            CHECK(LocMirrorText(once) == plain);
+        }
+        CHECK(LocMirrorText(LocMirrorText("Hello (world) [x]\nline <2>")) == "Hello (world) [x]\nline <2>");
+        // A table of junk survives the checker and the grid.
+        StringTable t;
+        t.AddLanguage("en");
+        t.AddLanguage("fr");
+        t.defaultLanguage = "en";
+        for (int i = 0; i < 200; ++i) {
+            t.Set("k" + std::to_string(i), "en", junk(rnd() % 40 + 1));
+            t.Set("k" + std::to_string(i), "fr", junk(rnd() % 40 + 1));
+        }
+        LocTable lt(t);
+        LocCheckOptions all;
+        all.sameAsSource = true;
+        CHECK(LocCheck(t, all).keys == 200);
+        CHECK(lt.Grid().RowCount() == 200 && lt.AllStats().size() == 2);
+        CHECK(!LocFontCoverage(t, LocFontOptions{"", {BuiltinUIFont()}, false}).languages.empty());
     }
 
     fs::remove_all(tmp, ec);

@@ -21,6 +21,7 @@
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Application.hpp"
 #include "okay/Core/BuildInfo.hpp"

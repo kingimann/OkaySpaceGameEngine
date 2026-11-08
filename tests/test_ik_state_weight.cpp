@@ -1,6 +1,6 @@
 // The Animator's IK weight reaches Look-At, Aim, Limb and Chain, not only the
-// feet. Death, sit, swim and emotes zero look and aim. Also the action
-// framework (play death, hit, roll, sit and stand back up) and the #503
+// feet. Death, sit and gestures zero look and aim; air, prone and the rest keep
+// the head. Also the action framework (play death, hit, roll, sit and stand back up) and the #503
 // pieces: an IK curve, an additive layer, a mirrored pose, per-state root motion.
 #include "test_framework.hpp"
 #include <Okay.hpp>
@@ -83,7 +83,7 @@ int main() {
         auto* chain = npc->AddComponent<ChainIK>();
         chain->bones = {up->transform, lo->transform, tip->transform};
         chain->target = {1, 1, 1};
-        AnimStateMachine::State half; half.name = "Half"; half.clip = "Idle"; half.ikWeight = 0.25f;
+        AnimStateMachine::State half; half.name = "Half"; half.clip = "Idle"; half.ikWeight = 0.25f; half.lookWeight = -1.0f;   // -1 follows the foot weight
         sm->states.push_back(half);
 
         s.Start(); Tick(s, 4);
@@ -106,15 +106,58 @@ int main() {
         CHECK(std::fabs(chain->stateWeight - 0.25f) < 1e-3f);
         CHECK(std::fabs(sm->IKWeight() - 0.25f) < 1e-3f);
         CHECK(std::fabs(sm->LookIKWeight() - 0.25f) < 1e-3f);
+        // The default look weight is 1: a state with no foot IK (Jump, Prone) keeps the head.
+        AnimStateMachine::State air; air.name = "Air"; air.clip = "Idle"; air.ikWeight = 0.0f;
+        sm->states.push_back(air);
+        sm->GoTo("Air", 0.0f); Tick(s, 2);
+        CHECK(sm->IKWeight() < 1e-3f);
+        CHECK(look->stateWeight > 0.99f && aim->stateWeight > 0.99f);
+        CHECK(std::fabs(HeadYaw(head->transform)) > 40.0f);
         AnimStateMachine::State sit; sit.name = "SitHands"; sit.clip = "Idle"; sit.ikWeight = 0.0f; sit.fullBodyIkWeight = 1.0f;
         sm->states.push_back(sit);
         sm->GoTo("SitHands", 0.0f); Tick(s, 2);
         CHECK(sm->IKWeight() < 1e-3f);
         CHECK(limb->stateWeight > 0.9f);
         CHECK(chain->stateWeight > 0.9f);
+
+        // A disabled machine hands the weights back.
+        sm->GoTo("Wave", 0.0f); Tick(s, 2);
+        CHECK(look->stateWeight < 1e-3f);
+        npc->active = false; Tick(s, 1);
+        CHECK(look->stateWeight == 1.0f && aim->stateWeight == 1.0f);
+        CHECK(limb->stateWeight == 1.0f && chain->stateWeight == 1.0f);
     }
 
-    // ---- Built-in graph: gestures and the action states zero look / aim ----
+    // ---- lookWeight survives the scene file; the default writes nothing ----
+    {
+        Scene s("rt"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Npc");
+        auto* sm = go->AddComponent<AnimStateMachine>();
+        AnimStateMachine::State a; a.name = "A"; a.lookWeight = 0.0f;
+        AnimStateMachine::State b; b.name = "B";
+        AnimStateMachine::State c; c.name = "C"; c.lookWeight = -1.0f;
+        AnimStateMachine::State d; d.name = "D"; d.lookWeight = 0.4f;
+        sm->states = {a, b, c, d};
+        const std::string text = SceneSerializer::Serialize(s);
+        CHECK(text.find("animsmlk") != std::string::npos);
+        Scene s2("rt2");
+        CHECK(SceneSerializer::Deserialize(s2, text));
+        GameObject* g2 = s2.Find("Npc");
+        auto* sm2 = g2 ? g2->GetComponent<AnimStateMachine>() : nullptr;
+        CHECK(sm2 && sm2->states.size() == 4);
+        if (sm2 && sm2->states.size() == 4) {
+            CHECK(sm2->states[0].lookWeight == 0.0f && sm2->states[1].lookWeight == 1.0f);
+            CHECK(sm2->states[2].lookWeight == -1.0f && std::fabs(sm2->states[3].lookWeight - 0.4f) < 1e-5f);
+        }
+        // All defaults: no line, and an old scene loads as 1.
+        Scene s3("rt3");
+        GameObject* g3 = s3.CreateGameObject("Old");
+        auto* sm3 = g3->AddComponent<AnimStateMachine>();
+        sm3->states = {b};
+        CHECK(SceneSerializer::Serialize(s3).find("animsmlk") == std::string::npos);
+    }
+
+    // ---- Built-in graph: gestures and the action states zero look / aim, the others keep it ----
     {
         Scene s("acts"); s.physicsEnabled = false;
         GameObject* go = s.CreateGameObject("Player");
@@ -132,7 +175,11 @@ int main() {
             CHECK(wave && wave->lookWeight == 0.0f);
             CHECK(death && death->lookWeight == 0.0f && death->ikWeight == 0.0f);
             CHECK(sit && sit->lookWeight == 0.0f);
-            CHECK(swim && swim->lookWeight == 0.0f);
+            CHECK(swim && swim->lookWeight == 1.0f);   // only gestures, emotes, sit and death drop the head
+            for (const char* keep : {"Idle", "Walk", "Jump", "Fall", "Prone", "Crawl", "GetUp", "Drop", "Roll", "Slide"}) {
+                const AnimStateMachine::State* k = Find(sm, keep);
+                if (k) CHECK(k->lookWeight == 1.0f);
+            }
             CHECK(nod && nod->lookWeight == 0.0f);
             s.Start(); Tick(s, 2);
             CHECK(HumanoidActions::PlayDeath(go, nullptr));

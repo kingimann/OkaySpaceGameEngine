@@ -37,35 +37,28 @@ From a script on the player:
 - `crouch()`, `prone()` and `stand()`, or `set_stance(0|1|2)`, change the stance.
 - `ik_look(x, y, z)` aims at a point.
 
-**IK Target.** Right-click a character or a rigged model and choose Add IK
-Target, then a limb. The new object is selected and a line shows which bone it
-pulls. Pick the character in the inspector. The limb eases onto that object by
-**Weight** and **Blend time** (the inspector shows the ease while it blends).
-Outside Play, moving the object previews the reach. A missing character or a
-missing bone is called out under the field. Hands and feet drive Full Body IK
-and default its body pull to about 0.2, so a target just past the hand does
-not dip the whole body. While a hand is reaching, Look-At turns the neck and
-head only.
+**IK Target.** Add the component to an empty object, or right-click a character
+and choose Add IK Target, then a limb. Pick the character. The limb eases onto
+that object by **Weight** and **Blend time**. Outside Play, moving the object
+previews the reach. Hands and feet drive Full Body IK and default its body
+pull to about 0.2, so a target just past the hand does not dip the whole body.
+While a hand is reaching, Look-At turns the neck and head only.
 
 **Aim Offset.** Add it to the character. **Aim with the camera** pitches from
-the third-person camera's resting pitch, and yaws with the camera's heading,
-so a level look does not bend or twist the chest. Or type a target object's
-name and the body aims at that object instead. A name that matches nothing is
-called out in the inspector. Pitch is about the character's right, in each
-bone's parent space, so a Mixamo mesh that faces -Z kicks back and up instead
-of bowing forward. `recoil(strength)` adds degrees to that pitch, then
-**Recovery** eases it back. It runs after item grips and does not change them.
-Changing the spine, chest, or arm weights takes effect on the next frame.
+the third-person camera's resting pitch, along the crosshair (a hit, otherwise
+a point 80 m out), so a level look does not bend the chest forward. Or type a
+target object's name. A name that matches nothing is called out in the
+inspector. Pitch is about the character's right, in each bone's parent space,
+so a Mixamo mesh that faces -Z kicks back and up instead of bowing forward.
+`recoil(strength)` adds degrees to that pitch, then **Recovery** eases it back.
+It runs after item grips and does not change them.
 
 **Pose Capture.** In Play, **Save pose** stores the current pose as a one-frame
 clip on this Model Animator. **Record** stores the next **Record seconds**.
 `capture_pose()` and `capture_pose(seconds)` do the same. The default name
 Captured is kept unique (Captured, Captured_1, ...). A named clip is replaced.
-The file is the bone pose, not the model's position, so a second character
-with the same bone names can receive it and a different skeleton cannot.
-On Play, Stop, and Load, an `.okayclip` under Assets (including a subfolder)
-is added only when that rig has every node the clip poses. Double-click the
-file, or drop it on the Model Animator, to import it onto the selected model.
+On Play, Stop, and Load, an `.okayclip` is added only to a Model Animator whose
+rig has every node that clip poses. Another skeleton in the scene is left alone.
 
 Typed scripts and visual-script Engine API nodes use `Animator` (SetTrigger,
 SetBool, SetFloat, Play, state) and `IK` (LookAt, SetWeight) on the player.
@@ -230,9 +223,9 @@ Bones map automatically from common rig names (Mixamo, Blender-style `.L/.R`,
 `ik_foot(...)`, `ik_look(x, y, z)`, `ik_release()` and `ik_reached("left_hand")`. In
 visual scripts: *IK Look At* and *IK Hand Reach*. State machine states have an
 **IK Weight**, so Foot, Full Body, Limb, Chain, Look-At and Aim fade out
-during a roll or a climb and back in after. Look-At and Aim follow that
-weight unless the state sets a look weight of its own. Death, sit, swim and
-the emotes set the look weight to 0.
+during a roll or a climb and back in after. Look-At and Aim keep tracking
+unless the state sets a look weight of its own (default 1; below 0 follows the
+IK weight). Death, sit, gestures and the emotes set it to 0.
 
 ## Troubleshooting
 

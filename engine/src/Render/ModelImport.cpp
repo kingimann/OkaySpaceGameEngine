@@ -1584,6 +1584,9 @@ void AutoMapLocomotion(ModelAnimator* ma) {
         return (any(words[ci], {"up"}) && any(words[ci], {"get", "getting", "stand", "standing"})) ||
                (proney(ci) && any(words[ci], {"to"}) && any(words[ci], {"stand", "standing", "idle"}));
     };
+    // Back / left / right clips are kept out of the forward slots, unless the model turns
+    // out to have no directional clips: then it maps exactly as it did before they existed.
+    auto mapForward = [&](bool skipDir) {
     for (int pass = 0; pass < 2; ++pass)
         for (int role = 0; role < 6; ++role)
             for (std::size_t ci = 0; ci < ma->clips.size() && slot[role]->empty(); ++ci) {
@@ -1603,8 +1606,10 @@ void AutoMapLocomotion(ModelAnimator* ma) {
                 const bool stance = crouchy(ci) || proney(ci) || getUp(ci);
                 const bool backward = any(words[ci], {"back", "backward", "backwards"});
                 const bool sideways = any(words[ci], {"left", "right", "strafe", "strafing"});
-                if (hit && !stance && !backward && !sideways && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
+                if (hit && !stance && !(skipDir && (backward || sideways)) && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
             }
+    };
+    mapForward(true);
     const std::function<bool(std::size_t)> roles[5] = {
         [&](std::size_t ci) { return crouchy(ci) && !change(ci) && !moving(ci) && !any(words[ci], {"sneak", "sneaking"}); },
         [&](std::size_t ci) { return crouchy(ci) && !change(ci) && (moving(ci) || any(words[ci], {"sneak", "sneaking"})); },
@@ -1633,17 +1638,7 @@ void AutoMapLocomotion(ModelAnimator* ma) {
     for (int role = 0; role < 4; ++role)
         for (std::size_t ci = 0; ci < ma->clips.size() && dirSlot[role]->empty(); ++ci)
             if (!used[ci] && dirRoles[role](ci)) { *dirSlot[role] = ma->clips[ci].name; used[ci] = true; }
-}
-
-std::string SuggestUnassignedSlot(const ModelAnimator& ma, int slot) {
-    if (slot < 0 || slot >= ModelAnimator::SlotCount) return {};
-    if (!ma.SlotClip(slot).empty()) return {};
-    ModelAnimator scratch;
-    scratch.clips.resize(ma.clips.size());
-    for (std::size_t i = 0; i < ma.clips.size(); ++i) scratch.clips[i].name = ma.clips[i].name;
-    for (int s = 0; s < ModelAnimator::SlotCount; ++s) scratch.SlotClip(s) = ma.SlotClip(s);
-    AutoMapLocomotion(&scratch);
-    return scratch.SlotClip(slot);
+    if (!ma->HasDirectionalClips()) mapForward(false);
 }
 
 // Switch a retargeted model's locomotion between its clips and the built-in
@@ -2404,6 +2399,36 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             look->chainNames.push_back(head->name);
             look->chain.clear();
             mapped += mapped.empty() ? "look-at IK on" : ", look-at IK on";
+        }
+    }
+
+    // The controllers' default 4.5 m/s "walk" is a jog: a downloaded walk clip is
+    // made for about 1.4 m/s, so at 4.5 the stride match picks the RUN clip for
+    // plain W and Shift plays it at its fastest. Bring a default speed down to
+    // the pace the file's clip can show (its playback rate stays inside the
+    // 0.6x-1.6x stride limits); speeds the user has already changed are kept.
+    if (ma && ma->strideMatch && !ma->rootMotion) {
+        const float kDefaultWalk = 4.5f, kDefaultRun = 8.0f;
+        auto fit = [&](float& walk, float& run) {
+            bool changed = false;
+            if (ma->SlotFilled(ModelAnimator::SlotWalk) && walk == kDefaultWalk) {
+                walk = 1.45f * ma->SlotClipSpeed(ModelAnimator::SlotWalk); changed = true;
+            }
+            if (ma->SlotFilled(ModelAnimator::SlotRun) && run == kDefaultRun) {
+                run = 1.25f * ma->SlotClipSpeed(ModelAnimator::SlotRun); changed = true;
+            }
+            return changed;
+        };
+        bool fitted = false;
+        if (auto* c = player->GetComponent<ThirdPersonController>()) fitted = fit(c->walkSpeed, c->runSpeed) || fitted;
+        if (auto* c = player->GetComponent<FirstPersonController>()) fitted = fit(c->walkSpeed, c->runSpeed) || fitted;
+        if (fitted) {
+            mapped += mapped.empty() ? "move speeds fitted to the clips" : ", move speeds fitted to the clips";
+            // The clip-only path keys its walk/run blend to the controller speeds.
+            float w = 0.0f, r = 0.0f;
+            if (!wantRetarget && ControllerSpeeds(player, w, r) && w > 0.0f && r > w) {
+                ma->walkThreshold = w; ma->runThreshold = r;
+            }
         }
     }
 

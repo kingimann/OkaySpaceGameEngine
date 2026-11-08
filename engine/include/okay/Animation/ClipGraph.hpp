@@ -144,8 +144,7 @@ inline int Build(AnimStateMachine& sm, const ModelAnimator& ma) {
 }
 
 /// Put this model's locomotion blend into `sm` without removing the other states.
-/// An existing Locomotion state keeps its transitions, playback speed, IK weights
-/// and events. Only the blend (which clips, and where they sit) is replaced.
+/// An existing Locomotion state keeps its transitions; otherwise one is added.
 /// The Character's action graph (death, sit, gestures) stays.
 inline int InsertLocomotion(AnimStateMachine& sm, const ModelAnimator& ma) {
     using SM = AnimStateMachine;
@@ -162,14 +161,6 @@ inline int InsertLocomotion(AnimStateMachine& sm, const ModelAnimator& ma) {
     for (auto& st : sm.states) if (st.name == "Locomotion") {
         const auto transitions = st.transitions;
         const float nx = st.nx, ny = st.ny;
-        const float speed = st.speed;
-        const std::string speedParam = st.speedParam;
-        const std::string fallback = st.fallbackClip;
-        const std::string enterEvent = st.enterEvent, exitEvent = st.exitEvent;
-        const float ikWeight = st.ikWeight, fullBody = st.fullBodyIkWeight;
-        const auto ikCurve = st.ikCurve, fbCurve = st.fullBodyIkCurve;
-        const bool matchSpeed = st.matchSpeed, loop = st.loop, interruptible = st.interruptible, mirror = st.mirror;
-        const int rootMotion = st.rootMotion;
         st.blendTree = loco->blendTree;
         st.blendDims = loco->blendDims;
         st.blendParam = loco->blendParam;
@@ -178,20 +169,6 @@ inline int InsertLocomotion(AnimStateMachine& sm, const ModelAnimator& ma) {
         st.clip = loco->clip;
         st.transitions = transitions;
         st.nx = nx; st.ny = ny;
-        st.speed = speed;
-        st.speedParam = speedParam;
-        st.fallbackClip = fallback;
-        st.enterEvent = enterEvent;
-        st.exitEvent = exitEvent;
-        st.ikWeight = ikWeight;
-        st.fullBodyIkWeight = fullBody;
-        st.ikCurve = ikCurve;
-        st.fullBodyIkCurve = fbCurve;
-        st.matchSpeed = matchSpeed;
-        st.loop = loop;
-        st.interruptible = interruptible;
-        st.mirror = mirror;
-        st.rootMotion = rootMotion;
         return (int)sm.states.size();
     }
     SM::State add = *loco;

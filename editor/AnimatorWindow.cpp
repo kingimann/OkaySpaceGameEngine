@@ -2665,12 +2665,12 @@ void DrawToolbar(Ctx& c, Ui& u) {
             const std::string slS = shown(ma->strafeLeftClip), srS = shown(ma->strafeRightClip);
             const std::string wbS = shown(ma->walkBackClip), rbS = shown(ma->runBackClip);
             ImGui::TextDisabled("Clips mapped (empty slots are filled from the clip names):");
-            ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", idleS.c_str(), walkS.c_str(),
-                        runS.c_str(), jumpS.c_str(), fallS.c_str(), landS.c_str());
-            ImGui::Text("Crouch: %s\nCrouch walk: %s\nProne: %s\nCrawl: %s\nGet up: %s", crS.c_str(),
-                        crwS.c_str(), prS.c_str(), crawlS.c_str(), upS.c_str());
+            ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", shown(ma->idleClip), shown(ma->walkClip),
+                        shown(ma->runClip), shown(ma->jumpClip), shown(ma->fallClip), shown(ma->landClip));
+            ImGui::Text("Crouch: %s\nCrouch walk: %s\nProne: %s\nCrawl: %s\nGet up: %s", shown(ma->crouchClip),
+                        shown(ma->crouchWalkClip), shown(ma->proneClip), shown(ma->crawlClip), shown(ma->getUpClip));
             ImGui::Text("Strafe left: %s\nStrafe right: %s\nWalk back: %s\nRun back: %s",
-                        slS.c_str(), srS.c_str(), wbS.c_str(), rbS.c_str());
+                        shown(ma->strafeLeftClip), shown(ma->strafeRightClip), shown(ma->walkBackClip), shown(ma->runBackClip));
             if (!sm.states.empty())
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Keeps the %d existing state(s) and updates Locomotion.", (int)sm.states.size());
             if (ImGui::Button("Build it", ImVec2(-1, 0))) {

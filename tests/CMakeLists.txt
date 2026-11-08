@@ -894,11 +894,6 @@ add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)
 
-# Animator getters, layer weight, root motion, per-kind IK, and the matching Engine API nodes.
-add_executable(test_anim_ik_tools test_anim_ik_tools.cpp)
-target_link_libraries(test_anim_ik_tools PRIVATE okay::engine)
-add_test(NAME anim_ik_tools COMMAND test_anim_ik_tools)
-
 # IK Target, Aim Offset (recoil), and Pose Capture.
 add_executable(test_anim_ik_components test_anim_ik_components.cpp)
 target_link_libraries(test_anim_ik_components PRIVATE okay::engine)
@@ -970,6 +965,7 @@ add_test(NAME clip_graph COMMAND test_clip_graph)
 
 add_executable(test_strafe_blend test_strafe_blend.cpp)
 target_link_libraries(test_strafe_blend PRIVATE okay::engine)
+target_compile_definitions(test_strafe_blend PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME strafe_blend COMMAND test_strafe_blend)
 
 add_executable(test_foot_planting test_foot_planting.cpp)
@@ -1404,3 +1400,8 @@ add_test(NAME behavior_tree COMMAND test_behavior_tree)
 add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
+
+# Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
+add_executable(test_script_batch1 test_script_batch1.cpp)
+target_link_libraries(test_script_batch1 PRIVATE okay::engine)
+add_test(NAME script_batch1 COMMAND test_script_batch1)

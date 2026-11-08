@@ -50,13 +50,6 @@ public:
     Vec3  forwardAxis = Vec3::Forward; ///< the bones' local "forward"
     float weight   = 1.0f;             ///< 0 = off, 1 = full look
     float stateWeight = 1.0f;          ///< x weight; set per state by the Animator state machine
-    /// Slider times the on/off fade and the state's weight. The Scene-view label uses this.
-    float EffectiveWeight() const {
-        const float v = m_fade.value;
-        float fade = ikActive ? 1.0f : 0.0f;
-        if (v >= 0.0f) fade = v * v * (3.0f - 2.0f * v);
-        return weight * stateWeight * fade;
-    }
     bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
     float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float maxAngle = 80.0f;            ///< max turn per bone (degrees), keeps it natural
@@ -156,7 +149,7 @@ public:
         for (std::size_t i = 0; i < chain.size(); ++i) {
             Transform* b = chain[i];
             if (!b) continue;
-            if (hands && TurnsTheShoulder(b)) continue;
+            if (hands && !NeckOrHead(b)) continue;
             Smooth& s = m_smooth[i];
             if (s.bone != b) { s = {}; s.bone = b; }
 
@@ -250,7 +243,7 @@ private:
     IKFade m_fade;
     IKRestore m_restore;
 
-    /// A hand effector is reaching, on this object or a parent that owns the body.
+    /// A hand effector driven by an IK Target (exactReach) is reaching, on this object or a parent that owns the body.
     bool ArmReachActive() const {
         for (Transform* t = transform; t; t = t->Parent()) {
             if (!t->gameObject) continue;
@@ -258,18 +251,16 @@ private:
             if (!fb || !fb->ikActive || fb->weight <= 0.001f) continue;
             for (int l = FullBodyIK::LeftHand; l <= FullBodyIK::RightHand; ++l) {
                 const FullBodyIK::Effector& e = fb->effectors[l];
-                if (e.enabled && e.positionWeight > 0.01f) return true;
+                if (e.enabled && e.exactReach && e.positionWeight > 0.01f) return true;
             }
         }
         return false;
     }
-    /// Spine, chest, and limb bones move the shoulders. Neck, head, and a
-    /// bone this rig doesn't classify (often the head tip) still look.
-    static bool TurnsTheShoulder(const Transform* b) {
+    /// Neck and head sit above the shoulders. Spine and chest do not.
+    static bool NeckOrHead(const Transform* b) {
         if (!b || !b->gameObject) return false;
         const int id = FullBodyIK::Classify(b->gameObject->name);
-        if (id < 0) return false;
-        return id != FullBodyIK::Neck && id != FullBodyIK::Head;
+        return id == FullBodyIK::Neck || id == FullBodyIK::Head;
     }
     std::vector<Smooth> m_smooth;
     Vec3 m_tgtChar = Vec3::Zero;

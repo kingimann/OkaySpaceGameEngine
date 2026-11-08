@@ -28,10 +28,11 @@
 // Per state: an event fired on enter / exit (to anim_event() and every
 // component's OnAnimationEvent, like clip events) and an IK weight that Foot IK
 // Full Body IK, Look-At, Aim, Limb and Chain ease to over the transition
-// (0 = feet free while jumping, and the head stops tracking).
+// (0 = feet free while jumping).
 // An optional curve shapes that weight over the clip; IK components read the
 // sampled result through the same state weight. Look and aim can take their
-// own weight (`lookWeight`); below 0 they follow the foot weight.
+// own weight (`lookWeight`, 1 by default, so air and prone states keep their
+// head); below 0 they follow the foot weight.
 // A transition can start its target part-way in (`offset`, normalized).
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
@@ -131,9 +132,10 @@ public:
         std::string speedParam;     ///< float parameter that multiplies `speed` ("" = none)
         std::string enterEvent, exitEvent;   ///< animation events fired on entering / leaving ("" = none)
         float       ikWeight = 1.0f;         ///< Foot / Limb / Chain IK weight in this state (base layer)
-        /// Look-At and Aim weight. Below 0 follows `ikWeight` (curve included).
-        /// Death, sit, swim and emotes set 0 so the head stops tracking.
-        float       lookWeight = -1.0f;
+        /// Look-At and Aim weight; 1 keeps the head tracking whatever `ikWeight` is.
+        /// Below 0 follows `ikWeight` (curve included). Death, sit and gestures
+        /// set 0 so the head plays the clip.
+        float       lookWeight = 1.0f;
         /// Weight over normalized clip time. Empty = the constant `ikWeight`.
         /// Keys are multiplied by `ikWeight`, so the slider stays a master gain.
         struct IkKey { float t = 0.0f; float w = 1.0f; };
@@ -503,7 +505,9 @@ public:
         ApplyParamDefaults();
         if (layer == 0) if (AnimBackend* ma = Anim()) ma->SetStateMachine(this);   // driveByMovement waits while we're enabled
     }
+    void OnDisable() override { ReleaseIk(); }
     void OnDestroy() override {
+        ReleaseIk();
         ReleaseImported();
         if (AnimBackend* ma = Anim()) ma->RemovePostPose(this);
         if (m_charBackend) m_charBackend->Detach();
@@ -959,6 +963,19 @@ private:
             m_ikWritten = m_ikW; m_fbWritten = m_fbW; m_lookWritten = m_lookW; m_ikRefresh = 0.5f;
         }
     }
+    /// Hand the IK components back to full weight, so a stale state weight
+    /// (a disabled machine left in Death) does not keep them off.
+    void ReleaseIk() {
+        if (layer != 0 || !gameObject) return;
+        m_ikW = m_fbW = m_lookW = 1.0f;
+        m_ikWritten = m_fbWritten = m_lookWritten = -1.0f;
+        if (auto* f = gameObject->GetComponent<FootIK>()) f->stateWeight = 1.0f;
+        if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = 1.0f;
+        for (LookAtIK* l : gameObject->GetComponents<LookAtIK>()) l->stateWeight = 1.0f;
+        for (AimIK* a : gameObject->GetComponents<AimIK>()) a->stateWeight = 1.0f;
+        for (LimbIK* limb : gameObject->GetComponents<LimbIK>()) limb->stateWeight = 1.0f;
+        for (ChainIK* c : gameObject->GetComponents<ChainIK>()) c->stateWeight = 1.0f;
+    }
     bool Try(const Transition& tr, AnimBackend* ma, const State* cur, bool presatisfied = false) {
         if (tr.muted || (!presatisfied && !Satisfied(tr, ma, cur))) return false;
         const State* to = FindState(tr.to);
@@ -1085,7 +1102,6 @@ private:
     std::unordered_map<std::string, bool>  m_bools;
     std::unordered_map<std::string, bool>  m_triggers;
     std::vector<float> m_bWeights;
-    bool m_reverseBack = false;   ///< backpedal hysteresis for a strafe tree with no back clip
     float m_ikW = 1.0f, m_fbW = 1.0f, m_lookW = 1.0f, m_ikBlend = 0.25f, m_ikEase = 0.0f;
     float m_clock = 0.0f;
     std::vector<HistoryEntry> m_history;

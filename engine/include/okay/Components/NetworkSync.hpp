@@ -38,89 +38,38 @@ inline float MoveAngleFor(const Transform& facing, float vx, float vz) {
     return std::atan2(side, fwd) * 57.2957795f;
 }
 
-inline AnimStateMachine* BaseLayer(Character* c) {
-    if (!c || !c->gameObject) return nullptr;
-    for (const auto& comp : c->gameObject->Components())
-        if (auto* m = dynamic_cast<AnimStateMachine*>(comp.get()))
-            if (m->layer == 0) return m;
-    return nullptr;
-}
-
-inline bool NameOrPrefix(const std::string& cur, const char* exact, const char* prefix) {
-    return cur == exact || cur.rfind(prefix, 0) == 0;
-}
-
 inline bool ProxyInAction(const Character* c, int id) {
-    AnimStateMachine* sm = BaseLayer(const_cast<Character*>(c));
+    if (!c || !c->gameObject) return false;
+    const AnimStateMachine* sm = nullptr;
+    for (const auto& comp : c->gameObject->Components())
+        if (auto* m = dynamic_cast<const AnimStateMachine*>(comp.get()))
+            if (m->layer == 0) { sm = m; break; }
     if (!sm) return false;
     const std::string& cur = sm->Current();
     switch (id) {
-        case 1: return NameOrPrefix(cur, "Death", "Death_") || NameOrPrefix(cur, "DeadHold", "DeadHold_");
-        case 2: return NameOrPrefix(cur, "Roll", "Roll_") || NameOrPrefix(cur, "Dodge", "Dodge_");
+        // Same names CharacterAnimBackend maps to the action ids.
+        case 1: return cur == "Death" || cur == "DeadHold" || cur.rfind("Death_", 0) == 0 || cur.rfind("DeadHold_", 0) == 0;
+        case 2: return cur == "Roll" || cur == "Dodge" || cur == "Roll_F" || cur.rfind("Dodge_", 0) == 0;
         case 3: return cur == "SitDown" || cur == "Sit" || cur == "StandUp";
-        case 4: return NameOrPrefix(cur, "Swim", "Swim_");
+        case 4: return cur == "Swim" || cur.rfind("Swim_", 0) == 0;
         default: return cur == "Idle" || cur == "Walk" || cur == "Run" || cur.empty();
     }
 }
 
-inline int ClampDir(float param) {
-    int d = (int)std::lround(param);
-    if (d < 0) d = 0;
-    if (d > 3) d = 3;
-    return d;
-}
-
-/// The blend parameter for the action already playing: death direction, dodge
-/// direction, sit type (10 + type means stand up), or swim speed.
-inline void RefreshRemoteParam(Character* c, int id, float param) {
-    AnimStateMachine* sm = BaseLayer(c);
-    if (!sm) return;
-    if (id == 1) sm->SetFloat("deathDir", (float)ClampDir(param));
-    else if (id == 2) sm->SetFloat("dodgeDir", (float)ClampDir(param));
-    else if (id == 3) {
-        const bool up = param >= 10.0f;
-        float type = up ? param - 10.0f : param;
-        if (type < 0.0f) type = 0.0f;
-        if (type > 2.0f) type = 2.0f;
-        sm->SetFloat("sitType", type);
-        sm->SetBool("sitting", !up);
-    } else if (id == 4) {
-        sm->SetBool("swimming", true);
-        if (param < 0.0f) param = 0.0f;
-        if (param > 8.0f) param = 8.0f;
-        sm->SetFloat("swimSpeed", param);
-    }
-}
-
-/// Play a replicated action on a proxy. Ids: 1 death, 2 roll, 3 sit, 4 swim.
-/// Anything else leaves the action. `param` is the direction or swim speed.
-/// Dive, hit, vault and emotes are not ids: the legacy anim field still carries
-/// jump, crouch and the other built-in poses. A machine added mid-session has
-/// its Start() clear the state, so callers re-apply until the proxy is in it.
-/// A roll is not replayed after it has been in the state (it is a one-shot).
-inline void ApplyRemoteAction(Character* c, int id, float param) {
+/// Play a replicated action on a proxy. Ids match CharacterAnimBackend:
+/// 1 death, 2 roll, 3 sit, 4 swim, anything else leaves the action.
+/// A machine added mid-session has its Start() clear the state, so callers
+/// re-apply until the proxy is actually in it.
+inline void ApplyRemoteAction(Character* c, int id) {
     if (!c || !c->gameObject) return;
     GameObject* go = c->gameObject;
     AnimStateMachine* sm = HumanoidLibrary::EnsureAnimator(go);
     if (sm) HumanoidActions::MergeMissing(*sm, c, false);
     switch (id) {
-        case 1:
-            HumanoidActions::PlayDeath(go, nullptr);   // sets deathDir 0, then we restore
-            RefreshRemoteParam(c, 1, param);
-            break;
-        case 2:
-            HumanoidActions::RequestRoll(go, ClampDir(param));
-            break;
-        case 3:
-            RefreshRemoteParam(c, 3, param);
-            if (sm && param < 10.0f && sm->Current() != "SitDown" && sm->Current() != "Sit")
-                sm->GoTo("SitDown", 0.2f);
-            else if (sm && param >= 10.0f && sm->Current() != "StandUp")
-                sm->GoTo("StandUp", 0.12f);
-            break;
-        case 4:
-            HumanoidActions::SetSwimming(go, true, param < 0.0f ? 0.0f : param);
-            break;
+        case 1: HumanoidActions::PlayDeath(go, nullptr); break;
+        case 2: HumanoidActions::RequestRoll(go, 0); break;
+        case 3: HumanoidActions::Play(go, "SitDown", 0.2f); break;
+        case 4: HumanoidActions::SetSwimming(go, true, 0.0f); break;
         default:
             if (!sm) break;
             sm->SetBool("dead", false);
@@ -131,31 +80,6 @@ inline void ApplyRemoteAction(Character* c, int id, float param) {
             HumanoidActions::SetSwimming(go, false, 0.0f);
             break;
     }
-}
-
-/// "<anim> <punchSeq> [<speed> <angle> [<actionSeq> <actionId> <lookYaw> <lookPitch> [<actionParam>]]]".
-/// Each later group is optional. An older peer stops when the stream runs out.
-struct AnimSyncView {
-    int anim = 0, punch = 0, actionSeq = 0, actionId = 0;
-    float speed = -1.0f, angle = 0.0f, lookYaw = 0.0f, lookPitch = 0.0f, actionParam = 0.0f;
-    bool haveGait = false, haveAction = false, haveParam = false;
-};
-/// False when `s` has no anim field. Gait, action and actionParam are optional.
-inline bool ParseAnimSync(const std::string& s, AnimSyncView& o) {
-    std::stringstream ss(s);
-    if (!(ss >> o.anim)) return false;
-    if (!(ss >> o.punch)) return true;
-    float sp = 0.0f, ang = 0.0f;
-    if (ss >> sp >> ang && std::isfinite(sp) && std::isfinite(ang)) {
-        o.speed = sp; o.angle = ang; o.haveGait = true;
-    }
-    int aseq = 0, aid = 0; float ly = 0.0f, lp = 0.0f;
-    if (ss >> aseq >> aid >> ly >> lp && std::isfinite(ly) && std::isfinite(lp)) {
-        o.actionSeq = aseq; o.actionId = aid; o.lookYaw = ly; o.lookPitch = lp; o.haveAction = true;
-        float param = 0.0f;
-        if (ss >> param && std::isfinite(param)) { o.actionParam = param; o.haveParam = true; }
-    }
-    return true;
 }
 
 class NetworkSync : public Behaviour {
@@ -199,10 +123,13 @@ public:
         if (m_char && syncAnimation && !OwnedNow() && !m_nm->Predicted(m_id)) {
             DriveProxyGait(dt);
             // A machine created to play the action has Start() clear its state
-            // on the next frame. Keep asking until it is actually in it. A roll
-            // latches once it has been playing, so the clip is not restarted
-            // when it ends while the owner's sequence is still that roll.
-            if (m_wantAction > 0) HoldRemoteAction();
+            // on the next frame. Keep asking until it is actually in it.
+            // Once it has stayed in it past that first frame, leave it alone: a
+            // roll that ends before the owner reports "none" must not replay.
+            if (m_wantAction > 0) {
+                if (ProxyInAction(m_char, m_wantAction)) { if (++m_actionFrames >= 2) m_actionSeen = true; }
+                else { m_actionFrames = 0; if (!m_actionSeen) ApplyRemoteAction(m_char, m_wantAction); }
+            }
         }
     }
 
@@ -219,8 +146,8 @@ private:
     int             m_lastPunchSeq = -1;  // remote: last punch replayed
     int             m_lastActionSeq = -1; // remote: last action sequence applied
     int             m_wantAction = 0;     // remote: action to hold until the proxy is in it
-    float           m_actionParam = 0.0f; // remote: direction / swim speed for that action
-    bool            m_actionLatched = false; // remote: a one-shot roll has been in its state
+    bool            m_actionSeen = false; // remote: the proxy has held m_wantAction (don't replay it)
+    int             m_actionFrames = 0;   // remote: consecutive frames the proxy has been in it
     bool            m_wasPunching = false;
     // Proxy gait: what the owner reported, and the smoothed speed this copy
     // actually moves at (the interpolated position, so the feet match it).
@@ -309,19 +236,15 @@ private:
         m_char = FindCharacter();
         if (m_char && syncAnimation) {
             Character* c = m_char; NetworkSync* self = this;
-            // "<anim> <punchSeq> [<moveSpeed> <moveAngle> [<actionSeq> <actionId> <lookYaw> <lookPitch> [<actionParam>]]]".
-            // Each later group is optional. An older peer stops when the stream
-            // runs out. First-person pitch, the raised arm and the camera hide
-            // are not in this message. Dive, hit, vault and emotes are not
-            // action ids. actionParam is death/roll direction, sit type
-            // (10 + type = stand up), or swim speed.
+            // "<anim> <punchSeq> [<moveSpeed> <moveAngle> [<actionSeq> <actionId> <lookYaw> <lookPitch>]]".
+            // Each later group is optional: an older peer stops when the stream
+            // runs out, and a message without the new fields still reads here.
             m_nm->SetSyncExtra(m_id,
                 [c, self]() {
                     std::ostringstream o;
                     o << c->anim << ' ' << self->m_punchSeq << ' ' << c->moveSpeed << ' ' << c->moveAngle
                       << ' ' << c->netActionSeq << ' ' << c->netActionId
-                      << ' ' << c->lookYaw << ' ' << c->lookPitch
-                      << ' ' << c->netActionParam;
+                      << ' ' << c->lookYaw << ' ' << c->lookPitch;
                     return o.str();
                 },
                 [c, self](const std::string& s) {
@@ -345,6 +268,23 @@ private:
                         self->m_lastActionSeq = v.actionSeq;
                         c->lookYaw = v.lookYaw;
                         c->lookPitch = v.lookPitch;
+                    }
+                    int aseq = 0, aid = 0; float ly = 0.0f, lp = 0.0f;
+                    // The sender is untrusted (the host also reads a client's): known
+                    // action ids only, and the look is bounded so the easing stays finite.
+                    if (ss >> aseq >> aid >> ly >> lp && std::isfinite(ly) && std::isfinite(lp)
+                        && aseq >= 0 && aid >= 0 && aid <= 4) {
+                        ly = std::max(-90.0f, std::min(90.0f, ly));
+                        lp = std::max(-90.0f, std::min(90.0f, lp));
+                        const bool changed = self->m_lastActionSeq < 0 || aseq != self->m_lastActionSeq;
+                        if (changed) { self->m_wantAction = aid; self->m_actionSeen = false; self->m_actionFrames = 0; }
+                        if (self->m_wantAction > 0 && (changed || (!self->m_actionSeen && !ProxyInAction(c, self->m_wantAction))))
+                            ApplyRemoteAction(c, self->m_wantAction);
+                        else if (self->m_wantAction == 0 && changed && self->m_lastActionSeq >= 0)
+                            ApplyRemoteAction(c, 0);
+                        self->m_lastActionSeq = aseq;
+                        c->lookYaw = ly;
+                        c->lookPitch = lp;
                     }
                 });
         }

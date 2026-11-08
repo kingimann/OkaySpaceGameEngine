@@ -767,6 +767,11 @@ idle. Every locomotion slot is filled on its own:
   per slot (walk 1.4, run 4.0, crouch walk 0.9, crawl 0.5). The Walk and
   Run Thresholds still work: they cap where idle turns into walk and walk
   into run.
+- **Move speeds follow the clips.** The controllers' default 4.5 m/s walk
+  is a jog, which a 1.4 m/s walk clip can't show. When a model with its own
+  Walk (and Run) clip is attached, a Walk Speed or Run Speed still at the
+  default is set to what the clip can show (about 2.0 and 5.0 m/s), so W
+  plays the walk and Shift the run. A speed you changed yourself is kept.
 - **Blends.** Between walk and run both clips are sampled at one shared
   normalized phase, so the feet stay in step through the blend; stepping
   off from a stand starts the walk on the same foot each time. Switching
@@ -866,7 +871,8 @@ and transitions. Beyond single conditions:
   over the clip (click to add a key, drag to move it, right-click to remove it).
   The curve is multiplied by the IK weight slider. Full Body IK can have its own
   curve when it does not follow the foot weight. Look-At and Aim use the
-  state's look weight when that is set, and otherwise the same foot weight.
+  state's look weight (1 by default, so a state with no foot IK keeps the head;
+  below 0 follows the foot weight).
   Limb IK and Chain IK follow the Full Body weight. The solvers themselves
   are unchanged. `SampleIkCurve` evaluates a curve the same way.
 
@@ -1045,11 +1051,13 @@ character, and the bone stays over it.
   has a strafe or a back clip. Names map by word: a left strafe or sidestep
   walk (`left` plus `strafe` / `walk`), a right one, `Walk Back`, and `Run Back`.
   Tricks such as Back Flip are not back-walks. With none of those clips,
-  locomotion stays the forward speed blend. The hips then yaw toward travel,
-  around world up in the hips' parent space, and the spine twists back by the
-  same yaw so the chest stays near the facing. A tilted armature does not tip
-  the pelvis. Backward movement with no back clip plays the forward walk in
-  reverse, including when strafe clips exist but a back clip does not.
+  locomotion stays the forward speed blend, exactly as before. Set
+  `legsFollowTravel` (off by default) and the hips ease
+  toward travel (up to 80 degrees, about 0.1 s), around world up in the hips'
+  parent space, with the spine twisting back by the same yaw so the chest stays
+  near the facing. A tilted armature does not tip the pelvis. With that option
+  on, or when strafe clips exist, backward movement with no back clip plays the
+  forward walk in reverse (with hysteresis around 100 degrees).
 - **Layers:** the **+** tab adds a layer, its own states playing over the base
   layer on part of the skeleton. Pick a **Mask bone** (e.g. the spine for
   upper-body actions) and a **Weight**. Layers share the base layer's parameters,
@@ -1066,11 +1074,11 @@ character, and the bone stays over it.
   sounds or to open a hit window.
 - **IK weight:** how much Foot IK, Full Body IK, Limb IK, Chain IK, Look-At
   and Aim apply in that state, eased over the transition. Look-At and Aim
-  follow this unless the state sets its own look weight. Set the weight to 0
-  for jumps, rolls and falls so the feet aren't pulled to the ground mid-air,
-  and for death, sit, swim and emotes so the head plays the action instead of
-  staying on a look target. Locomotion setup does this for Jump and Fall.
-  The built-in actions set the look weight to 0.
+  use the state's own look weight instead (1 by default). Set the IK weight to
+  0 for jumps, rolls and falls so the feet aren't pulled to the ground
+  mid-air; set the look weight to 0 for death, sit and emotes so the head
+  plays the action instead of staying on a look target. The built-in death,
+  sit, gesture and emote states do.
 - **Start at** on a transition starts the target part-way into its clip, to line
   up the feet between walk and run cycles.
 

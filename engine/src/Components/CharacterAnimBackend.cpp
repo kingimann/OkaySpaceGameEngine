@@ -304,14 +304,6 @@ void CharacterAnimBackend::Advance(float dt) {
             ++ch->netActionSeq;
         }
         ch->netActionId = action;
-        float param = 0.0f;
-        if (action == 1) param = m_sm->GetFloat("deathDir");
-        else if (action == 2) param = m_sm->GetFloat("dodgeDir");
-        else if (action == 3) {
-            param = m_sm->GetFloat("sitType");
-            if (m_sm->Current() == "StandUp") param += 10.0f;
-        } else if (action == 4) param = m_sm->GetFloat("swimSpeed");
-        ch->netActionParam = param;
         m_published = ch->anim;
     }
 }

@@ -129,9 +129,15 @@ float Camera::VerticalFovDegrees(float aspect) const {
 }
 
 Mat4 Camera::ProjectionMatrix(float aspect) const {
+    // A minimised window (0 wide or high), a NaN or a negative size must not turn
+    // the matrix into inf / NaN: reuse the last good aspect instead.
+    if (!(aspect > 1e-4f) || !std::isfinite(aspect)) aspect = viewportAspect > 1e-4f ? viewportAspect : 1.0f;
     if (aspect > 0.05f) viewportAspect = aspect;
+    // Clip planes typed into the inspector: near must be positive and far beyond it.
+    const float nearP = nearClip > 1e-3f ? nearClip : 1e-3f;
+    const float farP  = farClip > nearP + 0.01f ? farClip : nearP + 0.01f;
     if (projection == Projection::Perspective) {
-        Mat4 p = Mat4::Perspective(VerticalFovDegrees(aspect), aspect, nearClip, farClip);
+        Mat4 p = Mat4::Perspective(VerticalFovDegrees(aspect), aspect, nearP, farP);
         p.at(2, 0) = lensShiftX * 2.0f;   // off-axis lens shift
         p.at(2, 1) = lensShiftY * 2.0f;
         return p;
@@ -141,7 +147,7 @@ Mat4 Camera::ProjectionMatrix(float aspect) const {
     // An orthographic (2D) camera sees its whole rectangle whatever the depth:
     // a camera added to an object at z = 0 used to clip away every sprite at
     // z = 0 behind its 0.3 near plane. Depth sorting is unaffected.
-    Mat4 p = Mat4::Ortho(-w, w, -h, h, -farClip, farClip);
+    Mat4 p = Mat4::Ortho(-w, w, -h, h, -farP, farP);
     p.at(3, 0) -= lensShiftX * 2.0f;
     p.at(3, 1) -= lensShiftY * 2.0f;
     return p;

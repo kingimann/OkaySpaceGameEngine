@@ -50,13 +50,15 @@ bool DataAsset::Save(const std::string& path) const {
 }
 
 bool DataAsset::Load(const std::string& path) {
-    m_fields.clear();
     std::ifstream in(path);
     if (!in) {
         if (g_baseDir.empty()) return false;
-        in.open(g_baseDir + path);          // retry relative to the game's base dir
+        std::string full = g_baseDir;       // retry relative to the game's base dir
+        if (full.back() != '/' && full.back() != '\\') full += '/';
+        in.open(full + path);
         if (!in) return false;
     }
+    m_fields.clear();                       // only once there is something to replace it with
     std::string line;
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();

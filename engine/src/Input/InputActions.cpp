@@ -19,7 +19,29 @@ std::string Trim(const std::string& s) {
     while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
     return s.substr(a, b - a);
 }
-std::string KeyText(char k) { return Lower(Input::KeyName(k)); }
+// A saved action is "binding;binding" and a four-key binding is "keys:w,s,a,d", so a
+// key that IS ';' or ',' (or the '%' used to escape them) is written %3b / %2c / %25.
+std::string KeyText(char k) {
+    switch (k) {
+        case ';': return "%3b";
+        case ',': return "%2c";
+        case '%': return "%25";
+        default:  return Lower(Input::KeyName(k));
+    }
+}
+std::string Unescape(const std::string& s) {
+    std::string out;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 3 <= s.size()) {
+            const std::string h = s.substr(i + 1, 2);
+            if (h == "3b") { out += ';'; i += 2; continue; }
+            if (h == "2c") { out += ','; i += 2; continue; }
+            if (h == "25") { out += '%'; i += 2; continue; }
+        }
+        out += s[i];
+    }
+    return out;
+}
 const char* const kMouseNames[3] = {"left", "right", "middle"};
 
 Vec2 ClampLength(Vec2 v) {
@@ -86,8 +108,8 @@ InputBinding InputBinding::Parse(const std::string& textIn) {
     const std::string kind = colon == std::string::npos ? text : text.substr(0, colon);
     const std::string arg = colon == std::string::npos ? "" : Trim(text.substr(colon + 1));
     if (kind == "dpad") { b.kind = Kind::DPad; return b; }
-    if (kind == "key" && !arg.empty() && Input::IsKnownKeyName(arg)) {
-        b.kind = Kind::Key; b.code = (unsigned char)Input::KeyFromName(arg);
+    if (kind == "key" && !arg.empty() && Input::IsKnownKeyName(Unescape(arg))) {
+        b.kind = Kind::Key; b.code = (unsigned char)Input::KeyFromName(Unescape(arg));
     } else if (kind == "mouse") {
         if (arg == "delta") { b.kind = Kind::MouseDelta; return b; }
         for (int i = 0; i < 3; ++i) if (arg == kMouseNames[i]) { b.kind = Kind::Mouse; b.code = i; }
@@ -105,8 +127,9 @@ InputBinding InputBinding::Parse(const std::string& textIn) {
         if (parts.size() == 4) {
             bool ok = true;
             for (int i = 0; i < 4; ++i) {
-                if (parts[i].empty() || !Input::IsKnownKeyName(parts[i])) ok = false;
-                else b.keys[i] = Input::KeyFromName(parts[i]);
+                const std::string key = Unescape(parts[i]);
+                if (key.empty() || !Input::IsKnownKeyName(key)) ok = false;
+                else b.keys[i] = Input::KeyFromName(key);
             }
             if (ok) b.kind = Kind::Keys4;
         }

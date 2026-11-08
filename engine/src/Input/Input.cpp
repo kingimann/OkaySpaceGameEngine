@@ -16,6 +16,7 @@ bool Input::s_interactive = false;
 
 Vec2     Input::s_mousePos;
 Vec2     Input::s_mousePrevPos;
+bool     Input::s_mouseFed = false;
 unsigned Input::s_mouseCurrent = 0;
 Vec2     Input::s_padAxis;
 Vec2     Input::s_padRight;
@@ -59,7 +60,7 @@ void Input::EndSession() {
 #if defined(__unix__) || defined(__APPLE__)
     if (g_rawActive) {
         tcsetattr(STDIN_FILENO, TCSANOW, &g_savedTermios);
-        fcntl(STDIN_FILENO, g_savedFlags, 0);
+        fcntl(STDIN_FILENO, F_SETFL, g_savedFlags);
         g_rawActive = false;
     }
 #endif
@@ -93,7 +94,10 @@ void Input::FeedKeys(const std::vector<char>& downKeys) {
 }
 
 void Input::FeedMouse(const Vec2& position, unsigned buttonMask) {
-    s_mousePrevPos = s_mousePos;
+    // The first sample is a position, not a movement (else mouse-look jumps by the
+    // cursor's absolute position on frame one).
+    s_mousePrevPos = s_mouseFed ? s_mousePos : position;
+    s_mouseFed = true;
     s_mousePos = position;
     s_mousePrevious = s_mouseCurrent;
     s_mouseCurrent = buttonMask;

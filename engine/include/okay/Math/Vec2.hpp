@@ -111,7 +111,7 @@ struct Vec2 {
         Vec2 output = target + (change + temp) * exp;
         if (Dot(origTarget - current, output - origTarget) > 0.0f) {
             output = origTarget;
-            velocity = (output - origTarget) / deltaTime;
+            velocity = deltaTime > 0.0f ? (output - origTarget) / deltaTime : Vec2{};   // dt = 0 (paused): no 0/0
         }
         return output;
     }

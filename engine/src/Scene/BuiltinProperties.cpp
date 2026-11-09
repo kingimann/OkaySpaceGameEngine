@@ -462,12 +462,14 @@ void RegisterParticleSystem() {
 void RegisterSimpleBehaviours() {
     {
         PropertyBuilder<Mover> b("Mover", "mover", "Gameplay");
-        b.AddVec3("velocity", &Mover::velocity).Range(-kBig, kBig, 0.1).Tooltip("World units per second");
+        b.AddVec3("velocity", &Mover::velocity).Range(-kBig, kBig, 0.1).Tooltip("Units per second, read in the chosen space")
+         .AddEnum("space", &Mover::space, {"Local", "World", "Self"}).Tooltip("Local: the parent's frame. World: scene axes. Self: the object's own axes");
         b.Commit();
     }
     {
         PropertyBuilder<Spinner> b("Spinner", "spinner", "Gameplay");
-        b.AddVec3("angularVelocity", &Spinner::angularVelocity).Range(-36000, 36000, 1).Tooltip("Degrees per second around each axis");
+        b.AddVec3("angularVelocity", &Spinner::angularVelocity).Range(-36000, 36000, 1).Tooltip("Degrees per second: the vector is the axis of spin, its length the speed")
+         .AddEnum("space", &Spinner::space, {"Local", "World", "Self"}).Tooltip("Self: the object's own axes. Local: the parent's. World: the scene's");
         b.Commit();
     }
     {

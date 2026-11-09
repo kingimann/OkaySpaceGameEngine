@@ -47,8 +47,15 @@ duration (progress is kept, so a shorter interval can fire on the next update);
 `ActiveCount()` counts every task that has not finished or been cancelled, paused ones included.
 By group: `CancelByTag`, `CancelByOwner`, `CancelByObject(go)`, `SetPausedByTag(tag, bool)`,
 `SetPausedByOwner(owner, bool)` (each returns how many tasks it touched) and `CountByTag(tag)`.
-`Clear()` cancels everything. Looking a task up by handle is a linear scan, so a scheduler
-holding many thousands of tasks is better cancelled by tag or owner than one handle at a time.
+`Clear()` cancels everything.
+
+Cost: every lookup by handle (`Cancel`, `SetPaused`, `IsPaused`, `SetInterval`, `Remaining`,
+`IsScheduled`) is O(1), `ActiveCount` and `CountByTag` are O(1), and `CancelByTag`, `CancelByOwner`,
+`CancelByObject`, `SetPausedByTag` and `SetPausedByOwner` touch only the tasks of that group, so a
+hundred thousand timers can be cancelled one by one (an object that dies cancels its own with
+`CancelByOwner(this)` without scanning everyone else's). Tasks still run in the order they were
+scheduled. What a cancelled or finished task captured is freed at once (inside an update: when that
+update ends), and a captured value whose destructor calls back into the scheduler is fine.
 
 A repeating timer given `repeatCount` 0 behaves like 1 (it runs once); pass a negative
 count for "forever". The smallest interval or tween duration is 0.1 ms.
@@ -148,7 +155,8 @@ use it.
 - A repeating timer that is far behind (a long hitch, a suspended machine) runs at most
   `Scheduler::kMaxCatchUp` (4096) times in one update; the rest of the backlog is dropped
   and the timer keeps its rhythm. A normal catch-up still delivers every missed run.
-- A task's elapsed time is kept in double precision: a ten hour timer fires on time.
+- A task's elapsed time is kept in double precision: a ten hour timer fires on time. So is a tween's
+  timeline (see "Tweens that run for hours").
 - A callback that throws: that task is dropped (a repeating timer would only throw again
   next frame), the other tasks of the update still run, and the first exception is
   rethrown when the update is done. The scheduler is consistent by then. The tween manager
@@ -278,6 +286,94 @@ stiff spring integrated frame by frame blows up on a long frame). Damping equal 
 A step that is zero, negative, NaN or infinite changes nothing. They are pure functions,
 deterministic and safe from any thread.
 
+### Tweens that run for hours
+
+The timeline of a tween is kept in double precision (`ElapsedD()`, `FullDurationD()`, `RenderAt(double)`),
+and the loop number and the place inside the loop are worked out from it. A loading spinner or a
+bobbing coin that has been looping for ten hours still moves at the same pace as in its first
+minute, and its turning points are exactly the end values. (A float timeline gets coarser the
+longer it runs: past about nine hours a 0.1 s step rounds to 0.1016 s.) A tween with a delay
+completes at exactly delay plus its length: the end is "the time reached the full length", not a
+comparison of two floats that could miss by one rounding step. The plain `Tween` struct keeps its
+elapsed time in double too. The timeline stops at 1e9 seconds (31 years); an endless tween sent past
+it stays a number.
+
+### Sequences
+
+```cpp
+auto seq = scene.tweens().Sequence();
+seq->Append(a).Join(b).AppendInterval(0.2f).AppendCallback(done);   // after, with, pause, call
+seq->Prepend(intro);                          // plays before everything already in it
+seq->JoinCallback([] { /* when the last appended tween starts */ });
+seq->SetLoops(3, LoopType::Yoyo).OnStepComplete(...).OnComplete(...);   // loops, yoyo, step callbacks work as for any tween
+seq->Length();                                // seconds of one loop
+seq->Goto(1.5f); seq->Rewind(); seq->Complete();
+```
+
+A sequence is a tween: `SetLoops`, `SetDelay`, `SetSpeed`, `SetEase`, `Pause`, `Kill(true)`, `Goto`, ids and
+tags all work on it, and a sequence can hold sequences. In a Yoyo loop the children run backwards on the
+way back and the sequence ends exactly on its start; callbacks added with `AppendCallback` /
+`InsertCallback` / `JoinCallback` fire on the way forward only.
+
+### Speed based tweens
+
+```cpp
+DOTween::Move(go, target, 3.0f)->SetSpeedBased();     // 3 units a second: 6 units away takes 2 s
+```
+
+`SetSpeedBased()` makes `duration` a speed. The length is worked out when the tween starts (after its
+delay) from the distance between the start and end values (`ValueTween`: moves, scales, UI positions and
+sizes, colours, `DOTween::Property` floats and vectors), so `Duration()` reads the speed until then.
+Speed zero, negative, NaN or tiny means an instant tween, and a distance of zero too. Tweens that cannot
+measure a distance (rotations, punches, shakes, jumps, paths, quaternion tweens) and tweens inside a
+sequence read `duration` as seconds. Script: `tween_speed_based(id)`.
+
+### Aiming a running tween somewhere else
+
+```cpp
+auto t = scene.tweens().ToVec3([&] { return p; }, [&](const Vec3& v) { p = v; }, target, 1.0f);
+t->ChangeEnd(newTarget);     // same start, new end, progress kept
+```
+
+`ValueTween::ChangeEnd` takes a float, `Vec2`, `Vec3`, `Color` or the four-value array. The start stays
+where it was read; a relative tween takes the new value as an offset again; `From()` tweens move the start of
+the motion. A value that is not a number leaves that part where it was. The motion jumps onto the new line at
+the current progress. When the target keeps moving and you want the motion to bend instead, use a `Spring`.
+
+### Tweens for values you own
+
+`TweenManager::ToVec2`, `ToVec3`, `ToColor` (every channel, alpha too) and `ToQuat` (slerp, the short way
+round) tween a value through your own getter and setter, next to `To` for floats. `ToQuat` with
+`SetRelative()` applies the end rotation on top of the start. They support delay, loops, yoyo, ease, `From`,
+`SetRelative` and the rest like any tween, and a null getter or setter is harmless.
+
+### Tags
+
+`SetTag("menu")` labels a tween next to its id. An id names one tween for scripts; a tag groups many:
+`TweenManager::KillByTag(tag[, complete])`, `PauseByTag`, `PlayByTag`, `CompleteByTag`, `WithTag`, `CountByTag`,
+and `Rewind(id)` next to the by-id calls. Script: `tween_tag(id, "menu")`, `tween_kill_tag("menu"[, complete])`,
+`tween_pause_tag`, `tween_play_tag`, `tween_complete_tag`, `tween_rewind_id("name")`.
+
+### Punch and shake with a falloff
+
+The punch and shake tweens fade out in a straight line. `SetDecay(rate)` swaps that for an exponential
+falloff (`Easing::Decay(t, rate)`: 1 at the start, exactly 0 at the end; 4 is lively, 8 is snappy), so the
+motion is quiet sooner and the tail short:
+
+```cpp
+DOTween::PunchScale(go, {0.3f, 0.3f, 0}, 0.5f, 8)->SetDecay(5.0f);
+DOTween::ShakePosition(hud, 0.4f, {6, 6, 0}, 14)->SetDecay(8.0f);
+```
+
+Script: `tween_decay(id, rate)`.
+
+### Riding a spline
+
+`DOTween::AlongSpline(go, splineObject, duration, orient)` moves `go` along the `Spline` component on
+`splineObject` at constant speed (world position; `orient` also faces along the curve with the spline's up).
+It supports ease, loops and yoyo, finds the spline again every frame (removing it just stops the effect) and
+dies with `go`. For plain waypoints without a Spline component use `DOTween::Path`.
+
 ### Callbacks that change the sequence they run in
 
 A callback may add to the sequence that is running it (`Append`, `AppendCallback`...), or
@@ -304,7 +400,33 @@ Tweens: 1 (1 playing)
 ```
 
 `Scheduler::Tasks()` gives the same as a list of `TaskInfo` (kind, tag, remaining, repeats
-left, paused, clock, whether its object is still alive), in the order they were scheduled.
+left, paused, clock, whether its object is still alive, its object's name, how long it has run, how far it is
+overdue), in the order they were scheduled. `TweenManager::Infos()` is the same for tweens.
+
+`Core/TimerDebug.hpp` turns both into the lines an overlay or a console prints: counts by kind, the next
+task due, tasks that are overdue (paused or on a clock that does not tick) or whose owner is gone, groups by
+tag, owner (an object's name) and tween id, tweens that finished but are kept (auto kill off), the
+longest-running tasks and tweens.
+
+```cpp
+for (const std::string& line : TimerDebug::BuildLines(&scene.scheduler(), &scene.tweens()))
+    DrawLabel(line);
+//   Scheduler: 12 tasks (7 delays, 3 repeating, 2 tweens), 2 paused
+//     next due in 0.25s (#7), 1 overdue
+//     tags: wave x5, ui x3, (none) x4
+//     owners: Boss x4, 0x5612a0 x2
+//     oldest: #3 repeat every 0.5s [wave] running 2m05s
+//   Tweens: 4 (3 playing, 1 paused), 1 done and kept
+//     ids: fade x2, (none) x2
+//     oldest: #2 value "fade" running 35s, loop 3/forever
+
+DebugOverlay::AddLine([&] { return TimerDebug::Summary(&scene.scheduler(), &scene.tweens()); });
+//   Timers: 12 (2 paused, next 0.25s) | Tweens: 4 (3 playing)
+```
+
+`TimerDebug::Capture(...)` gives the numbers (`SchedulerStats`, `TweenStats`) if you want to draw your own.
+`TimerDebug::Options` limits the groups and oldest entries listed. Ties are broken by name and handle, so the
+text is the same every run.
 
 ### Lifetimes
 
@@ -398,7 +520,70 @@ Added:
 - Scripts: `tween_clock(id, channel)`, `tween_prop(path, to, dur)`, and `tween_ease` (and the
   ease argument of the `tween_*` builtins) accept curve text.
 
-Not done (follow-ups): `Dump()` in a debug overlay panel; visual-script nodes for a named or
-bezier ease and for springs; `Scheduler` lookups by handle are still a linear scan (fine
-for hundreds of tasks; cancel big groups by tag or owner); a `Quat` version of
-`Mathf::SmoothDamp` is `Spring::StepQuatCritical`.
+Not done (follow-ups, second pass): `Dump()` in a debug overlay panel (done in the fourth pass, see below);
+visual-script nodes for a named or bezier ease and for springs; a `Quat` version of `Mathf::SmoothDamp` is
+`Spring::StepQuatCritical`.
+
+### Fourth pass (scale, long runs, sequencing, juice, debug view)
+
+Bugs fixed (each with a regression test; the tests that fail on the code before the change are noted):
+
+- `Scheduler`: every lookup by handle was a linear scan and every cancel erased from the middle of a
+  vector, so cancelling 20 000 timers one by one took 5 s and the time grew with the square of the count
+  (10 000 took 1.7 s). Handles now resolve through an index and removal leaves a tombstone that is swept
+  in bulk; tags, owners and objects have their own group tables, so a group is cancelled, paused or
+  counted by touching only its members. `scheduler_scale` (100 000 timers, by handle, by owner, by tag).
+- `Scheduler`: a captured value whose destructor called back into the scheduler (an RAII timer handle
+  that cancels in its destructor, a callback object that schedules) ran while the task list was being
+  torn down: destroying a scheduler that held such a task aborted with a double free, and `Clear()` lost
+  the cancel and the new timer that destructor asked for. Tasks now leave every table first and their
+  callbacks are freed last. `scheduler_scale` blocks 13 and 14.
+- `Tweener`: a tween whose delay did not fit a float (0.1, 0.3, 0.7, ...) could never complete: the end
+  test compared `time - delay` with `duration * loops` in float and missed by one rounding step, so the
+  tween froze one hair short of its end, never fired `OnComplete` and was never removed (30 of 175
+  delay / length / loop combinations in the test). The end is now "the time reached the full length".
+  `tween_long_run` block 6.
+- `Tweener`: the timeline was a float, so a tween that had run for hours drifted: after ten hours of 0.1 s
+  frames an endless loop was 41 s behind (a 0.1 s step rounds to 0.1016 s), a yoyo no longer turned on
+  its end values, and an endless loop sent far out (5e8 s into a 0.1 ms loop) stopped moving (the loop
+  counter is capped at two billion; the phase now comes from the double time). `tween_long_run`.
+  The plain `Tween` struct had the same drift (an hour long tween was 0.3 s off at its half way point).
+- Tweens wrote NaN into objects: an end value that is NaN or infinite, an ease curve that returned NaN,
+  a start value that already was NaN, and non-finite punch, shake, jump, rotation and path settings all
+  ended up in the transform on every frame. They are now ignored (that part stays where it was) and a
+  bad curve counts as a straight line. `timers_audit` block 1, `tween_sequencing` block 26.
+- `Easing::Evaluate` returned NaN or infinity for NaN or infinite input and for inputs far outside 0..1
+  (`ExpoIn` past 13 overflows); it now treats NaN as 0, infinity as the nearer end and stops overflow at
+  plus or minus 1e30. `CubicBezier` with a NaN control point x counts it as 0. `timers_audit` block 12.
+- `Spring::Step` with a damping far above critical used the difference of two nearly equal rates for the
+  slow decay and got it wrong (a 4% error in the test, worse for stiffer settings); it now uses
+  `w0^2 / (a + b)`. `timers_audit` block 16.
+- `TweenManager::Add` of a tween that another manager owned left it in both lists, so it was advanced
+  twice a frame; it now leaves the first manager. `PlayAll()` (the end of a pause menu) turned a tween that
+  was playing backwards round; it now only resumes. `timers_audit` block 19, `tween_sequencing` block 21.
+- Script `after(NaN, "fn")` and `every(NaN, "fn")` made a timer that never fired and never went away, and
+  a NaN frame time stopped every script timer; NaN counts as 0 (after) or the shortest interval (every).
+
+Added:
+
+- Scheduler: O(1) handle lookups and group operations (see above), `TaskInfo::objectName`, `age`, `overdue`.
+- `Core/TimerDebug.hpp`: `TimerDebug::BuildLines`, `Summary`, `Capture`, `FormatSeconds` (see "Debug view");
+  `TweenManager::Infos()`.
+- Tweens: `ElapsedD`, `FullDurationD`, `RenderAt(double)`, `SetSpeedBased`, `SetTag`, `SetDecay`,
+  `ValueTween::ChangeEnd`, `TweenManager::ToVec2/ToVec3/ToColor/ToQuat`, `WithTag`, `KillByTag`, `PauseByTag`,
+  `PlayByTag`, `CompleteByTag`, `CountByTag`, `Rewind(id)`, `TweenSequence::Prepend`, `JoinCallback`, `Length`,
+  `DOTween::AlongSpline`, `Easing::Decay`.
+- Scripts: `tween_tag`, `tween_speed_based`, `tween_decay`, `tween_kill_tag`, `tween_pause_tag`,
+  `tween_play_tag`, `tween_complete_tag`, `tween_rewind_id`, `seq_prepend`, `seq_join_callback`.
+
+Checked and fine: owners destroyed from inside a callback, the scene cleared from inside a scheduler or
+tween callback, a callback that updates its own manager, zero-length and negative durations with endless
+loops, `INT_MAX` loops, a TweenAnimation saved while playing and loaded again (settings round trip; the copy
+plays on from the saved pose), a TweenAnimation record full of NaN and infinity (the scene still loads),
+springs at stiffness zero or below and at critical damping, the clock cursor after a reset. Pinned by
+`timers_audit`.
+
+Not done: `TweenAnimation` has no fields for `decay`, speed based or a tag (they would need an extension of the
+scene record and an Inspector row; the code tweens have them); a `Scheduler` still must be used from one thread;
+a callback that calls `Update` on the scheduler that is running it consumes the running task's period without
+running it (nothing in the engine does this); visual-script nodes for the new tweens.

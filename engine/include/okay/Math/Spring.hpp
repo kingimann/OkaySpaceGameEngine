@@ -80,7 +80,10 @@ struct Spring {
                 v = e * (v0 * cs - ((a * v0 + w0 * w0 * d0) / wd) * sn);
             } else {                                                     // overdamped: two decays
                 const double b = w0 * std::sqrt(zeta * zeta - 1.0);      // b < a, so both exponents fall
-                const double e1 = std::exp(-(a - b) * t), e2 = std::exp(-(a + b) * t);
+                // The slow decay rate a - b is a difference of two nearly equal numbers once the damping is
+                // far above critical (it would round to 0 or to noise); a^2 - b^2 = w0^2 gives it without cancelling.
+                const double slow = (w0 * w0) / (a + b);
+                const double e1 = std::exp(-slow * t), e2 = std::exp(-(a + b) * t);
                 const double ch = 0.5 * (e1 + e2), sh = 0.5 * (e1 - e2); // e^-at cosh(bt), e^-at sinh(bt)
                 d = d0 * ch + ((v0 + a * d0) / b) * sh;
                 v = v0 * ch - ((a * v0 + w0 * w0 * d0) / b) * sh;

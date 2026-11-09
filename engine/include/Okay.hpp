@@ -17,6 +17,7 @@
 #include "okay/Core/EventBus.hpp"
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Tween.hpp"
+#include "okay/Core/TimerDebug.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Core/SaveData.hpp"

@@ -640,6 +640,9 @@ Smoothly animate this object over time. Every tween:
 | `tween_speed(id, x)` | play faster or slower |
 | `tween_unscaled(id)` | ignore the time scale (pause menus) |
 | `tween_clock(id, "ui")` | follow a named clock channel (`"game"`, `"ui"`, `"cinematic"`, or your own) instead of scene time; `""` goes back |
+| `tween_tag(id, "menu")` | give it a group label, for the `_tag` functions below |
+| `tween_speed_based(id)` | the duration you gave is a speed in units a second: it lasts distance / speed (moves, scales, colours; not rotations or punches) |
+| `tween_decay(id, rate)` | how a punch or shake dies away: `0` is a straight fade, `6` is snappy |
 | `tween_from(id)` | play from the end value back to the current one (intros) |
 | `tween_relative(id)` | treat the end value as an offset |
 | `tween_set_id(id, "name")` | name it, for the `_id` functions below |
@@ -657,7 +660,10 @@ Smoothly animate this object over time. Every tween:
 - **By name, anywhere in the scene:** `tween_kill_id("name")`,
   `tween_pause_id("name")`, `tween_play_id("name")` and
   `tween_restart_id("name")`. These also start a **Tween Animation** component
-  with that Id.
+  with that Id. `tween_rewind_id("name")` puts them back at the start.
+- **By tag, anywhere in the scene:** `tween_kill_tag("tag"[, complete])`,
+  `tween_pause_tag("tag")`, `tween_play_tag("tag")` and `tween_complete_tag("tag")`
+  (the tag is set with `tween_tag(id, "tag")`; many tweens can share one).
 
 **Sequences** run tweens one after another, or together:
 
@@ -667,8 +673,10 @@ Smoothly animate this object over time. Every tween:
 | `seq_append(seq, id)` | play after everything already in it |
 | `seq_join(seq, id)` | play together with the last appended tween |
 | `seq_insert(seq, time, id)` | play at a time |
+| `seq_prepend(seq, id)` | play before everything already in it |
 | `seq_interval(seq, s)` / `seq_prepend_interval(seq, s)` | a pause at the end / start |
 | `seq_callback(seq, "fn")` / `seq_insert_callback(seq, time, "fn")` | call a function at that point |
+| `seq_join_callback(seq, "fn")` | call a function when the last appended tween starts |
 
 A sequence's id works with every setup and control function above (loops,
 delay, pause...).

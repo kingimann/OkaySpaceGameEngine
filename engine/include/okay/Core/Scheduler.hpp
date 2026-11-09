@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "okay/Core/ClockCursor.hpp"
 
@@ -17,8 +18,14 @@ class GameObject;
 ///
 /// Not thread safe: schedule, cancel and update from the thread that runs the
 /// scene. Callbacks may schedule and cancel freely (see docs/timers_and_tweens.md).
+///
+/// Cost: every lookup by handle (Cancel, SetPaused, IsPaused, SetInterval, Remaining,
+/// IsScheduled) is O(1); CancelByTag / CancelByOwner / CancelByObject / SetPausedByTag /
+/// SetPausedByOwner touch only the tasks of that group (CountByTag and ActiveCount are O(1));
+/// Update walks the live tasks once. A hundred thousand timers can be cancelled one by one.
 class Scheduler {
 public:
+    ~Scheduler();   // drops every task first, so a captured value that calls back from its destructor finds a consistent scheduler
     using Handle = std::uint64_t;
     static constexpr Handle InvalidHandle = 0;
     /// A repeating timer that is far behind (a long hitch, a suspended machine) runs
@@ -126,6 +133,9 @@ public:
         bool unscaled = false;
         bool hasObject = false;     ///< bound to a GameObject (Options::object)
         bool ownerAlive = true;     ///< false: its object or `alive` says it is gone
+        std::string objectName;     ///< that object's name while it is alive, else empty
+        double age = 0.0;           ///< seconds the task has been running (paused time and a hold on its clock do not count)
+        double overdue = 0.0;       ///< seconds past its due time without having run (paused, or its clock is not ticking); 0 = on time
     };
     /// Every active task, in the order it was scheduled.
     std::vector<TaskInfo> Tasks() const;
@@ -147,6 +157,7 @@ private:
     struct Task {
         Handle handle;
         double elapsed;
+        double age = 0.0;    // total seconds run (for the debug view)
         float  period;       // delay / interval / duration
         int    repeatsLeft;  // for repeating tasks (>=0), -1 = infinite
         bool   isTween;
@@ -164,20 +175,48 @@ private:
         std::function<void()>      tweenComplete;
     };
 
+    // The tasks of one tag / owner / object: handles in scheduling order (it may still list
+    // a few that finished; they are skipped and pruned) and how many are alive.
+    struct Group {
+        std::vector<Handle> handles;
+        std::size_t live = 0;
+    };
+
     Handle Add(Task&& t, const Options& options);
     const Task* Find(Handle handle) const;
-    template <class Pred> int CancelWhere(Pred match);
-    template <class Pred> int PauseWhere(Pred match, bool paused);
+    Task* FindMut(Handle handle);
+    /// Take the task in `slot` out of play: it stops counting, its handle stops resolving (the
+    /// slot keeps handle 0 until the list is compacted). Idempotent.
+    void Retire(std::size_t slot);
+    /// Free what a retired task captured (its callbacks), now or, inside an Update, when it ends.
+    static void ReleasePayload(Task& t);
+    void ReleaseRetired();
+    void Compact();
+    void MaybeCompact();
+    template <class Map, class Key> void JoinGroup(Map& map, const Key& key, Handle h);
+    template <class Map, class Key> void LeaveGroup(Map& map, const Key& key);
+    /// Run `fn(Task&)` on every live task of a group (a snapshot: `fn` may retire tasks). Returns how many.
+    template <class Map, class Key, class Fn> int ForGroup(Map& map, const Key& key, Fn fn);
+    bool SlotOwnerGone(std::size_t slot);
     static bool OwnerGone(const Task& t);
     static bool HasLiveness(const Task& t) { return t.objectId != 0 || t.alive; }
     float TaskStep(Task& t, float dt, float unscaledDt);
     void RunTask(std::size_t i, float dt, float unscaledDt);
 
+    // Tasks in scheduling order. A finished or cancelled task leaves a tombstone (handle 0)
+    // that is swept out in bulk (Compact), so removing one is O(1) and slots never move while
+    // an Update runs.
     std::vector<Task> m_tasks;
+    std::unordered_map<Handle, std::size_t> m_index;               // live handle -> slot in m_tasks
+    std::unordered_map<std::string, Group> m_byTag;
+    std::unordered_map<const void*, Group> m_byOwner;
+    std::unordered_map<const void*, Group> m_byObject;
+    std::size_t m_dead = 0;                                        // tombstones in m_tasks
+    std::vector<std::size_t> m_retired;                            // slots retired during the running Update
     Handle m_nextHandle = 1;
     ClockSet* m_clocks = nullptr;
-    // >0 while Update runs: Cancel/Clear only mark tasks dead (handle = 0) so
-    // the list never shrinks under a running callback; Update sweeps them.
+    // >0 while Update runs: Cancel/Clear only retire tasks (handle = 0) and nothing is
+    // compacted, so the list never shifts under a running callback.
     int m_updateDepth = 0;
 };
 

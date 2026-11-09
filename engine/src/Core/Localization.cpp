@@ -716,7 +716,7 @@ std::string Localization::KeyPart(const std::string& name) {
         const std::uint32_t cp = utf8::Next(t, i);
         const bool blank = cp == 0xA0 || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200F) || (cp >= 0x2028 && cp <= 0x202F) ||
                            (cp >= 0x205F && cp <= 0x206F) || cp == 0x3000 || cp == 0xFEFF;
-        if (blank) out += '_';
+        if (blank || cp == 0xFFFD) out += '_';   // spaces, invisible marks and broken UTF-8
         else out.append(t, start, i - start);
     }
     return out;

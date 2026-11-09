@@ -47,8 +47,8 @@ Load-menu helpers (each takes a slot, `save1` when left out):
 
 ```
 for slot in save_slots() {            // every slot, newest first, damaged ones included
-    if save_valid(slot) {              // would it load? (its file or its backup passes the checks)
-        text = save_label(slot) + "  " + save_play_text(slot) + "  " + save_ago(slot)
+    if (save_valid(slot)) {            // would it load? (its file or its backup passes the checks)
+        var text = save_label(slot) + "  " + save_play_text(slot) + "  " + save_ago(slot);
         // save_scene(slot), save_play_time(slot) (seconds), save_date(slot) "2026-11-08 14:03" (UTC)
     }
 }

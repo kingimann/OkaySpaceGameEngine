@@ -250,11 +250,13 @@ ReadState ReadSaveFile(const std::string& path, std::unordered_map<std::string, 
 bool SaveFile::Load(const std::string& path) {
     m_error.clear();
     m_fromBackup = false;
+    m_recheckOld = false;
     std::unordered_map<std::string, std::string> fresh;
     std::string why;
     ReadState st = ReadSaveFile(path, fresh, &why);
     if (st == ReadState::Ok) { m_data = std::move(fresh); return true; }
     if (st == ReadState::Missing) { m_data.clear(); return false; }
+    m_recheckOld = true;   // the file on disk is damaged: when this store is saved, check it before it becomes the backup
     std::unordered_map<std::string, std::string> back;
     std::string backWhy;
     if (ReadSaveFile(path + ".bak", back, &backWhy) == ReadState::Ok) {
@@ -282,7 +284,7 @@ bool SaveFile::Save(const std::string& path, std::string* error, bool durable, b
     out += "#sum " + savefmt::Hex16(savefmt::Fnv1a(out.data(), out.size())) + "\n";
 
     // The file about to be replaced: a good one becomes the backup, a damaged one is set aside.
-    if (checkOld) {
+    if (checkOld || m_recheckOld) {
         savefmt::KeepBackup(path, [](const std::string& bytes) {
             std::unordered_map<std::string, std::string> parsed;
             return ParseSaveText(bytes, parsed, nullptr) == ReadState::Ok;
@@ -299,6 +301,7 @@ bool SaveFile::Save(const std::string& path, std::string* error, bool durable, b
         return false;
     }
     m_error.clear();
+    m_recheckOld = false;
     return true;
 }
 

@@ -59,6 +59,7 @@ int main() {
         CHECK(Localization::KeyPart("Mr. 山田") == std::string("mr__") + yamada);
         CHECK(Localization::KeyPart("a\xC2\xA0" "b") == "a_b");                 // a no-break space is a space
         CHECK(Localization::KeyPart("a\xE3\x80\x80" "b") == "a_b");             // so is an ideographic one
+        CHECK(Localization::KeyPart("a\xFF" "z\xE5\xB1") == "a_z_");            // broken UTF-8 never reaches a key
         // The key survives the table's two text formats and a lookup.
         StringTable t = Langs({"en", "ja"});
         const std::string key = "speaker." + Localization::KeyPart(yamada);

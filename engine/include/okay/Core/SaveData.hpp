@@ -262,6 +262,7 @@ private:
     std::unordered_map<std::string, std::string> m_data;
     mutable std::string m_error;
     bool m_fromBackup = false;
+    mutable bool m_recheckOld = false;   // the last Load met a damaged file: the next Save checks what it replaces
 
     static std::string Num(float v) { return savefmt::FormatFloat(v); }
     bool Payload(const std::string& k, std::string& out) const {
@@ -333,7 +334,8 @@ public:
         auto it = m.find(key);
         if (it == m.end()) {
             SaveFile sf;
-            if (!sf.Load(key) && !sf.LastError().empty()) LastErrorRef() = sf.LastError();
+            sf.Load(key);
+            if (!sf.LastError().empty()) LastErrorRef() = sf.LastError();   // damaged: says so (and whether a backup was read)
             it = m.emplace(key, std::move(sf)).first;
         }
         return it->second;

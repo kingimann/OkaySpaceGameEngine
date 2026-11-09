@@ -259,7 +259,11 @@ int main() {
         WriteText(dmg, body.substr(0, body.size() - 10));
         CHECK(Save::Reload("dmg.okaysave") && Save::GetInt("x", 0, "dmg.okaysave") == 1);
         CHECK(Contains(Save::LastError(), "backup"));
-        Save::SetInt("x", 3, "dmg.okaysave");                           // saving heals it
+        Save::SetInt("x", 3, "dmg.okaysave");                           // saving heals it ...
+        {   // ... and the damaged main did not replace the good backup
+            SaveFile bak;
+            CHECK(bak.Load(dmg.string() + ".bak") && !bak.LoadedFromBackup() && bak.GetInt("x") == 1);
+        }
         CHECK(Save::Reload("dmg.okaysave") && Save::GetInt("x", 0, "dmg.okaysave") == 3 && Save::LastError().empty());
         CHECK(Save::DeleteFile("dmg.okaysave") && !fs::exists(dmg) && !fs::exists(dmg.string() + ".bak"));
         CHECK(!Save::Reload("dmg.okaysave") && !Save::Has("x", "dmg.okaysave"));
@@ -489,6 +493,28 @@ int main() {
         }
 #endif
         CHECK(!SaveGame::Save(s, "con", "x", &err) && Contains(err, "valid slot name"));
+
+        // The script builtins a load menu uses.
+        CHECK(SaveGame::Save(s, "menu1", "Menu One", &err));
+        auto run = [&](const std::string& src, const char* var) {
+            auto vm = CreateScriptVM("okayscript");
+            std::string lerr;
+            if (!vm->Load(src, &lerr)) { std::printf("  load error: %s\n", lerr.c_str()); return vs::VsValue{}; }
+            return vm->GetGlobal(var);
+        };
+        CHECK(run("var r = save_valid(\"menu1\");", "r").AsFloat() == 1.0f);
+        CHECK(run("var r = save_valid(\"cut\");", "r").AsFloat() == 0.0f);
+        CHECK(run("var r = save_valid(\"nothing-here\");", "r").AsFloat() == 0.0f);
+        CHECK(run("var r = save_label(\"menu1\");", "r").AsString() == "Menu One");
+        CHECK(run("var r = save_scene(\"menu1\");", "r").AsString() == "Level");
+        CHECK(run("var r = save_play_time(\"menu1\");", "r").AsFloat() >= 0.0f);
+        CHECK(!run("var r = save_play_text(\"menu1\");", "r").AsString().empty());
+        const std::string date = run("var r = save_date(\"menu1\");", "r").AsString();
+        CHECK(date.size() == 16 && date.compare(0, 2, "20") == 0 && date[4] == '-' && date[10] == ' ' && date[13] == ':');
+        CHECK(!run("var r = save_ago(\"menu1\");", "r").AsString().empty());
+        CHECK(run("var r = save_date(\"nope\");", "r").AsString().empty() && run("var r = save_play_text(\"nope\");", "r").AsString().empty());
+        CHECK(run("var all = save_slots(); var n = count(all); var found = 0; for s in all { if (s == \"menu1\") { found = 1; } }", "found").AsFloat() == 1.0f);
+        CHECK(run("var all = save_slots(); var n = count(all);", "n").AsFloat() >= 5.0f);
     }
     Save::SetBaseDir("");
 

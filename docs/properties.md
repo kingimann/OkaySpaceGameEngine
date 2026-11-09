@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-1106 properties on 61 types (a number before a slash counts the authored ones; the rest are
+1358 properties on 85 types (a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -301,6 +301,11 @@ has `enabled`.
 | NavMeshAgent, NavMeshObstacle, NavMeshSurface | 15, 3, 14 | the surface's bake settings are flat (`agentRadius`, `maxSlope`, `cellSize` ...) |
 | NetworkObject, NetworkSync, NetworkTransform, SyncVar, NetworkPlayerSpawner | 4, 6, 1, 3, 7 | `NetworkObject.netId` refuses a `/` |
 | UIButton, TextRenderer, UIImage, UISlider, UIToggle, UIProgressBar, UIInputField, UIStepper, UIDropdown | 41, 32, 22, 24, 14, 22, 14, 16, 16 | position, size, anchor, colours, shape, shadow, border, behaviour switches |
+| Crosshair, UIRadialProgress, UIRating, UIScrollView, UILayoutGroup, UIFrame, UIFlexItem, UIRawImage, UIKeybindField, UIDraggable | 25, 14, 10, 12, 12, 6, 5, 11, 18, 7 | the other UI widgets and layout parts that save plain fields (not the tabs, whose lists are not properties) |
+| Collectible, DamageOnTouch, Teleporter, JumpPad, TriggerZone, FollowTarget2D | 7, 7, 5, 6, 7, 4 | the no-code gameplay components; `TriggerZone.action` is an enum |
+| Destructible, Draggable, DropZone, Flashlight | 15, 10, 2, 7 | |
+| Joint2D, Joint3D | 16, 14 | `mode` (Distance, Spring, Pin, Hinge); the motor spins either way |
+| DayNightCycle, Water | 16, 16 | `DayNightCycle.time` is 0..24 hours; `Water.color` is red, green and blue (its alpha is `opacity`) |
 
 How the new types are described, so a tool can rely on it:
 
@@ -335,10 +340,10 @@ survives Save and Load, which the tests check.
 
 **Not registered yet:** scripts (`ScriptComponent` and `VisualScriptComponent` keep their
 source and a free-form `fields` table, not named properties), `NetworkManager` and the anti-cheat
-settings (record plus lists), the remaining UI components (scroll view, tabs, rating, key-bind field, layout
-group, frame, flex item, radial progress, raw image, draggable, toast, tooltip, theme ...), inventory,
-crafting, dialogue, quest and survival components, terrain, water, voxel and spline components,
-joints, ragdoll, the tilemap, and the sequence and cinematic components. Animation and IK components
+settings (record plus lists), the UI tabs, toast, tooltip, theme, context menu, list view, slot grid
+and colour picker, the minimap (markers are lists), inventory, crafting, dialogue, quest and survival
+components, terrain, voxel and spline components, ragdoll, the tilemap, and the sequence and
+cinematic components. Animation and IK components
 are left to the animation work. They can all register themselves with the builder.
 
 ## What the tests check
@@ -368,12 +373,12 @@ are left to the animation work. They can all register themselves with the builde
   property is set to a non-default value through the registry, the scene is
   serialized and loaded into a fresh scene, and each property must read back the
   same. It runs twice: once with all properties of a type set together, and once
-  one property at a time. All 1097 stored properties pass. The skip list for
+  one property at a time. All 1349 stored properties pass. The skip list for
   "properties the serializer does not store" is empty: only read-only,
   runtime-only and derived properties are skipped, by their flags;
 - **the edges through the scene file:** the lowest and highest value of every range, 0 and -1 for
   every integer, every enum option, both bool values and awkward strings (quotes, backslashes, a
-  leading space, UTF-8, 3000 characters) are set, saved, loaded and read back (3399 values);
+  leading space, UTF-8, 3000 characters) are set, saved, loaded and read back (4246 values);
 - the controllers (view mode adds and removes the parts, key codes, the dodge struct), navigation,
   networking and the UI widgets;
 - a third-party component through the builder; concurrent first use of the registry; and four
@@ -394,9 +399,11 @@ rediscover it):
   `normalStrength` needs a `normalMap`; `aoStrength` needs an `aoMap`; the
   vehicle's `rideHeight`, `springStrength`, `springDamping`, `suspensionTravel`, `wheelBase`,
   `trackWidth`, `bodyLean`, `maxTilt` and `tiltSmooth` need `suspension` on.
-- **Alpha:** `Light.ambientColor` and the MeshRenderer colors `emissive`,
-  `gradientTop`, `gradientBottom`, `rimColor`, `outlineColor` are saved as red,
-  green and blue only; alpha reads back as 1.
+- **Alpha:** `Light.ambientColor`, the MeshRenderer colors `emissive`,
+  `gradientTop`, `gradientBottom`, `rimColor`, `outlineColor`, `Flashlight.color` and the five
+  `DayNightCycle` colours are saved as red, green and blue only; alpha reads back as 1. `Water.color`
+  is the same, and in the component its alpha always follows `opacity`, so the property reads and
+  writes red, green and blue and keeps alpha 1.
 - **Edge and polygon colliders** do not keep `autoFit`, so it is not registered
   for them.
 - **Raw-character keys:** the records `tdctrl`, `tdctrl2d`, `charctrl2d`, `ctmctrl` and `tpsctrl` write a
@@ -419,9 +426,9 @@ Audit of the registry (each with a failing test first):
 - Name lookups use hash tables instead of three scans, and a write nobody listens to builds no
   `PropertyChange`.
 - No bug was found in the clamping of ranges, the text round trips, the thread safety of the table,
-  or the scene round trip: 3399 edge values and every enum option survive the scene file.
+  or the scene round trip: 4246 edge values and every enum option survive the scene file.
 
 New: `PropertyRegistry::WriteProperty` and `WritePropertyFromText` (old and stored value),
 `PropertyBuilder::Adder` and the nested-field overloads, the controllers, navigation, networking and
-UI widgets listed above (35 new types, 770 new properties: 336 on 26 types became 1106 on 61), and the
-three registration files.
+UI widgets, no-code gameplay, joints and environment components listed above (59 new types, 1022 new
+properties: 336 on 26 types became 1358 on 85), and the three registration files.

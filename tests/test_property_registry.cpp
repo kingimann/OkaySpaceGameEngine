@@ -359,7 +359,7 @@ static void TestRegistryBasics() {
     const std::size_t count = PropertyRegistry::All().size();
     RegisterBuiltinProperties();   // idempotent
     CHECK(PropertyRegistry::All().size() == count);
-    CHECK(count >= 61);
+    CHECK(count >= 85);
 
     const char* expected[] = {"GameObject", "Transform", "Camera", "Light", "SpriteRenderer", "MeshRenderer", "Rigidbody2D", "Rigidbody3D",
         "BoxCollider2D", "CircleCollider2D", "CapsuleCollider2D", "EdgeCollider2D", "PolygonCollider2D",
@@ -369,7 +369,10 @@ static void TestRegistryBasics() {
         "TopDownController", "TopDownController2D", "FreeRoamController", "ClickToMoveController", "ThirdPersonShooterController",
         "TopDownShooterController", "Platformer25DController", "VehicleController", "VehicleController2D", "Projectile3D", "Spawner",
         "MusicPlayer", "NavMeshAgent", "NavMeshObstacle", "NavMeshSurface", "NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar",
-        "NetworkPlayerSpawner", "UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown"};
+        "NetworkPlayerSpawner", "UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown",
+        "Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone",
+        "Flashlight", "Joint2D", "Joint3D", "DayNightCycle", "Water", "Crosshair", "UIRadialProgress", "UIRating", "UIScrollView",
+        "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");
@@ -421,7 +424,7 @@ static void TestThreadSafeRegistration() {
     RUN_SUITE("registry: concurrent first use");
     PropertyRegistry::Clear();   // only the built-ins from here on
     const std::size_t count = PropertyRegistry::All().size();
-    CHECK(count >= 61);
+    CHECK(count >= 85);
 
     // A fresh table (as in a new process), four threads racing to be the first user:
     // every one of them must see the complete table, and it must hold each entry once.
@@ -978,6 +981,14 @@ static GameObject* MakeSubject(Scene& s, const ComponentTypeInfo& info) {
     return go;
 }
 
+// The serializer keeps these colors as red, green and blue only (alpha stays 1).
+static const std::set<std::string> kRgbOnly = {
+    "Light.ambientColor", "MeshRenderer.emissive", "MeshRenderer.gradientTop", "MeshRenderer.gradientBottom",
+    "MeshRenderer.rimColor", "MeshRenderer.outlineColor",
+    "Flashlight.color", "DayNightCycle.dayLight", "DayNightCycle.nightLight", "DayNightCycle.skyDay", "DayNightCycle.skyHorizon",
+    "DayNightCycle.skyNight", "Water.color",   // Water: its alpha is the opacity property, so `color` is red, green, blue only
+};
+
 static void TestEveryPropertyRoundTrip() {
     RUN_SUITE("every built-in property: get -> set -> get, text, change");
     RegisterBuiltinProperties();
@@ -1020,7 +1031,7 @@ static void TestEveryPropertyRoundTrip() {
             CHECK(fires == 0);
 
             // a different value goes in, comes out, and fires once with old and new
-            const PropertyValue v1 = MakeDifferent(d, v0, other->Guid(), false);
+            const PropertyValue v1 = MakeDifferent(d, v0, other->Guid(), kRgbOnly.count(path) != 0);
             CHECK(v1.IsValid());
             // A derived property is computed from others (euler angles from a quaternion):
             // it reads back within float error rather than bit for bit.
@@ -1048,7 +1059,7 @@ static void TestEveryPropertyRoundTrip() {
         }
     }
     std::cout << "  covered " << comps << " component types, " << props << " properties\n";
-    CHECK(comps >= 61 && props >= 1100);
+    CHECK(comps >= 85 && props >= 1350);
 }
 
 // ---- Cross-check against the scene serializer ---------------------------------------------------------------
@@ -1057,11 +1068,6 @@ static void TestEveryPropertyRoundTrip() {
 // default flags (not read-only, runtime-only or derived) must survive Serialize
 // and Deserialize. Empty on purpose: every registered authored property is stored.
 static const std::set<std::string> kNotStored = {};
-// The serializer keeps these colors as red, green and blue only (alpha stays 1).
-static const std::set<std::string> kRgbOnly = {
-    "Light.ambientColor", "MeshRenderer.emissive", "MeshRenderer.gradientTop", "MeshRenderer.gradientBottom",
-    "MeshRenderer.rimColor", "MeshRenderer.outlineColor",
-};
 
 static void TestSerializerCrossCheck() {
     RUN_SUITE("cross-check against the scene serializer");
@@ -1112,7 +1118,7 @@ static void TestSerializerCrossCheck() {
               << " read-only/runtime/derived and " << skippedList << " listed; components:";
     for (const auto& c : coveredComponents) std::cout << " " << c;
     std::cout << "\n";
-    CHECK(checked >= 1000);
+    CHECK(checked >= 1300);
 }
 
 // Properties the scene file writes only together with another one: each rides on its
@@ -1350,7 +1356,7 @@ static void TestDescriptorsAreSane() {
         }
     }
     std::cout << "  " << checked << " descriptors\n";
-    CHECK(checked > 1000);
+    CHECK(checked > 1350);
 }
 
 static void TestControllerRegistrations() {
@@ -1548,6 +1554,61 @@ static void TestNavNetUiRegistrations() {
         // a slider's own limits are properties; the value is held to what a slider can show
         CHECK(PropertyRegistry::SetProperty(*go, "UISlider.maxValue", PropertyValue::MakeFloat(10.0f)) && PropertyRegistry::SetProperty(*go, "UISlider.value", PropertyValue::MakeFloat(4.0f)));
         CHECK(go->GetComponent<UISlider>()->maxValue == 10.0f && go->GetComponent<UISlider>()->value == 4.0f);
+    }
+}
+
+static void TestGameplayAndEnvironmentRegistrations() {
+    RUN_SUITE("no-code gameplay, joints, environment and the remaining UI widgets");
+    RegisterBuiltinProperties();
+    auto find = [](const char* n) { return PropertyRegistry::FindByName(n); };
+    for (const char* name : {"Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone", "Flashlight"})
+        CHECK(find(name) && find(name)->category == "Gameplay");
+    CHECK(find("Joint2D")->category == "Physics 2D" && find("Joint3D")->category == "Physics 3D");
+    CHECK(find("Water")->category == "Environment" && find("DayNightCycle")->category == "Environment");
+
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    {   // a trigger zone's action is an enum with the names of the action it runs
+        go->AddComponent<TriggerZone>();
+        auto d = find("TriggerZone")->Find("action");
+        CHECK(d->enumOptions == (std::vector<std::string>{"SetVar", "AddVar", "ActivateTarget", "DeactivateTarget", "Win", "Lose", "Quit"}));
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "TriggerZone.action", "win") && go->GetComponent<TriggerZone>()->action == (int)TriggerZone::Action::Win);
+        CHECK(PropertyRegistry::SetProperty(*go, "TriggerZone.varName", PropertyValue::MakeString("coins")) && go->GetComponent<TriggerZone>()->varName == "coins");
+    }
+    {   // joints: a motor can spin either way, its torque limit cannot be negative; limits are relative angles
+        go->AddComponent<Joint2D>();
+        go->AddComponent<Joint3D>();
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint2D.motorSpeed", PropertyValue::MakeFloat(-90.0f)) && go->GetComponent<Joint2D>()->motorSpeed == -90.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint3D.motorSpeed", PropertyValue::MakeFloat(-90.0f)) && go->GetComponent<Joint3D>()->motorSpeed == -90.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint2D.maxMotorTorque", PropertyValue::MakeFloat(-5.0f)) && go->GetComponent<Joint2D>()->maxMotorTorque == 0.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint2D.minAngle", PropertyValue::MakeFloat(-45.0f)) && go->GetComponent<Joint2D>()->minAngle == -45.0f);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "Joint2D.mode", "hinge") && go->GetComponent<Joint2D>()->mode == (int)Joint2D::Mode::Hinge);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "Joint3D.axis", "0 0 1") && go->GetComponent<Joint3D>()->axis.z == 1.0f);
+    }
+    {   // the environment: the clock is 0..24 hours; water's colour is red, green and blue, its alpha is `opacity`
+        go->AddComponent<DayNightCycle>();
+        go->AddComponent<Water>();
+        CHECK(PropertyRegistry::SetProperty(*go, "DayNightCycle.time", PropertyValue::MakeFloat(30.0f)) && go->GetComponent<DayNightCycle>()->time == 24.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "DayNightCycle.time", PropertyValue::MakeFloat(-2.0f)) && go->GetComponent<DayNightCycle>()->time == 0.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Water.opacity", PropertyValue::MakeFloat(0.4f)));
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "Water.color", "0.1 0.2 0.3 0.9"));
+        const Color c = go->GetComponent<Water>()->color;
+        CHECK(c.r == 0.1f && c.g == 0.2f && c.b == 0.3f && c.a == 0.4f);   // the alpha stays the opacity
+        CHECK(PropertyRegistry::GetProperty(*go, "Water.color") == PropertyValue::MakeColor(Color{0.1f, 0.2f, 0.3f, 1.0f}));
+        CHECK(PropertyRegistry::SetProperty(*go, "Water.resolution", PropertyValue::MakeInt(5000)) && go->GetComponent<Water>()->resolution == 256);
+        CHECK(PropertyRegistry::SetProperty(*go, "Water.waveLength", PropertyValue::MakeFloat(0.0f)) && go->GetComponent<Water>()->waveLength == 0.01f);
+    }
+    {   // the remaining widgets
+        go->AddComponent<UIScrollView>();
+        go->AddComponent<UIKeybindField>();
+        go->AddComponent<UILayoutGroup>();
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIScrollView.barStyle", "thin") && go->GetComponent<UIScrollView>()->barStyle == 1);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIScrollView.axis", "both"));
+        CHECK(PropertyRegistry::SetProperty(*go, "UIKeybindField.key", PropertyValue::MakeInt('k')) && go->GetComponent<UIKeybindField>()->key == 'k');
+        CHECK(PropertyRegistry::SetProperty(*go, "UIKeybindField.part", PropertyValue::MakeInt(9)) && go->GetComponent<UIKeybindField>()->part == 3);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UILayoutGroup.direction", "FlexRow") && go->GetComponent<UILayoutGroup>()->direction == UILayoutGroup::Direction::FlexRow);
+        CHECK(PropertyRegistry::SetProperty(*go, "UILayoutGroup.columns", PropertyValue::MakeInt(0)) && go->GetComponent<UILayoutGroup>()->columns == 1);
+        CHECK(find("Crosshair")->Find("anchor")->enumOptions == find("UIPanel")->Find("anchor")->enumOptions);
     }
 }
 
@@ -2060,6 +2121,7 @@ int main() {
     TestDescriptorsAreSane();
     TestControllerRegistrations();
     TestNavNetUiRegistrations();
+    TestGameplayAndEnvironmentRegistrations();
     TestAuditHooksWhileFiring();
     TestAuditWriteResult();
     TestAuditBuilderEdges();

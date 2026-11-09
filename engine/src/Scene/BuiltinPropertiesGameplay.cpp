@@ -11,8 +11,15 @@
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
+#include "okay/Components/DayNightCycle.hpp"
+#include "okay/Components/Destructible.hpp"
+#include "okay/Components/Draggable.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/Flashlight.hpp"
+#include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Components/FreeRoamController.hpp"
+#include "okay/Components/Joint2D.hpp"
+#include "okay/Components/Joint3D.hpp"
 #include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
@@ -20,6 +27,7 @@
 #include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NoCode.hpp"
 #include "okay/Components/Platformer25DController.hpp"
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/PlayerView.hpp"
@@ -32,6 +40,7 @@
 #include "okay/Components/TopDownShooterController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/Water.hpp"
 
 namespace okay {
 namespace detail {
@@ -709,6 +718,218 @@ void RegisterMusicPlayer() {
     b.Commit();
 }
 
+// ---- No-code gameplay ------------------------------------------------------
+
+// Collectible
+void RegisterCollectible() {
+    PropertyBuilder<Collectible> b("Collectible", "collectible", "Gameplay");
+    b.AddString("collectorTag", &Collectible::collectorTag).Tooltip("Who can collect (tag or name text); empty = anyone")
+     .AddString("scoreVar", &Collectible::scoreVar).Tooltip("Variable to add to (drives the HUD)")
+     .AddFloat("points", &Collectible::points).Range(-kBig, kBig, 0.1).Tooltip("Added to scoreVar per pickup")
+     .AddFloat("heal", &Collectible::heal).Range(-kBig, kBig, 0.1).Tooltip("Also heal the collector this much (needs a HealthStat)")
+     .AddBool("respawn", &Collectible::respawn).Tooltip("Reappear instead of vanishing for good")
+     .AddFloat("respawnDelay", &Collectible::respawnDelay).Range(0, 3600, 0.05);
+    b.Commit();
+}
+
+// DamageOnTouch
+void RegisterDamageOnTouch() {
+    PropertyBuilder<DamageOnTouch> b("DamageOnTouch", "damagetouch", "Gameplay");
+    b.AddString("targetTag", &DamageOnTouch::targetTag).Tooltip("Who takes damage (tag or name text); empty = anyone")
+     .AddFloat("damage", &DamageOnTouch::damage).Range(0, kBig, 0.1).Tooltip("Damage dealt per hit")
+     .AddFloat("interval", &DamageOnTouch::interval).Range(0, 3600, 0.05).Tooltip("Seconds between repeat hits while overlapping (0 = every frame)")
+     .AddBool("once", &DamageOnTouch::once).Tooltip("Hit only on first contact, then never again")
+     .AddFloat("knockback", &DamageOnTouch::knockback).Range(-kBig, kBig, 0.1).Tooltip("Impulse away from this object (Rigidbody toucher)")
+     .AddBool("destroySelf", &DamageOnTouch::destroySelf).Tooltip("Remove this object after it lands a hit (projectile)");
+    b.Commit();
+}
+
+// Teleporter
+void RegisterTeleporter() {
+    PropertyBuilder<Teleporter> b("Teleporter", "teleporter", "Gameplay");
+    b.AddString("triggerTag", &Teleporter::triggerTag).Tooltip("Who teleports (tag or name text); empty = anyone")
+     .AddString("targetName", &Teleporter::targetName).Tooltip("Teleport to this object's position (empty = use destination)")
+     .AddVec3("destination", &Teleporter::destination).Range(-kBig, kBig, 0.1).Tooltip("Fixed target when targetName is empty")
+     .AddFloat("cooldown", &Teleporter::cooldown).Range(0, 3600, 0.05).Tooltip("Seconds a just-teleported body is ignored");
+    b.Commit();
+}
+
+// JumpPad
+void RegisterJumpPad() {
+    PropertyBuilder<JumpPad> b("JumpPad", "jumppad", "Gameplay");
+    b.AddString("triggerTag", &JumpPad::triggerTag).Tooltip("Who launches (tag or name text); empty = anyone")
+     .AddFloat("force", &JumpPad::force).Range(0, kBig, 0.1).Tooltip("Launch speed (world units/s)")
+     .AddBool("useObjectUp", &JumpPad::useObjectUp).Tooltip("Launch along this object's local +Y (tilt the pad to aim); off = straight up")
+     .AddFloat("forwardBoost", &JumpPad::forwardBoost).Range(0, 1000, 0.01).Tooltip("Extra speed added along the body's CURRENT travel direction")
+     .AddFloat("cooldown", &JumpPad::cooldown).Range(0, 3600, 0.05).Tooltip("Seconds a just-launched body is ignored (no double-fire)");
+    b.Commit();
+}
+
+// TriggerZone
+void RegisterTriggerZone() {
+    PropertyBuilder<TriggerZone> b("TriggerZone", "triggerzone", "Gameplay");
+    b.AddEnum("action", &TriggerZone::action, {"SetVar", "AddVar", "ActivateTarget", "DeactivateTarget", "Win", "Lose", "Quit"})
+     .AddString("triggerTag", &TriggerZone::triggerTag).Tooltip("Who fires it (tag or name text); empty = anyone")
+     .AddString("varName", &TriggerZone::varName).Tooltip("Variable for SetVar/AddVar")
+     .AddFloat("amount", &TriggerZone::amount).Range(0, 1000, 0.01).Tooltip("Value to set / add")
+     .AddString("targetName", &TriggerZone::targetName).Tooltip("Object to activate/deactivate")
+     .AddBool("once", &TriggerZone::once).Tooltip("Fire a single time (default) or on every entry");
+    b.Commit();
+}
+
+// FollowTarget2D
+void RegisterFollowTarget2D() {
+    PropertyBuilder<FollowTarget2D> b("FollowTarget2D", "follow2d", "Gameplay");
+    b.AddString("target", &FollowTarget2D::target).Tooltip("Name of the object to follow")
+     .AddFloat("speed", &FollowTarget2D::speed).Range(0, 10000, 0.1)
+     .AddFloat("stopDistance", &FollowTarget2D::stopDistance).Range(0, kBig, 0.05).Tooltip("Keep this far from the target (0 = touch)");
+    b.Commit();
+}
+
+// Destructible
+void RegisterDestructible() {
+    PropertyBuilder<Destructible> b("Destructible", "destructible", "Gameplay");
+    b.AddString("blockTag", &Destructible::blockTag).Tooltip("Only objects with this tag fracture/collapse")
+     .AddFloat("voxelSize", &Destructible::voxelSize).Range(0.01, kBig, 0.05).Tooltip("Grid cell size (matches BlockBuilder.blockSize)")
+     .AddInt("fractureChunks", &Destructible::fractureChunks).Range(1, 8, 1).Tooltip("Debris cubes per axis (2 => 8 shards, 3 => 27)")
+     .AddFloat("debrisLifetime", &Destructible::debrisLifetime).Range(0, 3600, 0.05).Tooltip("Seconds before a shard despawns")
+     .AddFloat("explosionForce", &Destructible::explosionForce).Range(0, kBig, 0.1).Tooltip("Outward speed imparted to shards")
+     .AddFloat("upwardBias", &Destructible::upwardBias).Range(-kBig, kBig, 0.1).Tooltip("Extra \"pop\" up so debris arcs, not just sprays out")
+     .AddFloat("debrisGravityScale", &Destructible::debrisGravityScale).Range(0, 1000, 0.01).Tooltip("Gravity multiplier on shards and collapsing blocks")
+     .AddFloat("debrisDrag", &Destructible::debrisDrag).Range(0, kBig, 0.1).Tooltip("Air drag on shards (settles them)")
+     .AddBool("collapseEnabled", &Destructible::collapseEnabled).Tooltip("Run structural-support collapse after each break")
+     .AddFloat("anchorY", &Destructible::anchorY).Range(-kBig, kBig, 0.1).Tooltip("Blocks centred at/below this Y are ground-anchored")
+     .AddInt("maxDebris", &Destructible::maxDebris).Range(0, kBig, 1).Tooltip("Safety cap on live shards (skip fracturing past it)")
+     .AddInt("breakButton", &Destructible::breakButton).Range(-1, 4, 1).Tooltip("Mouse button to fire (0=left,1=right,2=middle)")
+     .AddFloat("breakRadius", &Destructible::breakRadius).Range(0, kBig, 0.05).Tooltip("Blocks within this radius of the hit shatter")
+     .AddFloat("reach", &Destructible::reach).Range(0, kBig, 0.05).Tooltip("Max ray distance for the gun");
+    b.Commit();
+}
+
+// Draggable
+void RegisterDraggable() {
+    PropertyBuilder<Draggable> b("Draggable", "draggable", "Gameplay");
+    b.AddBool("returnToStart", &Draggable::returnToStart).Tooltip("Snap back if not dropped on a target")
+     .AddBool("anyTarget", &Draggable::anyTarget).Tooltip("Any sprite is a target (not just DropZones)")
+     .AddBool("snapToZone", &Draggable::snapToZone).Tooltip("Center the item on the zone it lands on")
+     .AddEnum("axis", &Draggable::axis, {"Both", "Horizontal", "Vertical"})
+     .AddFloat("dragThreshold", &Draggable::dragThreshold).Range(0, 3600, 0.05).Tooltip("World units the pointer must move before a drag begins")
+     .AddBool("bringToFront", &Draggable::bringToFront).Tooltip("Raise sortOrder while dragging so the item draws above the rest")
+     .AddFloat("gridX", &Draggable::gridX).Range(-kBig, kBig, 0.1)
+     .AddFloat("gridY", &Draggable::gridY).Range(-kBig, kBig, 0.1)
+     .AddFloat("dragScale", &Draggable::dragScale).Range(0, 1000, 0.01).Tooltip("Multiply the sprite's scale while dragging for a \"lifted\" look (1 = off)");
+    b.Commit();
+}
+
+// DropZone
+void RegisterDropZone() {
+    PropertyBuilder<DropZone> b("DropZone", "dropzone", "Gameplay");
+    b.AddString("acceptTag", &DropZone::acceptTag);
+    b.Commit();
+}
+
+// Flashlight
+void RegisterFlashlight() {
+    PropertyBuilder<Flashlight> b("Flashlight", "flashlight", "Gameplay");
+    AddKey(b, "toggleKey", &Flashlight::toggleKey, false).Tooltip("Press to toggle (0 = no key; still starts in `on`)");
+    b.AddBool("on", &Flashlight::on).Tooltip("Current state")
+     .AddFloat("range", &Flashlight::range).Range(0, kBig, 0.05).Tooltip("How far the beam reaches (world units)")
+     .AddFloat("angle", &Flashlight::angle).Range(1, 179, 1).Tooltip("Cone width (full angle, degrees)")
+     .AddFloat("intensity", &Flashlight::intensity).Range(0, 1000, 0.05).Tooltip("Brightness")
+     .AddColor("color", &Flashlight::color).Range(0, 1, 0.01).Tooltip("Warm torch white");
+    b.Commit();
+}
+
+// ---- Physics joints and environment ----------------------------------------
+
+// Joint2D
+void RegisterJoint2D() {
+    PropertyBuilder<Joint2D> b("Joint2D", "joint2d", "Physics 2D");
+    b.AddEnum("mode", &Joint2D::mode, {"Distance", "Spring", "Pin", "Hinge"}).Tooltip("Movement style")
+     .AddString("connectedBody", &Joint2D::connectedBody).Tooltip("Name of the other body (empty = world anchor)")
+     .AddVec2("anchor", &Joint2D::anchor).Range(-kBig, kBig, 0.1).Tooltip("World anchor point when there's no connected body")
+     .AddFloat("distance", &Joint2D::distance).Range(0, kBig, 0.05).Tooltip("Rest length (Distance / Spring)")
+     .AddBool("autoConfigure", &Joint2D::autoConfigure).Tooltip("Set `distance`/offset from the start separation")
+     .AddFloat("spring", &Joint2D::spring).Range(0, kBig, 0.1).Tooltip("Spring stiffness")
+     .AddFloat("damper", &Joint2D::damper).Range(0, 1000, 0.1).Tooltip("Spring damping")
+     .AddBool("breakable", &Joint2D::breakable).Tooltip("Snap the joint if stretched past breakForce")
+     .AddFloat("breakForce", &Joint2D::breakForce).Range(0, kBig, 0.1).Tooltip("Stretch (length error) at which it breaks")
+     .Section("Hinge")
+     .AddBool("useMotor", &Joint2D::useMotor).Tooltip("Drive the spin toward `motorSpeed`")
+     .AddFloat("motorSpeed", &Joint2D::motorSpeed).Range(-10000, 10000, 0.1).Tooltip("Target angular speed (deg/s)")
+     .AddFloat("maxMotorTorque", &Joint2D::maxMotorTorque).Range(0, kBig, 0.1).Tooltip("Torque the motor can apply to reach it")
+     .AddBool("useLimits", &Joint2D::useLimits).Tooltip("Clamp the hinge angle to [minAngle, maxAngle]")
+     .AddFloat("minAngle", &Joint2D::minAngle).Range(-360, 360, 1).Tooltip("Lower limit (deg, relative to the start angle)")
+     .AddFloat("maxAngle", &Joint2D::maxAngle).Range(-360, 360, 1).Tooltip("Upper limit (deg, relative to the start angle)");
+    b.Commit();
+}
+
+// Joint3D
+void RegisterJoint3D() {
+    PropertyBuilder<Joint3D> b("Joint3D", "joint3d", "Physics 3D");
+    b.AddEnum("mode", &Joint3D::mode, {"Distance", "Spring", "Pin", "Hinge"}).Tooltip("Movement style")
+     .AddString("connectedBody", &Joint3D::connectedBody).Tooltip("Name of the other body (empty = world anchor)")
+     .AddVec3("anchor", &Joint3D::anchor).Range(-kBig, kBig, 0.1).Tooltip("World anchor point when there's no connected body")
+     .AddFloat("distance", &Joint3D::distance).Range(0, kBig, 0.05).Tooltip("Rest length (Distance / Spring)")
+     .AddBool("autoConfigure", &Joint3D::autoConfigure).Tooltip("Set `distance`/offset from the start separation")
+     .AddFloat("spring", &Joint3D::spring).Range(0, kBig, 0.1).Tooltip("Spring stiffness")
+     .AddFloat("damper", &Joint3D::damper).Range(0, 1000, 0.1).Tooltip("Spring damping")
+     .AddBool("breakable", &Joint3D::breakable).Tooltip("Snap the joint if stretched past breakForce")
+     .AddFloat("breakForce", &Joint3D::breakForce).Range(0, kBig, 0.1).Tooltip("Stretch (length error) at which it breaks")
+     .Section("Hinge")
+     .AddVec3("axis", &Joint3D::axis).Range(-kBig, kBig, 0.1).Tooltip("World hinge axis the body may spin about")
+     .AddBool("useMotor", &Joint3D::useMotor).Tooltip("Drive the spin about the axis toward motorSpeed")
+     .AddFloat("motorSpeed", &Joint3D::motorSpeed).Range(-10000, 10000, 0.1).Tooltip("Target angular speed about the axis (deg/s)")
+     .AddFloat("maxMotorTorque", &Joint3D::maxMotorTorque).Range(0, kBig, 0.1).Tooltip("Torque the motor can apply to reach it");
+    b.Commit();
+}
+
+// DayNightCycle
+void RegisterDayNightCycle() {
+    PropertyBuilder<DayNightCycle> b("DayNightCycle", "daynight", "Environment");
+    b.AddFloat("dayLengthSeconds", &DayNightCycle::dayLengthSeconds).Range(0, kBig, 1).Tooltip("Real seconds for a full 24h day")
+     .AddFloat("time", &DayNightCycle::time).Range(0, 24, 0.1).Tooltip("Current time of day, hours [0,24)")
+     .AddBool("paused", &DayNightCycle::paused)
+     .AddBool("controlSun", &DayNightCycle::controlSun).Tooltip("Drive the sun Light (intensity/color/ambient)")
+     .AddBool("rotateSun", &DayNightCycle::rotateSun).Tooltip("Rotate the sun Light's transform across the sky")
+     .AddBool("controlSky", &DayNightCycle::controlSky).Tooltip("Drive the main camera's background color")
+     .AddFloat("dayIntensity", &DayNightCycle::dayIntensity).Range(0, 1000, 0.05)
+     .AddFloat("nightIntensity", &DayNightCycle::nightIntensity).Range(0, 1000, 0.05)
+     .AddFloat("dayAmbient", &DayNightCycle::dayAmbient).Range(0, 1, 0.01)
+     .AddFloat("nightAmbient", &DayNightCycle::nightAmbient).Range(0, 1, 0.01)
+     .AddColor("dayLight", &DayNightCycle::dayLight).Range(0, 1, 0.01).Tooltip("Midday white")
+     .AddColor("nightLight", &DayNightCycle::nightLight).Range(0, 1, 0.01).Tooltip("Cool moonlight")
+     .AddColor("skyDay", &DayNightCycle::skyDay).Range(0, 1, 0.01).Tooltip("Clear blue")
+     .AddColor("skyHorizon", &DayNightCycle::skyHorizon).Range(0, 1, 0.01).Tooltip("Sunrise/sunset orange")
+     .AddColor("skyNight", &DayNightCycle::skyNight).Range(0, 1, 0.01).Tooltip("Deep night");
+    b.Commit();
+}
+
+// Water
+void RegisterWater() {
+    PropertyBuilder<Water> b("Water", "water", "Environment");
+    b.AddFloat("size", &Water::size).Range(0, kBig, 0.05).Tooltip("Plane edge length (world units), centred on the object")
+     .AddInt("resolution", &Water::resolution).Range(2, 256, 1).Tooltip("Grid subdivisions per side (more = smoother waves)")
+     .AddFloat("waveHeight", &Water::waveHeight).Range(0, kBig, 0.05).Tooltip("Crest-to-trough amplitude")
+     .AddFloat("waveLength", &Water::waveLength).Range(0.01, kBig, 0.05).Tooltip("Distance between crests (world units)")
+     .AddFloat("waveSpeed", &Water::waveSpeed).Range(0, 10000, 0.1).Tooltip("How fast the waves travel")
+     .Custom("color", PropertyType::Color,
+             [](const Water& w) { return PropertyValue::MakeColor(Color{w.color.r, w.color.g, w.color.b, 1.0f}); },
+             // the file keeps the red, green and blue; the alpha of `color` always follows `opacity`
+             [](Water& w, const PropertyValue& v) { const Color c = v.AsColor(); w.color = Color{c.r, c.g, c.b, w.opacity}; return true; })
+        .Range(0, 1, 0.01).Tooltip("Tint (red, green, blue). The transparency is the separate opacity property")
+     .AddFloat("opacity", &Water::opacity).Range(0, 1, 0.01).Tooltip("0 clear .. 1 opaque (GPU renderers blend by this)")
+     .AddFloat("reflectivity", &Water::reflectivity).Range(0, 1, 0.01).Tooltip("How much sky reflects in the surface")
+     .AddFloat("specular", &Water::specular).Range(0, 100, 0.05).Tooltip("Sun-glint strength")
+     .AddFloat("shininess", &Water::shininess).Range(1, 1024, 1).Tooltip("Glint tightness")
+     .AddVec2("flow", &Water::flow).Range(-kBig, kBig, 0.1).Tooltip("Surface UV scroll (a current)")
+     .AddAssetPath("texture", &Water::texture, "image").Tooltip("Optional water/normal-ripple texture")
+     .AddFloat("depth", &Water::depth).Range(0, kBig, 0.1)
+     .AddFloat("fluidDensity", &Water::fluidDensity).Range(0, kBig, 0.1)
+     .AddFloat("linearDrag", &Water::linearDrag).Range(0, kBig, 0.1).Tooltip("How fast a submerged prop's velocity fades (1/s, scaled by how much of it is under)");
+    b.Commit();
+}
+
 // ---- Navigation ------------------------------------------------------------
 
 // NavMeshAgent
@@ -835,6 +1056,20 @@ void RegisterGameplayProperties() {
     RegisterProjectile3D();
     RegisterSpawner();
     RegisterMusicPlayer();
+    RegisterCollectible();
+    RegisterDamageOnTouch();
+    RegisterTeleporter();
+    RegisterJumpPad();
+    RegisterTriggerZone();
+    RegisterFollowTarget2D();
+    RegisterDestructible();
+    RegisterDraggable();
+    RegisterDropZone();
+    RegisterFlashlight();
+    RegisterJoint2D();
+    RegisterJoint3D();
+    RegisterDayNightCycle();
+    RegisterWater();
     RegisterNavMeshAgent();
     RegisterNavMeshObstacle();
     RegisterNavMeshSurface();

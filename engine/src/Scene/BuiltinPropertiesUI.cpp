@@ -4,12 +4,22 @@
 // (the dropdown's options) and the localisation key are left out. See docs/properties.md.
 #include "BuiltinPropertiesShared.hpp"
 
+#include "okay/Components/Crosshair.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/UIDraggable.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UIFlexItem.hpp"
+#include "okay/Components/UIFrame.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIKeybindField.hpp"
+#include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIRadialProgress.hpp"
+#include "okay/Components/UIRating.hpp"
+#include "okay/Components/UIRawImage.hpp"
+#include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIToggle.hpp"
@@ -255,6 +265,166 @@ void RegisterUIDropdown() {
     b.Commit();
 }
 
+void RegisterCrosshair() {
+    PropertyBuilder<Crosshair> b("Crosshair", "crosshair", "UI");
+    b.AddVec2("position", &Crosshair::position).Range(-kBig, kBig, 0.1).Tooltip("Offset from the anchor (px)")
+     .AddVec2("size", &Crosshair::size).Range(-kBig, kBig, 0.1).Tooltip("Overall reticle extent (px)")
+     .AddEnum("anchor", &Crosshair::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddColor("color", &Crosshair::color).Range(0, 1, 0.01).Tooltip("Main colour")
+     .AddFloat("thickness", &Crosshair::thickness).Range(0, 1000, 0.5).Tooltip("Line width (px)")
+     .AddFloat("gap", &Crosshair::gap).Range(-1000, 1000, 0.5).Tooltip("Center gap (px)")
+     .AddFloat("length", &Crosshair::length).Range(0, kBig, 0.05).Tooltip("Length of each of the 4 lines (px)")
+     .AddBool("showLines", &Crosshair::showLines).Tooltip("The 4 ticks")
+     .AddBool("lineUp", &Crosshair::lineUp).Tooltip("Per-tick (T-style: Up off)")
+     .AddBool("lineDown", &Crosshair::lineDown).Tooltip("Per-tick (T-style: Up off)")
+     .AddBool("lineLeft", &Crosshair::lineLeft).Tooltip("Per-tick (T-style: Up off)")
+     .AddBool("lineRight", &Crosshair::lineRight).Tooltip("Per-tick (T-style: Up off)")
+     .AddFloat("spread", &Crosshair::spread).Range(0, kBig, 0.1).Tooltip("Extra gap added to every tick (aim spread, px)")
+     .AddFloat("spreadRecover", &Crosshair::spreadRecover).Range(0, 1000, 0.1)
+     .AddFloat("spreadMax", &Crosshair::spreadMax).Range(0, kBig, 0.1)
+     .AddBool("dot", &Crosshair::dot)
+     .AddFloat("dotSize", &Crosshair::dotSize).Range(0, kBig, 0.05)
+     .AddColor("dotColor", &Crosshair::dotColor).Range(0, 1, 0.01)
+     .AddBool("circle", &Crosshair::circle).Tooltip("A ring around the centre")
+     .AddFloat("circleRadius", &Crosshair::circleRadius).Range(0, kBig, 0.05).Tooltip("Ring radius (px)")
+     .AddFloat("circleThickness", &Crosshair::circleThickness).Range(0, 1000, 0.5).Tooltip("Ring line width (px)")
+     .AddColor("circleColor", &Crosshair::circleColor).Range(0, 1, 0.01)
+     .AddBool("outline", &Crosshair::outline).Tooltip("A 1px dark edge under the marks")
+     .AddColor("outlineColor", &Crosshair::outlineColor).Range(0, 1, 0.01).Tooltip("Outline colour");
+    b.Commit();
+}
+
+void RegisterUIRadialProgress() {
+    PropertyBuilder<UIRadialProgress> b("UIRadialProgress", "uiradial", "UI");
+    b.AddVec2("position", &UIRadialProgress::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor (margins for a stretch anchor)")
+     .AddVec2("size", &UIRadialProgress::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels")
+     .AddFloat("value", &UIRadialProgress::value).Range(0, 1, 0.01).Tooltip("0..1 filled fraction")
+     .AddFloat("thickness", &UIRadialProgress::thickness).Range(0, kBig, 0.5).Tooltip("Ring width in px (<=0 = pie)")
+     .AddFloat("startAngle", &UIRadialProgress::startAngle).Range(0, 360, 1).Tooltip("0 = 12 o'clock; degrees")
+     .AddBool("clockwise", &UIRadialProgress::clockwise)
+     .AddColor("background", &UIRadialProgress::background).Range(0, 1, 0.01).Tooltip("Background colour of the track")
+     .AddColor("fill", &UIRadialProgress::fill).Range(0, 1, 0.01).Tooltip("Colour of the filled part")
+     .AddEnum("anchor", &UIRadialProgress::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddBool("showPercent", &UIRadialProgress::showPercent).Tooltip("Draw the percentage on the bar")
+     .AddColor("textColor", &UIRadialProgress::textColor).Range(0, 1, 0.01).Tooltip("Colour of the text")
+     .AddBool("spin", &UIRadialProgress::spin)
+     .AddFloat("spinSpeed", &UIRadialProgress::spinSpeed).Range(0, 10000, 0.1);
+    b.Commit();
+}
+
+void RegisterUIRating() {
+    PropertyBuilder<UIRating> b("UIRating", "uirating", "UI");
+    b.AddVec2("position", &UIRating::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor (margins for a stretch anchor)")
+     .AddVec2("size", &UIRating::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels")
+     .AddInt("count", &UIRating::count).Range(1, 50, 1).Tooltip("Number of stars")
+     .AddFloat("value", &UIRating::value).Range(0, 50, 0.5).Tooltip("Filled stars (may be fractional)")
+     .AddBool("allowHalf", &UIRating::allowHalf).Tooltip("Half-star precision")
+     .AddBool("readOnly", &UIRating::readOnly).Tooltip("Display only (no click to set)")
+     .AddColor("on", &UIRating::on).Range(0, 1, 0.01).Tooltip("Filled star")
+     .AddColor("off", &UIRating::off).Range(0, 1, 0.01).Tooltip("Empty star")
+     .AddEnum("anchor", &UIRating::anchor, AnchorNames()).Tooltip("The screen point the position is measured from");
+    b.Commit();
+}
+
+void RegisterUIScrollView() {
+    PropertyBuilder<UIScrollView> b("UIScrollView", "uiscroll", "UI");
+    b.AddVec2("position", &UIScrollView::position).Range(-kBig, kBig, 0.1).Tooltip("Viewport top-left (pixels, from anchor)")
+     .AddVec2("size", &UIScrollView::size).Range(-kBig, kBig, 0.1).Tooltip("Viewport size")
+     .AddEnum("anchor", &UIScrollView::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddColor("background", &UIScrollView::background).Range(0, 1, 0.01).Tooltip("Background colour of the track")
+     .AddEnum("axis", &UIScrollView::axis, {"Vertical", "Horizontal", "Both"})
+     .AddFloat("contentHeight", &UIScrollView::contentHeight).Range(0, kBig, 0.05).Tooltip("Total height of the scrollable content")
+     .AddFloat("contentWidth", &UIScrollView::contentWidth).Range(0, kBig, 0.05).Tooltip("Total width (horizontal scrolling)")
+     .AddBool("autoContent", &UIScrollView::autoContent)
+     .AddFloat("inertia", &UIScrollView::inertia).Range(0, 1000, 0.1)
+     .AddBool("elastic", &UIScrollView::elastic).Tooltip("Let a drag or a glide pass the ends, then spring back")
+     .AddEnum("barStyle", &UIScrollView::barStyle, {"Standard", "Thin", "AutoHide"}).Tooltip("Scrollbar: 0 = the current bar, 1 = thin, 2 = hidden until the view is scrolling");
+    b.Commit();
+}
+
+void RegisterUILayoutGroup() {
+    PropertyBuilder<UILayoutGroup> b("UILayoutGroup", "uilayout", "UI");
+    b.AddEnum("direction", &UILayoutGroup::direction, {"Vertical", "Horizontal", "Grid", "FlexRow", "FlexColumn"})
+     .AddEnum("anchor", &UILayoutGroup::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddVec2("origin", &UILayoutGroup::origin).Range(-kBig, kBig, 0.1).Tooltip("Where the first child is placed")
+     .AddFloat("spacing", &UILayoutGroup::spacing).Range(0, kBig, 0.05).Tooltip("Gap between children (row gap in Grid)")
+     .AddFloat("padding", &UILayoutGroup::padding).Range(-kBig, kBig, 0.1).Tooltip("Extra inset before the first child")
+     .AddInt("columns", &UILayoutGroup::columns).Range(1, 64, 1).Tooltip("Grid: children per row")
+     .AddFloat("spacingY", &UILayoutGroup::spacingY).Range(0, kBig, 0.05).Tooltip("Grid / Flex: gap between rows or lines (`spacing` is the main gap)")
+     .AddVec2("boxSize", &UILayoutGroup::boxSize).Range(-kBig, kBig, 0.1).Tooltip("The flex container's size")
+     .AddEnum("justify", &UILayoutGroup::justify, {"Start", "Center", "End", "SpaceBetween", "SpaceAround", "SpaceEvenly"}).Tooltip("Spare room along a line")
+     .AddEnum("align", &UILayoutGroup::align, {"Start", "Center", "End", "Stretch"}).Tooltip("Placement across a line")
+     .AddBool("wrap", &UILayoutGroup::wrap).Tooltip("Start a new line when the box is full");
+    b.Commit();
+}
+
+void RegisterUIFrame() {
+    PropertyBuilder<UIFrame> b("UIFrame", "uiframe", "UI");
+    b.AddVec2("anchorMin", &UIFrame::anchorMin).Range(-10, 10, 0.01)
+     .AddVec2("anchorMax", &UIFrame::anchorMax).Range(-10, 10, 0.01)
+     .AddVec2("pivot", &UIFrame::pivot).Range(-10, 10, 0.01)
+     .AddVec2("position", &UIFrame::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor (margins for a stretch anchor)")
+     .AddVec2("size", &UIFrame::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels");
+    b.Commit();
+}
+
+void RegisterUIFlexItem() {
+    PropertyBuilder<UIFlexItem> b("UIFlexItem", "uiflexitem", "UI");
+    b.AddFloat("grow", &UIFlexItem::grow).Range(0, 1000, 0.1).Tooltip("Share of the line's spare room this item takes (0 = none)")
+     .AddFloat("shrink", &UIFlexItem::shrink).Range(0, 1000, 0.1).Tooltip("Share of an overflow it gives up (0 = never shrinks)")
+     .AddVec2("baseSize", &UIFlexItem::baseSize).Range(-kBig, kBig, 0.1)
+     .AddEnum("alignSelf", &UIFlexItem::alignSelf, {"Auto", "Start", "Center", "End", "Stretch"}).Tooltip("Auto = the layout's alignment");
+    b.Commit();
+}
+
+void RegisterUIRawImage() {
+    PropertyBuilder<UIRawImage> b("UIRawImage", "uirawimage", "UI");
+    b.AddVec2("position", &UIRawImage::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor (margins for a stretch anchor)")
+     .AddVec2("size", &UIRawImage::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels")
+     .AddEnum("anchor", &UIRawImage::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddAssetPath("texture", &UIRawImage::texture, "image").Tooltip("Image path (PNG/JPG/BMP)")
+     .AddColor("color", &UIRawImage::color).Range(0, 1, 0.01).Tooltip("Tint")
+     .AddFloat("uvX", &UIRawImage::uvX).Range(-1000, 1000, 0.01)
+     .AddFloat("uvY", &UIRawImage::uvY).Range(-1000, 1000, 0.01)
+     .AddFloat("uvW", &UIRawImage::uvW).Range(-1000, 1000, 0.01)
+     .AddFloat("uvH", &UIRawImage::uvH).Range(-1000, 1000, 0.01)
+     .AddVec2("scroll", &UIRawImage::scroll).Range(-kBig, kBig, 0.1).Tooltip("UV units per second added to the offset (a scrolling background)");
+    b.Commit();
+}
+
+void RegisterUIKeybindField() {
+    PropertyBuilder<UIKeybindField> b("UIKeybindField", "uikeybind", "UI");
+    b.AddVec2("position", &UIKeybindField::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor (margins for a stretch anchor)")
+     .AddVec2("size", &UIKeybindField::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels")
+     .AddEnum("anchor", &UIKeybindField::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddString("action", &UIKeybindField::action);
+    AddKey(b, "key", &UIKeybindField::key, false);
+    AddKey(b, "defaultKey", &UIKeybindField::defaultKey, false);
+    b.AddString("prefKey", &UIKeybindField::prefKey).Tooltip("Prefs name to persist the binding under (\"\" = don't)")
+     .AddString("inputAction", &UIKeybindField::inputAction).Tooltip("An InputActions action to rebind (\"\" = use `key`)")
+     .AddBool("gamepad", &UIKeybindField::gamepad).Tooltip("With inputAction: bind a controller button")
+     .AddInt("part", &UIKeybindField::part).Range(-1, 3, 1).Tooltip("With inputAction: 0..3 = one key of a four-key direction")
+     .AddFloat("textSize", &UIKeybindField::textSize).Range(0, kBig, 0.05)
+     .AddColor("background", &UIKeybindField::background).Range(0, 1, 0.01).Tooltip("Background colour of the track")
+     .AddColor("keyColor", &UIKeybindField::keyColor).Range(0, 1, 0.01)
+     .AddColor("listenColor", &UIKeybindField::listenColor).Range(0, 1, 0.01)
+     .AddColor("textColor", &UIKeybindField::textColor).Range(0, 1, 0.01).Tooltip("Colour of the text")
+     .AddBool("interactable", &UIKeybindField::interactable).Tooltip("When off the widget is greyed out and ignores input")
+     .AddBool("focusable", &UIKeybindField::focusable);
+    b.Commit();
+}
+
+void RegisterUIDraggable() {
+    PropertyBuilder<UIDraggable> b("UIDraggable", "uidraggable", "UI");
+    b.AddBool("returnToStart", &UIDraggable::returnToStart).Tooltip("Snap back if not dropped on a target")
+     .AddBool("anyTarget", &UIDraggable::anyTarget).Tooltip("Any widget is a drop target (not just UIDropTarget)")
+     .AddBool("snapToSlot", &UIDraggable::snapToSlot).Tooltip("Center the item in the slot it's dropped on")
+     .AddEnum("axis", &UIDraggable::axis, {"Both", "Horizontal", "Vertical"})
+     .AddFloat("dragThreshold", &UIDraggable::dragThreshold).Range(0, 3600, 0.05)
+     .AddBool("bringToFront", &UIDraggable::bringToFront).Tooltip("Draw on top of its siblings while being dragged");
+    b.Commit();
+}
+
 } // namespace
 
 void RegisterUIProperties() {
@@ -267,6 +437,16 @@ void RegisterUIProperties() {
     RegisterUIInputField();
     RegisterUIStepper();
     RegisterUIDropdown();
+    RegisterCrosshair();
+    RegisterUIRadialProgress();
+    RegisterUIRating();
+    RegisterUIScrollView();
+    RegisterUILayoutGroup();
+    RegisterUIFrame();
+    RegisterUIFlexItem();
+    RegisterUIRawImage();
+    RegisterUIKeybindField();
+    RegisterUIDraggable();
 }
 
 } // namespace detail

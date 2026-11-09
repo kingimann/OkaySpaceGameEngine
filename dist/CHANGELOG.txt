@@ -1,5 +1,76 @@
 OkaySpace Game Engine — Changelog
 
+v2.854.0
+  Updater
+  - After an update, the editor and the launcher start again. The new process
+    waits until the old one has exited, so it is not turned away by the
+    single-instance lock, and it keeps the original arguments and folder,
+    including paths with spaces and parentheses. A failed install puts the
+    previous program back and writes okay_update.log (#584).
+  Loop and time
+  - Game.TogglePause now works while a cutscene or menu holds a pause: it
+    flips the player's own pause hold, so the game stays paused when the
+    cutscene ends if the player paused it (#594).
+  - New session clocks (Time.SessionTime, SessionUnscaledTime,
+    SessionFrameCount) count from the start of the current Play session;
+    elapsed time and frame count still never rewind (#594).
+  - Run N frames then pause (GameLoop.RunFrames), slower and faster presets
+    from 0.05x to 32x, and the console commands time.run and time.overlay
+    (#594).
+  - The player's F3 overlay and the console share one text builder: fps, 1%
+    low, hitches, dropped frames, time scale, hit stop and who paused the
+    game (#594).
+  - Random: pick k different items (SampleIndices), blue-noise points
+    (PoissonDisk2D), and shuffle bags and weighted tables can save and load
+    their position, so a reloaded game does not re-roll the next draw
+    (#594).
+  - Fixes: a huge frame time no longer pushes elapsed time to infinity,
+    smoothed fps no longer turns into NaN, a tiny target fps no longer asks
+    for a sleep of years, the tick pacer and the fixed step no longer
+    overflow or spin two billion steps, Gaussian and point helpers return
+    numbers for NaN or infinite input, restoring a time snapshot without a
+    scale keeps the current scale, and a frame recording with an extreme
+    marker loads again (#594).
+  Timers and tweens
+  - Timers stay fast with many of them: cancelling by handle, owner or tag
+    took seconds for 10000 timers and now takes about a tenth of a second
+    for 100000 (#595).
+  - A tween with a delay such as 0.1 no longer freezes just short of its
+    end, endless and long tweens stay exact after hours (the timeline is now
+    a double), and NaN or infinite values never reach an object (#595).
+  - New: tween by speed, retarget a running tween, tween Vec2, Vec3, Color
+    and Quat values, tag tweens and kill, pause, play or complete them by
+    tag, decay easing for punch and shake, tween along a spline, and Prepend
+    and JoinCallback on sequences (#595).
+  - A timers debug view builds overlay lines for the scheduler and the
+    tweens (#595).
+  - Scripts get tween_tag, tween_speed_based, tween_decay, tween_kill_tag,
+    tween_pause_tag, tween_play_tag, tween_complete_tag, tween_rewind_id,
+    seq_prepend and seq_join_callback, and after(NaN) or every(NaN) no
+    longer makes a timer that never fires (#595).
+  Scene graph
+  - Very deep and very wide hierarchies stay fast: the active state is
+    cached and destroying a big subtree is one pass (a 50000-deep chain took
+    over two minutes to destroy before) (#596).
+  - Calling Clear, LoadFromFile or Deserialize from inside Update,
+    OnDisable, OnDestroy or Awake no longer frees the running component; the
+    change is applied at the end of the frame (#596).
+  - Components moved in the inspector keep their order in the saved scene
+    (an optional record, older files load as before) (#596).
+  - Fixes: InverseTransformPoint on a zero-scale object, SetPosition under a
+    sheared parent chain, a Lifetime longer than six days never ending,
+    Instantiate of a destroyed object, and Scene.Update with a NaN time
+    (#596).
+  - New: Scene.Stats, DestroyChildren, GetComponentsInParent,
+    SetPositionAndRotation and SetParent with a sibling index (#596).
+  Docs
+  - The docs index lists every page, and the properties page has the right
+    counts (#593).
+  CI
+  - The Windows build retries the SDL2 and libsodium downloads and checks
+    that the archives actually arrived (#592).
+
+
 v2.853.0
   Editor
   - Play mode in the editor now runs on the shared game loop, like the built

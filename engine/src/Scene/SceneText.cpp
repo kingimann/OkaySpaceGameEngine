@@ -128,7 +128,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
 
 const std::vector<std::string>& GlobalOrder() {
     static const std::vector<std::string> order = {
-        "name", "uifont", "gravity", "layermatrix", "rendersettings", "fog", "vignette", "tonemap",
+        "name", "uifont", "gravity", "layermatrix", "gravity3", "rendersettings", "fog", "vignette", "tonemap",
         "sky", "skystars", "ambientmode", "fogmode", "skyproc", "post", "weather"};
     return order;
 }
@@ -152,7 +152,7 @@ int ObjectRank(const std::string& key) {
 // record this list does not vouch for).
 bool IsNumericRecord(const std::string& key) {
     static const std::unordered_set<std::string> keys = {
-        "gravity", "layermatrix", "rendersettings", "fog", "vignette", "tonemap", "sky", "skystars",
+        "gravity", "gravity3", "layermatrix", "rendersettings", "fog", "vignette", "tonemap", "sky", "skystars",
         "ambientmode", "fogmode", "skyproc", "post", "weather",
         "active", "static", "locked", "layer", "uiorder", "parent", "sibling",
         "transform", "sprite", "camera", "light", "rigidbody2d", "rigidbody3d",

@@ -627,6 +627,7 @@ Smoothly animate this object over time. Every tween:
 | `tween_text("Hello!", dur[, "done"])` | type this object's text out letter by letter |
 | `tween_var("name", to, dur[, ease][, "done"])` | tween one of the script's own variables |
 | `tween_call(seconds, "fn")` | call a function after a delay |
+| `tween_prop("Light.intensity", to, dur[, ease][, "done"])` | tween any property of this object by path (`Light.intensity`, `Camera.zoom`, `Transform.scale.y`, `SpriteRenderer.color.a`; see docs/properties.md); a number for a float or integer property |
 
 **Set up** a tween. Each of these returns the id, so they nest, e.g.
 `tween_loops(tween_scale(1.2, 0.4), -1, "yoyo")`:

@@ -246,7 +246,8 @@ component (`Transform.scale.y`) is a Float, and `to` must have the property's ty
 `SetRelative`, `From`, delays, loops and callbacks work as for any tween. Every frame
 writes through `PropertyRegistry::SetProperty`, so the property's own range clamps apply and
 the change hook fires. The path is resolved again each frame: a removed component just
-stops the effect. When the path cannot be tweened (unknown, wrong type, a String or Enum)
+stops the effect. Scripts have it as `tween_prop("Light.intensity", 3, 0.5[, ease][, "done"])`.
+When the path cannot be tweened (unknown, wrong type, a String or Enum)
 the result is an inactive tween (`IsActive() == false`) and the optional last argument
 says why. The tween is killed with `go`.
 
@@ -373,8 +374,8 @@ Added:
   `StepAngle`, `StepQuat`, `StepQuatCritical`, and the `Spring` state object.
 - `Core/ClockCursor.hpp` (what channel tasks and tweens use to follow a clock).
 - TweenAnimation: `clock` and `easeCurve`, saved in the scene file.
-- Scripts: `tween_clock(id, channel)`, and `tween_ease` (and the ease argument of the
-  `tween_*` builtins) accept curve text.
+- Scripts: `tween_clock(id, channel)`, `tween_prop(path, to, dur)`, and `tween_ease` (and the
+  ease argument of the `tween_*` builtins) accept curve text.
 
 Not done (follow-ups): an inspector field for `clock` / `easeCurve` and a preview of the
 curve (editor); `Dump()` in a debug overlay panel; visual-script nodes for a named or

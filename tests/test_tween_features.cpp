@@ -399,6 +399,36 @@ int main() {
     }
 
     // ----------------------------------------------------------- scripting ----
+    {   // tween_prop from a script: a float property, one vector component, an integer property; a bad path does nothing.
+        Scene s("sp"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Lamp");
+        auto* light = go->AddComponent<Light>();
+        light->intensity = 1.0f;
+        auto* sprite = go->AddComponent<SpriteRenderer>();
+        sprite->color = Color{1, 1, 1, 1};
+        go->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() {\n"
+            "  tween_prop(\"Light.intensity\", 5, 1.0, \"linear\");\n"
+            "  tween_prop(\"Transform.scale.y\", 3, 1.0, \"linear\");\n"
+            "  tween_prop(\"GameObject.layer\", 7, 1.0, \"linear\");\n"
+            "  tween_prop(\"SpriteRenderer.color.a\", 0, 1.0, \"linear\");\n"
+            "  var id = tween_prop(\"Nope.nothing\", 1, 1.0);\n"
+            "  tween_prop(\"Light.intensity\", 1);\n"
+            "}\n");
+        s.Start();
+        CHECK(s.tweens().Count() == 4);
+        s.Update(0.5f);
+        CHECK_NEAR(light->intensity, 3.0f, 1e-3f);
+        CHECK_NEAR(go->transform->localScale.y, 2.0f, 1e-3f);
+        CHECK(go->layer == 4);                      // 3.5 rounds to 4
+        CHECK_NEAR(sprite->color.a, 0.5f, 1e-3f);
+        s.Update(0.5f);
+        CHECK_NEAR(light->intensity, 5.0f, 1e-4f);
+        CHECK_NEAR(go->transform->localScale.y, 3.0f, 1e-4f);
+        CHECK(go->layer == 7);
+        CHECK_NEAR(sprite->color.a, 0.0f, 1e-4f);
+        CHECK(s.tweens().Count() == 0);
+    }
     {   // tween_clock and ease text from a script.
         ClockSet::Global().Reset();
         Scene s("ts"); s.physicsEnabled = false;

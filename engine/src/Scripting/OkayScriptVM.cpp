@@ -3,6 +3,7 @@
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/TweenAnimation.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -9216,6 +9217,17 @@ struct OkayScriptVM::Impl {
                            a[1].AsFloat(), a[2].AsFloat());
             t->SetTarget(rt.host->gameObject);
             return finish(a, t, 3, 4);
+        };
+        // Any property of this object by path: tween_prop("Light.intensity", 3, 0.5[, ease][, "done"]).
+        // One vector component is its own path ("Transform.scale.y"); an integer property rounds.
+        b["tween_prop"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self();
+            if (!g || a.size() < 3 || !a[0].IsString()) return Value{0.0f};
+            const std::string path = a[0].AsString();
+            const PropertyValue cur = PropertyRegistry::GetProperty(*g, path);
+            const PropertyValue to = cur.Type() == PropertyType::Int ? PropertyValue::MakeInt(std::llround((double)a[1].AsFloat()))
+                                                                      : PropertyValue::MakeFloat(a[1].AsFloat());
+            return finish(a, DOTween::Property(g, path, to, a[2].AsFloat()), 3, 4);
         };
         // Call a function after a delay: tween_call(seconds, "fn") (DOVirtual.DelayedCall).
         b["tween_call"] = [this, tweens, fnFromArg, reg](std::vector<Value>& a) {

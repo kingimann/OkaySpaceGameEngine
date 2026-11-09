@@ -73,6 +73,7 @@
 #include <vector>
 #include "ScriptText.hpp"   // the Script Editor's token view of a script: outline / go-to-definition
 #include "VsCanvasTools.hpp"   // visual-script snap, align, variable list (no GUI)
+#include "VisualScriptEditor.hpp"   // graph text the editor saves (round-trip in --selftest)
 
 // ----------------------------------------------------------------------------
 // OkayScript semantic lint — Rider-style "yellow" inspections, no execution.
@@ -455,6 +456,23 @@ static int RunSelfTest() {
         const auto params = VsCollectParameters(nodes);
         check(params.size() == 1 && params[0].function == "Hurt" && params[0].name == "amount" && params[0].type == "Number",
               "parameters: function signature");
+        // The text the editor writes is what it reads back, including a comment box.
+        VsEditGraph g;
+        const int start = g.add("OnStart", 30, 40);
+        const int print = g.add("Print", 200, 40);
+        g.linkExec(start, 0, print);
+        g.comments.push_back(VsComment{10, 10, 300, 160, "Intro", 1});
+        const std::string snap = g.toText();
+        g.add("OnUpdate", 30, 200);
+        g.fromText(snap);
+        check(g.nodes.size() == 2 && g.execLinks.size() == 1 && g.comments.size() == 1
+              && g.comments[0].text == "Intro", "graph undo snapshot restores nodes, wires and the comment");
+        const std::string path = "/tmp/okay_editor_graph_roundtrip.okayvs";
+        check(g.save(path), "graph save writes a file");
+        VsEditGraph loaded;
+        check(loaded.load(path) && loaded.nodes.size() == 2 && loaded.find(start)
+              && loaded.find(start)->type == "OnStart", "saved graph reopens with the same nodes");
+        std::remove(path.c_str());
     }
 
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
@@ -30055,6 +30073,9 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Camera", cam, &toRemove)) {
             int proj = (int)cam->projection;
             const char* projs[] = {"Orthographic", "Perspective"};
+            // Use the row's width so the full name stays visible in a narrow inspector.
+            const float projLabel = ImGui::CalcTextSize("Projection").x + ImGui::GetStyle().ItemInnerSpacing.x;
+            ImGui::SetNextItemWidth(std::max(120.0f, ImGui::GetContentRegionAvail().x - projLabel));
             if (ImGui::Combo("Projection", &proj, projs, 2)) { cam->projection = (Camera::Projection)proj; ed.dirty = true; }
             if (cam->projection == Camera::Projection::Orthographic) {
                 if (ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f)) ed.dirty = true;

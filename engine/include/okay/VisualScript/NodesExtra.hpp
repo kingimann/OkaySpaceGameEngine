@@ -6,6 +6,7 @@
 // the end of Nodes.hpp; MakeNode (NodeGraph.cpp) builds them by type name.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsWhole.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
@@ -639,8 +640,8 @@ struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
     int ExecOutCount() const override { return 2; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)index; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int first = (int)std::lround(In(0, g, ctx, VsValue{0.0f}).AsFloat());
-        const int last  = (int)std::lround(In(1, g, ctx, VsValue{9.0f}).AsFloat());
+        const int first = VsWhole(In(0, g, ctx, VsValue{0.0f}).AsFloat(), 0);
+        const int last  = VsWhole(In(1, g, ctx, VsValue{9.0f}).AsFloat(), 0);
         const int step = last >= first ? 1 : -1;
         const int body = Next(0);
         // No iteration cap of its own: every body run spends the event's step
@@ -657,7 +658,11 @@ struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
 // Only lets the flow through while Open is true.
 struct GateNode : VsNode {   // in0 = open
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { return In(0, g, ctx, VsValue{true}).AsBool() ? 0 : -1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const VsValue v = In(0, g, ctx, VsValue{true});
+        if (v.IsNumber() && !std::isfinite(v.AsFloat())) return -1;   // NaN is not "open"
+        return v.AsBool() ? 0 : -1;
+    }
 };
 // Passes the first N times only; Count reads how many times it has passed.
 struct DoNNode : VsNode {
@@ -671,7 +676,9 @@ struct DoNNode : VsNode {
 struct SwitchIntNode : VsNode {   // in0 = value
     int ExecOutCount() const override { return 4; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int v = (int)std::lround(In(0, g, ctx).AsFloat());
+        const float f = In(0, g, ctx).AsFloat();
+        if (!std::isfinite(f)) return 3;
+        const int v = VsWhole(f, 3);
         return (v >= 0 && v <= 2) ? v : 3;
     }
 };

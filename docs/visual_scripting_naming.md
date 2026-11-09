@@ -17,19 +17,29 @@ and then lowercase letters (`Seconds`, `Target`).
 
 | Kind | Starts with | Examples |
 |---|---|---|
-| Event | `On` | On Start, On Every Frame, On Bump, On Key Pressed |
-| Action (a step in the flow) | a verb | Play Sound, Wait Seconds, Move Towards, Set Position |
+| Event | `On` | On Start, On Every Frame, On Collision Start, On Key Pressed |
+| Action (a step in the flow) | a verb | Play Sound, Wait Seconds, Run a Number of Times, Move Towards |
 | Yes or no value | `Is` or `Has` | Is Touching, Is Key Held, Has Item |
 | Reading a value that already exists | `Get` | Get Position, Get Name, Get Time |
 | Working out a new value | a verb | Add, Subtract, Round Down, Make Vector |
 
+Prefer the word a game maker already uses when it is clear. Collision, Trigger,
+Enabled, Physics Update, Branch, Sequence, Cooldown, and For Loop are those
+words. Do not invent a cuter or vaguer one: On Bump, On Steady Tick, and On
+Entered Area are worse than On Collision Start, On Physics Update, and On
+Trigger Enter. Stay and Exit stay in that family (On Collision Stay, On
+Trigger Exit), not a new metaphor.
+
 Do not use:
 
-- Abbreviations: Var, Vec, Vec3, Pos, Rot, Deg, Rad, Anim, Nav, Rpc, Fov, Obj, Num, Idx, Min, Max, UI, API, IK, Id, Dt
-- Engine type names: Transform, Rigidbody, GameObject, Prefab, Quat, Euler
-- Jargon where an everyday word exists: Collision, Trigger, Update, Timer, Enable, Disable, Fixed, Late, Custom, Sequence, Dialogue, Validate, Equip, Global, Logic
+- Abbreviations: Var, Vec, Vec3, Pos, Rot, Deg, Rad, Anim, Nav, Rpc, Fov, Obj, Num, Idx, Min, Max, UI, API, IK, Id, Dt, int
+- Engine type names as the title: Transform, Rigidbody, GameObject, Prefab, Quat, Euler
 - Symbols, digits, or units in brackets: `+`, `/`, `%`, `Delay (s)`, `Every (s)`, `Switch (int)`, `Add (+)`
 - Camel case: `MoveTowardsVec3`, `OverlapTest`
+
+Put the unit in the words when it matters: `Wait Seconds`, pin `Seconds`.
+Not `Wait (s)` and not a pin named `s`. `On Physics Update` is the steady
+50-steps-a-second clock; the node help says that, the title does not say "tick".
 
 Put the unit in the words when it matters: `Wait Seconds`, pin `Seconds`.
 Not `Wait (s)` and not a pin named `s`.
@@ -47,7 +57,7 @@ Sidebar groups use the same voice. Old group on the left, name to use on the rig
 | Was | Use |
 |---|---|
 | Events | Events |
-| Flow | Order |
+| Flow | Flow |
 | Variables | Values |
 | Math | Numbers |
 | Logic | Choices |

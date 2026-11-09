@@ -461,9 +461,14 @@ struct TimerNode : VsNode {
     explicit TimerNode(float s) : interval(s > 0.0f ? s : 0.0f) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
+        // Zero or negative means "every time". A long frame keeps the leftover,
+        // so the next pass is not a full interval late.
+        if (!(interval > 0.0f)) return 0;
         acc += ctx.deltaTime;
-        if (acc >= interval) { acc = 0.0f; return 0; }
-        return -1;
+        if (acc < interval) return -1;
+        acc -= interval;
+        if (acc > interval * 4.0f) acc = interval * 4.0f;
+        return 0;
     }
 };
 
@@ -566,7 +571,7 @@ struct WaitNode : VsNode {
         if (done) return 0;
         if (!g.Resuming()) {
             if (waiting) return -1;
-            if (seconds <= 0.0f) { done = true; return 0; }
+            if (!(seconds > 0.0f)) { done = true; return 0; }   // zero, negative, or not a real number
             waiting = true; acc = 0.0f;
             return NodeGraph::kSuspend;
         }

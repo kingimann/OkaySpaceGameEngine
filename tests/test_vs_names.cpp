@@ -12,7 +12,7 @@
 using namespace okay::editor::vsed;
 
 namespace {
-const int kGatedNameCategories[] = {CAT_EVENT};   // add the next group here when its rows land
+const int kGatedNameCategories[] = {CAT_EVENT, CAT_FLOW};   // add the next group here when its rows land
 
 bool Gated(int cat) {
     for (int c : kGatedNameCategories) if (c == cat) return true;
@@ -52,7 +52,8 @@ int main() {
         const VsName* n = FindVsName(d.type);
         CHECK(n != nullptr);
         if (!n) { std::printf("  missing friendly name: %s\n", d.type); continue; }
-        CHECK(n->kind == VsNameKind::Event);
+        if (d.cat == CAT_EVENT) CHECK(n->kind == VsNameKind::Event);
+        else CHECK(n->kind == VsNameKind::Action || n->kind == VsNameKind::Calculation);
         CHECK(std::strcmp(d.title, n->title) == 0);
         const std::string titleWhy = LintVsTitle(d.title, n->kind);
         CHECK(titleWhy.empty());
@@ -70,6 +71,11 @@ int main() {
             CHECK(why.empty());
             if (!why.empty()) std::printf("  %s pin \"%s\": %s\n", d.type, p ? p : "", why.c_str());
         }
+        for (const char* p : d.execOut) {
+            const std::string why = LintVsPin(p);
+            CHECK(why.empty());
+            if (!why.empty()) std::printf("  %s flow pin \"%s\": %s\n", d.type, p ? p : "", why.c_str());
+        }
         if (n->outPins) {
             CHECK(n->outCount == (int)d.dataOut.size());
             for (int i = 0; i < n->outCount && i < (int)d.dataOut.size(); ++i)
@@ -80,8 +86,15 @@ int main() {
         if (!err.empty() && err.find("unknown") != std::string::npos)
             std::printf("  %s did not load: %s\n", d.type, err.c_str());
     }
-    CHECK(gated == (int)(sizeof kVsNames / sizeof kVsNames[0]));
-    std::printf("  events named: %d\n", gated);
+    int named = 0;
+    for (const VsDef& d : Registry()) if (Gated(d.cat) && FindVsName(d.type)) ++named;
+    CHECK(named == gated);
+    std::printf("  named in finished groups: %d\n", gated);
+    CHECK(std::string(FindVsName("OnCollision")->title) == "On Collision Start");
+    CHECK(std::string(FindVsName("OnFixedUpdate")->title) == "On Physics Update");
+    CHECK(VsSearchKeywords("OnCollision").find("On Bump") != std::string::npos);
+    CHECK(VsSearchKeywords("OnFixedUpdate").find("On Steady Tick") != std::string::npos);
+    CHECK(VsSearchKeywords("Delay").find("Delay") != std::string::npos);
 
     // Every row already in the table follows the rules, gated or not.
     for (const VsName& n : kVsNames) {

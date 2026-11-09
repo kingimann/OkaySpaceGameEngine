@@ -113,6 +113,8 @@ inline std::vector<VsDef> ApplyFriendlyNames(std::vector<VsDef> defs) {
         };
         apply(d.dataIn, n->inPins, n->inCount);
         apply(d.dataOut, n->outPins, n->outCount);
+        for (const VsExecLabels& e : kVsExecLabels)
+            if (std::strcmp(e.type, d.type) == 0) apply(d.execOut, e.pins, e.count);
     }
     return defs;
 }

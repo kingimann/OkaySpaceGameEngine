@@ -514,6 +514,7 @@ int main(int argc, char** argv) {
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
+#include "NodePlayground.hpp"      // File > Examples > Node Playground
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
 #include "SceneManagerPanel.hpp"   // Scene Manager window + build-list bridge
@@ -5671,6 +5672,21 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::SetTooltip("Projects are created from the Launcher Create tab:\npick a template, name it, choose a folder.");
         if (ImGui::MenuItem("New 2D Scene")) { ed.NewScene2D(); ConsoleLog("New 2D project"); }
         if (ImGui::MenuItem("New 3D Scene")) { ed.NewScene3D(); ConsoleLog("New 3D project"); }
+        if (ImGui::BeginMenu("Examples")) {
+            const auto playground = okay::editor::NodePlaygroundScenes();
+            if (ImGui::BeginMenu("Node Playground", !playground.empty())) {
+                for (const std::string& p : playground) {
+                    const std::string name = std::filesystem::path(p).stem().string();
+                    if (ImGui::MenuItem(name.c_str())) {
+                        std::string err;
+                        if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                        else ConsoleLog("Open failed: " + err, 2);
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Import Model...")) PickAndImportModel();   // OS file explorer, then settings
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", DAE, STL, ..." : "");

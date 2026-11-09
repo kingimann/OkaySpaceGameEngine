@@ -844,10 +844,10 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 
 - **On Start** (`OnStart`)
 - **On Every Frame** (`OnUpdate`) — was On Update
-- **On After Every Frame** (`OnLateUpdate`) — was On Late Update
-- **On Steady Tick** (`OnFixedUpdate`) — was On Fixed Update
-- **On Becomes Active** (`OnEnable`) — was On Enable
-- **On Becomes Inactive** (`OnDisable`) — was On Disable
+- **On Late Update** (`OnLateUpdate`)
+- **On Physics Update** (`OnFixedUpdate`) — was On Fixed Update. Runs 50 times a second, before On Every Frame, so a long frame does not speed it up
+- **On Enabled** (`OnEnable`) — was On Enable
+- **On Disabled** (`OnDisable`) — was On Disable
 - **On Destroyed** (`OnDestroy`) — was On Destroy
 - **On Every Few Seconds** (`OnTimer`) — was On Timer
 - **On Key Pressed** (`OnKey`) — setting: key
@@ -858,12 +858,12 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **On Mouse Entered** (`OnMouseEnter`) — was On Mouse Enter
 - **On Mouse Left** (`OnMouseExit`) — was On Mouse Exit
 - **On Mouse Hover** (`OnMouseOver`) — was On Mouse Over
-- **On Bump** (`OnCollision`) — was On Collision
-- **On Still Bumping** (`OnCollisionStay`) — was On Collision Stay
-- **On Bump Ended** (`OnCollisionExit`) — was On Collision Exit
-- **On Entered Area** (`OnTrigger`) — was On Trigger
-- **On Still Inside Area** (`OnTriggerStay`) — was On Trigger Stay
-- **On Left Area** (`OnTriggerExit`) — was On Trigger Exit
+- **On Collision Start** (`OnCollision`) — was On Collision
+- **On Collision Stay** (`OnCollisionStay`)
+- **On Collision End** (`OnCollisionExit`) — was On Collision Exit
+- **On Trigger Enter** (`OnTrigger`) — was On Trigger
+- **On Trigger Stay** (`OnTriggerStay`)
+- **On Trigger Exit** (`OnTriggerExit`)
 - **On Animation Marker** (`OnAnimEvent`) — was On Anim Event; setting: event (blank = any)
 - **On Message** (`OnEvent`) — was On Custom Event; out Value; setting: event name
 - **On Object Placed** (`OnObjectPlaced`)
@@ -893,29 +893,29 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 
 ### Flow
 
-- **Branch** (`Branch`) — in Cond
-- **Sequence** (`Sequence`)
-- **Once** (`Once`)
-- **Every (s)** (`Timer`) — setting: seconds
-- **Wait (s)** (`Wait`) — setting: seconds
-- **Cooldown (s)** (`Cooldown`) — setting: seconds
+- **Branch** (`Branch`) — in Condition
+- **Sequence** (`Sequence`) — continues to First, then Second
+- **Run Once** (`Once`) — was Once
+- **Every Seconds** (`Timer`) — was Every (s); setting: seconds
+- **Wait Once** (`Wait`) — was Wait (s). Waits the first time, then stays open
+- **Wait Seconds** (`Delay`) — was Delay (s). Pauses, then continues, and waits again next time
+- **Cooldown** (`Cooldown`) — was Cooldown (s)
 - **For Loop** (`ForLoop`) — in First, Last; out Index
-- **Repeat N** (`Repeat`) — setting: count
-- **Flip-Flop** (`FlipFlop`)
+- **Repeat** (`Repeat`) — was Repeat N
+- **Flip Flop** (`FlipFlop`) — was Flip-Flop; First, then Second
 - **Gate** (`Gate`) — in Open
-- **Do N Times** (`DoN`) — out Count; setting: N
-- **Switch (int)** (`SwitchInt`) — in Value
-- **Delay (s)** (`Delay`) — setting: seconds
+- **Run a Number of Times** (`DoN`) — was Do N Times; out Count
+- **Switch Number** (`SwitchInt`) — was Switch (int); Zero, One, Two, or Default
 - **Random Branch** (`ChanceBranch`) — in Chance
 - **Counter** (`Counter`) — in Reset; out Count
-- **Every N Times** (`EveryN`) — in N
-- **Function** (`FunctionStart`) — setting: Name(a: Number) -> out: Number
+- **Every Number of Times** (`EveryN`) — was Every N Times; in Times
+- **Define Function** (`FunctionStart`) — was Function
 - **Return** (`Return`)
 - **Call Function** (`CallFunction`)
-- **While** (`While`) — in Cond
+- **While** (`While`) — in Condition
 - **For Each** (`ForEach`) — in List; out Item, Index
-- **Break** (`Break`)
-- **Continue** (`Continue`)
+- **Break Loop** (`Break`) — was Break
+- **Continue Loop** (`Continue`) — was Continue
 
 ### Variables
 

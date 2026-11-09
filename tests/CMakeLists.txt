@@ -1710,6 +1710,13 @@ add_test(NAME component_order COMMAND test_component_order)
 add_executable(test_scene_graph_wave4 test_scene_graph_wave4.cpp)
 target_link_libraries(test_scene_graph_wave4 PRIVATE okay::engine)
 add_test(NAME scene_graph_wave4 COMMAND test_scene_graph_wave4)
+
+# Scene graph (1.3, wave 5): world-cache check against a plain walk, constant-cost child-list removal, look-at variants,
+# GetOrAddComponent / ForEachDescendant, FindByPath with duplicates, Stats on a huge scene, tag / layer names in other languages
+add_executable(test_scene_graph_wave5 test_scene_graph_wave5.cpp)
+target_link_libraries(test_scene_graph_wave5 PRIVATE okay::engine)
+add_test(NAME scene_graph_wave5 COMMAND test_scene_graph_wave5)
+set_tests_properties(scene_graph_wave5 PROPERTIES TIMEOUT 240)   # 300000 children, 100000-deep chains
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)

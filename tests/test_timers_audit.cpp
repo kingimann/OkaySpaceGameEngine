@@ -179,6 +179,9 @@ int main(int argc, char** argv) {
     }
 
     BLOCK(6) {   // the scene is cleared from inside a scheduler or tween callback: nothing runs on freed objects
+        // A Clear() requested while the scene is updating waits for the end of the frame (Scene::IsUpdating,
+        // RequestClear), so everything that was already due in that frame still runs on live objects; after the
+        // frame the scene is empty and nothing runs again.
         Scene s;
         GameObject* a = s.CreateGameObject("A");
         GameObject* b = s.CreateGameObject("B");
@@ -191,10 +194,11 @@ int main(int argc, char** argv) {
         int tweenCalls = 0;
         t->OnUpdate([&] { ++tweenCalls; });
         s.Update(0.1f);
-        CHECK(cleared == 1 && later == 0);
+        CHECK(cleared == 1 && later == 2);                                // both timers due this frame ran before the Clear took effect
         CHECK(s.scheduler().ActiveCount() == 0 && s.tweens().Count() == 0 && !t->IsActive());
+        CHECK(s.Objects().empty());
         s.Update(0.1f);
-        CHECK(later == 0);
+        CHECK(later == 2 && cleared == 1);                                // nothing survives the Clear
 
         // From a tween callback.
         GameObject* c = s.CreateGameObject("C");

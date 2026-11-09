@@ -2539,15 +2539,15 @@ int main(int argc, char** argv) {
             const std::vector<std::string> overlayLines = okay::FrameOverlay::Lines(loop);
             const std::vector<float> plot = okay::FrameOverlay::RecentFps(loop.Stats(), 90);   // chronological
 
-            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 340.0f, 400.0f);
+            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 340.0f, 556.0f);   // tall enough for the overlay lines, the graph and a short object list
             for (const std::string& ol : overlayLines) OkayUI::Text(ol.c_str());
             char line[64];
             std::snprintf(line, sizeof(line), "%d", (int)scene.Objects().size());
             OkayUI::LabelText("Objects", line);
             OkayUI::SeparatorText("FPS (last 90 frames)");
-            OkayUI::PlotLines("##fps", plot.data(), (int)plot.size(), 0.0f, 0.0f, 56.0f);
+            OkayUI::PlotLines("", plot.data(), (int)plot.size(), 0.0f, 0.0f, 56.0f);   // no label: OkayUI draws "##" ids as text
             OkayUI::SeparatorText("Scene objects");
-            if (OkayUI::BeginChild("##objs", 0.0f, 130.0f, true)) {
+            if (OkayUI::BeginChild("##objs", 0.0f, 64.0f, true)) {
                 for (const auto& up : scene.Objects())
                     if (up) OkayUI::BulletText(up->name.c_str());
             }

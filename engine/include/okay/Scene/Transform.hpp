@@ -29,8 +29,16 @@ public:
     Quat Rotation() const;
     Vec3 LossyScale() const;
 
+    /// Place the object at a world position: the local position becomes what puts it there under the
+    /// whole parent chain (a parent that is stretched on one axis and a child of it that is turned
+    /// included). A parent with a collapsed axis (a scale of 0) cannot be undone on that axis; the
+    /// local value of that axis is then kept.
     void SetPosition(const Vec3& worldPos);
     void SetRotation(const Quat& worldRot);
+    /// Both at once (world space).
+    void SetPositionAndRotation(const Vec3& worldPos, const Quat& worldRot) { SetRotation(worldRot); SetPosition(worldPos); }
+    /// Both at once in the parent's frame (the rotation is normalized).
+    void SetLocalPositionAndRotation(const Vec3& pos, const Quat& rot) { localPosition = pos; localRotation = rot.Normalized(); }
     /// Set the world-space scale (per axis, as LossyScale() reads it): the local scale
     /// becomes the wanted scale divided by the parent's lossy scale. An axis whose parent
     /// scale is zero is left alone. SetScale is the same call.
@@ -69,17 +77,17 @@ public:
 
     // ---- Local <-> world conversions ----------------------------------
     Vec3 TransformPoint(const Vec3& local) const { return LocalToWorldMatrix().MultiplyPoint(local); }
-    Vec3 InverseTransformPoint(const Vec3& world) const {
-        return LocalToWorldMatrix().Inverse().MultiplyPoint(world);
-    }
+    /// The local coordinates of a world point. An object whose matrix cannot be inverted (a scale of 0
+    /// on some axis, here or in a parent) has no exact answer: each collapsed axis reads 0 and the other
+    /// axes are exact, which is the nearest point of the object to `world` (the pseudo-inverse).
+    Vec3 InverseTransformPoint(const Vec3& world) const;
     Vec3 TransformDirection(const Vec3& dir) const { return Rotation() * dir; }
     Vec3 InverseTransformDirection(const Vec3& dir) const { return Rotation().Conjugate() * dir; }
     /// Like TransformPoint without the position: the vector is turned and scaled (a
     /// direction is only turned).
     Vec3 TransformVector(const Vec3& local) const { return LocalToWorldMatrix().MultiplyVector(local); }
-    Vec3 InverseTransformVector(const Vec3& world) const {
-        return LocalToWorldMatrix().Inverse().MultiplyVector(world);
-    }
+    /// The inverse of TransformVector; a collapsed axis reads 0 (see InverseTransformPoint).
+    Vec3 InverseTransformVector(const Vec3& world) const;
 
     // ---- Matrices ------------------------------------------------------
     Mat4 LocalToWorldMatrix() const;
@@ -99,6 +107,10 @@ public:
     /// object was destroyed, and a parent that lives in another scene. nullptr (make this a
     /// root) is always accepted.
     bool SetParent(Transform* parent, bool worldPositionStays = true);
+    /// SetParent, then put this transform at sibling position `siblingIndex` (clamped, so 0 or less is
+    /// first and anything past the end is last) among the new parent's children, or among the scene's
+    /// root objects for nullptr. Nothing changes (false) when SetParent refuses.
+    bool SetParent(Transform* parent, bool worldPositionStays, int siblingIndex);
     const std::vector<Transform*>& Children() const { return m_children; }
     int ChildCount() const { return static_cast<int>(m_children.size()); }
     /// The child at `index` in sibling order, or nullptr when out of range.
@@ -170,6 +182,7 @@ private:
     friend class GameObject;
     friend class Scene;
     bool PlaceNextTo(Transform* anchor, bool after);
+    Vec3 WorldToParentLocal(const Vec3& worldPos) const;   // a world point in the parent's frame
     void NoteOrderChanged();   // sibling order changed: the scene's structure version moves
     Transform* m_parent = nullptr;
     std::vector<Transform*> m_children;

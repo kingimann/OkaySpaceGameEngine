@@ -1661,6 +1661,12 @@ add_test(NAME scene_spawn COMMAND test_scene_spawn)
 add_executable(test_mover_spinner_lifetime test_mover_spinner_lifetime.cpp)
 target_link_libraries(test_mover_spinner_lifetime PRIVATE okay::engine)
 add_test(NAME mover_spinner_lifetime COMMAND test_mover_spinner_lifetime)
+
+# Scene graph (1.3, wave 4): world math (singular inverse, shear, negative scale), a cached active state and linear
+# destroy on deep / wide hierarchies, Clear and loads from inside callbacks, saved component order, audit and additions
+add_executable(test_transform_world test_transform_world.cpp)
+target_link_libraries(test_transform_world PRIVATE okay::engine)
+add_test(NAME transform_world COMMAND test_transform_world)
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)

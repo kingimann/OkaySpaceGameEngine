@@ -472,6 +472,10 @@ Intuitive names for common builtins so code reads naturally:
 `screen_width` / `screen_height`.
 | `upper lower split join substr replace trim str_len` | Strings |
 | `time()` / `dt()` / `fps()` | Timing |
+| `session_time()` / `session_unscaled_time()` / `session_frame_count()` | Game seconds, real seconds and frames since this Play began (`time()` keeps counting across Plays) |
+| `unscaled_dt()` / `is_paused()` / `hitch_count()` | Real frame time (a pause and slow motion do not change it), the pause, frames over 0.1 s |
+| `push_pause(reason)` / `pop_pause(reason)` / `is_paused_by(reason)` | Pause with a reason of your own; the game stays paused until every reason is let go (two scripts never resume each other) |
+| `hit_stop(seconds [, scale])` / `slow_motion(scale, seconds)` / `ramp_timescale(target, seconds)` | Freeze frame, bullet time, an eased time scale (real seconds; they end by themselves) |
 | `print(...)` | Log to the Console panel |
 
 ### Timers & spawning

@@ -137,7 +137,7 @@ each one with a warning saying what to delete:
 | Lambdas | `x => x * 2`, `(a, b) => { ... }`, and defaults `(x = 3) => x + 1`, with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)` |
 | Coroutines | `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)` (`WaitForSecondsRealtime` ignores time scale), `yield return new WaitUntil(() => cond)`, `yield return new WaitWhile(() => cond)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
 | Components | `GetComponent<T>()` returns a usable reference: `Rigidbody2D`/`Rigidbody` (`velocity`, `AddForce`, `MovePosition`, `gravityScale`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
-| Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
+| Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Time.sessionTime/sessionFrameCount/unscaledDeltaTime/fps/paused`, `Time.HitStop/SlowMotion/RampTimeScale`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
 
 Objects are referenced by name under the hood, so `GameObject.Find("Enemy")`
 returns a reference you can pass to `Destroy`, compare with `null`, or read
@@ -175,7 +175,8 @@ What's supported:
   familiar code often pastes in unchanged.
 - **Dot properties**: `transform.position` / `.localPosition` / `.localScale`
   (and `.x/.y/.z`), `transform.eulerAngles.z`, `Time.deltaTime` / `Time.time` /
-  `Time.timeScale`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
+  `Time.timeScale` / `Time.unscaledDeltaTime` / `Time.sessionTime` /
+  `Time.sessionFrameCount` / `Time.fps` / `Time.paused`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
   `Input.mousePosition.x/y`, `Mathf.PI`, `Random.value`, `Vector3.zero/one/up/...`.
   Readable and assignable (`transform.position.x = 5;`).
 - **Dot methods**: `Input.GetKey/GetKeyDown/GetKeyUp/GetAxis/GetMouseButton...`,
@@ -396,6 +397,15 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `stop()` | zero this object's Rigidbody velocity |
 | `is_moving()` / `face_velocity()` | is the Rigidbody2D moving / turn to its heading |
 | `set_timescale(x)` / `timescale()` | global speed (0 = pause, 0.5 = slow-mo) |
+| `session_time()` / `session_unscaled_time()` / `session_frame_count()` | game seconds / real seconds / frames since this Play began (`time()` and `frame_count()` keep counting across Plays; these start from 0 each time) |
+| `unscaled_dt()` | real seconds of the last frame: not slowed by `set_timescale`, a hit stop or a pause (animate a menu with it) |
+| `is_paused()` | 1 while the game is paused (a menu, a cutscene, the pause button) |
+| `push_pause(reason)` / `pop_pause(reason)` / `is_paused_by(reason)` | pause with a reason of your own (`"dialogue"`, `"shop"`): the game stays paused until every reason is let go, so two scripts that pause never resume each other (`pause_game(bool)` is the one shared "manual" reason) |
+| `fps()` | real frames per second over the last half second (a pause or slow motion does not change it, a stall shows) |
+| `hitch_count()` | frames that took over a tenth of a second since this Play began |
+| `hit_stop(seconds [, scale])` | a freeze frame (scale 0, the default) or a brief slow-down for an impact; real time, ends by itself, composes with `set_timescale` |
+| `slow_motion(scale, seconds)` | bullet time: `slow_motion(0.2, 2)` runs at a fifth speed for two real seconds, then back to normal |
+| `ramp_timescale(target, seconds)` | ease the time scale to `target` over `seconds` real seconds, in a straight line |
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
 | `destroy()` | destroy this script's own GameObject |
@@ -773,6 +783,8 @@ they all call the same function, so use whichever reads best to you:
 | `call_later(secs, "fn")` | `after` |
 | `repeat_every(secs, "fn")` | `every` |
 | `time_elapsed()` / `frame_time()` | `time` / `dt` / `Time.time` / `Time.deltaTime` |
+| `Time.HitStop(s, scale)` / `Time.SlowMotion(scale, s)` / `Time.RampTimeScale(target, s)` | `hit_stop` / `slow_motion` / `ramp_timescale` |
+| `Time.PushPause(r)` / `Time.PopPause(r)` / `Time.IsPausedBy(r)` | `push_pause` / `pop_pause` / `is_paused_by` |
 | `set_tint(r,g,b)` | `set_color` |
 | `set_sprite("img.png")` | `set_texture` |
 | `set_background_color(r,g,b)` | `set_bg` |

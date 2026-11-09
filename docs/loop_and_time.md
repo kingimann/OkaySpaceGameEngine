@@ -1,6 +1,6 @@
 # Loop and time
 
-How a frame runs and how the engine keeps time. Headers: `okay/Core/Time.hpp`, `Game.hpp`, `GameLoop.hpp`, `Clock.hpp`, `FrameRecord.hpp`, `FrameStats.hpp`, `TickPacer.hpp`, `Random.hpp`, `RandomExtras.hpp`, `Application.hpp`, from the third pass `Countdown.hpp`, `TimeSnapshot.hpp`, `LoopConsole.hpp`, and from the fourth `FrameOverlay.hpp` (with `Utf8.hpp` and `FramePacing.hpp`, which this page also covers). Tests: `test_game_loop`, `test_clock`, `test_time_extras`, `test_game_state`, `test_random_extras`, `test_application_loop`, from the second pass `test_loop_audit2`, `test_frame_step`, `test_capture_mode`, `test_frame_record`, `test_frame_stats`, `test_tick_pacer`, `test_loop_player_style`, from the third pass `test_loop_audit3`, `test_countdown`, `test_time_snapshot`, from the fourth `test_loop_audit4`, `test_frame_overlay`, `test_random_wave4`, plus the older `test_time_pause`, `test_random`, `test_utf8`, `test_frame_pacing`, `test_timescale`. The third pass is summarised in "Third pass" and the fourth in "Fourth pass" at the end.
+How a frame runs and how the engine keeps time. Headers: `okay/Core/Time.hpp`, `Game.hpp`, `GameLoop.hpp`, `Clock.hpp`, `FrameRecord.hpp`, `FrameStats.hpp`, `TickPacer.hpp`, `Random.hpp`, `RandomExtras.hpp`, `Application.hpp`, from the third pass `Countdown.hpp`, `TimeSnapshot.hpp`, `LoopConsole.hpp`, and from the fourth `FrameOverlay.hpp` (with `Utf8.hpp` and `FramePacing.hpp`, which this page also covers). Tests: `test_game_loop`, `test_clock`, `test_time_extras`, `test_game_state`, `test_random_extras`, `test_application_loop`, from the second pass `test_loop_audit2`, `test_frame_step`, `test_capture_mode`, `test_frame_record`, `test_frame_stats`, `test_tick_pacer`, `test_loop_player_style`, from the third pass `test_loop_audit3`, `test_countdown`, `test_time_snapshot`, from the fourth `test_loop_audit4`, `test_frame_overlay`, `test_random_wave4`, from the fifth `test_loop_audit5`, `test_random_threads`, `test_script_time`, plus the older `test_time_pause`, `test_random`, `test_utf8`, `test_frame_pacing`, `test_timescale`. The third pass is summarised in "Third pass", the fourth in "Fourth pass" and the fifth in "Fifth pass" at the end.
 
 ## Which one do I use?
 
@@ -32,6 +32,13 @@ How a frame runs and how the engine keeps time. Headers: `okay/Core/Time.hpp`, `
 | The same performance text in the player and the editor | `FrameOverlay::Lines(loop)` |
 | Pick 3 different spawn points out of 40; scatter trees with no two too close | `rnd::SampleIndices`, `rnd::PoissonDisk2D` |
 | Save a half-used shuffle bag or reward pool with the game | `ShuffleBag::Save/Load`, `WeightedTable::Save/Load` |
+| Read "since this Play began", real frame time, FPS, the pause from a script | `Time.sessionTime`, `Time.unscaledDeltaTime`, `Time.fps`, `Time.paused` (see "Fifth pass") |
+| Bullet time for two seconds, a freeze frame, an eased time scale from a script | `Time.SlowMotion(0.2, 2)`, `Time.HitStop(0.08, 0)`, `Time.RampTimeScale(0.2, 0.5)` |
+| Show a real FPS number (a 5 s stall must read as one) | `FrameOverlay::FpsLabel(loop)`, `FrameStats::AverageFps(n)` |
+| Blend two fixed states when drawing, with no handle on the loop | `Time::FixedAlpha()` (`GameLoop::Alpha()` for code that has the loop) |
+| Draw from the seeded stream on any thread | `Random::Shared()` (now safe), `Random::LockShared()` for several draws that must stay together |
+| Spend at most 2 ms a frame on streaming, baking or a path field | `TimeBudget budget(0.002); budget.Begin(); while (work && budget.Allow()) Step();` |
+| Replay a recording that had a pause, or play the same random numbers again | `GameLoop::Options::replayPauses`, `replayRandom` (the recorder stores the seed) |
 
 ## GameLoop: one frame driver
 
@@ -196,7 +203,7 @@ loopTick = windowFocused || cfg.runInBackground;
 if (!loop.BeginFrame(loopTick ? (double)measuredDt : 0.0)) running = false;
 ```
 
-The FPS readouts keep showing the measured time cut to 0.1 s (`dt`, as before). `test_loop_player_style` still copies the *old* per-frame code and runs it next to a configured `GameLoop` on the same synthetic frame sequences (steady at 30, 60 and 144 Hz, spikes at and just over the limit, an alt-tab gap, paused ticks with two reasons, slow motion, hit stops, NaN and negative times, a quit, vsync switched on and off while playing), with and without smoothing and vsync snapping, and compares every `Time` value of every frame for exact equality. The player still behaves as it did in every way that test pins; where the two differ it is on purpose:
+The FPS readouts showed the measured time cut to 0.1 s (`dt`) in the third pass; both now read the loop's real frame times (fourth and fifth pass). `test_loop_player_style` still copies the *old* per-frame code and runs it next to a configured `GameLoop` on the same synthetic frame sequences (steady at 30, 60 and 144 Hz, spikes at and just over the limit, an alt-tab gap, paused ticks with two reasons, slow motion, hit stops, NaN and negative times, a quit, vsync switched on and off while playing), with and without smoothing and vsync snapping, and compares every `Time` value of every frame for exact equality. The player still behaves as it did in every way that test pins; where the two differ it is on purpose:
 
 - **Identical** with focus kept, in every sequence and every smoothing / vsync setting, and also with `runInBackground` on.
 - **`OnUpdate` runs every frame** (UI keeps ticking; the old player skipped `scene.Update` when unfocused), so the player gates it on its own `loopTick` flag as above and an unfocused frame is still a 0 s step with no scene update.
@@ -204,7 +211,7 @@ The FPS readouts keep showing the measured time cut to 0.1 s (`dt`, as before). 
 - **A measured infinity** is a 0 s frame in `GameLoop` (any non-finite measurement is) and was 0.1 s in the old player (`inf > 0.1f` clamped). No timer produces one.
 - **Pause on focus loss** (`Game::SetPauseOnFocusLoss(true)` plus `Game::NotifyFocus`, instead of the `loopTick` flag) gives the same game time, but real time keeps running in the unfocused frames, so `UnscaledDeltaTime`, the "ui" clock and UI animation continue. The player does not use it.
 - **A new session starts at time scale 1.** `Game::Reset()` kept a script's time scale into the next session; `loop.BeginSession()` does not. At the player's one call (process start) the two are the same unless something set a scale earlier.
-- **New and invisible to the game:** the `Clock` channels now tick in the player (nothing ticked them there before, so `Clock::Get("ui").Delta()` read 0 in a built game), `loop.Stats()` holds frame statistics, `OnFixedUpdate` is available, and hitch logging is off (`logHitches` stays false so the player's log does not change). The F3 overlay read the player's own `dt` then; the fourth pass moved it to `FrameOverlay` (see "Fourth pass"), the `show_fps` readout still shows the clamped `dt`. What was run: the player built from this source and started headless (SDL's dummy video and audio drivers, no display here): a scene whose Action List quits on a one second interval exited with code 0 after about 1.2 s (so `Time` is stepped, the scene updates by the scaled step and the quit is seen), and SIGINT ended a running game cleanly. The real window, a GPU renderer and the `SDL_Delay` pacing were not run; the per-frame numbers are the ones the test pins.
+- **New and invisible to the game:** the `Clock` channels now tick in the player (nothing ticked them there before, so `Clock::Get("ui").Delta()` read 0 in a built game), `loop.Stats()` holds frame statistics, `OnFixedUpdate` is available, and hitch logging is off (`logHitches` stays false so the player's log does not change). The F3 overlay read the player's own `dt` then; the fourth pass moved it to `FrameOverlay` (see "Fourth pass"), and the fifth pass moved the `show_fps` readout there too (`FrameOverlay::FpsLabel(loop)`: real frame times, see "Fifth pass"). What was run: the player built from this source and started headless (SDL's dummy video and audio drivers, no display here): a scene whose Action List quits on a one second interval exited with code 0 after about 1.2 s (so `Time` is stepped, the scene updates by the scaled step and the quit is seen), and SIGINT ended a running game cleanly. The real window, a GPU renderer and the `SDL_Delay` pacing were not run; the per-frame numbers are the ones the test pins.
 
 **The editor has adopted it too** (editor hooks). Before, the editor's Play loop clamped to 0.1 s, smoothed, and called `ed.Tick(Game::Paused() ? 0 : playDt)`, which runs `scene.Update(dt)`, but nothing called `Time::Step`: during Play `Time::DeltaTime()` stayed 0 (the Action List "move towards" steps multiply by it), `Time::ElapsedTime()` and `FrameCount()` stood still, and `Time.timeScale`, hit stops, ramps and the `Clock` channels did nothing (the built player has all of them). Now:
 
@@ -366,7 +373,7 @@ A vetoed request leaves the game running (`QuitVetoCount()`). The guard runs on 
 ```cpp
 Random rng = Random::FromString("world-42");          // the same stream on every platform and build
 Random loot = rng.Fork();                              // an independent child stream; advances rng by one draw
-Random& mine = Random::ThreadLocal();                  // for a worker thread: Shared() has no lock
+Random& mine = Random::ThreadLocal();                  // a stream of its own per thread (Shared() is safe on any thread since the fifth pass)
 { auto shared = Random::LockShared(); int roll = shared->Range(1, 7); }   // or take the lock for a few draws of the one seeded stream
 
 Vec2 spawn = rnd::PointInCircle(rng, 5.0f, center);    // even by area; also PointOnCircle, PointInRing(rng, inner, outer)
@@ -513,7 +520,7 @@ The prefix is a constructor argument (a client and a server in one process each 
 
 ### Threads and the shared random stream
 
-`Random::Shared()` is still the plain, fast, unlocked generator (a replay or a seeded test reads it from the main thread). A thread that must draw from that same stream takes the lock for a few draws: `{ auto rng = Random::LockShared(); a = rng->Range(0, 6); }`. It is a short spin lock (a header here may not include `<mutex>`), do not nest it, and code that calls `Shared()` directly does not take it. The test has six threads draw 24 000 numbers: the sum and the generator's end state equal the sequential run, and it is clean under a thread sanitizer. `Random::ThreadLocal()` (a stream of its own per thread) is still the cheap answer when you do not need the shared sequence. A debug assert on `Shared()` was not added: the editor ticks the game on a fiber and tests move between threads, so "one thread" cannot be checked without false alarms.
+(Third pass text, superseded: `Random::Shared()` is now locked inside the generator, see "Fifth pass".) `Random::Shared()` was the plain, fast, unlocked generator (a replay or a seeded test reads it from the main thread). A thread that must draw from that same stream took the lock for a few draws: `{ auto rng = Random::LockShared(); a = rng->Range(0, 6); }`. It is a short spin lock (a header here may not include `<mutex>`), do not nest it, and code that calls `Shared()` directly does not take it. The test has six threads draw 24 000 numbers: the sum and the generator's end state equal the sequential run, and it is clean under a thread sanitizer. `Random::ThreadLocal()` (a stream of its own per thread) is still the cheap answer when you do not need the shared sequence. A debug assert on `Shared()` was not added: the editor ticks the game on a fiber and tests move between threads, so "one thread" cannot be checked without false alarms.
 
 ### More random helpers
 
@@ -701,7 +708,7 @@ These are the exact call sites, all on `ed.playLoop()` (`EditorState::m_loop`), 
 1. **Stats overlay in the Game view.** While `ed.isPlaying()`, once per UI refresh: `for (const std::string& l : okay::FrameOverlay::Lines(ed.playLoop())) ImGui::TextUnformatted(l.c_str());` and `auto fps = okay::FrameOverlay::RecentFps(ed.playLoop().Stats(), 90); ImGui::PlotLines("##fps", fps.data(), (int)fps.size());` (include `okay/Core/FrameOverlay.hpp`). A "Stats" toggle can sit by the PLAYING / PAUSED pill in `editor/main.cpp` (about line 43327).
 2. **Slow motion buttons.** In the toolbar next to Step (`stepHit`, about line 6436): "Slower" is `ed.playLoop().SetDebugTimeScale(GameLoop::NextDebugTimeScale(ed.playLoop().DebugTimeScale(), -1))`, "Faster" the same with `+1`, "1x" is `SetDebugTimeScale(1.0f)`; the label is `ed.playLoop().DebugTimeScale()`. The debug scale survives Play and Stop (by design), so call `SetDebugTimeScale(1.0f)` in `EditorState::Stop()` if it should not.
 3. **Run N frames, then pause.** Once, where `ed.playTick` is set (about line 44630): `ed.playLoop().OnRunFramesDone = [] { g_paused = true; };`. The button calls `ed.playLoop().RunFrames(n, 1.0f / 60.0f, "editor")`: the reason must be `EditorState::kPauseReason` (`"editor"`), the one `ed.SetPaused(g_paused)` holds, so when the run ends the loop's pause and `g_paused` agree and the Resume button releases it. While the game is paused the same call steps `n` frames and stays paused (the editor lifts its own pause around the scene tick for step frames already).
-4. **Scripts: `Time.sessionTime` and `Time.sessionFrameCount`.** Next to `Time.time` / `Time.frameCount` in `Script/EngineApi.cpp` (the `Time` type, about line 891) and `Scripting/OkayScriptVM.cpp` (`Time.time` about line 2078, builtin `time` about line 3719), return `Time::SessionTime()` and `Time::SessionFrameCount()`; regenerate `docs/engine_api.md`. Until then a script that needs "since Play" can store `Time.time` in `Start`.
+4. **Scripts: `Time.sessionTime` and `Time.sessionFrameCount`.** (Done in the fifth pass, see "What a script can reach".) Next to `Time.time` / `Time.frameCount` in `Script/EngineApi.cpp` (the `Time` type, about line 891) and `Scripting/OkayScriptVM.cpp` (`Time.time` about line 2078, builtin `time` about line 3719), return `Time::SessionTime()` and `Time::SessionFrameCount()`; regenerate `docs/engine_api.md`. Until then a script that needs "since Play" can store `Time.time` in `Start`.
 5. **Console.** `LoopConsole(ed.playLoop())` (declared after the loop) gives `time.stats`, `time.scale`, `time.debug_scale`, `time.pause`, `time.step`, and from this pass `time.run [n] [fps]` (`RunFrames`: with `fps` every frame is exactly 1/fps s) and `time.overlay` (the `FrameOverlay` text); they do what the buttons do. Without the editor hook 3 the pause that `time.run` ends with is the reason `"manual"`.
 
 ### What changed (fourth pass)
@@ -713,4 +720,97 @@ These are the exact call sites, all on `ed.playLoop()` (`EditorState::m_loop`), 
 - `LoopConsole`: `time.run [n] [fps]`, `time.overlay`.
 - New `Core/FrameOverlay.hpp/.cpp`: `FrameOverlay::Lines`, `Format`, `StateOf`, `Text`, `RecentFps`, `RecentMs`. `player/main.cpp`: F3 uses it.
 - `Random::Gaussian`, the `rnd::Point*` helpers: bad numbers. New `rnd::SampleIndices`, `rnd::PoissonDisk2D`, `ShuffleBag::SaveState / RestoreState / Save / Load`, `WeightedTable::DrawnMask / RestoreDrawn / Drawn / Save / Load`.
-- Not done: `Time.sessionTime` in the scripts (hook 4), a `PseudoRandom` "bad luck protection" chance (a streak-aware crit chance; small, but nothing asked for it yet), `Rng` was left alone (it belongs to the math wave).
+- Not done then (the script bindings were done in the fifth pass): `Time.sessionTime` in the scripts (hook 4), a `PseudoRandom` "bad luck protection" chance (a streak-aware crit chance; small, but nothing asked for it yet), `Rng` was left alone (it belongs to the math wave).
+
+## Fifth pass
+
+What the fifth pass did: a game script can read the session clocks, real time and the real frame rate and can start a hit stop, bullet time or a time-scale ease; the player's `show_fps` readout shows real frame times; `Random::Shared()` is safe on any thread; a time-scale ramp survives a save; a replay can reproduce the recorded run's pauses and its random numbers; a time budget helper; and a dozen more bugs and edge cases are fixed. Tests: `test_loop_audit5` (207 checks), `test_random_threads` (20), `test_script_time` (96).
+
+### What a script can reach
+
+Before this pass a script could read `Time.time` and `Time.deltaTime` and set `Time.timeScale`, and nothing else about the loop (the OkayScript builtin `fps()` was `1 / dt`). Added to both script languages (the typed one lives in `Script/EngineApi.cpp`, so the visual-script nodes and `docs/engine_api.md` list them too; OkayScript is `Scripting/OkayScriptVM.cpp`):
+
+| Typed / dotted | OkayScript builtin | Meaning |
+| --- | --- | --- |
+| `Time.sessionTime` | `session_time()` | game seconds since this Play began (`Time.time` is the process's clock and keeps counting across Plays) |
+| `Time.sessionUnscaledTime` | `session_unscaled_time()` | real seconds since this Play began |
+| `Time.sessionFrameCount` | `session_frame_count()` | frames since this Play began |
+| `Time.unscaledDeltaTime` | `unscaled_dt()` | real seconds of the last frame: a pause, slow motion and hit stops do not change it |
+| `Time.unscaledTime` | - | real seconds since the game started |
+| `Time.fps` | `fps()` | frames per second over the last 30 REAL frame times of the running loop (`GameLoop::Current()->Stats().AverageFps(30)`); 0 / the last frame's rate with no loop |
+| `Time.hitchCount` | `hitch_count()` | frames over 0.1 s since this Play began |
+| `Time.paused` | `is_paused()` | the game is paused (any reason) |
+| `Time.PushPause(reason)`, `Time.PopPause(reason)`, `Time.IsPausedBy(reason)` | `push_pause`, `pop_pause`, `is_paused_by` | pause with a reason of your own (`Game::PushPause`): the game stays paused until every reason is let go, so two scripts that pause never resume each other (`pause_game(bool)` stays the one shared "manual" reason); a hold a script left is cleared by the next `BeginSession` |
+| `Time.HitStop(seconds, scale)` | `hit_stop(seconds [, scale])` | a freeze frame (scale 0) or a brief slow-down; real time, ends by itself |
+| `Time.SlowMotion(scale, seconds)` | `slow_motion(scale, seconds)` | bullet time: the same effect with the arguments the way a game reads them (`Time.SlowMotion(0.2, 2)`); it composes with `Time.timeScale` and ends by itself |
+| `Time.RampTimeScale(target, seconds)` | `ramp_timescale(target, seconds)` | ease the time scale in a straight line over real seconds |
+
+Two answers that were wrong are fixed: OkayScript's `Time.unscaledDeltaTime` and `Time.fixedDeltaTime` both returned this frame's SCALED delta (so the "unscaled" one read 0 in a pause and half of itself at `timeScale` 0.5); they now read `Time::UnscaledDeltaTime()` and `Time::FixedDeltaTime()`. `fps()` was `1 / the scaled delta` (0 in a pause, double at half speed); it now reads the loop's real frame times. What a script still cannot do: per-clock `Clock` channels and their scales, the debug time scale, frame statistics beyond `fps` and `hitchCount`. Those belong to the host, not to game logic.
+
+`GameLoop::Current()` is how the script layer (and any code with no handle on the loop) reaches the numbers: the loop that ran the latest frame, `nullptr` when none has or it was destroyed (the destructor clears it). With two loops in one process it is the one that ran last. Main thread only.
+
+### The show_fps readout, and real FPS
+
+`player/main.cpp`'s `show_fps` readout smoothed `dt`, the frame time cut to 0.1 s, so it never read under 10 FPS and a stall hardly moved it. It now draws `FrameOverlay::FpsLabel(loop)` ("FPS 60"): `FrameStats::AverageFps(30)`, the frames in the newest 30 divided by how long they really took. A 5 s stall shows as 2 FPS for the next 30 frames; with no frame yet it reads "FPS --". `FrameStats::AverageFps(n)` is O(n) with no allocation, so a script or a HUD may call it every frame. The editor's Game view stats (not wired, see the hooks below) can use the same call.
+
+### `Random::Shared()` is safe on any thread
+
+It was a plain generator: two threads that drew from it raced on its two state words (a thread sanitizer reports it on the first draw) and a `Seed` or `GetState` from another thread could see half of an update. The fix keeps what code relies on: the seed API (`Random::Shared().Seed(42)`), the sequence on one thread (a test pins the first numbers against a plain `Random` of the same seed) and the type (`Random&`, so every `rnd::` helper still takes it).
+
+- Every step of the shared generator, and `Seed`, `SetState` and `GetState` on it, is taken under a short recursive spin lock (atomics only: this header may not include `<mutex>`). Any other generator (your own, a copy of `Shared()`, `ThreadLocal()`) has no lock and costs one predictable branch more per draw.
+- It is one stream shared by all threads, so the numbers the threads draw are the sequential numbers in some interleaving: the sum of N draws and the generator's end state are the same whoever drew what (the test), but which thread gets which number is the scheduler's. A replay that needs the same numbers at the same events draws on one thread or gives each thread a `ThreadLocal()` stream. A helper that makes several draws (`Gaussian`, a point in a circle) can be interleaved with another thread's draws between them: hold `Random::LockShared()` across it when the draws must stay together.
+- `LockShared()` is now recursive on one thread (a nested handle, or a draw made while holding one, used to wait for itself forever).
+- A thread-local default was the other option; it would have made `Shared().Seed(...)` on the main thread silently not apply to a worker. The lock keeps one seed for the process.
+- Tested with `std::thread` (`test_random_threads`: six threads draw 120 000 numbers straight from `Shared()` and the sum and end state equal the sequential run; a reader thread takes `GetState()` snapshots while four threads draw and every snapshot is a real state of the sequence; `Seed` / `SetState` racing draws; `LockShared` pairs stay consecutive; nested locks) and built standalone with `-fsanitize=thread` (the file includes only `Random.hpp`): clean. Against the old header a four thread program drawing from `Shared()` gets a data race report on the first draw, and the test's nested `LockShared` never finishes (it waits for itself).
+
+### A ramp survives a save; Cooldown credit
+
+`TimeSnapshot` saved `Time::BaseTimeScale()`, which during a `Time::RampTimeScale` is the half-way value, and nothing about where the ramp was heading: a game saved while easing out of slow motion loaded stuck at the half-way scale for good. It now also stores the ramp (`timeRampTarget`, `timeRampLeft`, written only while one runs; a block without them loads as before) and `Apply` restarts it from the saved scale in the same straight line, so the game time the loaded run gets equals what the saved run got. Hit stops stay session state (they last fractions of a second). The clock ramps and groups were checked too: a fresh `ClockSet` restored from a snapshot taken mid-ramp, with a paused clock holding its ramp, a game-clock held by the pause and custom clocks the new set did not have, runs the next 23 frames to the same elapsed times and scales as the original (`test_loop_audit5`).
+
+`Cooldown::Save` left out the one-frame held-fire credit, so a save taken after the tick that made the cooldown ready and before the shot gave a longer wait than the same save a moment earlier. It is written only while a credit is pending (`credit`; older saves have none and load as before; a credit on a cooldown that is still counting down is ignored).
+
+### Replaying a run that had a pause; seeds in a recording
+
+- **`GameLoop::Options::replayPauses`** (default false, the old behaviour). A replay only reproduced the pauses its host reproduced itself, so a pause the recorded run got from somewhere the replay has no copy of left the replayed game moving through those frames: the pause `RunFrames` ends with, the editor's Pause button, a menu the inputs are not replayed for. With it on, a replayed frame the recording marks paused is run paused (the loop holds `Game::PushPause(GameLoop::kReplayPause)`, "replay", only when the game is not paused already, and lets go on the next frame that was running, when the replay ends, on `Reset()`, `BeginSession()` or `AttachPlayer(nullptr)`). Recorded debug-step frames then replay as steps on a game that is not paused. A test records a `RunFrames(3)` that ends in a pause, four frames while paused, a resume, a menu pause, and replays it: without the option the Time values part ways at the first paused frame, with it all 17 frames equal the live ones bit for bit.
+- **The shared random stream in a recording.** `FrameRecorder` stores `Random::Shared()`'s state with the first frame it records (`SetRecordRandom(false)` turns that off), the text form carries it as one optional line (`random <16 hex digits> <16 hex digits>` between `micros` and the frames; a recording without it, every file written so far, loads and saves as before; the version stays 1), and `GameLoop` puts it back when the replay starts, and at each lap of a looping replay (`Options::replayRandom`, default true). `FrameRecording::HasRandom()`, `RandomState()`, `SetRandom()`, `ClearRandom()`. With the same inputs the replayed game then rolls the numbers the recorded one rolled.
+
+### Smaller additions
+
+- **`Time::FixedAlpha()`**: the loop's `Alpha()` (how far the leftover time is into the next fixed step) for code that has no handle on the loop. Published by `GameLoop` each frame, reset by `BeginSession`, cut to [0, 1). `Time::RampSecondsLeft()` is the remaining real time of a running ramp.
+- **`TimeBudget`** (`Core/TimeBudget.hpp`, header only): a slice of time for work that must not blow a frame. `TimeBudget budget(0.002); budget.Begin(); while (work && budget.Allow()) Step();` or `budget.Run([&]{ return Step(); })`. At least one item per slice (a step longer than the budget still finishes), the clock is `Time::RealtimeSinceStartup()` or a function you give (a test is deterministic), a budget that is not a finite number >= 0 is 0, a clock that goes back or is NaN is no time passing.
+- **`FrameStats::AverageFps(n)`**, **`FrameOverlay::FpsLabel(stats | loop, n = 30)`**.
+
+### Bugs found and fixed
+
+| Where | Bug | Test |
+| --- | --- | --- |
+| `Random::Shared()` | data race between threads; torn `GetState`; the lock handle deadlocked when nested | `test_random_threads` |
+| OkayScript `Time.unscaledDeltaTime` / `Time.fixedDeltaTime` | answered this frame's scaled delta (0 in a pause) | `test_script_time` |
+| OkayScript `fps()` | `1 / scaled delta`: 0 in a pause, double at half speed | `test_script_time` |
+| player `show_fps` | read the frame time cut to 0.1 s: never under 10 FPS | `test_loop_audit5` (the label numbers) |
+| `TimeSnapshot` | a running `Time::RampTimeScale` was not saved: the load stuck at the half-way scale | `test_loop_audit5` |
+| `Cooldown::Save` | the held-fire credit pending at the save was dropped | `test_loop_audit5` |
+| `Countdown`, `Cooldown` | the remaining time was a float: a tick of 1/60 s is not a whole number of float steps once the timer is long, so a one day countdown ran 6% off after ten minutes of ticks and a one week one never counted down at all (a tick is under half a float step there). The time is kept in double now (the API still reads and writes floats; short timers read the same floats as before) | `test_loop_audit5` |
+| `LoopConsole` | `time.scale 1e300` and `time.debug_scale 1e300` cast a double beyond float range (undefined); `time.step 2.5` / `time.run 2.5` silently ran 2 frames; `time.run 3 1e-300` started a run whose frame length was dropped | `test_loop_audit5` |
+| `GameLoop` replay | a pause the replay's host did not reproduce was not replayed (the game kept moving, the `Time` values parted ways) | `test_loop_audit5` (`replayPauses`) |
+| `Application::Run` | did not start a session: `Time::SessionFrameCount()` and `SessionTime()` read on from an earlier run (6 after two 3 frame runs) | `test_loop_audit5` |
+| `FrameTimer::Tick(now)` | a NaN or infinite reading became the new "last" and every later delta was NaN: a frame time of 0 for the rest of the run | `test_loop_audit5` |
+| `FrameLimiter` | a tiny target rate (1e-30 fps) planned a sleep of 1e30 seconds; a frame is now paced at most an hour (`kMaxFrameSeconds`) | `test_loop_audit5` |
+
+### Checked and found fine in the fifth pass
+
+`Application::Run`: a second run on the same object, a time scale set before `Run` (kept), pacing arithmetic for NaN, infinite, negative and sub-1 target rates, the frame budget, `Quit()`; the player's `fpsCap` sleep and the focus paths (an unfocused frame is a 0 s step, the first frame after refocus is a normal one); `FrameRecording` replay of capture-mode frames (exact, not clamped, the recorded options are not needed) and of run-frame and step frames; `TimeSnapshot` of a block with no `v`, a newer `v`, no `timeScale`, no ramp keys and hostile ramp keys; `Countdown` save and load of every state; clock ramps across a save.
+
+### Editor and script hooks (not wired: `editor/*` is outside this pass)
+
+1. **`show_fps` in the editor's built-game settings** needs nothing: it is the player. The editor's Game view can draw `okay::FrameOverlay::FpsLabel(ed.playLoop())` for a one-line FPS (include `okay/Core/FrameOverlay.hpp`), next to the PLAYING pill in `editor/main.cpp` (about line 43327).
+2. **The editor's script help** (`editor/main.cpp`, the `{"Time.deltaTime", ...}` table at about line 12526) can list `Time.sessionTime`, `Time.sessionFrameCount`, `Time.unscaledDeltaTime`, `Time.fps`, `Time.paused`, `Time.HitStop(seconds, scale)`, `Time.SlowMotion(scale, seconds)`, `Time.RampTimeScale(target, seconds)`, `Time.PushPause(reason)`, `Time.PopPause(reason)` and `Time.IsPausedBy(reason)`, and the function list line `fapi("time() / dt() / fps()", "timing")` (about line 11536) the new builtins (`session_time()`, `unscaled_dt()`, `is_paused()`, `push_pause`, `hit_stop`, `slow_motion`, `ramp_timescale`). The text of every row is in `docs/engine_api.md` and `docs/scripting_reference.md`.
+3. **Replaying a recording in the editor**: when a recorded session is replayed (a bug report's timing), set `ed.playLoop().SetOptions(o)` with `o.replayPauses = true` so the Pause button's frames replay as paused. `replayRandom` is already on.
+4. **Frame recorder button**: `FrameRecorder` now stores the random state itself; nothing extra is needed to get deterministic random numbers in a replay.
+
+### What changed (fifth pass)
+
+- New: `Core/TimeBudget.hpp`, `Time::FixedAlpha` / `SetFixedAlpha` / `RampSecondsLeft`, `GameLoop::Current()` / `kReplayPause` / `Options::replayPauses` / `replayRandom`, `FrameStats::AverageFps`, `FrameOverlay::FpsLabel`, `FrameRecording::HasRandom` / `RandomState` / `SetRandom` / `ClearRandom`, `FrameRecorder::SetRecordRandom` / `RecordRandom`, `TimeSnapshot::timeRamping` / `timeRampTarget` / `timeRampSecondsLeft`, `FrameLimiter::kMaxFrameSeconds`.
+- Script surface: the `Time` members and builtins above (`Script/EngineApi.cpp`, `Scripting/OkayScriptVM.cpp`), `docs/engine_api.md` regenerated, rows in `docs/scripting.md` and `docs/scripting_reference.md`.
+- Changed: `Countdown` / `Cooldown` keep their time in double, `Random` (locked `Shared()`, copy constructor and assignment that never copy the lock), `Application::Run` marks the session start, `LoopConsole` number handling, `Cooldown::Save` / `Load`, `FrameTimer::Tick`, `FrameLimiter::SetTargetFps`, `player/main.cpp` (`show_fps`).
+- Not done: Cvars for the scales, per-system random streams in `TimeSnapshot` for `ThreadLocal()` (there is no name to save them under), a frame-time overlay in the editor (hook 1).

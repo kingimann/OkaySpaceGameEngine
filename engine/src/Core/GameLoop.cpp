@@ -3,6 +3,7 @@
 #include "okay/Core/FrameRecord.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Random.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -63,6 +64,12 @@ int GameLoop::EffectiveMaxSteps() const {
 
 bool GameLoop::BudgetSpent() const {
     return m_opt.frameBudget > 0 && (std::int64_t)(m_frames - std::min(m_frames, m_budgetBase)) >= m_opt.frameBudget;
+}
+
+void GameLoop::ReleaseReplayHold() {
+    if (!m_replayHold) return;
+    m_replayHold = false;
+    Game::ClearPause(kReplayPause);
 }
 
 bool GameLoop::PlaybackFinished() const {
@@ -151,6 +158,7 @@ void GameLoop::Reset() {
     m_stepsLeft = 0; m_stepDeltaReq = 0.0f; m_wasStep = false; m_inStepFrame = false;
     m_runLeft = 0; m_runDelta = 0.0f;
     m_replaying = false;
+    ReleaseReplayHold();
     m_marker = m_frameMarker = 0;
     m_stats.Clear();
 }
@@ -172,8 +180,9 @@ void GameLoop::BeginSession() {
 bool GameLoop::BeginFrame(double realDeltaSeconds) {
     // A callback that pumps the loop (a modal dialog) must not start a second frame inside this one.
     if (m_inFrame) return !QuitRequested();
+    s_current = this;   // the loop that is driving the game now (GameLoop::Current)
     // A used-up budget or a finished replay runs no more frames.
-    if (BudgetSpent() || PlaybackFinished()) return false;
+    if (BudgetSpent() || PlaybackFinished()) { ReleaseReplayHold(); return false; }
     ScopedFlag inFrame(m_inFrame, true);
 
     // 1. Where this frame's time comes from.
@@ -190,6 +199,17 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
         replaying = true;
         real = FrameRecording::ToSeconds(played.micros);
         marker = played.marker;
+        // The recording starts from the random stream it was made with (when it carries one).
+        if (m_opt.replayRandom && m_player->Position() == 1 && m_player->Recording().HasRandom())
+            Random::Shared().SetState(m_player->Recording().RandomState());
+        // The pause the recorded frame began with, for a replay whose host does not reproduce it.
+        if (m_opt.replayPauses) {
+            if (played.flags & kFramePaused) {
+                if (!Game::Paused()) { Game::PushPause(kReplayPause); m_replayHold = true; }
+            } else {
+                ReleaseReplayHold();
+            }
+        }
         if (played.flags & kFrameSynthetic) exact = true;
         if ((played.flags & kFrameStepped) && Game::Paused()) { stepFrame = true; exact = true; }
     } else if (m_stepsLeft > 0) {
@@ -202,6 +222,7 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
         }
     }
     // A frame of RunFrames' run: the game is running and nothing replaces this frame's time.
+    if (!replaying) ReleaseReplayHold();   // a replay's pause does not outlive the replay
     const bool runFrame = m_runLeft > 0 && !replaying && !stepFrame && !Game::Paused();
     if (!replaying && !stepFrame) {
         if (runFrame && m_runDelta > 0.0f) { real = (double)m_runDelta; exact = true; }
@@ -294,6 +315,7 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
     {
         const float a = m_fixed.Alpha();
         m_alpha = a < 0.0f ? 0.0f : (a >= 1.0f ? std::nextafter(1.0f, 0.0f) : a);
+        Time::SetFixedAlpha(m_alpha);   // for code that has no handle on the loop
     }
     // Locals: a callback may Reset() the loop or change its options; this frame's steps keep
     // the count and the length they were due with. A step that throws counts as run.
@@ -320,6 +342,7 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
         if (OnRunFramesDone) OnRunFramesDone();
     }
 
+    if (m_replayHold && PlaybackFinished()) ReleaseReplayHold();   // the last frame of a replay that ended paused
     return !QuitRequested();
 }
 

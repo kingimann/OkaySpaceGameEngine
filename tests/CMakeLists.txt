@@ -697,6 +697,21 @@ target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/edito
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
 
+# Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
+add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_link_libraries(test_project_save PRIVATE okay::engine)
+add_test(NAME project_save COMMAND test_project_save)
+
+# The project's own state (project.okayproj, build settings, profiles, tags, layers): every field set, written, read back; old files load.
+add_executable(test_project_state test_project_state.cpp)
+target_link_libraries(test_project_state PRIVATE okay::engine)
+add_test(NAME project_state COMMAND test_project_state)
+
+# Save coverage: every component type the engine has survives a scene save and load (and the Enabled switch with it); two colliders / audio sources on one object both do.
+add_executable(test_save_coverage test_save_coverage.cpp)
+target_link_libraries(test_save_coverage PRIVATE okay::engine)
+add_test(NAME save_coverage COMMAND test_save_coverage)
+
 add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
 add_test(NAME ui_overlays COMMAND test_ui_overlays)
@@ -1271,6 +1286,11 @@ add_executable(test_project_delete test_project_delete.cpp)
 target_compile_features(test_project_delete PRIVATE cxx_std_17)
 target_include_directories(test_project_delete PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME project_delete COMMAND test_project_delete)
+
+# New-project rules shared by the editor and the launcher: name, location, folder choice, skeleton, atomic writes.
+add_executable(test_project_create test_project_create.cpp)
+target_link_libraries(test_project_create PRIVATE okay::engine)
+add_test(NAME project_create COMMAND test_project_create)
 
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)

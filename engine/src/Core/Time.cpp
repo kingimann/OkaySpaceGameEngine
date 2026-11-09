@@ -50,10 +50,23 @@ void Time::HitStop(float seconds, float scale) {
     if (g_hitN < kMaxHitStops) {
         g_hit[g_hitN++] = h;
     } else {
-        // Full: the shortest-lived one makes room.
-        int at = 0;
-        for (int i = 1; i < g_hitN; ++i) if (g_hit[i].remaining < g_hit[at].remaining) at = i;
-        g_hit[at] = h;
+        // Full. An effect another one outlasts at the same or a stronger scale changes nothing
+        // (the strongest running one decides), so it is the one to give up; the shortest-lived
+        // effect is not always that one (a short freeze among long, weak slow-downs).
+        auto dominates = [](const Hit& a, const Hit& b) { return a.remaining >= b.remaining && a.scale <= b.scale; };
+        for (int i = 0; i < g_hitN; ++i) if (dominates(g_hit[i], h)) { RefreshFx(); return; }   // the newcomer adds nothing
+        int victim = -1;
+        for (int i = 0; i < g_hitN && victim < 0; ++i) if (dominates(h, g_hit[i])) victim = i;
+        if (victim < 0) {   // an existing effect that another existing one covers (the shortest such)
+            for (int i = 0; i < g_hitN; ++i)
+                for (int j = 0; j < g_hitN; ++j)
+                    if (i != j && dominates(g_hit[j], g_hit[i]) && (victim < 0 || g_hit[i].remaining < g_hit[victim].remaining)) { victim = i; break; }
+        }
+        if (victim < 0) {   // nothing is redundant: the shortest-lived makes room
+            victim = 0;
+            for (int i = 1; i < g_hitN; ++i) if (g_hit[i].remaining < g_hit[victim].remaining) victim = i;
+        }
+        g_hit[victim] = h;
     }
     RefreshFx();
 }

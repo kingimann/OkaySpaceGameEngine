@@ -28,6 +28,15 @@ public:
         int   maxFixedSteps = 5;     // fixed steps one frame may run (the rest is dropped)
         bool  catchExceptions = false; // true: an exception from the scene is logged, the loop ends and
                                        // ExitCode() is 1 (Run returns); false: it is rethrown after cleanup
+        /// How targetFps is held. Sleep (the default, as it always was): sleep for what is left of each
+        /// frame, so every frame that wakes up late runs long and the rate lands a little under the
+        /// target (about 3% at 30 fps when a sleep overshoots by a millisecond). Limiter: Core/FramePacing's
+        /// FrameLimiter, which schedules each frame from when the last one was due, sleeps most of the wait
+        /// and yields through the rest, so an overshoot is paid back by the next frame and the average rate
+        /// is the target. It costs a short busy wait (about 1.5 ms) at the end of each frame. Ignored when
+        /// targetFps <= 0.
+        enum class Pacing { Sleep, Limiter };
+        Pacing pacing = Pacing::Sleep;
     };
 
     explicit Application(Config config);
@@ -50,7 +59,9 @@ public:
         return quitRequested || (config.quitKey != 0 && keyPressed);
     }
 
-    /// Request a graceful shutdown of the loop (safe from another thread).
+    /// Request a graceful shutdown of the loop (safe from another thread). It ends the Run that is
+    /// going now, after the current frame; one called before Run starts has no effect (Run begins by
+    /// marking itself running), so a thread that stops the app waits until a frame has run.
     void Quit() { m_running = false; }
 
     /// The per-frame driver Run uses: set OnFixedUpdate / OnPause / OnResume on it before

@@ -44,7 +44,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [dialogue_quests.md](dialogue_quests.md): dialogue graphs, story variables and quests.
 - [cutscenes.md](cutscenes.md): sequences and the Timeline window.
 - [timers_and_tweens.md](timers_and_tweens.md): timers that survive scene loads, cancel by tag, and tween behaviour.
-- [loop_and_time.md](loop_and_time.md): the shared frame driver (`GameLoop`), hit stop and time-scale ramps, clock channels, pause reasons and quit guard, exit codes, dice and shuffle bags.
+- [loop_and_time.md](loop_and_time.md): the shared frame driver (`GameLoop`), frame stepping, debug slow motion, fixed-rate capture, recording and replaying frame times, frame statistics, hit stop and time-scale ramps, clock channels, pause reasons and quit guard, exit codes, the server tick pacer, dice and shuffle bags.
 - [build_mode.md](build_mode.md): let players build in your game, logic links, saving creations.
 - [save_games.md](save_games.md): save and load the whole game.
 - [save_framework.md](save_framework.md): saveable objects, checkpoints, quick save and autosave slots, slot headers, migrations, sync hooks, load menus.
@@ -76,7 +76,20 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [anticheat.md](anticheat.md): anti-cheat.
 - [supabase-backend.md](supabase-backend.md): the Supabase backend.
 
+## Core and scene
+- [scene_hierarchy_search.md](scene_hierarchy_search.md): active state that follows the hierarchy, find and search helpers, scene validation.
+- [scene_management.md](scene_management.md): loading scenes, spawning objects, pools and declaring what a component needs.
+- [layers_tags_cameras.md](layers_tags_cameras.md): layers and the collision matrix, tags, project tag and layer lists, the camera stack.
+- [ecs.md](ecs.md): the opt-in ECS: safe iteration, the command buffer, delta snapshots and the scene bridge.
+- [core_tools.md](core_tools.md): small dependency-free helpers in `okay/Core/`.
+- [math_geometry.md](math_geometry.md): math, geometry, noise and random numbers.
+- [localization_prefs_time.md](localization_prefs_time.md): localization formats, typed prefs and the fixed timestep.
+- [asset_manager.md](asset_manager.md): the opt-in registry for files loaded from disk.
+- [asset_database.md](asset_database.md): persistent asset GUIDs, move tracking, the dependency graph and import settings.
+- [core_audit_notes.md](core_audit_notes.md): what a bug hunt over the core found and fixed.
+
 ## Working on the engine
+- [FEATURE_MAP.md](FEATURE_MAP.md): every system in the engine, where its code, tests and docs are, and what is still open (the pages live in [feature_map/](feature_map/)).
 - [qa_workflow.md](qa_workflow.md): a developer and a QA session working together.
 - [../ROADMAP.md](../ROADMAP.md): releases and plans.
 - [archive/](archive/): old reports kept for history.

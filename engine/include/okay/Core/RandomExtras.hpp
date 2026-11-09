@@ -86,6 +86,45 @@ template <class G> Vec3 PointInBox(G& g, Vec3 a, Vec3 b) {
             std::fmin(a.z, b.z) + z * std::fabs(b.z - a.z)};
 }
 
+/// A direction within `halfAngle` radians of `axis`, every direction in that cone equally
+/// likely (a weapon's spread, a spray of sparks). The axis does not have to be a unit vector; a
+/// zero or non-finite one means +Z. `halfAngle` is taken as a size in [0, pi]: 0 is always the axis,
+/// pi is every direction (a negative one counts as its magnitude, NaN as 0).
+template <class G> Vec3 DirectionInCone(G& g, Vec3 axis, float halfAngle) {
+    const float half = std::isfinite(halfAngle) ? std::fmin(std::fabs(halfAngle), 3.14159265358979f) : 0.0f;
+    const float cosMax = std::cos(half);
+    const float cosT = 1.0f - g.Value() * (1.0f - cosMax);      // uniform in cos(theta): even by solid angle
+    const float sinT = std::sqrt(std::fmax(0.0f, 1.0f - cosT * cosT));
+    const float phi = g.Value() * kTwoPi;
+    Vec3 w = std::isfinite(axis.x) && std::isfinite(axis.y) && std::isfinite(axis.z) ? axis.Normalized() : Vec3{};
+    if (w.SqrMagnitude() < 0.5f) w = Vec3{0.0f, 0.0f, 1.0f};
+    // Any two unit vectors that, with w, make a right-handed frame.
+    const Vec3 helper = std::fabs(w.z) < 0.9f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{1.0f, 0.0f, 0.0f};
+    const Vec3 u = Vec3::Cross(helper, w).Normalized();
+    const Vec3 v = Vec3::Cross(w, u);
+    return (u * (sinT * std::cos(phi)) + v * (sinT * std::sin(phi)) + w * cosT).Normalized();
+}
+/// The 2D form: an angle uniform in [-halfAngle, halfAngle] around `axis` (zero axis = +X).
+template <class G> Vec2 DirectionInCone2D(G& g, Vec2 axis, float halfAngle) {
+    const float half = std::isfinite(halfAngle) ? std::fmin(std::fabs(halfAngle), 3.14159265358979f) : 0.0f;
+    Vec2 w = std::isfinite(axis.x) && std::isfinite(axis.y) ? axis.Normalized() : Vec2{};
+    if (w.SqrMagnitude() < 0.5f) w = Vec2{1.0f, 0.0f};
+    const float a = (g.Value() * 2.0f - 1.0f) * half;
+    const float c = std::cos(a), s = std::sin(a);
+    return {w.x * c - w.y * s, w.x * s + w.y * c};
+}
+
+/// Anywhere in the triangle a-b-c (Vec2 or Vec3), evenly by area. A degenerate triangle gives a
+/// point on its segment or its single point, never NaN.
+template <class G, class V> V PointInTriangle(G& g, V a, V b, V c) {
+    const float r1 = std::sqrt(g.Value());
+    const float r2 = g.Value();
+    return a * (1.0f - r1) + b * (r1 * (1.0f - r2)) + c * (r1 * r2);
+}
+
+/// +1 or -1 with equal chance.
+template <class G> int Sign(G& g) { return g.Value() < 0.5f ? -1 : 1; }
+
 /// A uniform index in [0, n) for either generator (n clamped to what Below takes).
 template <class G> std::size_t IndexBelow(G& g, std::size_t n) {
     if (n <= 1) return 0;
@@ -105,9 +144,15 @@ template <class G> std::size_t IndexBelow(G& g, std::size_t n) {
 template <class T>
 class ShuffleBag {
 public:
+    /// At most kMaxSlots copies in all (a million): more are dropped, so a typo of a
+    /// weight cannot ask for gigabytes of slots.
+    static constexpr std::size_t kMaxSlots = std::size_t(1) << 20;
+
     void Add(const T& item, int copies = 1) {
         if (copies <= 0) return;
         if (copies > 100000) copies = 100000;
+        if (m_slots.size() >= kMaxSlots) return;
+        if (m_slots.size() + (std::size_t)copies > kMaxSlots) copies = (int)(kMaxSlots - m_slots.size());
         m_items.push_back(item);
         m_copies.push_back(copies);
         for (int i = 0; i < copies; ++i) m_slots.push_back(m_items.size() - 1);

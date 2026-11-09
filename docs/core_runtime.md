@@ -259,6 +259,6 @@ while (running) {
 
 ## Not covered
 
-- No hook into `Application` or the Profiler window yet: call `Time::Step`, `PumpMainThread`, `Reset` and the stats yourself.
+- `Application` can use the limiter (`Application::Config::pacing = Pacing::Limiter`, see [loop_and_time.md](loop_and_time.md); the default is still its own sleep). No hook into the Profiler window yet: call `Time::Step`, `PumpMainThread`, `Reset` and the stats yourself.
 - Work stealing and per-worker queues (see Limits above).
 - `SlotMap` and `FrameArena` are not thread safe by design.

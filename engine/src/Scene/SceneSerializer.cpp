@@ -2,6 +2,7 @@
 #include "okay/Scene/PrefabTools.hpp"
 #include <iostream>
 #include <charconv>
+#include <limits>
 #include <locale>
 #include <mutex>
 #include "okay/Animation/HumanoidLibrary.hpp"
@@ -230,6 +231,52 @@ protected:
         return out;
     }
 };
+// Reads "nan" / "inf" (what the writer prints for a non-finite float) as well as numbers. The
+// standard stream reader fails on those words, which made a scene saved with one NaN in it
+// (a physics blow-up, then an autosave) a file that could not be opened at all. Other values
+// parse exactly as before: the sign is taken here and the digits go to the standard reader.
+class TolerantNumGet : public std::num_get<char> {
+public:
+    explicit TolerantNumGet(std::size_t refs) : std::num_get<char>(refs) {}
+protected:
+    using std::num_get<char>::do_get;
+    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, float& v) const override {
+        return Get(in, end, str, err, v);
+    }
+    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, double& v) const override {
+        return Get(in, end, str, err, v);
+    }
+private:
+    template <class F>
+    iter_type Get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, F& v) const {
+        bool neg = false;
+        if (in != end && (*in == '-' || *in == '+')) {
+            neg = (*in == '-'); ++in;
+            if (in != end && (*in == '-' || *in == '+')) { v = 0; err |= std::ios_base::failbit; return in; }   // "--5" is not a number
+        }
+        if (in != end && (*in == 'n' || *in == 'N' || *in == 'i' || *in == 'I')) {
+            std::string word;
+            while (in != end && std::isalpha(static_cast<unsigned char>(*in))) { word += static_cast<char>(std::tolower(static_cast<unsigned char>(*in))); ++in; }
+            if (in != end && *in == '(') {   // nan(payload)
+                while (in != end && *in != ')') ++in;
+                if (in != end) ++in;
+            }
+            if (word == "nan")                        v = std::numeric_limits<F>::quiet_NaN();
+            else if (word == "inf" || word == "infinity") v = std::numeric_limits<F>::infinity();
+            else { v = 0; err |= std::ios_base::failbit; return in; }
+            if (neg) v = -v;
+            if (in == end) err |= std::ios_base::eofbit;
+            return in;
+        }
+        iter_type r = std::num_get<char>::do_get(in, end, str, err, v);
+        if (neg && !(err & std::ios_base::failbit)) v = -v;
+        return r;
+    }
+};
+const std::locale& TolerantLocale() {
+    static const std::locale* loc = new std::locale(std::locale::classic(), new TolerantNumGet(0));   // lives to the end of the process, like the writer's
+    return *loc;
+}
 void UseRoundTripFloats(std::ostream& o) {
     // The locale is allocated once and never destroyed (a static std::locale object would be torn down at exit,
     // orphaning the facet and tripping leak checkers, and streams used during static destruction need it alive).
@@ -472,21 +519,6 @@ void ReadAnchor(std::istream& in, UIAnchor& anchor) {
     }
 }
 
-// A Character's "Rig" (the separated part objects) is a GENERATED view of the
-// Character — like Terrain's mesh — so it isn't serialized. It's rebuilt from the
-// Character on load (BuildParts), which keeps part colours correct and avoids both
-// file bloat and duplicate rigs. True for the "Rig" node and everything under it.
-static bool IsGeneratedRig(GameObject* go) {
-    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent()) {
-        GameObject* g = t->gameObject;
-        if (g && g->name == "Rig") {
-            Transform* par = t->Parent();
-            if (par && par->gameObject && par->gameObject->GetComponent<Character>()) return true;
-        }
-    }
-    return false;
-}
-
 // The first-person arm VIEWMODEL is spawned at runtime by FirstPersonHand (a "FP_Arm"
 // child of the camera). Like the rig, it's regenerated each run, so it must not be
 // written to the scene file — otherwise it would reload as a stale duplicate.
@@ -502,12 +534,24 @@ static bool IsGeneratedViewmodel(GameObject* go) {
     return par && par->gameObject && par->gameObject->GetComponent<FirstPersonHand>();
 }
 
-// Build mode's own runtime objects (placement ghost, link wires, hotbar) are
-// recreated each run, so they're never written to a scene or prefab.
-static bool IsBuildModeRuntime(GameObject* go) {
-    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
-        if (t->gameObject && t->gameObject->tag == BuildMode::kRuntimeTag) return true;
-    return false;
+// What keeps an object (and everything under it) out of a saved file, one bit per reason:
+//  - runtime-only (`transient`);
+//  - a Character's "Rig" (the separated part objects), a GENERATED view of the Character like
+//    Terrain's mesh: rebuilt on load (BuildParts), which keeps part colours right and avoids
+//    both file bloat and duplicate rigs;
+//  - build mode's own runtime objects (placement ghost, link wires, hotbar), recreated each run.
+// Each applies to the object itself and all its descendants, so a whole file is worked out with one
+// pass that hands the parent's bits down (a walk up per object would be quadratic in the depth).
+constexpr unsigned kSkipTransient = 1, kSkipRig = 2, kSkipBuildRuntime = 4;
+static unsigned OwnSkipBits(const GameObject* g) {
+    unsigned f = 0;
+    if (g->transient) f |= kSkipTransient;
+    if (g->name == "Rig" && g->transform) {
+        const Transform* par = g->transform->Parent();
+        if (par && par->gameObject && par->gameObject->GetComponent<Character>()) f |= kSkipRig;
+    }
+    if (g->tag == BuildMode::kRuntimeTag) f |= kSkipBuildRuntime;
+    return f;
 }
 
 // Types the format saves more than one of per object (their writers loop over every
@@ -1636,7 +1680,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  actions " << Quote(al->ToText()) << "\n";
     }
     if (auto* mv = go->GetComponent<Mover>()) {
-        out << "  mover " << mv->velocity.x << " " << mv->velocity.y << " " << mv->velocity.z << "\n";
+        out << "  mover " << mv->velocity.x << " " << mv->velocity.y << " " << mv->velocity.z;
+        if (mv->space != Space::Local) out << " " << static_cast<int>(mv->space);   // optional trailing field
+        out << "\n";
     }
     if (auto* cc = go->GetComponent<CharacterController2D>()) {
         out << "  charctrl2d " << (int)cc->mode << " " << cc->speed << " " << cc->jumpForce
@@ -2371,10 +2417,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* c = go->GetComponent<NPCController>())                WriteStanceControl(out, "npcstance", c->stanceControl);
     if (auto* sp = go->GetComponent<Spinner>()) {
         out << "  spinner " << sp->angularVelocity.x << " " << sp->angularVelocity.y
-            << " " << sp->angularVelocity.z << "\n";
+            << " " << sp->angularVelocity.z;
+        if (sp->space != Space::Self) out << " " << static_cast<int>(sp->space);   // optional trailing field
+        out << "\n";
     }
     if (auto* lt = go->GetComponent<Lifetime>()) {
-        out << "  lifetime " << lt->seconds << "\n";
+        out << "  lifetime " << lt->seconds;
+        if (lt->Elapsed() > 0.0f) out << " " << lt->Elapsed();   // optional: a running timer is saved with the game
+        out << "\n";
     }
     if (auto* co = go->GetComponent<Collectible>()) {
         out << "  collectible " << Quote(co->scoreVar) << " " << co->points << " " << co->heal
@@ -2775,7 +2825,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ta->duration << " " << ta->delay << " " << ta->ease << " " << ta->loops << " " << ta->loopType
             << " " << (ta->autoPlay ? 1 : 0) << " " << (ta->autoKill ? 1 : 0) << " " << (ta->unscaled ? 1 : 0)
             << " " << ta->vibrato << " " << ta->elasticity << " " << ta->jumps << " " << (ta->enabled ? 1 : 0)
-            << " " << Quote(ta->id) << "\n";
+            << " " << Quote(ta->id);
+        // Optional tail (older files stop after the id): clock channel, ease as text.
+        if (!ta->clock.empty() || !ta->easeCurve.empty()) out << " " << Quote(ta->clock) << " " << Quote(ta->easeCurve);
+        out << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
@@ -3408,8 +3461,26 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         }
     }
     const auto& objs = scene.Objects();
-    auto skipped = [](GameObject* go) {
-        return go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go);   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
+    // A runtime-only (transient) object is never written, and neither is anything under it: a
+    // child left in the file would come back as a loose root, its local pose meant for a parent
+    // that is not there. The same goes for a generated rig and build mode's runtime objects. The
+    // bits are worked out once per object from its parent's (remembered), so a deep chain stays linear.
+    std::unordered_map<const GameObject*, unsigned> skipBits;
+    auto skipBitsOf = [&skipBits](const GameObject* start) {
+        std::vector<const GameObject*> path;   // from `start` up to the first object already known
+        unsigned above = 0;
+        for (const GameObject* g = start; g;) {
+            auto m = skipBits.find(g);
+            if (m != skipBits.end()) { above = m->second; break; }
+            path.push_back(g);
+            const Transform* p = g->transform ? g->transform->Parent() : nullptr;
+            g = p ? p->gameObject : nullptr;
+        }
+        for (std::size_t i = path.size(); i-- > 0;) { above |= OwnSkipBits(path[i]); skipBits[path[i]] = above; }
+        return above;
+    };
+    auto skipped = [&skipBitsOf](GameObject* go) {
+        return skipBitsOf(go) != 0 || IsGeneratedViewmodel(go);   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
     };
     std::unordered_map<const GameObject*, int> indexOf;
     indexOf.reserve(objs.size());
@@ -3584,7 +3655,7 @@ static void CompleteViewToggle(Scene& scene, GameObject* go) {
 // State of a document being parsed, kept so a parse can pause between objects
 // and carry on later (multi-frame scene loads).
 struct ParseSession {
-    explicit ParseSession(std::string t) : text(std::move(t)), in(text) {}
+    explicit ParseSession(std::string t) : text(std::move(t)), in(text) { in.imbue(TolerantLocale()); }
     std::string text;
     std::istringstream in;
     bool started = false;
@@ -3782,7 +3853,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
                 else if (field == "locked") { int l = 0; in >> l; go->editorLocked = (l != 0); }
-                else if (field == "layer") { in >> go->layer; }
+                else if (field == "layer") {
+                    int l = 0; in >> l;
+                    if (l < 0 || l > 31) {   // renderers and the collision matrix read it modulo 32: say so, and store what they use
+                        warn("layer out of range on object " + std::to_string(idx) + ": " + std::to_string(l) + " (used " + std::to_string(l & 31) + ")");
+                        l &= 31;
+                    }
+                    go->layer = l;
+                }
                 else if (field == "uiorder") { in >> go->uiDrawOrder; }
                 else if (field == "srcscene") { go->sourceScene = ReadQuoted(in); }
                 else if (field == "prefab") { go->prefabSource = ReadQuoted(in); }
@@ -3790,6 +3868,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 else if (field == "transform") {
                     Vec3 p, s; Quat q;
                     in >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w >> s.x >> s.y >> s.z;
+                    {   // a NaN or infinity (a physics blow-up that got saved) would poison every pose below it
+                        auto fin = [](float f) { return std::isfinite(f); };
+                        bool repaired = false;
+                        if (!fin(p.x) || !fin(p.y) || !fin(p.z)) { p = Vec3::Zero; repaired = true; }
+                        if (!fin(q.x) || !fin(q.y) || !fin(q.z) || !fin(q.w) ||
+                            q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w < 1e-8f) { q = Quat::Identity; repaired = true; }   // also all zero: no rotation at all
+                        if (!fin(s.x) || !fin(s.y) || !fin(s.z)) { s = Vec3::One; repaired = true; }
+                        if (repaired) warn("non-finite transform on object " + std::to_string(idx) + " was reset");
+                    }
                     go->transform->localPosition = p;
                     go->transform->localRotation = q;
                     go->transform->localScale = s;
@@ -6124,13 +6211,22 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
-                    go->AddComponent<Mover>()->velocity = v;
+                    auto* mv = go->AddComponent<Mover>();
+                    mv->velocity = v;
+                    in >> std::ws;   // optional: the space (0 local, 1 world, 2 self); anything else is the default
+                    if (std::isdigit(in.peek()) || in.peek() == '-') { int sp = 0; in >> sp; mv->space = (sp >= 0 && sp <= 2) ? static_cast<Space>(sp) : Space::Local; }
                 } else if (field == "spinner") {
                     Vec3 v; in >> v.x >> v.y >> v.z;
-                    go->AddComponent<Spinner>()->angularVelocity = v;
+                    auto* sp = go->AddComponent<Spinner>();
+                    sp->angularVelocity = v;
+                    in >> std::ws;   // optional: the space, as for mover
+                    if (std::isdigit(in.peek()) || in.peek() == '-') { int sv = 0; in >> sv; sp->space = (sv >= 0 && sv <= 2) ? static_cast<Space>(sv) : Space::Self; }
                 } else if (field == "lifetime") {
                     float s = 1.0f; in >> s;
-                    go->AddComponent<Lifetime>()->seconds = s;
+                    auto* lt = go->AddComponent<Lifetime>();
+                    lt->seconds = s;
+                    in >> std::ws;   // optional: seconds already lived (a saved game picks up where it was)
+                    if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') { float el = 0.0f; in >> el; lt->SetElapsed(el); }
                 } else if (field == "collectible") {
                     auto* co = go->AddComponent<Collectible>();
                     co->scoreVar = ReadQuoted(in);
@@ -7170,6 +7266,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ta->relative = rel != 0; ta->from = frm != 0; ta->autoPlay = ap != 0; ta->autoKill = ak != 0;
                     ta->unscaled = us != 0; ta->enabled = en != 0;
                     ta->id = ReadQuoted(in);
+                    in >> std::ws;   // optional tail: clock channel, ease as text
+                    if (in.peek() == '"') {
+                        ta->clock = ReadQuoted(in);
+                        in >> std::ws;
+                        if (in.peek() == '"') ta->easeCurve = ReadQuoted(in);
+                    }
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
                     tt->text = ReadQuoted(in);
@@ -8301,13 +8403,26 @@ bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
 
 
 std::string SceneSerializer::SerializeObject(const GameObject& root) {
-    // Gather the object and all its descendants (depth-first).
+    // Gather the object and all its descendants (depth-first, in sibling order). A stack, not a
+    // recursion: a hierarchy 100000 deep must not overflow the call stack. `skipBits` says why an
+    // object is not written (see OwnSkipBits): inherited from its parent inside the subtree. Above
+    // the root only a generated rig or a build mode object counts (as it always did), not `transient`.
     std::vector<GameObject*> subtree;
-    std::function<void(GameObject*)> gather = [&](GameObject* go) {
-        subtree.push_back(go);
-        for (Transform* child : go->transform->Children()) gather(child->gameObject);
-    };
-    gather(const_cast<GameObject*>(&root));
+    std::vector<unsigned> skipBits;
+    {
+        unsigned rootBits = 0;
+        for (const Transform* p = root.transform ? root.transform->Parent() : nullptr; p; p = p->Parent())
+            if (p->gameObject) rootBits |= OwnSkipBits(p->gameObject) & ~kSkipTransient;
+        std::vector<std::pair<GameObject*, unsigned>> stack{{const_cast<GameObject*>(&root), rootBits}};
+        while (!stack.empty()) {
+            auto [go, above] = stack.back(); stack.pop_back();
+            const unsigned bits = above | OwnSkipBits(go);
+            subtree.push_back(go);
+            skipBits.push_back(bits);
+            const auto& kids = go->transform->Children();
+            for (std::size_t i = kids.size(); i-- > 0;) stack.push_back({kids[i]->gameObject, bits});
+        }
+    }
 
     std::unordered_map<const GameObject*, int> localIndex;
     for (std::size_t i = 0; i < subtree.size(); ++i) localIndex[subtree[i]] = (int)i;
@@ -8317,7 +8432,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     out << "okayscene 3\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
-        if (go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
+        if (skipBits[i] != 0 || IsGeneratedViewmodel(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
@@ -8639,9 +8754,14 @@ std::string SpliceOverrides(const std::string& prefabText, const std::vector<Gam
     return JoinObjects(preamble, objs);
 }
 
-void CollectSubtree(GameObject* go, std::vector<GameObject*>& out) {
-    out.push_back(go);
-    for (Transform* c : go->transform->Children()) CollectSubtree(c->gameObject, out);
+void CollectSubtree(GameObject* go, std::vector<GameObject*>& out) {   // depth first, siblings in order; a stack so a deep hierarchy cannot overflow
+    std::vector<GameObject*> stack{go};
+    while (!stack.empty()) {
+        GameObject* g = stack.back(); stack.pop_back();
+        out.push_back(g);
+        const auto& kids = g->transform->Children();
+        for (std::size_t i = kids.size(); i-- > 0;) stack.push_back(kids[i]->gameObject);
+    }
 }
 } // namespace
 
@@ -8802,10 +8922,19 @@ SceneValidationReport SceneSerializer::Validate(const std::string& text, const s
                 w.substr(recordKey.size(), q == std::string::npos ? std::string::npos : q - recordKey.size()) + "'");
         } else if (w.compare(0, 25, "duplicate guid on object ") == 0) {
             continue;   // the load repaired it; the text pass above already reported it as DuplicateGuid
+        } else if (w.rfind("layer out of range on object ", 0) == 0) {
+            const int idx = std::atoi(w.c_str() + 29);
+            std::string obj;
+            for (const Obj& o : objs) if (o.index == idx) { obj = o.name + " (#" + std::to_string(idx) + ")"; break; }
+            add(SceneIssue::Kind::BadLayer, obj, w);
         } else {
             add(SceneIssue::Kind::UnknownField, "", w);
         }
     }
+    if (Tags::Strict())   // free-form tags are the norm; a project that lists its tags wants the others found
+        for (const auto& o : probe.Objects())
+            if (!o->tag.empty() && !Tags::Contains(o->tag))
+                add(SceneIssue::Kind::UnknownTag, o->name, "tag '" + std::string(o->tag) + "' is not in the project tag list");
     for (const std::string& p : CollectAssetPaths(probe)) {
         std::error_code ec;
         if (fs::exists(fs::path(p), ec)) continue;

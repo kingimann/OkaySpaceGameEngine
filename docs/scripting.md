@@ -627,6 +627,7 @@ Smoothly animate this object over time. Every tween:
 | `tween_text("Hello!", dur[, "done"])` | type this object's text out letter by letter |
 | `tween_var("name", to, dur[, ease][, "done"])` | tween one of the script's own variables |
 | `tween_call(seconds, "fn")` | call a function after a delay |
+| `tween_prop("Light.intensity", to, dur[, ease][, "done"])` | tween any property of this object by path (`Light.intensity`, `Camera.zoom`, `Transform.scale.y`, `SpriteRenderer.color.a`; see docs/properties.md); a number for a float or integer property |
 
 **Set up** a tween. Each of these returns the id, so they nest, e.g.
 `tween_loops(tween_scale(1.2, 0.4), -1, "yoyo")`:
@@ -634,10 +635,11 @@ Smoothly animate this object over time. Every tween:
 | Function | Effect |
 | --- | --- |
 | `tween_delay(id, s)` | wait before starting |
-| `tween_ease(id, "out_back")` | change the ease |
+| `tween_ease(id, "out_back")` | change the ease; also takes a curve as text: `"cubic-bezier(0.4, 0, 0.2, 1)"`, `"steps(4)"`, `"ease-in-out"` (the ease argument of `tween_move` and the others takes the same) |
 | `tween_loops(id, n[, "restart" \| "yoyo" \| "incremental"])` | repeat (`-1` = forever) |
 | `tween_speed(id, x)` | play faster or slower |
 | `tween_unscaled(id)` | ignore the time scale (pause menus) |
+| `tween_clock(id, "ui")` | follow a named clock channel (`"game"`, `"ui"`, `"cinematic"`, or your own) instead of scene time; `""` goes back |
 | `tween_from(id)` | play from the end value back to the current one (intros) |
 | `tween_relative(id)` | treat the end value as an offset |
 | `tween_set_id(id, "name")` | name it, for the `_id` functions below |

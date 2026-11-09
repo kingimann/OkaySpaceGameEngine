@@ -115,7 +115,8 @@ bool Game::RequestQuit(const std::string& reason, int exitCode) {
     if (!QuitRequested() && g_guard) {
         bool allow = true;
         g_inGuard = true;
-        try { allow = g_guard(); }
+        const std::function<bool()> guard = g_guard;   // a copy: the guard may replace or clear itself while it runs
+        try { allow = guard(); }
         catch (const std::exception& e) { Log::Warning("Game quit guard threw: ", e.what(), " (quit allowed)"); }
         catch (...) { Log::Warning("Game quit guard threw (quit allowed)"); }
         g_inGuard = false;

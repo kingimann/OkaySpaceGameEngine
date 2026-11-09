@@ -112,6 +112,12 @@ add_test(NAME core_features COMMAND test_core_features)
 add_executable(test_scheduler_reentry test_scheduler_reentry.cpp)
 target_link_libraries(test_scheduler_reentry PRIVATE okay::engine)
 add_test(NAME scheduler_reentry COMMAND test_scheduler_reentry)
+add_executable(test_scheduler_hardening test_scheduler_hardening.cpp)
+target_link_libraries(test_scheduler_hardening PRIVATE okay::engine)
+add_test(NAME scheduler_hardening COMMAND test_scheduler_hardening)
+add_executable(test_scheduler_owner_clock test_scheduler_owner_clock.cpp)
+target_link_libraries(test_scheduler_owner_clock PRIVATE okay::engine)
+add_test(NAME scheduler_owner_clock COMMAND test_scheduler_owner_clock)
 
 add_executable(test_gameplay test_gameplay.cpp)
 target_link_libraries(test_gameplay PRIVATE okay::engine)
@@ -175,6 +181,9 @@ add_test(NAME pathfinding COMMAND test_pathfinding)
 add_executable(test_easing test_easing.cpp)
 target_link_libraries(test_easing PRIVATE okay::engine)
 add_test(NAME easing COMMAND test_easing)
+add_executable(test_spring test_spring.cpp)
+target_link_libraries(test_spring PRIVATE okay::engine)
+add_test(NAME spring COMMAND test_spring)
 
 add_executable(test_templates test_templates.cpp)
 target_link_libraries(test_templates PRIVATE okay::engine)
@@ -678,6 +687,12 @@ add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/Edit
 target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
+
+# The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
+add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_hooks PRIVATE okay::engine)
+add_test(NAME editor_hooks COMMAND test_editor_hooks)
 
 add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
@@ -1314,6 +1329,12 @@ endif()
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)
 add_test(NAME tween COMMAND test_tween)
+add_executable(test_tween_edges test_tween_edges.cpp)
+target_link_libraries(test_tween_edges PRIVATE okay::engine)
+add_test(NAME tween_edges COMMAND test_tween_edges)
+add_executable(test_tween_features test_tween_features.cpp)
+target_link_libraries(test_tween_features PRIVATE okay::engine)
+add_test(NAME tween_features COMMAND test_tween_features)
 
 add_executable(test_editor_tabs test_editor_tabs.cpp)
 target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -1622,6 +1643,32 @@ add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
 add_executable(test_scene_hierarchy_search test_scene_hierarchy_search.cpp)
 target_link_libraries(test_scene_hierarchy_search PRIVATE okay::engine)
 add_test(NAME scene_hierarchy_search COMMAND test_scene_hierarchy_search)
+
+# Scene graph (1.3): a 100000-deep chain, Transform audit and helpers, scene / GameObject audit,
+# project tag list and layer names, spawning (Instantiate / Duplicate / unique names), Mover / Spinner / Lifetime
+add_executable(test_deep_hierarchy test_deep_hierarchy.cpp)
+target_link_libraries(test_deep_hierarchy PRIVATE okay::engine)
+add_test(NAME deep_hierarchy COMMAND test_deep_hierarchy)
+
+add_executable(test_transform_graph test_transform_graph.cpp)
+target_link_libraries(test_transform_graph PRIVATE okay::engine)
+add_test(NAME transform_graph COMMAND test_transform_graph)
+
+add_executable(test_scene_graph_audit test_scene_graph_audit.cpp)
+target_link_libraries(test_scene_graph_audit PRIVATE okay::engine)
+add_test(NAME scene_graph_audit COMMAND test_scene_graph_audit)
+
+add_executable(test_layers_tags_project test_layers_tags_project.cpp)
+target_link_libraries(test_layers_tags_project PRIVATE okay::engine)
+add_test(NAME layers_tags_project COMMAND test_layers_tags_project)
+
+add_executable(test_scene_spawn test_scene_spawn.cpp)
+target_link_libraries(test_scene_spawn PRIVATE okay::engine)
+add_test(NAME scene_spawn COMMAND test_scene_spawn)
+
+add_executable(test_mover_spinner_lifetime test_mover_spinner_lifetime.cpp)
+target_link_libraries(test_mover_spinner_lifetime PRIVATE okay::engine)
+add_test(NAME mover_spinner_lifetime COMMAND test_mover_spinner_lifetime)
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)
@@ -1767,3 +1814,48 @@ add_executable(test_scene_migration test_scene_migration.cpp)
 target_link_libraries(test_scene_migration PRIVATE okay::engine)
 target_compile_definitions(test_scene_migration PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME scene_migration COMMAND test_scene_migration)
+
+# 1.1 Loop and time, second pass: audit regressions, frame stepping, frame recorder / player, capture
+# mode, frame statistics, the server tick pacer and the player-style loop harness. All deterministic:
+# made-up frame times, no sleeping (the record tests write a few small files in the build directory).
+add_executable(test_loop_audit2 test_loop_audit2.cpp)
+target_link_libraries(test_loop_audit2 PRIVATE okay::engine)
+add_test(NAME loop_audit2 COMMAND test_loop_audit2)
+
+add_executable(test_frame_step test_frame_step.cpp)
+target_link_libraries(test_frame_step PRIVATE okay::engine)
+add_test(NAME frame_step COMMAND test_frame_step)
+
+add_executable(test_capture_mode test_capture_mode.cpp)
+target_link_libraries(test_capture_mode PRIVATE okay::engine)
+add_test(NAME capture_mode COMMAND test_capture_mode)
+
+add_executable(test_frame_record test_frame_record.cpp)
+target_link_libraries(test_frame_record PRIVATE okay::engine)
+add_test(NAME frame_record COMMAND test_frame_record)
+
+add_executable(test_frame_stats test_frame_stats.cpp)
+target_link_libraries(test_frame_stats PRIVATE okay::engine)
+add_test(NAME frame_stats COMMAND test_frame_stats)
+
+add_executable(test_tick_pacer test_tick_pacer.cpp)
+target_link_libraries(test_tick_pacer PRIVATE okay::engine)
+add_test(NAME tick_pacer COMMAND test_tick_pacer)
+
+add_executable(test_loop_player_style test_loop_player_style.cpp)
+target_link_libraries(test_loop_player_style PRIVATE okay::engine)
+add_test(NAME loop_player_style COMMAND test_loop_player_style)
+
+# 1.1 third pass (docs/loop_and_time.md): GameLoop / Game / Application edge cases, timers and clock
+# ramps, the loop's save snapshot, frame-stat export and console commands.
+add_executable(test_loop_audit3 test_loop_audit3.cpp)
+target_link_libraries(test_loop_audit3 PRIVATE okay::engine)
+add_test(NAME loop_audit3 COMMAND test_loop_audit3)
+
+add_executable(test_countdown test_countdown.cpp)
+target_link_libraries(test_countdown PRIVATE okay::engine)
+add_test(NAME countdown COMMAND test_countdown)
+
+add_executable(test_time_snapshot test_time_snapshot.cpp)
+target_link_libraries(test_time_snapshot PRIVATE okay::engine)
+add_test(NAME time_snapshot COMMAND test_time_snapshot)

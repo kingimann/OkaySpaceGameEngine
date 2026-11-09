@@ -9,6 +9,7 @@
 #include "okay/Math/Rect.hpp"
 #include "okay/Math/Bounds.hpp"
 #include "okay/Math/Easing.hpp"
+#include "okay/Math/Spring.hpp"
 #include "okay/Math/Mat3.hpp"
 #include "okay/Math/Ray.hpp"
 #include "okay/Math/Geometry.hpp"

@@ -17,6 +17,7 @@
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "okay/Core/Utf8.hpp"
+#include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "okay/Components/HoldPrompt.hpp"
@@ -72,6 +73,8 @@
 #include <cctype>
 #include <vector>
 #include "ScriptText.hpp"   // the Script Editor's token view of a script: outline / go-to-definition
+#include "VsCanvasTools.hpp"   // visual-script snap, align, variable list (no GUI)
+#include "VisualScriptEditor.hpp"   // graph text the editor saves (round-trip in --selftest)
 
 // ----------------------------------------------------------------------------
 // OkayScript semantic lint — Rider-style "yellow" inspections, no execution.
@@ -432,6 +435,45 @@ static int RunSelfTest() {
         check(scripttext::CodeMask("x = '{'\n")[5] == 0, "code mask: char literal isn't code");
         check(scripttext::IsValidNewName("health2") && !scripttext::IsValidNewName("2hp") &&
               !scripttext::IsValidNewName("var") && !scripttext::IsValidNewName("a b"), "rename: new name validated");
+    }
+    // Visual Script layout helpers (the graph file format is unchanged).
+    {
+        using namespace okay::editor::vsed;
+        check(VsSnap(21.0f, 20.0f) == 20.0f && VsSnap(31.0f, 20.0f) == 40.0f && VsSnap(10.0f, 0.0f) == 10.0f,
+              "snap: nearest grid step, and a zero grid leaves the value");
+        std::vector<float> xs{0, 10, 30}, ys{5, 40, 8}, w{10, 10, 10}, h{10, 10, 10};
+        VsAlignNodes(xs, ys, w, h, VsAlign::Left);
+        check(xs[0] == 0 && xs[1] == 0 && xs[2] == 0 && ys[1] == 40, "align left keeps y");
+        xs = {0, 10, 30};
+        VsAlignNodes(xs, ys, w, h, VsAlign::Right);
+        check(xs[0] == 30 && xs[1] == 30 && xs[2] == 30, "align right uses node width");
+        std::vector<VsVarNode> nodes = {
+            {"SetVar", "hp", 1}, {"GetVar", "hp", 2}, {"Print", "", 3},
+            {"GetSceneVar", "coins", 4}, {"FunctionStart", "Hurt(amount: Number)", 5},
+        };
+        const auto vars = VsCollectVariables(nodes);
+        check(vars.size() == 2 && vars[0].name == "hp" && vars[0].scope == VsVarScope::Object && vars[0].nodeId == 1
+              && vars[1].name == "coins" && vars[1].scope == VsVarScope::Scene, "variables: one row per name and scope");
+        const auto params = VsCollectParameters(nodes);
+        check(params.size() == 1 && params[0].function == "Hurt" && params[0].name == "amount" && params[0].type == "Number",
+              "parameters: function signature");
+        // The text the editor writes is what it reads back, including a comment box.
+        VsEditGraph g;
+        const int start = g.add("OnStart", 30, 40);
+        const int print = g.add("Print", 200, 40);
+        g.linkExec(start, 0, print);
+        g.comments.push_back(VsComment{10, 10, 300, 160, "Intro", 1});
+        const std::string snap = g.toText();
+        g.add("OnUpdate", 30, 200);
+        g.fromText(snap);
+        check(g.nodes.size() == 2 && g.execLinks.size() == 1 && g.comments.size() == 1
+              && g.comments[0].text == "Intro", "graph undo snapshot restores nodes, wires and the comment");
+        const std::string path = "/tmp/okay_editor_graph_roundtrip.okayvs";
+        check(g.save(path), "graph save writes a file");
+        VsEditGraph loaded;
+        check(loaded.load(path) && loaded.nodes.size() == 2 && loaded.find(start)
+              && loaded.find(start)->type == "OnStart", "saved graph reopens with the same nodes");
+        std::remove(path.c_str());
     }
 
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
@@ -1927,7 +1969,7 @@ static ImFont* g_codeFont    = nullptr;   // monospace face for the Script Edito
 // (15 * 3.0 = 45) — or the glyphs upscale and blur past 2x zoom. Baked at 48 so the
 // entire zoom range (0.7x .. 3.0x) is a downscale, never an upscale.
 static constexpr float kCodeFontBakePx = 48.0f;   // atlas size the glyphs are rasterised at
-static constexpr float kCodeFontDispPx = 15.0f;   // on-screen size at 1.0x zoom
+static constexpr float kCodeFontDispPx = 16.0f;   // on-screen size at 1.0x zoom
 static void SectionHeader(const char* label) {
     ImGui::Spacing();
     if (g_headingFont) ImGui::PushFont(g_headingFont);   // larger heading face
@@ -2764,7 +2806,6 @@ struct ProjectSettings {
     float gravity3D[3]  = {0.0f, -9.81f, 0.0f};
     float ambient       = 0.30f;
     bool  skybox        = true;
-    std::vector<std::string> customTags;   // project-wide user tags, persisted
     // ---- Editor loading screen (per-project splash customization) ----
     char  splashLogo[260] = "";            // optional PNG shown instead of the cube
     float splashBgTop[3]  = {0.094f, 0.094f, 0.106f};
@@ -2794,18 +2835,19 @@ void SaveProjectSettings() {
     f << "splash_bg_top=" << g_project.splashBgTop[0] << " " << g_project.splashBgTop[1] << " " << g_project.splashBgTop[2] << "\n";
     f << "splash_bg_bot=" << g_project.splashBgBot[0] << " " << g_project.splashBgBot[1] << " " << g_project.splashBgBot[2] << "\n";
     f << "splash_accent=" << g_project.splashAccent[0] << " " << g_project.splashAccent[1] << " " << g_project.splashAccent[2] << "\n";
-    for (const std::string& t : g_project.customTags)
-        if (!t.empty()) f << "tag=" << t << "\n";
+    f << okay::ProjectLists::Write();   // the tag list (tag= lines, strict_tags) and the layer names (layer_name_N=)
 }
 
 void LoadProjectSettings() {
     std::ifstream f("project.okayproj");
     if (!f) return;
+    okay::ProjectLists::Reset();   // the tag list and layer names come from this file (or stay the defaults)
     std::string line;
     while (std::getline(f, line)) {
         std::size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        if (okay::ProjectLists::ApplyLine(k, v)) continue;   // tag=, strict_tags=, layer_name_N=
         if      (k == "company") std::strncpy(g_project.company, v.c_str(), sizeof(g_project.company) - 1);
         else if (k == "version") std::strncpy(g_project.version, v.c_str(), sizeof(g_project.version) - 1);
         else if (k == "width")   g_project.defaultWidth = std::atoi(v.c_str());
@@ -2820,8 +2862,68 @@ void LoadProjectSettings() {
         else if (k == "splash_bg_top") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashBgTop[0], &g_project.splashBgTop[1], &g_project.splashBgTop[2]);
         else if (k == "splash_bg_bot") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashBgBot[0], &g_project.splashBgBot[1], &g_project.splashBgBot[2]);
         else if (k == "splash_accent") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashAccent[0], &g_project.splashAccent[1], &g_project.splashAccent[2]);
-        else if (k == "tag") { if (!v.empty()) g_project.customTags.push_back(v); }
     }
+}
+// A layer's name is a project setting (okay::Layers, saved in project.okayproj with the tag list). Right-click a
+// layer in a list to rename it: Enter applies, an empty box (or Reset) goes back to the default name, which
+// the box shows as its hint. Call it right after the layer's own item, inside the list's popup.
+static void LayerRenameMenu(int layer) {
+    if (!okay::Layers::IsValid(layer)) return;
+    if (!ImGui::BeginPopupContextItem((std::string("layerctx") + std::to_string(layer)).c_str())) return;
+    static char buf[48] = "";
+    static std::string err;
+    if (ImGui::IsWindowAppearing()) {
+        std::snprintf(buf, sizeof(buf), "%s", okay::Layers::IsNamed(layer) ? okay::Layers::Name(layer).c_str() : "");
+        err.clear();
+    }
+    auto apply = [&](const std::string& name) {
+        err.clear();
+        const bool ok = name.empty() ? okay::Layers::ClearName(layer) : okay::Layers::SetName(layer, name);
+        if (ok) { SaveProjectSettings(); return true; }
+        err = name.empty() ? "Layer 0 always keeps a name"
+            : !okay::Layers::IsValidName(name) ? "1 to 32 characters; no comma or !, no space at either end, not only digits"
+            : "another layer already has that name";
+        return false;
+    };
+    ImGui::TextDisabled("Layer %d name", layer);
+    ImGui::SetNextItemWidth(170);
+    const std::string hint = okay::Layers::DefaultName(layer)[0] ? okay::Layers::DefaultName(layer) : "Layer " + std::to_string(layer);
+    if (ImGui::InputTextWithHint("##layername", hint.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue))
+        if (apply(buf)) ImGui::CloseCurrentPopup();
+    if (ImGui::SmallButton("Reset to default")) {
+        if (apply(okay::Layers::DefaultName(layer))) ImGui::CloseCurrentPopup();
+    }
+    if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
+    ImGui::EndPopup();
+}
+// The right-click menu of a custom tag: rename it (the list, and the tag on every object of this scene that
+// carries it) before "Remove tag from list".
+static void TagRenameMenu(EditorState& ed, const std::string& tag) {
+    static char buf[80] = "";
+    static std::string err;
+    if (ImGui::IsWindowAppearing()) { std::snprintf(buf, sizeof(buf), "%s", tag.c_str()); err.clear(); }
+    ImGui::SetNextItemWidth(170);
+    const bool enter = ImGui::InputText("##tagrename", buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    const bool click = ImGui::Button("Rename");
+    if (enter || click) {
+        const std::string to = buf;
+        if (to == tag) ImGui::CloseCurrentPopup();
+        else if (okay::Tags::Contains(to)) err = "that tag is already in the list";
+        else if (!okay::Tags::IsValidName(to)) err = okay::Tags::WhyInvalid(to);
+        else {
+            ed.PushUndo();   // the objects that carry the tag change too
+            if (okay::Tags::Rename(tag, to)) {
+                const int n = ed.scene().ReplaceTag(tag, to);
+                SaveProjectSettings();
+                ed.dirty = true;
+                ConsoleLog("Renamed tag " + tag + " to " + to + " (" + std::to_string(n) + " object" + (n == 1 ? "" : "s") + " in this scene)");
+                ImGui::CloseCurrentPopup();
+            } else err = "that tag cannot be renamed";
+        }
+    }
+    if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
+    ImGui::Separator();
 }
 bool  g_snap = false;
 float g_snapSize = 1.0f;
@@ -4279,23 +4381,17 @@ void ApplyTheme() {
     else if (g_theme == 2) ImGui::StyleColorsClassic();
     else                   ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Flat, squared-off rounding — a pro-tool / Steam-like look rather than soft
-    // rounded "cards" (which read as generic). Unified across widgets.
-    s.WindowRounding    = 0.0f;  s.ChildRounding    = 2.0f;
-    s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
-    s.PopupRounding     = 2.0f;  s.TabRounding      = 2.0f;
-    s.ScrollbarRounding = 2.0f;
-    // Balanced spacing: comfortable but not bloated (slightly roomier than the
-    // ImGui defaults). View > UI Scale scales everything for bigger displays.
-    s.WindowPadding   = ImVec2(10, 9);  s.FramePadding = ImVec2(8, 6);
-    s.ItemSpacing     = ImVec2(8, 7);   s.ItemInnerSpacing = ImVec2(7, 5);
-    s.CellPadding     = ImVec2(6, 4);   s.IndentSpacing = 18.0f;
-    s.ScrollbarSize   = 8.0f;           s.GrabMinSize = 11.0f;
-    s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 1.0f;   // thin frame borders for definition
-    s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 1.0f;   // subtler section rules
+    // One spacing system for every panel: readable type, room between controls,
+    // and hit targets you can land on. View > UI Scale still scales all of this.
+    s.WindowPadding   = ImVec2(16, 12); s.FramePadding = ImVec2(12, 8);
+    s.ItemSpacing     = ImVec2(12, 8);  s.ItemInnerSpacing = ImVec2(8, 6);
+    s.CellPadding     = ImVec2(10, 6);  s.IndentSpacing = 22.0f;
+    s.ScrollbarSize   = 14.0f;          s.GrabMinSize = 16.0f;
+    s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 0.0f;
+    s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 1.0f;
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
-    s.SeparatorTextAlign = ImVec2(0.0f, 0.5f);   // left-align section headers
-    s.SeparatorTextPadding = ImVec2(18.0f, 4.0f);
+    s.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
+    s.SeparatorTextPadding = ImVec2(22.0f, 8.0f);
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     s.DockingSeparatorSize = 1.5f;
@@ -4310,11 +4406,11 @@ void ApplyTheme() {
     s.TabCloseButtonMinWidthSelected   = 0.0f;
     s.TabCloseButtonMinWidthUnselected = 0.0f;
     s.DockingNodeHasCloseButton = false;
-    s.TabBarOverlineSize = 2.0f;
+    s.TabBarOverlineSize = 3.0f;
     s.TabBarBorderSize   = 1.0f;
-    s.TabMinWidthBase    = 64.0f;
-    s.TabMinWidthShrink  = 96.0f;    // squeezed dock tabs still show the icon + a few letters
-    if (g_theme == 0) s.TabRounding = 4.0f;
+    s.TabMinWidthBase    = 92.0f;
+    s.TabMinWidthShrink  = 120.0f;   // squeezed dock tabs still show the icon + a few letters
+    if (g_theme == 0) s.TabRounding = 6.0f;
     // Apply the global UI scale LAST so every metric above is scaled together.
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
@@ -4335,6 +4431,8 @@ void ApplyTheme() {
     c[ImGuiCol_TabDimmed]           = okaytheme::kSunken;
     c[ImGuiCol_TabDimmedSelected]   = okaytheme::kBase;
     c[ImGuiCol_TabDimmedSelectedOverline] = okaytheme::WithAlpha(okaytheme::kTextDim, 0.35f);
+    // Disabled text was easy to miss on the slate background.
+    c[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.74f, 0.82f, 1.0f);
 }
 
 // ---- Panel tabs, layouts and the panel switcher ------------------------------
@@ -4743,9 +4841,9 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
         break;
     }
     default: {   // Default: the original layout
-        ImGuiID left  = split(center, ImGuiDir_Left, 0.18f);
-        ImGuiID right = split(center, ImGuiDir_Right, 0.24f);
-        ImGuiID down  = split(center, ImGuiDir_Down, 0.26f);
+        ImGuiID left  = split(center, ImGuiDir_Left, 0.20f);
+        ImGuiID right = split(center, ImGuiDir_Right, 0.27f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.22f);
         dock("Hierarchy", left);
         dock("Inspector", right);
         dock("Console###Console", down);
@@ -6274,7 +6372,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     // state (green while playing, amber while paused), like toolbar.
     const ImU32 kIconWhite = IM_COL32(255, 255, 255, 235);
     const float tb = ImGui::GetFrameHeight();
-    const float bw = tb * 1.45f;                 // transport button width
+    const float bw = tb * 1.7f;                  // transport button width (a real hit target)
     const float buildW = ImGui::CalcTextSize("Build").x + tb * 0.9f + 10.0f;
     ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - (bw * 3.0f) * 0.5f);
     {
@@ -6338,7 +6436,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         dl->AddTriangleFilled(ImVec2(c.x - s * 1.1f, c.y - s), ImVec2(c.x - s * 1.1f, c.y + s), ImVec2(c.x + s * 0.5f, c.y), col);
         dl->AddRectFilled(ImVec2(c.x + s * 0.75f, c.y - s), ImVec2(c.x + s * 0.75f + tb * 0.075f, c.y + s), col, 1.0f);
     }
-    if (stepHit) { g_paused = true; TickGame(ed, 1.0f / 60.0f); }
+    if (stepHit) { g_paused = true; ed.StepFrame(); }   // one frame of 1/60 s, run by the next Play frame
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -7005,7 +7103,7 @@ std::string g_pingAsset;
 static int   g_projFilter = 0;      // 0 All,1 Scripts,2 Images,3 Scenes,4 Materials,5 Prefabs,6 Data,7 Audio,8 Models
 static int   g_projSort   = 0;      // 0 Name, 1 Type, 2 Size, 3 Date
 static int   g_projView   = 0;      // 0 grid (tiles), 1 list (rows)
-static float g_projCell   = 76.0f;  // grid tile size
+static float g_projCell   = 112.0f; // grid tile size (readable thumbnails; the view menu can shrink them)
 static float g_projTreeW  = 200.0f; // folder-tree pane width (drag the splitter)
 static void SaveProjectViewPrefs() {
     std::ofstream f("okay_projectview.txt");
@@ -8629,8 +8727,8 @@ void DrawProject(EditorState& ed) {
         g_pingAsset.clear();
     }
     // Roomier spacing for the Project panel (it was too compact).
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(8, 8));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 5));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(12, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
 
     std::error_code ec;
     fs::path root = ed.projectDir().empty() ? fs::absolute(".", ec)
@@ -11298,6 +11396,8 @@ void DrawScriptDocs() {
         ImGui::TextDisabled("Every tween returns an id. Set it up (each returns the id, so they nest):");
         fapi("tween_loops(id, n[, \"yoyo\"|\"incremental\"]) / tween_delay(id, s)", "repeat (-1 forever) / wait first");
         fapi("tween_ease(id, e) / tween_speed(id, x) / tween_unscaled(id)", "ease / speed / ignore time scale");
+        fapi("tween_clock(id, channel)", "follow a Clock channel (\"ui\", \"cinematic\", your own); \"\" = scene time");
+        fapi("tween_prop(path, to, dur[, ease][, \"done\"])", "tween any property by path (\"Light.intensity\")");
         fapi("tween_from(id) / tween_relative(id) / tween_set_id(id, \"name\")", "from the end value / offset / name it");
         fapi("tween_on_complete(id, \"fn\") / tween_on_step / tween_on_start", "callbacks");
         fapi("tween_pause / play / restart / rewind / complete / kill(id)", "control one tween");
@@ -11306,7 +11406,7 @@ void DrawScriptDocs() {
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
         fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
-        ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce.");
+        ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce,\nor a curve as text: \"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\".");
     }
 
     if (sec("Persistence, PlayerPrefs & Data Assets")) {
@@ -11627,7 +11727,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "tween_ui_move","tween_ui_size","tween_jump","tween_path","tween_path_smooth",
         "tween_loop_scale","tween_loop_rotate","tween_number","tween_text","tween_var","tween_call",
         "tween_punch_pos","tween_punch_rotate","tween_shake_rotate","tween_shake_scale","flash",
-        "tween_loops","tween_delay","tween_ease","tween_speed","tween_unscaled","tween_from",
+        "tween_loops","tween_delay","tween_ease","tween_speed","tween_unscaled","tween_clock","tween_prop","tween_from",
         "tween_relative","tween_set_id","tween_keep","tween_on_complete","tween_on_step",
         "tween_on_start","tween_on_update","tween_kill","tween_pause","tween_play","tween_toggle",
         "tween_restart","tween_rewind","tween_complete","tween_backwards","tween_goto",
@@ -12704,15 +12804,15 @@ static const TextEditor::Palette& OkayScriptPalette() {
         0xffaa7698,  // PreprocIdentifier  purple
         0xff808a80,  // Comment            (128,138,128) gray
         0xff808a80,  // MultiLineComment   gray
-        0xff1e1e1e,  // Background         (30,30,30)
-        0xffe0e0e0,  // Cursor
+        0xff241f1c,  // Background         (28,31,36) calm blue-grey
+        0xffe8e6e2,  // Cursor
         0x8c915c3a,  // Selection          Rider blue, translucent
-        0x60303df0,  // ErrorMarker        red wash
+        0x80302820,  // ErrorMarker        soft red wash
         0x40eca25c,  // Breakpoint         bookmark blue (92,162,236)
-        0xff807876,  // LineNumber         muted
-        0x14ffffff,  // CurrentLineFill
-        0x0affffff,  // CurrentLineFillInactive
-        0x18ffffff,  // CurrentLineEdge
+        0xffc4bbb0,  // LineNumber         readable
+        0x3a403028,  // CurrentLineFill
+        0x22403028,  // CurrentLineFillInactive
+        0x55ffffff,  // CurrentLineEdge
         0xffb0c94e,  // TypeName           (78,201,176)  teal — Vector3, List, your classes
         0xff6dc6ff,  // Function           (255,198,109) yellow — calls + method declarations
         0xffc49ab0,  // Member             (176,154,196) light purple — .position, .x
@@ -12801,6 +12901,8 @@ static TextEditor& CodeEditorFor(okay::ScriptComponent* sc) {
         te->SetPalette(OkayScriptPalette());
         te->SetShowWhitespaces(false);
         te->SetTabSize(4);
+        te->SetLineSpacing(1.55f);
+        te->SetLeftMargin(22);
         it = g_codeEditors.emplace(sc, std::move(te)).first;
     }
     return *it->second;
@@ -12979,14 +13081,23 @@ void DrawScriptEditor(EditorState& ed) {
     s_lastSel = sel; s_lastSelScripts = selScripts;
 
     if (g_scriptTabs.empty()) {
-        // Nothing open: start a new script or open one from the project - no
-        // object needs to be selected.
-        ImGui::Dummy(ImVec2(0, 18));
-        ImGui::Indent(18);
+        // Nothing open: a calm, roomy start. No object needs to be selected.
+        ImGui::Dummy(ImVec2(0, 36));
+        const float colW = std::min(520.0f, ImGui::GetContentRegionAvail().x - 48.0f);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - colW) * 0.5f));
+        ImGui::BeginGroup();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 10.0f));
+        ImGui::SetWindowFontScale(1.35f);
         ImGui::TextUnformatted("No script open");
-        ImGui::TextDisabled("Start a new script, or open one from your project.");
+        ImGui::SetWindowFontScale(1.0f);
         ImGui::Spacing();
-        if (ImGui::Button("+ New Script", ImVec2(180, 34))) g_seNewReq = true;
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + colW);
+        ImGui::TextWrapped("Start a new script, or open one from the list. Selecting an object that has a Script opens it here too.");
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        if (ImGui::Button("New Script", ImVec2(200, 40))) g_seNewReq = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create a script and open it in a tab");
+        ImGui::PopStyleVar();
         ImGui::Spacing(); ImGui::Spacing();
         ImGui::TextDisabled("Scripts in this project");
         {
@@ -13007,8 +13118,8 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::EndChild();
         }
         ImGui::Spacing();
-        ImGui::TextDisabled("Selecting an object that has a Script also opens it here.");
-        ImGui::Unindent(18);
+        ImGui::TextDisabled("Ctrl+F finds text. The View menu has zoom and the problems list.");
+        ImGui::EndGroup();
         ScriptEditorNewScriptPopup(ed);
         ImGui::End();
         return;
@@ -13016,6 +13127,7 @@ void DrawScriptEditor(EditorState& ed) {
     ScriptEditorNewScriptPopup(ed);
 
     // One tab per open script; the selected tab drives the editor below.
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 8.0f));
     if (ImGui::BeginTabBar("##scripttabs",
             ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll)) {
         ScriptComponent* closeTab = nullptr;
@@ -13024,12 +13136,13 @@ void DrawScriptEditor(EditorState& ed) {
             std::string disp = !t->Path().empty()
                 ? std::filesystem::path(t->Path()).filename().string()
                 : (tgo ? tgo->name : std::string("script")) + "." + extide::ExtFor(t->Language());
-            if (ScriptTabDirty(t)) disp = "* " + disp;   // modified marker
+            if (ScriptTabDirty(t)) disp += " *";   // unsaved marker, after the name
             char id[32]; std::snprintf(id, sizeof(id), "###sct%p", (void*)t);
             ImGuiTabItemFlags fl = (g_focusScriptTab == t) ? ImGuiTabItemFlags_SetSelected : 0;
             bool open = true;
             if (ImGui::BeginTabItem((disp + id).c_str(), &open, fl)) {
                 g_activeScriptTab = t;
+                if (ScriptTabDirty(t) && ImGui::IsItemHovered()) ImGui::SetTooltip("Unsaved changes");
                 ImGui::EndTabItem();
             }
             if (!open) closeTab = t;
@@ -13050,6 +13163,7 @@ void DrawScriptEditor(EditorState& ed) {
                 g_looseScripts.end());
         }
     }
+    ImGui::PopStyleVar();
 
     ScriptComponent* sc = g_activeScriptTab ? g_activeScriptTab
                         : (g_scriptTabs.empty() ? nullptr : g_scriptTabs.front());
@@ -13217,7 +13331,7 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Statics that outlive the toolbar (used by the editor body further below).
         static bool  s_minimap = true;
-        static float s_zoom = 1.0f;
+        static float s_zoom = 1.25f;
 
         // ---- Menu bar: every tool, grouped the way IDEs do -------------------------
         bool rqReload = false, rqIde = false, rqOutline = false, rqMarks = false, rqTemplates = false,
@@ -13293,11 +13407,11 @@ void DrawScriptEditor(EditorState& ed) {
                 if (ImGui::MenuItem("Scripting Docs")) g_showScriptDocs = true;
                 ImGui::EndMenu();
             }
-            // Right end: the everyday actions as buttons.
+            // Right end: the two actions you use constantly. Format, zoom and
+            // float/dock stay in the menus so this bar stays one quiet row.
             const ImGuiStyle& mst = ImGui::GetStyle();
             auto bw = [&](const char* l) { return ImGui::CalcTextSize(l).x + mst.FramePadding.x * 2.0f + mst.ItemSpacing.x; };
-            const char* popLbl = s_isDocked ? "Pop Out" : "Dock";
-            float right = bw(" Run ") + bw("Save") + bw("Format") + bw(popLbl) + 6.0f;
+            float right = bw(" Run ") + bw("Save") + 8.0f;
             float x = ImGui::GetWindowContentRegionMax().x - right;
             if (x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(x);
             ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.18f, 0.42f, 0.26f, 1.0f));
@@ -13309,11 +13423,6 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::SetTooltip("Compile and test-run the script in a sandbox object.\nDebug.Log / print output shows in the Console.");
             if (ImGui::SmallButton("Save")) s_tbSave = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save (Ctrl+S)");
-            if (ImGui::SmallButton("Format")) s_tbFormat = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Re-indent the whole document (Ctrl+Alt+L)");
-            if (ImGui::SmallButton(popLbl)) g_scriptDockReq = s_isDocked ? 1 : 2;
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(s_isDocked ? "Open the Script Editor in its own large window" : "Dock it back as a tab");
             ImGui::EndMenuBar();
         }
         // Search Everywhere's actions reuse the menu's own tools.
@@ -13884,40 +13993,63 @@ void DrawScriptEditor(EditorState& ed) {
             else if (s_showFind) s_showFind = false;
         }
         if (s_showFind) {
+            static char s_replace[128] = "";
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 7.0f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.145f, 0.175f, 1.0f));
+            ImGui::BeginChild("##findbar", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
             if (sfFocusField) { ImGui::SetKeyboardFocusHere(); s_findCursor = caret.pos; }
-            ImGui::SetNextItemWidth(180);
-            if (ImGui::InputTextWithHint("##find", "Find", s_find, sizeof(s_find),
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Find");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(260);
+            if (ImGui::InputTextWithHint("##find", "Text to find", s_find, sizeof(s_find),
                                          ImGuiInputTextFlags_EnterReturnsTrue)) {
                 jumpMatch(!ImGui::GetIO().KeyShift);
-                ImGui::SetKeyboardFocusHere(-1);   // stay in the field for repeated Enter
+                ImGui::SetKeyboardFocusHere(-1);
             }
-            if (ImGui::IsItemEdited()) s_findCursor = caret.pos;   // new query: search from the caret
-            // Rider's "current/total" match indicator.
+            if (ImGui::IsItemEdited()) s_findCursor = caret.pos;
+            ImGui::SameLine();
             {
                 std::vector<int> at = findMatches();
-                ImGui::SameLine();
-                if (!s_find[0])          ImGui::TextDisabled("     ");
-                else if (at.empty())     ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.5f, 1.0f), "0 results");
+                if (!s_find[0])          ImGui::TextDisabled(" ");
+                else if (at.empty())     ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.5f, 1.0f), "No matches");
                 else {
                     int ref = s_findCursor >= 0 ? s_findCursor : caret.pos;
                     int cur = 0; for (int p : at) if (p < ref) ++cur;
                     if (cur >= (int)at.size()) cur = (int)at.size() - 1;
-                    ImGui::TextDisabled("%d/%d", cur + 1, (int)at.size());
+                    ImGui::TextDisabled("%d of %d", cur + 1, (int)at.size());
                 }
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton("<")) jumpMatch(false);
+            if (ImGui::Button("Previous")) jumpMatch(false);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find previous (Shift+F3 / Shift+Enter)");
             ImGui::SameLine();
-            if (ImGui::SmallButton(">")) jumpMatch(true);
+            if (ImGui::Button("Next")) jumpMatch(true);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find next (F3 / Enter)");
-            // Replace field + Replace All (case-sensitive). Clicking here deactivates
-            // the editor, so editing the buffer directly takes effect.
-            static char s_replace[128] = "";
-            ImGui::SameLine(); ImGui::SetNextItemWidth(150);
-            ImGui::InputTextWithHint("##replace", "Replace", s_replace, sizeof(s_replace));
             ImGui::SameLine();
-            if (ImGui::SmallButton("Replace All") && s_find[0]) {
+            if (ImGui::Button("Close")) s_showFind = false;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close (Esc)");
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Replace");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(260);
+            ImGui::InputTextWithHint("##replace", "Replacement", s_replace, sizeof(s_replace));
+            ImGui::SameLine();
+            if (ImGui::Button("Replace") && s_find[0]) {
+                std::string text = buf.data(), from = s_find, to = s_replace;
+                std::size_t start = s_findCursor >= 0 ? (std::size_t)s_findCursor : 0;
+                if (start > text.size()) start = 0;
+                std::size_t p = text.find(from, start);
+                if (p == std::string::npos) p = text.find(from);
+                if (p != std::string::npos) {
+                    text.replace(p, from.size(), to);
+                    caret.replaceAll = text;
+                    s_findCursor = (int)(p + to.size());
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Replace the next match");
+            ImGui::SameLine();
+            if (ImGui::Button("Replace All") && s_find[0]) {
                 std::string text = buf.data(), from = s_find, to = s_replace;
                 int n = 0;
                 for (std::size_t p = text.find(from); p != std::string::npos && !from.empty();
@@ -13925,9 +14057,9 @@ void DrawScriptEditor(EditorState& ed) {
                 if (n > 0) caret.replaceAll = text;
                 ConsoleLog("Replaced " + std::to_string(n) + " occurrence" + (n == 1 ? "" : "s"));
             }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("x##closefind")) s_showFind = false;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close (Esc)");
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
         }
 
         // --- Command Palette (Ctrl+Shift+P): searchable editor actions + go-to ---
@@ -14006,7 +14138,10 @@ void DrawScriptEditor(EditorState& ed) {
         // with the shared CodeBuffer and feed it our diagnostics + bookmarks.
         int lines = 1; for (const char* p = buf.data(); *p; ++p) if (*p == '\n') ++lines;
         float lineH = ImGui::GetTextLineHeight();
-        ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= lineH + 8.0f; if (av.y < 80) av.y = 80;
+        const int nprobLive = (int)s_diags.size() + (int)s_warns.size();
+        const float probH = (s_showProblems && nprobLive > 0)
+            ? (std::min(nprobLive, 6) * (ImGui::GetTextLineHeight() + 14.0f) + 28.0f) : 0.0f;
+        ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= lineH + 16.0f + probH; if (av.y < 80) av.y = 80;
 
         TextEditor& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
@@ -14230,7 +14365,7 @@ void DrawScriptEditor(EditorState& ed) {
         // ones that live in the scene), with a filter. It folds away to a thin
         // strip with the chevron or Alt+1. (Classes and methods: double Shift.)
         {
-            static bool s_sideOpen = true;
+            static bool s_sideOpen = false;
             static char s_sideFilter[64] = "";
             static std::vector<std::string> s_sideFiles;
             static double s_sideScan = -10.0;
@@ -14244,13 +14379,9 @@ void DrawScriptEditor(EditorState& ed) {
                 d->AddLine(ImVec2(c.x + 2.5f * k, c.y), ImVec2(c.x - 2.5f * k, c.y + 5), col, 1.6f);
             };
             if (!s_sideOpen) {   // folded: a slim strip with an expand chevron
-                ImGui::BeginChild("##sesidefold", ImVec2(24, av.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-                const ImVec2 p0 = ImGui::GetCursorScreenPos();
-                if (ImGui::InvisibleButton("##seunfold", ImVec2(22, 26))) s_sideOpen = true;
-                const bool h = ImGui::IsItemHovered();
-                ImDrawList* d = ImGui::GetWindowDrawList();
-                if (h) { d->AddRectFilled(p0, ImVec2(p0.x + 22, p0.y + 26), IM_COL32(255, 255, 255, 22), 5.0f); ImGui::SetTooltip("Show scripts  (Alt+1)"); }
-                chevron(d, ImVec2(p0.x + 11, p0.y + 13), false, h ? IM_COL32(240, 244, 250, 255) : IM_COL32(170, 176, 188, 255));
+                ImGui::BeginChild("##sesidefold", ImVec2(84, av.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+                if (ImGui::Button("Scripts", ImVec2(76, 32))) s_sideOpen = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the script list (Alt+1)");
                 ImGui::EndChild();
                 ImGui::SameLine(0, 2);
             } else {
@@ -14273,7 +14404,7 @@ void DrawScriptEditor(EditorState& ed) {
                         return a < b;
                     });
                 }
-                ImGui::BeginChild("##setool", ImVec2(230, av.y), ImGuiChildFlags_Borders);
+                ImGui::BeginChild("##setool", ImVec2(280, av.y), ImGuiChildFlags_Borders);
                 {   // header: "Scripts" + count, fold chevron on the right
                     const ImVec2 hp = ImGui::GetCursorScreenPos();
                     const float hw = ImGui::GetContentRegionAvail().x;
@@ -14306,7 +14437,7 @@ void DrawScriptEditor(EditorState& ed) {
                     if (rel == "." || rel == "Scripts") rel.clear();
                     ImGui::PushID(f.c_str());
                     const ImVec2 rp = ImGui::GetCursorScreenPos();
-                    if (ImGui::Selectable("##sefile", cur, 0, ImVec2(0, ImGui::GetTextLineHeight() + 4)) && !cur) OpenScriptFileInEditor(f);
+                    if (ImGui::Selectable("##sefile", cur, 0, ImVec2(0, ImGui::GetTextLineHeight() + 14)) && !cur) OpenScriptFileInEditor(f);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", fp.lexically_relative(assets.parent_path()).generic_string().c_str());
                     ImDrawList* d = ImGui::GetWindowDrawList();
                     const float ty = rp.y + 2;
@@ -15355,8 +15486,9 @@ void DrawScriptEditor(EditorState& ed) {
                             : sc->Language() == "lua" ? "Lua" : sc->Language().c_str();
         char selInfo[32] = "";
         if (caret.selLen > 0) std::snprintf(selInfo, sizeof(selInfo), " (%d sel)", caret.selLen);
-        ImGui::TextDisabled("%s   Ln %d, Col %d%s   %d lines   %d chars   Spaces", langLbl,
-                            caret.line, caret.col, selInfo, lines, (int)std::strlen(buf.data()));
+        ImGui::TextDisabled("%s    Ln %d, Col %d%s    %d lines    Spaces    %d%%", langLbl,
+                            caret.line, caret.col, selInfo, lines, (int)std::lround(s_zoom * 100.0f));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ctrl+scroll over the code changes the font size. View > Reset Zoom puts it back.");
         // Breadcrumb: the function enclosing the caret (Rider's location bar). Scan back
         // for the nearest `function name(` / `void Name(` at a shallower brace depth.
         {
@@ -15458,8 +15590,8 @@ void DrawScriptEditor(EditorState& ed) {
         if (s_showProblems && (!s_diags.empty() || !s_warns.empty())) {
             ImGui::Spacing();
             SectionHeader("Problems");
-            float ph = ImClamp((float)(s_diags.size() + s_warns.size()), 1.0f, 6.0f)
-                       * ImGui::GetTextLineHeightWithSpacing() + 8.0f;
+            float ph = std::min((int)s_diags.size() + (int)s_warns.size(), 6)
+                       * (ImGui::GetTextLineHeight() + 14.0f) + 12.0f;
             if (ImGui::BeginChild("##problems", ImVec2(0, ph), true)) {
                 for (std::size_t i = 0; i < s_diags.size(); ++i) {
                     const auto& d = s_diags[i];
@@ -15473,7 +15605,7 @@ void DrawScriptEditor(EditorState& ed) {
                     else
                         std::snprintf(row, sizeof(row), "x  %s##p%zu", d.message.c_str(), i);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.55f, 1.0f));
-                    bool clicked = ImGui::Selectable(row);
+                    bool clicked = ImGui::Selectable(row, false, 0, ImVec2(0, ImGui::GetTextLineHeight() + 10));
                     ImGui::PopStyleColor();
                     if (clicked && d.line > 0) { jumpTo(d.line, d.column > 0 ? d.column : 1); }
                 }
@@ -15487,7 +15619,7 @@ void DrawScriptEditor(EditorState& ed) {
                         std::snprintf(row, sizeof(row), "!  line %d:  %s##w%zu",
                                       w.line, w.msg.c_str(), i);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.78f, 0.35f, 1.0f));
-                    bool clicked = ImGui::Selectable(row);
+                    bool clicked = ImGui::Selectable(row, false, 0, ImVec2(0, ImGui::GetTextLineHeight() + 10));
                     ImGui::PopStyleColor();
                     if (clicked && w.line > 0) { jumpTo(w.line, w.column > 0 ? w.column : 1); }
                 }
@@ -17266,7 +17398,7 @@ void DrawHierarchy(EditorState& ed) {
     // One toolbar row: [+] [search.............] [...]
     if (IconButton("##hcreate", TbIcon::Plus, "Create object")) ImGui::OpenPopup("HierCreate");
     ImGui::SameLine();
-    SearchField("##hfilter", g_hierFilter, sizeof(g_hierFilter), "Search (name or type)",
+    SearchField("##hfilter", g_hierFilter, sizeof(g_hierFilter), "Search",
                 -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
     if (ImGui::IsItemHovered() && !g_hierFilter[0])
         ImGui::SetTooltip("Search by name, or by type: camera, light, mesh, script, ui...");
@@ -17284,9 +17416,7 @@ void DrawHierarchy(EditorState& ed) {
         ImGui::Spacing();
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d", (int)ed.scene().Objects().size());
         std::string sname = ed.scene().Name().empty() ? std::string("Untitled") : ed.scene().Name();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextUnformatted((sname + (ed.dirty ? " *" : "")).c_str());
-        ImGui::PopStyleColor();
+        ImGui::TextUnformatted((sname + (ed.dirty ? "  ·  unsaved" : "")).c_str());
         SameLineRight(ImGui::CalcTextSize(cnt).x);
         ImGui::TextDisabled("%s", cnt);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Objects in the scene");
@@ -25154,20 +25284,34 @@ static float ButtonW(const char* label) {
 static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls, ImVec2 pos, ImVec2 size,
                                   float previewTime = -1.0f);
 // Ease picker: every ease by name, each with a drawing of its curve.
-static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, okay::Ease e, ImU32 col) {
+// Any ease as a curve (a preset, a cubic bezier or steps) inside the box (p0, sz); a bezier that overshoots
+// stays inside the box, and a staircase gets more points so its jumps read as steps.
+static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, const okay::EaseCurve& c, ImU32 col) {
     const float pad = sz.y * 0.22f;
+    const int n = c.kind == okay::EaseCurve::Kind::Steps ? 96 : 24;
     ImVec2 prev;
-    for (int i = 0; i <= 24; ++i) {
-        const float t = i / 24.0f, k = okay::Easing::Evaluate(e, t);
-        ImVec2 pt(p0.x + t * sz.x, p0.y + sz.y - pad - k * (sz.y - pad * 2.0f));
+    for (int i = 0; i <= n; ++i) {
+        const float t = (float)i / (float)n, k = c.Evaluate(t);
+        ImVec2 pt(p0.x + t * sz.x, std::clamp(p0.y + sz.y - pad - k * (sz.y - pad * 2.0f), p0.y, p0.y + sz.y));
         if (i > 0) dl->AddLine(prev, pt, col, 1.5f);
         prev = pt;
     }
 }
-static bool EaseCombo(const char* label, int& ease) {
+static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, okay::Ease e, ImU32 col) {
+    DrawEaseCurve(dl, p0, sz, okay::EaseCurve::OfPreset(e), col);
+}
+// `curveText` (optional): the ease as text from the component (TweenAnimation::easeCurve). While it parses it
+// replaces the preset, so the combo reads "Custom curve" and the small drawing at the end of the row is that curve.
+static bool EaseCombo(const char* label, int& ease, const std::string* curveText = nullptr) {
     bool changed = false;
     const int cur = std::clamp(ease, 0, (int)okay::Ease::Count - 1);
-    if (ImGui::BeginCombo(label, okay::Easing::Name((okay::Ease)cur), ImGuiComboFlags_HeightLarge)) {
+    okay::EaseCurve effective = okay::EaseCurve::OfPreset((okay::Ease)cur);
+    bool custom = false;
+    if (curveText && !curveText->empty()) {
+        okay::EaseCurve parsed;
+        if (okay::EaseCurve::Parse(*curveText, parsed)) { effective = parsed; custom = true; }
+    }
+    if (ImGui::BeginCombo(label, custom ? "Custom curve" : okay::Easing::Name((okay::Ease)cur), ImGuiComboFlags_HeightLarge)) {
         const float h = ImGui::GetTextLineHeight();
         for (int i = 0; i < (int)okay::Ease::Count; ++i) {
             ImGui::PushID(i);
@@ -25183,8 +25327,41 @@ static bool EaseCombo(const char* label, int& ease) {
         const ImVec2 mx = ImGui::GetItemRectMax(), mn = ImGui::GetItemRectMin();
         const float h = mx.y - mn.y;
         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(mx.x + 4, mn.y), ImVec2(mx.x + 4 + h * 1.8f, mx.y), IM_COL32(0, 0, 0, 60), 3.0f);
-        DrawEaseCurve(ImGui::GetWindowDrawList(), ImVec2(mx.x + 6, mn.y), ImVec2(h * 1.8f - 4, h), (okay::Ease)cur, ImGui::GetColorU32(AccentCol(1.0f)));
+        DrawEaseCurve(ImGui::GetWindowDrawList(), ImVec2(mx.x + 6, mn.y), ImVec2(h * 1.8f - 4, h), effective, ImGui::GetColorU32(AccentCol(1.0f)));
     }
+    return changed;
+}
+// The ease as text: a preset name ("OutBack"), cubic-bezier(x1,y1,x2,y2), steps(n[,start]) or one of ease, ease-in,
+// ease-out, ease-in-out (okay::EaseCurve::Parse). While the text parses it is stored and replaces the preset; text
+// that does not parse is shown in red and the stored value stays. Empty = use the preset. Returns true when the
+// stored text changed.
+static bool EaseCurveField(const char* label, std::string& stored) {
+    struct Edit { std::string text, err; };
+    static std::unordered_map<ImGuiID, Edit> s_edits;   // the text being typed, per field (a few components at most)
+    const ImGuiID id = ImGui::GetID(label);
+    if (s_edits.size() > 64) s_edits.clear();
+    Edit& e = s_edits[id];
+    // Not typing here: show the stored value (it may have changed elsewhere, and a mistake is dropped when the
+    // field loses focus, so the old value reads again).
+    if (e.text != stored && ImGui::GetActiveID() != id) { e.text = stored; e.err.clear(); }
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "%s", e.text.c_str());
+    bool changed = false;
+    if (ImGui::InputTextWithHint(label, "preset, cubic-bezier(0.4,0,0.2,1) or steps(4)", buf, sizeof(buf))) {
+        e.text = buf;
+        okay::EaseCurve parsed;
+        if (e.text.empty()) { changed = !stored.empty(); stored.clear(); e.err.clear(); }
+        else if (okay::EaseCurve::Parse(e.text, parsed)) { changed = stored != e.text; stored = e.text; e.err.clear(); }
+        else e.err = "Not an ease: use a preset name, cubic-bezier(x1,y1,x2,y2) or steps(n)";
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("An ease as text; while it parses it replaces the Ease above.\n"
+                          "  cubic-bezier(0.4, 0, 0.2, 1)   steps(4)   steps(4, start)\n"
+                          "  ease  ease-in  ease-out  ease-in-out   or a preset name (OutBack).\n"
+                          "Empty = the Ease above. A text with a mistake is not applied (the old one stays).");
+    if (!e.err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", e.err.c_str());
+    else if (okay::EaseCurve unused; !stored.empty() && !okay::EaseCurve::Parse(stored, unused))
+        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "Not an ease: the Ease above is used");
     return changed;
 }
 // Tween Animation preview in edit mode: play its tween on the real object, then put
@@ -25223,7 +25400,7 @@ static void StartTweenPreview(EditorState& ed, okay::TweenAnimation* ta) {
     if (UIRect r = GetUIRect(go); r.valid) { p.hasUI = true; if (r.position) p.uiPos = *r.position; if (r.sizePtr) p.uiSize = *r.sizePtr; }
     if (auto* tr = go->GetComponent<TextRenderer>()) p.text = tr->text;
     auto t = ta->CreateTween();
-    if (t) t->SetAutoKill(false);
+    if (t) { t->SetAutoKill(false); t->SetClock(std::string{}); }   // editing has no running clocks: preview on real time
     p.tween = t;
 }
 // Each editor frame: advance the preview; put the object back shortly after a
@@ -27455,8 +27632,8 @@ static int ReloadPrefabInstances(EditorState& ed, const std::string& path) {
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     // Roomier spacing for the Inspector specifically (it was too compact).
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(9, 9));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(9, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(10, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(8, 8));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
 
     // Lock (pin) the inspector to the current object so it stays put while you
@@ -27484,7 +27661,7 @@ void DrawInspector(EditorState& ed) {
     // a tinted bar, then a Tag field + Save-as-Prefab, then a divider. The child
     // auto-sizes to its contents so there's no empty gap at the top.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
     ImGui::BeginChild("##objheader", ImVec2(0, 0),
                       ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
 
@@ -27532,32 +27709,28 @@ void DrawInspector(EditorState& ed) {
     }
 
     // Row 2: Tag dropdown + Save-as-Prefab.
-    // Built-in presets, then any project-wide custom tags (persisted in project.okayproj),
+    // The project's tag list (okay::Tags: the built-ins, then the custom tags saved in project.okayproj),
     // then an "Add Tag" field that creates a new tag AND applies it in one step.
-    static const char* kTagPresets[] = {"Untagged", "Player", "MainCamera", "Enemy",
-                                        "Respawn", "Finish", "GameController", "UI"};
     std::string curTag = go->tag.empty() ? "Untagged" : go->tag;
     const float tagLblW = ImGui::CalcTextSize("Layer").x + ImGui::GetStyle().ItemInnerSpacing.x;
     const float comboW = std::clamp(ImGui::GetContentRegionAvail().x - tagLblW, 90.0f, 150.0f);
     ImGui::SetNextItemWidth(comboW);
     if (ImGui::BeginCombo("Tag", curTag.c_str())) {
-        for (const char* t : kTagPresets) {
-            bool sel = (curTag == t);
-            if (ImGui::Selectable(t, sel)) {
-                go->tag = (std::strcmp(t, "Untagged") == 0) ? "" : t; ed.dirty = true;
-            }
-        }
-        // Project-wide custom tags (click to apply; right-click to remove from the list).
-        if (!g_project.customTags.empty()) {
+        if (ImGui::Selectable("Untagged", curTag == "Untagged")) { go->SetTag(""); ed.dirty = true; }
+        for (const std::string& t : okay::Tags::Builtin())
+            if (ImGui::Selectable(t.c_str(), curTag == t) && go->SetTag(t)) ed.dirty = true;
+        // Project-wide custom tags (click to apply; right-click to rename or remove from the list).
+        if (!okay::Tags::Custom().empty()) {
             ImGui::Separator();
-            for (std::size_t i = 0; i < g_project.customTags.size(); ++i) {
-                const std::string& t = g_project.customTags[i];
-                if (t.empty()) continue;
+            const std::vector<std::string> custom = okay::Tags::Custom();   // a copy: the menu below edits the list
+            for (std::size_t i = 0; i < custom.size(); ++i) {
+                const std::string& t = custom[i];
                 bool sel = (curTag == t);
-                if (ImGui::Selectable(t.c_str(), sel)) { go->tag = t; ed.dirty = true; }
+                if (ImGui::Selectable(t.c_str(), sel) && go->SetTag(t)) ed.dirty = true;
                 if (ImGui::BeginPopupContextItem((std::string("tagctx") + std::to_string(i)).c_str())) {
+                    TagRenameMenu(ed, t);
                     if (ImGui::MenuItem("Remove tag from list")) {
-                        g_project.customTags.erase(g_project.customTags.begin() + i);
+                        okay::Tags::Remove(t);
                         SaveProjectSettings();
                         ImGui::EndPopup();
                         break;
@@ -27569,33 +27742,41 @@ void DrawInspector(EditorState& ed) {
         ImGui::Separator();
         // Add a brand-new tag: type a name, press Enter or click Add → it's saved to
         // the project tag list and applied to this object immediately.
-        static char newTag[64] = "";
+        static char newTag[72] = "";
+        static std::string newTagErr;
+        if (ImGui::IsWindowAppearing()) newTagErr.clear();
         ImGui::SetNextItemWidth(120);
         bool entered = ImGui::InputTextWithHint("##newtag", "new tag...", newTag, sizeof(newTag),
                                                 ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine();
         bool clicked = ImGui::Button("Add");
         if ((entered || clicked) && newTag[0]) {
-            std::string nt = newTag;
-            bool known = false;
-            for (const char* p : kTagPresets) if (nt == p) known = true;
-            for (const std::string& e : g_project.customTags) if (e == nt) known = true;
-            if (!known) { g_project.customTags.push_back(nt); SaveProjectSettings(); }
-            go->tag = nt; ed.dirty = true; newTag[0] = '\0';
-            ImGui::CloseCurrentPopup();
+            const std::string nt = newTag;
+            const bool listed = okay::Tags::Contains(nt);
+            if (nt == "Untagged") { go->SetTag(""); ed.dirty = true; newTag[0] = '\0'; newTagErr.clear(); ImGui::CloseCurrentPopup(); }
+            else if (!okay::Tags::Add(nt)) newTagErr = okay::Tags::IsValidName(nt) ? "the tag list is full" : okay::Tags::WhyInvalid(nt);
+            else {
+                if (!listed) SaveProjectSettings();
+                if (go->SetTag(nt)) ed.dirty = true;
+                newTag[0] = '\0'; newTagErr.clear();
+                ImGui::CloseCurrentPopup();
+            }
         }
+        if (!newTagErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", newTagErr.c_str());
         ImGui::EndCombo();
     }
     SameLineOrWrap(comboW + tagLblW);
-    // Layer dropdown: which of the 32 named layers the object sits on.
+    // Layer dropdown: which of the 32 named layers the object sits on. Right-click a layer to rename it.
     ImGui::SetNextItemWidth(comboW);
     if (ImGui::BeginCombo("Layer", okay::Layers::Name(go->layer).c_str())) {
+        ImGui::TextDisabled("Right-click a layer to rename it");
         for (int i = 0; i < 32; ++i) {
             std::string nm = okay::Layers::Name(i);
             bool sel = (go->layer == i);
             if (ImGui::Selectable((nm + "##layer" + std::to_string(i)).c_str(), sel)) {
                 go->layer = i; ed.dirty = true;
             }
+            LayerRenameMenu(i);
         }
         ImGui::EndCombo();
     }
@@ -27741,7 +27922,7 @@ void DrawInspector(EditorState& ed) {
         }
         UIRect ar = GetUIRect(go);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
         ImGui::BeginChild("##uilayoutcard", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
         const float capW = ImGui::CalcTextSize("ARRANGE").x + 12.0f;
         // A row: caption on the left, its controls in a group so they wrap under
@@ -30009,6 +30190,9 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Camera", cam, &toRemove)) {
             int proj = (int)cam->projection;
             const char* projs[] = {"Orthographic", "Perspective"};
+            // Use the row's width so the full name stays visible in a narrow inspector.
+            const float projLabel = ImGui::CalcTextSize("Projection").x + ImGui::GetStyle().ItemInnerSpacing.x;
+            ImGui::SetNextItemWidth(std::max(120.0f, ImGui::GetContentRegionAvail().x - projLabel));
             if (ImGui::Combo("Projection", &proj, projs, 2)) { cam->projection = (Camera::Projection)proj; ed.dirty = true; }
             if (cam->projection == Camera::Projection::Orthographic) {
                 if (ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f)) ed.dirty = true;
@@ -30129,6 +30313,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Selectable("Everything", cam->cullingMask == ~0)) { cam->cullingMask = ~0; ed.dirty = true; }
                 if (ImGui::Selectable("Nothing", cam->cullingMask == 0)) { cam->cullingMask = 0; ed.dirty = true; }
                 ImGui::Separator();
+                ImGui::TextDisabled("Right-click a layer to rename it");
                 for (int i = 0; i < 32; ++i) {
                     std::string nm = okay::Layers::Name(i);
                     bool on = (cam->cullingMask & (1 << i)) != 0;
@@ -30137,6 +30322,7 @@ void DrawInspector(EditorState& ed) {
                         else    cam->cullingMask &= ~(1 << i);
                         ed.dirty = true;
                     }
+                    LayerRenameMenu(i);   // right-click: rename the layer
                 }
                 ImGui::EndCombo();
             }
@@ -35341,7 +35527,34 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Duration (s)##ta", &ta->duration, 0.01f, 0.01f, 120.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Delay (s)##ta", &ta->delay, 0.01f, 0.0f, 120.0f)) ed.dirty = true;
-            if (!punchy && EaseCombo("Ease##ta", ta->ease)) ed.dirty = true;
+            if (!punchy && EaseCombo("Ease##ta", ta->ease, &ta->easeCurve)) ed.dirty = true;
+            if (!punchy && EaseCurveField("Curve##ta", ta->easeCurve)) ed.dirty = true;
+            {   // Which clock drives it: scene time, or a Clock channel ("ui", "cinematic", your own).
+                const std::string curClock = ta->clock;
+                if (ImGui::BeginCombo("Clock##ta", curClock.empty() ? "Scene time" : curClock.c_str())) {
+                    if (ImGui::Selectable("Scene time", curClock.empty())) { ta->clock.clear(); ed.dirty = true; }
+                    std::vector<std::string> names = okay::ClockSet::Global().Names();
+                    if (!curClock.empty() && std::find(names.begin(), names.end(), curClock) == names.end()) names.push_back(curClock);
+                    for (const std::string& n : names)
+                        if (ImGui::Selectable(n.c_str(), n == curClock)) { ta->clock = n; ed.dirty = true; }
+                    ImGui::Separator();
+                    static char customClock[64] = "";
+                    ImGui::SetNextItemWidth(130);
+                    const bool entered = ImGui::InputTextWithHint("##taclockname", "custom channel...", customClock, sizeof(customClock),
+                                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine();
+                    if ((ImGui::Button("Use##taclock") || entered) && customClock[0]) {
+                        ta->clock = customClock; ed.dirty = true; customClock[0] = '\0';
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Scene time, or a Clock channel to follow instead: \"game\" (scaled), \"ui\" (real time),\n"
+                                      "\"cinematic\", or your own name (made on first use, on real time).\n"
+                                      "The channel's own scale and pause apply, and it wins over Ignore time scale.\n"
+                                      "The editor Preview plays on real time whatever the clock is.");
+            }
             {
                 bool forever = ta->loops < 0;
                 int n = forever ? 1 : ta->loops;
@@ -41525,11 +41738,11 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // Tools are icon buttons (tooltips carry the names + shortcuts); view toggles,
     // camera alignment and help live in the "..." menu so the row never wraps.
     const ImGuiStyle& vst = ImGui::GetStyle();
-    if (ImGui::Button(ed.view3D ? "3D" : "2D", ImVec2(ImGui::GetFrameHeight() * 1.35f, 0))) ed.view3D = !ed.view3D;
+    if (ImGui::Button(ed.view3D ? "3D" : "2D", ImVec2(ImGui::GetFrameHeight() * 1.6f, 0))) ed.view3D = !ed.view3D;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch between the 2D and 3D scene view");
     if (!uiPanel) {   // UI editing view, one click away (was buried in the "..." menu)
-        ImGui::SameLine(0, 2);
-        if (AccentToggleButton("UI##uimodebtn", g_uiOnlyMode, ImVec2(ImGui::GetFrameHeight() * 1.35f, 0))) g_uiOnlyMode = !g_uiOnlyMode;
+        ImGui::SameLine();
+        if (AccentToggleButton("UI##uimodebtn", g_uiOnlyMode, ImVec2(ImGui::GetFrameHeight() * 1.6f, 0))) g_uiOnlyMode = !g_uiOnlyMode;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(g_uiOnlyMode ? "UI editing view: the game screen with only the UI. Click to go back to the scene."
                                                                    : "UI editing view: edit the HUD / menus on a flat game screen");
     }
@@ -43844,12 +44057,12 @@ int main(int argc, char** argv) {
         // "—", "•", "…" renders without an explicit range. Geometric shapes ●▶★ are
         // simply absent from Roboto, so those are drawn or swapped in the code.)
         if (!io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 16.0f, &fc))
+                RobotoMedium_compressed_data_base85, 18.0f, &fc))
             io.Fonts->AddFontDefault();
         MergeLocalizationFonts(16.0f);   // Japanese, Chinese, Korean text in the string table
         // A slightly larger heading face for section titles (visual hierarchy).
         g_headingFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 18.5f, &fc);
+                RobotoMedium_compressed_data_base85, 22.0f, &fc);
         // A monospace face for the Script Editor. Code needs fixed-width glyphs so the
         // syntax overlay, caret and columns line up. JetBrains Mono (the JetBrains IDE
         // font) is a scalable TTF, so it can't fall out of alignment like a proportional
@@ -44416,9 +44629,10 @@ int main(int argc, char** argv) {
         {   // Frozen at a visual-script breakpoint: Continue / Step resume that same tick.
             auto& dv = okay::editor::vsed::DebugView();
             if (g_gameFiber.Suspended()) { if (dv.resume) { dv.resume = false; g_gameFiber.Resume(); } }
-            else if (!g_paused) {
+            else {   // (was `else if (!g_paused)`: the editor's Pause is a Game pause the Play loop honours, see EditorState::SetPaused)
                 // One hitch (a compile, an asset load, a window drag) mustn't become
-                // one huge physics step: clamp like the built game, then even it out.
+                // one huge physics step: the Play loop (ed.PlayFrame, a GameLoop) clamps
+                // to 0.1 s like the built game, then evens it out.
                 static float s_refreshHz = 0.0f;
                 static int s_refreshAge = 0;
                 if (s_refreshAge-- <= 0) {
@@ -44426,9 +44640,13 @@ int main(int argc, char** argv) {
                     s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
                     s_refreshAge = 120;
                 }
-                float playDt = dt > 0.1f ? 0.1f : dt;
-                if (g_smoothFrameTime) playDt = okay::Time::SmoothDelta(playDt, g_vsync ? s_refreshHz : 0.0f);
-                TickGame(ed, okay::Game::Paused() ? 0.0f : playDt);
+                if (ed.isPlaying()) {
+                    if (!ed.playTick) ed.playTick = [&ed](float gdt) { TickGame(ed, gdt); };   // the Play loop's update (debugger fiber aware)
+                    ed.SetPaused(g_paused);   // the Pause button = Game::PushPause("editor")
+                    // Steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the
+                    // scene by the scaled delta: 0 while the game or the editor is paused, as before.
+                    ed.PlayFrame((double)dt, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f);
+                } else TickGame(ed, dt > 0.1f ? 0.1f : dt);   // editing never steps Time
             }
         }
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).
@@ -44818,6 +45036,7 @@ int main(int argc, char** argv) {
                     vg.fromText(okay::vs::ActionListToGraph(demo));
                     okay::editor::vsed::State().frameAll = true;
                 }
+                okay::editor::vsed::State().frameAll = true;
                 g_showVisualScript = true;
             }
             // OKAY_UI_CHARMODEL=model.glb: a Third Person player wearing that model,

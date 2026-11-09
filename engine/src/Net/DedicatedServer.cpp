@@ -10,6 +10,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Core/TickPacer.hpp"
 #include "okay/Core/Game.hpp"
 
 #include <atomic>
@@ -544,7 +545,10 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
         net->SetJoinCheck([a](const std::string& token, std::string& uid) { return a->Check(token, uid); });
     }
 
-    Game::Reset();
+    // A new session: Reset() plus time scale 1. The server steps Time itself by a fixed tick, and its options
+    // carry no time scale, so a scale left from an earlier run in this process (a test, an embedding host)
+    // would only be stale state that slows the world. A scene script's Start() below may still set its own.
+    Game::BeginSession();
     scene.Start();
     // The command line's .okayac wins over a scene's AntiCheatConfig (which
     // applied its own at Start).
@@ -626,10 +630,16 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     double lastBeat = 0.0;
 
     using clock = std::chrono::steady_clock;
-    const auto tick = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / opts.tickRate));
     const float dt = 1.0f / opts.tickRate;
     const auto started = clock::now();
-    auto next = started;
+    // The pacing arithmetic this loop always had (a tick is due a tick after the last one was
+    // due; a tick more than 4 late is not caught up), as Core/TickPacer so it is tested with a
+    // made-up clock. The game advances one `dt` per tick, never the real elapsed time.
+    TickPacer pacer(opts.tickRate);
+    pacer.Start(0);
+    const auto sinceStartNs = [&started] {
+        return (std::int64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - started).count();
+    };
     double lastStatus = 0.0, busySum = 0.0; long busyTicks = 0;
     std::map<std::uint32_t, std::string> known;   // roster last tick (for join/leave lines)
     int reportsSeen = FinishedMatchReports();
@@ -677,11 +687,8 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
         if (opts.maxRuntime > 0.0f && up >= opts.maxRuntime) break;
 
         // Fixed rate: sleep to the next tick (catch up without a spiral if we fall behind).
-        next += tick;
-        const auto t1 = clock::now();
-        if (next < t1 - tick * 4) next = t1;
-        const auto wait = next - clock::now();
-        if (wait > clock::duration::zero()) {
+        const auto wait = std::chrono::nanoseconds(pacer.FinishTick(sinceStartNs()));
+        if (wait > std::chrono::nanoseconds::zero()) {
 #if defined(_WIN32)
             Sleep((DWORD)std::chrono::duration_cast<std::chrono::milliseconds>(wait).count());
 #else

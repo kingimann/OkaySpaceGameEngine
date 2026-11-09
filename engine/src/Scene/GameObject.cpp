@@ -146,20 +146,57 @@ void GameObject::MoveComponent(Component* component, int delta) {
 
 bool GameObject::RemoveComponent(Component* component) {
     if (!component || component == transform) return false; // Transform is permanent
+    // Only a component of this object (found by address: nothing is read through the pointer yet).
+    auto find = [&]() {
+        for (auto it = m_components.begin(); it != m_components.end(); ++it)
+            if (it->get() == component) return it;
+        return m_components.end();
+    };
+    if (find() == m_components.end()) return false;
+    if (component->m_removing) return false;   // already on its way out: its own OnDisable / OnDestroy asked again
+    component->m_removing = true;
     std::vector<Component*> parts;
     component->CollectOwnedParts(parts);
     for (Component* part : parts) RemoveComponent(part);
-    for (auto it = m_components.begin(); it != m_components.end(); ++it) {
-        if (it->get() == component) {
-            component->DeliverDisableBeforeDestroy();
-            component->OnDestroy();
-            // Notify after OnDestroy: a query it runs can't cache a component about to be freed.
-            if (m_scene) m_scene->NotifyComponentRemoved(component);
-            m_components.erase(it);
-            return true;
-        }
+    component->DeliverDisableBeforeDestroy();
+    component->OnDestroy();
+    // Those callbacks may add or remove components of this object (the list can have moved or
+    // shifted), so the position is looked up again, never kept from before.
+    auto it = find();
+    if (it == m_components.end()) return false;
+    // Notify after OnDestroy: a query it runs can't cache a component about to be freed.
+    if (m_scene) m_scene->NotifyComponentRemoved(component);
+    m_components.erase(it);
+    return true;
+}
+
+bool GameObject::SetLayer(int newLayer, bool includeChildren) {
+    if (newLayer < 0 || newLayer > 31) return false;
+    if (!includeChildren) { layer = newLayer; return true; }
+    std::vector<GameObject*> stack{this};   // explicit stack: a deep hierarchy cannot overflow
+    while (!stack.empty()) {
+        GameObject* g = stack.back(); stack.pop_back();
+        g->layer = newLayer;
+        if (g->transform)
+            for (Transform* c : g->transform->Children())
+                if (c && c->gameObject) stack.push_back(c->gameObject);
     }
-    return false;
+    return true;
+}
+
+std::string GameObject::Path() const {
+    std::vector<const GameObject*> chain;
+    for (const GameObject* g = this; g;) {
+        chain.push_back(g);
+        const Transform* p = g->transform ? g->transform->Parent() : nullptr;
+        g = p ? p->gameObject : nullptr;
+    }
+    std::string out;
+    for (std::size_t i = chain.size(); i-- > 0;) {
+        out += chain[i]->name;
+        if (i > 0) out += '/';
+    }
+    return out;
 }
 
 } // namespace okay

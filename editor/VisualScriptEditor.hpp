@@ -16,6 +16,7 @@
 #include "VisualScriptNodeHelp.hpp"
 #include "VisualScriptNames.hpp"
 #include "VisualScriptCategories.hpp"
+#include "VisualScriptLevels.hpp"
 #include "VsCanvasTools.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -64,6 +65,10 @@ struct VsDef {
     std::vector<const char*> dataOut; // data output pin labels
     int         param;                // 0 none, 1 text field, 2 compare-op combo
     const char* paramHint;
+    // How hard this node is. Registry() fills it from VisualScriptLevels.hpp.
+    // A new row can leave it out; the default is replaced there. PR 601's nodes
+    // are named in kSharedLevels so they get a level too.
+    VsLevel     level = VsLevel::Intermediate;
 };
 
 // Node types that act on an object get a last "Target" input (empty = this
@@ -120,10 +125,21 @@ inline std::vector<VsDef> ApplyFriendlyNames(std::vector<VsDef> defs) {
     return defs;
 }
 
+// Levels come from VisualScriptLevels.hpp, not from the big list below, so a
+// new node (including one added on another branch) gets a level by name.
+inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
+    for (VsDef& d : defs) {
+        const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
+        d.level = api ? VsLevelForApi(api->apiType.c_str(), api->member.c_str())
+                      : VsLevelForNode(d.type);
+    }
+    return defs;
+}
+
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime),
 // then the generated engine-API nodes.
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = ApplyFriendlyNames(VsWithApiDefs(VsWithTargetPins({
+    static const std::vector<VsDef> defs = ApplyLevels(ApplyFriendlyNames(VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -567,7 +583,7 @@ inline const std::vector<VsDef>& Registry() {
         {"OnVarChanged",       "On Var Changed",        CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
         {"OnSceneVarChanged",  "On Scene Var Changed",  CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
         {"OnGlobalVarChanged", "On Global Var Changed", CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
-    })));
+    }))));
     return defs;
 }
 
@@ -3345,7 +3361,8 @@ inline void Draw(EditorState& ed, bool* open) {
         // Every placeable thing: nodes, script-API nodes, and Actions steps, each in a topic.
         struct Entry {
             const VsDef* def = nullptr; const VsStepInfo* step = nullptr; bool cond = false;
-            std::string title, cat, sub, key, desc, keywords;
+            std::string title, cat, sub, key, desc, keywords, helpLine, example;
+            VsLevel level = VsLevel::Intermediate;
             int catIndex = 0, rank = 0; bool browse = true; ImU32 col = 0;
         };
         auto catColor = [&](int index) {
@@ -3379,7 +3396,12 @@ inline void Draw(EditorState& ed, bool* open) {
             e.sub = place.subcategory ? place.subcategory : "";
             e.catIndex = VsPaletteCategoryIndex(place.category);
             e.browse = place.browse && !dup;
+            e.level = d.level;
             e.rank = api ? 2 : 0;
+            if (const char* what = VsNodeHelp(d.type)) e.helpLine = what;
+            else if (api && !api->doc.empty()) e.helpLine = api->doc;
+            else if (d.title && d.title[0]) e.helpLine = std::string(d.title) + ".";
+            if (const char* ex = VsNodeExample(d.type)) e.example = ex;
             e.keywords = api ? "engine api" : "";
             if (d.cat >= 0 && d.cat < CAT_COUNT) {
                 static const char* oldCat[] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API"};
@@ -3419,6 +3441,8 @@ inline void Draw(EditorState& ed, bool* open) {
                     e.sub = place.subcategory ? place.subcategory : "";
                     e.catIndex = VsPaletteCategoryIndex(place.category);
                     e.browse = place.browse && !sameAsNode;
+                    e.level = VsLevelForStep(si.op.c_str(), si.group.c_str());
+                    e.helpLine = si.desc;
                     e.rank = 1;
                     e.key = std::string(cond ? "c:" : "a:") + si.op; e.desc = si.desc;
                     e.keywords = si.group + (cond ? " check something" : " do something");
@@ -3428,17 +3452,24 @@ inline void Draw(EditorState& ed, bool* open) {
         }
         // Favourites and recently added, remembered between sessions.
         static std::vector<std::string> s_fav, s_recent;
+        static int s_filter = 0;   // VsLevelFilter: 0 all, 1 basic, 2 intermediate, 3 advanced
         static bool s_loaded = false;
         auto saveLists = [&] {
             std::ofstream f("okay_vsnodes.txt");
+            f << "lvl " << s_filter << "\n";
             for (const auto& k : s_fav) f << "fav " << k << "\n";
             for (const auto& k : s_recent) f << "rec " << k << "\n";
         };
         if (!s_loaded) {
             s_loaded = true;
             std::ifstream f("okay_vsnodes.txt"); std::string kind, k;
-            while (f >> kind >> k) (kind == "fav" ? s_fav : s_recent).push_back(k);
+            while (f >> kind >> k) {
+                if (kind == "lvl") s_filter = std::clamp(std::atoi(k.c_str()), 0, 3);
+                else (kind == "fav" ? s_fav : s_recent).push_back(k);
+            }
         }
+        const VsLevelFilter levelFilter = (VsLevelFilter)s_filter;
+        auto passesLevel = [&](VsLevel level) { return VsLevelPasses(level, levelFilter); };
         auto isFav = [&](const std::string& k) { return std::find(s_fav.begin(), s_fav.end(), k) != s_fav.end(); };
         auto add = [&](const Entry& e) {
             if (e.step) addFromPalette(*e.def, okay::ActionList::EncodeItem({e.step->op, {}}));
@@ -3456,14 +3487,30 @@ inline void Draw(EditorState& ed, bool* open) {
         static std::string s_subName;
         static int s_kb = 0;
         static char search[64] = "";
-        if (ImGui::IsWindowAppearing()) { search[0] = '\0'; s_kb = 0; ImGui::SetKeyboardFocusHere(); }
+        if (ImGui::IsWindowAppearing()) {
+            search[0] = '\0'; s_kb = 0; ImGui::SetKeyboardFocusHere();
+            // A wire dropped on empty space: start on the whole list, compatible nodes first.
+            if (st.linkPending) { s_side = -3; s_sub = -1; s_subName.clear(); }
+        }
         if (st.linkPending && st.linkExec)
-            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that fit this flow pin are shown");
+            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit this flow pin");
         else if (st.linkPending)
-            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that fit a %s pin are shown", okay::vs::PinTypeName(dragged));
+            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit a %s pin", okay::vs::PinTypeName(dragged));
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::InputTextWithHint("##vssearch", "Search nodes and actions...  (Up / Down, Enter to add)", search, sizeof search))
             s_kb = 0;
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+        const float filterW = (ImGui::GetContentRegionAvail().x - 18.0f) / 4.0f;
+        for (int fi = 0; fi < 4; ++fi) {
+            if (fi) ImGui::SameLine();
+            const bool on = s_filter == fi;
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 110, 160, 255));
+            if (ImGui::Button(VsLevelFilterName((VsLevelFilter)fi), ImVec2(filterW, 0))) {
+                s_filter = fi; s_kb = 0; saveLists();
+            }
+            if (on) ImGui::PopStyleColor();
+        }
+        ImGui::PopStyleVar();
         const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
         const std::string needle = lower(search);
 
@@ -3523,7 +3570,10 @@ inline void Draw(EditorState& ed, bool* open) {
             sdl->PopClipRect();
             if (count >= 0) sdl->AddText(ImVec2(right - nw, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), n);
             if (ImGui::IsItemHovered()) {
-                const char* blurb = (id >= 0 && id < VsPaletteCategoryCount()) ? kPaletteCategories[id].blurb : nullptr;
+                const char* blurb = (id >= 0 && id < VsPaletteCategoryCount()) ? kPaletteCategories[id].blurb
+                                  : id == -4 ? "The 26 nodes a first script is built from."
+                                  : id == -2 ? "Nodes you have added lately."
+                                  : nullptr;
                 if (blurb && *blurb) {
                     ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
                     ImGui::TextUnformatted(label); ImGui::TextDisabled("%s", blurb);
@@ -3538,15 +3588,20 @@ inline void Draw(EditorState& ed, bool* open) {
         auto browseCount = [&](int cat, const std::string& sub, bool anySub) {
             int n = 0;
             for (const auto& e : all) {
-                if (!e.browse || e.catIndex != cat) continue;
+                if (!e.browse || !passesLevel(e.level) || e.catIndex != cat) continue;
                 if (!anySub && e.sub != sub) continue;
                 ++n;
             }
             return n;
         };
-        int browseAll = 0; for (const auto& e : all) if (e.browse) ++browseAll;
+        int browseAll = 0, starterN = 0;
+        for (const auto& e : all) if (e.browse && passesLevel(e.level)) {
+            ++browseAll;
+            if (e.def && VsIsStarter(e.def->type)) ++starterN;
+        }
+        if (sideItem(-4, "Starter", 0, starterN, s_side == -4, 0)) { s_side = -4; s_sub = -1; s_subName.clear(); }
+        if (sideItem(-2, "Recently used", 0, -1, s_side == -2, 0)) { s_side = -2; s_sub = -1; s_subName.clear(); }
         if (sideItem(-3, "All", 0, browseAll, s_side == -3, 0)) { s_side = -3; s_sub = -1; s_subName.clear(); }
-        if (sideItem(-2, "Recent", 0, -1, s_side == -2, 0)) { s_side = -2; s_sub = -1; s_subName.clear(); }
         if (sideItem(-1, "Favourites", 0, (int)s_fav.size(), s_side == -1, 0)) { s_side = -1; s_sub = -1; s_subName.clear(); }
         ImGui::Separator();
         for (int c = 0; c < VsPaletteCategoryCount(); ++c) {
@@ -3558,7 +3613,7 @@ inline void Draw(EditorState& ed, bool* open) {
             if (s_side != c) continue;   // expanded: the topic you are in shows its subcategories
             std::vector<std::pair<std::string, int>> subs;
             for (const auto& e : all) {
-                if (!e.browse || e.catIndex != c || e.sub.empty()) continue;
+                if (!e.browse || !passesLevel(e.level) || e.catIndex != c || e.sub.empty()) continue;
                 bool found = false;
                 for (auto& s : subs) if (s.first == e.sub) { ++s.second; found = true; break; }
                 if (!found) subs.push_back({e.sub, 1});
@@ -3582,8 +3637,14 @@ inline void Draw(EditorState& ed, bool* open) {
         // ---- Results ----
         struct Row { const Entry* e; int sc; std::vector<int> hits; };
         std::vector<Row> rows;
+        auto recentRank = [&](const std::string& key) {
+            const auto it = std::find(s_recent.begin(), s_recent.end(), key);
+            return it == s_recent.end() ? 10000 : (int)(it - s_recent.begin());
+        };
         for (const auto& e : all) {
+            if (!passesLevel(e.level)) continue;
             if (needle.empty() && !e.browse) continue;
+            if (s_side == -4 && !(e.def && VsIsStarter(e.def->type))) continue;
             if (s_side >= 0 && e.catIndex != s_side) continue;
             if (s_side >= 0 && s_sub >= 0 && e.sub != s_subName) continue;
             if (s_side == -1 && !isFav(e.key)) continue;
@@ -3593,10 +3654,23 @@ inline void Draw(EditorState& ed, bool* open) {
             if (r.sc > 0) rows.push_back(std::move(r));
         }
         if (!needle.empty())
-            std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.sc > b.sc; });
+            std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
+                return VsSearchRanksBefore(a.sc, a.e->level, recentRank(a.e->key),
+                                           b.sc, b.e->level, recentRank(b.e->key));
+            });
         else if (s_side == -2)
             std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
                 return std::find(s_recent.begin(), s_recent.end(), a.e->key) < std::find(s_recent.begin(), s_recent.end(), b.e->key);
+            });
+        else if (s_side == -4)
+            std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+                return VsStarterIndex(a.e->def ? a.e->def->type : "") < VsStarterIndex(b.e->def ? b.e->def->type : "");
+            });
+        else if (st.linkPending)
+            std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+                if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
+                if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
+                return a.e->rank < b.e->rank;
             });
         else
             std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
@@ -3604,6 +3678,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 const int ao = VsSubOrder(a.e->sub.c_str()), bo = VsSubOrder(b.e->sub.c_str());
                 if (ao != bo) return ao < bo;
                 if (a.e->sub != b.e->sub) return a.e->sub < b.e->sub;
+                if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
                 return a.e->rank < b.e->rank;
             });
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) s_kb = std::min(s_kb + 1, (int)rows.size() - 1);
@@ -3616,14 +3691,19 @@ inline void Draw(EditorState& ed, bool* open) {
         if (rows.empty()) {
             ImGui::TextDisabled(s_side == -1 ? "No favourites yet: click the star on a node to add one."
                               : s_side == -2 ? "Nodes you add show up here."
-                              : needle.empty() ? "Nothing here." : "No node matches that.");
+                              : s_side == -4 ? "Nothing at this level in the starter set."
+                              : needle.empty() ? "Nothing here at this level." : "No node matches that.");
+        } else if (st.linkPending && needle.empty()) {
+            ImGui::TextDisabled("Suggested for this pin");
+        } else if (s_side == -4 && needle.empty()) {
+            ImGui::TextDisabled("Start here");
         }
         const float lh = ImGui::GetTextLineHeight();
         std::string lastHeader;
         for (int i = 0; i < (int)rows.size(); ++i) {
             const Entry& e = *rows[i].e;
             // Topic headers while browsing (not while searching). Inside a topic, the header is the subcategory.
-            if (needle.empty() && s_side != -1 && s_side != -2 && s_sub < 0) {
+            if (needle.empty() && !st.linkPending && s_side != -1 && s_side != -2 && s_side != -4 && s_sub < 0) {
                 const std::string header = s_side < 0 ? e.cat : e.sub;
                 if (!header.empty() && header != lastHeader) {
                     lastHeader = header;
@@ -3635,7 +3715,19 @@ inline void Draw(EditorState& ed, bool* open) {
             const ImVec2 p = ImGui::GetCursorScreenPos();
             const bool kbSel = i == s_kb;
             if (ImGui::Selectable("##row", kbSel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, lh + 14))) toAdd = &e;
-            if (ImGui::IsItemHovered()) { hovered = &e; }
+            if (ImGui::IsItemHovered()) {
+                hovered = &e;
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                ImGui::TextUnformatted(e.helpLine.empty() ? "No description." : e.helpLine.c_str());
+                if (!e.example.empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Example: %s", e.example.c_str());
+                }
+                ImGui::TextDisabled("%s", VsLevelName(e.level));
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
             if (kbSel && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow))) ImGui::SetScrollHereY(0.5f);
             ImDrawList* rdl = ImGui::GetWindowDrawList();
             const float w = ImGui::GetContentRegionAvail().x;
@@ -3648,6 +3740,20 @@ inline void Draw(EditorState& ed, bool* open) {
                 const bool h = std::find(rows[i].hits.begin(), rows[i].hits.end(), c) != rows[i].hits.end();
                 rdl->AddText(ImVec2(x, p.y + 2), h ? hit : normal, buf);
                 x += ImGui::CalcTextSize(buf).x;
+            }
+            // Level badge: Basic, then Inter, then Adv. Colour says which, the word says it too.
+            {
+                const char* badge = VsLevelBadge(e.level);
+                const ImVec2 bs = ImGui::CalcTextSize(badge);
+                const float bw = bs.x + 8.0f, bh = lh + 2.0f;
+                if (x + 8.0f + bw < p.x + w - ImGui::CalcTextSize(e.cat.c_str()).x - 36.0f) {
+                    const ImVec2 b0(x + 8.0f, p.y + 4.0f), b1(b0.x + bw, b0.y + bh);
+                    const ImU32 bg = e.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
+                                   : e.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255)
+                                   : IM_COL32(52, 78, 120, 255);
+                    rdl->AddRectFilled(b0, b1, bg, 3.0f);
+                    rdl->AddText(ImVec2(b0.x + 4.0f, b0.y + 1.0f), IM_COL32(230, 236, 244, 255), badge);
+                }
             }
             // Category on the right, then the favourite star.
             const float catW = ImGui::CalcTextSize(e.cat.c_str()).x;
@@ -3684,7 +3790,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (info) {
             ImGui::TextUnformatted(info->title.c_str());
             ImGui::SameLine();
-            ImGui::TextDisabled("%s", info->cat.c_str());
+            ImGui::TextDisabled("%s · %s", VsLevelName(info->level), info->cat.c_str());
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextDisabled("%s", info->desc.empty() ? "No description." : info->desc.c_str());
             ImGui::PopTextWrapPos();

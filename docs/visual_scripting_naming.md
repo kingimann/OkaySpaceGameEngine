@@ -52,9 +52,9 @@ An empty flow pin (the triangle with no word) is fine. Do not label it `Exec`.
 The Add Node menu has one topic per node, in this order. Common topics come
 first. A large topic also has subcategories; the everyday nodes stay in the
 topic itself, and the subcategory list appears when that topic is selected.
-There is no catch-all: not "Do something", "Check something", "Actions",
+There is no catch-all topic: not "Do something", "Check something", "Actions",
 "Data", "Engine API", "Basic", "Look", or "World". Those old words are search
-keywords only.
+keywords only. Basic is a level, below, not a topic.
 
 | Topic | What goes here | Subcategories, when the topic is large |
 |---|---|---|
@@ -95,6 +95,39 @@ Old menu words still find the node. "Engine API", "Transform", "Actions", and
 the old step group (Move, Look, Variables) are search keywords. A script node
 that does the same job as a hand-written node (Mathf.Abs, Transform.Translate)
 stays out of the browse list and still appears when you search for its old name.
+
+## How hard a node is
+
+Every node has a level, stored on the registry row as `VsDef::level` and filled
+by `Registry()` from `editor/VisualScriptLevels.hpp`.
+
+| Level | Who it is for | Examples |
+|---|---|---|
+| Basic | A first script | On Start, Branch, Set Variable, Add, Spawn, Print |
+| Intermediate | The rest of the toolbox | For Loop, lists, tweens, raycasts, quests |
+| Advanced | A specialist tool | Online play, behavior trees, IK, build mode, calling another graph |
+
+Inside a topic, Basic nodes come first, then Intermediate, then Advanced. Each
+row has a small badge. The filter above the search is All, Basic, Intermediate,
+or Advanced. All is the default. The choice is remembered in `okay_vsnodes.txt`.
+
+**Starter** is the first section. It is the 26 Basic nodes a beginner needs:
+On Start, On Every Frame, On Key, Branch, Sequence, Wait Seconds, Get Variable,
+Set Variable, Add To Variable, a fixed value, Add, Compare, a random number,
+Print, Spawn, Destroy, Set Active, Get Position, Set Position, Move, a key,
+Play Sound, Set Text, Show UI, the frame time, and Pause. **Recently used** is
+the section under it.
+
+Search puts the closest match first, then the easier level, then a node the
+person used lately. Dropping a wire on empty space lists the nodes that fit
+that pin first, still easiest first.
+
+A new node, including one added on the logic-runtime branch, gets a level in
+`VsLevelForNode` (or `kSharedLevels` when the type is new on that branch), a
+one-line `VsNodeHelp` sentence, and a `VsNodeExample` when a beginner would
+benefit from one. `tests/test_vs_palette_levels.cpp` fails if a node in this
+tree has no level or no help, if the filter or the search order is wrong, or
+if a shared type from that branch has no level.
 
 ## Old names still work
 

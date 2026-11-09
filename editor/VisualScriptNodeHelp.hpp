@@ -49,6 +49,7 @@ inline const char* VsNodeHelp(const char* type) {
     static const std::unordered_map<std::string, const char*> help = {
         // ---- Events ----
         {"OnStart",        "Runs once when the object starts (the scene loads or the object is spawned)."},
+        {"OnDestroy",      "Runs once, just before this object is removed from the scene."},
         {"OnUpdate",       "Runs every frame. Put movement and checks that must happen all the time here."},
         {"OnLateUpdate",   "On Late Update. Runs every frame after On Every Frame. Good for a camera that follows something."},
         {"OnFixedUpdate", "On Physics Update. Runs on a steady clock, 50 times a second, before On Every Frame. A long or a short frame does not change how often it runs, so movement here does not speed up when the game stutters."},
@@ -108,6 +109,11 @@ inline const char* VsNodeHelp(const char* type) {
         {"Counter",        "Counts how many times it has run (read it from Count). Wire true into Reset to start again from 0."},
         {"SwitchInt",      "Picks an output by number: 0, 1 or 2, or Default for any other value."},
         {"ChanceBranch",   "Goes out True with the given chance (0 to 1, e.g. 0.25 = 25%), otherwise False."},
+        {"FunctionStart",  "The start of a function you can call from Call Function. Name it in the node."},
+        {"Return",         "Leaves the function that is running and goes back to whoever called it."},
+        {"CallFunction",   "Runs a function in this graph by name, then carries on."},
+        {"SetLocal",       "Stores a value under a name that only this function can see."},
+        {"GetLocal",       "Reads a value stored with Set Local in the function that is running."},
         // ---- Variables ----
         {"GetVar",         "Reads a variable on this object by name."},
         {"SetVar",         "Stores Value in a variable on this object (creates it if it doesn't exist)."},
@@ -245,6 +251,11 @@ inline const char* VsNodeHelp(const char* type) {
         {"ObjectPosition", "The position of an object by name (or self / other)."},
         {"DistanceTo",     "How far this object is from another object."},
         {"SelfName",       "This object's name."},
+        {"Self",           "This object. Wire it into a node that asks for an object."},
+        {"Other",          "The other object from the event that just ran, such as the one this object bumped."},
+        {"FindObject",     "The object with this name, or nothing if there isn't one."},
+        {"GetName",        "The name of an object. Leave the target empty to read this object's name."},
+        {"GetTag",         "The tag of an object. Leave the target empty to read this object's tag."},
         {"FindWithTag",    "The name of an object with this tag."},
         {"NearestWithTag", "The name of the closest object with this tag. Good for targeting enemies or pickups."},
         {"CountWithTag",   "How many objects have this tag (e.g. enemies left)."},

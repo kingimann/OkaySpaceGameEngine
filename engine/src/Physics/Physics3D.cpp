@@ -328,7 +328,7 @@ bool TriggerAccepts(const Collider3D* trig, const Collider3D* other) {
     return ((trig->triggerLayers >> (other->layer & 31)) & 1u) != 0;
 }
 
-bool Alive(Collider3D* c) { return c->enabled && c->gameObject && c->gameObject->active; }
+bool Alive(Collider3D* c) { return c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy(); }
 
 /// A fast fall or a low frame rate can step a body through a thin floor. The
 /// voxel and mesh paths already march their own probes; a box floor does not.
@@ -337,7 +337,7 @@ bool Alive(Collider3D* c) { return c->enabled && c->gameObject && c->gameObject-
 /// above the hit are left alone.
 void CatchTunneledFloor(Scene& scene, Rigidbody3D* rb) {
     if (!rb || !rb->hasPrevPos || !rb->transform || !rb->gameObject) return;
-    if (!rb->enabled || !rb->gameObject->active) return;
+    if (!rb->enabled || !rb->gameObject->ActiveInHierarchy()) return;
     if (rb->bodyType != Rigidbody3D::BodyType::Dynamic || rb->freezeY) return;
     Collider3D* col = rb->gameObject->GetComponent<Collider3D>();
     if (!col || !col->enabled || col->isTrigger) return;
@@ -382,7 +382,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     // 1) Integrate dynamic / kinematic bodies.
     auto bodies = scene.FindObjectsOfType<Rigidbody3D>();
     for (Rigidbody3D* rb : bodies) {
-        if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+        if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
         Transform* t = rb->transform;
         // A sleeping body holds position until woken; a directly-set velocity above
         // the threshold wakes it so scripted moves/teleports still take effect.
@@ -463,7 +463,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (gone.Gone(a)) break;
             if (gone.Gone(b)) continue;
             if (!a->enabled || !b->enabled) continue;
-            if (!a->gameObject->active || !b->gameObject->active) continue;
+            if (!a->gameObject->ActiveInHierarchy() || !b->gameObject->ActiveInHierarchy()) continue;
             if (a->gameObject == b->gameObject) continue;
             if (!finite[i] || !finite[j]) continue;   // a NaN body touches nothing
             if (!LayersCollide(a->layer, b->layer)) continue;
@@ -645,7 +645,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     auto terrains = scene.FindObjectsOfType<Terrain>();
     if (!terrains.empty()) {
         for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
-            if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+            if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
             if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
             Transform* t = rb->transform;
             if (!t) continue;
@@ -720,7 +720,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     auto voxels = scene.FindObjectsOfType<VoxelTerrain>();
     if (!voxels.empty()) {
         for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
-            if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+            if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
             if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
             Transform* t = rb->transform;
             if (!t) continue;
@@ -834,7 +834,7 @@ void Physics3D::Step(Scene& scene, float dt) {
         }
         if (!meshes.empty()) {
             for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
-                if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+                if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
                 if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
                 Collider3D* self = rb->gameObject->GetComponent<Collider3D>();
                 if (self && self->shape() == Collider3D::Shape::Mesh) continue;  // don't self-collide
@@ -985,7 +985,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     // seconds sleeps (zeroed and skipped next step). Any motion resets the timer.
     for (Rigidbody3D* rb : bodies) {
         if (gone.Gone(rb)) continue;                 // removed by a contact callback
-        if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+        if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
         if (rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
         if (!rb->allowSleep) { rb->WakeUp(); continue; }
         if (rb->sleeping) continue;
@@ -1223,7 +1223,7 @@ bool RayTerrain(Terrain* terr, const Vec3& origin, const Vec3& dir, float maxT,
 
 bool TerrainPasses(Terrain* terr, GameObject* ignore, std::uint32_t mask) {
     GameObject* tg = terr->gameObject;
-    if (!tg || !tg->active || !tg->transform) return false;
+    if (!tg || !tg->ActiveInHierarchy() || !tg->transform) return false;
     if (ignore && tg == ignore) return false;
     return ((mask >> (tg->layer & 31)) & 1u) != 0;
 }

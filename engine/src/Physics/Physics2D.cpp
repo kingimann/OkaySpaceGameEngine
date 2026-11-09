@@ -321,7 +321,7 @@ void Physics2D::Step(Scene& scene, float dt) {
     // 1) Integrate dynamic / kinematic bodies.
     auto bodies = scene.FindObjectsOfType<Rigidbody2D>();
     for (Rigidbody2D* rb : bodies) {
-        if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+        if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
         Transform* t = rb->transform;
         // A sleeping body stays put until something wakes it. If its velocity was
         // set directly (script/teleport) it exceeds the threshold -> wake and run.
@@ -391,7 +391,7 @@ void Physics2D::Step(Scene& scene, float dt) {
             if (gone.Gone(a)) break;
             if (gone.Gone(b)) continue;
             if (!a->enabled || !b->enabled) continue;
-            if (!a->gameObject->active || !b->gameObject->active) continue;
+            if (!a->gameObject->ActiveInHierarchy() || !b->gameObject->ActiveInHierarchy()) continue;
             if (a->gameObject == b->gameObject) continue;
             if (!finite[i] || !finite[j]) continue;   // a NaN body touches nothing
             if (!LayersCollide(a->layer, b->layer)) continue; // collision matrix
@@ -640,7 +640,7 @@ void Physics2D::Step(Scene& scene, float dt) {
     // resets the timer. Bodies with allowSleep off never sleep.
     for (Rigidbody2D* rb : bodies) {
         if (gone.Gone(rb)) continue;                 // removed by a contact callback
-        if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
+        if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
         if (rb->bodyType != Rigidbody2D::BodyType::Dynamic) continue;
         if (!rb->allowSleep) { rb->WakeUp(); continue; }
         if (rb->sleeping) continue;
@@ -758,7 +758,7 @@ bool RayOBB2(const Vec2& o, const Vec2& d, BoxCollider2D* box,
     return true;
 }
 
-bool Alive(Collider2D* c) { return c->enabled && c->gameObject && c->gameObject->active; }
+bool Alive(Collider2D* c) { return c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy(); }
 
 } // namespace
 

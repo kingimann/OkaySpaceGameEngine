@@ -229,8 +229,11 @@ protected:
     }
 };
 void UseRoundTripFloats(std::ostream& o) {
-    static const std::locale loc(std::locale::classic(), new RoundTripNumPut(1));   // refs=1: never freed
-    o.imbue(loc);
+    // The locale is allocated once and never destroyed (a static std::locale object would be torn down at exit,
+    // orphaning the facet and tripping leak checkers, and streams used during static destruction need it alive).
+    // The facet has refs=0, so the locale owns it.
+    static const std::locale* loc = new std::locale(std::locale::classic(), new RoundTripNumPut(0));
+    o.imbue(*loc);
 }
 // Quote a string for the line-based format (escapes quotes/backslashes).
 std::string Quote(const std::string& s) {

@@ -13175,24 +13175,27 @@ void DrawScriptEditor(EditorState& ed) {
     s_lastSel = sel; s_lastSelScripts = selScripts;
 
     if (g_scriptTabs.empty()) {
-        // Nothing open: a calm, roomy start. No object needs to be selected.
-        ImGui::Dummy(ImVec2(0, 36));
-        const float colW = std::min(520.0f, ImGui::GetContentRegionAvail().x - 48.0f);
+        // A short bottom dock used to clip "New Script" under the intro text, with
+        // no scrollbar, so the button could not be reached. The button stays at
+        // the top of a scrolling area that fills whatever height the dock has.
+        const float availH = ImGui::GetContentRegionAvail().y;
+        ImGui::BeginChild("##seempty", ImVec2(0, std::max(1.0f, availH)), ImGuiChildFlags_None, ImGuiWindowFlags_None);
+        const float colW = std::min(520.0f, std::max(160.0f, ImGui::GetContentRegionAvail().x - 24.0f));
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - colW) * 0.5f));
         ImGui::BeginGroup();
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 10.0f));
-        ImGui::SetWindowFontScale(1.35f);
+        ImGui::SetWindowFontScale(1.2f);
         ImGui::TextUnformatted("No script open");
         ImGui::SetWindowFontScale(1.0f);
+        ImGui::Spacing();
+        if (ImGui::Button("New Script", ImVec2(200, 36))) g_seNewReq = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create a script and open it in a tab");
         ImGui::Spacing();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + colW);
         ImGui::TextWrapped("Start a new script, or open one from the list. Selecting an object that has a Script opens it here too.");
         ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        if (ImGui::Button("New Script", ImVec2(200, 40))) g_seNewReq = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create a script and open it in a tab");
         ImGui::PopStyleVar();
-        ImGui::Spacing(); ImGui::Spacing();
+        ImGui::Spacing();
         ImGui::TextDisabled("Scripts in this project");
         {
             namespace fs = std::filesystem;
@@ -13214,6 +13217,7 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::Spacing();
         ImGui::TextDisabled("Ctrl+F finds text. The View menu has zoom and the problems list.");
         ImGui::EndGroup();
+        ImGui::EndChild();
         ScriptEditorNewScriptPopup(ed);
         ImGui::End();
         return;

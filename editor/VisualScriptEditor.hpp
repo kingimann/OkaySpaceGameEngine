@@ -1907,8 +1907,10 @@ struct VsSession {
     int active = 0;
     int nextId = 1;
     bool restored = false;
-    enum class Ask { None, CloseTab, CloseOthers, CloseAll, CloseWindow } ask = Ask::None;
+    enum class Ask { None, CloseTab, CloseOthers, CloseAll, CloseWindow, NewGraph } ask = Ask::None;
     int askTab = -1;
+    bool newStarter = true;   ///< New graph vs New empty graph, once the save prompt is answered
+    bool forceSelect = false; ///< select `active` once; not every frame (that blocked tab clicks)
 };
 inline VsSession& Session() { static VsSession s; return s; }
 
@@ -1937,6 +1939,7 @@ inline VsEditState& VsAddTab() {
     t->tabId = s.nextId++;
     s.tabs.push_back(std::move(t));
     s.active = (int)s.tabs.size() - 1;
+    s.forceSelect = true;
     return *s.tabs.back();
 }
 inline bool VsAnyUnsaved() {
@@ -2072,7 +2075,7 @@ inline void VsSaveTabList() {
 inline void OpenFile(const std::string& path) {
     VsSession& s = Session();
     const int have = VsFindTabByPath(path);
-    if (have >= 0) { s.active = have; return; }
+    if (have >= 0) { s.active = have; s.forceSelect = true; return; }
     VsEditState& st = VsAddTab();
     ResetEditState(st);
     if (!st.g.load(path)) {
@@ -2094,6 +2097,19 @@ inline void NewGraph(bool starter) {
     VsMarkClean(st);
     st.frameAll = true;
     VsSaveTabList();
+}
+/// New keeps the current graph. When that graph is dirty, ask first, with Save
+/// as the focused button, so Enter does not skip the question.
+inline void RequestNewGraph(bool starter) {
+    VsSession& s = Session();
+    VsEditState* cur = (s.active >= 0 && s.active < (int)s.tabs.size()) ? s.tabs[(std::size_t)s.active].get() : nullptr;
+    if (cur && cur->baselineSet && cur->g.dirty) {
+        s.ask = VsSession::Ask::NewGraph;
+        s.askTab = s.active;
+        s.newStarter = starter;
+        return;
+    }
+    NewGraph(starter);
 }
 inline void VsCloseTab(int index, bool remember) {
     VsSession& s = Session();
@@ -2173,6 +2189,7 @@ inline void VsRestoreTabs() {
         s.tabs.clear();
     for (const std::string& p : paths) OpenFile(p);
     if (active >= 0 && active < (int)s.tabs.size()) s.active = active;
+    s.forceSelect = true;
 }
 /// Save every dirty tab. Untitled graphs land in Assets with a free name.
 inline int VsSaveAllTabs(const std::string& projectDir) {
@@ -2303,9 +2320,81 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     for (auto& tab : Session().tabs) if (tab) VsRefreshDirty(*tab);
     if (open && !*open && VsAnyUnsaved()) { *open = true; Session().ask = VsSession::Ask::CloseWindow; }
+    // Tabs first, so a click this frame selects that graph before the canvas is drawn.
+    // SetSelected every frame kept the old tab and the canvas never followed the click.
+    ImGuiIO& io = ImGui::GetIO();
+    const bool winFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    const bool typing = io.WantTextInput;
+    {
+        VsSession& ses = Session();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 8.0f));
+        if (ImGui::BeginTabBar("##vstabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+            for (int i = 0; i < (int)ses.tabs.size(); ++i) {
+                VsEditState& tab = *ses.tabs[(std::size_t)i];
+                std::string title = VsTabTitle(tab);
+                if (tab.missing) title += " (missing)";
+                if (tab.g.dirty) title += " \xE2\x97\x8F";
+                title += "###vstab" + std::to_string(tab.tabId);
+                bool openTab = true;
+                ImGuiTabItemFlags fl = (ses.forceSelect && i == ses.active) ? ImGuiTabItemFlags_SetSelected : 0;
+                if (ImGui::BeginTabItem(title.c_str(), &openTab, fl)) {
+                    ses.active = i;
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", tab.g.path.empty() ? "Not saved yet" : tab.g.path.c_str());
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                            if (tab.g.dirty) { ses.ask = VsSession::Ask::CloseTab; ses.askTab = i; }
+                            else s_closeIds.push_back(i);
+                        }
+                        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 12.0f)) {
+                            const float dx = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).x;
+                            if (dx > 56.0f && i + 1 < (int)ses.tabs.size()) {
+                                std::swap(ses.tabs[(std::size_t)i], ses.tabs[(std::size_t)i + 1]);
+                                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+                                VsSaveTabList();
+                            } else if (dx < -56.0f && i > 0) {
+                                std::swap(ses.tabs[(std::size_t)i], ses.tabs[(std::size_t)i - 1]);
+                                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+                                VsSaveTabList();
+                            }
+                        }
+                    }
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::MenuItem("Close")) {
+                            if (tab.g.dirty) { ses.ask = VsSession::Ask::CloseTab; ses.askTab = i; }
+                            else s_closeIds.push_back(i);
+                        }
+                        if (ImGui::MenuItem("Close others")) { ses.ask = VsSession::Ask::CloseOthers; ses.askTab = i; }
+                        if (ImGui::MenuItem("Close all")) ses.ask = VsSession::Ask::CloseAll;
+                        if (ImGui::MenuItem("Reopen closed tab", "Ctrl+Shift+T", false, !okay::editor::docrec::ClosedStack().empty()))
+                            VsReopenClosedGraph();
+                        ImGui::EndPopup();
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (!openTab) {
+                    if (tab.g.dirty) { ses.ask = VsSession::Ask::CloseTab; ses.askTab = i; }
+                    else { s_closeRemember = false; s_closeIds.push_back(i); }
+                }
+            }
+            ses.forceSelect = false;
+            if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) RequestNewGraph(true);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("New graph");
+            ImGui::EndTabBar();
+        }
+        ImGui::PopStyleVar();
+        if (winFocused && !typing && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            const int n = (int)ses.tabs.size();
+            if (n > 1) { ses.active = (ses.active + (io.KeyShift ? n - 1 : 1)) % n; ses.forceSelect = true; }
+        }
+        if (winFocused && !typing && io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_T)) VsReopenClosedGraph();
+        if (winFocused && !typing && io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_W)) {
+            if (ses.active >= 0 && ses.active < (int)ses.tabs.size() && ses.tabs[(std::size_t)ses.active]->g.dirty) {
+                ses.ask = VsSession::Ask::CloseTab; ses.askTab = ses.active;
+            } else if (ses.tabs.size() > 1) { s_closeRemember = false; s_closeIds.push_back(ses.active); }
+        }
+    }
     VsEditState& st = State();
     VsEditGraph& g = st.g;
-    ImGuiIO& io = ImGui::GetIO();
     okay::vs::NodeGraph::Tracing() = true;
     if (!st.trackInit) { st.lastText = g.toText(); st.trackInit = true; }
 
@@ -2325,8 +2414,6 @@ inline void Draw(EditorState& ed, bool* open) {
         VsRefreshDirty(st);
         st.sel.clear(); st.selected = -1;
     };
-    const bool winFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-    const bool typing = io.WantTextInput;
 
     // ---- Toolbar: File / Edit / + Add / Templates ... Fit / zoom / View --------------
     // Kept short on purpose: everything else is a shortcut, the right-click menu,
@@ -2374,74 +2461,6 @@ inline void Draw(EditorState& ed, bool* open) {
         ed.dirty = true;
         Log("Attached visual script to " + o->name);
     };
-    // ---- Tabs: one graph each. A dirty tab asks before it closes. ----
-    {
-        VsSession& ses = Session();
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 8.0f));
-        if (ImGui::BeginTabBar("##vstabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
-            for (int i = 0; i < (int)ses.tabs.size(); ++i) {
-                VsEditState& tab = *ses.tabs[(std::size_t)i];
-                std::string title = VsTabTitle(tab);
-                if (tab.missing) title += " (missing)";
-                if (tab.g.dirty) title += " \xE2\x97\x8F";
-                title += "###vstab" + std::to_string(tab.tabId);
-                bool openTab = true;
-                ImGuiTabItemFlags fl = (i == ses.active) ? ImGuiTabItemFlags_SetSelected : 0;
-                if (ImGui::BeginTabItem(title.c_str(), &openTab, fl)) {
-                    ses.active = i;
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", tab.g.path.empty() ? "Not saved yet" : tab.g.path.c_str());
-                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
-                            if (tab.g.dirty) { ses.ask = VsSession::Ask::CloseTab; ses.askTab = i; }
-                            else s_closeIds.push_back(i);
-                        }
-                        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 12.0f)) {
-                            const float dx = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).x;
-                            if (dx > 56.0f && i + 1 < (int)ses.tabs.size()) {
-                                std::swap(ses.tabs[(std::size_t)i], ses.tabs[(std::size_t)i + 1]);
-                                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
-                                VsSaveTabList();
-                            } else if (dx < -56.0f && i > 0) {
-                                std::swap(ses.tabs[(std::size_t)i], ses.tabs[(std::size_t)i - 1]);
-                                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
-                                VsSaveTabList();
-                            }
-                        }
-                    }
-                    if (ImGui::BeginPopupContextItem()) {
-                        if (ImGui::MenuItem("Close")) {
-                            if (tab.g.dirty) { ses.ask = VsSession::Ask::CloseTab; ses.askTab = i; }
-                            else s_closeIds.push_back(i);
-                        }
-                        if (ImGui::MenuItem("Close others")) { ses.ask = VsSession::Ask::CloseOthers; ses.askTab = i; }
-                        if (ImGui::MenuItem("Close all")) ses.ask = VsSession::Ask::CloseAll;
-                        if (ImGui::MenuItem("Reopen closed tab", "Ctrl+Shift+T", false, !okay::editor::docrec::ClosedStack().empty()))
-                            VsReopenClosedGraph();
-                        ImGui::EndPopup();
-                    }
-                    ImGui::EndTabItem();
-                }
-                if (!openTab) {
-                    if (tab.g.dirty) { ses.ask = VsSession::Ask::CloseTab; ses.askTab = i; }
-                    else { s_closeRemember = false; s_closeIds.push_back(i); }
-                }
-            }
-            if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) NewGraph(true);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("New graph");
-            ImGui::EndTabBar();
-        }
-        ImGui::PopStyleVar();
-        if (winFocused && !typing && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Tab)) {
-            const int n = (int)ses.tabs.size();
-            if (n > 1) ses.active = (ses.active + (io.KeyShift ? n - 1 : 1)) % n;
-        }
-        if (winFocused && !typing && io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_T)) VsReopenClosedGraph();
-        if (winFocused && !typing && io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_W)) {
-            if (ses.active >= 0 && ses.active < (int)ses.tabs.size() && ses.tabs[(std::size_t)ses.active]->g.dirty) {
-                ses.ask = VsSession::Ask::CloseTab; ses.askTab = ses.active;
-            } else if (ses.tabs.size() > 1) { s_closeRemember = false; s_closeIds.push_back(ses.active); }
-        }
-    }
     bool addComment = false;
     bool openTpl = false;
     int alignReq = 0;   // 1 left, 2 right, 3 top, 4 bottom
@@ -2451,8 +2470,8 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::Button("Graph")) ImGui::OpenPopup("##vsfile");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("New, open, save, undo, align, and the panels");
     if (ImGui::BeginPopup("##vsfile")) {
-        if (ImGui::MenuItem("New graph")) NewGraph(true);
-        if (ImGui::MenuItem("New empty graph")) NewGraph(false);
+        if (ImGui::MenuItem("New graph")) RequestNewGraph(true);
+        if (ImGui::MenuItem("New empty graph")) RequestNewGraph(false);
         if (ImGui::MenuItem("Save all graphs")) VsSaveAllTabs(ed.projectDir());
         if (ImGui::BeginMenu("Restore previous version", !g.path.empty())) {
             // Filled by the host when backups are wired. The menu stays so the
@@ -3891,12 +3910,15 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (!ses.tabs[(std::size_t)i]->g.dirty) continue;
                 if (ses.ask == VsSession::Ask::CloseTab && i != ses.askTab) continue;
                 if (ses.ask == VsSession::Ask::CloseOthers && i == ses.askTab) continue;
+                if (ses.ask == VsSession::Ask::NewGraph && i != ses.askTab) continue;
                 ids.push_back(i);
             }
             return ids;
         };
         const std::vector<int> ids = dirtyIdx();
-        if (ses.ask == VsSession::Ask::CloseWindow)
+        if (ses.ask == VsSession::Ask::NewGraph)
+            ImGui::TextUnformatted("Save this graph before opening a new one?");
+        else if (ses.ask == VsSession::Ask::CloseWindow)
             ImGui::TextUnformatted("Close the Visual Script window?");
         else if (ids.empty())
             ImGui::TextUnformatted("Close these graphs?");
@@ -3909,7 +3931,12 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::Button("Save", ImVec2(120, 0))) {
             VsSaveAllTabs(ed.projectDir());
             s_closeRemember = false;
-            if (ses.ask == VsSession::Ask::CloseTab) s_closeIds.push_back(ses.askTab);
+            if (ses.ask == VsSession::Ask::NewGraph) {
+                const bool starter = ses.newStarter;
+                ses.ask = VsSession::Ask::None;
+                NewGraph(starter);
+                ImGui::CloseCurrentPopup();
+            } else if (ses.ask == VsSession::Ask::CloseTab) s_closeIds.push_back(ses.askTab);
             else if (ses.ask == VsSession::Ask::CloseOthers) {
                 for (int i = 0; i < (int)ses.tabs.size(); ++i) if (i != ses.askTab) s_closeIds.push_back(i);
             } else if (ses.ask == VsSession::Ask::CloseAll) {
@@ -3932,15 +3959,22 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::CloseCurrentPopup();
             }
         } else if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
-            s_closeRemember = true;
-            if (ses.ask == VsSession::Ask::CloseTab) s_closeIds.push_back(ses.askTab);
-            else if (ses.ask == VsSession::Ask::CloseOthers) {
-                for (int i = 0; i < (int)ses.tabs.size(); ++i) if (i != ses.askTab) s_closeIds.push_back(i);
-            } else if (ses.ask == VsSession::Ask::CloseAll) {
-                for (int i = 0; i < (int)ses.tabs.size(); ++i) s_closeIds.push_back(i);
+            if (ses.ask == VsSession::Ask::NewGraph) {
+                const bool starter = ses.newStarter;
+                ses.ask = VsSession::Ask::None;
+                NewGraph(starter);
+                ImGui::CloseCurrentPopup();
+            } else {
+                s_closeRemember = true;
+                if (ses.ask == VsSession::Ask::CloseTab) s_closeIds.push_back(ses.askTab);
+                else if (ses.ask == VsSession::Ask::CloseOthers) {
+                    for (int i = 0; i < (int)ses.tabs.size(); ++i) if (i != ses.askTab) s_closeIds.push_back(i);
+                } else if (ses.ask == VsSession::Ask::CloseAll) {
+                    for (int i = 0; i < (int)ses.tabs.size(); ++i) s_closeIds.push_back(i);
+                }
+                ses.ask = VsSession::Ask::None;
+                ImGui::CloseCurrentPopup();
             }
-            ses.ask = VsSession::Ask::None;
-            ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }

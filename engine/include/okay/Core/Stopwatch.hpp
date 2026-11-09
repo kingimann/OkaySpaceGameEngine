@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace okay {
@@ -25,6 +26,13 @@ public:
     explicit Stopwatch(Source source) : m_source(source ? std::move(source) : Source(RealSource)) {}
     /// A stopwatch on the game clock: paused games do not advance it.
     static Stopwatch GameTime() { return Stopwatch([] { return Time::ElapsedTimeD(); }); }
+    /// A stopwatch on one of the named game clocks (Clock::Get(name)): it follows that clock's own
+    /// scale and pause, so a stopwatch on "ui" runs through a game pause and one on "game" does not.
+    /// The clock is looked up on every read (a clock set that removed it reads as no time).
+    /// Defined in okay/Core/Clock.hpp (include that header to call it). Stopwatch.hpp is part of
+    /// <Okay.hpp> and must not name okay::Clock, so a program with its own `Clock` and
+    /// `using namespace okay;` keeps compiling.
+    static Stopwatch OnClock(const std::string& name);
     /// A stopwatch on the real clock that is already running.
     static Stopwatch StartNew() { Stopwatch s; s.Start(); return s; }
 

@@ -1,4 +1,5 @@
 #include "okay/Core/FrameStats.hpp"
+#include "okay/Core/SaveData.hpp"      // savefmt::AtomicWrite
 #include "okay/Debug/FrameHistory.hpp"
 
 #include <algorithm>
@@ -135,6 +136,27 @@ std::string FrameStats::ToJson() const {
     j += ",\"low01PercentMs\":" + n(s.low01PercentMs) + ",\"low01PercentFps\":" + n(s.low01PercentFps);
     j += ",\"hitches\":" + std::to_string(s.hitches) + ",\"hitchMs\":" + n(s.hitchMs) + "}";
     return j;
+}
+
+std::string FrameStats::ToCsv(bool header) const {
+    std::string out;
+    if (header) out = "frame,start_ms,frame_ms,fps\n";
+    out.reserve(out.size() + m_size * 36);
+    const std::uint64_t oldest = m_total - (std::uint64_t)m_size;
+    char buf[128];
+    for (std::size_t i = 0; i < m_size; ++i) {
+        const Entry& e = At(i);
+        const double fps = e.ms > 0.0 ? 1000.0 / e.ms : 0.0;
+        std::snprintf(buf, sizeof buf, "%llu,%.4f,%.4f,%.2f\n", (unsigned long long)(oldest + (std::uint64_t)i), e.startMs, e.ms, fps);
+        out += buf;
+    }
+    return out;
+}
+
+bool FrameStats::SaveCsv(const std::string& path, std::string* error) const {
+    if (path.empty()) { if (error) *error = "no file name given"; return false; }
+    if (!savefmt::AtomicWrite(path, ToCsv())) { if (error) *error = "could not write " + path; return false; }
+    return true;
 }
 
 std::size_t FrameStats::SyncTo(FrameHistory& history) {

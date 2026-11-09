@@ -55,13 +55,14 @@ public:
         /// Real frame times longer than this are cut down (seconds; <= 0 turns the clamp off).
         float maxDelta = 0.25f;
         /// > 0: a clamped frame steps this long instead of maxDelta (Application uses its
-        /// target frame time, as it always has).
+        /// target frame time, as it always has). Never longer than the frame was (a clamp only
+        /// shortens), and a value that is not a finite number > 0 means maxDelta.
         float hitchReplacement = 0.0f;
         /// A real frame longer than this is counted as a hitch (<= 0 turns counting off).
         float hitchThreshold = 0.1f;
         /// The fixed step in seconds; 0 follows Time::FixedDeltaTime().
         float fixedStep = 0.0f;
-        /// Fixed steps one frame may run (>= 1). Time past that is dropped.
+        /// Fixed steps one frame may run (>= 1, at most kMaxFixedStepsPerFrame). Time past that is dropped.
         int maxFixedSteps = 5;
         /// Step by an evened-out time (Time::SmoothDelta) instead of the clamped one.
         bool smoothDelta = false;
@@ -100,6 +101,9 @@ public:
     /// Largest debug time scale; a debug step may not be longer than kMaxStepDelta seconds;
     /// pending debug steps are capped at kMaxStepRequest.
     static constexpr float kMaxDebugTimeScale = 32.0f;
+    /// No frame runs more fixed steps than this, whatever maxFixedSteps and a fast-forward say: a tiny
+    /// fixedStep (a typo, 1e-9) with a huge cap used to keep one BeginFrame busy for billions of callbacks.
+    static constexpr int   kMaxFixedStepsPerFrame = 10000;
     static constexpr float kMaxCaptureFps = 1000.0f;
     static constexpr float kMaxStepDelta = 1.0f;
     static constexpr int   kMaxStepRequest = 1000000;

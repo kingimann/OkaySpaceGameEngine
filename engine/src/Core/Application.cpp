@@ -1,4 +1,5 @@
 #include "okay/Core/Application.hpp"
+#include "okay/Core/FramePacing.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/Log.hpp"
@@ -47,8 +48,10 @@ void Application::Run(Scene& scene) {
         m_config.targetFps > 0.0f ? 1.0f / m_config.targetFps : 0.0f;
 
     // The shared driver: clamp a stall, step Time (evened out when smoothDt), run the
-    // fixed steps and OnUpdate. Config defaults reproduce the loop this used to be.
-    GameLoop::Options opt;
+    // fixed steps and OnUpdate. Config defaults reproduce the loop this used to be. The Config
+    // decides only the options it has a field for; anything else the host set on loop() before
+    // Run (capture mode, a frame budget, the stats window, hitch logging...) stays as it set it.
+    GameLoop::Options opt = m_loop.options();
     opt.maxDelta = m_config.maxDelta;
     // A frame beyond the clamp steps one target frame (0.016 s uncapped), not the limit.
     opt.hitchReplacement = targetFrameTime > 0.0f ? targetFrameTime : 0.016f;
@@ -62,6 +65,8 @@ void Application::Run(Scene& scene) {
         GameLoop& loop;
         ~DropHook() { loop.OnUpdate = nullptr; }
     } dropHook{m_loop};
+
+    FrameLimiter limiter(m_config.pacing == Config::Pacing::Limiter ? (double)m_config.targetFps : 0.0);
 
     int frame = 0;
     try {
@@ -86,7 +91,9 @@ void Application::Run(Scene& scene) {
             ++frame;
             if (m_config.maxFrames > 0 && frame >= m_config.maxFrames) m_running = false;
 
-            if (targetFrameTime > 0.0f) {
+            if (limiter.Enabled()) {
+                limiter.EndFrame();   // sleeps to the frame's deadline (the first call only starts its clock)
+            } else if (targetFrameTime > 0.0f) {
                 auto frameEnd = clock::now();
                 float elapsed = std::chrono::duration<float>(frameEnd - now).count();
                 float remaining = targetFrameTime - elapsed;

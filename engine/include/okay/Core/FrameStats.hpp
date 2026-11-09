@@ -82,6 +82,15 @@ public:
     /// "240 frames: 59.8 fps avg (16.72 ms), 1% low 41.2 fps, 0.1% low 22.0 fps, worst 45.31 ms, 2 hitches".
     std::string ToText() const;
     std::string ToJson() const;
+    /// The window as CSV, oldest frame first, for a spreadsheet or a plot: a header line (`header`)
+    /// `frame,start_ms,frame_ms,fps` and one row per frame. `frame` counts from the last Clear (the
+    /// first frame ever pushed is 0), `start_ms` is where the frame began on the sum of all frame
+    /// times, `fps` is 1000 / frame_ms (0 for a 0 ms frame). Numbers use a dot and no thousands
+    /// separator whatever the locale. Cost is linear in the window: an export button, not a per-frame call.
+    std::string ToCsv(bool header = true) const;
+    /// Write ToCsv() to `path` atomically (a crash or a full disk leaves the old file whole). False,
+    /// with the reason in *error, when the file cannot be written.
+    bool SaveCsv(const std::string& path, std::string* error = nullptr) const;
 
     /// Copy the frames pushed since the last SyncTo (at most the window's worth) into a
     /// FrameHistory as FrameRecords (startMs, totalMs = cpuMs = frame time). Returns how

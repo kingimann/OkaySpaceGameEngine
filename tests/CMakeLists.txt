@@ -1831,3 +1831,17 @@ add_test(NAME tick_pacer COMMAND test_tick_pacer)
 add_executable(test_loop_player_style test_loop_player_style.cpp)
 target_link_libraries(test_loop_player_style PRIVATE okay::engine)
 add_test(NAME loop_player_style COMMAND test_loop_player_style)
+
+# 1.1 third pass (docs/loop_and_time.md): GameLoop / Game / Application edge cases, timers and clock
+# ramps, the loop's save snapshot, frame-stat export and console commands.
+add_executable(test_loop_audit3 test_loop_audit3.cpp)
+target_link_libraries(test_loop_audit3 PRIVATE okay::engine)
+add_test(NAME loop_audit3 COMMAND test_loop_audit3)
+
+add_executable(test_countdown test_countdown.cpp)
+target_link_libraries(test_countdown PRIVATE okay::engine)
+add_test(NAME countdown COMMAND test_countdown)
+
+add_executable(test_time_snapshot test_time_snapshot.cpp)
+target_link_libraries(test_time_snapshot PRIVATE okay::engine)
+add_test(NAME time_snapshot COMMAND test_time_snapshot)

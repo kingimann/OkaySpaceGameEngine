@@ -802,6 +802,11 @@ add_executable(test_ui_input_guard test_ui_input_guard.cpp)
 target_link_libraries(test_ui_input_guard PRIVATE okay::engine)
 add_test(NAME ui_input_guard COMMAND test_ui_input_guard)
 
+# Display settings model: window modes, resolutions, vsync, quality preset (no window needed)
+add_executable(test_display_settings test_display_settings.cpp)
+target_link_libraries(test_display_settings PRIVATE okay::engine)
+add_test(NAME display_settings COMMAND test_display_settings)
+
 add_executable(test_char_anim test_char_anim.cpp)
 target_link_libraries(test_char_anim PRIVATE okay::engine)
 add_test(NAME char_anim COMMAND test_char_anim)

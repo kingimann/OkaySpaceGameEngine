@@ -455,7 +455,11 @@ Each maps a normalized `t` (0..1) to an eased 0..1 — feed the result to `lerp`
 
 `ease_in`, `ease_out`, `ease_in_out`, `ease_in_cubic`, `ease_out_cubic`,
 `ease_in_out_cubic`, `ease_back`, `ease_elastic`, `ease_bounce`,
-plus `fract(x)` for the fractional part.
+plus `fract(x)` for the fractional part. A NaN `t` counts as 0.
+
+`ease_curve(t, "OutBack")` is any ease by name or as curve text (`"cubic-bezier(0.4, 0, 0.2, 1)"`,
+`"steps(4)"`, `"ease-in-out"`; the text `tween_ease` takes). Text it does not know leaves `t` as it is; a curve
+may overshoot 0..1 (Back, Elastic, a bezier with y outside it).
 
 ### More string helpers
 

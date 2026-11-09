@@ -23,6 +23,24 @@ std::vector<TimerDebug::GroupCount> Sorted(const std::map<std::string, std::size
     return out;
 }
 
+// The `options.topOldest` entries that have run longest, longest first (ties keep their order). Only that many are
+// copied: sorting a copy of every entry would cost more than the rest of a capture on a scene with thousands of them.
+template <class Info, class Age>
+std::vector<Info> TopByAge(const std::vector<Info>& all, const TimerDebug::Options& options, Age age) {
+    const std::size_t want = std::min<std::size_t>(all.size(), (std::size_t)std::max(0, options.topOldest));
+    std::vector<Info> out;
+    if (want == 0) return out;
+    std::vector<std::size_t> idx(all.size());
+    for (std::size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+    std::partial_sort(idx.begin(), idx.begin() + (std::ptrdiff_t)want, idx.end(), [&](std::size_t a, std::size_t b) {
+        const double x = age(all[a]), y = age(all[b]);
+        return x != y ? x > y : a < b;
+    });
+    out.reserve(want);
+    for (std::size_t i = 0; i < want; ++i) out.push_back(all[idx[i]]);
+    return out;
+}
+
 std::string Hex(const void* p) {
     char buf[40];
     std::snprintf(buf, sizeof(buf), "0x%llx", (unsigned long long)(std::uintptr_t)p);
@@ -102,6 +120,7 @@ TimerDebug::SchedulerStats TimerDebug::Capture(const Scheduler& scheduler, const
     SchedulerStats st;
     const std::vector<Scheduler::TaskInfo> tasks = scheduler.Tasks();
     std::map<std::string, std::size_t> tags, owners;
+    const bool groups = options.showGroups || options.topGroups > 0;   // a one-line summary does not pay for the tables
     for (const Scheduler::TaskInfo& t : tasks) {
         ++st.total;
         switch (t.kind) {
@@ -114,10 +133,12 @@ TimerDebug::SchedulerStats TimerDebug::Capture(const Scheduler& scheduler, const
         if (!t.ownerAlive) ++st.ownerGone;
         if (!t.clock.empty()) ++st.onClock;
         else if (t.unscaled) ++st.unscaled;
-        ++tags[t.tag.empty() ? std::string(kNone) : t.tag];
-        std::string who = kNone;
-        if (t.owner) who = !t.objectName.empty() ? t.objectName : t.hasObject ? std::string("(object gone)") : Hex(t.owner);
-        ++owners[who];
+        if (groups) {
+            ++tags[t.tag.empty() ? std::string(kNone) : t.tag];
+            std::string who = kNone;
+            if (t.owner) who = !t.objectName.empty() ? t.objectName : t.hasObject ? std::string("(object gone)") : Hex(t.owner);
+            ++owners[who];
+        }
         // The soonest task that is really waiting: not paused, still owned, and with a finite time.
         if (!t.paused && t.ownerAlive && std::isfinite(t.remaining) && (st.nextDue < 0.0f || t.remaining < st.nextDue)) {
             st.nextDue = t.remaining;
@@ -126,11 +147,7 @@ TimerDebug::SchedulerStats TimerDebug::Capture(const Scheduler& scheduler, const
     }
     st.byTag = Sorted(tags);
     st.byOwner = Sorted(owners);
-    st.oldest = tasks;
-    std::stable_sort(st.oldest.begin(), st.oldest.end(), [](const Scheduler::TaskInfo& a, const Scheduler::TaskInfo& b) {
-        return a.age > b.age;
-    });
-    st.oldest.resize(std::min<std::size_t>(st.oldest.size(), (std::size_t)std::max(0, options.topOldest)));
+    st.oldest = TopByAge(tasks, options, [](const Scheduler::TaskInfo& t) { return t.age; });
     return st;
 }
 
@@ -138,6 +155,7 @@ TimerDebug::TweenStats TimerDebug::Capture(const TweenManager& tweens, const Opt
     TweenStats st;
     const std::vector<TweenManager::TweenInfo> infos = tweens.Infos();
     std::map<std::string, std::size_t> ids, tags;
+    const bool groups = options.showGroups || options.topGroups > 0;
     for (const TweenManager::TweenInfo& t : infos) {
         ++st.total;
         if (t.paused) ++st.paused;
@@ -148,23 +166,24 @@ TimerDebug::TweenStats TimerDebug::Capture(const TweenManager& tweens, const Opt
         if (!t.clock.empty()) ++st.onClock;
         else if (t.unscaled) ++st.unscaled;
         if (t.hasTarget) ++st.withTarget;
-        ++ids[t.id.empty() ? std::string(kNone) : t.id];
-        if (!t.tag.empty()) ++tags[t.tag];
+        if (groups) {
+            ++ids[t.id.empty() ? std::string(kNone) : t.id];
+            if (!t.tag.empty()) ++tags[t.tag];
+        }
     }
     st.byId = Sorted(ids);
     st.byTag = Sorted(tags);
-    st.oldest = infos;
-    std::stable_sort(st.oldest.begin(), st.oldest.end(), [](const TweenManager::TweenInfo& a, const TweenManager::TweenInfo& b) {
-        return a.age > b.age;
-    });
-    st.oldest.resize(std::min<std::size_t>(st.oldest.size(), (std::size_t)std::max(0, options.topOldest)));
+    st.oldest = TopByAge(infos, options, [](const TweenManager::TweenInfo& t) { return t.age; });
     return st;
 }
 
 std::vector<std::string> TimerDebug::BuildLines(const Scheduler* scheduler, const TweenManager* tweens, const Options& options) {
     std::vector<std::string> lines;
+    Options capture = options;   // capture only what the lines will show
+    if (!options.showGroups) capture.topGroups = 0;
+    if (!options.showOldest) capture.topOldest = 0;
     if (scheduler) {
-        const SchedulerStats st = Capture(*scheduler, options);
+        const SchedulerStats st = Capture(*scheduler, capture);
         std::string head = "Scheduler: " + Plural(st.total, "task", "tasks");
         if (st.total > 0) {
             head += " (" + Plural(st.delays, "delay", "delays") + ", " + std::to_string(st.repeating) + " repeating, " +
@@ -196,7 +215,7 @@ std::vector<std::string> TimerDebug::BuildLines(const Scheduler* scheduler, cons
         }
     }
     if (tweens) {
-        const TweenStats st = Capture(*tweens, options);
+        const TweenStats st = Capture(*tweens, capture);
         std::string head = "Tweens: " + std::to_string(st.total);
         if (st.total > 0) {
             head += " (" + std::to_string(st.playing) + " playing";

@@ -4299,23 +4299,17 @@ void ApplyTheme() {
     else if (g_theme == 2) ImGui::StyleColorsClassic();
     else                   ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    // Flat, squared-off rounding — a pro-tool / Steam-like look rather than soft
-    // rounded "cards" (which read as generic). Unified across widgets.
-    s.WindowRounding    = 0.0f;  s.ChildRounding    = 2.0f;
-    s.FrameRounding     = 2.0f;  s.GrabRounding     = 2.0f;
-    s.PopupRounding     = 2.0f;  s.TabRounding      = 2.0f;
-    s.ScrollbarRounding = 2.0f;
-    // Balanced spacing: comfortable but not bloated (slightly roomier than the
-    // ImGui defaults). View > UI Scale scales everything for bigger displays.
-    s.WindowPadding   = ImVec2(10, 9);  s.FramePadding = ImVec2(8, 6);
-    s.ItemSpacing     = ImVec2(8, 7);   s.ItemInnerSpacing = ImVec2(7, 5);
-    s.CellPadding     = ImVec2(6, 4);   s.IndentSpacing = 18.0f;
-    s.ScrollbarSize   = 8.0f;           s.GrabMinSize = 11.0f;
-    s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 1.0f;   // thin frame borders for definition
-    s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 1.0f;   // subtler section rules
+    // One spacing system for every panel: readable type, room between controls,
+    // and hit targets you can land on. View > UI Scale still scales all of this.
+    s.WindowPadding   = ImVec2(16, 12); s.FramePadding = ImVec2(12, 8);
+    s.ItemSpacing     = ImVec2(12, 8);  s.ItemInnerSpacing = ImVec2(8, 6);
+    s.CellPadding     = ImVec2(10, 6);  s.IndentSpacing = 22.0f;
+    s.ScrollbarSize   = 14.0f;          s.GrabMinSize = 16.0f;
+    s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 0.0f;
+    s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 1.0f;
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
-    s.SeparatorTextAlign = ImVec2(0.0f, 0.5f);   // left-align section headers
-    s.SeparatorTextPadding = ImVec2(18.0f, 4.0f);
+    s.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
+    s.SeparatorTextPadding = ImVec2(22.0f, 8.0f);
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     s.DockingSeparatorSize = 1.5f;
@@ -4330,11 +4324,11 @@ void ApplyTheme() {
     s.TabCloseButtonMinWidthSelected   = 0.0f;
     s.TabCloseButtonMinWidthUnselected = 0.0f;
     s.DockingNodeHasCloseButton = false;
-    s.TabBarOverlineSize = 2.0f;
+    s.TabBarOverlineSize = 3.0f;
     s.TabBarBorderSize   = 1.0f;
-    s.TabMinWidthBase    = 64.0f;
-    s.TabMinWidthShrink  = 96.0f;    // squeezed dock tabs still show the icon + a few letters
-    if (g_theme == 0) s.TabRounding = 4.0f;
+    s.TabMinWidthBase    = 92.0f;
+    s.TabMinWidthShrink  = 120.0f;   // squeezed dock tabs still show the icon + a few letters
+    if (g_theme == 0) s.TabRounding = 6.0f;
     // Apply the global UI scale LAST so every metric above is scaled together.
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
@@ -4355,6 +4349,8 @@ void ApplyTheme() {
     c[ImGuiCol_TabDimmed]           = okaytheme::kSunken;
     c[ImGuiCol_TabDimmedSelected]   = okaytheme::kBase;
     c[ImGuiCol_TabDimmedSelectedOverline] = okaytheme::WithAlpha(okaytheme::kTextDim, 0.35f);
+    // Disabled text was easy to miss on the slate background.
+    c[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.74f, 0.82f, 1.0f);
 }
 
 // ---- Panel tabs, layouts and the panel switcher ------------------------------
@@ -4763,9 +4759,9 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
         break;
     }
     default: {   // Default: the original layout
-        ImGuiID left  = split(center, ImGuiDir_Left, 0.18f);
-        ImGuiID right = split(center, ImGuiDir_Right, 0.24f);
-        ImGuiID down  = split(center, ImGuiDir_Down, 0.26f);
+        ImGuiID left  = split(center, ImGuiDir_Left, 0.20f);
+        ImGuiID right = split(center, ImGuiDir_Right, 0.27f);
+        ImGuiID down  = split(center, ImGuiDir_Down, 0.22f);
         dock("Hierarchy", left);
         dock("Inspector", right);
         dock("Console###Console", down);
@@ -6294,7 +6290,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     // state (green while playing, amber while paused), like toolbar.
     const ImU32 kIconWhite = IM_COL32(255, 255, 255, 235);
     const float tb = ImGui::GetFrameHeight();
-    const float bw = tb * 1.45f;                 // transport button width
+    const float bw = tb * 1.7f;                  // transport button width (a real hit target)
     const float buildW = ImGui::CalcTextSize("Build").x + tb * 0.9f + 10.0f;
     ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f - (bw * 3.0f) * 0.5f);
     {
@@ -7025,7 +7021,7 @@ std::string g_pingAsset;
 static int   g_projFilter = 0;      // 0 All,1 Scripts,2 Images,3 Scenes,4 Materials,5 Prefabs,6 Data,7 Audio,8 Models
 static int   g_projSort   = 0;      // 0 Name, 1 Type, 2 Size, 3 Date
 static int   g_projView   = 0;      // 0 grid (tiles), 1 list (rows)
-static float g_projCell   = 76.0f;  // grid tile size
+static float g_projCell   = 112.0f; // grid tile size (readable thumbnails; the view menu can shrink them)
 static float g_projTreeW  = 200.0f; // folder-tree pane width (drag the splitter)
 static void SaveProjectViewPrefs() {
     std::ofstream f("okay_projectview.txt");
@@ -8649,8 +8645,8 @@ void DrawProject(EditorState& ed) {
         g_pingAsset.clear();
     }
     // Roomier spacing for the Project panel (it was too compact).
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(8, 8));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 5));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,  ImVec2(12, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
 
     std::error_code ec;
     fs::path root = ed.projectDir().empty() ? fs::absolute(".", ec)
@@ -17318,7 +17314,7 @@ void DrawHierarchy(EditorState& ed) {
     // One toolbar row: [+] [search.............] [...]
     if (IconButton("##hcreate", TbIcon::Plus, "Create object")) ImGui::OpenPopup("HierCreate");
     ImGui::SameLine();
-    SearchField("##hfilter", g_hierFilter, sizeof(g_hierFilter), "Search (name or type)",
+    SearchField("##hfilter", g_hierFilter, sizeof(g_hierFilter), "Search",
                 -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
     if (ImGui::IsItemHovered() && !g_hierFilter[0])
         ImGui::SetTooltip("Search by name, or by type: camera, light, mesh, script, ui...");
@@ -17336,9 +17332,7 @@ void DrawHierarchy(EditorState& ed) {
         ImGui::Spacing();
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d", (int)ed.scene().Objects().size());
         std::string sname = ed.scene().Name().empty() ? std::string("Untitled") : ed.scene().Name();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextUnformatted((sname + (ed.dirty ? " *" : "")).c_str());
-        ImGui::PopStyleColor();
+        ImGui::TextUnformatted((sname + (ed.dirty ? "  ·  unsaved" : "")).c_str());
         SameLineRight(ImGui::CalcTextSize(cnt).x);
         ImGui::TextDisabled("%s", cnt);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Objects in the scene");
@@ -27507,8 +27501,8 @@ static int ReloadPrefabInstances(EditorState& ed, const std::string& path) {
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     // Roomier spacing for the Inspector specifically (it was too compact).
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(9, 9));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(9, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(10, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(8, 8));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
 
     // Lock (pin) the inspector to the current object so it stays put while you
@@ -27536,7 +27530,7 @@ void DrawInspector(EditorState& ed) {
     // a tinted bar, then a Tag field + Save-as-Prefab, then a divider. The child
     // auto-sizes to its contents so there's no empty gap at the top.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
     ImGui::BeginChild("##objheader", ImVec2(0, 0),
                       ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
 
@@ -27793,7 +27787,7 @@ void DrawInspector(EditorState& ed) {
         }
         UIRect ar = GetUIRect(go);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
         ImGui::BeginChild("##uilayoutcard", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
         const float capW = ImGui::CalcTextSize("ARRANGE").x + 12.0f;
         // A row: caption on the left, its controls in a group so they wrap under
@@ -41577,11 +41571,11 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // Tools are icon buttons (tooltips carry the names + shortcuts); view toggles,
     // camera alignment and help live in the "..." menu so the row never wraps.
     const ImGuiStyle& vst = ImGui::GetStyle();
-    if (ImGui::Button(ed.view3D ? "3D" : "2D", ImVec2(ImGui::GetFrameHeight() * 1.35f, 0))) ed.view3D = !ed.view3D;
+    if (ImGui::Button(ed.view3D ? "3D" : "2D", ImVec2(ImGui::GetFrameHeight() * 1.6f, 0))) ed.view3D = !ed.view3D;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch between the 2D and 3D scene view");
     if (!uiPanel) {   // UI editing view, one click away (was buried in the "..." menu)
-        ImGui::SameLine(0, 2);
-        if (AccentToggleButton("UI##uimodebtn", g_uiOnlyMode, ImVec2(ImGui::GetFrameHeight() * 1.35f, 0))) g_uiOnlyMode = !g_uiOnlyMode;
+        ImGui::SameLine();
+        if (AccentToggleButton("UI##uimodebtn", g_uiOnlyMode, ImVec2(ImGui::GetFrameHeight() * 1.6f, 0))) g_uiOnlyMode = !g_uiOnlyMode;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(g_uiOnlyMode ? "UI editing view: the game screen with only the UI. Click to go back to the scene."
                                                                    : "UI editing view: edit the HUD / menus on a flat game screen");
     }
@@ -43886,12 +43880,12 @@ int main(int argc, char** argv) {
         // "—", "•", "…" renders without an explicit range. Geometric shapes ●▶★ are
         // simply absent from Roboto, so those are drawn or swapped in the code.)
         if (!io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 16.0f, &fc))
+                RobotoMedium_compressed_data_base85, 18.0f, &fc))
             io.Fonts->AddFontDefault();
         MergeLocalizationFonts(16.0f);   // Japanese, Chinese, Korean text in the string table
         // A slightly larger heading face for section titles (visual hierarchy).
         g_headingFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 18.5f, &fc);
+                RobotoMedium_compressed_data_base85, 22.0f, &fc);
         // A monospace face for the Script Editor. Code needs fixed-width glyphs so the
         // syntax overlay, caret and columns line up. JetBrains Mono (the JetBrains IDE
         // font) is a scalable TTF, so it can't fall out of alignment like a proportional

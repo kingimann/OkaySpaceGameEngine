@@ -1651,6 +1651,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
         struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz, fo, sp; };
+        // Once per mesh. Doing this inside the triangle loop made a plain scene
+        // about twice as slow (every band, every triangle, a component lookup).
+        float lodR = 1, lodG = 1, lodB = 1;
+        if (auto* lg = go->GetComponent<LODGroup>()) lg->DebugTint(lg->activeLevel, lodR, lodG, lodB);
+        Color shaded = mr->color;
+        shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
             Vec3 wp[3];
@@ -1826,12 +1832,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 if (nh > 0.0f) spec = std::pow(nh, faceShine) * faceSpec;
             }
             // Per-face color when the mesh carries one (e.g. character skin /
-            // outfit / hair); otherwise the renderer's single albedo color.
-            // LOD debug tint multiplies the albedo the same way the GPU backends do.
-            float lodR = 1, lodG = 1, lodB = 1;
-            if (auto* lg = go->GetComponent<LODGroup>()) lg->DebugTint(lg->activeLevel, lodR, lodG, lodB);
-            Color shaded = mr->color;
-            shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
+            // outfit / hair); otherwise the renderer's albedo, including LOD tint.
             const Color& base = faceCols ? drawMesh.triColors[i / 3] : shaded;
             const float metalK = mr->metallicRoughnessMap.empty() ? 1.0f : (1.0f - 0.9f * std::min(1.0f, std::max(0.0f, faceMetal)));
             float cr = base.r * lit.x * metalK + spec + faceEr;

@@ -121,7 +121,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 ### 6.7 Collision layers and trigger filters
 - **What:** A 32 by 32 layer matrix says which collider layers touch; triggers can also react only to a tag or to chosen layers.
 - **Parts:**
-  - 6.7.1 Layer matrix - `Physics/Physics2D`, `Physics/Physics3D` - `SetLayerCollision`, `LayersCollide`, `CollisionMask`, `ResetLayerCollisions`; scene file `layermatrix` record
+  - 6.7.1 Layer matrix - `Physics/Physics2D`, `Physics/Physics3D` - `SetLayerCollision`, `LayersCollide`, `CollisionMask`, `ResetLayerCollisions`; since #586 also `ApplyLayerCollisionPreset(Everything | Nothing | SameLayerOnly)`, `SetLayerCollisionGroups(maskA, maskB, enabled)`, `SetLayerCollisionByName`, `DisabledLayerPairs` (docs `layers_tags_cameras.md`); scene file `layermatrix` record
   - 6.7.2 Collider layer and trigger filter fields - `Physics/Collider2D`, `Physics/Collider3D` - `layer`, `triggerTag`, `triggerLayers`
 - **Code:** `Physics/Physics2D`, `Physics/Physics3D`, `Physics/Collider2D`, `Physics/Collider3D`, `Scene/Layers`
 - **API:** `scene.SetLayerCollision`, `scene.LayerCollisionMask`, `scene.ResetLayerCollisions`, `Collider3D::layer`, `triggerTag`, `triggerLayers`
@@ -129,7 +129,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Docs:** `docs/layers_tags_cameras.md`
 - **Tests:** `layers`, `physics_queries_ext`
 - **Status:** Works - matrix code in both Step functions and the collider fields read; covered by `layers` and the trigger tag tests in `physics_queries_ext`
-- **Open:** the matrix itself and its scene-file record are owned by area 1.3 (PR #570); this page only covers how the solvers use it
+- **Open:** the matrix itself, its presets and its scene-file record are owned by area 1.3 (#570, #586); this page only covers how the solvers use it
 - **Related:** 1.3, 6.1, 6.2, 6.5
 - **Words:** collision layers, layer matrix, collision mask, trigger tag, triggerLayers, ignore collision, layerMask, physics layers
 - **Seen as:** enemies bump each other when they should pass through; a pickup trigger fires for the wrong object; bullets hit the player who fired them

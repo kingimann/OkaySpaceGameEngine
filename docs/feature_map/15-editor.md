@@ -2,7 +2,7 @@
 
 The OkayEngine editor (Dear ImGui on SDL): docked panels, Scene and Game views, Inspector, Project panel, many tool windows, Play mode and Build Game. About 65k lines in `editor/`, of which `editor/main.cpp` is still about 45k; the split-out panel files hold the rest.
 `editor/vendor` (the vendored text editor widget) is out of scope. Only the headless logic (`EditorState`, tabs, game fiber, script text, graph model) has unit tests; the drawing code is checked by the CI `--selftest` run and by hand.
-Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. Animation windows belong to Grok's animation sessions; leave them alone. Open draft PR #577 (branch `cursor/editor-ui-redesign-00d9`, not from this team's sessions) redesigns the Visual Script and Script Editor layouts: it edits `editor/main.cpp` and `editor/VisualScriptEditor.hpp` and adds `editor/VsCanvasTools.hpp` (not on main; described only, not verified).
+Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. Animation windows belong to Grok's animation sessions; leave them alone. PR #577 (a Cursor session, merged for 2.851.0) redesigned the Visual Script and Script Editor layouts and gave the whole editor a roomier layout; it edited `editor/main.cpp`, `editor/VisualScriptEditor.hpp`, `editor/ConsolePanel.cpp` and `editor/vendor/TextEditor.*` and added `editor/VsCanvasTools.hpp` (14.1.9, 13.5, 15.9.7). Draft PR #584 (updater restart after install, from the same kind of session) touches `editor/main.cpp`, `launcher/main.cpp` and adds `shared/AppRestart.hpp`; it is not on main.
 
 ## 15. Editor
 
@@ -189,6 +189,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.9.4 Panel tabs and layouts - `editor/EditorTabs.hpp`, `editor/main.cpp` (~4337-5388) - saved named layouts, presets (Default, Tall, Wide, 2 by 3, Scripting, Animation), Ctrl+Tab switcher, tab overflow, side tabs
   - 15.9.5 Edit-mode undo for meshes - `editor/main.cpp` (~3021) - undo inside mesh edit mode
   - 15.9.6 Focus-aware undo - `editor/LocalizationWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/DialogueWindow.*`, `editor/TimelineWindow.*` - while one of these windows has focus, Ctrl+Z and Ctrl+Y act on its own file (string table, tree, dialogue, sequence), not on the scene
+  - 15.9.7 Roomier shared layout - `editor/main.cpp`, `editor/ConsolePanel.cpp` - (#577) larger shared spacing, type size and hit targets for the menu, docks, Hierarchy, Inspector, Project browser, scene toolbar and Console; the default dock keeps a wider Inspector and Hierarchy without giving up the Scene view, also at 1280x800; the camera projection combo is no longer clipped (per the PR description; the drawing code was not read)
 - **Code:** `editor/EditorState.*`, `editor/EditorTabs.hpp`, `editor/main.cpp`
 - **API:** Edit > Undo / Redo, View > Layout, File > Autosave, View > Panels > History
 - **Editor:** Edit menu, History panel, Layout dropdown
@@ -215,7 +216,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** -
 - **Tests:** `editor` (selftest), `editor_tabs`, `game_fiber`
 - **Status:** Partial - several windows already live in their own files (listed above) but `main.cpp` is still about 45k lines and holds the largest panels; no PR or branch for the next split found
-- **Open:** no PR for the next split found (draft PR #577 edits about 280 lines of `main.cpp` for the Visual Script and Script Editor layouts, so expect merge conflicts for anyone moving those panels); `DrawFlowGraph` (~1,060 lines) is retired and uncalled and could be deleted instead of moved (14.6); `editor/main.cpp` also holds the headless selftest and a self-updater (~1439-2114); the Scripting side asks for splitting the OkayScript VM too (19.4)
+- **Open:** no PR for the next split found (#577 changed about 280 lines of `main.cpp` for the layouts, the Script Editor find and replace bar and the Visual Script canvas, and draft PR #584 changes about 60 more, so expect merge conflicts for anyone moving those panels); `DrawFlowGraph` (~1,060 lines) is retired and uncalled and could be deleted instead of moved (14.6); `editor/main.cpp` also holds the headless selftest and a self-updater (~1439-2114); the Scripting side asks for splitting the OkayScript VM too (19.4)
 - **Related:** 19.4, 15.2, 15.3, 13.5
 - **Words:** main.cpp, split, refactor, panel files, MainShared, EditorCommon, giant file
 - **Seen as:** merge conflicts in `main.cpp`; slow rebuilds after a one-line editor change; two agents editing the same function

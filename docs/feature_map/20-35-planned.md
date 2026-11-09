@@ -1,8 +1,8 @@
 # 20-35. Planned areas
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
-The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.851.0 is live (it holds #571 and #572 from 2.849.0, #574, #575, #578 and #579 from 2.850.0, and the loop and time pass #581); 2.852.0 is being cut (PR #588) with the scene graph, timers and tweens and loop and time waves #586, #587 and #585. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (Grok's animation work, the updater fix #584, the 2.852.0 release PR #588).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 ## 20. Asset management (Critical)
@@ -364,7 +364,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   3. M - Renderers call `GpuScope` around shadow, opaque, transparent and post passes; `CpuFenceGpuTimer` as fallback. Depends on: #574 (on main).
   4. S - Profile scopes for scripts per object and for networking. Depends on: package 2.
   5. S - In-game stats overlay (`DebugStatsOverlay`) toggled by a key or a cvar. Depends on: #574, 54 proposal.
-- **Open:** the "GPU" number is CPU wall time around the render call; the ring is only 4 seconds at 60 fps; `FrameHistory` keeps 600 frames by default (`Capture(Prof())` copies the profiler's ring) but nothing calls it from the live frame yet (the second loop pass adds `GameLoop::Stats()` that can sync into it, 1.1).
+- **Open:** the "GPU" number is CPU wall time around the render call; the ring is only 4 seconds at 60 fps; `FrameHistory` keeps 600 frames by default (`Capture(Prof())` copies the profiler's ring) but nothing calls it from the live frame yet (`GameLoop::Stats()` from #581 keeps a window of loop frames and can sync into it, 1.1.13, but no host calls it).
 - **Related:** 1.10, 2.1, 15.6, 23.2, 23.3, 58.1
 - **Words:** profiler, CPU profiler, GPU profiler, frame time, spike, flame graph, OKAY_PROFILE, Chrome trace, Perfetto, FrameHistory, GpuTimer, Stats panel, FPS
 - **Seen as:** game stutters and I cannot tell why; FPS drops with many objects; profiler shows GPU time that does not change
@@ -1536,11 +1536,12 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 35.3.2 Inventory persistence - `Inventory/InventoryPersistence` - inventories, chests and equipment saved and restored
   - 35.3.3 Saveable state (#572) - `Core/SaveFrameworkScene` - `Saveable` component with a key, typed field helpers, `SaveSystem::CaptureScene` and `ApplyScene`, spawned and destroyed objects handled
   - 35.3.4 Stable object ids - `Scene/SceneSerializer` - persistent `GameObject::Guid()` (merged #570), usable as a save key
-- **Code:** `Core/SaveGame`, `Inventory/InventoryPersistence`, `Core/SaveFrameworkScene`, `Core/SaveFramework`, `Scene/SceneSerializer`
+  - 35.3.5 Clocks, time scale and random streams - `Core/TimeSnapshot`, `Core/Countdown` - (#585) `TimeSnapshot::Capture().AddRandom("loot", rng).Write(doc.Writer("time"))` stores every `Clock`, the gameplay time scale and named random streams in a save document so a reload cannot re-roll a chest; `Cooldown` and `Countdown` have `Save/Load` through `SaveWriter`/`SaveReader` (1.1.14, 1.1.15); `Time::ElapsedTime` and `FrameCount` are deliberately not restored
+- **Code:** `Core/SaveGame`, `Inventory/InventoryPersistence`, `Core/SaveFrameworkScene`, `Core/SaveFramework`, `Core/TimeSnapshot`, `Core/Countdown`, `Scene/SceneSerializer`
 - **API:** `SaveGame::Save`; `Saveable`, `SaveSystem::CaptureScene`, `ApplyScene`
 - **Editor:** none yet (no Add Component entry or Inspector section for Saveable)
 - **Docs:** `docs/save_games.md`; `docs/save_framework.md`
-- **Tests:** `save_game`, `inventory_persist_craft`; `save_scene`
+- **Tests:** `save_game`, `inventory_persist_craft`; `save_scene`, `time_snapshot`, `countdown`
 - **Status:** Works - whole-scene saves are shipped and tested; the selective saveable-objects model is on main (#572, test `save_scene`) but has no scene-file record or Inspector.
 - **Exists today:** Whole-scene save replaces the scene on load, so scripts restart and saves tie to one scene layout. Streamed worlds (27.4) are not covered.
 - **Work packages:**

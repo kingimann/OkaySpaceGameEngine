@@ -54,15 +54,17 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
   - 36.3.2 Easing functions - `Math/Easing` - `Ease` enum and `Easing::*` (Quad, Cubic, Sine, Expo, Back, Elastic, Bounce in/out/in-out), used by tweens, animation clips and UI animation
   - 36.3.3 Umbrella header - `Math/Math` - includes every Math header except the IK ones
   - 36.3.4 Curves - `Math/Curves` - (#571) `Curves::QuadBezier`, `CubicBezier`, `Hermite` and their tangents over float, Vec2 and Vec3
-- **Code:** `Math/Mathf`, `Math/Easing`, `Math/Math`, `Math/Curves`
+  - 36.3.5 Ease curves as data - `Math/Easing` - (#587) `Easing::ToName/FromName`, `CubicBezier(x1, y1, x2, y2, t)`, `Steps(n, t)`, `EaseCurve` that parses and writes `cubic-bezier(...)`, `steps(n)`, `ease-in-out` and preset names (see 1.2.10)
+  - 36.3.6 Springs - `Math/Spring` - (#587) closed-form damped springs: `Spring::Step`, `StepCritical`, `StepVec2/3`, `StepCriticalVec2/3`, `StepAngle`, `StepQuat`, `StepQuatCritical` and a `Spring` state object; one big step equals many small ones, so a hitch cannot blow it up; the older `Mathf::SmoothDamp` still works (see 1.2.12)
+- **Code:** `Math/Mathf`, `Math/Easing`, `Math/Math`, `Math/Curves`, `Math/Spring`
 - **API:** `Mathf::Lerp`, `Mathf::SmoothDamp`, `Mathf::Clamp01`, `Ease`, `Easing::QuadOut`, `Easing::BounceOut`
 - **Editor:** ease picker and curve preview in the Animator, Timeline and Tween Animation inspectors (editor/main.cpp)
 - **Docs:** `docs/timers_and_tweens.md`
-- **Tests:** `easing`, `math`, `math_extra`, `core_features`, `core_audit`
-- **Status:** Works - every easing endpoint was checked in the core audit (#565); new easings are appended to the enum so saved numbers keep their meaning
+- **Tests:** `easing`, `spring`, `math`, `math_extra`, `core_features`, `core_audit`
+- **Status:** Works - every easing endpoint was checked in the core audit (#565); `Spring.hpp` and `Easing.hpp` read on main (#587, tests `spring`, `easing`); new easings are appended to the enum so saved numbers keep their meaning
 - **Open:** `Mathf::Infinity` is now a real IEEE infinity (#571; `Mathf::MaxFloat` is the old value; script-side `Mathf.Infinity` stays `1e30`); `Mathf::SmoothStep` accepts its edges in either order (#571)
 - **Related:** 1.2, 5.2, 12.4, 36.1
-- **Words:** Mathf, Lerp, Clamp, SmoothStep, SmoothDamp, Repeat, PingPong, easing, Ease, ease in, ease out, bounce, elastic, back
+- **Words:** Mathf, Lerp, Clamp, SmoothStep, SmoothDamp, Repeat, PingPong, easing, Ease, ease in, ease out, bounce, elastic, back, cubic-bezier, EaseCurve, steps, Spring, critical damping, spring follow
 - **Seen as:** an animation overshoots or snaps; a camera follow lags or oscillates; an angle jumps at 360
 - **Ask me like:** "Use a springy ease for the menu pop-in"; "Damp the camera toward the target without overshoot"
 

@@ -1,5 +1,30 @@
 OkaySpace Game Engine — Changelog
 
+v2.853.0
+  Editor
+  - Play mode in the editor now runs on the shared game loop, like the built
+    player: time scale, hit stop, time-scale ramps and the named clocks work
+    inside Play, Time.deltaTime and elapsed time advance, and every Play starts
+    a clean session. Editing never advances game time (#590).
+  - Tags and layers: the editor uses the project tag and layer lists. Add a
+    custom tag with a clear error when the name is not allowed, rename or remove
+    it (objects keep their tags in one undo step), and rename a layer by
+    right-clicking it in the object Layer menu or the camera Culling Mask list
+    (#590).
+  - Duplicate keeps a copy under the same parent, places it right after the
+    original and numbers the name ("Cube (1)") (#590).
+  - The Tween Animation inspector has a Curve field (cubic-bezier, steps or a
+    preset name, with a preview) and a Clock menu, so a tween can run on the UI
+    clock while the game is paused (#590).
+  - The script editor knows tween_clock and tween_prop (#590).
+  Loop and time
+  - A dedicated server starts every run with a clean time session, so a time
+    scale left over from an earlier run in the same process no longer slows the
+    world (#590).
+  Docs
+  - The feature map now covers the new loop, timer, tween and scene graph parts,
+    their tests and what is still open (#589).
+
 v2.852.0
   Loop and time
   - The built player now runs on the shared game loop, so its hitch handling,

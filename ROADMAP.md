@@ -4,12 +4,13 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-11-09 05:30 UTC_
+_Last updated: 2026-11-09 07:05 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.853.0 | Editor on the new core: Play on the shared game loop, project tag and layer lists with rename, Duplicate keeps the parent, tween clock and ease-curve fields (#590); feature map for the core 1.1 to 1.3 wave (#589) |
 | 2.852.0 | Loop and time third pass: player on the shared game loop, Countdown and Cooldown, time snapshot, frame stats CSV and console (#585); timers and tweens: owner-safe timers, clock channels, springs, ease curves, tween any property (#587); scene graph: deep hierarchies, Transform and spawn API, project tag and layer lists, collision presets (#586) |
 | 2.851.0 | Roomier editor layout across the shell, Visual Script editor and Script Editor (#577); frame stepping, frame recorder and player, capture mode, frame stats, server tick pacer (#581); scene text tools learn the gravity3 record (#582); feature map v2 (#576) |
 | 2.850.0 | Shared game loop with hitch handling, clocks, hit stop, pause and quit reasons, random helpers (#579); nested prefabs and variants, property registry, scene diff and merge, job system and arenas (#578); scene hierarchy, search and validation, exact float round trip (#575); profiling data, optimization tools, localization tools, accessibility (#574) |

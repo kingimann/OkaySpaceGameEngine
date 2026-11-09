@@ -172,7 +172,9 @@ struct PropertyDesc {
     bool Set(Component& c, const PropertyValue& v) const;
 
     /// Read text in this property's type. Like PropertyValue::FromString, plus an
-    /// Enum takes an option name ("Point", any case) as well as a number.
+    /// Enum takes an option name ("Point", any case) as well as a number. For an Enum
+    /// written as "number name" the two must agree: "1 Point" when option 1 is not Point
+    /// is refused (a name that is no option any more leaves the number to decide).
     bool ParseText(const std::string& text, PropertyValue& out) const;
     /// The friendly text of a value: an Enum's option name, else ToString().
     std::string FormatText(const PropertyValue& v) const;

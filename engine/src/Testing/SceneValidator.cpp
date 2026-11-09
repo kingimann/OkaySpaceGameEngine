@@ -39,6 +39,7 @@
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Core/DataPack.hpp"
 #include "okay/Scripting/ScriptVM.hpp"
 #include "okay/Testing/ObjectPath.hpp"
 
@@ -479,12 +480,31 @@ ValidationReport ValidateLoaded(const std::string& sceneName, bool loaded, Scene
 
 } // namespace
 
+namespace {
+
+// What the loader repairs silently and a look at the loaded scene cannot see: found in the text, reported first.
+void AddLinkIssues(ValidationReport& rep, const std::string& text, const ValidatorOptions& options) {
+    if (!options.checkLinks) return;
+    std::vector<ValidationIssue> found;
+    for (const SceneIssue& i : ValidateSceneLinks(text).issues) {
+        if (i.kind == SceneIssue::Kind::DuplicateGuid)
+            found.push_back({Severity::Warning, "scene.duplicate_guid", i.object, "", i.message + " (one of them is given a new guid on load)"});
+        else if (i.kind == SceneIssue::Kind::BrokenParentLink)
+            found.push_back({Severity::Error, "scene.broken_parent", i.object, "", i.message + " (it loads as a root object, so it is not where it was placed)"});
+    }
+    rep.issues.insert(rep.issues.begin(), found.begin(), found.end());
+}
+
+} // namespace
+
 ValidationReport SceneValidator::ValidateText(const std::string& sceneText, const ValidatorOptions& options) {
     Scene scene("scene");
     std::string err;
     std::vector<std::string> warnings;
     const bool ok = SceneSerializer::Deserialize(scene, sceneText, &err, &warnings);
-    return ValidateLoaded(scene.Name(), ok, scene, err, warnings, options);
+    ValidationReport rep = ValidateLoaded(scene.Name(), ok, scene, err, warnings, options);
+    AddLinkIssues(rep, sceneText, options);
+    return rep;
 }
 
 ValidationReport SceneValidator::ValidateFile(const std::string& path, const ValidatorOptions& options) {
@@ -497,6 +517,13 @@ ValidationReport SceneValidator::ValidateFile(const std::string& path, const Val
     if (slash != std::string::npos) opt.searchDirs.push_back(path.substr(0, slash));
     ValidationReport rep = ValidateLoaded(scene.Name(), ok, scene, err, warnings, opt);
     if (!ok) rep.sceneName = path;
+    else if (options.checkLinks) {
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream raw; raw << in.rdbuf();
+        bool packOk = true;
+        const std::string text = DataPack::Unpack(raw.str(), &packOk);   // the same text the load just read
+        if (packOk) AddLinkIssues(rep, text, options);
+    }
     return rep;
 }
 

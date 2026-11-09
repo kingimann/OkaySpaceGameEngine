@@ -138,8 +138,11 @@ float CommandLine::GetFloat(const std::string& name, float def) const {
     return ParseFloatStrict(Get(name), v) ? (float)v : def;
 }
 bool CommandLine::GetBool(const std::string& name, bool def) const {
-    if (!Has(name)) return def;
-    std::string v = Get(name);
+    // Like the other getters: the command line first, then the default the option was declared with, then `def`.
+    std::string v;
+    if (Has(name)) v = Get(name);
+    else if (const Option* o = FindLong(name); o && !o->defaultValue.empty()) v = o->defaultValue;
+    else return def;
     for (char& c : v) c = (char)std::tolower((unsigned char)c);
     if (v == "0" || v == "false" || v == "off" || v == "no") return false;
     return true;

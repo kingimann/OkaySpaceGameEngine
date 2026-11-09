@@ -2,7 +2,7 @@
 // from outside, through each component's public fields, so the component headers
 // and the scene serializer stay as they are. See docs/properties.md for what is
 // covered and what is not.
-#include "okay/Scene/PropertyBuilder.hpp"
+#include "BuiltinPropertiesShared.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -23,9 +23,27 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 
 namespace okay {
+
+namespace detail {
+const std::vector<std::string>& AnchorNames() {
+    static const std::vector<std::string> n = {"TopLeft", "TopCenter", "TopRight", "MiddleLeft", "Center", "MiddleRight",
+                                               "BottomLeft", "BottomCenter", "BottomRight",
+                                               "StretchHorizontal", "StretchVertical", "StretchFull"};
+    return n;
+}
+const std::vector<std::string>& ShapeNames() {
+    static const std::vector<std::string> n = {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon",
+                                               "Parallelogram", "Trapezoid", "Pentagon", "Squircle", "TabTop",
+                                               "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"};
+    return n;
+}
+} // namespace detail
+
 namespace {
 
-constexpr double kBig = 100000.0;   // a sane ceiling for sizes and distances
+using detail::kBig;
+using detail::AnchorNames;
+using detail::ShapeNames;
 
 // ---- GameObject (the object's own fields) ---------------------------------------
 
@@ -490,14 +508,7 @@ void RegisterSimpleBehaviours() {
 }
 
 // ---- UI: Canvas and UIPanel ----------------------------------------------------------------------------------
-// The other widgets (buttons, sliders, inputs ...) are not registered yet.
-
-const std::vector<std::string>& AnchorNames() {
-    static const std::vector<std::string> n = {"TopLeft", "TopCenter", "TopRight", "MiddleLeft", "Center", "MiddleRight",
-                                               "BottomLeft", "BottomCenter", "BottomRight",
-                                               "StretchHorizontal", "StretchVertical", "StretchFull"};
-    return n;
-}
+// The other widgets (button, text, image, slider ...) are in BuiltinPropertiesUI.cpp.
 
 void RegisterCanvas() {
     PropertyBuilder<Canvas> b("Canvas", "canvas", "UI");
@@ -523,9 +534,7 @@ void RegisterUIPanel() {
      .AddVec2("size", &UIPanel::size).Range(-kBig, kBig, 1)
      .AddEnum("anchor", &UIPanel::anchor, AnchorNames())
      .AddColor("color", &UIPanel::color).Range(0, 1, 0.01)
-     .AddEnum("shape", &UIPanel::shape, {"Rectangle", "Rounded", "Circle", "Pill", "Triangle", "Diamond", "Hexagon", "Octagon",
-                                          "Parallelogram", "Trapezoid", "Pentagon", "Squircle", "TabTop",
-                                          "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"})
+     .AddEnum("shape", &UIPanel::shape, ShapeNames())
      .AddFloat("cornerRadius", &UIPanel::cornerRadius).Range(0, 10000, 1)
      .AddInt("cornerMask", &UIPanel::cornerMask).Range(0, 15).Tooltip("Bits for the corners that are rounded: 1 top-left, 2 top-right, 4 bottom-right, 8 bottom-left")
      .Section("Border")
@@ -568,6 +577,8 @@ void RegisterBuiltinPropertyTable() {
     RegisterSimpleBehaviours();
     RegisterCanvas();
     RegisterUIPanel();
+    RegisterGameplayProperties();
+    RegisterUIProperties();
 }
 } // namespace detail
 

@@ -3,7 +3,11 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <cstdlib>
+#include <limits>
 
 namespace okay {
 namespace {
@@ -29,8 +33,43 @@ std::string DataAsset::GetString(const std::string& key, const std::string& def)
 }
 
 double DataAsset::GetNumber(const std::string& key, double def) const {
-    for (const auto& f : m_fields) if (f.first == key) return std::atof(f.second.c_str());
+    for (const auto& f : m_fields) if (f.first == key) {
+        const double v = std::strtod(f.second.c_str(), nullptr);   // what atof reads
+        return std::isfinite(v) ? v : def;                         // "nan", "inf" and "1e999" are not numbers a game can use
+    }
     return def;
+}
+
+int DataAsset::GetInt(const std::string& key, int def) const {
+    const double v = GetNumber(key, std::numeric_limits<double>::quiet_NaN());
+    if (v != v) return def;   // missing, or not a usable number
+    if (v >= 2147483647.0) return std::numeric_limits<int>::max();
+    if (v <= -2147483648.0) return std::numeric_limits<int>::min();
+    return (int)v;
+}
+
+bool DataAsset::GetBool(const std::string& key, bool def) const {
+    for (const auto& f : m_fields) if (f.first == key) {
+        std::string v = Trim(f.second);
+        for (char& c : v) c = (char)std::tolower((unsigned char)c);
+        if (v == "true" || v == "yes" || v == "on" || v == "1") return true;
+        if (v == "false" || v == "no" || v == "off" || v == "0") return false;
+        return def;
+    }
+    return def;
+}
+
+bool DataAsset::TryGetNumber(const std::string& key, double& out) const {
+    for (const auto& f : m_fields) if (f.first == key) {
+        const std::string t = Trim(f.second);
+        if (t.empty()) return false;
+        char* end = nullptr;
+        const double v = std::strtod(t.c_str(), &end);
+        if (!end || *end != '\0' || !std::isfinite(v)) return false;
+        out = v;
+        return true;
+    }
+    return false;
 }
 
 void DataAsset::Set(const std::string& key, const std::string& value) {
@@ -76,6 +115,7 @@ bool DataAsset::Load(const std::string& path) {
     bool escaped = false, first = true;
     std::string line;
     while (std::getline(in, line)) {
+        if (first && line.compare(0, 3, "\xEF\xBB\xBF") == 0) line.erase(0, 3);   // a byte order mark from a text editor
         if (!line.empty() && line.back() == '\r') line.pop_back();
         std::string t = Trim(line);
         if (first) { first = false; escaped = (t == kHeader); }
@@ -111,7 +151,16 @@ bool DataAsset::Reload(const std::string& path) {
     return true;
 }
 
-void DataAsset::Invalidate(const std::string& path) { g_cache.erase(path); }
-void DataAsset::InvalidateAll() { g_cache.clear(); }
+// Emptied in place rather than erased: a DataAsset& the caller still holds (a script's cached lookup, a
+// panel) must not dangle. An emptied, unloaded entry is read from disk again by the next Cached().
+void DataAsset::Invalidate(const std::string& path) {
+    auto it = g_cache.find(path);
+    if (it == g_cache.end()) return;
+    it->second.m_fields.clear();
+    it->second.m_loaded = false;
+}
+void DataAsset::InvalidateAll() {
+    for (auto& kv : g_cache) { kv.second.m_fields.clear(); kv.second.m_loaded = false; }
+}
 
 } // namespace okay

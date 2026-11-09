@@ -124,6 +124,11 @@ std::cout << r.ToText();        // or r.ToJson()
 if (r.HasErrors()) return 1;
 ```
 
+This is the validator for CI. The scene text has a second, lighter one (`Scene::Validate`,
+`SceneSerializer::Validate`); `scene_hierarchy_search.md` ("Which validator?") says when to use which. `ValidateText` and
+`ValidateFile` also report `scene.duplicate_guid` and `scene.broken_parent` (the loader repairs both, so only the text shows
+them); `checkLinks = false` turns that off.
+
 `Validate(scene)`, `ValidateText(text)` and `ValidateFile(path)` never change the scene
 (the last two load into a scratch scene; a document that does not load is one
 `scene.load` error, skipped records become `scene.load_warning`). Relative asset paths
@@ -151,8 +156,10 @@ textures and URLs are built in and always found.
 | `object.inactive` | info | the top of an inactive subtree (reported once, with the descendant count) |
 | `object.layer_range` | warning | a layer outside 0..31 |
 | `physics.rigidbody_no_collider` | warning | a `Rigidbody2D` / `Rigidbody3D` with no collider on the object |
+| `scene.duplicate_guid` | warning | `ValidateText` / `ValidateFile`: two objects carry the same `guid` (the loader gives one a new guid) |
+| `scene.broken_parent` | error | `ValidateText` / `ValidateFile`: `parent N` names an object that is not in the file (it loads as a root) |
 
-`ValidatorOptions` has a `check*` switch per group, severities for missing assets, no
+`ValidatorOptions` has a `check*` switch per group (including `checkLinks` for the two codes above), severities for missing assets, no
 camera and duplicate names, and `allowDuplicateNames`. The asset fields it follows are
 the same ones `SceneSerializer::CollectAssetPaths` ships with a build (plus fonts and the
 prefab source); `SceneValidator::AssetReferences(go)` lists them per object. Objects a

@@ -505,6 +505,18 @@ bool PropertyDesc::ParseText(const std::string& text, PropertyValue& out) const 
     }
     PropertyValue v;
     if (!PropertyValue::FromString(type, text, v)) return false;
+    if (type == PropertyType::Enum && !v.EnumName().empty()) {
+        // "number name" (what FormatText / ToString write): when the name is one of the
+        // options it must be the option the number picks. A text that contradicts itself
+        // (a stale "1 Orthographic" after the options were reordered) is refused rather
+        // than silently taking the number. A name that is no option any more: the number decides.
+        const std::string low = Lower(v.EnumName());
+        for (std::size_t i = 0; i < enumOptions.size(); ++i)
+            if (Lower(enumOptions[i]) == low) {
+                if (static_cast<int>(i) != v.AsEnum()) return false;
+                break;
+            }
+    }
     out = v;
     return true;
 }

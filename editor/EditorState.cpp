@@ -10,6 +10,8 @@
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
+#include "okay/Core/FrameOverlay.hpp"
+#include "okay/Core/TimerDebug.hpp"
 #include <filesystem>
 #include "../shared/ProjectCreate.hpp"
 
@@ -50,6 +52,8 @@ EditorState::EditorState() : m_scene("Untitled") {
         } unpause(editorPaused);
         if (playTick) playTick(dt); else Tick(dt);
     };
+    // "Run N frames": the loop paused the game under the editor's own reason; let the toolbar's Pause flag follow.
+    m_loop.OnRunFramesDone = [this] { if (onRunFramesDone) onRunFramesDone(); };
     MarkClean();   // an empty scene is nothing to save
 }
 
@@ -332,6 +336,26 @@ void EditorState::DeleteSelected() {
     m_selected = nullptr;
     m_multi.clear();
     dirty = true;
+}
+
+int EditorState::DeleteChildrenOfSelected() {
+    if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
+    const std::vector<GameObject*> targets = m_multi.empty() ? std::vector<GameObject*>(m_selected ? 1 : 0, m_selected) : m_multi;
+    bool any = false;
+    for (const GameObject* g : targets) if (g && g->transform && g->transform->ChildCount() > 0) any = true;
+    if (!any) return 0;
+    PushUndo();
+    int removed = 0;
+    for (GameObject* g : targets) {
+        if (!g || g->IsDestroyed() || !g->transform) continue;
+        // Anything below `g` leaves the selection before it is freed, so no selected pointer dangles.
+        for (const auto& up : m_scene.Objects())
+            if (up.get() != g && up->IsSelfOrDescendantOf(g)) Deselect(up.get());
+        removed += m_scene.DestroyChildren(g);
+    }
+    m_scene.FlushDestroyed();   // no simulated frame in edit mode (see DeleteSelected)
+    dirty = true;
+    return removed;
 }
 
 void EditorState::NewScene() {
@@ -852,6 +876,7 @@ void EditorState::Play() {
     // scale a script had left, so the next Play started frozen once the editor stepped Time), the clocks
     // at zero and SmoothDelta's history forgotten.
     m_loop.BeginSession();
+    m_loop.SetDebugTimeScale(1.0f);   // slow motion is a per-session debugging aid (BeginSession keeps it by design)
     // Audio files named on AudioSources play in Play mode without pressing Load.
     {
         std::vector<std::string> missing;
@@ -883,6 +908,7 @@ void EditorState::Stop() {
     m_playing = false;
     m_scene.UseFixedStepPhysics(false);
     m_loop.BeginSession();   // unpause, clear quit and any script's time scale, so the next Play starts clean
+    m_loop.SetDebugTimeScale(1.0f);   // and the toolbar's slow motion: a new Play never starts at 0.25x
     ActionList::DebugPaused() = false; ActionList::StepBudget() = 0;   // never leave Actions frozen after Stop
     // Deserialize rebuilds the scene, destroying every live component — including
     // any NetworkManager m_net points at. Drop the pointer first so TickServices
@@ -923,6 +949,63 @@ bool EditorState::StepFrame(float seconds) {
     if (!m_playing) return false;
     SetPaused(true);
     return m_loop.RequestStep(1, seconds);
+}
+
+float EditorState::StepDebugTimeScale(int direction) {
+    if (!m_playing) return m_loop.DebugTimeScale();
+    m_loop.SetDebugTimeScale(GameLoop::NextDebugTimeScale(m_loop.DebugTimeScale(), direction));
+    return m_loop.DebugTimeScale();
+}
+
+void EditorState::ResetDebugTimeScale() {
+    m_loop.SetDebugTimeScale(1.0f);
+}
+
+bool EditorState::RunFrames(int frames, float frameSeconds) {
+    if (!m_playing || frames < 1) return false;
+    // The loop pauses under the editor's own reason, so the Pause button (Game::PushPause("editor")) and the
+    // loop agree when the run ends; already paused, it steps the frames and stays paused.
+    return m_loop.RunFrames(frames, frameSeconds, kPauseReason);
+}
+
+std::vector<std::string> EditorState::PerfLines() const {
+    return m_playing ? FrameOverlay::Lines(m_loop) : std::vector<std::string>();
+}
+
+std::vector<std::string> EditorState::SceneLines(int maxComponentTypes) const {
+    return m_scene.Stats().Lines(maxComponentTypes);
+}
+
+std::vector<std::string> EditorState::StatsLines(int maxComponentTypes) const {
+    std::vector<std::string> lines = PerfLines();
+    for (std::string& l : SceneLines(maxComponentTypes)) lines.push_back(std::move(l));
+    return lines;
+}
+
+std::string EditorState::FpsLabel() const {
+    return FrameOverlay::FpsLabel(m_loop);
+}
+
+std::vector<float> EditorState::RecentFps(std::size_t count) const {
+    return FrameOverlay::RecentFps(m_loop.Stats(), count);
+}
+
+std::vector<std::string> EditorState::TimerLines(std::size_t maxChars) {
+    TimerDebug::Options o;
+    o.topGroups = 3;
+    o.topOldest = 1;
+    // The scene's own timers and tweens (a scene change or Clear drops them), then the process-wide scheduler
+    // (Scheduler::Global(), which survives scene loads) when something is in it.
+    std::vector<std::string> lines = TimerDebug::BuildLines(&m_scene.scheduler(), &m_scene.tweens(), o);
+    if (Scheduler::Global().ActiveCount() > 0) {
+        std::vector<std::string> global = TimerDebug::BuildLines(&Scheduler::Global(), nullptr, o);
+        if (!global.empty()) global[0] = "Global " + global[0];
+        for (std::string& l : global) lines.push_back(std::move(l));
+    }
+    if (maxChars >= 4)
+        for (std::string& l : lines)
+            if (l.size() > maxChars) { l.resize(maxChars - 3); l += "..."; }
+    return lines;
 }
 
 } // namespace okay::editor

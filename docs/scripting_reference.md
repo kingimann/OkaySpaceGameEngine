@@ -226,6 +226,9 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `tween_punch_scale(amount, dur [, vib])` / `tween_punch_pos(dx, dy, dur [, vib])` | Punch & settle ("juice") |
 | `tween_shake(intensity, dur)` | Random shake that decays to a stop |
 | `tween_clock(id, channel)` | Follow a Clock channel (`"game"`, `"ui"`, `"cinematic"`, or your own) instead of scene time; `""` goes back. Returns the id |
+| `tween_tag(id, tag)` / `tween_speed_based(id)` / `tween_decay(id, rate)` | Group label for the `_tag` calls / duration is a speed in units a second / falloff of a punch or shake. Return the id |
+| `tween_kill_tag(tag [, complete])` / `tween_pause_tag(tag)` / `tween_play_tag(tag)` / `tween_complete_tag(tag)` / `tween_rewind_id(id)` | Control every tween with a tag (or id) in the scene; return how many |
+| `seq_prepend(seq, id)` / `seq_join_callback(seq, "fn")` | Play a tween before everything in a sequence / call a function when the last appended tween starts |
 | `tween_prop(path, to, dur [, ease][, "done"])` | Tween any property of this object by path (`"Light.intensity"`, `"Transform.scale.y"`; see docs/properties.md). The ease is a name or curve text: `"cubic-bezier(0.4,0,0.2,1)"`, `"steps(4)"` |
 | `save_game([slot] [, label])` / `load_game([slot])` | Save / load the whole game (see docs/save_games.md) |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |

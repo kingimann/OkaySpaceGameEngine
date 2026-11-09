@@ -6,7 +6,8 @@
 
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
+#include <locale>
+#include <sstream>
 
 namespace okay {
 
@@ -20,12 +21,17 @@ std::string Num(double v) {
     return b;
 }
 
-// A finite number from text, with nothing left over ("0.5", not "0.5x" or "nan").
+// A finite number from text, with nothing left over ("0.5", not "0.5x", "nan" or "0x10"), read with
+// a dot whatever the process locale is.
 bool ParseNumber(const std::string& text, double& out) {
     if (text.empty()) return false;
-    char* end = nullptr;
-    const double v = std::strtod(text.c_str(), &end);
-    if (end == text.c_str() || *end != '\0' || !std::isfinite(v)) return false;
+    std::istringstream is(text);
+    is.imbue(std::locale::classic());
+    double v = 0.0;
+    is >> v;
+    if (is.fail()) return false;
+    is >> std::ws;
+    if (!is.eof() || !std::isfinite(v)) return false;
     out = v;
     return true;
 }

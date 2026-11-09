@@ -59,7 +59,9 @@ public:
         return quitRequested || (config.quitKey != 0 && keyPressed);
     }
 
-    /// Request a graceful shutdown of the loop (safe from another thread).
+    /// Request a graceful shutdown of the loop (safe from another thread). It ends the Run that is
+    /// going now, after the current frame; one called before Run starts has no effect (Run begins by
+    /// marking itself running), so a thread that stops the app waits until a frame has run.
     void Quit() { m_running = false; }
 
     /// The per-frame driver Run uses: set OnFixedUpdate / OnPause / OnResume on it before

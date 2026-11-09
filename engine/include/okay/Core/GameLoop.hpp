@@ -55,7 +55,8 @@ public:
         /// Real frame times longer than this are cut down (seconds; <= 0 turns the clamp off).
         float maxDelta = 0.25f;
         /// > 0: a clamped frame steps this long instead of maxDelta (Application uses its
-        /// target frame time, as it always has).
+        /// target frame time, as it always has). Never longer than the frame was (a clamp only
+        /// shortens), and a value that is not a finite number > 0 means maxDelta.
         float hitchReplacement = 0.0f;
         /// A real frame longer than this is counted as a hitch (<= 0 turns counting off).
         float hitchThreshold = 0.1f;

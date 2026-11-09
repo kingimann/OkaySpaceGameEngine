@@ -1,9 +1,12 @@
-// Component order (1.3, wave 4): the order the components of one object were arranged in (MoveComponent,
-// ReorderComponents) is saved in an optional `comporder` record and comes back after a save and load, a
-// clone and an undo snapshot. An object nobody reordered writes no record, a file without the record loads
-// exactly as before, and a record that names types the file does not have is ignored.
+// Component order (1.3, waves 4 and 5): the order of an object's components is saved in an optional `comporder`
+// record and comes back after a save and load, a clone and an undo snapshot. The record is written for an object
+// that was arranged on purpose (MoveComponent, ReorderComponents) and, since wave 5, for any object whose order is
+// not the one the loader would produce from its records anyway (plain AddComponent calls in another order). An
+// object that already loads in its own order writes no record, a file without the record loads exactly as before,
+// and a record that names types the file does not have is ignored.
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -42,7 +45,30 @@ using V = std::vector<std::string>;
 } // namespace
 
 int main() {
-    RUN_SUITE("the writer's own order is what a plain object comes back with");
+    RUN_SUITE("an object whose components are in the writer's order saves no record");
+    {
+        Scene s("T");
+        GameObject* g = s.CreateGameObject("G");
+        g->AddComponent<Mover>();
+        g->AddComponent<Spinner>();
+        g->AddComponent<Lifetime>();
+        CHECK(Order(g) == (V{"Mover", "Spinner", "Lifetime"}));
+        CHECK(!g->HasCustomComponentOrder());
+        const std::string text = SceneSerializer::Serialize(s);
+        CHECK(!Contains(text, "comporder"));                        // it already loads in its own order: nothing extra in the file
+        Scene t("Loaded");
+        CHECK(SceneSerializer::Deserialize(t, text));
+        CHECK(Order(t.Find("G")) == (V{"Mover", "Spinner", "Lifetime"}));
+        CHECK(!t.Find("G")->HasCustomComponentOrder());
+        CHECK(SceneSerializer::Serialize(t) == text);               // saving it again changes nothing
+        // one component, or none: never a record
+        GameObject* one = s.CreateGameObject("One");
+        one->AddComponent<Lifetime>();
+        s.CreateGameObject("None");
+        CHECK(!Contains(SceneSerializer::Serialize(s), "comporder"));
+    }
+
+    RUN_SUITE("the order of plain AddComponent calls is saved when the writer would change it");
     {
         Scene s("T");
         GameObject* g = s.CreateGameObject("G");
@@ -50,13 +76,97 @@ int main() {
         g->AddComponent<Spinner>();
         g->AddComponent<Mover>();
         CHECK(Order(g) == (V{"Lifetime", "Spinner", "Mover"}));
-        CHECK(!g->HasCustomComponentOrder());
+        CHECK(!g->HasCustomComponentOrder());                       // nobody arranged it
         const std::string text = SceneSerializer::Serialize(s);
-        CHECK(!Contains(text, "comporder"));                        // nobody arranged it: nothing extra in the file
+        CHECK(Contains(text, "comporder \"Lifetime\" \"Spinner\" \"Mover\""));
         Scene t("Loaded");
+        std::vector<std::string> warnings;
+        CHECK(SceneSerializer::Deserialize(t, text, nullptr, &warnings));
+        CHECK(warnings.empty());
+        CHECK(Order(t.Find("G")) == (V{"Lifetime", "Spinner", "Mover"}));
+        CHECK(SceneSerializer::Serialize(t) == text);               // and it stays that way
+        // a copy made with Instantiate / Duplicate and an undo snapshot keep it too
+        GameObject* copy = s.Instantiate(*g);
+        CHECK(copy != nullptr && Order(copy) == (V{"Lifetime", "Spinner", "Mover"}));
+        GameObject* twin = s.Duplicate(*g);
+        CHECK(twin != nullptr && Order(twin) == (V{"Lifetime", "Spinner", "Mover"}));
+        const std::string object = SceneSerializer::SerializeObject(*g);
+        Scene u("Paste");
+        GameObject* pasted = SceneSerializer::InstantiateFromText(u, object);
+        CHECK(pasted != nullptr && Order(pasted) == (V{"Lifetime", "Spinner", "Mover"}));
+        CHECK(t.Validate().issues.empty());
+        // the record can be taken out by hand: the writer's order comes back, as for every older file
+        Scene old("Old");
+        CHECK(SceneSerializer::Deserialize(old, RemoveLine(text, "comporder")));
+        CHECK(Order(old.Find("G")) == (V{"Mover", "Spinner", "Lifetime"}));
+    }
+
+    RUN_SUITE("every order of five components comes back, and only the odd ones write a record");
+    {
+        std::vector<int> perm{0, 1, 2, 3, 4};
+        auto add = [](GameObject* g, int kind) {
+            switch (kind) {
+                case 0: g->AddComponent<Mover>(); break;
+                case 1: g->AddComponent<Spinner>(); break;
+                case 2: g->AddComponent<Lifetime>(); break;
+                case 3: g->AddComponent<SpriteRenderer>(); break;
+                default: g->AddComponent<Rigidbody2D>(); break;
+            }
+        };
+        // the writer's order, found by loading one object with its record taken out
+        V natural;
+        {
+            Scene s("N");
+            GameObject* g = s.CreateGameObject("G");
+            for (int k : perm) add(g, k);
+            Scene t("N2");
+            CHECK(SceneSerializer::Deserialize(t, RemoveLine(SceneSerializer::Serialize(s), "comporder")));
+            natural = Order(t.Find("G"));
+        }
+        CHECK(natural.size() == 5);
+        int perms = 0, withRecord = 0, mismatches = 0;
+        do {
+            Scene s("P");
+            GameObject* g = s.CreateGameObject("G");
+            for (int k : perm) add(g, k);
+            const V live = Order(g);
+            const std::string text = SceneSerializer::Serialize(s);
+            const bool record = Contains(text, "comporder");
+            Scene t("L");
+            CHECK(SceneSerializer::Deserialize(t, text));
+            if (Order(t.Find("G")) != live) ++mismatches;
+            if (record != (live != natural)) ++mismatches;           // a record exactly when the order differs from the writer's
+            if (record) ++withRecord;
+            ++perms;
+        } while (std::next_permutation(perm.begin(), perm.end()));
+        CHECK(perms == 120 && mismatches == 0);
+        CHECK(withRecord == 119);                                    // all but the writer's own
+    }
+
+    RUN_SUITE("objects of one shape in one scene, and scripts around another component");
+    {
+        Scene s("T");
+        for (int i = 0; i < 20; ++i) {
+            GameObject* g = s.CreateGameObject("Obj" + std::to_string(i));
+            if (i % 2 == 0) { g->AddComponent<Lifetime>(); g->AddComponent<Mover>(); }   // not the writer's order
+            else            { g->AddComponent<Mover>(); g->AddComponent<Lifetime>(); }   // the writer's
+        }
+        GameObject* sc = s.CreateGameObject("Scripted");
+        auto* a = sc->AddComponent<ScriptComponent>();
+        sc->AddComponent<Mover>();
+        auto* b = sc->AddComponent<ScriptComponent>();
+        a->SetSource("// a");
+        b->SetSource("// b");
+        const std::string text = SceneSerializer::Serialize(s);
+        Scene t("L");
         CHECK(SceneSerializer::Deserialize(t, text));
-        CHECK(Order(t.Find("G")) == (V{"Mover", "Spinner", "Lifetime"}));
-        CHECK(!t.Find("G")->HasCustomComponentOrder());
+        for (int i = 0; i < 20; ++i)
+            CHECK(Order(t.Find("Obj" + std::to_string(i))) == (i % 2 == 0 ? V{"Lifetime", "Mover"} : V{"Mover", "Lifetime"}));
+        const V scripted = Order(t.Find("Scripted"));
+        CHECK(scripted == (V{"ScriptComponent", "Mover", "ScriptComponent"}));
+        const auto scripts = t.Find("Scripted")->GetComponents<ScriptComponent>();
+        CHECK(scripts.size() == 2 && scripts[0]->Source() == "// a" && scripts[1]->Source() == "// b");
+        CHECK(SceneSerializer::Serialize(t) == text);
     }
 
     RUN_SUITE("an arranged order survives save and load");

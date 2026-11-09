@@ -299,6 +299,11 @@ add_executable(test_log test_log.cpp)
 target_link_libraries(test_log PRIVATE okay::engine)
 add_test(NAME log COMMAND test_log)
 
+# Core wave 6, 1.10: $OKAY_LOG vs Configure, log file cap / flush / failing disk, sink recursion, profiler bounds, threads and trace validity
+add_executable(test_core_log_profiler test_core_log_profiler.cpp)
+target_link_libraries(test_core_log_profiler PRIVATE okay::engine)
+add_test(NAME core_log_profiler COMMAND test_core_log_profiler)
+
 # Profiling & debugging data layers (okay/Debug): frame history, GPU/render stats, memory, frame debugger, console, overlay
 add_executable(test_debug_frame_history test_debug_frame_history.cpp)
 target_link_libraries(test_debug_frame_history PRIVATE okay::engine)

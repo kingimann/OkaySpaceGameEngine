@@ -1,5 +1,9 @@
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/PrefabTools.hpp"
 #include <iostream>
+#include <charconv>
+#include <locale>
+#include <mutex>
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
@@ -182,6 +186,7 @@
 #include <functional>
 #include "okay/Core/DataPack.hpp"   // transparent unpack of obfuscated game data
 #include <fstream>
+#include <chrono>
 #include <filesystem>
 #include <sstream>
 #include <type_traits>
@@ -198,6 +203,40 @@ namespace okay {
 static thread_local std::string g_loadingSceneDir;
 
 namespace {
+
+// Floats in scene text are written with the fewest digits that read back as the
+// same value (the default stream precision keeps 6, so 12345.678 came back as
+// 12345.7 and every save, undo step and prefab clone rounded again). A stream
+// hands floats to the facet as doubles, so a double that is exactly a float is
+// printed as that float, which is what every float field wants; anything else
+// prints as the shortest double. Streams with their own precision, width or
+// fixed / scientific flags keep the standard formatting. Short values print as
+// before (0.5 is still 0.5), so old files and text compares are unaffected.
+class RoundTripNumPut : public std::num_put<char> {
+public:
+    explicit RoundTripNumPut(std::size_t refs) : std::num_put<char>(refs) {}
+protected:
+    iter_type do_put(iter_type out, std::ios_base& str, char fill, double v) const override {
+        if ((str.flags() & (std::ios_base::fixed | std::ios_base::scientific)) || str.precision() != 6 ||
+            str.width() != 0)
+            return std::num_put<char>::do_put(out, str, fill, v);
+        char buf[64];
+        std::to_chars_result r;
+        const float f = static_cast<float>(v);
+        if (static_cast<double>(f) == v) r = std::to_chars(buf, buf + sizeof buf, f);
+        else                             r = std::to_chars(buf, buf + sizeof buf, v);
+        if (r.ec != std::errc()) return std::num_put<char>::do_put(out, str, fill, v);
+        for (const char* c = buf; c != r.ptr; ++c) *out++ = *c;
+        return out;
+    }
+};
+void UseRoundTripFloats(std::ostream& o) {
+    // The locale is allocated once and never destroyed (a static std::locale object would be torn down at exit,
+    // orphaning the facet and tripping leak checkers, and streams used during static destruction need it alive).
+    // The facet has refs=0, so the locale owns it.
+    static const std::locale* loc = new std::locale(std::locale::classic(), new RoundTripNumPut(0));
+    o.imbue(*loc);
+}
 // Quote a string for the line-based format (escapes quotes/backslashes).
 std::string Quote(const std::string& s) {
     std::string out = "\"";
@@ -363,12 +402,12 @@ void ReadStanceControl(std::istream& in, StanceControl* sc) {
 
 // Point lists inside one quoted key=value (line points, profile points).
 std::string PointList(const std::vector<Vec2>& v) {
-    std::ostringstream o;
+    std::ostringstream o; UseRoundTripFloats(o);
     for (std::size_t i = 0; i < v.size(); ++i) o << (i ? " " : "") << v[i].x << ' ' << v[i].y;
     return o.str();
 }
 std::string PointList(const std::vector<Vec3>& v) {
-    std::ostringstream o;
+    std::ostringstream o; UseRoundTripFloats(o);
     for (std::size_t i = 0; i < v.size(); ++i) o << (i ? " " : "") << v[i].x << ' ' << v[i].y << ' ' << v[i].z;
     return o.str();
 }
@@ -431,13 +470,6 @@ void ReadAnchor(std::istream& in, UIAnchor& anchor) {
         int a = 0; in >> a;
         anchor = static_cast<UIAnchor>(a);
     }
-}
-
-int IndexOf(const Scene& scene, const GameObject* go) {
-    const auto& objs = scene.Objects();
-    for (std::size_t i = 0; i < objs.size(); ++i)
-        if (objs[i].get() == go) return static_cast<int>(i);
-    return -1;
 }
 
 // A Character's "Rig" (the separated part objects) is a GENERATED view of the
@@ -3106,7 +3138,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     // switches, after the components they belong to. Its own key=value record, so
     // older scenes load unchanged; nothing is written for literal text.
     {
-        std::ostringstream ls;
+        std::ostringstream ls; UseRoundTripFloats(ls);
         KvOut k{ls};
         if (auto* tr = go->GetComponent<TextRenderer>(); tr && !tr->loc.key.empty()) k.str("text", tr->loc.key);
         if (auto* b = go->GetComponent<UIButton>(); b && !b->loc.key.empty()) k.str("button", b->loc.key);
@@ -3295,6 +3327,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
 
 std::string SceneSerializer::Serialize(const Scene& scene) {
     std::ostringstream out;
+    UseRoundTripFloats(out);
     out << "okayscene 3\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
@@ -3303,6 +3336,10 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         out << "layermatrix";
         for (int i = 0; i < 32; ++i) out << " " << scene.LayerCollisionMask(i);
         out << "\n";
+    }
+    {   // 3D gravity (a record older builds skip as unknown; a file without it loads the default)
+        const Vec3& g3 = scene.physics3D().gravity;
+        out << "gravity3 " << g3.x << " " << g3.y << " " << g3.z << "\n";
     }
     {
         const auto& rs = scene.renderSettings;
@@ -3388,7 +3425,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             done[par] = true;
             std::vector<std::pair<int, const GameObject*>> kids;   // (scene index, child) in sibling order
             for (const Transform* ch : par->Children())
-                if (!skipped(ch->gameObject)) kids.push_back({indexOf[ch->gameObject], ch->gameObject});
+                if (!skipped(ch->gameObject)) { auto ci = indexOf.find(ch->gameObject); if (ci != indexOf.end()) kids.push_back({ci->second, ch->gameObject}); }
             std::vector<int> sorted;
             for (auto& k : kids) sorted.push_back(k.first);
             std::sort(sorted.begin(), sorted.end());
@@ -3414,7 +3451,8 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";
         if (!go->prefabSource.empty()) out << "  prefab " << Quote(go->prefabSource) << "\n";
         for (const auto& ov : go->prefabOverrides) out << "  override " << ov.object << " " << Quote(ov.line) << "\n";
-        int parent = t->Parent() ? indexOf[t->Parent()->gameObject] : -1;
+        int parent = -1;
+        if (t->Parent()) { auto pit = indexOf.find(t->Parent()->gameObject); if (pit != indexOf.end()) parent = pit->second; }
         out << "  parent " << parent << "\n";
         auto sp = siblingPos.find(go);
         if (sp != siblingPos.end()) out << "  sibling " << sp->second << "\n";
@@ -3424,7 +3462,27 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     return out.str();
 }
 
+namespace {
+// The decoded text of recently read prefab files, keyed by path and checked against the file's
+// size and time, so spawning the same prefab again does not reopen and decode it. A file that was
+// modified in the last two seconds is never cached (its time cannot yet tell two writes apart),
+// and every write the engine makes clears the cache.
+struct CachedPrefab { std::filesystem::file_time_type time; std::uintmax_t size = 0; std::string text; };
+std::mutex& PrefabCacheMutex() { static std::mutex m; return m; }
+std::unordered_map<std::string, CachedPrefab>& PrefabCacheMap() {
+    static std::unordered_map<std::string, CachedPrefab> c;
+    return c;
+}
+struct ClearPrefabCacheOnExit { ~ClearPrefabCacheOnExit() { SceneSerializer::ClearPrefabCache(); } };
+} // namespace
+
+void SceneSerializer::ClearPrefabCache() {
+    std::lock_guard<std::mutex> lock(PrefabCacheMutex());
+    PrefabCacheMap().clear();
+}
+
 bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path) {
+    ClearPrefabCacheOnExit clearPrefabCache;   // whatever happens below, the next read sees the new file
     namespace fs = std::filesystem;
     // Atomic save: write to a temp file, then rename over the target, so a crash
     // or full disk mid-write can never leave a truncated/corrupt scene. Keep one
@@ -3618,6 +3676,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
             if (clear) scene.physics().gravity = g;
+        } else if (token == "gravity3") {
+            Vec3 g; in >> g.x >> g.y >> g.z;
+            if (clear && in) scene.physics3D().gravity = g;
         } else if (token == "rendersettings") {
             int sky = 1; Color top, hor, bot; float amb = 0.0f;
             in >> sky >> top.r >> top.g >> top.b
@@ -8252,6 +8313,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     for (std::size_t i = 0; i < subtree.size(); ++i) localIndex[subtree[i]] = (int)i;
 
     std::ostringstream out;
+    UseRoundTripFloats(out);
     out << "okayscene 3\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
@@ -8291,6 +8353,7 @@ GameObject* SceneSerializer::Instantiate(Scene& scene, const GameObject& prefab)
 }
 
 bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string& path) {
+    ClearPrefabCacheOnExit clearPrefabCache;
     std::ofstream f(path);
     if (!f) return false;
     f << SerializeObject(root);
@@ -8299,11 +8362,33 @@ bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string
 
 GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string& path,
                                                  std::string* error, std::vector<std::string>* warnings) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
-    std::stringstream ss; ss << f.rdbuf();
-    std::string text = DataPack::Unpack(ss.str());   // decode if obfuscated
-    if (text.empty() && DataPack::IsPacked(ss.str())) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
+    std::mutex& cacheMutex = PrefabCacheMutex();
+    auto& cache = PrefabCacheMap();
+    std::string text;
+    {
+        std::error_code ec1, ec2;
+        const auto mtime = std::filesystem::last_write_time(path, ec1);
+        const auto fsize = std::filesystem::file_size(path, ec2);
+        bool hit = false;
+        if (!ec1 && !ec2) {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            auto it = cache.find(path);
+            if (it != cache.end() && it->second.time == mtime && it->second.size == fsize) { text = it->second.text; hit = true; }
+        }
+        if (!hit) {
+            std::ifstream f(path, std::ios::binary);
+            if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
+            std::stringstream ss; ss << f.rdbuf();
+            text = DataPack::Unpack(ss.str());   // decode if obfuscated
+            if (text.empty() && DataPack::IsPacked(ss.str())) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
+            if (!ec1 && !ec2 && (std::filesystem::file_time_type::clock::now() - mtime) > std::chrono::seconds(2)) {
+                std::lock_guard<std::mutex> lock(cacheMutex);
+                if (cache.size() >= 32) cache.clear();   // small and simple: start over when full
+                cache[path] = CachedPrefab{mtime, fsize, text};
+            }
+        }
+    }
+    if (PrefabTools::UsesPrefabStructure(text)) return PrefabTools::Instantiate(scene, path, {}, error, warnings);   // nested prefabs / variant
     GameObject* root = nullptr;
     if (!ParseInto(scene, text, /*clear=*/false, &root, error, warnings)) return nullptr;
     // Link the new instance to its source prefab so the editor can apply/revert
@@ -8564,6 +8649,7 @@ bool SceneSerializer::CapturePrefabOverrides(GameObject& instanceRoot, std::stri
     if (instanceRoot.prefabSource.empty()) { if (error) *error = "object is not a prefab instance"; return false; }
     std::string fileText;
     if (!ReadFileText(instanceRoot.prefabSource, fileText, error)) return false;
+    if (PrefabTools::UsesPrefabStructure(fileText)) return PrefabTools::CaptureOverrides(instanceRoot, error);   // nested prefabs / variant
     // Canonical form of the prefab: load it into a scratch scene and write it back out,
     // so both sides of the comparison come from the same writer.
     Scene scratch("prefab");
@@ -8606,6 +8692,7 @@ GameObject* SceneSerializer::InstantiatePrefab(Scene& scene, const std::string& 
                                                std::string* error, std::vector<std::string>* warnings) {
     std::string fileText;
     if (!ReadFileText(path, fileText, error)) return nullptr;
+    if (PrefabTools::UsesPrefabStructure(fileText)) return PrefabTools::Instantiate(scene, path, overrides, error, warnings);   // nested prefabs / variant
     std::vector<std::string> own;
     const std::string text = SpliceOverrides(fileText, overrides, &own);
     GameObject* root = nullptr;
@@ -8618,6 +8705,7 @@ GameObject* SceneSerializer::InstantiatePrefab(Scene& scene, const std::string& 
 GameObject* SceneSerializer::ReapplyPrefab(Scene& scene, GameObject& instanceRoot, std::string* error,
                                            std::vector<std::string>* warnings) {
     if (instanceRoot.prefabSource.empty()) { if (error) *error = "object is not a prefab instance"; return nullptr; }
+    if (PrefabTools::FileUsesPrefabStructure(instanceRoot.prefabSource)) return PrefabTools::Reapply(scene, instanceRoot, error, warnings);
     GameObject* fresh = InstantiatePrefab(scene, instanceRoot.prefabSource, instanceRoot.prefabOverrides, error, warnings);
     if (!fresh) return nullptr;   // nothing was added, the instance is as it was
     // The new instance takes the old one's place: same name, parent, sibling slot, and
@@ -8639,6 +8727,103 @@ GameObject* SceneSerializer::ReapplyPrefab(Scene& scene, GameObject& instanceRoo
     }
     scene.Destroy(&instanceRoot);   // like any Destroy: removed at the end of the frame
     return fresh;
+}
+
+// ---- Validation ---------------------------------------------------------
+
+SceneValidationReport SceneSerializer::Validate(const std::string& text, const std::string& assetRoot) {
+    namespace fs = std::filesystem;
+    SceneValidationReport report;
+    auto add = [&](SceneIssue::Kind k, std::string obj, std::string msg) {
+        report.issues.push_back(SceneIssue{k, std::move(obj), std::move(msg)});
+    };
+
+    // Text pass: object names, parent links, guids. Records are one per line.
+    struct Obj { int index = -1; std::string name; int parent = -1; };
+    std::vector<Obj> objs;
+    std::unordered_map<std::string, std::string> guidOwner;   // guid -> object label
+    std::unordered_map<int, bool> known;
+    {
+        std::istringstream in(text);
+        std::string line;
+        Obj* cur = nullptr;
+        while (std::getline(in, line)) {
+            std::istringstream ls(line);
+            std::string word;
+            if (!(ls >> word)) continue;
+            const bool indented = !line.empty() && (line[0] == ' ' || line[0] == '\t');
+            if (!indented && word == "gameobject") {
+                Obj o; ls >> o.index; o.name = ReadQuoted(ls);
+                objs.push_back(o); cur = &objs.back();
+                known[o.index] = true;
+            } else if (!indented && word == "end") {
+                cur = nullptr;
+            } else if (indented && cur && word == "parent") {
+                ls >> cur->parent;
+            } else if (indented && cur && word == "guid") {
+                std::string g = ReadQuoted(ls);
+                if (g.empty()) { ls.clear(); ls >> g; }
+                const std::string label = cur->name + " (#" + std::to_string(cur->index) + ")";
+                auto ins = guidOwner.emplace(g, label);
+                if (!ins.second) add(SceneIssue::Kind::DuplicateGuid, label, "guid " + g + " is also used by " + ins.first->second);
+            }
+        }
+    }
+    for (const Obj& o : objs)
+        if (o.parent >= 0 && !known.count(o.parent))
+            add(SceneIssue::Kind::BrokenParentLink, o.name + " (#" + std::to_string(o.index) + ")",
+                "parent " + std::to_string(o.parent) + " is not in the scene");
+
+    // Load pass in a throwaway scene: unknown records, and the assets the loaded scene points at.
+    Scene probe("validate");
+    std::string error;
+    std::vector<std::string> warnings;
+    if (!ParseCore(probe, text, true, nullptr, &error, &warnings)) {
+        add(SceneIssue::Kind::LoadError, "", error);
+        return report;
+    }
+    for (const std::string& w : warnings) {
+        const std::string fieldKey = "skipped unknown field '";
+        const std::string recordKey = "skipped unknown record '";
+        if (w.compare(0, fieldKey.size(), fieldKey) == 0) {
+            std::size_t q = w.find('\'', fieldKey.size());
+            std::string field = w.substr(fieldKey.size(), q == std::string::npos ? std::string::npos : q - fieldKey.size());
+            std::string obj;
+            const std::size_t at = w.rfind("object ");
+            if (at != std::string::npos) {
+                int idx = std::atoi(w.c_str() + at + 7);
+                for (const Obj& o : objs) if (o.index == idx) { obj = o.name + " (#" + std::to_string(idx) + ")"; break; }
+            }
+            if (field == "guid") continue;   // an object id record: checked for duplicates above, not a component
+            add(SceneIssue::Kind::MissingComponentType, obj, "unknown component record '" + field + "'");
+        } else if (w.compare(0, recordKey.size(), recordKey) == 0) {
+            std::size_t q = w.find('\'', recordKey.size());
+            add(SceneIssue::Kind::UnknownField, "", "unknown record '" +
+                w.substr(recordKey.size(), q == std::string::npos ? std::string::npos : q - recordKey.size()) + "'");
+        } else if (w.compare(0, 25, "duplicate guid on object ") == 0) {
+            continue;   // the load repaired it; the text pass above already reported it as DuplicateGuid
+        } else {
+            add(SceneIssue::Kind::UnknownField, "", w);
+        }
+    }
+    for (const std::string& p : CollectAssetPaths(probe)) {
+        std::error_code ec;
+        if (fs::exists(fs::path(p), ec)) continue;
+        if (!assetRoot.empty() && fs::exists(fs::path(assetRoot) / p, ec)) continue;
+        add(SceneIssue::Kind::MissingAsset, "", "file not found: " + p);
+    }
+    return report;
+}
+
+SceneValidationReport SceneSerializer::ValidateFile(const std::string& path, const std::string& assetRoot) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) {
+        SceneValidationReport r;
+        r.issues.push_back(SceneIssue{SceneIssue::Kind::LoadError, "", "cannot open " + path});
+        return r;
+    }
+    std::stringstream ss; ss << f.rdbuf();
+    return Validate(DataPack::Unpack(ss.str()), assetRoot);
 }
 
 } // namespace okay

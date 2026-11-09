@@ -703,7 +703,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
             const D3D12_GPU_VIRTUAL_ADDRESS cbBaseD = p->cbUpload->GetGPUVirtualAddress();
             for (const auto& upo : scene.Objects()) {
                 GameObject* go = upo.get();
-                if (!go || !go->active || go->firstPersonOnly || go->HiddenFromCamera(ignore)) continue;
+                if (!go || !go->ActiveInHierarchy() || go->firstPersonOnly || go->HiddenFromCamera(ignore)) continue;
                 auto* mr = go->GetComponent<MeshRenderer>();
                 if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
                 if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
@@ -803,7 +803,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
 
     for (const auto& upo : scene.Objects()) {
         GameObject* go = upo.get();
-        if (!go || !go->active || go->HiddenFromCamera(ignore)) continue;
+        if (!go || !go->ActiveInHierarchy() || go->HiddenFromCamera(ignore)) continue;
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled) continue;

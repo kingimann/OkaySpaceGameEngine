@@ -34,6 +34,11 @@ position and name), and queues the old one for destruction (an ordinary `Destroy
 at the end of the frame). On any error it returns nullptr and the instance is untouched.
 `InstantiatePrefab(scene, path, overrides)` is the same without an existing instance.
 
+Nested prefabs (a prefab file holding instances of other prefab files), variants, unpack,
+per-field apply and revert and a validator are in [prefab_system.md](prefab_system.md).
+`InstantiateFromFile`, `InstantiatePrefab`, `CapturePrefabOverrides` and `ReapplyPrefab` send
+such files to `PrefabTools` themselves; plain prefab files work as described on this page.
+
 ## Limits
 
 - The unit of an override is a whole record, not one number inside it: overriding a
@@ -43,7 +48,7 @@ at the end of the frame). On any error it returns nullptr and the instance is un
   `ReapplyPrefab`.
 - An override naming an object the prefab no longer has is dropped, with a warning.
 - Nothing in the editor calls these yet; the editor's own Apply / Revert / Reload are
-  unchanged.
+  unchanged. Per-field apply and revert for records live in `PrefabTools`.
 
 ## Object ids
 

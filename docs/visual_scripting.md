@@ -737,18 +737,18 @@ Lists are shared: every node that reads `bag` sees the same list. The other list
 
 A beginner set sits on top of the low-level nodes. It does not replace Move Towards, Look At, Teleport, Nav Move To, Clamp, Lerp, Play Sound, Play Music, Load Scene, or the other nodes that already did that job. Each new node uses a sensible default when a pin is left empty, and a missing object or component is a node error.
 
-Movement: Rotate Towards, Orbit Around, Follow Path, Bob, Spin, Knockback, Smooth Follow. Tweens (the caller waits): Tween Position, Rotation, Scale and Color. Animation: Crossfade Animation, Stop Animation, Wait For Animation End. Interaction: On Interact (E within 2 units), Pick Up, Drop, Door Open, Door Close, Lever, Collect, On Tag Enter / Stay / Exit, Proximity. Combat: Damage, Heal, Is Dead, On Death, On Health Changed, Respawn (a Health component), Spawn Projectile, Shoot, Ammo. AI: Patrol Waypoints, Chase Target, Flee, Wander, Can See Target. Spawning: Spawn Every, Destroy After, Pool Get, Pool Release. Flow: Score Add / Set / Get, Countdown, Win, Lose, Restart Scene, Checkpoint Save / Load (the existing save). UI: Set Progress Bar, Show Floating Text, Fade Screen. Camera: Set Camera Target, Zoom, Switch Camera. Audio: Play Sound At, Stop Sound (the Audio Source; music stays on Play Music / Stop Music). Input: On Action Pressed / Released / Held (interact, jump, fire, or a key name) and Get Move Axis. Utility: Random Pick, Random Point In Area, Shuffle, Min Of List, Max Of List, On Collision With Tag.
+Movement: Turn Towards, Orbit Around Center, Follow Path, Move Upward and Downward, Spin, Knock Back, Follow Smoothly. Tweens (the caller waits): Tween Position, Rotation, Scale and Color. Animation: Crossfade Animation, Stop Animation, Wait for Animation End. Interaction: On Interact (E within 2 units), Pick up, Drop, Open Door, Close Door, Flip Lever, Collect, On Tag Enter / Stay / Exit, Is Nearby. Combat: Apply Damage, Heal, Is Dead, On Death, On Health Changed, Respawn (a Health component), Spawn Projectile, Shoot, Use Ammo. AI: Patrol Waypoints, Chase Target, Flee From Threat, Wander Around, Is Target Visible. Spawning: Spawn Every Few Seconds, Destroy After Seconds, Take From Pool, Release to Pool. Flow: Add Score, Set Score, Get Score, Count Down, Show Win, Show Loss, Restart Scene, Save Checkpoint, Load Checkpoint (the existing save). UI: Set Progress, Show Floating Text, Fade Screen. Camera: Set Camera Target, Zoom Camera, Switch Camera. Audio: Play Sound Here, Stop Sound (the Audio Source; music stays on Play Music / Stop Music). Input: On Action Pressed / Released / Held (interact, jump, fire, or a key name) and Get Move Direction. Utility: Pick Random Item, Pick Random Point, Shuffle List, Find Smallest, Find Largest, On Collision With Tag.
 
 The Visual Script toolbar's Recipes menu drops in a whole graph: collect coins and score, an enemy that chases and damages, a door with a key, a health pickup, and a countdown that ends in a win.
 
 ### Switches, gates and calling out
 
-- **Switch (name)** (`SwitchString`) and **Switch (cases)** (`SwitchCases`): one pin per case in the text field (comma separated, or **+ case**), then Default. An older file that wired Default to pin 4 still hits Default. Switch (int) is still the fixed 0 / 1 / 2 / Default node.
+- **Switch on Name** (`SwitchString`) and **Switch on Number** (`SwitchCases`): one pin per case in the text field (comma separated, or **+ case**), then Default. An older file that wired Default to pin 4 still hits Default. Switch Number is still the fixed Zero / One / Two / Default node.
 - A **Delay** or **Wait** inside a function pauses the **Call Function**. The caller continues when the wait finishes, with the same arguments and locals. A called graph's own Delay is kept if the parent graph is reloaded during Play.
 - **Latch Gate** starts closed (type `open` to start open). Open, Close and Toggle are pulses. The flow passes only while the latch is open.
 - **Is Valid** is false for a destroyed object, a name that finds nothing, or a number that isn't finite.
 - **Call Script** calls a function on this object's text script (`function bump(n) { return n + 1; }`) and reads the return value. The other direction already exists: a script's `send_event` runs On Custom Event.
-- **Run Graph** runs another `.okayvs` file's event on this object (`door_logic.okayvs` or `door_logic.okayvs|Open`). Variables are shared. A relative path only, no `..`.
+- **Run Another Graph** runs another `.okayvs` file's event on this object (`door_logic.okayvs` or `door_logic.okayvs|Open`). Variables are shared. A relative path only, no `..`.
 
 ### Values
 
@@ -942,12 +942,12 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **While** (`While`) — in Cond
 - **For Each** (`ForEach`) — in List; out Item, Index
 - **For Each Map** (`ForEachMap`) — in Map; out Key, Value
-- **Switch (name)** (`SwitchString`) — in Value; setting: cases
-- **Switch (cases)** (`SwitchCases`) — in Value; setting: numbers
+- **Switch on Name** (`SwitchString`) — in Value; setting: cases
+- **Switch on Number** (`SwitchCases`) — in Value; setting: numbers
 - **Latch Gate** (`LatchGate`) — in Open, Close, Toggle; out Is Open
 - **Is Valid** (`IsValid`) — in Value; out Yes
 - **Call Script** (`CallScript`) — in Argument; out Result; setting: function
-- **Run Graph** (`RunGraph`) — setting: file or file|Event
+- **Run Another Graph** (`RunGraph`) — setting: file or file|Event
 - **Break** (`Break`)
 - **Continue** (`Continue`)
 

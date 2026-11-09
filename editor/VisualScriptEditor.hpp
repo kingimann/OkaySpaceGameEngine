@@ -18,6 +18,10 @@
 #include "VisualScriptNodeHelp.hpp"
 #include "VsCanvasTools.hpp"
 #include "VsPlayground.hpp"
+#include "VisualScriptNames.hpp"
+#include "VisualScriptLevels.hpp"
+#include "VisualScriptCategories.hpp"
+#include "VisualScriptFriendly.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cctype>
@@ -66,6 +70,8 @@ struct VsDef {
     std::vector<const char*> dataOut; // data output pin labels
     int         param;                // 0 none, 1 text field, 2 compare-op combo
     const char* paramHint;
+    // How hard this node is. Registry() fills it from VisualScriptLevels.hpp.
+    VsLevel     level = VsLevel::Intermediate;
 };
 
 // Node types that act on an object get a last "Target" input (empty = this
@@ -92,10 +98,9 @@ inline std::vector<VsDef> VsWithTargetPins(std::vector<VsDef> defs) {
 // okay/VisualScript/VsApi.hpp): one per property / method, pins included.
 inline std::vector<VsDef> VsWithApiDefs(std::vector<VsDef> defs) {
     for (const okay::vs::VsApiEntry& e : okay::vs::VsApiEntries()) {
-        VsDef d{e.type.c_str(), e.title.c_str(), CAT_API, e.exec, {}, {}, {}, 0, nullptr};
+        VsDef d{e.type.c_str(), VsFriendlyApiTitle(e), CAT_API, e.exec, {}, {}, {}, 0, nullptr};
         if (e.exec) d.execOut.push_back("");
-        for (const auto& p : e.ins) d.dataIn.push_back(p.name.c_str());
-        for (const auto& p : e.outs) d.dataOut.push_back(p.name.c_str());
+        VsFillFriendlyPins(e, d.dataIn, d.dataOut);
         defs.push_back(std::move(d));
     }
     return defs;
@@ -106,7 +111,8 @@ inline bool IsApiNode(const std::string& t) { return okay::vs::VsApiFind(t) != n
 // BuiltinNodes() keeps its strings for the process lifetime.
 inline std::vector<VsDef> VsWithBuiltinDefs(std::vector<VsDef> defs) {
     for (const okay::vs::BuiltinNodeInfo& n : okay::vs::BuiltinNodes()) {
-        VsDef d{n.type.c_str(), n.title.c_str(), CAT_SCRIPT, true, {""}, {"A","B","C","D"}, {"Result"}, 0, nullptr};
+        VsDef d{n.type.c_str(), VsFriendlyBuiltinTitle(n.builtin), CAT_SCRIPT, true, {""},
+                {"First", "Second", "Third", "Fourth"}, {"Result"}, 0, nullptr};
         defs.push_back(std::move(d));
     }
     defs.push_back({"GetProperty", "Get Property", CAT_DATA, true, {""}, {"Path","Target"}, {"Value"}, 1, "Component.property"});
@@ -121,10 +127,40 @@ inline std::vector<VsDef> VsWithBuiltinDefs(std::vector<VsDef> defs) {
     return defs;
 }
 
+// Titles and renamed pins come from VisualScriptNames.hpp. The strings in the
+// list below stay the file token's fallback for nodes that are not renamed yet.
+inline std::vector<VsDef> ApplyFriendlyNames(std::vector<VsDef> defs) {
+    for (VsDef& d : defs) {
+        const VsName* n = FindVsName(d.type);
+        if (!n) continue;
+        if (n->title && n->title[0]) d.title = n->title;
+        auto apply = [](std::vector<const char*>& pins, const char* const* repl, int count) {
+            if (!repl) return;
+            for (int i = 0; i < count && i < (int)pins.size(); ++i)
+                if (repl[i] && repl[i][0]) pins[(std::size_t)i] = repl[i];
+        };
+        apply(d.dataIn, n->inPins, n->inCount);
+        apply(d.dataOut, n->outPins, n->outCount);
+        for (const VsExecLabels& e : kVsExecLabels)
+            if (std::strcmp(e.type, d.type) == 0) apply(d.execOut, e.pins, e.count);
+    }
+    return defs;
+}
+
+// Levels come from VisualScriptLevels.hpp, not from the big list below.
+inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
+    for (VsDef& d : defs) {
+        const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
+        d.level = api ? VsLevelForApi(api->apiType.c_str(), api->member.c_str())
+                      : VsLevelForNode(d.type);
+    }
+    return defs;
+}
+
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime),
 // then the generated engine-API nodes.
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
+    static const std::vector<VsDef> defs = ApplyLevels(ApplyFriendlyNames(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -653,7 +689,7 @@ inline const std::vector<VsDef>& Registry() {
         {"IsValid",         "Is Valid",         CAT_LOGIC, false, {}, {"Value"}, {"Yes"}, 0, nullptr},
         {"CallScript",      "Call Script",      CAT_ACTION, true, {""}, {"Argument"}, {"Result"}, 1, "function"},
         {"RunGraph",        "Run Graph",        CAT_FLOW,  true, {""}, {}, {}, 1, "file.okayvs or file|Event"},
-    })));
+    })))));
     return defs;
 }
 
@@ -3556,7 +3592,7 @@ inline void Draw(EditorState& ed, bool* open) {
         // Every placeable thing: core nodes, plus each Actions step ("Do" / "Check").
         struct Entry {
             const VsDef* def = nullptr; const VsStepInfo* step = nullptr; bool cond = false;
-            std::string title, cat, key, desc; int group = 0; ImU32 col = 0;
+            std::string title, cat, key, desc, keywords; int group = 0; ImU32 col = 0;
         };
         std::vector<Entry> all;
         for (const auto& d : Registry()) {
@@ -3580,6 +3616,7 @@ inline void Draw(EditorState& ed, bool* open) {
             if (!out.empty()) e.desc += "Gives: " + out + ". ";
             if (!ex.empty())  e.desc += "Continues to: " + ex + ". ";
             if (d.param && d.paramHint) e.desc += std::string("Setting: ") + d.paramHint + ".";
+            e.keywords = VsNodeSearchText(d.type);
             all.push_back(std::move(e));
         }
         for (int pass = 0; pass < 2; ++pass) {
@@ -3664,7 +3701,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
                     pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
             }
-            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc + " " + pins);
+            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc + " " + e.keywords + " " + pins);
             return extra.find(needle) != std::string::npos ? 40 : 0;
         };
 

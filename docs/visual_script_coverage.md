@@ -2,29 +2,29 @@
 
 How a graph reaches each engine area. Text-script builtins (`.okay`) are nodes named `Fn.<builtin>` (search the palette for the builtin). The C#-style engine API is the **Engine API** category. Anything still missing a dedicated node goes through the escape hatches.
 
-Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Method`), **Get Component**, **Add Component**, **Find Object** (by name), **Find By Tag**, **All With Tag**, **Send Message**, **Broadcast**, **Run Snippet**, **Call Script**. A wrong type or a missing component is an error on that node.
+Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Method`), **Get Component**, **Add Component**, **Find Object** (by name), **Get Object by Tag**, **All With Tag**, **Send Message**, **Broadcast Message**, **Run Text Snippet**, **Call Script**. A wrong type or a missing component is an error on that node. The raw path (`Light.intensity`, `Mathf.Abs`) stays a search word.
 
 | System | API a text script uses | Visual script node |
 | --- | --- | --- |
-| Core and scene | GameObject, Transform, scene builtins | Engine API GameObject/Transform, Fn.load_scene, Find Object, Find By Tag |
+| Core and scene | GameObject, Transform, scene builtins | Engine API GameObject/Transform, Fn.load_scene, Find Object, Get Object by Tag |
 | Rendering and materials | Camera, Light, MeshRenderer, PostProcess, Fog, material properties | Engine API Camera/Light/PostProcess/Fog, Get/Set Property |
 | Lights | Light.* | Engine API Light, Get/Set Property Light.intensity |
-| Camera | Camera.* | Engine API Camera, Set Camera Target, Zoom, Switch Camera |
+| Camera | Camera.* | Engine API Camera, Set Camera Target, Zoom Camera, Switch Camera |
 | Physics queries and forces | Rigidbody, raycast, add_force | Engine API Rigidbody, Fn.raycast, Fn.add_force |
 | Collisions and triggers | on_collision, on_trigger | On Collision, On Trigger, On Tag Enter, On Collision With Tag |
 | Animation, Animator, IK | Animator.*, IK.*, play_anim | Engine API Animator/IK, Crossfade Animation, Fn.play_anim |
-| Navigation | NavMeshAgent.* | Engine API NavMeshAgent, Chase, Patrol |
-| Audio | Audio.*, play_sound | Engine API Audio, Play Sound At, Fn.play_sound |
-| Input | Input.*, key | Engine API Input, Get Move Axis, On Key, Fn.key |
+| Navigation | NavMeshAgent.* | Engine API NavMeshAgent, Chase Target, Patrol Waypoints |
+| Audio | Audio.*, play_sound | Engine API Audio, Play Sound Here, Fn.play_sound |
+| Input | Input.*, key | Engine API Input, Get Move Direction, On Key, Fn.key |
 | UI | UI components, ui_* builtins | Engine API UI nodes, every Fn.ui_* builtin |
 | Particles | particle builtins and properties | Get/Set Property, plus Fn.particle_* builtins in the list below |
 | Terrain | terrain properties | Get/Set Property on a terrain component. No separate terrain builtin. |
 | Splines | Spline.*, SplineFollower.* | Engine API Spline / SplineFollower / LineRenderer |
 | Networking | net_* builtins | Every Fn.net_* builtin in the list below |
-| Saves | SaveGame.* | Engine API SaveGame, Checkpoint Save / Load |
-| Scenes and prefabs | instantiate, load_scene | Fn.instantiate, Fn.load_scene, Spawn Projectile, Run Graph |
+| Saves | SaveGame.* | Engine API SaveGame, Save Checkpoint, Load Checkpoint |
+| Scenes and prefabs | instantiate, load_scene | Fn.instantiate, Fn.load_scene, Spawn Projectile, Run Another Graph |
 | Time | Time.*, time | Engine API Time, Fn.time, Delta Time |
-| Tweens and timers | tween builtins, Every, Delay | Fn.tween_* builtins, Tween Position, Every, Delay, Countdown |
+| Tweens and timers | tween builtins, Every, Delay | Fn.tween_* builtins, Tween Position, Every, Delay, Count Down |
 | Localization | Localization.* | Engine API Localization |
 | Debug and console | print, Debug.Log | Print, Fn.print, Fn.log_warn, Engine API Debug |
 | Math | Mathf.*, clamp | Math nodes, Engine API Mathf, Fn.clamp |

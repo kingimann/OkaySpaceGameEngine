@@ -1,4 +1,5 @@
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/NodeAliases.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
@@ -376,6 +377,8 @@ int ArgInt(const std::string& a, int def) {
 std::unique_ptr<VsNode> MakeNode(const std::string& type,
                                  const std::vector<std::string>& argsIn,
                                  std::string* err) {
+    if (const std::string canon = CanonicalNodeType(type); canon != type)
+        return MakeNode(canon, argsIn, err);
     // A node whose text field was left blank gets a sensible default instead of
     // failing — one empty "Set Var" used to stop the whole graph from loading.
     std::vector<std::string> args = argsIn;

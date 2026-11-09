@@ -1439,7 +1439,9 @@ bool CommitFile(const std::string& path, const std::string& text, std::string& e
         err = "not written: the result would not be a valid prefab (" + ErrorFor(ctx, why) + ")";
         return false;
     }
-    if (!savefmt::AtomicWrite(path, text)) { err = "cannot write " + path; return false; }
+    const bool written = savefmt::AtomicWrite(path, text);
+    SceneSerializer::ClearPrefabCache();   // InstantiateFromFile must not hand out the old text
+    if (!written) { err = "cannot write " + path; return false; }
     return true;
 }
 

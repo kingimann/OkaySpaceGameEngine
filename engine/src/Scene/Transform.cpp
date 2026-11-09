@@ -76,6 +76,54 @@ void Transform::SetRotation(const Quat& worldRot) {
     localRotation = (m_parent->Rotation().Conjugate() * worldRot).Normalized();
 }
 
+void Transform::SetLossyScale(const Vec3& worldScale) {
+    const Vec3 ps = m_parent ? m_parent->LossyScale() : Vec3::One;
+    if (ps.x != 0) localScale.x = worldScale.x / ps.x;
+    if (ps.y != 0) localScale.y = worldScale.y / ps.y;
+    if (ps.z != 0) localScale.z = worldScale.z / ps.z;
+}
+
+void Transform::LookAt(const Vec3& worldTarget, const Vec3& worldUp) {
+    const Vec3 dir = worldTarget - Position();
+    if (dir.SqrMagnitude() < 1e-12f) return;
+    SetRotation(Quat::LookRotation(dir, worldUp));
+}
+
+int Transform::GetSiblingIndex() const {
+    if (m_parent) {
+        for (std::size_t i = 0; i < m_parent->m_children.size(); ++i)
+            if (m_parent->m_children[i] == this) return static_cast<int>(i);
+        return -1;
+    }
+    Scene* sc = gameObject ? gameObject->scene() : nullptr;
+    if (!sc) return -1;
+    int n = 0;
+    for (const auto& up : sc->Objects()) {
+        if (up.get() == gameObject) return n;
+        if (!up->transform || !up->transform->Parent()) ++n;
+    }
+    return -1;
+}
+
+void Transform::SetSiblingIndex(int index) {
+    const int cur = GetSiblingIndex();
+    if (cur < 0) return;
+    if (m_parent) {
+        auto& kids = m_parent->m_children;
+        index = std::clamp(index, 0, static_cast<int>(kids.size()) - 1);
+        if (index == cur) return;
+        kids.erase(kids.begin() + cur);
+        kids.insert(kids.begin() + index, this);
+        NoteOrderChanged();
+        return;
+    }
+    Scene* sc = gameObject->scene();
+    std::vector<GameObject*> roots = sc->Roots();
+    index = std::clamp(index, 0, static_cast<int>(roots.size()) - 1);
+    if (index == cur) return;
+    sc->ReorderSibling(gameObject, roots[index], /*after=*/index > cur);
+}
+
 void Transform::NoteOrderChanged() {
     if (gameObject)   // UI draws in hierarchy order, so caches keyed on it re-sort
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();

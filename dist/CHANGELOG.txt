@@ -1,5 +1,58 @@
 OkaySpace Game Engine — Changelog
 
+v2.852.0
+  Loop and time
+  - The built player now runs on the shared game loop, so its hitch handling,
+    refresh-rate changes, focus pause and fresh sessions all come from one place
+    (#585).
+  - Countdown and Cooldown timers that you poll each frame: pause aware, frame
+    rate independent, and savable. Clocks can ramp their time scale smoothly
+    (#585).
+  - One save block for the clocks, the base time scale and named random
+    generators, so a loaded game continues with the same dice (#585).
+  - Frame statistics can be exported as CSV, and console commands (time.stats,
+    time.scale, time.pause, time.step) show and change the loop live (#585).
+  - A lock for the shared random generator, random directions inside a cone,
+    points in a triangle, and a much larger UTF-8 toolkit: validate, sanitize,
+    walk backwards, cut safely, and convert to and from UTF-16 and UTF-32 (#585).
+  Timers and tweens
+  - A timer or tween can belong to an object and goes away silently when that
+    object is destroyed, so a delayed call can no longer touch a dead object
+    after a scene change (#587).
+  - Timers and tweens can follow a named clock, so a pause menu freezes gameplay
+    timers while menu animation keeps running (#587).
+  - Springs and critically damped smoothing for numbers, vectors, angles and
+    rotations; one big step gives the same answer as many small ones (#587).
+  - Ease curves as data: cubic-bezier(...), steps(n) and preset names, for
+    tweens and for the Tween Animation component. Tween any property by name,
+    for example tween_prop("Light.intensity", 3, 0.5) (#587).
+  - A debug listing of every pending timer and tween (#587).
+  Scene graph
+  - Hierarchies 100000 levels deep can be built, saved, loaded, copied and
+    destroyed; they used to crash at around 60000 (#586).
+  - Transform: find a child by path, move an object among its siblings, move and
+    rotate in world, local or self space, rotate around a point (#586).
+  - Spawning: Instantiate with position, rotation and parent, Duplicate, unique
+    names such as "Cube (1)", DestroyImmediate, world bounds of a hierarchy, and
+    queries by name or layer (#586).
+  - Tag and layer lists saved in the project file, named layers, and collision
+    matrix presets (everything, nothing, same layer only) (#586).
+  - Mover, Spinner and Lifetime can work in local, world or self space, and
+    Lifetime saves how long it has lived (#586).
+  Fixes
+  - The game loop can no longer lengthen a frame when it clamps a hitch, a
+    frame time beyond the number range no longer overflows, a tiny fixed step
+    can no longer keep the loop busy for billions of callbacks, and options set
+    on the loop before Run are no longer dropped (#585).
+  - Timers and tweens: NaN or infinite times, a huge step on a fast repeating
+    timer, a callback that throws, a 10-hour timer firing late, and tweens from
+    action lists writing into destroyed objects are all fixed (#587).
+  - Scene graph: removing a component from its own disable or destroy handler,
+    changing a tag in place, reordering root objects, an object parented to one
+    that is being destroyed, children of a transient object, and scene files that
+    contain a NaN are all fixed. A spinner that turns on several axes now gives
+    the same result at any frame rate (#586).
+
 v2.851.0
   Editor
   - A roomier editor layout: larger type, more space and bigger click targets

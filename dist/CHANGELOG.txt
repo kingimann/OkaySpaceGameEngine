@@ -1,5 +1,44 @@
 OkaySpace Game Engine — Changelog
 
+v2.849.0
+  Scenes and objects
+  - Scenes load all-or-nothing: a damaged or truncated scene file no longer
+    leaves a half-built level, sizes are bounded, and files written by a newer
+    version still open (#553).
+  - Scenes can load in the background without freezing the game, and objects
+    can be pooled and reused instead of created and destroyed (#570).
+  - Components can require other components, objects and prefabs carry stable
+    IDs, prefab instances remember their overrides, and a layer collision
+    matrix, a tag index and a camera stack are available (#570).
+  - Scene lifecycle is predictable: Start runs once the object is really
+    active, SetParent keeps the world position, Destroy can be delayed and is
+    safe in the middle of an update, OnEnable and OnDisable fire, and objects
+    can survive a scene change with DontDestroyOnLoad (#558).
+  Saves and data
+  - Saves are durable: files are written atomically so a crash mid-save keeps
+    the old file, text is escaped properly, save slots are versioned and
+    checksummed, and the loaders tolerate damaged files (#552).
+  - Asset manager with handles, background loading and hot reload, and an
+    asset database with stable IDs, dependency tracking, import settings and
+    thumbnails (#568).
+  - Localization and Prefs improvements, plus math and geometry helpers, a
+    command line and console, ECS commands and deltas, and more keys and
+    gamepads in the input system (#571).
+  Scripts and tools
+  - Log has categories, a rotating log file and is safe to call from several
+    threads; the profiler exports Chrome trace and CSV files (#559).
+  - Timers and tweens run on one global scheduler, can be cancelled by tag or
+    owner, and several tween bugs are fixed (#560).
+  - Undo and crash recovery, an automated test framework and a save framework
+    for tools and games (#572).
+  Fixes
+  - Random.Range no longer returns its maximum, the event bus is safe when a
+    handler adds or removes handlers, time uses double precision so long
+    sessions don't drift, a pause scale is available, and UTF-8 handling no
+    longer breaks on bad input (#557).
+  - Core audit: fixed bugs in math, the ECS, network snapshots, the camera,
+    layers and input (#565).
+
 v2.848.0
   Characters
   - The speed fit from 2.847.0 now covers every player controller (third-person

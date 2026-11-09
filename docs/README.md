@@ -8,6 +8,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
 - [scene_serializer.md](scene_serializer.md): what a scene round trip keeps, and the component serializer registry.
 - [editor.md](editor.md): the editor, its panels and Build Game.
+- [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.
 - [packaging.md](packaging.md): how a build is laid out for distribution.
 - [releasing.md](releasing.md): releasing an update to players.
@@ -19,6 +20,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [visual_scripting.md](visual_scripting.md): the visual scripting text format (OkayVS) and Action Lists.
 - [engine_api.md](engine_api.md): the engine API reference.
 - [core_logging_profiling.md](core_logging_profiling.md): logging (categories, file sink, OKAY_LOG) and the frame profiler (trace and CSV export).
+- [automated_testing.md](automated_testing.md): play-mode tests (`PlayTest`, `okay-playtest`), scene validation and golden-file / golden-image regression helpers.
 - [editor-plugins.md](editor-plugins.md): extend the editor with plugins.
 
 ## Characters and animation
@@ -39,6 +41,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [timers_and_tweens.md](timers_and_tweens.md): timers that survive scene loads, cancel by tag, and tween behaviour.
 - [build_mode.md](build_mode.md): let players build in your game, logic links, saving creations.
 - [save_games.md](save_games.md): save and load the whole game.
+- [save_framework.md](save_framework.md): saveable objects, checkpoints, quick save and autosave slots, slot headers, migrations, sync hooks, load menus.
 - [day_night_cycle.md](day_night_cycle.md): the day and night cycle.
 - [splines.md](splines.md): splines, followers, lines and trails.
 

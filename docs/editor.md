@@ -604,15 +604,47 @@ lives in `EditorState` (`editor/EditorState.hpp`) and is tested by `editor_hooks
 
 Not wired, on purpose: Hierarchy drag-and-drop already reorders and reparents through `Scene::ReorderSibling` (the same
 result as `SetParent(parent, true, index)`), so it was left as it is; there is no engine call to reset a component order
-to its default, so there is no button; the Console panel has no command line (it only shows the log), so the `time.*`
-console commands and a `timers` command have nowhere to be typed yet (the Stats and Timers overlays show the same text);
-the Tween Animation inspector has no fields for decay, speed based or tag (they need new component fields and a scene
-record extension). The hooks that belong to the fifth core pass (the one-line FPS label next to the PLAYING pill,
-the new `Time.*` script rows, `replayPauses`, the Tween Animation fields, the visual-script tween nodes,
-`FindAllByPath` in the Hierarchy search) depend on engine code that was still in open pull requests; they are not wired
-here.
+to its default (`GameObject::ReorderComponents` arranges one on purpose, nothing puts it back), so there is no
+button; the Console panel has no command line (it only shows the log), so the `time.*` console commands and a `timers`
+command have nowhere to be typed yet (the Stats and Timers overlays show the same text); `FindNearest` is a lookup
+for components that point at another object by name, not something a search box needs; the editor has no screen that
+replays a recording, so `GameLoop::Options::replayPauses` has nothing to be set from.
 
 Things to know when reading the numbers: the frames of a **Run N frames** are exact (1/60 s), so the loop records them
 as 1/60 s and the graph reads 60 fps for them whatever the machine does; the **PAUSED** banner in the middle of the Game
 view can sit behind the Stats box when the view is narrow; the editor allows one running instance per machine (a second
 launch hands its request to the first), which matters when you script it for screenshots.
+
+### Editor wiring, second part (the fifth core pass)
+
+- **The PLAYING / PAUSED pill no longer sits on the resolution readout.** The readout ("934 x 514 px") and the pill were
+  both drawn at the top-left corner, so the readout's trailing "x" showed through next to the pill. The pill is now on
+  the line below the readout. Beside it a one-line **FPS label** shows `EditorState::FpsLabel()`
+  (`FrameOverlay::FpsLabel`: the real frame times of the last 30 frames, so a 5 s stall reads as 2 FPS, and "FPS --"
+  before the first frame; left out when the view is too narrow for it). The Stats and Timers boxes at the top-right
+  move below anything drawn at the top-left when the view is narrow, so they never cover the pill, the FPS label or the
+  readout; a view narrower than a box keeps the start of each line readable and clips the end.
+- **Tween Animation inspector**: **Speed based** (a checkbox under Delay for the types that read it: move, scale, UI
+  move and size, fade and colour; the Duration row then reads **Speed (units/s)**), **Decay** (punch and shake types,
+  0 to 60, a straight fade at 0, lively at 4, snappy at 8) and **Tag** (a group label for `tween_kill_tag`,
+  `tween_pause_tag`, `tween_play_tag` and the tag nodes). The **Clock** combo (`ClockSet::Global().Names()` plus a
+  custom channel) and the **Curve** text field (`easeCurve`, with the small drawing of the curve) were already in the
+  Inspector.
+- **Script Editor, time**: the `Time.` member list offers `sessionTime`, `sessionUnscaledTime`, `sessionFrameCount`,
+  `unscaledDeltaTime`, `unscaledTime`, `fps`, `hitchCount`, `paused`, `HitStop`, `SlowMotion`, `RampTimeScale`,
+  `PushPause`, `PopPause` and `IsPausedBy` (and the existing `fixedDeltaTime` now has a description); each has a
+  description and an example in the completion's detail pane, and the three methods that take arguments show their
+  signature while you type the call. The builtins `session_time`, `session_unscaled_time`, `session_frame_count`,
+  `unscaled_dt`, `is_paused`, `hitch_count`, `push_pause`, `pop_pause`, `is_paused_by`, `hit_stop`, `slow_motion`,
+  `ramp_timescale` and `ease_curve` are in the Scripting Reference (Timing and Easing sections), the signature hints and
+  the hover descriptions; the completion list already took every VM builtin.
+- **Visual script**: the seven tween, spring and ease nodes are in the node search and palette: **Ease With Curve**
+  (Math), **Spring Step** (Math), **Tween Move**, **Tween Move By Speed**, **Kill / Pause / Play Tweens With Tag**
+  (Action), each with its pins, setting hint and help text. "Generate script" turns Ease With Curve into
+  `ease_curve(t, "<text>")`, Tween Move into `tween_move3(x, y, z, seconds[, "<ease>"])` (an axis nobody feeds stays at
+  the object's own value) wrapped in `tween_speed_based(...)` and `tween_tag(..., "<tag>")` as asked, and the tag nodes
+  into `tween_kill_tag("<tag>", complete)`, `tween_pause_tag`, `tween_play_tag` with the Count kept in a field.
+  **Spring Step** keeps a velocity between frames, which a text script has no call for: it is listed under "NOT
+  TRANSLATED" in the generated code (the graph itself runs it).
+- **Hierarchy search by path**: typing `Parent/Child` lists every object that path names (`Scene::FindAllByPath`, in
+  scene order, two siblings called "Door" both come back) next to the usual name and type matches.

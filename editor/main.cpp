@@ -11651,7 +11651,11 @@ void DrawScriptDocs() {
         fapi("sin cos tan asin acos atan atan2", "trigonometry");
         fapi("sqrt pow exp log abs sign floor ceil round", "math");
         fapi("min max clamp clamp01 lerp smoothstep wrap ping_pong", "ranges & easing");
-        fapi("time() / dt() / fps()", "timing");
+        fapi("time() / dt() / fps()", "timing (fps() is the real rate over the last half second)");
+        fapi("session_time() / session_unscaled_time() / session_frame_count()", "game seconds / real seconds / frames since this Play began");
+        fapi("unscaled_dt() / is_paused() / hitch_count()", "real frame time / is the game paused / frames over 0.1 s");
+        fapi("push_pause(reason) / pop_pause(reason) / is_paused_by(reason)", "pause with a reason of your own: two scripts never resume each other");
+        fapi("hit_stop(s[, scale]) / slow_motion(scale, s) / ramp_timescale(target, s)", "freeze frame / bullet time / eased time scale (real seconds)");
     }
 
     if (sec("Collections — arrays & maps")) {
@@ -11708,6 +11712,7 @@ void DrawScriptDocs() {
         fapi("ease_in / ease_out / ease_in_out", "quad ease");
         fapi("ease_in_cubic / ease_out_cubic / ease_in_out_cubic", "cubic ease");
         fapi("ease_back / ease_elastic / ease_bounce", "overshoot / spring / bounce");
+        fapi("ease_curve(t, \"OutBack\")", "any ease by name or curve text: \"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\"");
         fapi("fract(x)", "the fractional part of x");
     }
 
@@ -12069,7 +12074,14 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"ease_in","ease_in(t)"}, {"ease_out","ease_out(t)"}, {"ease_in_out","ease_in_out(t)"},
         {"ease_in_cubic","ease_in_cubic(t)"}, {"ease_out_cubic","ease_out_cubic(t)"},
         {"ease_in_out_cubic","ease_in_out_cubic(t)"}, {"ease_back","ease_back(t)"},
-        {"ease_elastic","ease_elastic(t)"}, {"ease_bounce","ease_bounce(t)"},
+        {"ease_elastic","ease_elastic(t)"}, {"ease_bounce","ease_bounce(t)"}, {"ease_curve","ease_curve(t, \"OutBack\")"},
+        // time (the C#-style Time.* methods are keyed by their member name: the hint shows after `Time.HitStop(`)
+        {"session_time","session_time()"}, {"session_unscaled_time","session_unscaled_time()"}, {"session_frame_count","session_frame_count()"},
+        {"unscaled_dt","unscaled_dt()"}, {"is_paused","is_paused()"}, {"hitch_count","hitch_count()"},
+        {"push_pause","push_pause(\"reason\")"}, {"pop_pause","pop_pause(\"reason\")"}, {"is_paused_by","is_paused_by(\"reason\")"},
+        {"hit_stop","hit_stop(seconds [, scale])"}, {"slow_motion","slow_motion(scale, seconds)"}, {"ramp_timescale","ramp_timescale(target, seconds)"},
+        {"HitStop","Time.HitStop(seconds, scale)"}, {"SlowMotion","Time.SlowMotion(scale, seconds)"}, {"RampTimeScale","Time.RampTimeScale(target, seconds)"},
+        {"PushPause","Time.PushPause(reason)"}, {"PopPause","Time.PopPause(reason)"}, {"IsPausedBy","Time.IsPausedBy(reason)"},
         // higher-order array ops (named-function callbacks)
         {"call","call(\"fn\"[, args...])"}, {"map_fn","map_fn(arr, \"fn\")"}, {"filter_fn","filter_fn(arr, \"fn\")"},
         {"reduce_fn","reduce_fn(arr, \"fn\", init)"}, {"for_each","for_each(arr, \"fn\")"}, {"find_fn","find_fn(arr, \"fn\")"},
@@ -12322,6 +12334,25 @@ static const std::string* ScriptDoc(const std::string& name) {
         {"ease_back","Ease with a slight backward overshoot."},
         {"ease_elastic","Springy elastic ease-out."},
         {"ease_bounce","Bouncing ease-out."},
+        {"ease_curve","The eased value of t (0..1) for any ease the tween calls take: a name (\"OutBack\") or curve text (\"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\"). Text it does not know leaves t as it is."},
+        {"session_time","Game seconds since this Play began (time() keeps counting across Plays)."},
+        {"session_unscaled_time","Real seconds since this Play began: a pause, slow motion and hit stops do not change it."},
+        {"session_frame_count","Frames since this Play began."},
+        {"unscaled_dt","Real seconds of the last frame: not slowed by the time scale, a hit stop or a pause (animate a menu with it)."},
+        {"is_paused","True while the game is paused (a menu, a cutscene, the pause button)."},
+        {"hitch_count","Frames that took over a tenth of a second since this Play began."},
+        {"push_pause","Pause the game for a reason of your own (\"dialogue\", \"shop\"): it stays paused until every reason is let go."},
+        {"pop_pause","Let go of one hold of that reason. False when nothing held it."},
+        {"is_paused_by","True while that reason is holding the pause."},
+        {"hit_stop","A freeze frame (scale 0, the default) or a brief slow-down for an impact: real seconds, ends by itself."},
+        {"slow_motion","Bullet time: slow_motion(0.2, 2) runs at a fifth speed for two real seconds, then back to normal."},
+        {"ramp_timescale","Ease the time scale to `target` over `seconds` real seconds, in a straight line."},
+        {"HitStop","A freeze frame or a brief slow-down for an impact: for `seconds` real seconds the game runs at `scale` (0 = frozen), then goes back by itself."},
+        {"SlowMotion","Bullet time: run at `scale` (0.2 = a fifth) for `seconds` real seconds, then back to normal. Composes with Time.timeScale."},
+        {"RampTimeScale","Ease Time.timeScale to `target` over `seconds` real seconds, in a straight line."},
+        {"PushPause","Hold the game paused for a reason of your own (\"dialogue\", \"shop\"); it stays paused until every reason is let go."},
+        {"PopPause","Let go of one hold of that reason. False when nothing held it."},
+        {"IsPausedBy","True while that reason is holding the pause."},
         // grok/ui-color
         {"set_swatch","Select a swatch on a named color picker. Fires on_change when it changes."},
         {"swatch_value","The selected swatch index on a named color picker, or -1."},
@@ -12381,7 +12412,9 @@ static const std::vector<std::string>& ScriptMembers(const std::string& receiver
         {"gameObject", {"name","tag","activeSelf","SetActive","GetComponent"}},
         {"Input", {"GetAxis","GetButton","GetButtonDown","GetButtonUp","GetKey","GetKeyDown",
                    "GetKeyUp","GetMouseButton","GetMouseButtonDown","GetMouseButtonUp","mousePosition"}},
-        {"Time", {"deltaTime","time","timeScale","fixedDeltaTime"}},
+        {"Time", {"deltaTime","time","timeScale","fixedDeltaTime","unscaledDeltaTime","unscaledTime","sessionTime",
+                  "sessionUnscaledTime","sessionFrameCount","fps","hitchCount","paused",
+                  "HitStop","SlowMotion","RampTimeScale","PushPause","PopPause","IsPausedBy"}},
         {"Mathf", {"Abs","Acos","Asin","Atan","Ceil","Clamp","Clamp01","Cos","Deg2Rad","DeltaAngle",
                    "Epsilon","Exp","Floor","Infinity","InverseLerp","Lerp","LerpAngle","Log","Max",
                    "Min","MoveTowards","PI","PerlinNoise","PingPong","Pow","Rad2Deg","Repeat","Round",
@@ -12654,6 +12687,36 @@ static const ScriptHelp* ScriptHelpFor(const std::string& key) {
             "float y = Mathf.Sin(Time.time * 2f) * 0.5f;"}},
         {"Time.timeScale", {"Game speed: 1 = normal, 0.5 = slow motion, 0 = paused.",
             "Time.timeScale = paused ? 0f : 1f;"}},
+        {"Time.fixedDeltaTime", {"Seconds between FixedUpdate calls (0.02 = 50 a second).",
+            "rb.AddForce(Vector3.up * lift * Time.fixedDeltaTime);"}},
+        {"Time.unscaledDeltaTime", {"Real seconds since the last frame: not slowed by timeScale, a hit stop or a pause. Animate a pause menu with it.",
+            "panel.alpha += 4f * Time.unscaledDeltaTime;"}},
+        {"Time.unscaledTime", {"Real seconds since the game started: a pause, slow motion and hit stops do not change it.",
+            "float blink = Mathf.PingPong(Time.unscaledTime, 1f);"}},
+        {"Time.sessionTime", {"Game seconds since this Play began. Time.time keeps counting across Plays; this starts from 0 each time.",
+            "if (Time.sessionTime > 30f)\n    SpawnBoss();"}},
+        {"Time.sessionUnscaledTime", {"Real seconds since this Play began: a pause, slow motion and hit stops do not change it.",
+            "Debug.Log($\"Playing for {Time.sessionUnscaledTime}s\");"}},
+        {"Time.sessionFrameCount", {"Frames since this Play began.",
+            "if (Time.sessionFrameCount == 1)\n    Debug.Log(\"first frame\");"}},
+        {"Time.fps", {"Frames per second over the last half second of real frame times (0 before the first frame). A stall shows.",
+            "if (Time.fps < 30f)\n    LowerQuality();"}},
+        {"Time.hitchCount", {"How many frames took over a tenth of a second since this Play began.",
+            "Debug.Log($\"Hitches so far: {Time.hitchCount}\");"}},
+        {"Time.paused", {"True while the game is paused (a menu, a cutscene or the pause button holds it).",
+            "if (Time.paused)\n    return;"}},
+        {"Time.HitStop", {"A freeze frame or a brief slow-down for an impact: for some real seconds the game runs at this scale (0 = frozen), then goes back by itself.",
+            "Time.HitStop(0.08f, 0f);   // a heavy hit"}},
+        {"Time.SlowMotion", {"Bullet time: run at this speed (0.2 = a fifth) for some real seconds, then back to normal. Composes with Time.timeScale.",
+            "Time.SlowMotion(0.2f, 2f);"}},
+        {"Time.RampTimeScale", {"Ease Time.timeScale to a new value over some real seconds, in a straight line.",
+            "Time.RampTimeScale(1f, 0.5f);   // ease back to normal"}},
+        {"Time.PushPause", {"Hold the game paused for a reason of your own (\"dialogue\", \"shop\"). It stays paused until every reason is let go, so two scripts that pause never resume each other.",
+            "Time.PushPause(\"shop\");"}},
+        {"Time.PopPause", {"Let go of one hold of that reason. False when nothing held it.",
+            "Time.PopPause(\"shop\");"}},
+        {"Time.IsPausedBy", {"True while that reason is holding the pause.",
+            "if (Time.IsPausedBy(\"shop\"))\n    ShowShopUI();"}},
         {"Debug.Log", {"Print a message to the Console.",
             "Debug.Log(\"Hello\");\nDebug.Log($\"Score: {score}\");"}},
         {"Debug.LogWarning", {"Print a yellow warning to the Console.",
@@ -17632,7 +17695,7 @@ void DrawHierarchy(EditorState& ed) {
     SearchField("##hfilter", g_hierFilter, sizeof(g_hierFilter), "Search",
                 -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
     if (ImGui::IsItemHovered() && !g_hierFilter[0])
-        ImGui::SetTooltip("Search by name, or by type: camera, light, mesh, script, ui...");
+        ImGui::SetTooltip("Search by name, or by type: camera, light, mesh, script, ui...\nOr by hierarchy path: Parent/Child lists every object that path names.");
     ImGui::SameLine();
     if (IconButton("##hmore", TbIcon::More, "Hierarchy options", g_hierSort)) ImGui::OpenPopup("##hieropts");
     if (ImGui::BeginPopup("##hieropts")) {
@@ -17689,6 +17752,11 @@ void DrawHierarchy(EditorState& ed) {
     if (g_hierFilter[0] != '\0') {
         std::string needle = g_hierFilter;
         for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
+        // A hierarchy path ("Parent/Child"): every object it names, in scene order (Scene::FindAllByPath), on top of the
+        // name and type matches. Two siblings called "Door" both come back.
+        std::unordered_set<const GameObject*> pathHits;
+        if (needle.find('/') != std::string::npos)
+            for (GameObject* g : ed.scene().FindAllByPath(g_hierFilter)) pathHits.insert(g);
         int hits = 0;
         for (const auto& up : ed.scene().Objects()) {
             GameObject* go = up.get();
@@ -17715,7 +17783,7 @@ void DrawHierarchy(EditorState& ed) {
                 go->GetComponent<UIToggle>() || go->GetComponent<UIProgressBar>())
                 hay += " ui widget canvas";
             for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
-            if (hay.find(needle) == std::string::npos) continue;
+            if (hay.find(needle) == std::string::npos && !pathHits.count(go)) continue;
             ++hits;
             bool sel = (go == ed.selected());
             ImGui::PushID(go);
@@ -35763,8 +35831,15 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SliderInt("Vibrato##ta", &ta->vibrato, 1, 40)) ed.dirty = true;
                 if (ty <= TT::PunchRotation && ImGui::SliderFloat("Elasticity##ta", &ta->elasticity, 0.0f, 1.0f)) ed.dirty = true;
             }
-            if (ImGui::DragFloat("Duration (s)##ta", &ta->duration, 0.01f, 0.01f, 120.0f)) ed.dirty = true;
+            // Speed based: the number is a speed in units a second and the tween lasts distance / speed (move, scale,
+            // UI move and size, fade and colour read it; rotations, punches, shakes and jumps use it as seconds).
+            const bool speedable = ty != TT::Rotate && ty <= TT::UISize;
+            if (ImGui::DragFloat(speedable && ta->speedBased ? "Speed (units/s)##ta" : "Duration (s)##ta", &ta->duration, 0.01f, 0.01f, 120.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Delay (s)##ta", &ta->delay, 0.01f, 0.0f, 120.0f)) ed.dirty = true;
+            if (speedable) {
+                if (ImGui::Checkbox("Speed based##ta", &ta->speedBased)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The number above (Speed) is a speed in units per second, not seconds:\nthe tween lasts as long as the distance needs (a long move takes longer\nthan a short one at the same speed).");
+            }
             if (!punchy && EaseCombo("Ease##ta", ta->ease, &ta->easeCurve)) ed.dirty = true;
             if (!punchy && EaseCurveField("Curve##ta", ta->easeCurve)) ed.dirty = true;
             {   // Which clock drives it: scene time, or a Clock channel ("ui", "cinematic", your own).
@@ -35808,12 +35883,19 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::Combo("Loop type##ta", &ta->loopType, kLoopTypes, IM_ARRAYSIZE(kLoopTypes))) ed.dirty = true;
                 }
             }
+            if (punchy) {
+                if (ImGui::DragFloat("Decay##ta", &ta->decay, 0.1f, 0.0f, 60.0f, "%.1f")) { ta->decay = std::clamp(ta->decay, 0.0f, 60.0f); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How a punch or shake dies away: 0 is a straight fade,\n4 is lively, 8 snappy (the motion is quiet sooner).");
+            }
             if (ImGui::Checkbox("Play on start##ta", &ta->autoPlay)) ed.dirty = true;
             SameLineOrWrap(ButtonW("Ignore time scale") + 30);
             if (ImGui::Checkbox("Ignore time scale##ta", &ta->unscaled)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keeps playing while the game is paused (menus).");
             char idb[64]; std::snprintf(idb, sizeof(idb), "%s", ta->id.c_str());
             if (ImGui::InputTextWithHint("Id##ta", "for tween_play_id(\"...\")", idb, sizeof(idb))) { ta->id = idb; ed.dirty = true; }
+            char tagb[okay::Tags::kMaxLength * 4 + 1]; std::snprintf(tagb, sizeof(tagb), "%s", ta->tag.c_str());
+            if (ImGui::InputTextWithHint("Tag##ta", "for tween_kill_tag(\"...\")", tagb, sizeof(tagb))) { ta->tag = tagb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A group label: tween_kill_tag(\"menu\"), tween_pause_tag and tween_play_tag\n(and the Kill / Pause / Play Tweens With Tag nodes) reach every\ntween that carries it. Many tweens can share one.");
             if (!ta->autoPlay && ta->id.empty())
                 ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "Not on start and no Id: nothing will play it.");
             // Preview in the editor (restores the object after).
@@ -43557,6 +43639,10 @@ void DrawGameView(EditorState& ed) {
         if (!g_gameDeviceLandscape) labelDrop = longSide * device->safeTop + 4.0f;
         labelIn = shortSide * device->corner * 0.45f + (g_gameDeviceLandscape ? longSide * device->safeTop : 0.0f);
     }
+    // Everything drawn in the view's top-left corner (the resolution readout, the PLAYING / PAUSED pill, the FPS label,
+    // the idle hint) is remembered here, so the Stats and Timers boxes at the top-right move below it instead of
+    // drawing over it when the view is narrow.
+    std::vector<std::pair<ImVec2, ImVec2>> topLeftRects;
     // Resolution readout (top-left of the canvas, over the scene): the target pixel
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.
     {
@@ -43572,6 +43658,7 @@ void DrawGameView(EditorState& ed) {
                           ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
         dl->AddText(tp, IM_COL32(220, 220, 230, 220), resLbl);
+        topLeftRects.push_back({ImVec2(tp.x - 3, tp.y - 2), ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2)});
     }
 
     // Play-mode cue: a soft accent border around the running view so
@@ -43584,11 +43671,24 @@ void DrawGameView(EditorState& ed) {
         ImVec2 ts = ImGui::CalcTextSize(pill);
         float pr = ImGui::GetTextLineHeight() * 0.26f;   // drawn dot (● is tofu here)
         float dotW = pr * 2.0f + 6.0f;
-        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 6 + labelDrop);
+        // Below the resolution readout (it used to be drawn on top of it: the readout's trailing "x" showed through).
+        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + 4 + labelDrop);
         dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + dotW + ts.x + 6, p0.y + ts.y + 3),
                           IM_COL32(0, 0, 0, 150), 4.0f);
         dl->AddCircleFilled(ImVec2(p0.x + pr, p0.y + ts.y * 0.55f), pr, pc);
         dl->AddText(ImVec2(p0.x + dotW, p0.y), pc, pill);
+        float pillRight = p0.x + dotW + ts.x + 6;
+        topLeftRects.push_back({ImVec2(p0.x - 4, p0.y - 3), ImVec2(pillRight, p0.y + ts.y + 3)});
+        {   // The real frame rate, one line, beside the pill (FrameOverlay::FpsLabel: real frame times, a stall reads as one).
+            const std::string fpsText = ed.FpsLabel();
+            const ImVec2 fs = ImGui::CalcTextSize(fpsText.c_str());
+            const ImVec2 f0(pillRight + 8.0f, p0.y), f1(f0.x + fs.x + 10.0f, p0.y + ts.y + 3);
+            if (f1.x < canvasEnd.x - 8.0f) {   // no room (a very narrow view): leave it out
+                dl->AddRectFilled(ImVec2(f0.x, f0.y - 3), f1, IM_COL32(0, 0, 0, 150), 4.0f);
+                dl->AddText(ImVec2(f0.x + 5.0f, f0.y), IM_COL32(225, 228, 235, 235), fpsText.c_str());
+                topLeftRects.push_back({ImVec2(f0.x, f0.y - 3), f1});
+            }
+        }
         if (g_paused) {
             // Full-canvas dim + centered banner: a paused game should never be
             // mistakable for a hang.
@@ -43613,6 +43713,7 @@ void DrawGameView(EditorState& ed) {
         dl->AddRectFilled(ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
         dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);
+        topLeftRects.push_back({ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2)});
     }
     // In-view Stats overlay, drawn over the view's top-right corner: while playing, the Play loop's performance
     // text (okay::FrameOverlay: fps, frame times, 1% low, hitches, time scale, what paused the game) with a
@@ -43663,7 +43764,13 @@ void DrawGameView(EditorState& ed) {
             for (const auto* g : groups) for (const std::string& r : *g) { ++n; w = std::max(w, ImGui::CalcTextSize(r.c_str()).x); }
             if (n == 0 && !withGraph) return;
             const float h = (float)n * lh + (withGraph ? graphH + 4.0f : 0.0f);
-            const float x1 = canvasEnd.x - 8.0f, x0 = x1 - w;
+            float x1 = canvasEnd.x - 8.0f, x0 = x1 - w;
+            if (x0 < canvasPos.x + 8.0f + pad) { x0 = canvasPos.x + 8.0f + pad; x1 = x0 + w; }   // narrower than the box: keep the start of each line readable (the end is clipped)
+            // A narrow view: when this box would sit over something drawn at the top-left, start it below that instead.
+            for (int pass = 0; pass < 3; ++pass)
+                for (const auto& r : topLeftRects)
+                    if (x0 - pad < r.second.x && x1 + pad > r.first.x && top - 4.0f < r.second.y && top + h + 4.0f > r.first.y)
+                        top = r.second.y + 8.0f;
             dl->AddRectFilled(ImVec2(x0 - pad, top - 4.0f), ImVec2(x1 + pad, top + h + 4.0f), IM_COL32(0, 0, 0, 165), 4.0f);
             float y = top;
             if (withGraph) {   // the last 90 frames as frames per second, newest at the right, auto-scaled

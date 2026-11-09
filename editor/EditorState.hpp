@@ -225,6 +225,9 @@ public:
     /// out: the loop's performance lines (empty outside Play) and the scene's counts.
     std::vector<std::string> PerfLines() const;
     std::vector<std::string> SceneLines(int maxComponentTypes = 3) const;
+    /// One line for the Game view's corner, beside the PLAYING pill (FrameOverlay::FpsLabel: the real frame times of
+    /// the last 30 frames, so a stall reads as a stall; "FPS --" before the first frame).
+    std::string FpsLabel() const;
     /// The recent frame rate for the overlay's graph, `count` points, oldest first (all 0 until frames ran).
     std::vector<float> RecentFps(std::size_t count) const;
     /// The Timers overlay: what the scene's scheduler and tweens are doing (TimerDebug::BuildLines), plus

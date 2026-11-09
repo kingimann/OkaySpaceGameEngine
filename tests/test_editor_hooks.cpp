@@ -484,6 +484,21 @@ int main() {
         ed.Stop();
     }
 
+    // ---- The one-line FPS label beside the PLAYING pill: the real frame rate, a stall reads as a stall ---------
+    {
+        Fresh();
+        EditorState ed;
+        CHECK(ed.FpsLabel() == "FPS --");                 // no frame yet
+        ed.Play();
+        CHECK(ed.FpsLabel() == "FPS --");
+        for (int i = 0; i < 10; ++i) ed.PlayFrame(0.016, false);
+        const int steady = std::atoi(ed.FpsLabel().c_str() + 4);   // after "FPS "
+        CHECK(ed.FpsLabel().rfind("FPS ", 0) == 0 && steady >= 62 && steady <= 63);
+        ed.PlayFrame(5.0, false);                          // a 5 s stall: the game steps 0.1 s, the label says what happened
+        CHECK(std::atoi(ed.FpsLabel().c_str() + 4) < 5);
+        ed.Stop();
+    }
+
     // ---- The Timers overlay text: the scene's scheduler and tweens, shortened to fit ---------------------------
     {
         Fresh();

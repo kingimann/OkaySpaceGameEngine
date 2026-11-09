@@ -801,12 +801,12 @@ It was a plain generator: two threads that drew from it raced on its two state w
 
 `Application::Run`: a second run on the same object, a time scale set before `Run` (kept), pacing arithmetic for NaN, infinite, negative and sub-1 target rates, the frame budget, `Quit()`; the player's `fpsCap` sleep and the focus paths (an unfocused frame is a 0 s step, the first frame after refocus is a normal one); `FrameRecording` replay of capture-mode frames (exact, not clamped, the recorded options are not needed) and of run-frame and step frames; `TimeSnapshot` of a block with no `v`, a newer `v`, no `timeScale`, no ramp keys and hostile ramp keys; `Countdown` save and load of every state; clock ramps across a save.
 
-### Editor and script hooks (not wired: `editor/*` is outside this pass)
+### Editor and script hooks (wired in the editor wiring pass, second part)
 
-1. **`show_fps` in the editor's built-game settings** needs nothing: it is the player. The editor's Game view can draw `okay::FrameOverlay::FpsLabel(ed.playLoop())` for a one-line FPS (include `okay/Core/FrameOverlay.hpp`), next to the PLAYING pill in `editor/main.cpp` (about line 43327).
-2. **The editor's script help** (`editor/main.cpp`, the `{"Time.deltaTime", ...}` table at about line 12526) can list `Time.sessionTime`, `Time.sessionFrameCount`, `Time.unscaledDeltaTime`, `Time.fps`, `Time.paused`, `Time.HitStop(seconds, scale)`, `Time.SlowMotion(scale, seconds)`, `Time.RampTimeScale(target, seconds)`, `Time.PushPause(reason)`, `Time.PopPause(reason)` and `Time.IsPausedBy(reason)`, and the function list line `fapi("time() / dt() / fps()", "timing")` (about line 11536) the new builtins (`session_time()`, `unscaled_dt()`, `is_paused()`, `push_pause`, `hit_stop`, `slow_motion`, `ramp_timescale`). The text of every row is in `docs/engine_api.md` and `docs/scripting_reference.md`.
-3. **Replaying a recording in the editor**: when a recorded session is replayed (a bug report's timing), set `ed.playLoop().SetOptions(o)` with `o.replayPauses = true` so the Pause button's frames replay as paused. `replayRandom` is already on.
-4. **Frame recorder button**: `FrameRecorder` now stores the random state itself; nothing extra is needed to get deterministic random numbers in a replay.
+1. **The one-line FPS in the editor's Game view (wired).** `EditorState::FpsLabel()` is `FrameOverlay::FpsLabel(ed.playLoop())`; it is drawn beside the PLAYING pill (`editor/main.cpp`, `DrawGameView`).
+2. **The editor's script help (wired).** The `Time.` members, their descriptions and examples, the call hints for `Time.HitStop` / `SlowMotion` / `RampTimeScale` / `PushPause` / `PopPause` / `IsPausedBy`, and the builtins `session_time()`, `session_unscaled_time()`, `session_frame_count()`, `unscaled_dt()`, `is_paused()`, `hitch_count()`, `push_pause`, `pop_pause`, `is_paused_by`, `hit_stop`, `slow_motion`, `ramp_timescale` are in the Script Editor's reference, completion and hover text.
+3. **Replaying a recording in the editor (not wired).** The editor has no screen that replays a recording (nothing in `editor/` attaches a `FramePlayer`), so there is nowhere to set `o.replayPauses = true`; whoever adds one calls `ed.playLoop().SetOptions(o)` with it.
+4. **Frame recorder button**: nothing extra is needed to get deterministic random numbers in a replay (unchanged).
 
 ### What changed (fifth pass)
 

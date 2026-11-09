@@ -693,8 +693,10 @@ a cleared scene (dropped without running), and a scene load requested from a cal
 Springs with a NaN, zero or infinite quaternion, angle or target stay finite (`StepQuat`, `StepAngle`); a spring
 fed values near the float limit (about 3e38) can overflow its velocity to infinity.
 
-Not done: Inspector rows for the three new `TweenAnimation` fields and palette entries, help text and code generation for the
-seven new nodes are editor changes (the page lists them as node types; the editor's node list does not show them yet);
-there is no script builtin for a spring (it needs state; the node keeps it); `TweenAnimation` is not in the property
+Editor (wired in the editor wiring pass): the Tween Animation Inspector has **Speed based**, **Decay** and **Tag** rows; the seven
+visual-script nodes are in the node search with help text and code generation (Spring Step is listed as not translated: a script has no
+spring call); `ease_curve` is in the Script Editor's reference, hints and hover text.
+
+Not done: there is no script builtin for a spring (it needs state; the node keeps it); `TweenAnimation` is not in the property
 registry; `TweenManager::OfTarget` / `IsTweening` / `WithId` / `WithTag` scan every tween (fine for hundreds, slow if a
 script calls `is_tweening()` on thousands of objects every frame); a `Scheduler` still must be used from one thread.

@@ -885,6 +885,10 @@ std::vector<std::string> EditorState::StatsLines(int maxComponentTypes) const {
     return lines;
 }
 
+std::string EditorState::FpsLabel() const {
+    return FrameOverlay::FpsLabel(m_loop);
+}
+
 std::vector<float> EditorState::RecentFps(std::size_t count) const {
     return FrameOverlay::RecentFps(m_loop.Stats(), count);
 }

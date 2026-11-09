@@ -59,7 +59,7 @@ Streams that set their own precision, width or fixed / scientific flags are unch
 | --- | --- |
 | `scene.FindGameObjectsWithTag(tag)` | every match, in scene order |
 | `scene.FindByPath("A/B/C")` | a root named A, its child B, its child C. `Find("A/B/C")` also accepts a path. Duplicate names are all tried (see "fifth pass") |
-| `scene.FindAllByPath("A/B")` | every object the path names, in scene and sibling order |
+| `scene.FindAllByPath("A/B")` | every object the path names, in scene and sibling order (the editor's Hierarchy search box lists them when the text contains a `/`) |
 | `FindNearest(scene, "Axle", go)` | the object called "Axle" nearest to `go` in the hierarchy (its own subtree, then its parent's, ...), then the scene-wide `Find` |
 | `go->ForEachDescendant(fn, includeInactive = true, includeSelf = false)` | pre-order walk, `fn(GameObject&)` may return `false` to stop |
 | `scene.Roots()` | objects without a parent |

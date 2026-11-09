@@ -12,6 +12,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Random.hpp"
+#include "okay/Core/Rng.hpp"
 #include "okay/Core/DataPack.hpp"
 #include "okay/Core/EventBus.hpp"
 #include "okay/Core/Scheduler.hpp"
@@ -20,13 +21,29 @@
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/Localization.hpp"
+#include "okay/Core/LocCheck.hpp"
+#include "okay/Core/LocTable.hpp"
+#include "okay/Core/LocScan.hpp"
+#include "okay/Core/LocPreview.hpp"
+#include "okay/Core/Subtitles.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Core/Application.hpp"
+#include "okay/Core/BuildInfo.hpp"
+#include "okay/Core/CommandLine.hpp"
+#include "okay/Core/Paths.hpp"
+#include "okay/Core/Stopwatch.hpp"
+#include "okay/Core/StateMachine.hpp"
+#include "okay/Core/Cvar.hpp"
+#include "okay/Core/Console.hpp"
+#include "okay/Core/DebugOverlay.hpp"
 #include "okay/Core/DisplaySettings.hpp"
 
 // Input
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/RemapModel.hpp"
 #include "okay/Input/GameInput.hpp"
 #include "okay/Input/Cursor.hpp"
 
@@ -60,6 +77,7 @@
 // Graphics assets
 #include "okay/Graphics/Image.hpp"
 #include "okay/Graphics/Font.hpp"
+#include "okay/Graphics/ColorVision.hpp"
 
 // Built-in components
 #include "okay/Components/Camera.hpp"

@@ -10,6 +10,7 @@
 // start (so cancelling restores them exactly and typed values are exact).
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Vec3.hpp"
+#include "okay/Math/Ray.hpp"
 #include "okay/Render/Mesh.hpp"
 #include <string>
 #include <vector>
@@ -61,7 +62,7 @@ Mat4 RotateMatrix(const Vec3& pivot, const Vec3& axisDir, float degrees);
 Mat4 ScaleMatrix(const Vec3& pivot, const AxisLock& lock, float factor);
 
 // ---- Mouse -> transform amount (the editor passes its camera rays) --------
-struct Ray { Vec3 origin, dir; };
+using Ray = okay::Ray;   // shared type from Math/Ray.hpp (fields: origin, direction)
 /// How far the mouse moved the pivot, from the ray at the start of the drag to
 /// the ray now: along the locked axis, in the locked plane, or (free) in the
 /// plane facing the camera (`viewDir` points from the camera into the scene).

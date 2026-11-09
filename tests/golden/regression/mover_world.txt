@@ -1,0 +1,3 @@
+scenehash e63f0979fe278c0b
+Main Camera|active=1|layer=0|tag=|pos=0.000,0.000,0.000|rot=0.000,0.000,0.000,1.000|scale=1.000,1.000,1.000|components=Camera
+Mover|active=1|layer=0|tag=|pos=2.000,0.000,0.000|rot=0.000,0.000,0.000,1.000|scale=1.000,1.000,1.000|components=ScriptComponent

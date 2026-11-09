@@ -103,7 +103,15 @@ std::string Joined(const std::vector<InputBinding>& b) {
 
 InputBinding InputBinding::Parse(const std::string& textIn) {
     InputBinding b;
-    const std::string text = Lower(Trim(textIn));
+    std::string text = Lower(Trim(textIn));
+    // "@n" on the end names the controller.
+    const bool padKind = text.rfind("pad:", 0) == 0 || text.rfind("stick:", 0) == 0 || text.rfind("dpad", 0) == 0;
+    if (const std::size_t at = text.rfind('@'); padKind && at != std::string::npos) {
+        const std::string n = Trim(text.substr(at + 1));
+        if (n.size() == 1 && n[0] >= '0' && n[0] < '0' + Input::kMaxGamepads) b.player = n[0] - '0';
+        else return b;   // a bad controller index is not a binding
+        text = Trim(text.substr(0, at));
+    }
     const std::size_t colon = text.find(':');
     const std::string kind = colon == std::string::npos ? text : text.substr(0, colon);
     const std::string arg = colon == std::string::npos ? "" : Trim(text.substr(colon + 1));
@@ -134,18 +142,20 @@ InputBinding InputBinding::Parse(const std::string& textIn) {
             if (ok) b.kind = Kind::Keys4;
         }
     }
+    if (!b.IsGamepad()) b.player = 0;
     return b;
 }
 
 std::string InputBinding::ToString() const {
+    const std::string at = player > 0 ? "@" + std::to_string(player) : "";
     switch (kind) {
         case Kind::Key:        return "key:" + KeyText((char)code);
         case Kind::Mouse:      return std::string("mouse:") + kMouseNames[code];
-        case Kind::PadButton:  return "pad:" + Input::GamepadButtonKey(code);
+        case Kind::PadButton:  return "pad:" + Input::GamepadButtonKey(code) + at;
         case Kind::Keys4:      return "keys:" + KeyText(keys[0]) + "," + KeyText(keys[1]) + "," + KeyText(keys[2]) + "," + KeyText(keys[3]);
-        case Kind::StickLeft:  return "stick:left";
-        case Kind::StickRight: return "stick:right";
-        case Kind::DPad:       return "dpad";
+        case Kind::StickLeft:  return "stick:left" + at;
+        case Kind::StickRight: return "stick:right" + at;
+        case Kind::DPad:       return "dpad" + at;
         case Kind::MouseDelta: return "mouse:delta";
         case Kind::None:       break;
     }
@@ -153,15 +163,16 @@ std::string InputBinding::ToString() const {
 }
 
 std::string InputBinding::Label() const {
+    const std::string who = player > 0 ? " (Pad " + std::to_string(player + 1) + ")" : "";
     switch (kind) {
         case Kind::Key:        return Input::KeyName((char)code);
         case Kind::Mouse:      return code == 0 ? "Left Mouse" : code == 1 ? "Right Mouse" : "Middle Mouse";
-        case Kind::PadButton:  return Input::GamepadButtonName(code);
+        case Kind::PadButton:  return Input::GamepadButtonName(code) + who;
         case Kind::Keys4:      return Input::KeyName(keys[0]) + " " + Input::KeyName(keys[2]) + " " +
                                       Input::KeyName(keys[1]) + " " + Input::KeyName(keys[3]);
-        case Kind::StickLeft:  return "Left Stick";
-        case Kind::StickRight: return "Right Stick";
-        case Kind::DPad:       return "D-pad";
+        case Kind::StickLeft:  return "Left Stick" + who;
+        case Kind::StickRight: return "Right Stick" + who;
+        case Kind::DPad:       return "D-pad" + who;
         case Kind::MouseDelta: return "Mouse";
         case Kind::None:       break;
     }
@@ -173,9 +184,9 @@ float InputBinding::Value() const {
         case Kind::Key:       return Input::GetKey((char)code) ? 1.0f : 0.0f;
         case Kind::Mouse:     return Input::GetMouseButton(code) ? 1.0f : 0.0f;
         case Kind::PadButton:
-            if (code == Input::PadLT) return Input::GamepadTrigger(0);
-            if (code == Input::PadRT) return Input::GamepadTrigger(1);
-            return Input::GetGamepadButton(code) ? 1.0f : 0.0f;
+            if (code == Input::PadLT) return Input::GamepadTrigger(0, player);
+            if (code == Input::PadRT) return Input::GamepadTrigger(1, player);
+            return Input::GetGamepadButton(code, player) ? 1.0f : 0.0f;
         case Kind::None:      return 0.0f;
         default: {
             const Vec2 v = Vector();
@@ -189,11 +200,11 @@ Vec2 InputBinding::Vector() const {
         case Kind::Keys4:
             return {(Input::GetKey(keys[3]) ? 1.0f : 0.0f) - (Input::GetKey(keys[2]) ? 1.0f : 0.0f),
                     (Input::GetKey(keys[0]) ? 1.0f : 0.0f) - (Input::GetKey(keys[1]) ? 1.0f : 0.0f)};
-        case Kind::StickLeft:  return Input::GamepadAxis();
-        case Kind::StickRight: return Input::GamepadRightAxis();
+        case Kind::StickLeft:  return Input::GamepadAxis(player);
+        case Kind::StickRight: return Input::GamepadRightAxis(player);
         case Kind::DPad:
-            return {(Input::GetGamepadButton(Input::PadRight) ? 1.0f : 0.0f) - (Input::GetGamepadButton(Input::PadLeft) ? 1.0f : 0.0f),
-                    (Input::GetGamepadButton(Input::PadUp) ? 1.0f : 0.0f) - (Input::GetGamepadButton(Input::PadDown) ? 1.0f : 0.0f)};
+            return {(Input::GetGamepadButton(Input::PadRight, player) ? 1.0f : 0.0f) - (Input::GetGamepadButton(Input::PadLeft, player) ? 1.0f : 0.0f),
+                    (Input::GetGamepadButton(Input::PadUp, player) ? 1.0f : 0.0f) - (Input::GetGamepadButton(Input::PadDown, player) ? 1.0f : 0.0f)};
         case Kind::MouseDelta: {
             const float s = InputActions::mouseDeltaScale > 0.0f ? InputActions::mouseDeltaScale : 1.0f;
             const Vec2 d = Input::MouseDelta();
@@ -234,27 +245,153 @@ InputActions::Action* InputActions::Find(const std::string& name) {
     return nullptr;
 }
 
+namespace {
+
+struct ContextEntry { std::string name; InputActions::ContextMode mode; };
+std::vector<ContextEntry>& Stack() { static std::vector<ContextEntry> s; return s; }
+bool IsBase(const std::string& c) { return c.empty() || Lower(c) == "gameplay"; }
+
+// Each physical input gets an id so a context can claim it from the ones below.
+int KeyId(char k) { return 1000 + (unsigned char)k; }
+int MouseId(int b) { return 2000 + b; }
+int PadId(int button, int player) { return 3000 + player * 100 + button; }
+int StickId(bool right, int player) { return (right ? 4100 : 4000) + player; }
+constexpr int kMouseDeltaId = 5000;
+
+void ClaimsOf(const InputBinding& b, std::vector<int>& out) {
+    using K = InputBinding::Kind;
+    switch (b.kind) {
+        case K::Key:        out.push_back(KeyId((char)b.code)); break;
+        case K::Mouse:      out.push_back(MouseId(b.code)); break;
+        case K::PadButton:  out.push_back(PadId(b.code, b.player)); break;
+        case K::Keys4:      for (char k : b.keys) out.push_back(KeyId(k)); break;
+        case K::StickLeft:  out.push_back(StickId(false, b.player)); break;
+        case K::StickRight: out.push_back(StickId(true, b.player)); break;
+        case K::DPad:       for (int p : {Input::PadUp, Input::PadDown, Input::PadLeft, Input::PadRight}) out.push_back(PadId(p, b.player)); break;
+        case K::MouseDelta: out.push_back(kMouseDeltaId); break;
+        case K::None:       break;
+    }
+}
+bool Claimed(const std::vector<int>& claimed, int id) {
+    return std::find(claimed.begin(), claimed.end(), id) != claimed.end();
+}
+
+// A binding read with some of its inputs swallowed by a higher context.
+Vec2 MaskedVector(const InputBinding& b, const std::vector<int>& claimed) {
+    using K = InputBinding::Kind;
+    auto key = [&](char k) { return !Claimed(claimed, KeyId(k)) && Input::GetKey(k) ? 1.0f : 0.0f; };
+    auto pad = [&](int btn) { return !Claimed(claimed, PadId(btn, b.player)) && Input::GetGamepadButton(btn, b.player) ? 1.0f : 0.0f; };
+    switch (b.kind) {
+        case K::Keys4: return {key(b.keys[3]) - key(b.keys[2]), key(b.keys[0]) - key(b.keys[1])};
+        case K::DPad:  return {pad(Input::PadRight) - pad(Input::PadLeft), pad(Input::PadUp) - pad(Input::PadDown)};
+        default: {
+            std::vector<int> ids; ClaimsOf(b, ids);
+            for (int id : ids) if (Claimed(claimed, id)) return {0.0f, 0.0f};
+            return b.Vector();
+        }
+    }
+}
+float MaskedValue(const InputBinding& b, const std::vector<int>& claimed) {
+    if (b.IsDirection()) {
+        const Vec2 v = MaskedVector(b, claimed);
+        return std::min(1.0f, std::sqrt(v.x * v.x + v.y * v.y));
+    }
+    std::vector<int> ids; ClaimsOf(b, ids);
+    for (int id : ids) if (Claimed(claimed, id)) return 0.0f;
+    return b.Value();
+}
+
+// Everything the stack above the base context swallows.
+std::vector<int> ConsumedByStack() {
+    std::vector<int> claimed;
+    for (const ContextEntry& c : Stack()) {
+        if (c.mode == InputActions::ContextMode::Passthrough) continue;
+        for (const InputActions::Action& a : Actions())
+            if (!IsBase(a.context) && Lower(a.context) == Lower(c.name))
+                for (const InputBinding& b : a.bindings) ClaimsOf(b, claimed);
+    }
+    return claimed;
+}
+
+} // namespace
+
 void InputActions::Tick() {
     EnsureDefaults();
-    for (Action& a : Actions()) {
-        a.previous = a.value;
+    for (Action& a : Actions()) { a.previous = a.value; a.value = 0.0f; a.vector = {0.0f, 0.0f}; }
+
+    auto sample = [](Action& a, const std::vector<int>& claimed) {
         Vec2 v{0.0f, 0.0f};
         float best = 0.0f;
         for (const InputBinding& b : a.bindings) {
-            if (a.direction) { const Vec2 d = b.Vector(); v.x += d.x; v.y += d.y; }
-            else best = std::max(best, b.Value());
+            if (a.direction) { const Vec2 d = MaskedVector(b, claimed); v.x += d.x; v.y += d.y; }
+            else best = std::max(best, MaskedValue(b, claimed));
         }
         if (a.direction) {
             a.vector = ClampLength(v);
             best = std::sqrt(a.vector.x * a.vector.x + a.vector.y * a.vector.y);
         }
         a.value = best;
+    };
+
+    // Top of the stack first; each layer sees what the layers above left over.
+    std::vector<int> claimed;
+    bool blocked = false;
+    const auto& stack = Stack();
+    for (std::size_t i = stack.size(); i-- > 0 && !blocked;) {
+        const ContextEntry& c = stack[i];
+        for (Action& a : Actions())
+            if (!IsBase(a.context) && Lower(a.context) == Lower(c.name)) sample(a, claimed);
+        if (c.mode == ContextMode::Block) blocked = true;
+        else if (c.mode == ContextMode::Consume)
+            for (const Action& a : Actions())
+                if (!IsBase(a.context) && Lower(a.context) == Lower(c.name))
+                    for (const InputBinding& b : a.bindings) ClaimsOf(b, claimed);
     }
+    if (!blocked)
+        for (Action& a : Actions())
+            if (IsBase(a.context)) sample(a, claimed);
 }
 
-bool InputActions::Get(const std::string& name) { const Action* a = Find(name); return a && a->value >= 0.5f; }
-bool InputActions::Down(const std::string& name) { const Action* a = Find(name); return a && a->value >= 0.5f && a->previous < 0.5f; }
-bool InputActions::Up(const std::string& name) { const Action* a = Find(name); return a && a->value < 0.5f && a->previous >= 0.5f; }
+void InputActions::DefineIn(const std::string& context, const std::string& name,
+                            const std::vector<std::string>& bindings, bool direction) {
+    Define(name, bindings, direction);
+    SetContext(name, context);
+}
+bool InputActions::SetContext(const std::string& action, const std::string& context) {
+    Action* a = Find(action);
+    if (!a) return false;
+    a->context = IsBase(context) ? "" : context;
+    return true;
+}
+void InputActions::PushContext(const std::string& context, ContextMode mode) {
+    if (IsBase(context)) return;
+    PopContext(context);
+    Stack().push_back({context, mode});
+}
+void InputActions::PopContext(const std::string& context) {
+    auto& s = Stack();
+    s.erase(std::remove_if(s.begin(), s.end(), [&](const ContextEntry& c) { return Lower(c.name) == Lower(context); }), s.end());
+}
+void InputActions::ClearContexts() { Stack().clear(); }
+bool InputActions::ContextActive(const std::string& context) {
+    if (IsBase(context)) return true;
+    for (const ContextEntry& c : Stack()) if (Lower(c.name) == Lower(context)) return true;
+    return false;
+}
+std::string InputActions::TopContext() { return Stack().empty() ? std::string() : Stack().back().name; }
+static bool StackBlocks() {
+    for (const ContextEntry& c : Stack()) if (c.mode == InputActions::ContextMode::Block) return true;
+    return false;
+}
+bool InputActions::KeyConsumed(char key) { return StackBlocks() || Claimed(ConsumedByStack(), KeyId(key)); }
+bool InputActions::PadButtonConsumed(int button, int player) { return StackBlocks() || Claimed(ConsumedByStack(), PadId(button, player)); }
+void InputActions::SetThreshold(const std::string& action, float t) {
+    if (Action* a = Find(action)) a->threshold = t < 0.01f ? 0.01f : (t > 1.0f ? 1.0f : t);
+}
+
+bool InputActions::Get(const std::string& name) { const Action* a = Find(name); return a && a->value >= a->threshold; }
+bool InputActions::Down(const std::string& name) { const Action* a = Find(name); return a && a->value >= a->threshold && a->previous < a->threshold; }
+bool InputActions::Up(const std::string& name) { const Action* a = Find(name); return a && a->value < a->threshold && a->previous >= a->threshold; }
 float InputActions::Value(const std::string& name) { const Action* a = Find(name); return a ? a->value : 0.0f; }
 Vec2 InputActions::Vector(const std::string& name) { const Action* a = Find(name); return a ? a->vector : Vec2{0.0f, 0.0f}; }
 
@@ -312,6 +449,6 @@ void InputActions::Save() {
     }
 }
 
-void InputActions::Restore() { DefineDefaults(); }
+void InputActions::Restore() { Stack().clear(); DefineDefaults(); }
 
 } // namespace okay

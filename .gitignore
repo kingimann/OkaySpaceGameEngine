@@ -18,6 +18,9 @@ CMakeFiles/
 cmake_install.cmake
 CTestTestfile.cmake
 Testing/
+# ...but the engine's own okay::testing sources live in folders with that name
+!engine/include/okay/Testing/
+!engine/src/Testing/
 compile_commands.json
 
 # Editor / IDE

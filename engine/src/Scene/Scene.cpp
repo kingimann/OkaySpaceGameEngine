@@ -5,6 +5,7 @@
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Layers.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneLocalization.hpp"
@@ -52,6 +53,64 @@ GameObject* Scene::Instantiate(const GameObject& prefab) {
 GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position) {
     GameObject* go = SceneSerializer::Instantiate(*this, prefab);
     if (go) go->transform->localPosition = position;
+    return go;
+}
+
+GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation) {
+    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    if (go) { go->transform->localPosition = position; go->transform->localRotation = rotation.Normalized(); }
+    return go;
+}
+
+GameObject* Scene::Instantiate(const GameObject& prefab, Transform* parent, bool worldPositionStays) {
+    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    if (go && parent) go->transform->SetParent(parent, worldPositionStays);   // refused: it stays a root
+    return go;
+}
+
+GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation, Transform* parent) {
+    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    if (!go) return nullptr;
+    if (parent) go->transform->SetParent(parent, /*worldPositionStays=*/false);   // refused: it stays a root
+    go->transform->SetPosition(position);   // world values, whatever it ended up under
+    go->transform->SetRotation(rotation);
+    return go;
+}
+
+std::string Scene::UniqueName(const std::string& base, const Transform* parent) const {
+    std::unordered_set<std::string> used;   // the names among the siblings
+    if (parent) {
+        for (const Transform* c : parent->Children()) if (c && c->gameObject) used.insert(c->gameObject->name);
+    } else {
+        for (const auto& o : m_objects) if (!o->transform || !o->transform->Parent()) used.insert(o->name);
+    }
+    const std::string wanted = base.empty() ? std::string("GameObject") : base;
+    if (!used.count(wanted)) return wanted;
+    // "Crate (3)" counts from "Crate": cut a trailing " (digits)".
+    std::string stem = wanted;
+    const std::size_t open = stem.rfind(" (");
+    if (open != std::string::npos && stem.size() > open + 3 && stem.back() == ')') {
+        bool digits = true;
+        for (std::size_t i = open + 2; i + 1 < stem.size(); ++i) if (stem[i] < '0' || stem[i] > '9') { digits = false; break; }
+        if (digits) stem.resize(open);
+    }
+    for (int n = 1;; ++n) {
+        std::string candidate = stem + " (" + std::to_string(n) + ")";
+        if (!used.count(candidate)) return candidate;
+    }
+}
+
+GameObject* Scene::Duplicate(const GameObject& original) {
+    if (original.IsDestroyed() || !original.transform) return nullptr;
+    Transform* parent = original.transform->Parent();
+    if (parent && (!parent->gameObject || parent->gameObject->scene() != this || parent->gameObject->IsDestroyed())) parent = nullptr;
+    const std::string name = UniqueName(original.name, parent);   // before the copy exists: it must not count
+    GameObject* go = SceneSerializer::Instantiate(*this, original);
+    if (!go) return nullptr;
+    go->name = name;
+    if (parent) go->transform->SetParent(parent, /*worldPositionStays=*/false);   // same local pose under the same parent
+    if (original.scene() == this)
+        go->transform->PlaceAfter(original.transform);   // right behind the original
     return go;
 }
 
@@ -149,6 +208,14 @@ bool CanRun(const Component* c) {
 }
 } // namespace
 
+// Counts the stretches where the scene is walking its component lists and calling user code
+// (Awake/Start, Update, physics, render, OnDestroy). DestroyImmediate waits for the end of those.
+struct Scene::BusyScope {
+    Scene& s;
+    explicit BusyScope(Scene& sc) : s(sc) { ++s.m_busy; }
+    ~BusyScope() { --s.m_busy; }
+};
+
 void Scene::FlushPending() {
     if (m_pending.empty()) return;
     // Awake the whole batch first, then Start it.
@@ -195,6 +262,7 @@ void Scene::StartComponent(Component* c) {
 
 void Scene::Start() {
     ActionList::UseScene(this);
+    BusyScope busy(*this);
     FlushPending();
 }
 
@@ -244,6 +312,8 @@ void Scene::ReattachKept(KeptState& k) {
 
 void Scene::Update(float deltaTime) {
     ActionList::UseScene(this);
+    {
+    BusyScope busy(*this);   // component lists are walked until the end of LateUpdate
     FlushPending(); // adopt anything created since last frame
     // Drop any components removed last frame (their slots were nulled).
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
@@ -296,6 +366,7 @@ void Scene::Update(float deltaTime) {
                 c->LateUpdate(deltaTime);
         }
     }
+    }   // end of BusyScope
 
     FlushDestroyed();
     ResolveMainCamera();   // follow cameras being switched on/off this frame
@@ -526,6 +597,7 @@ void Scene::DispatchPointer() {
 
 void Scene::Render(IRenderer& renderer) {
     ActionList::UseScene(this);
+    BusyScope busy(*this);
     Color clear = mainCamera ? mainCamera->backgroundColor : Color::Black;
     renderer.BeginFrame(clear);
 
@@ -568,16 +640,23 @@ void Scene::Destroy(GameObject* go) {
 
 void Scene::Destroy(GameObject* go, float seconds) {
     if (!go) return;
-    if (seconds <= 0.0f) { Destroy(go); return; }
+    if (!(seconds > 0.0f)) { Destroy(go); return; }   // zero, negative or NaN: now
     for (auto& d : m_delayedDestroy)
         if (d.first == go->InstanceId()) { d.second = std::min(d.second, seconds); return; }
     m_delayedDestroy.push_back({go->InstanceId(), seconds});
+}
+
+void Scene::DestroyImmediate(GameObject* go) {
+    if (!go || go->IsDestroyed()) return;
+    Destroy(go);
+    if (m_busy == 0) FlushDestroyed();   // not while a component list is being walked: the end of the frame does it then
 }
 
 void Scene::TickDelayedDestroys(float deltaTime) {
     if (m_delayedDestroy.empty()) return;
     auto due = std::move(m_delayedDestroy);
     m_delayedDestroy.clear();
+    if (!(deltaTime > 0.0f) || !std::isfinite(deltaTime)) deltaTime = 0.0f;   // a bad frame time takes no time off
     for (auto& d : due) {
         GameObject* go = GameObject::FromInstanceId(d.first);   // null once it is gone
         if (!go || go->scene() != this) continue;
@@ -618,6 +697,7 @@ void Scene::DispatchActivation() {
 }
 
 void Scene::FlushDestroyed() {
+    BusyScope busy(*this);   // OnDestroy handlers run: a DestroyImmediate from one only queues
     // OnDestroy handlers (scripts, visual scripts) may destroy or spawn more
     // objects: take the queue as a batch so they can't invalidate it, and treat
     // what they queued as the next batch (a few rounds; the rest waits a frame).
@@ -691,6 +771,15 @@ void Scene::FlushDestroyed() {
         }
         m_objects.swap(kept);
     }
+    // An object an OnDestroy handler parented under a dying one is not part of the batch: it
+    // lives on, as a root at the pose it had, instead of hanging under a frozen shell for good.
+    // (Every dying child has detached itself above, so what is still listed was adopted.)
+    for (GameObject* go : batch) {
+        Transform* t = go->transform;
+        if (!inScene.count(go) || !t || t->Children().empty()) continue;
+        const std::vector<Transform*> adopted = t->Children();
+        for (Transform* kid : adopted) kid->SetParent(nullptr, /*worldPositionStays=*/true);
+    }
     ++m_structureVersion;   // again after the free: a query from OnDestroy may have cached the dying components
     }
     if (m_graveyard.size() > 20000) {   // bullets etc.: oldest shells go
@@ -749,16 +838,75 @@ SceneValidationReport Scene::Validate(const std::string& assetRoot) const {
     return SceneSerializer::Validate(SceneSerializer::Serialize(*this), assetRoot);
 }
 
+// The objects the index lists for `tag`. A tag can be changed through std::string calls the
+// index cannot see, so each entry is checked against what the object carries now; one that
+// disagrees means the index is stale and it is rebuilt once.
+const std::vector<GameObject*>* Scene::TagList(const std::string& tag) const {
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const auto& idx = TagIndex();
+        auto it = idx.find(tag);
+        if (it == idx.end()) return nullptr;
+        bool fresh = true;
+        for (const GameObject* o : it->second) if (o->tag != tag) { fresh = false; break; }
+        if (fresh) return &it->second;
+        m_tagIndexTags = 0;   // force the rebuild
+    }
+    return nullptr;
+}
+
 GameObject* Scene::FindWithTag(const std::string& tag) const {
     if (tag.empty()) return nullptr;   // "no tag" is not a tag: every untagged object would match
-    auto it = TagIndex().find(tag);
-    return it == TagIndex().end() || it->second.empty() ? nullptr : it->second.front();
+    const auto* list = TagList(tag);
+    return !list || list->empty() ? nullptr : list->front();
 }
 
 std::vector<GameObject*> Scene::FindGameObjectsWithTag(const std::string& tag) const {
     if (tag.empty()) return {};
-    auto it = TagIndex().find(tag);
-    return it == TagIndex().end() ? std::vector<GameObject*>{} : it->second;
+    const auto* list = TagList(tag);
+    return list ? *list : std::vector<GameObject*>{};
+}
+
+int Scene::CountWithTag(const std::string& tag) const {
+    if (tag.empty()) return 0;
+    const auto* list = TagList(tag);
+    return list ? static_cast<int>(list->size()) : 0;
+}
+
+std::vector<GameObject*> Scene::FindGameObjectsWithName(const std::string& name) const {
+    std::vector<GameObject*> out;
+    for (const auto& o : m_objects) if (o->name == name) out.push_back(o.get());
+    return out;
+}
+
+std::vector<GameObject*> Scene::FindGameObjectsOnLayer(int layer) const {
+    std::vector<GameObject*> out;
+    if (layer < 0 || layer > 31) return out;
+    for (const auto& o : m_objects) if (o->layer == layer) out.push_back(o.get());
+    return out;
+}
+
+int Scene::CountOnLayer(int layer) const {
+    if (layer < 0 || layer > 31) return 0;
+    int n = 0;
+    for (const auto& o : m_objects) if (o->layer == layer) ++n;
+    return n;
+}
+
+std::vector<std::string> Scene::UnlistedTags() const {
+    std::vector<std::string> out;
+    for (const auto& o : m_objects)
+        if (!o->tag.empty() && !Tags::Contains(o->tag) && std::find(out.begin(), out.end(), std::string(o->tag)) == out.end())
+            out.push_back(o->tag);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+int Scene::ReplaceTag(const std::string& from, const std::string& to) {
+    if (from.empty() || !Tags::Accepts(to)) return 0;
+    int n = 0;
+    for (const auto& o : m_objects)
+        if (o->tag == from) { o->tag = to; ++n; }
+    return n;
 }
 
 const std::unordered_map<std::string, std::vector<GameObject*>>& Scene::TagIndex() const {
@@ -785,6 +933,66 @@ void Scene::ResetLayerCollisions() {
 bool Scene::HasCustomLayerCollisions() const {
     for (int i = 0; i < 32; ++i) if (m_physics.CollisionMask(i) != 0xFFFFFFFFu) return true;
     return false;
+}
+
+void Scene::ApplyLayerCollisionPreset(LayerCollisionPreset preset) {
+    if (preset == LayerCollisionPreset::Everything) { ResetLayerCollisions(); return; }
+    for (int a = 0; a < 32; ++a)
+        for (int b = a; b < 32; ++b)
+            SetLayerCollision(a, b, preset == LayerCollisionPreset::SameLayerOnly && a == b);
+}
+
+void Scene::SetLayerCollisionGroups(std::uint32_t maskA, std::uint32_t maskB, bool enabled) {
+    for (int a = 0; a < 32; ++a) {
+        if (!((maskA >> a) & 1u)) continue;
+        for (int b = 0; b < 32; ++b)
+            if ((maskB >> b) & 1u) SetLayerCollision(a, b, enabled);
+    }
+}
+
+bool Scene::SetLayerCollisionByName(const std::string& a, const std::string& b, bool enabled) {
+    const int la = Layers::NameToLayer(a), lb = Layers::NameToLayer(b);
+    if (la < 0 || lb < 0) return false;
+    SetLayerCollision(la, lb, enabled);
+    return true;
+}
+
+std::vector<std::pair<int, int>> Scene::DisabledLayerPairs() const {
+    std::vector<std::pair<int, int>> out;
+    for (int a = 0; a < 32; ++a)
+        for (int b = a; b < 32; ++b)
+            if (!LayersCollide(a, b)) out.push_back({a, b});
+    return out;
+}
+
+Bounds Scene::WorldBounds(const GameObject& root, bool includeChildren) {
+    Bounds out;   // empty until a renderer adds to it
+    std::vector<const GameObject*> stack{&root};
+    while (!stack.empty()) {
+        const GameObject* g = stack.back(); stack.pop_back();
+        if (g->IsDestroyed() || !g->active || !g->transform) continue;   // an inactive object takes its subtree with it
+        Vec3 lo, hi;
+        bool have = false;
+        if (const auto* mr = g->GetComponent<MeshRenderer>(); mr && mr->enabled && !mr->DisplayMesh().vertices.empty()) {
+            mr->DisplayMesh().Bounds(lo, hi);
+            have = true;
+        } else if (const auto* sr = g->GetComponent<SpriteRenderer>(); sr && sr->enabled) {
+            lo = {-sr->size.x * 0.5f, -sr->size.y * 0.5f, 0.0f};
+            hi = { sr->size.x * 0.5f,  sr->size.y * 0.5f, 0.0f};
+            have = true;
+        }
+        if (have) {
+            const Mat4 m = g->transform->LocalToWorldMatrix();   // the eight corners, so a turned box is boxed as drawn
+            for (int i = 0; i < 8; ++i)
+                out.Encapsulate(m.MultiplyPoint({(i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y, (i & 4) ? hi.z : lo.z}));
+        }
+        if (includeChildren) {
+            const auto& kids = g->transform->Children();
+            for (std::size_t i = kids.size(); i-- > 0;)
+                if (kids[i] && kids[i]->gameObject) stack.push_back(kids[i]->gameObject);
+        }
+    }
+    return out;
 }
 
 std::vector<Camera*> Scene::CameraStack() const {
@@ -891,8 +1099,9 @@ void Scene::ReorderSibling(GameObject* go, GameObject* anchor, bool after) {
     m_objects.erase(m_objects.begin() + gi);
     int ai = -1;
     for (int i = 0; i < (int)m_objects.size(); ++i) if (m_objects[i].get() == anchor) { ai = i; break; }
-    if (ai < 0) { m_objects.push_back(std::move(held)); return; }
-    m_objects.insert(m_objects.begin() + (after ? ai + 1 : ai), std::move(held));
+    if (ai < 0) m_objects.push_back(std::move(held));
+    else        m_objects.insert(m_objects.begin() + (after ? ai + 1 : ai), std::move(held));
+    ++m_structureVersion;   // root order changed (UI draws in this order)
 }
 
 // ---- Incremental (multi-frame) scene loads ----------------------------------

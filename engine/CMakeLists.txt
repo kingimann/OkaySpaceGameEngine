@@ -436,3 +436,32 @@ endif()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
+
+# ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, unpack,
+# per-record / per-field apply and revert, prefab queries and the asset validator.
+target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
+# ---- Property reflection (docs/properties.md) ----
+# PropertyValue / PropertyDesc, the registry with path access and change hook,
+# snapshot / diff / copy, and the built-in component registrations.
+target_sources(okay_engine PRIVATE
+    src/Scene/Properties.cpp
+    src/Scene/PropertyRegistry.cpp
+    src/Scene/BuiltinProperties.cpp
+)
+
+# ---- Core runtime foundations: job system, memory arenas, handles and ids, frame pacing ----
+# (docs/core_runtime.md). Appended as a block; Jobs.cpp and StringId.cpp keep their
+# threading behind engine/src/Core/CoreThreads.hpp (native Win32 primitives on Windows).
+target_sources(okay_engine PRIVATE
+    src/Core/Jobs.cpp
+    src/Core/StringId.cpp
+    src/Core/FramePacing.cpp
+)
+# Scene text tools for version control (docs/scene_diff_merge.md): canonical form, diff,
+# three-way merge and format migration. Text level only: none of these builds a Scene.
+target_sources(okay_engine PRIVATE
+    src/Scene/SceneText.cpp
+    src/Scene/SceneTextDetail.cpp
+    src/Scene/SceneDiff.cpp
+    src/Scene/SceneMerge.cpp
+    src/Scene/SceneMigration.cpp)

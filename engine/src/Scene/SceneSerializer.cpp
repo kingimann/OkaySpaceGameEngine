@@ -575,6 +575,38 @@ void WriteDisabledComponents(std::ostream& out, const GameObject* go) {
     }
 }
 
+// `comporder "Type" "Type" ...`: the order of an object whose components were arranged on purpose
+// (GameObject::HasCustomComponentOrder). An object nobody arranged writes nothing, so its text is unchanged.
+void WriteComponentOrder(std::ostream& out, const GameObject* go) {
+    if (!go->HasCustomComponentOrder()) return;
+    std::string line;
+    int n = 0;
+    for (const auto& c : go->Components()) {
+        if (c.get() == static_cast<const Component*>(go->transform)) continue;
+        line += " " + Quote(ComponentSerializerRegistry::TypeKey(*c));
+        ++n;
+    }
+    if (n >= 2) out << "  comporder" << line << "\n";
+}
+
+// Bring an object's components into the order of a `comporder` record: the Nth name of a type is the Nth
+// component of that type; names the object has no component for are ignored, and components the record
+// does not name keep their order after the named ones.
+void ApplyComponentOrder(GameObject& go, const std::vector<std::string>& names) {
+    std::unordered_map<std::string, std::vector<Component*>> byType;
+    for (const auto& c : go.Components())
+        if (c.get() != static_cast<Component*>(go.transform)) byType[ComponentSerializerRegistry::TypeKey(*c)].push_back(c.get());
+    std::unordered_map<std::string, std::size_t> used;
+    std::vector<Component*> want;
+    for (const std::string& n : names) {
+        auto it = byType.find(n);
+        if (it == byType.end()) continue;
+        std::size_t& u = used[n];
+        if (u < it->second.size()) want.push_back(it->second[u++]);
+    }
+    go.ReorderComponents(want);
+}
+
 // Write a GameObject's Transform + all known components (no header/parent line).
 void WriteComponents(std::ostream& out, GameObject* go) {
     Transform* t = go->transform;
@@ -3375,6 +3407,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     // Components that registered with ComponentSerializerRegistry (trailrenderer, ...).
     ComponentSerializerRegistry::WriteAll(*go, out);
     WriteDisabledComponents(out, go);
+    WriteComponentOrder(out, go);
 }
 } // namespace
 
@@ -3847,6 +3880,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             std::string field;
             bool sawEnd = false;
             std::vector<std::pair<std::string, int>> compOff;   // (type key, occurrence) switched off
+            std::vector<std::string> compOrder;                  // `comporder`: type keys in the saved component order
             while (in >> field) {
                 if (field == "end") { sawEnd = true; break; }
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
@@ -8123,6 +8157,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "compoff") {
                     std::string key = ReadQuoted(in); int occ = 0; in >> occ;
                     compOff.push_back({key, occ});
+                } else if (field == "comporder") {
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream ls(rest);
+                    while (ls >> std::ws && ls.peek() == '"') compOrder.push_back(ReadQuoted(ls));
                 } else if (field == "override") {
                     GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
                     if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);
@@ -8152,6 +8190,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         break;
                     }
             }
+            if (!compOrder.empty()) ApplyComponentOrder(*go, compOrder);   // after the flags: they were counted in the writer's order
             // Single-instance components appear once per object: a second record of
             // the same type loads (both exist) but is reported.
             {
@@ -8285,6 +8324,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             if (!ParseCore(probe, text, true, nullptr, error, &found)) return false;
         }
         report();
+        if (scene.IsUpdating()) { scene.RequestLoadText(text); return true; }   // objects are in use: loaded at the end of the frame
         scene.Clear();
         return ParseCore(scene, text, true, firstNew, error, nullptr);   // accepted above
     }
@@ -8578,6 +8618,7 @@ bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::s
     std::string raw = ss.str();
     std::string text = DataPack::Unpack(raw);   // decode if obfuscated (plaintext passes through)
     if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
+    if (scene.IsUpdating()) { scene.RequestLoad(path); return true; }   // objects are in use (a callback): loaded at the end of the frame
     // Mesh files the scene points at are also looked for next to it.
     const std::size_t slash = path.find_last_of("/\\");
     const std::string prevDir = g_loadingSceneDir;

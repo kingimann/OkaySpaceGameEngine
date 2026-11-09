@@ -32,7 +32,10 @@ constexpr double kBig = 100000.0;   // a sane ceiling for sizes and distances
 void RegisterGameObject() {
     PropertyBuilder<GameObject> b("GameObject", "", "Core", false);
     b.AddString("name", &GameObject::name).Tooltip("Name shown in the hierarchy")
-     .AddBool("active", &GameObject::active).Tooltip("Inactive objects are skipped by Update and Render").Default(PropertyValue::MakeBool(true))
+     .Custom("active", PropertyType::Bool,
+             [](const GameObject& g) { return PropertyValue::MakeBool(g.active); },
+             [](GameObject& g, const PropertyValue& v) { g.active = v.AsBool(); return true; })
+        .Tooltip("Inactive objects are skipped by Update and Render").Default(PropertyValue::MakeBool(true))
      .Custom("tag", PropertyType::String,
              [](const GameObject& g) { return PropertyValue::MakeString(g.tag); },
              [](GameObject& g, const PropertyValue& v) { return g.SetTag(v.AsString()); })

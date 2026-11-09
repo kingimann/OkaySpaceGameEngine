@@ -70,13 +70,11 @@ nulled, never erased), mass `Destroy` of 60000 children (0.7 s).
 
 Not fixed (seen):
 
-- `Scene::Clear()`, `SceneSerializer::LoadFromFile` and `Deserialize` called from inside a component's
-  `Update` free the object the code is running on. `RequestLoad` is the safe call; the scene does not
-  guard the direct ones.
-- Destroying one parent with hundreds of thousands of children is quadratic in `FlushDestroyed` (each
-  shell leaves its parent's child list one by one). 60000 children take 0.7 s; it only matters for
-  hierarchies far bigger than a level.
-- Component order is not saved (see `scene_serializer.md` for why it was left out).
+- (Fixed in the fourth pass, see `scene_hierarchy_search.md` "What changed: scene graph, fourth pass":
+  `Clear()` / `LoadFromFile` / `Deserialize` from inside a callback are queued to the end of the frame;
+  destroying a huge parent or a deep chain is linear; component order that was arranged on purpose is saved in
+  an optional `comporder` record. The order of plain `AddComponent` calls is still not saved, see
+  `scene_serializer.md`.)
 - `Instantiate` copies only what the serializer writes: a plain C++ `Behaviour` subclass without a
   serializer entry is not cloned, and a type with several instances other than the per-instance ones
   saves only the first.

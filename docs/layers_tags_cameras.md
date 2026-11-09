@@ -170,3 +170,19 @@ nothing changed for a layer outside 0-31), `GameObject::CompareTag(tag)`.
 outside 0-31 in the file; the loader used it modulo 32 and now stores that value) and
 `UnknownTag` (an object carries a tag that is not in the list; reported only when
 `Tags::Strict()` is on, since free tags are normal otherwise).
+
+## What changed: tags and layers, fourth pass (1.3)
+
+Test: `scene_graph_wave4` (the rest of this pass is in `scene_hierarchy_search.md`).
+
+* `Scene::FindWithTag` checks only the first entry of the tag's list against what that object carries now (it used to check
+  every entry on every call, so a lookup under a tag that 10000 objects carry was a 10000-step loop). `FindGameObjectsWithTag`
+  and `CountWithTag` still check every entry they return or count. A tag changed through `go->tag = ...` (or any of the
+  `TagString` calls) is seen by the next lookup, as before.
+* Checked with 10000 objects and found right: tag lookup after `go->tag = ...`, after `Scene::ReplaceTag`
+  (rename, untag, a refused name), and after a destroy; `FindGameObjectsOnLayer` / `CountOnLayer` on every layer;
+  `ProjectLists::Apply` with 10000 `tag=` and `layer_name_N=` lines (the tag list stops at `Tags::kMaxCustom`, the layer
+  lines that name a layer past 31 are skipped, nothing loops).
+* `Scene::DestroyChildren(go)`, `GameObject::GetComponentsInParent<T>()`, `Scene::Stats()` and the other additions are listed in
+  `scene_hierarchy_search.md`.
+

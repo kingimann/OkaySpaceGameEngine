@@ -1,6 +1,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -125,6 +126,43 @@ bool GameObject::IsSelfOrDescendantOf(const GameObject* other) const {
     return false;
 }
 
+// The answer for this object, worked out for `epoch`. The walk climbs only until it meets an object whose
+// answer is already known for this epoch (or an inactive one, or the top), then writes the answer into
+// every object it passed on the way down. So after a change the first question costs the length of the
+// chain, and every other object below that point finds its parent answered: the whole hierarchy is
+// re-answered in linear time, however deep it is.
+bool GameObject::ComputeActiveInHierarchy(std::uint64_t epoch) const {
+    const GameObject* small[32];
+    std::vector<const GameObject*> big;
+    std::size_t n = 0;
+    auto push = [&](const GameObject* g) {
+        if (big.empty() && n < 32) { small[n++] = g; return; }
+        if (big.empty()) big.assign(small, small + n);
+        big.push_back(g);
+        n = big.size();
+    };
+    auto at = [&](std::size_t i) { return big.empty() ? small[i] : big[i]; };
+    auto store = [epoch](const GameObject* g, bool answer) {
+        g->m_activeCache.store((epoch << 1) | (answer ? 1u : 0u), std::memory_order_relaxed);
+    };
+    bool value = true;   // the answer for what is above the last object pushed (true past the top)
+    std::uint64_t steps = 0;
+    const GameObject* g = this;
+    // The bound only keeps a corrupted pointer from spinning for ever; a hierarchy cannot loop (SetParent refuses it).
+    for (long guard = 0; g && guard < (1L << 26); ++guard) {
+        ++steps;
+        const std::uint64_t seen = g->m_activeCache.load(std::memory_order_relaxed);
+        if ((seen >> 1) == epoch) { value = (seen & 1u) != 0; break; }
+        if (!g->active) { value = false; store(g, false); break; }
+        push(g);
+        const Transform* p = g->transform ? g->transform->Parent() : nullptr;
+        g = p ? p->gameObject : nullptr;
+    }
+    for (std::size_t i = n; i-- > 0;) store(at(i), value);   // every object pushed is itself active, so it takes its parent's answer
+    detail::g_activeWalkSteps.fetch_add(steps, std::memory_order_relaxed);
+    return value;
+}
+
 void GameObject::NotifyComponentAdded(Component* component) {
     if (m_scene) m_scene->QueuePending(component);
 }
@@ -142,6 +180,37 @@ void GameObject::MoveComponent(Component* component, int delta) {
     auto owned = std::move(m_components[index]);
     m_components.erase(m_components.begin() + index);
     m_components.insert(m_components.begin() + target, std::move(owned));
+    m_customOrder = true;   // arranged on purpose: the scene file keeps it
+}
+
+bool GameObject::ReorderComponents(const std::vector<Component*>& first) {
+    std::vector<Component*> want;   // this object's own components named in `first`, once each, never the Transform
+    for (Component* c : first) {
+        if (!c || c == static_cast<Component*>(transform)) continue;
+        if (std::find(want.begin(), want.end(), c) != want.end()) continue;
+        bool mine = false;
+        for (const auto& own : m_components) if (own.get() == c) { mine = true; break; }
+        if (mine) want.push_back(c);
+    }
+    if (want.empty()) return false;
+    m_customOrder = true;
+    Component* const pinned = transform;   // stays first
+    std::vector<Component*> order;
+    order.reserve(m_components.size());
+    if (pinned) order.push_back(pinned);
+    for (Component* w : want) order.push_back(w);
+    for (const auto& c : m_components)
+        if (c.get() != pinned && std::find(want.begin(), want.end(), c.get()) == want.end()) order.push_back(c.get());
+    bool changed = false;
+    for (std::size_t i = 0; i < order.size(); ++i) if (order[i] != m_components[i].get()) { changed = true; break; }
+    if (!changed) return false;
+    std::vector<std::unique_ptr<Component>> next;
+    next.reserve(m_components.size());
+    for (Component* o : order)
+        for (auto& c : m_components)
+            if (c.get() == o) { next.push_back(std::move(c)); break; }
+    m_components.swap(next);
+    return true;
 }
 
 bool GameObject::RemoveComponent(Component* component) {

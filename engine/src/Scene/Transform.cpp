@@ -2,6 +2,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -33,6 +34,23 @@ struct ChainBuffer {   // the chain from a transform up to its root; no allocati
     }
     const Transform* at(std::size_t i) const { return big.empty() ? small[i] : big[i]; }
 };
+
+// The inverse of an affine matrix; false when it has none (a collapsed axis, or not finite).
+// Mat4::Inverse answers the identity then, which is not an inverse. Same relative test as Mat4::Inverse.
+bool TryInvert(const Mat4& m, Mat4& out) {
+    const float det = m.Determinant();
+    float bound = 1.0f;
+    for (int c = 0; c < 4; ++c) {
+        const float* a = &m.m[4 * c];
+        bound *= std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2] + a[3] * a[3]);
+    }
+    if (!(std::fabs(det) > 1e-9f * bound)) return false;
+    out = m.Inverse();
+    return true;
+}
+
+// Undo a scale axis by axis; an axis that is collapsed (0) has no way back and reads `whenCollapsed`.
+float Unscale(float v, float scale, float whenCollapsed) { return std::fabs(scale) > 1e-12f ? v / scale : whenCollapsed; }
 } // namespace
 
 // Bring this one transform's own cache up to date; its parent's cache must be current.
@@ -90,17 +108,42 @@ Vec3 Transform::LossyScale() const {
     return out;
 }
 
+Vec3 Transform::WorldToParentLocal(const Vec3& worldPos) const {
+    // The whole parent matrix is inverted, so a stretched grandparent above a turned parent (a shear,
+    // which "rotation then scale" cannot undo) still lands the position exactly.
+    Mat4 inv;
+    if (TryInvert(m_parent->WorldCache(), inv)) return inv.MultiplyPoint(worldPos);
+    // The parent has a collapsed axis: undo what can be undone, keep the local value on that axis.
+    const Vec3 parentPos = m_parent->Position();
+    const Quat invRotation = m_parent->Rotation().Conjugate();
+    const Vec3 parentScale = m_parent->LossyScale();
+    const Vec3 rel = invRotation * (worldPos - parentPos);
+    return {Unscale(rel.x, parentScale.x, localPosition.x),
+            Unscale(rel.y, parentScale.y, localPosition.y),
+            Unscale(rel.z, parentScale.z, localPosition.z)};
+}
+
+Vec3 Transform::InverseTransformPoint(const Vec3& world) const {
+    const Mat4& m = WorldCache();
+    Mat4 inv;
+    if (TryInvert(m, inv)) return inv.MultiplyPoint(world);
+    // No inverse: the pseudo-inverse, in position, rotation and scale. A collapsed axis reads 0.
+    const Vec3 rel = Rotation().Conjugate() * (world - Vec3{m.m[12], m.m[13], m.m[14]});
+    const Vec3 sc = LossyScale();
+    return {Unscale(rel.x, sc.x, 0.0f), Unscale(rel.y, sc.y, 0.0f), Unscale(rel.z, sc.z, 0.0f)};
+}
+
+Vec3 Transform::InverseTransformVector(const Vec3& world) const {
+    Mat4 inv;
+    if (TryInvert(WorldCache(), inv)) return inv.MultiplyVector(world);
+    const Vec3 rel = Rotation().Conjugate() * world;
+    const Vec3 sc = LossyScale();
+    return {Unscale(rel.x, sc.x, 0.0f), Unscale(rel.y, sc.y, 0.0f), Unscale(rel.z, sc.z, 0.0f)};
+}
+
 void Transform::SetPosition(const Vec3& worldPos) {
     if (!m_parent) { localPosition = worldPos; return; }
-    // Convert world position into the parent's local space.
-    Vec3 parentPos   = m_parent->Position();
-    Quat invRotation = m_parent->Rotation().Conjugate();
-    Vec3 parentScale = m_parent->LossyScale();
-    Vec3 rel = invRotation * (worldPos - parentPos);
-    localPosition = {
-        parentScale.x != 0 ? rel.x / parentScale.x : rel.x,
-        parentScale.y != 0 ? rel.y / parentScale.y : rel.y,
-        parentScale.z != 0 ? rel.z / parentScale.z : rel.z};
+    localPosition = WorldToParentLocal(worldPos);
 }
 
 void Transform::SetRotation(const Quat& worldRot) {
@@ -162,6 +205,12 @@ void Transform::NoteOrderChanged() {
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
 }
 
+bool Transform::SetParent(Transform* parent, bool worldPositionStays, int siblingIndex) {
+    if (!SetParent(parent, worldPositionStays)) return false;
+    SetSiblingIndex(siblingIndex);
+    return true;
+}
+
 bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
     if (parent == m_parent) return true;
     if (parent) {
@@ -187,6 +236,7 @@ bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
     }
     m_parent = parent;
     if (m_parent) m_parent->m_children.push_back(this);
+    detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);   // what is above this object changed: its active state is worked out again
     if (gameObject)   // a reparent changes which bones / names a model's caches see
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
     // Preserve the world pose (position, rotation and scale) only when asked.
@@ -275,6 +325,7 @@ void Transform::DetachChildren() {
         k->localRotation = poses[i].rotation.Normalized();
         k->localScale = poses[i].scale;
     }
+    detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);
     if (gameObject)
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
 }

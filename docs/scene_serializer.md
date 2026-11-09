@@ -4,6 +4,8 @@ Format and loading rules are in `engine/include/okay/Scene/SceneSerializer.hpp`.
 page covers what an object round trip keeps.
 
 - **Ids:** `guid` (see prefabs.md). Same id on reload, new id for a copy.
+- **Prefab files:** `nestedprefab`, `variant`, `override`, `unset`, `remove` and `under` are prefab-file
+  records (prefab_system.md). A build that does not know them skips them with a warning.
 - **Sibling order:** objects load in file order, so a reordered family writes a
   `sibling <position>` record on each child. An untouched scene writes none.
 - **Active and enabled:** `active` is saved for every object. Every component that is

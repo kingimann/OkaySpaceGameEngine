@@ -860,7 +860,7 @@ inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull
         // shadow map another view would sample.
         if (go.firstPersonOnly) return static_cast<MeshRenderer*>(nullptr);
         auto* mr = go.GetComponent<MeshRenderer>();
-        return mr && go.active && mr->enabled && !mr->wireframe && mr->castShadows ? mr : nullptr;
+        return mr && go.ActiveInHierarchy() && mr->enabled && !mr->wireframe && mr->castShadows ? mr : nullptr;
     };
     const float cr = cas.radius * 1.05f, cr2 = cr * cr;
     for (const auto& go : scene.Objects()) {
@@ -958,7 +958,7 @@ inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye)
     bool any = false;
     auto visible = [](const GameObject& go) {
         auto* mr = go.GetComponent<MeshRenderer>();
-        return mr && go.active && mr->enabled && !mr->wireframe ? mr : nullptr;
+        return mr && go.ActiveInHierarchy() && mr->enabled && !mr->wireframe ? mr : nullptr;
     };
     for (const auto& go : scene.Objects()) {
         auto* mr = visible(*go); if (!mr) continue;
@@ -1032,7 +1032,7 @@ inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, co
     for (const auto& go : scene.Objects()) {
         if (!go) continue;
         auto* mr = go->template GetComponent<MeshRenderer>();
-        if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;
+        if (!mr || !go->ActiveInHierarchy() || !mr->enabled || mr->wireframe) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();
         Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
         for (int c = 0; c < 8; ++c) {
@@ -1550,7 +1550,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (go->HiddenFromCamera(ignore)) continue;   // owner's body, except the parts that camera is meant to see (shirt, raised-arm copy)
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
+        if (!mr || !go->ActiveInHierarchy() || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
         // The Unlit shader is equivalent to the unlit flag for the renderer.
         const bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
         // Scrolling-UV offset (animated textures): advance the texture coordinates by

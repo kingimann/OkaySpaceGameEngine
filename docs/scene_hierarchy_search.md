@@ -11,6 +11,11 @@ D3D12 and software renderers (colour and shadow passes) and Physics2D / Physics3
 child of an inactive parent. `OnDisable` / `OnEnable` follow the same rule, so a script on a
 child hears about it when its parent is switched off or on.
 
+`ActiveInHierarchy()` remembers its answer (see "What changed: scene graph, fourth pass"): the
+answer is worked out again only after some `active` flag or parent link changed, so a frame over a
+very deep chain costs a few reads per component. `go->active` is an `ActiveFlag`, which reads and
+assigns like a `bool`.
+
 ## Native FixedUpdate
 
 `Component::FixedUpdate(float fixedDeltaTime)` runs from the scene's physics step: once per
@@ -39,7 +44,9 @@ Streams that set their own precision, width or fixed / scientific flags are unch
 
 ## Speed
 
-* Mass `Destroy` + `FlushDestroyed` are linear in the number of objects and components.
+* Mass `Destroy` + `FlushDestroyed` are linear in the number of objects and components, deep chains
+  and very wide parents included (the objects leave their parents in one pass, top down).
+* `ActiveInHierarchy()` is cached (it is asked for every component, every frame).
 * `Serialize` finds parents through a map instead of a scan per object.
 * `InstantiateFromFile` keeps the decoded text of up to 32 prefab files, checked against the
   file's size and time, so repeated spawns skip the file read. Changing the file reloads it.
@@ -56,6 +63,9 @@ Streams that set their own precision, width or fixed / scientific flags are unch
 | `go->GetComponentInChildren<T>(includeInactive = false)` | the object itself first, then depth first |
 | `go->GetComponentsInChildren<T>(includeInactive = false)` | every match, pre-order |
 | `go->GetComponentInParent<T>(includeInactive = false)` | the object, then each parent |
+| `go->GetComponentsInParent<T>(includeInactive = false)` | every match on the object and each parent, nearest first |
+| `scene.DestroyChildren(go)` | queue every child of `go` (and below) for destruction; `go` stays |
+| `scene.Stats()` | counts for an overlay: objects, roots, depth, active, components per type (see below) |
 
 An inactive object is skipped together with its children unless `includeInactive` is true.
 
@@ -64,7 +74,8 @@ An inactive object is skipped together with its children unless `includeInactive
 `LookAt(target, up)`, `SetLossyScale(worldScale)` (and `SetScale`, the same call),
 `EulerAngles()` / `SetEulerAngles()`, `LocalEulerAngles()` / `SetLocalEulerAngles()`,
 `GetSiblingIndex()` / `SetSiblingIndex(i)` (children use the parent's list, roots use the
-scene's root order; the index is clamped).
+scene's root order; the index is clamped), `SetPositionAndRotation(pos, rot)`,
+`SetLocalPositionAndRotation(pos, rot)`, `SetParent(parent, keepWorld, siblingIndex)`.
 
 ## Validation
 
@@ -165,3 +176,86 @@ components under a running loop is not safe.
 * `Lifetime::SetElapsed(s)`, `Restart()`. The seconds already lived are saved (`lifetime 5 1.5`, written
   only when above 0), so a saved game carries on. Disabling the component pauses it.
 * The property registry lists `space` for both.
+
+## What changed: scene graph, fourth pass (1.3)
+
+Tests: `transform_world`, `scene_graph_perf`, `scene_reentrant`, `component_order`, `scene_graph_wave4`.
+Scene files from before load unchanged; the one new record (`comporder`) is optional.
+
+### Bugs fixed
+
+| Bug | Fix |
+| --- | --- |
+| `InverseTransformPoint` / `InverseTransformVector` on an object with a zero scale (here or in a parent) returned the world point: `Mat4::Inverse` answers the identity for a singular matrix. | An invertible matrix inverts exactly as before. A singular one gets the pseudo-inverse: each collapsed axis reads 0 and the other axes are exact, so `TransformPoint(InverseTransformPoint(w))` is the nearest point of the object to `w`. |
+| `SetPosition` (and so `SetParent` keeping the world pose, a World-space `Mover`, physics interpolation) moved the object under a chain where a stretched object sits above a turned one (a shear): it undid rotation and then scale, not the matrix. `SetPosition(Position())` changed the local position. | The position goes back through the whole parent matrix. A parent with a collapsed axis keeps the old local value on that axis (it used to take an unrelated number there). |
+| `ActiveInHierarchy()` walked to the top of the hierarchy for every component every frame: a chain `n` deep cost `n * n / 2` reads per frame (measured: 5000 deep, 2 frames took 3.9 s; 100000 deep would take about 25 minutes by the same growth). | Cached per object; any `active` change or reparent anywhere starts a new epoch, and the next question re-answers the whole hierarchy in `O(n)` (each object reuses its parent's answer). A frame over a chain does linear work. |
+| The 2D pointer pass (`OnMouse*`, run every `Update`) read the world position and scale of every active object before checking whether it has a sprite or a 2D box to pick: another `O(n * depth)` per frame on a deep chain, even with the cache above. | The pose is read only for objects that can be picked. |
+| `FlushDestroyed` took the objects out of their parents one at a time, reading the world pose through the whole chain and erasing from the front of a child list. A chain built leaf first took `O(n^2)` (20000 deep: 19 s, 50000: 130 s), one parent with `n` children `O(n^2)` too (50000: 1.1 s, 100000 children of a survivor: 4.7 s). | One top-down pass: each dying object gets its world pose from its parent's (carried along), becomes a root shell, and each child list loses all its dying children together. 100000 deep and 200000 wide are well under a second. |
+| `Scene::Clear()`, `SceneSerializer::LoadFromFile` and `Deserialize` called from a component's `Update`, `OnDisable`, `OnDestroy` or `Awake` freed the object whose method was running (and the pending-flush batch). A `Clear()` from an `OnDestroy` that ran inside `Clear()` told every component again, without end. | While the scene walks its component lists the call is queued and runs at the end of the frame (see below). A `Clear()` inside `Clear()` is ignored. |
+| `Lifetime` summed its seconds as a float: past about 524288 s (6 days) a 60 FPS frame adds nothing any more, so such a lifetime never ended. | Summed as a double. |
+| `Instantiate` of a destroyed object made an empty, switched-off object. | Returns `nullptr` (`Duplicate` already did). |
+| `Scene::Update(NaN)` or `Update(infinity)` handed the bad time to physics, timers and every script. | Treated as no time. |
+| `FindWithTag` checked every object listed under the tag against what it carries now on every call: 10000 objects under one tag made each lookup `O(n)`. `UnlistedTags` scanned its own result per object (10000 different tags: quadratic). | `FindWithTag` checks the first match; the list-returning calls still check every entry. `UnlistedTags` uses a hash. |
+| `FindByGuid` scanned every object per call (one lookup per object was quadratic). | A hit is a hash lookup; the index is rebuilt after objects were created, destroyed or reparented. An id that is not in the index, or was changed by `SetGuid` since, is still found by the scan. |
+| `Destroy(go, seconds)` scanned the whole waiting list per call to see whether `go` already waits (20000 bullets each given a delayed destroy: quadratic). | An index by instance id. The destruction order is still the order of the requests. |
+
+### Clear and loads from inside callbacks
+
+`Scene::IsUpdating()` is true while the scene walks its component lists and calls user code (Awake, Start,
+Update, LateUpdate, FixedUpdate, OnRender, OnEnable, OnDisable, OnDestroy and the physics, timer and tween
+callbacks that run inside them). The rule:
+
+* `scene.Clear()` while `IsUpdating()` does nothing now and empties the scene at the end of the frame, after the
+  destroy queue was flushed (`RequestClear()` is the same call, spelled for anywhere; `HasPendingClear()` tells).
+* `SceneSerializer::LoadFromFile(scene, path)` while `IsUpdating()` becomes `scene.RequestLoad(path)` and returns
+  `true` when the file could be read; a bad scene is reported at the end of the frame through `LastLoadError()`,
+  as for `RequestLoad`. `SceneSerializer::Deserialize` does the same with `RequestLoadText`. Objects marked
+  `DontDestroyOnLoad` come along, as with `RequestLoad`.
+* Everything made after the call goes with the old scene (all or nothing): `scene.Clear(); scene.CreateGameObject("X");`
+  inside an `Update` leaves an empty scene at the end of the frame. To replace the world use `RequestLoad`.
+* A queued `Clear()` runs before a queued load. Outside a frame (editor edit mode, tests, the loading code)
+  `Clear()` is immediate as always. An `OnRender` that asks waits for the next `Update` or `FlushDestroyed`.
+* `Scene::~Scene` and `Clear()` run their `OnDisable` / `OnDestroy` pass inside this rule, so a handler that calls
+  `Clear()` or loads a scene is not re-entered.
+
+### Component order
+
+See `scene_serializer.md`: `GameObject::MoveComponent` and the new `ReorderComponents` are saved in an optional
+`comporder` record, written only for an object that was arranged on purpose.
+
+### New
+
+| Call | Notes |
+| --- | --- |
+| `go->GetComponentsInParent<T>(includeInactive = false)` | every match on the object and each parent, nearest first |
+| `go->ReorderComponents({a, b})`, `go->HasCustomComponentOrder()` | the named components come right after the Transform, in that order; saved |
+| `scene.DestroyChildren(go)` | queue every child of `go`; returns how many direct children were asked |
+| `transform->SetPositionAndRotation(pos, rot)` / `SetLocalPositionAndRotation(pos, rot)` | both at once (world / parent frame; the rotation is normalized) |
+| `transform->SetParent(parent, keepWorld, siblingIndex)` | reparent and place among the new siblings (clamped; `nullptr` = among the scene's roots) |
+| `scene.RequestClear()`, `HasPendingClear()`, `IsUpdating()` | see above |
+| `scene.Stats()` | a `SceneGraphStats`: `objects`, `roots`, `maxDepth`, `activeInHierarchy`, `inactive`, `components`, `runningComponents`, `awaitingStart`, `pendingDestroy`, `shells`, `byType` (name and count, biggest first); `Lines(maxTypes)` and `ToString()` for an overlay |
+| `GameObject::ActiveWalkSteps()` | diagnostic: how many objects `ActiveInHierarchy()` has had to look at since the process started (a cache hit adds nothing) |
+
+Already there, so not added: `FindByPath`, `GetComponentInChildren(s)` with an include-inactive flag,
+`Transform::GetSiblingIndex` / `SetSiblingIndex` / `SetAsFirstSibling`, `PlaceBefore` / `PlaceAfter`,
+`GameObject::SetLayer(layer, includeChildren)`, `Scene::ReorderSibling`.
+
+```cpp
+for (const std::string& line : scene.Stats().Lines(3)) overlay.Add(line);   // "Objects: 120 (3 roots, 40 inactive, depth 4)" ...
+```
+
+### Notes
+
+* `go->active` is an `ActiveFlag` (a `bool` that counts changes): `if (go->active)` and `go->active = false` work as
+  before; taking its address as a `bool*` does not. Reading `ActiveInHierarchy()` from several threads is safe while
+  nothing is being changed; the cache is relaxed atomics.
+* `Transform::Position()` and the other world reads still walk the chain (the local fields are public, so the
+  world matrix is checked level by level); a very deep chain read from its leaf end costs its depth per read.
+* `SetParent(parent, true)` keeps position, rotation and `LossyScale()`. Under a parent with a mirror (negative scale)
+  or a stretch above a turned child, the matrix itself cannot be kept (that takes a shear); the three numbers are.
+* Not done: `Transform::SetParent(nullptr)` called on each of a very large number of children of one parent, one at a time, is
+  still `O(n)` per call (a child list is a vector; `DetachChildren()` and `Destroy` are linear). The order of `AddComponent`
+  calls is not saved, only an arranged order (see `scene_serializer.md`).
+* The wide and deep destroy checks in `scene_graph_perf` rely on size (a 100000-deep chain built leaf first would have taken about 8 minutes
+  before, by the growth measured at 20000 deep; 100000 children took 4.7 s); the test has a ctest `TIMEOUT` of 240 s instead of a clock inside it.
+

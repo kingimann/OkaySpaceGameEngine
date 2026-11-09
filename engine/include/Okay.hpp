@@ -23,6 +23,12 @@
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/Localization.hpp"
+#include "okay/Core/LocCheck.hpp"
+#include "okay/Core/LocTable.hpp"
+#include "okay/Core/LocScan.hpp"
+#include "okay/Core/LocPreview.hpp"
+#include "okay/Core/Subtitles.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Core/Application.hpp"
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/CommandLine.hpp"
@@ -37,6 +43,7 @@
 // Input
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/RemapModel.hpp"
 #include "okay/Input/GameInput.hpp"
 #include "okay/Input/Cursor.hpp"
 
@@ -71,6 +78,7 @@
 // Graphics assets
 #include "okay/Graphics/Image.hpp"
 #include "okay/Graphics/Font.hpp"
+#include "okay/Graphics/ColorVision.hpp"
 
 // Built-in components
 #include "okay/Components/Camera.hpp"

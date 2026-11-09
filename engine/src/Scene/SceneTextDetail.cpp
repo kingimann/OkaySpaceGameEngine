@@ -214,6 +214,7 @@ const std::vector<Names>& NameTable() {
                           "shadowOffset.y", "align", "outline", "outlineColor.r", "outlineColor.g", "outlineColor.b", "outlineColor.a"}},
         {"script", "Script", {"language", "source", "path", "fieldCount"}},
         {"gravity", "gravity", {"x", "y"}},
+        {"gravity3", "gravity3", {"x", "y", "z"}},
         {"fog", "fog", {"on", "color.r", "color.g", "color.b", "start", "end"}},
         {"active", "Active", {}}, {"tag", "Tag", {}}, {"static", "Static", {}}, {"locked", "Locked", {}},
         {"layer", "Layer", {}}, {"uiorder", "UiOrder", {}}, {"prefab", "Prefab", {}}, {"srcscene", "SrcScene", {}},

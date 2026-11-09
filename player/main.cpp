@@ -13,6 +13,7 @@
 #include "okay/Input/SdlKeys.hpp"      // F1-F12, nav keys, left / right modifiers
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "okay/Scene/EnsureCamera.hpp"
+#include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
 #include <termios.h>
@@ -1646,7 +1647,23 @@ int main(int argc, char** argv) {
         if (ok && !m.vertices.empty()) mr->mesh = m;
     }
 
-    okay::Game::Reset();   // clear any stale pause/quit state from a prior scene
+    // One frame driver for the run (okay/Core/GameLoop.hpp). It does what this loop used to do by hand,
+    // in the same order: clamp the frame time to 0.1 s (a window drag or an alt-tab is not a giant
+    // step), even it out when smoothDt (and snap to the display's refresh periods with vsync),
+    // Time::Step, the scene's Update, and the quit check. docs/loop_and_time.md ("Adopting GameLoop in
+    // the player and the editor") and test_loop_player_style pin that the Time values are identical.
+    // On top of that it ticks the Clock channels ("ui", "game", "cinematic"), keeps frame statistics
+    // (loop.Stats()) and runs OnFixedUpdate steps for anything that registers one.
+    bool loopTick = true;   // false while the window is unfocused and Run In Background is off: no scene update
+    float loopRefreshHz = 0.0f;
+    okay::GameLoop::Options loopOpt;
+    loopOpt.maxDelta = 0.1f;
+    loopOpt.smoothDelta = cfg.smoothDt;
+    okay::GameLoop loop(loopOpt);
+    loop.OnUpdate = [&](float dt) { if (loopTick) scene.Update(dt); };
+    // A new session: no stale pause or quit from a prior scene, and the time scale back to 1 (Game::Reset
+    // kept a scale a script had left, so a scene loaded after one that froze the game started frozen).
+    loop.BeginSession();
     scene.Start();
 
     // Open every connected game controller (up to Input::kMaxGamepads, one per player).
@@ -1935,12 +1952,13 @@ int main(int argc, char** argv) {
         }
 
         Uint64 now = SDL_GetPerformanceCounter();
-        float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
+        const float measuredDt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
-        if (dt > 0.1f) dt = 0.1f;
+        // The FPS readouts below show the measured time, cut to the 0.1 s the game steps by at most.
+        const float dt = measuredDt > 0.1f ? 0.1f : measuredDt;
         // The game steps by an evened-out frame time (vsync: whole refresh
-        // periods); the FPS readouts below keep the measured `dt`. The refresh
-        // rate is re-read now and then (the window can move to another display).
+        // periods; the loop does it). The refresh rate is re-read now and then
+        // (the window can move to another display).
         static float s_refreshHz = 0.0f;
         static int s_refreshAge = 0;
         if (s_refreshAge-- <= 0) {
@@ -1948,7 +1966,15 @@ int main(int argc, char** argv) {
             s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
             s_refreshAge = 120;
         }
-        const float stepDt = cfg.smoothDt ? Time::SmoothDelta(dt, cfg.vsync ? s_refreshHz : 0.0f) : dt;
+        {   // the loop snaps to refresh periods only with vsync on (Settings can switch it while playing)
+            const float hz = cfg.vsync ? s_refreshHz : 0.0f;
+            if (hz != loopRefreshHz) {
+                loopRefreshHz = hz;
+                okay::GameLoop::Options o = loop.options();
+                o.refreshHz = hz;
+                loop.SetOptions(o);
+            }
+        }
 
         // Publish the render-target size so anchored UI widgets and their
         // hit-tests (run inside scene.Update) agree on where things sit.
@@ -2025,9 +2051,6 @@ int main(int argc, char** argv) {
             s_bmPrev = f2;
         }
 
-        // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
-        // advance the scene by the scaled delta (timeScale 0 = paused).
-        Time::Step(tick ? stepDt : 0.0f);
         // Characters skin in the vertex shader when Direct3D 11 or OpenGL draws the
         // frame: bone matrices per frame instead of every vertex on the CPU plus a
         // full mesh re-upload. (D3D12 and the software fallback skin on the CPU.)
@@ -2046,8 +2069,11 @@ int main(int argc, char** argv) {
             okay::SkinnedMesh::GpuSkinning() = gpuSkin;
             okay::SkinnedMesh::GpuMaxJoints() = maxJoints;
         }
-        if (tick) scene.Update(Time::DeltaTime());
-        if (okay::Game::QuitRequested()) running = false;   // a PauseMenu / script asked to quit
+        // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then advance the scene by the
+        // scaled delta (timeScale 0 = paused): the loop's OnUpdate does that unless the window is
+        // unfocused and the game does not run in the background (that frame is a 0 s step, as before).
+        loopTick = tick;
+        if (!loop.BeginFrame(tick ? (double)measuredDt : 0.0)) running = false;   // false: a PauseMenu / script asked to quit
         if (acGuard.Tick()) {   // only ever true in enforce mode
             running = false;
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(),

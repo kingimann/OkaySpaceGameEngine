@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <limits>
 
 namespace okay {
 
@@ -57,7 +58,7 @@ int GameLoop::EffectiveMaxSteps() const {
     // A fast forward owes proportionally more steps a frame; the cap grows with it.
     const double mult = m_debugScale > 1.0f ? std::ceil((double)m_debugScale) : 1.0;
     const double cap = (double)std::max(1, m_opt.maxFixedSteps) * mult;
-    return cap >= (double)INT_MAX ? INT_MAX : (int)cap;
+    return cap >= (double)kMaxFixedStepsPerFrame ? kMaxFixedStepsPerFrame : (int)cap;
 }
 
 bool GameLoop::BudgetSpent() const {
@@ -181,6 +182,10 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
         if (CaptureActive()) { real = 1.0 / (double)m_opt.captureFps; exact = true; }
         else if (m_frames == 0 && m_opt.firstFrameDelta >= 0.0f) real = (double)m_opt.firstFrameDelta;
     }
+    // The frame time is kept as a float: a measurement beyond that range (a broken timer) is
+    // the largest float, not an infinity (converting it would be undefined, and OnHitch and
+    // FrameDeltaReal() would read infinity).
+    if (real > (double)std::numeric_limits<float>::max()) real = (double)std::numeric_limits<float>::max();
     // While recording (or on request) the time is a whole number of microseconds, so a
     // replay of the recording steps Time by the very same numbers.
     if (!replaying && (m_recorder || m_opt.quantizeMicros)) real = FrameRecording::Quantize(real);
@@ -212,9 +217,17 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
     // 3. Clamp, then maybe even out. An exact time is used as it is.
     double clamped = real;
     if (!exact && m_opt.maxDelta > 0.0f && std::isfinite(m_opt.maxDelta) && real > (double)m_opt.maxDelta) {
-        clamped = m_opt.hitchReplacement > 0.0f ? (double)m_opt.hitchReplacement : (double)m_opt.maxDelta;
-        ++m_clampedFrames;
-        m_lostReal += real - clamped;
+        // The replacement is what a clamped frame steps instead of maxDelta. It is only used when it is a
+        // real number, and a clamp never lengthens a frame (a replacement above the real time used to make
+        // the game step more than it had measured, count a negative lost time, and an infinite one made
+        // both of them infinite).
+        const double replacement = (m_opt.hitchReplacement > 0.0f && std::isfinite(m_opt.hitchReplacement))
+                                       ? (double)m_opt.hitchReplacement : (double)m_opt.maxDelta;
+        clamped = std::min(replacement, real);
+        if (clamped < real) {
+            ++m_clampedFrames;
+            m_lostReal += real - clamped;
+        }
     }
     m_clamped = (float)clamped;
     m_stepped = (m_opt.smoothDelta && !exact) ? Time::SmoothDelta(m_clamped, m_opt.refreshHz) : m_clamped;

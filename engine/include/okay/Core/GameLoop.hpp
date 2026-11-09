@@ -61,7 +61,7 @@ public:
         float hitchThreshold = 0.1f;
         /// The fixed step in seconds; 0 follows Time::FixedDeltaTime().
         float fixedStep = 0.0f;
-        /// Fixed steps one frame may run (>= 1). Time past that is dropped.
+        /// Fixed steps one frame may run (>= 1, at most kMaxFixedStepsPerFrame). Time past that is dropped.
         int maxFixedSteps = 5;
         /// Step by an evened-out time (Time::SmoothDelta) instead of the clamped one.
         bool smoothDelta = false;
@@ -100,6 +100,9 @@ public:
     /// Largest debug time scale; a debug step may not be longer than kMaxStepDelta seconds;
     /// pending debug steps are capped at kMaxStepRequest.
     static constexpr float kMaxDebugTimeScale = 32.0f;
+    /// No frame runs more fixed steps than this, whatever maxFixedSteps and a fast-forward say: a tiny
+    /// fixedStep (a typo, 1e-9) with a huge cap used to keep one BeginFrame busy for billions of callbacks.
+    static constexpr int   kMaxFixedStepsPerFrame = 10000;
     static constexpr float kMaxCaptureFps = 1000.0f;
     static constexpr float kMaxStepDelta = 1.0f;
     static constexpr int   kMaxStepRequest = 1000000;

@@ -1,7 +1,9 @@
 // 1.1 The safety net for moving the windowed player (and the editor's Play loop) onto GameLoop.
 //
-// player/main.cpp runs this every frame (the lines below are copied from it, with the SDL timer
-// replaced by made-up frame times):
+// player/main.cpp ran this every frame until the third pass, when it moved onto GameLoop exactly as the
+// "adopting" sketch in docs/loop_and_time.md says (the editor's Play loop is still on it). The lines below
+// are the old per-frame code, kept here as the reference the new one is compared with, with the SDL timer
+// replaced by made-up frame times:
 //
 //     float dt = (now - last) / freq;                       // measured
 //     if (dt > 0.1f) dt = 0.1f;                             // clamp
@@ -332,6 +334,47 @@ int main() {
             CHECK(FirstDiff(p, l.trace) == -1);
             CHECK(p.back().updates == 500);
         }
+    }
+
+    // ---- vsync switched on and off while playing (the player re-reads it each frame and calls SetOptions when it changes) ---------------------------------------------------------
+    {
+        g_s = 4242u;
+        const Seq seq = Steady(800, 1.0f / 60.0f, 0.004f);
+        auto vsyncAt = [](std::size_t i) { return (i / 97) % 2 == 1; };
+        // the old per-frame code, with the toggle
+        std::vector<Trace> p;
+        {
+            Fresh();
+            int updates = 0; float sceneDt = 0.0f;
+            for (std::size_t i = 0; i < seq.size(); ++i) {
+                float dt = seq[i].dt; if (dt > 0.1f) dt = 0.1f;
+                const float stepDt = Time::SmoothDelta(dt, vsyncAt(i) ? 60.0f : 0.0f);
+                Time::Step(stepDt);
+                ++updates; sceneDt = Time::DeltaTime();
+                p.push_back(Snap(updates, sceneDt, true));
+            }
+        }
+        // the new one, as player/main.cpp does it
+        std::vector<Trace> l;
+        {
+            Fresh();
+            GameLoop::Options o; o.maxDelta = 0.1f; o.smoothDelta = true;
+            GameLoop loop(o);
+            int updates = 0; float sceneDt = 0.0f;
+            bool loopTick = true;
+            loop.OnUpdate = [&](float dt) { if (loopTick) { ++updates; sceneDt = dt; } };
+            float loopRefreshHz = 0.0f;
+            int setOptionsCalls = 0;
+            for (std::size_t i = 0; i < seq.size(); ++i) {
+                const float hz = vsyncAt(i) ? 60.0f : 0.0f;
+                if (hz != loopRefreshHz) { loopRefreshHz = hz; GameLoop::Options q = loop.options(); q.refreshHz = hz; loop.SetOptions(q); ++setOptionsCalls; }
+                const bool running = loop.BeginFrame((double)seq[i].dt);
+                l.push_back(Snap(updates, sceneDt, running));
+            }
+            CHECK(setOptionsCalls == 8);                         // 800 frames, a toggle every 97: SetOptions is not a per-frame cost
+        }
+        Fresh();
+        CHECK(FirstDiff(p, l) == -1);
     }
 
     // ---- the one numeric difference: a measured infinity ---------------------------------------------------------------------------------------------------------------------------------

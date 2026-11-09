@@ -233,7 +233,8 @@ builds and off in release builds; `SetCollisionCheck` changes it. `InternWithHas
 Console variables already exist: see `okay/Core/Cvar.hpp` (`Cvars`, `Cvar`) and the console in
 `okay/Core/Console.hpp`. They have ranges, change callbacks, a command-line override and file persistence. A
 first version of this runtime work also had a second registry with read-only, cheat and restart-required flags;
-it was left out so there is one system. Those flags are a follow-up for `Cvar`.
+it was left out so there is one system. The flags (`Cvar::kReadOnly`, `kCheat`, `kRestartRequired`) were added to `Cvar` itself
+in core wave 6: see [core_tools.md](core_tools.md).
 
 ## Frame pacing
 
@@ -262,3 +263,12 @@ while (running) {
 - `Application` can use the limiter (`Application::Config::pacing = Pacing::Limiter`, see [loop_and_time.md](loop_and_time.md); the default is still its own sleep). No hook into the Profiler window yet: call `Time::Step`, `PumpMainThread`, `Reset` and the stats yourself.
 - Work stealing and per-worker queues (see Limits above).
 - `SlotMap` and `FrameArena` are not thread safe by design.
+
+## Audit notes (core wave 6)
+
+The job system, `FrameArena`, `PoolAllocator`, `SlotMap`, `StringId`, `FrameTimer` and `FrameLimiter` were read again for crashes,
+undefined behaviour and races, and the job system's own suite (`jobs`, 9199 checks including the allocation-failure runs) was run
+under ThreadSanitizer: no report, no change needed. Fixed in the neighbouring files of this area: the console, cvars,
+command line and state machine (see [core_tools.md](core_tools.md), "What changed (core wave 6)"). To hand an event or an
+ECS change from a worker to the main thread, use `RunOnMainThread` and `PumpMainThread`; `EventBus`, `ecs::World`,
+`SystemScheduler`, `SceneBridge`, `DataAsset::Cached`, `Cvars` and `Console` are not thread safe.

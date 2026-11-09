@@ -116,6 +116,11 @@ public:
     /// then it keeps its place in the hierarchy (and so its world pose), and its
     /// OnDestroy still sees its parent.
     void Destroy(GameObject* go);
+    /// End `go`'s life the way it should end: back into the ObjectPool it came from when it came from one that is
+    /// still there (it is switched off and kept for the next Get), else Destroy(go). Lifetime, Projectile3D and the
+    /// script call `pool_release()` use it, so pooled bullets and effects are reused instead of freed. Queued like
+    /// Destroy when the scene is busy. True when the object went back to a pool.
+    bool Despawn(GameObject* go);
     /// Destroy every child of `go` (and what is below them), keeping `go`: a list container emptying
     /// its rows, a pool recalling its bullets. Queued like Destroy. Returns how many direct children
     /// were asked (0 for null or a destroyed object).
@@ -141,6 +146,8 @@ public:
     /// Timers, tweens and physics contacts of the old scene do not carry over.
     void DontDestroyOnLoad(GameObject* go);
     bool IsDontDestroyOnLoad(const GameObject* go) const;
+    /// Take `go` off the DontDestroyOnLoad list again (it is replaced with the scene by the next load). True when it was on it.
+    bool CancelDontDestroyOnLoad(const GameObject* go);
     /// Process the pending-destroy queue now (runs OnDestroy + frees the objects).
     /// Update() calls this each frame; the editor calls it in edit mode so deferred
     /// destroys (e.g. removing a rig) take effect without a full simulation tick.
@@ -187,6 +194,10 @@ public:
         std::function<void(float)> onProgress;   // 0..1, after each step
         std::function<void(bool)>  onDone;       // once: true = loaded, false = failed / cancelled
     };
+    /// A replacing load (additive false) is the newest word on what the scene should be: a deferred load or text
+    /// load still waiting, and a replacing load still in flight, are cancelled (their callbacks hear false; what a
+    /// load in flight made is removed) when this one begins. An additive load is not cancelled by it until the
+    /// replacing load clears the scene, which takes the additive content with it.
     /// Start loading a .okayscene over several frames: the file is read now and
     /// `objectsPerFrame` objects are made at the end of each Update, so a loading
     /// screen keeps running. Nothing in the new content Awakes or Starts until all of it
@@ -489,6 +500,10 @@ public:
     /// bitmap font. A widget/Text with its own fontPath overrides this. Travels with
     /// the scene so the editor preview and the shipped player match.
     std::string uiFont;
+    /// Scene-level records of the file this build does not know (a setting a newer build wrote), each one whole
+    /// line, written back as they were by SceneSerializer::Serialize. Set by a full load (not by a merge or
+    /// Instantiate), cleared with the scene. See GameObject::unknownRecords for the per-object ones.
+    std::vector<std::string> unknownRecords;
 
     // ---- Lifecycle (driven by the Application) ------------------------
     /// Run Awake/Start on all components created so far.
@@ -566,9 +581,20 @@ private:
         std::vector<std::unique_ptr<GameObject>> objects;
         std::vector<Component*> active, pending;
         std::vector<GameObject*> marked;
+        // What a load that did not happen must put back: where every object stood, and which kept objects
+        // were taken off a parent that is not kept (with their place among its children).
+        std::vector<const GameObject*> order;
+        std::vector<Component*> activeOrder;   // the update list as it was
+        Camera* mainCamera = nullptr;          // the main camera, when it is a kept one
+        struct Unparented { GameObject* go; Transform* parent; int index; };
+        std::vector<Unparented> unparented;
     };
     void DetachKept(KeptState& k);
-    void ReattachKept(KeptState& k);
+    /// Put the kept objects back. With `undo` (the load failed, the old scene stays) they also go back to the
+    /// places they stood in: the object order and the parents they were taken off.
+    void ReattachKept(KeptState& k, bool undo = false);
+    /// After a multi-frame replacing load: the kept objects come last again, as they do after a one-go load.
+    void MoveKeptToEnd();
     struct LoadRecord {
         int handle = 0;
         std::unique_ptr<SceneLoadJob> job;

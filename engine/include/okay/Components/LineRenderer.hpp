@@ -117,6 +117,8 @@ public:
     void Update(float dt) override;
     /// Drop every point (the trail starts again from where the object is).
     void Clear();
+    /// A pooled bullet that is reused does not draw a streak from where the last use ended.
+    void OnPoolReuse() override { Clear(); }
     int  PointCount() const { return (int)m_points.size(); }
     /// The stored points, oldest first.
     std::vector<Vec3> Points() const;

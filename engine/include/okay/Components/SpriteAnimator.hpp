@@ -43,6 +43,12 @@ public:
     std::vector<SpriteClip> clips;   // named clips, switched with Play(name)
 
     void Start() override { Apply(); }
+    /// A pooled object that is reused begins its animation again, with the clip and the play state it was made with.
+    void OnPoolReuse() override {
+        if (!m_seen) return;
+        m_clip = m_clipOnReuse; m_time = 0.0f; m_frame = 0; m_hold = false; playing = m_playOnReuse; Apply();
+    }
+    void Awake() override { m_seen = true; m_clipOnReuse = m_clip; m_playOnReuse = playing; }
 
     void Update(float dt) override {
         int count = FrameCount();
@@ -137,6 +143,8 @@ private:
     float m_time = 0.0f;
     int   m_frame = 0;
     int   m_clip = -1;   // index into clips; -1 = the base frames / atlas
+    bool  m_seen = false, m_playOnReuse = true;   // what a pool puts back (taken in Awake)
+    int   m_clipOnReuse = -1;
     bool  m_hold = false;
 };
 

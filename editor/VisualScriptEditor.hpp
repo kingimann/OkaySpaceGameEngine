@@ -728,6 +728,9 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     return {};
 }
 
+inline bool IsSwitchNode(const std::string& t);
+inline std::vector<std::string> VsEditorSwitchCases(const std::string& arg);
+
 struct VsEditGraph {
     std::vector<VsEditNode> nodes;
     std::vector<VsExecLink> execLinks;
@@ -882,6 +885,16 @@ struct VsEditGraph {
                         [&](const VsExecLink& l) { return !has(l.from) || !has(l.to); }), execLinks.end());
         dataLinks.erase(std::remove_if(dataLinks.begin(), dataLinks.end(),
                         [&](const VsDataLink& l) { return !has(l.consumer) || !has(l.producer); }), dataLinks.end());
+        // Switch Default used to be pin 4. With fewer cases it is the pin after the last case.
+        for (const auto& n : nodes) {
+            if (!IsSwitchNode(n.type)) continue;
+            const int ncases = (int)VsEditorSwitchCases(n.arg).size();
+            if (ncases >= 4) continue;
+            bool dest = false;
+            for (const auto& l : execLinks) if (l.from == n.id && l.pin == ncases) dest = true;
+            if (dest) continue;
+            for (auto& l : execLinks) if (l.from == n.id && l.pin == 4) l.pin = ncases;
+        }
         nextId = maxId + 1;
     }
 };
@@ -936,9 +949,32 @@ inline bool VsSigFor(const VsEditGraph& g, const VsEditNode& n, okay::vs::Functi
 }
 /// The node's pins: the registry entry, or for function nodes one built from
 /// the signature (parameters / return values become data pins).
+inline bool IsSwitchNode(const std::string& t) { return t == "SwitchString" || t == "SwitchCases"; }
+/// Cases in a Switch node's text field (comma separated). Empty pieces are dropped.
+inline std::vector<std::string> VsEditorSwitchCases(const std::string& arg) {
+    std::vector<std::string> out;
+    std::string cur;
+    auto flush = [&] {
+        std::size_t b = 0, e = cur.size();
+        while (b < e && std::isspace(static_cast<unsigned char>(cur[b]))) ++b;
+        while (e > b && std::isspace(static_cast<unsigned char>(cur[e - 1]))) --e;
+        if (e > b) out.push_back(cur.substr(b, e - b));
+        cur.clear();
+    };
+    for (char c : arg) { if (c == ',') flush(); else cur.push_back(c); }
+    if (!cur.empty()) flush();
+    if (out.size() > 63) out.resize(63);
+    return out;
+}
+/// Default is the pin after the last case. Moving the list moves that wire with it.
+inline void VsMoveSwitchDefault(VsEditGraph& g, int node, int oldDef, int newDef) {
+    if (oldDef == newDef) return;
+    for (auto& l : g.execLinks)
+        if (l.from == node && l.pin == oldDef) l.pin = newDef;
+}
 inline const VsDef* VsDefFor(const VsEditGraph& g, const VsEditNode& n) {
     const VsDef* base = FindDef(n.type);
-    if (!base || !IsFunctionNode(n.type)) return base;
+    if (!base || (!IsFunctionNode(n.type) && !IsSwitchNode(n.type))) return base;
     struct Dyn { std::string key; std::vector<std::string> labels; VsDef def; };
     static std::map<int, std::unique_ptr<Dyn>> cache;   // node id -> its pins
     okay::vs::FunctionSig sig;
@@ -949,11 +985,21 @@ inline const VsDef* VsDefFor(const VsEditGraph& g, const VsEditNode& n) {
         key += "|";
         for (const auto& p : sig.returns) key += p.name + ",";
     }
+    if (IsSwitchNode(n.type)) key = n.type + "|sw|" + n.arg;
     auto& slot = cache[n.id];
     if (slot && slot->key == key) return &slot->def;
     slot = std::make_unique<Dyn>();
     slot->key = key;
     slot->def = *base;
+    if (IsSwitchNode(n.type)) {
+        const auto cases = VsEditorSwitchCases(n.arg);
+        slot->labels.reserve(cases.size() + 1);
+        for (const auto& c : cases) slot->labels.push_back(c);
+        slot->labels.push_back("Default");
+        slot->def.execOut.clear();
+        for (const auto& s : slot->labels) slot->def.execOut.push_back(s.c_str());
+        return &slot->def;
+    }
     if (ok) {
         const auto& ins  = n.type == "FunctionStart" ? std::vector<okay::vs::FunctionSig::Pin>{} : n.type == "Return" ? sig.returns : sig.params;
         const auto& outs = n.type == "FunctionStart" ? sig.params : n.type == "Return" ? std::vector<okay::vs::FunctionSig::Pin>{} : sig.returns;
@@ -2732,7 +2778,8 @@ inline void Draw(EditorState& ed, bool* open) {
             if (inlineMsg.empty()) inlineMsg = is.message;
         }
         const float msgH = inlineMsg.empty() ? 0.0f : ROW_H * 1.35f;
-        float bodyH = rows * ROW_H + (d->param ? ROW_H + 10.0f * z : 0) + PAD;
+        const bool isSwitch = IsSwitchNode(n.type);
+        float bodyH = rows * ROW_H + (d->param ? ROW_H + 10.0f * z : 0) + (isSwitch ? ROW_H : 0.0f) + PAD;
         float h = HEADER_H + bodyH + msgH;
         // Wider when it has data inputs: their value boxes sit between the input
         // labels and the output labels.
@@ -3037,6 +3084,40 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (n.arg == "right") b = 1; else if (n.arg == "middle") b = 2;
                 if (b < 0 || b > 2) b = 0;
                 if (ImGui::Combo("##mbtn", &b, btns, 3)) { n.arg = std::to_string(b); g.dirty = true; }
+            } else if (isSwitch) {
+                char sbuf[512]; std::snprintf(sbuf, sizeof(sbuf), "%s", n.arg.c_str());
+                if (ImGui::InputTextWithHint("##sw", d->paramHint ? d->paramHint : "", sbuf, sizeof(sbuf))) {
+                    const int oldN = (int)VsEditorSwitchCases(n.arg).size();
+                    const int newN = (int)VsEditorSwitchCases(sbuf).size();
+                    VsMoveSwitchDefault(g, n.id, oldN, newN);
+                    n.arg = sbuf; g.dirty = true;
+                }
+                // InputText returns the cursor to the window flow. Put + case
+                // back under the field, inside this node.
+                const ImVec2 swField = ImGui::GetItemRectMax();
+                ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD, swField.y + 6.0f * z));
+                if (ImGui::SmallButton("+ case")) {
+                    auto cases = VsEditorSwitchCases(n.arg);
+                    if ((int)cases.size() < 63) {
+                        const int oldN = (int)cases.size();
+                        if (n.type == "SwitchCases") {
+                            int next = oldN;
+                            if (!cases.empty()) {
+                                char* end = nullptr;
+                                const long v = std::strtol(cases.back().c_str(), &end, 10);
+                                if (end && *end == '\0') next = (int)v + 1;
+                            }
+                            cases.push_back(std::to_string(next));
+                        } else {
+                            cases.push_back("case" + std::to_string(oldN + 1));
+                        }
+                        std::string joined;
+                        for (const auto& c : cases) { if (!joined.empty()) joined += ", "; joined += c; }
+                        VsMoveSwitchDefault(g, n.id, oldN, oldN + 1);
+                        n.arg = joined; g.dirty = true;
+                    }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another case. Default stays the last pin.");
             } else {
                 if (ImGui::InputTextWithHint("##arg", d->paramHint ? d->paramHint : "", buf, sizeof(buf)))
                     { n.arg = buf; g.dirty = true; }

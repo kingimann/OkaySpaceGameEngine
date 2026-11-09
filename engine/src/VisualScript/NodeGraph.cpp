@@ -15,6 +15,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -99,27 +100,70 @@ VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     return v;
 }
 
-bool NodeGraph::CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
-                             const VsNode* caller, VsContext& ctx) {
+NodeGraph::CallResult NodeGraph::CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
+                                                  const VsNode* caller, VsContext& ctx, int* suspendedAt) {
     const int start = FunctionNode(name);
     if (start < 0) {
         ReportError(caller, ctx, name.empty() ? std::string("no function is picked to call")
                                               : "there's no function named '" + name + "' in this graph");
-        return false;
+        return CallResult::Failed;
     }
     if ((int)m_frames.size() >= kMaxCallDepth) {
         ReportError(caller, ctx, "function '" + name + "' was called more than " + std::to_string(kMaxCallDepth) +
                                  " deep (a function calling itself with no way to stop?); the call was skipped");
-        return false;
+        return CallResult::Failed;
     }
     Frame f; f.name = name; f.args = std::move(args);
     m_frames.push_back(std::move(f));
-    // The body runs as a nested chain: it shares the event's step budget, so a
-    // function looping forever is stopped like any other runaway loop.
-    Run(start, ctx);
-    rets = std::move(m_frames.back().rets);
-    m_frames.pop_back();
-    return !m_abort;
+    // Propagate a pause so a Delay in the body waits the caller instead of being refused.
+    const RunStatus st = Run(start, ctx, false, true);
+    if (st == RunStatus::Suspended) {
+        if (suspendedAt) *suspendedAt = TakeSuspendNode();
+        return CallResult::Suspended;
+    }
+    if (!m_frames.empty()) {
+        rets = std::move(m_frames.back().rets);
+        m_frames.pop_back();
+    }
+    return m_abort ? CallResult::Failed : CallResult::Done;
+}
+
+void NodeGraph::StashFrames(int depthBefore, std::vector<VsHeldFrame>& out) {
+    out.clear();
+    if (depthBefore < 0) depthBefore = 0;
+    if ((int)m_frames.size() <= depthBefore) return;
+    for (int i = depthBefore; i < (int)m_frames.size(); ++i) {
+        Frame& f = m_frames[(std::size_t)i];
+        VsHeldFrame h;
+        h.name = std::move(f.name);
+        h.args = std::move(f.args);
+        h.rets = std::move(f.rets);
+        h.returned = f.returned;
+        h.locals.assign(f.locals.begin(), f.locals.end());
+        std::sort(h.locals.begin(), h.locals.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        out.push_back(std::move(h));
+    }
+    m_frames.resize((std::size_t)depthBefore);
+}
+
+void NodeGraph::RestoreFrames(std::vector<VsHeldFrame>& in) {
+    for (VsHeldFrame& h : in) {
+        Frame f;
+        f.name = std::move(h.name);
+        f.args = std::move(h.args);
+        f.rets = std::move(h.rets);
+        f.returned = h.returned;
+        for (auto& kv : h.locals) f.locals.emplace(std::move(kv.first), std::move(kv.second));
+        m_frames.push_back(std::move(f));
+    }
+    in.clear();
+}
+
+void NodeGraph::FinishCall(int depthBefore, std::vector<VsValue>& rets) {
+    if (depthBefore < 0) depthBefore = 0;
+    if ((int)m_frames.size() > depthBefore)
+        rets = std::move(m_frames[(std::size_t)depthBefore].rets);
+    if ((int)m_frames.size() > depthBefore) m_frames.resize((std::size_t)depthBefore);
 }
 
 bool NodeGraph::ResolveTarget(VsNode* n, VsContext& ctx, GameObject*& out) {
@@ -262,16 +306,8 @@ NodeGraph::RunStatus NodeGraph::Run(int entryNode, VsContext& ctx, bool resume, 
             m_resuming = false;
         }
         first = false;
-        if (outPin == kSuspend && !m_frames.empty()) {
-            // A function has to finish before its caller carries on: there's no
-            // caller to come back to next frame. Clear the node's "I'm waiting"
-            // flag so a later call isn't stuck.
-            n->OnSuspendRejected();
-            ReportError(n, ctx, "Delay / Wait can't pause inside a function (a loop that reaches one counts too; "
-                                "a function runs to the end at once); the function stopped here");
-            m_frames.back().returned = true;
-            break;
-        }
+        // A pause inside a function is a latent call: propagate it so the Call
+        // Function node can park and keep the frame. The caller waits.
         if (outPin == kSuspend && propagateSuspend) {
             m_suspendAt = cur;
             status = RunStatus::Suspended;
@@ -1045,6 +1081,19 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         int n = resolve(en.fileId, ok);
         if (!ok) return fail("entry references unknown node");
         graph->SetEntry(en.name, n);
+    }
+    // Old Switch (name) / Switch (cases) files put Default on pin 4. Fewer than
+    // four cases now put Default on the pin just after the last case.
+    for (const auto& node : graph->m_nodes) {
+        int ncases = -1;
+        if (auto* s = dynamic_cast<SwitchStringNode*>(node.get())) ncases = s->CaseCount();
+        else if (auto* s = dynamic_cast<SwitchCasesNode*>(node.get())) ncases = s->CaseCount();
+        if (ncases < 0 || ncases >= kLegacySwitchDefault) continue;
+        if (kLegacySwitchDefault >= (int)node->execOut.size() || node->execOut[kLegacySwitchDefault] < 0) continue;
+        if (ncases < (int)node->execOut.size() && node->execOut[ncases] >= 0) continue;
+        const int to = node->execOut[kLegacySwitchDefault];
+        node->execOut[kLegacySwitchDefault] = -1;
+        graph->ConnectExec(node->id, ncases, to);
     }
     return graph;
 }

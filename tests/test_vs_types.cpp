@@ -253,7 +253,7 @@ entry OnStart 0
         CHECK(Has(v, 0, 30, "already a function named 'Double'"));
         CHECK(Has(v, 0, 4, "no function named 'Nope'"));
         CHECK(Has(v, 0, 3, "outside a function"));
-        CHECK(Has(v, 0, 41, "can't pause inside a function"));
+        CHECK(!Has(v, 0, 41, "can't pause"));   // a Delay in a function pauses the caller
         CHECK(Has(v, 0, 42, "returns from 'Double'"));
         CHECK(Has(v, 0, 5, "Set Local only works inside a function"));
         CHECK(Has(v, 0, 6, "Get Local only works inside a function"));

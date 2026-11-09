@@ -766,9 +766,6 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             else if (!owner.empty() && FunctionNameOf(kv.second.arg) != owner)
                 issues.push_back({0, kv.first, "this Return is in function '" + owner + "' but returns from '" + FunctionNameOf(kv.second.arg) + "'"});
         }
-        if ((t == "Delay" || t == "Wait" || t == "RunGraph") && !owner.empty())
-            issues.push_back({0, kv.first, "Delay / Wait / Run Graph can't pause inside a function (it runs to the end at once) - "
-                                           "start the pause after the Call Function instead"});
         if (t == "SetLocal" && owner.empty() && fromEvents.count(kv.first))
             issues.push_back({0, kv.first, "Set Local only works inside a function - use Set Var for graph variables"});
     }

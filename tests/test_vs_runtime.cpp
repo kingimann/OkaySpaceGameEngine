@@ -316,6 +316,60 @@ int main() {
         CHECK(m.AsBool());
     }
 
+    // ---- Any number of switch cases, and an old Default wire on pin 4 --------
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Many",
+            "node 1 OnStart\nentry OnStart 1\n"
+            "node 2 Const 5\nnode 3 SwitchCases 0,1,2,3,4,5\n"
+            "node 4 SetVar hit\nnode 5 Const \"five\"\n"
+            "node 6 SetVar hit\nnode 7 Const \"no\"\n"
+            "exec 1 0 3\ndata 3 0 2 0\nexec 3 5 4\ndata 4 0 5 0\nexec 3 6 6\ndata 6 0 7 0\n");
+        s.Start();
+        CHECK(v->GetVariable("hit").AsString() == "five");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Old",
+            "node 1 OnStart\nentry OnStart 1\n"
+            "node 2 Const \"z\"\nnode 3 SwitchString a,b\n"
+            "node 4 SetVar hit\nnode 5 Const \"def\"\n"
+            "exec 1 0 3\ndata 3 0 2 0\nexec 3 4 4\ndata 4 0 5 0\n");
+        s.Start();
+        CHECK(v->GetVariable("hit").AsString() == "def");
+    }
+
+    // ---- A Delay inside a function waits the caller, and keeps the local ------
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "FnWait",
+            "node 10 FunctionStart \"AddOne(n: Number) -> out: Number\"\n"
+            "node 11 SetLocal kept\nnode 12 Delay 0.25\nnode 13 GetLocal kept\nnode 14 Return AddOne\n"
+            "exec 10 0 11\nexec 11 0 12\nexec 12 0 14\ndata 11 0 10 0\ndata 14 0 13 0\n"
+            "node 1 OnStart\nentry OnStart 1\nnode 2 Const 5\nnode 3 CallFunction AddOne\nnode 4 SetVar out\n"
+            "exec 1 0 3\nexec 3 0 4\ndata 3 0 2 0\ndata 4 0 3 0\n");
+        s.Start();
+        CHECK(v->Variables().count("out") == 0);
+        s.Update(0.1f);
+        CHECK(v->Variables().count("out") == 0);
+        Updates(s, 2, 0.1f);
+        CHECK_NEAR(v->GetVariable("out").AsFloat(), 5.0f, 1e-4f);
+    }
+
+    // ---- Reloading the parent keeps the called graph's Delay ------------------
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = AttachFile(s, "ParentWait2", Ex("call_wait.okayvs"));
+        s.Start();
+        s.Update(0.1f);                                   // 0.15s left of a 0.25s delay
+        std::string err;
+        CHECK(v->LoadFromText(v->Source(), &err));
+        s.Update(0.1f);
+        CHECK(v->Variables().count("from_sub") == 0);     // not restarted from a full 0.25s
+        s.Update(0.1f);
+        CHECK_NEAR(v->GetVariable("from_sub").AsFloat(), 9.0f, 1e-4f);
+    }
+
     vs::SetRuntimeErrorHook(nullptr);
     TEST_MAIN_RESULT();
 }

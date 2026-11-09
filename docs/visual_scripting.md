@@ -735,7 +735,8 @@ Lists are shared: every node that reads `bag` sees the same list. The other list
 
 ### Switches, gates and calling out
 
-- **Switch (name)** (`SwitchString`) and **Switch (cases)** (`SwitchCases`): up to four cases in the text field, comma separated, plus Default. Switch (int) is still the fixed 0 / 1 / 2 / Default node.
+- **Switch (name)** (`SwitchString`) and **Switch (cases)** (`SwitchCases`): one pin per case in the text field (comma separated, or **+ case**), then Default. An older file that wired Default to pin 4 still hits Default. Switch (int) is still the fixed 0 / 1 / 2 / Default node.
+- A **Delay** or **Wait** inside a function pauses the **Call Function**. The caller continues when the wait finishes, with the same arguments and locals. A called graph's own Delay is kept if the parent graph is reloaded during Play.
 - **Latch Gate** starts closed (type `open` to start open). Open, Close and Toggle are pulses. The flow passes only while the latch is open.
 - **Is Valid** is false for a destroyed object, a name that finds nothing, or a number that isn't finite.
 - **Call Script** calls a function on this object's text script (`function bump(n) { return n + 1; }`) and reads the return value. The other direction already exists: a script's `send_event` runs On Custom Event.

@@ -173,40 +173,56 @@ struct ForEachMapNode : VsNode {
 };
 
 // ---- Switches --------------------------------------------------------------
-// Four case pins plus Default. The text field lists the cases, comma separated.
-constexpr int kSwitchSlots = 4;
+// One exec pin per case in the text field, then Default. Any number of cases
+// up to the pin limit. An old graph that wired Default to pin 4 (the previous
+// fixed layout) is moved onto the real Default pin when it is loaded.
+constexpr int kLegacySwitchDefault = 4;
+
+inline int SwitchPinCount(int ncases) {
+    if (ncases < 0) ncases = 0;
+    if (ncases > NodeGraph::kMaxPins - 1) ncases = NodeGraph::kMaxPins - 1;
+    return ncases + 1;
+}
 
 struct SwitchStringNode : VsNode {
     std::vector<std::string> cases;
     explicit SwitchStringNode(std::string arg) : cases(VsSplitCases(arg)) {}
-    int ExecOutCount() const override { return kSwitchSlots + 1; }
+    int CaseCount() const { return (int)cases.size(); }
+    int ExecOutCount() const override { return SwitchPinCount(CaseCount()); }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if ((int)cases.size() > kSwitchSlots)
-            g.Error(this, ctx, "only the first " + std::to_string(kSwitchSlots) + " cases are used; the rest never run");
+        int n = CaseCount();
+        if (n > NodeGraph::kMaxPins - 1) {
+            g.Error(this, ctx, "only the first " + std::to_string(NodeGraph::kMaxPins - 1) + " cases are used");
+            n = NodeGraph::kMaxPins - 1;
+        }
         const std::string v = In(0, g, ctx).AsString();
-        const int n = std::min((int)cases.size(), kSwitchSlots);
         for (int i = 0; i < n; ++i) if (cases[(std::size_t)i] == v) return i;
-        return kSwitchSlots;
+        return n;
     }
 };
 
 struct SwitchCasesNode : VsNode {
     std::vector<int> cases;
+    std::vector<char> live;   // 0 = the text wasn't a number, so that pin never matches
     explicit SwitchCasesNode(std::string arg) {
         for (const std::string& s : VsSplitCases(arg)) {
             float f = 0.0f;
-            if (!VsParseFinite(s, f)) continue;
-            cases.push_back((int)std::lround(f));
+            if (VsParseFinite(s, f)) { cases.push_back((int)std::lround(f)); live.push_back(1); }
+            else { cases.push_back(0); live.push_back(0); }
         }
     }
-    int ExecOutCount() const override { return kSwitchSlots + 1; }
+    int CaseCount() const { return (int)cases.size(); }
+    int ExecOutCount() const override { return SwitchPinCount(CaseCount()); }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if ((int)cases.size() > kSwitchSlots)
-            g.Error(this, ctx, "only the first " + std::to_string(kSwitchSlots) + " cases are used; the rest never run");
+        int n = CaseCount();
+        if (n > NodeGraph::kMaxPins - 1) {
+            g.Error(this, ctx, "only the first " + std::to_string(NodeGraph::kMaxPins - 1) + " cases are used");
+            n = NodeGraph::kMaxPins - 1;
+        }
         const int v = (int)std::lround(In(0, g, ctx).AsFloat());
-        const int n = std::min((int)cases.size(), kSwitchSlots);
-        for (int i = 0; i < n; ++i) if (cases[(std::size_t)i] == v) return i;
-        return kSwitchSlots;
+        for (int i = 0; i < n; ++i)
+            if (live[(std::size_t)i] && cases[(std::size_t)i] == v) return i;
+        return n;
     }
 };
 
@@ -295,8 +311,27 @@ struct RunGraphNode : VsNode {
         hold = false;
         if (sub) sub->CancelSuspended();
     }
-    bool SaveFlow(VsFlowRecord& r) const override { if (!hold) return false; r.b0 = true; return true; }
-    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { hold = r.b0; }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!hold || !sub) return false;
+        r.b0 = true;
+        r.text = loadedText;
+        r.texts = {entry, path};
+        sub->CaptureFlow(r.children, r.parked);
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override {
+        hold = r.b0;
+        if (!r.texts.empty()) entry = r.texts[0];
+        if (r.texts.size() > 1) path = r.texts[1];
+        if (!hold || r.text.empty()) return;
+        std::string err;
+        auto parsed = NodeGraph::Parse(r.text, &err);
+        if (!parsed) { hold = false; return; }
+        parsed->debugKey = path;
+        parsed->RestoreFlow(r.children, r.parked);
+        sub = std::move(parsed);
+        loadedText = r.text;
+    }
     bool Unsafe(const std::string& p) const {
         if (p.empty()) return true;
         if (p[0] == '/' || p[0] == '\\') return true;

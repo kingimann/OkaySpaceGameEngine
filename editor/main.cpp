@@ -45175,6 +45175,14 @@ int main(int argc, char** argv) {
         ApplyPendingInspectorAdds(ed);
         { OKAY_PROFILE("UI.Services"); if (g_showServices)  DrawServices(ed); }
         { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); }
+        if (const char* vsOpen = std::getenv("OKAY_VS_OPEN")) {
+            static bool opened = false;
+            if (!opened && *vsOpen) {
+                opened = true;
+                okay::editor::vsed::OpenFile(vsOpen);
+                g_showVisualScript = true;
+            }
+        }
         { OKAY_PROFILE("UI.VisualScript"); if (g_showVisualScript) okay::editor::vsed::Draw(ed, &g_showVisualScript); }
         { OKAY_PROFILE("UI.Modeling"); if (g_showModeling)  DrawModeling(ed); }
         { OKAY_PROFILE("UI.UVEditor"); if (g_showUVEditor)  DrawUVEditor(ed); }

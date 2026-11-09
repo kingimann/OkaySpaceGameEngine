@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace okay {
@@ -40,8 +41,19 @@ struct VsContext {
 
 class NodeGraph;
 
+/// One paused function call: arguments, locals and whether Return already ran.
+/// Kept on the Call Function node while the call is waiting, so other events
+/// don't run "inside" it.
+struct VsHeldFrame {
+    std::string name;
+    std::vector<VsValue> args, rets;
+    std::vector<std::pair<std::string, VsValue>> locals;
+    bool returned = false;
+};
+
 /// One node-local bit of state worth keeping when the graph text is reloaded
-/// during Play (Once, a timer, a loop paused on a Delay). Keyed by file id.
+/// during Play (Once, a timer, a loop parked on a Delay, a called graph's Delay).
+/// Keyed by file id. `children` / `parked` / `text` are a called graph's own state.
 struct VsFlowRecord {
     int fileId = -1;
     std::string type;
@@ -50,6 +62,10 @@ struct VsFlowRecord {
     bool b0 = false, b1 = false, b2 = false;
     std::vector<VsValue> values;
     std::vector<std::string> texts;
+    std::string text;
+    std::vector<VsHeldFrame> frames;
+    std::vector<VsFlowRecord> children;
+    std::vector<int> parked;
 };
 
 /// Which data input of a node type is its optional "Target" object input (the
@@ -271,10 +287,18 @@ public:
         auto it = m_functions.find(name);
         return it != m_functions.end() ? it->second : -1;
     }
-    /// Run function `name` with `args`; its Return values land in `rets` (one per
-    /// return value; unset ones stay empty). False (and reported) when it can't run.
-    bool CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
-                      const VsNode* caller, VsContext& ctx);
+    enum class CallResult { Failed, Done, Suspended };
+    /// Run function `name` with `args`. Done: Return values are in `rets` and the
+    /// frame is gone. Suspended: the body paused (a Delay); the frame stays on the
+    /// stack and `suspendedAt` is the node to resume. The caller stashes that frame.
+    CallResult CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
+                            const VsNode* caller, VsContext& ctx, int* suspendedAt = nullptr);
+    /// Lift the frames pushed after `depthBefore` onto `out` and leave the stack
+    /// as it was before the call. Restore puts them back, in the same order.
+    void StashFrames(int depthBefore, std::vector<VsHeldFrame>& out);
+    void RestoreFrames(std::vector<VsHeldFrame>& in);
+    /// Pop the call that started at `depthBefore` and write its return values.
+    void FinishCall(int depthBefore, std::vector<VsValue>& rets);
     /// Inside a running function: its arguments / where Return writes / its locals.
     bool InFunction() const { return !m_frames.empty(); }
     const VsValue* Arg(int i) const {

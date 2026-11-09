@@ -91,6 +91,14 @@ std::vector<double> FrameStats::Values() const {
     return v;
 }
 
+double FrameStats::AverageFps(std::size_t frames) const {
+    const std::size_t take = std::min(frames, m_size);
+    if (take == 0) return 0.0;
+    double ms = 0.0;
+    for (std::size_t i = m_size - take; i < m_size; ++i) ms += At(i).ms;
+    return ms > 0.0 ? (double)take * 1000.0 / ms : 0.0;
+}
+
 FrameStatsSnapshot FrameStats::Snapshot() const {
     FrameStatsSnapshot s;
     s.frames = m_size;

@@ -31,6 +31,8 @@ public:
     void SetElapsed(float lived) { if (std::isfinite(lived)) m_elapsed = std::max(0.0, static_cast<double>(lived)); }
     /// Start the timer again.
     void Restart() { m_elapsed = 0.0; }
+    /// A pooled object that is reused lives its full time again.
+    void OnPoolReuse() override { Restart(); }
 
 private:
     double m_elapsed = 0.0;

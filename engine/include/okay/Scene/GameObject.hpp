@@ -178,6 +178,12 @@ public:
     template <typename T, typename... Args>
     T* AddComponent(Args&&... args);
 
+    /// The first attached component of type T, or a new one made with `args` when there is none (the way
+    /// to say "I need a Rigidbody here" without checking first). With a RequireComponent or
+    /// DisallowMultipleComponent rule registered for T the rule applies to the one that is added.
+    template <typename T, typename... Args>
+    T* GetOrAddComponent(Args&&... args);
+
     /// Return the first attached component of type T, or nullptr.
     template <typename T>
     T* GetComponent() const;
@@ -202,6 +208,22 @@ public:
     /// skipped (its parents are still looked at) unless `includeInactive`.
     template <typename T>
     std::vector<T*> GetComponentsInParent(bool includeInactive = false) const;
+
+    /// Call `fn(GameObject&)` for the objects below this one: parents before children, siblings in their
+    /// order (this object first too with `includeSelf`). When `fn` returns a bool, returning false stops the
+    /// walk at once; a function that returns nothing visits everything. An object whose own `active` is off
+    /// is skipped with everything below it unless `includeInactive` (the default visits every object); the rule
+    /// covers this object too, so with `includeInactive` false a switched-off start visits nothing. Returns
+    /// true when the whole walk ran and false when `fn` stopped it. Objects an `fn` call asks the scene to destroy are
+    /// still visited (they go at the end of the frame); a child it adds to the object it was just called for
+    /// is visited too. Uses an explicit stack, so a very deep hierarchy is fine.
+    template <typename Fn>
+    bool ForEachDescendant(Fn&& fn, bool includeInactive = true, bool includeSelf = false) const;
+
+    /// True when this object or anything below it has a component that was told OnEnable and not yet
+    /// OnDisable (see HasLiveComponent for one object). A pool uses it to tell when a released object, its
+    /// children included, has been switched off for real.
+    bool HasLiveComponentInHierarchy() const;
 
     /// Append every component assignable to T to `out` (no per-object allocation;
     /// used by Scene::FindObjectsOfType to avoid a temporary vector per object).
@@ -405,6 +427,37 @@ template <typename T>
 void DisallowMultipleComponent() {
     static_assert(std::is_base_of<Component, T>::value, "T must derive from okay::Component");
     ComponentRules::SetUnique(typeid(T));
+}
+
+template <typename T, typename... Args>
+T* GameObject::GetOrAddComponent(Args&&... args) {
+    if (T* existing = GetComponent<T>()) return existing;
+    return AddComponent<T>(std::forward<Args>(args)...);
+}
+
+template <typename Fn>
+bool GameObject::ForEachDescendant(Fn&& fn, bool includeInactive, bool includeSelf) const {
+    std::vector<GameObject*> stack;   // explicit stack: pre-order, children kept in order, no recursion
+    auto pushChildren = [&stack](const GameObject* g) {
+        if (!g->transform) return;
+        const auto& kids = g->transform->Children();
+        for (std::size_t i = kids.size(); i-- > 0;)
+            if (kids[i] && kids[i]->gameObject) stack.push_back(kids[i]->gameObject);
+    };
+    auto visit = [&fn](GameObject* g) -> bool {
+        if constexpr (std::is_same<decltype(fn(*g)), bool>::value) return fn(*g);
+        else { fn(*g); return true; }
+    };
+    if (!includeInactive && !active) return true;   // switched off: it and everything below it are skipped
+    if (includeSelf && !visit(const_cast<GameObject*>(this))) return false;
+    pushChildren(this);
+    while (!stack.empty()) {
+        GameObject* g = stack.back(); stack.pop_back();
+        if (!includeInactive && !g->active) continue;
+        if (!visit(g)) return false;
+        pushChildren(g);
+    }
+    return true;
 }
 
 template <typename T>

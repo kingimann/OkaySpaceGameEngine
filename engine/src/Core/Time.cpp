@@ -99,6 +99,7 @@ void Time::RampTimeScale(float target, float seconds) {
 
 bool  Time::IsRamping() { return g_ramp; }
 float Time::RampTarget() { return g_ramp ? (float)g_rampTo : s_timeScale; }
+float Time::RampSecondsLeft() { return g_ramp ? (float)std::max(g_rampDur - g_rampT, 0.0) : 0.0f; }
 void  Time::CancelRamp() { g_ramp = false; RefreshFx(); }
 
 void Time::ClearEffects() {

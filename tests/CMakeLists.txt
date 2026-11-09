@@ -1353,6 +1353,9 @@ add_test(NAME timer_debug COMMAND test_timer_debug)
 add_executable(test_timers_audit test_timers_audit.cpp)
 target_link_libraries(test_timers_audit PRIVATE okay::engine)
 add_test(NAME timers_audit COMMAND test_timers_audit)
+add_executable(test_timers_fifth test_timers_fifth.cpp)
+target_link_libraries(test_timers_fifth PRIVATE okay::engine)
+add_test(NAME timers_fifth COMMAND test_timers_fifth)
 
 add_executable(test_editor_tabs test_editor_tabs.cpp)
 target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -1609,6 +1612,9 @@ endif()
 add_executable(test_vs_media test_vs_media.cpp)
 target_link_libraries(test_vs_media PRIVATE okay::engine)
 add_test(NAME vs_media COMMAND test_vs_media)
+add_executable(test_vs_tween test_vs_tween.cpp)
+target_link_libraries(test_vs_tween PRIVATE okay::engine)
+add_test(NAME vs_tween COMMAND test_vs_tween)
 
 # Script navmesh queries: nav_path_exists / nav_path_length / nav_point_walkable / nav_nearest_point
 add_executable(test_script_nav test_script_nav.cpp)
@@ -1710,6 +1716,17 @@ add_test(NAME component_order COMMAND test_component_order)
 add_executable(test_scene_graph_wave4 test_scene_graph_wave4.cpp)
 target_link_libraries(test_scene_graph_wave4 PRIVATE okay::engine)
 add_test(NAME scene_graph_wave4 COMMAND test_scene_graph_wave4)
+
+# Scene graph (1.3, wave 5): world-cache check against a plain walk, constant-cost child-list removal, look-at variants,
+# GetOrAddComponent / ForEachDescendant, FindByPath with duplicates, Stats on a huge scene, tag / layer names in other languages
+add_executable(test_scene_graph_wave5 test_scene_graph_wave5.cpp)
+target_link_libraries(test_scene_graph_wave5 PRIVATE okay::engine)
+add_test(NAME scene_graph_wave5 COMMAND test_scene_graph_wave5)
+set_tests_properties(scene_graph_wave5 PROPERTIES TIMEOUT 240)   # 300000 children, 100000-deep chains
+
+add_executable(test_object_pool_wave5 test_object_pool_wave5.cpp)
+target_link_libraries(test_object_pool_wave5 PRIVATE okay::engine)
+add_test(NAME object_pool_wave5 COMMAND test_object_pool_wave5)
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)
@@ -1802,6 +1819,11 @@ add_test(NAME random_extras COMMAND test_random_extras)
 add_executable(test_random_wave4 test_random_wave4.cpp)
 target_link_libraries(test_random_wave4 PRIVATE okay::engine)
 add_test(NAME random_wave4 COMMAND test_random_wave4)
+
+# 1.1 fifth pass: Random::Shared() is thread safe (std::thread tests; header-only, also built standalone under a thread sanitizer)
+add_executable(test_random_threads test_random_threads.cpp)
+target_link_libraries(test_random_threads PRIVATE okay::engine)
+add_test(NAME random_threads COMMAND test_random_threads)
 
 add_executable(test_application_loop test_application_loop.cpp)
 target_link_libraries(test_application_loop PRIVATE okay::engine)
@@ -1902,6 +1924,15 @@ add_test(NAME loop_audit3 COMMAND test_loop_audit3)
 add_executable(test_loop_audit4 test_loop_audit4.cpp)
 target_link_libraries(test_loop_audit4 PRIVATE okay::engine)
 add_test(NAME loop_audit4 COMMAND test_loop_audit4)
+
+# 1.1 fifth pass: script access to the clocks, real FPS, TimeSnapshot ramps, replay pauses and seeds, console arguments
+add_executable(test_loop_audit5 test_loop_audit5.cpp)
+target_link_libraries(test_loop_audit5 PRIVATE okay::engine)
+add_test(NAME loop_audit5 COMMAND test_loop_audit5)
+
+add_executable(test_script_time test_script_time.cpp)
+target_link_libraries(test_script_time PRIVATE okay::engine)
+add_test(NAME script_time COMMAND test_script_time)
 
 add_executable(test_frame_overlay test_frame_overlay.cpp)
 target_link_libraries(test_frame_overlay PRIVATE okay::engine)

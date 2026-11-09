@@ -13,6 +13,7 @@
 #include "okay/Input/SdlKeys.hpp"      // F1-F12, nav keys, left / right modifiers
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "okay/Scene/EnsureCamera.hpp"
+#include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
@@ -2529,29 +2530,22 @@ int main(int argc, char** argv) {
         if (!toastDemo && std::getenv("OKAY_TESTUI")) { toastDemo = true; OkayUI::Toast("Match found - joining EU 1", 1, 30.0f); OkayUI::Toast("Maya invited you to play", 0, 30.0f); }
         DrawServerBrowserWindow(scene, window);   // net_browser_open(): the in-game "Find a server" window
         DrawMatchmakingBanner(window);            // net_queue_join() / Find match: progress + Cancel
-        // F3 performance HUD — a real in-engine use of OkayUI (FPS graph, frame time,
-        // and a scrollable list of scene objects). Showcases PlotLines/LabelText/child.
+        // F3 performance HUD — a real in-engine use of OkayUI (stat lines, FPS graph, and a scrollable
+        // list of scene objects). The numbers are the loop's own (okay/Core/FrameOverlay.hpp, from
+        // GameLoop::Stats()): REAL frame times over the last 240 frames (a stall reads as the stall it was,
+        // not the 0.1 s the game stepped), plus the time scale, hit stop, debug scale and pause reasons. The
+        // editor's Game view shows the same lines.
         if (g_statsUI) {
-            static float s_fps = 0.0f;
-            float inst = dt > 0.0001f ? 1.0f / dt : 0.0f;
-            s_fps = s_fps <= 0.0f ? inst : s_fps * 0.9f + inst * 0.1f;   // smoothed FPS
-            static float s_fpsHist[90] = {0};
-            static int   s_fpsIdx = 0;
-            s_fpsHist[s_fpsIdx] = s_fps;
-            s_fpsIdx = (s_fpsIdx + 1) % 90;
-            float plot[90];
-            for (int i = 0; i < 90; ++i) plot[i] = s_fpsHist[(s_fpsIdx + i) % 90];  // chronological
+            const std::vector<std::string> overlayLines = okay::FrameOverlay::Lines(loop);
+            const std::vector<float> plot = okay::FrameOverlay::RecentFps(loop.Stats(), 90);   // chronological
 
-            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 320.0f, 320.0f);
+            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 340.0f, 400.0f);
+            for (const std::string& ol : overlayLines) OkayUI::Text(ol.c_str());
             char line[64];
-            std::snprintf(line, sizeof(line), "%d", (int)(s_fps + 0.5f));
-            OkayUI::LabelText("FPS", line);
-            std::snprintf(line, sizeof(line), "%.2f ms", dt * 1000.0f);
-            OkayUI::LabelText("Frame time", line);
             std::snprintf(line, sizeof(line), "%d", (int)scene.Objects().size());
             OkayUI::LabelText("Objects", line);
             OkayUI::SeparatorText("FPS (last 90 frames)");
-            OkayUI::PlotLines("##fps", plot, 90, 0.0f, 0.0f, 56.0f);
+            OkayUI::PlotLines("##fps", plot.data(), (int)plot.size(), 0.0f, 0.0f, 56.0f);
             OkayUI::SeparatorText("Scene objects");
             if (OkayUI::BeginChild("##objs", 0.0f, 130.0f, true)) {
                 for (const auto& up : scene.Objects())

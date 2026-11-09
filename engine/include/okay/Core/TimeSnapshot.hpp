@@ -66,6 +66,9 @@ struct TimeSnapshot {
     };
 
     float timeScale = 1.0f;                     ///< Time::BaseTimeScale() (the scale you set; not the pause)
+    /// False when the block Read came from did not hold a time scale: Apply then leaves the gameplay time
+    /// scale alone (it used to set it to 1, against the rule that a field an older block lacks is left as it is).
+    bool hasTimeScale = true;
     std::vector<ClockSnapshot> clocks;
     /// Named generator states. "shared" is Random::Shared().
     std::map<std::string, Random::State> randoms;

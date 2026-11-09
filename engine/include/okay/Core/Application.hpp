@@ -53,6 +53,15 @@ public:
     /// ExitCode() == 1 and returns normally.
     void Run(Scene& scene);
 
+    /// Seconds one paced frame lasts for a `targetFps`: 1 / targetFps, 0 (uncapped) for 0, a negative, NaN
+    /// or infinite rate, and never more than 1 (a rate under 1 fps paces at 1: 1e-30 once asked the sleep for
+    /// 1e30 seconds, which overflows the sleep's clock type). Run paces with this.
+    static float TargetFrameSeconds(float targetFps) {
+        if (!(targetFps > 0.0f)) return 0.0f;
+        const float t = 1.0f / targetFps;
+        return t > 1.0f ? 1.0f : t;
+    }
+
     /// Whether the loop should end after this frame: the game asked to quit
     /// (Game::RequestQuit), or the quit key (`quitKey`, default 'q'; 0 = none) was pressed.
     static bool ShouldQuit(const Config& config, bool keyPressed, bool quitRequested) {

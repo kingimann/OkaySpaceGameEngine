@@ -1644,6 +1644,11 @@ add_executable(test_ecs_commands test_ecs_commands.cpp)
 target_link_libraries(test_ecs_commands PRIVATE okay::engine)
 add_test(NAME ecs_commands COMMAND test_ecs_commands)
 
+# Core wave 6, 1.9: Subscription::Active, throwing handlers, SystemScheduler changes while running, entity id wrap, SceneBridge
+add_executable(test_core_events_ecs test_core_events_ecs.cpp)
+target_link_libraries(test_core_events_ecs PRIVATE okay::engine)
+add_test(NAME core_events_ecs COMMAND test_core_events_ecs)
+
 # Multi-frame scene loads (progress, additive load + unload by handle), ObjectPool, RequireComponent rules
 add_executable(test_scene_load_pool test_scene_load_pool.cpp)
 target_link_libraries(test_scene_load_pool PRIVATE okay::engine)

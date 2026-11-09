@@ -1163,6 +1163,16 @@ add_executable(test_vs_gameplay test_vs_gameplay.cpp)
 target_link_libraries(test_vs_gameplay PRIVATE okay::engine)
 add_test(NAME vs_gameplay COMMAND test_vs_gameplay)
 
+add_executable(test_vs_node_behavior test_vs_node_behavior.cpp)
+target_link_libraries(test_vs_node_behavior PRIVATE okay::engine)
+target_compile_definitions(test_vs_node_behavior PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_node_behavior COMMAND test_vs_node_behavior)
+
+add_executable(test_vs_playground test_vs_playground.cpp)
+target_link_libraries(test_vs_playground PRIVATE okay::engine)
+target_compile_definitions(test_vs_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_playground COMMAND test_vs_playground)
+
 add_executable(test_ui_animation test_ui_animation.cpp)
 target_link_libraries(test_ui_animation PRIVATE okay::engine)
 add_test(NAME ui_animation COMMAND test_ui_animation)

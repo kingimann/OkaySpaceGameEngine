@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -121,6 +122,8 @@ inline Color GpReadColor(GameObject* o) {
     if (auto* mr = o->GetComponent<MeshRenderer>()) return mr->color;
     return Color(1, 1, 1, 1);
 }
+
+inline std::string GpAssetPath(NodeGraph& g, const std::string& path);
 
 inline void GpWriteColor(GameObject* o, const Color& c) {
     if (!o) return;
@@ -276,9 +279,12 @@ struct GpTween : VsNode {
             return true;
         }
         if (waiting) return true;
-        seconds = std::max(0.0f, Seconds(g, ctx));
-        acc = 0; waiting = true; captured = false; u = 0;
-        return seconds > 0.0f;
+        seconds = Seconds(g, ctx);
+        if (!std::isfinite(seconds) || seconds < 0.0f) seconds = 0.0f;
+        acc = 0; captured = false;
+        if (seconds <= 0.0f) { waiting = false; u = 1.0f; return false; }
+        waiting = true; u = 0;
+        return true;
     }
     virtual float Seconds(NodeGraph& g, VsContext& ctx) = 0;
 };
@@ -354,10 +360,10 @@ struct CrossfadeClipNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (!ctx.gameObject) { g.Error(this, ctx, "this node needs an object"); return 0; }
         if (clip.empty()) { g.Error(this, ctx, "type the clip name"); return 0; }
-        const float blend = std::max(0.0f, In(0, g, ctx, VsValue{0.25f}).AsFloat());
+        const float blend = In(0, g, ctx, VsValue{0.25f}).AsFloat();
         if (auto* ma = FindAnimComponent<ModelAnimator>(ctx.gameObject)) {
-            for (int i = 0; i < (int)ma->clips.size(); ++i)
-                if (ma->clips[(std::size_t)i].name == clip) { ma->PlayIndex(i, false, blend); return 0; }
+            if (std::isfinite(blend) && blend >= 0.0f) ma->blendTime = blend;
+            if (ma->PlayHeld(clip)) return 0;
             g.Error(this, ctx, "no clip named \"" + clip + "\" on its model");
             return 0;
         }
@@ -385,14 +391,20 @@ struct WaitAnimEndNode : VsNode {
     void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { waiting = r.b0; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (!ctx.gameObject) { g.Error(this, ctx, "this node needs an object"); return 0; }
+        auto playing = [](GameObject* go) {
+            if (auto* c = FindAnimComponent<Character>(go); c && c->IsPlayingClip()) return true;
+            if (auto* m = FindAnimComponent<ModelAnimator>(go))
+                return m->ClipOverridesPose() && m->ClipLength(m->active) > 0.0f;
+            return false;
+        };
         const float nrm = ClipNormalizedFrom(ctx.gameObject);
         if (!g.Resuming()) {
             if (waiting) return -1;
-            if (nrm <= 0.0f) { g.Error(this, ctx, "nothing is playing on this object"); return 0; }
+            if (!playing(ctx.gameObject)) { g.Error(this, ctx, "nothing is playing on this object"); return 0; }
             waiting = true;
             return NodeGraph::kSuspend;
         }
-        if (nrm >= 0.98f) { waiting = false; return 0; }
+        if (!playing(ctx.gameObject) || nrm >= 0.98f) { waiting = false; return 0; }
         return NodeGraph::kSuspend;
     }
 };
@@ -527,7 +539,7 @@ struct SpawnProjectileNode : VsNode {
         id = 0;
         if (!GpHasBody(this, g, ctx) || !ctx.gameObject->scene()) return 0;
         if (path.empty()) { g.Error(this, ctx, "type a prefab path"); return 0; }
-        GameObject* b = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), path);
+        GameObject* b = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), GpAssetPath(g, path));
         if (!b) { g.Error(this, ctx, "couldn't spawn '" + path + "'"); return 0; }
         const float speed = In(0, g, ctx, VsValue{12.0f}).AsFloat();
         if (b->transform) b->transform->SetPosition(ctx.transform->Position() + ctx.transform->Forward() * 0.8f);
@@ -559,7 +571,7 @@ struct ShootNode : VsNode {
 
 struct AmmoNode : VsNode {
     int left;
-    explicit AmmoNode(int n) : left(n > 0 ? n : 6) {}
+    explicit AmmoNode(int n) : left(n < 0 ? 0 : n) {}
     int ExecOutCount() const override { return 2; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)left; }
     bool SaveFlow(VsFlowRecord& r) const override { r.i0 = left; return true; }
@@ -678,10 +690,26 @@ struct CanSeeNode : VsNode {
 };
 
 // ---- Spawning --------------------------------------------------------------
+// A prefab typed as a file name is looked up next to the graph, so a demo can
+// say "cube.okayprefab" and still spawn when the editor was not started in that folder.
+inline std::string GpAssetPath(NodeGraph& g, const std::string& path) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (path.empty() || fs::exists(path, ec)) return path;
+    if (!g.debugKey.empty()) {
+        const fs::path base = fs::path(g.debugKey).parent_path();
+        fs::path alt = base / path;
+        if (fs::exists(alt, ec)) return alt.string();
+        alt = base / fs::path(path).filename();
+        if (fs::exists(alt, ec)) return alt.string();
+    }
+    return path;
+}
+
 inline GameObject* GpSpawn(VsNode* n, NodeGraph& g, VsContext& ctx, const std::string& path) {
     if (!ctx.gameObject || !ctx.gameObject->scene()) { g.Error(n, ctx, "this node needs an object in a scene"); return nullptr; }
     if (path.empty()) { g.Error(n, ctx, "type a prefab path"); return nullptr; }
-    GameObject* o = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), path);
+    GameObject* o = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), GpAssetPath(g, path));
     if (!o) g.Error(n, ctx, "couldn't spawn '" + path + "'");
     return o;
 }
@@ -1041,7 +1069,7 @@ inline std::unique_ptr<VsNode> MakeGameplayNode(const std::string& type, const s
         return std::make_unique<EventNode>();
     if (type == "RotateTowards") return std::make_unique<RotateTowardsNode>();
     if (type == "OrbitAround") return std::make_unique<OrbitAroundNode>();
-    if (type == "FollowPath") return std::make_unique<FollowPathNode>(argOr("0,0,0; 2,0,0"));
+    if (type == "FollowPath") return std::make_unique<FollowPathNode>(a);
     if (type == "Bob") return std::make_unique<BobNode>();
     if (type == "Spin") return std::make_unique<SpinNode>();
     if (type == "Knockback") return std::make_unique<KnockbackNode>();

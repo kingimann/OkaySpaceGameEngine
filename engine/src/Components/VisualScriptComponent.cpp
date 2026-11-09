@@ -173,6 +173,14 @@ void VisualScriptComponent::Update(float dt) {
     m_ctx.deltaTime = dt;
     m_ctx.gameObject = gameObject;
     m_ctx.transform = transform;
+    // Remember health before this frame's graph, so a hit in On Update is a change.
+    if (!m_sawHealth) {
+        if (auto* hp = gameObject->GetComponent<HealthStat>()) {
+            m_lastHealth = hp->health;
+            m_sawHealth = true;
+            m_deathFired = hp->IsDead();
+        }
+    }
     m_graph->Resume(m_ctx);   // chains parked by Delay / Wait / Actions steps carry on
     if (!m_graph) return;
     // On Fixed Update: whole fixed steps for the time that passed (at most 5 per

@@ -1,0 +1,41 @@
+# AI. Each creature runs the branch with its name. The player stands still.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 GetName
+pos 2 40 240
+node 3 SwitchString "Patroler, Chaser, Runner, Wanderer, Lookout"
+pos 3 340 40
+node 4 FindObject Player
+pos 4 40 420
+node 5 Patrol "-4,0.5,-2; -4,0.5,3; 0,0.5,3"
+pos 5 780 20
+default 5 0 2.2
+node 6 Chase
+pos 6 780 180
+default 6 1 2.4
+node 7 Flee
+pos 7 780 340
+default 7 1 2.8
+node 8 Wander
+pos 8 780 500
+default 8 0 3
+default 8 1 1.6
+node 9 CanSee
+pos 9 780 680
+default 9 1 14
+default 9 2 80
+node 10 SetVar seen
+pos 10 1060 680
+exec 1 0 3
+data 3 0 2 0
+exec 3 0 5
+exec 3 1 6
+data 6 0 4 0
+exec 3 2 7
+data 7 0 4 0
+exec 3 3 8
+exec 3 4 10
+data 10 0 9 0
+data 9 0 4 0
+comment 20 860 1400 80 1 "Stand in front of Lookout and its seen pin turns true."

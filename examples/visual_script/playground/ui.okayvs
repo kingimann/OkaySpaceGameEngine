@@ -1,0 +1,17 @@
+# UI. The bar, the floating label and the fade are on this object and on Fade.
+node 1 OnStart
+pos 1 40 80
+entry OnStart 1
+node 2 SetProgress
+pos 2 340 80
+default 2 0 0.72
+node 3 ShowFloatingText
+pos 3 640 80
+default 3 0 "Hello"
+node 4 FadeScreen
+pos 4 960 80
+default 4 0 0.35
+exec 1 0 2
+exec 2 0 3
+exec 3 0 4
+comment 20 240 1200 80 3 "Fade is a full-screen panel. The bar is on this object."

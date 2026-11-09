@@ -15,6 +15,7 @@
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
 #include "VsCanvasTools.hpp"
+#include "VsPlayground.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cctype>
@@ -2116,6 +2117,9 @@ inline void ResetEditState(VsEditState& st) {
 // Load a .okayvs into the editor's live graph (used to open one on double-click).
 inline void OpenFile(const std::string& path) { State().g.load(path); ResetEditState(State()); }
 
+// File > Examples and "Try it" on a node. The editor (main.cpp) fills this in.
+inline void (*OpenPlayground)(EditorState& ed, const char* demoId) = nullptr;
+
 // Pin geometry helpers (screen positions computed during draw).
 struct PinKey { int node; int kind; int side; int index; };  // kind:0 exec,1 data; side:0 in,1 out
 
@@ -3777,6 +3781,18 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextDisabled("%s", info->desc.empty() ? "No description." : info->desc.c_str());
             ImGui::PopTextWrapPos();
+            if (info->def && OpenPlayground) {
+                if (const char* demo = VsPlaygroundForNode(info->def->type)) {
+                    if (const VsPlaygroundDemo* d = VsPlaygroundById(demo)) {
+                        if (ImGui::SmallButton("Try it")) {
+                            OpenPlayground(ed, d->id);
+                            ImGui::CloseCurrentPopup();
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Open the %s playground scene. Press Play and follow the text on screen.", d->title);
+                    }
+                }
+            }
         } else {
             ImGui::TextDisabled("%d nodes and actions. Star the ones you use most.", (int)all.size());
         }
@@ -3958,6 +3974,16 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextWrapped("%s", help);
                 ImGui::PopTextWrapPos();
+            }
+            if (OpenPlayground) {
+                if (const char* demo = VsPlaygroundForNode(sn->type.c_str())) {
+                    if (const VsPlaygroundDemo* d = VsPlaygroundById(demo)) {
+                        ImGui::Spacing();
+                        if (ImGui::Button("Try it", ImVec2(-1, 0))) OpenPlayground(ed, d->id);
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Open the %s playground scene. Press Play and follow the text on screen.", d->title);
+                    }
+                }
             }
             if (d) {
                 ImGui::Spacing();

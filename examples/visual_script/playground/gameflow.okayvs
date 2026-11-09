@@ -1,0 +1,38 @@
+# Game flow. The countdown ends in a win. Lose and Restart Scene are here to wire up.
+node 1 OnStart
+pos 1 40 80
+entry OnStart 1
+node 2 ScoreSet
+pos 2 300 40
+default 2 0 0
+node 3 ScoreAdd
+pos 3 540 40
+default 3 0 5
+node 4 CheckpointSave
+pos 4 780 40
+node 5 CheckpointLoad
+pos 5 1040 40
+node 6 Countdown 20
+pos 6 1300 40
+node 7 Win
+pos 7 1560 40
+node 8 OnUpdate
+pos 8 40 280
+entry OnUpdate 8
+node 9 ScoreGet
+pos 9 300 280
+node 10 SetVar score_now
+pos 10 560 280
+node 11 Lose
+pos 11 300 480
+node 12 RestartScene
+pos 12 560 480
+exec 1 0 2
+exec 2 0 3
+exec 3 0 4
+exec 4 0 5
+exec 5 0 6
+exec 6 0 7
+exec 8 0 10
+data 10 0 9 0
+comment 240 440 700 160 2 "Lose and Restart Scene are not wired, so the demo keeps playing. Wire either of them after the countdown if you want to try it. Win runs when the 20 second countdown finishes."

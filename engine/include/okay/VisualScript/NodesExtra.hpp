@@ -19,6 +19,7 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/UIAnchor.hpp"   // UICanvas size for the mouse-to-ground ray
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -210,6 +211,32 @@ struct OtherTagNode : VsNode {
 };
 
 // ---- Mouse buttons ----------------------------------------------------------
+// The point where the cursor's ray crosses the floor at this object's height.
+// out0 x, out1 y, out2 z, out3 hit. Needs the scene's main camera.
+struct MouseGroundNode : VsNode {
+    VsValue Eval(int pin, NodeGraph&, VsContext& ctx) override {
+        const float y = ctx.transform ? ctx.transform->Position().y : 0.0f;
+        Vec3 point{0, y, 0};
+        bool hit = false;
+        Scene* scene = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+        Camera* cam = scene ? scene->mainCamera : nullptr;
+        const float w = UICanvas::Width(), h = UICanvas::Height();
+        if (cam && w >= 1.0f && h >= 1.0f) {
+            Vec3 origin, dir;
+            const Vec2 mp = Input::MousePosition();
+            cam->ScreenPointToRay(mp.x, mp.y, w, h, origin, dir);
+            if (std::fabs(dir.y) > 1e-5f) {
+                const float t = (y - origin.y) / dir.y;
+                if (t >= 0.0f) { point = origin + dir * t; point.y = y; hit = true; }
+            }
+        }
+        if (pin == 0) return point.x;
+        if (pin == 1) return point.y;
+        if (pin == 2) return point.z;
+        return hit;
+    }
+};
+
 struct MouseButtonNode : VsNode {   // arg 0 left, 1 right, 2 middle
     int button; bool pressedOnly;
     MouseButtonNode(int b, bool p) : button(b), pressedOnly(p) {}

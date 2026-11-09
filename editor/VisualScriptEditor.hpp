@@ -287,6 +287,7 @@ inline const std::vector<VsDef>& Registry() {
         // --- Input / flow ---
         {"MouseButton",     "Mouse Held",    CAT_INPUT, false, {}, {}, {"Down"}, 1, "0 L / 1 R / 2 M"},
         {"MouseButtonDown", "Mouse Pressed", CAT_INPUT, false, {}, {}, {"Pressed"}, 1, "0 L / 1 R / 2 M"},
+        {"MouseGround",     "Mouse Ground",  CAT_INPUT, false, {}, {}, {"X", "Y", "Z", "Hit"}, 0, nullptr},
         {"Cooldown",        "Cooldown (s)",  CAT_FLOW,  true, {""}, {}, {}, 1, "seconds"},
         // --- Animation & IK ---
         {"AnimTrigger",  "Anim Trigger",   CAT_ACTION, true, {""}, {}, {}, 1, "parameter"},

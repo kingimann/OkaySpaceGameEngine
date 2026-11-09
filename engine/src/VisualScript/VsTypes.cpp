@@ -144,6 +144,7 @@ const Row kRows[] = {
         {"LoadScene", true, "", ""},
         {"MouseButton", false, "", "B"},
         {"MouseButtonDown", false, "", "B"},
+        {"MouseGround", false, "", "NNNB"},
         {"Cooldown", true, "", ""},
         {"AnimTrigger", true, "", ""},
         {"AnimSetFloat", true, "N", ""},

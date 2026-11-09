@@ -641,6 +641,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "FindObject")     return std::make_unique<FindObjectNode>(argOr(""));
     if (type == "GetName")        return std::make_unique<ObjectInfoNode>(false);
     if (type == "GetTag")         return std::make_unique<ObjectInfoNode>(true);
+    if (type == "MouseGround") return std::make_unique<MouseGroundNode>();
     if (type == "MouseButton" || type == "MouseButtonDown") {
         // 0/1/2 or left/right/middle (what the editor's button picker writes is 0/1/2).
         int b = 0;

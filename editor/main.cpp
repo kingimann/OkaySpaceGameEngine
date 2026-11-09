@@ -13667,8 +13667,8 @@ void DrawScriptEditor(EditorState& ed) {
                     "if (timer(\"spawn\", 2)) {\n    spawn(\"enemy.okayprefab\", pos_x(), pos_y())\n}\n"},
                 {"Gameplay", "Countdown to a scene", "Tick a timer down, then load a scene.",
                     "start() {\n    timeLeft = 10\n}\n\nupdate(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        load_scene(\"GameOver\")\n    }\n}\n"},
-                {"Gameplay", "Do something near the player", "Act only when within a distance.",
-                    "update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        // ... the player is close ...\n    }\n}\n"},
+                {"Gameplay", "When the player is close", "Prints a line while this object is within 3 units of Player.",
+                    "update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        print(\"Player is close\")\n    }\n}\n"},
                 {"Gameplay", "Spawn a wave (loop)", "Create a row of enemies at start.",
                     "start() {\n    // Spawn 5 enemies in a row.\n    for (i = 0; i < 5; i = i + 1) {\n        spawn(\"enemy.okayprefab\", i * 2, 0)\n    }\n}\n"},
                 // ---- HUD (on-screen UI from script) ----
@@ -19329,14 +19329,14 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
         {"Physics", "Bounce up every second", "Gives an upward push on a timer.",
             T::OnInterval, "1", {}, {{"impulse", {"0", "6"}}}},
         // ---- Spawning ----
-        {"Spawning", "Spawn every 2 seconds", "Creates a prefab on a repeating timer.",
-            T::OnInterval, "2", {}, {{"spawn", {"enemy.okayprefab", "0", "0"}}}},
-        {"Spawning", "Spawn from above every 3s", "Drops a prefab in from y = 5 on a timer.",
-            T::OnInterval, "3", {}, {{"spawn", {"enemy.okayprefab", "0", "5"}}}},
-        {"Spawning", "Spawn on click", "Creates a prefab where this object is when clicked.",
-            T::OnClick, "", {}, {{"spawn", {"coin.okayprefab", "0", "0"}}}},
-        {"Spawning", "Random chance spawn", "Every second, a 50% chance to spawn from above.",
-            T::OnInterval, "1", {{"chance", {"0.5"}}}, {{"spawn", {"enemy.okayprefab", "0", "5"}}}},
+        {"Spawning", "Spawn every 2 seconds", "Creates the example marker cube on a repeating timer.",
+            T::OnInterval, "2", {}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "0"}}}},
+        {"Spawning", "Spawn from above every 3s", "Drops the example marker cube in from y = 5 on a timer.",
+            T::OnInterval, "3", {}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "5"}}}},
+        {"Spawning", "Spawn on click", "Creates the example marker cube where this object is when clicked.",
+            T::OnClick, "", {}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "0"}}}},
+        {"Spawning", "Random chance spawn", "Every second, a 50% chance to drop a marker cube from above.",
+            T::OnInterval, "1", {{"chance", {"0.5"}}}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "5"}}}},
         {"Spawning", "Self-destruct after 3s", "Waits 3 seconds, then removes this object.",
             T::OnStart, "", {}, {{"wait", {"3"}}, {"destroy", {}}}},
         // ---- Combat / health ----
@@ -19380,12 +19380,12 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnClick, "", {}, {{"set_scale", {"2"}}}},
         {"Interaction", "Toggle a flag on E", "Flips a true/false variable named 'on' when E is pressed.",
             T::OnKey, "e", {}, {{"toggle_var", {"on"}}}},
-        {"Interaction", "Play a sound on click", "Plays a sound when clicked (auto-adds an Audio Source).",
-            T::OnClick, "", {}, {{"play_sound", {"click.wav"}}}},
+        {"Interaction", "Play a sound on click", "Plays this object's sound when clicked (auto-adds an Audio Source).",
+            T::OnClick, "", {}, {{"play_sound", {}}}},
         // ---- Timers ----
         {"Timers", "Countdown timer", "Ticks a 'timer' variable down each second and shows it on this Text.",
             T::OnInterval, "1", {}, {{"add_var", {"timer", "-1"}}, {"set_text", {"Time:", "{timer}"}}}},
-        {"Timers", "Do something every 5s", "A blank timer that fires every 5 seconds — add your actions.",
+        {"Timers", "Log a tick every 5 seconds", "Writes tick to the console every 5 seconds.",
             T::OnInterval, "5", {}, {{"log", {"tick"}}}},
         // ---- HUD / Text ----
         {"HUD", "Say hello on start", "Prints a message to the console when the game starts.",
@@ -19397,13 +19397,13 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
         {"HUD", "Flash 'Go!' then clear", "Shows 'Go!' for 2 seconds, then blanks this Text.",
             T::OnStart, "", {}, {{"set_text", {"Go!"}}, {"wait", {"2"}}, {"set_text", {""}}}},
         // ---- Audio ----
-        {"Audio", "Play music on start", "Plays a sound when the game begins (auto-adds an Audio Source).",
-            T::OnStart, "", {}, {{"play_sound", {"music.wav"}}}},
-        {"Audio", "Footstep while moving", "Plays a step sound whenever this object is moving.",
-            T::OnUpdate, "", {{"is_moving", {}}}, {{"play_sound", {"step.wav"}}}},
+        {"Audio", "Play a sound on start", "Plays this object's sound when the game begins (auto-adds an Audio Source).",
+            T::OnStart, "", {}, {{"play_sound", {}}}},
+        {"Audio", "Sound while moving", "Plays this object's sound whenever it is moving.",
+            T::OnUpdate, "", {{"is_moving", {}}}, {{"play_sound", {}}}},
         // ---- Camera / Scene ----
-        {"Scene", "Win on collision", "Loads the scene named 'Win' on collision.",
-            T::OnCollision, "", {}, {{"load_scene", {"Win"}}}},
+        {"Scene", "Mark a win on collision", "Sets won to 1 and logs You win when this object hits something.",
+            T::OnCollision, "", {}, {{"set_var", {"won", "1"}}, {"log", {"You win"}}}},
         {"Scene", "Next level on collision", "Loads the next scene in build order on collision.",
             T::OnCollision, "", {}, {{"load_next_scene", {}}}},
         {"Scene", "Pause on P", "Freezes the game when P is pressed.",
@@ -19412,13 +19412,13 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnClick, "", {}, {{"set_timescale", {"0.5"}}}},
         {"Scene", "Set sky color on start", "Paints the background blue when the game starts.",
             T::OnStart, "", {}, {{"set_bg", {"0.2", "0.4", "0.8"}}}},
-        {"Scene", "Win at 10 points", "Loads the 'Win' scene once 'score' reaches 10.",
-            T::OnUpdate, "", {{"var_ge", {"score", "10"}}}, {{"load_scene", {"Win"}}}},
-        {"Scene", "Win when enemies cleared", "Loads 'Win' when no objects are tagged 'enemy'.",
-            T::OnUpdate, "", {{"tag_count_lt", {"enemy", "1"}}}, {{"load_scene", {"Win"}}}},
+        {"Scene", "Mark a win at 10 points", "Sets won to 1 and logs You win once score reaches 10.",
+            T::OnUpdate, "", {{"var_ge", {"score", "10"}}}, {{"set_var", {"won", "1"}}, {"log", {"You win"}}}},
+        {"Scene", "Mark a win when the tagged enemies are gone", "Sets won to 1 when no objects are tagged enemy.",
+            T::OnUpdate, "", {{"tag_count_lt", {"enemy", "1"}}}, {{"set_var", {"won", "1"}}, {"log", {"You win"}}}},
         // ---- Juice ----
         {"Juice", "Pickup pop", "Punches the scale, plays a sound, then vanishes when clicked.",
-            T::OnClick, "", {}, {{"punch_scale", {"0.4", "0.3"}}, {"play_sound", {"pickup.wav"}},
+            T::OnClick, "", {}, {{"punch_scale", {"0.4", "0.3"}}, {"play_sound", {}},
                                  {"wait", {"0.3"}}, {"destroy", {}}}},
         {"Juice", "Hit shake", "Shakes this object whenever a 'hit' message arrives.",
             T::OnMessage, "hit", {}, {{"shake", {"0.4", "0.35"}}}},
@@ -19448,8 +19448,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
         {"Move", "Cruise forward", "Moves in the facing direction at 2 units/second — pair with Look At or Aim.",
             T::OnUpdate, "", {}, {{"move_dir", {"forward", "2"}}}},
         // ---- Timing ----
-        {"Timing", "Rate-limited shot on Space", "Spawns a 'Bullet' prefab when Space is held, at most every 0.3s (edit the prefab name).",
-            T::OnKey, " ", {{"cooldown", {"0.3"}}}, {{"spawn", {"Bullet", "0", "0"}}}},
+        {"Timing", "Shot on Space, then wait", "Spawns the example shot when Space is held, at most every 0.3 seconds.",
+            T::OnKey, " ", {{"cooldown", {"0.3"}}}, {{"spawn", {"examples/node_playground/shot.okayprefab", "0", "0"}}}},
         // ---- Cloud (PlayFab) ----
         {"Cloud", "PlayFab sign-in on start", "Signs in to PlayFab when the game starts (put your Title ID in). Sets playfab_ok and playfab_id.",
             T::OnStart, "", {}, {{"playfab_login", {"TITLEID", "player-1"}},
@@ -45095,6 +45095,99 @@ int main(int argc, char** argv) {
                     ed.scene().mainCamera = cam->AddComponent<Camera>();
                 }
                 place("Shaker", "Camera shake", {0, -1.2f, 0}, {0.7f, 0.55f, 0.95f, 1});
+            }
+            // OKAY_UI_GAMEPLAY=1: the gameplay templates in one scene (Play proof).
+            if (std::getenv("OKAY_UI_GAMEPLAY") && s_focusFrames == 36) {
+                ed.view3D = true;
+                ed.camTarget = {1.0f, 0.8f, 0.4f};
+                ed.camDist = 13.0f;
+                ed.camPitch = 28.0f;
+                ed.camYaw = -25.0f;
+                auto place = [&](const char* name, const char* which, okay::Vec3 at, okay::Color color) {
+                    GameObject* go = ed.scene().CreateGameObject(name);
+                    go->transform->localPosition = at;
+                    auto* mesh = go->AddComponent<MeshRenderer>();
+                    mesh->mesh = Mesh::Cube();
+                    mesh->color = color;
+                    const okay::editor::vsed::VsTemplate* t = okay::editor::vsed::VsTemplateNamed(which);
+                    if (!t) return go;
+                    okay::editor::vsed::VsAddTemplateComponents(go, t->add);
+                    go->AddComponent<VisualScriptComponent>()->LoadFromText(t->graph);
+                    return go;
+                };
+                place("Player", "Move with WASD", {-3.6f, 0.5f, 1.6f}, {0.25f, 0.55f, 0.95f, 1});
+                place("Enemy", "Chase", {-3.6f, 0.5f, 3.4f}, {0.85f, 0.25f, 0.25f, 1});
+                GameObject* door = place("Door", "Door", {-1.2f, 0.5f, -1.4f}, {0.55f, 0.38f, 0.22f, 1});
+                if (auto* box = door->GetComponent<BoxCollider3D>()) box->size = {1.6f, 1.6f, 1.6f};
+                GameObject* guest = ed.scene().CreateGameObject("Guest");
+                guest->transform->localPosition = {-3.5f, 0.5f, -1.4f};
+                auto* gm = guest->AddComponent<MeshRenderer>();
+                gm->mesh = Mesh::Cube();
+                gm->color = {0.9f, 0.9f, 0.95f, 1};
+                guest->AddComponent<BoxCollider3D>();
+                auto* gb = guest->AddComponent<Rigidbody3D>();
+                gb->bodyType = Rigidbody3D::BodyType::Kinematic;
+                gb->gravityScale = 0.0f;
+                gb->velocity = {1.8f, 0, 0};
+                GameObject* coin = place("Coin", "Pickup", {2.0f, 0.5f, -1.4f}, {0.95f, 0.8f, 0.2f, 1});
+                if (auto* box = coin->GetComponent<BoxCollider3D>()) box->size = {1.4f, 1.4f, 1.4f};
+                GameObject* collector = ed.scene().CreateGameObject("Collector");
+                collector->transform->localPosition = {0.7f, 0.5f, -1.4f};
+                auto* cm = collector->AddComponent<MeshRenderer>();
+                cm->mesh = Mesh::Cube();
+                cm->color = {0.95f, 0.95f, 0.95f, 1};
+                collector->AddComponent<BoxCollider3D>();
+                auto* cb = collector->AddComponent<Rigidbody3D>();
+                cb->bodyType = Rigidbody3D::BodyType::Kinematic;
+                cb->gravityScale = 0.0f;
+                cb->velocity = {1.4f, 0, 0};
+                GameObject* board = ed.scene().CreateGameObject("Scoreboard");
+                board->transform->localPosition = {2.0f, 2.2f, -1.4f};
+                board->AddComponent<TextRenderer>()->text = "Score: 0";
+                board->AddComponent<VisualScriptComponent>()->LoadFromText(
+                    "node 1 OnUpdate\nentry OnUpdate 1\n"
+                    "node 2 GetSceneVar score\nnode 3 ToString\ndata 3 0 2 0\n"
+                    "node 4 Const \"Score: \"\nnode 5 Concat\ndata 5 0 4 0\ndata 5 1 3 0\n"
+                    "node 6 SetText self\ndata 6 0 5 0\nexec 1 0 6\n");
+                place("Switch", "Press E", {4.2f, 0.5f, 1.2f}, {0.85f, 0.22f, 0.2f, 1});
+                place("Hero", "Health", {6.2f, 0.5f, 1.2f}, {0.95f, 0.45f, 0.55f, 1});
+                place("Flag", "Checkpoint", {6.2f, 0.5f, 3.2f}, {0.35f, 0.85f, 0.55f, 1});
+                place("Clock", "Countdown", {0.4f, 2.5f, 1.2f}, {0.95f, 0.9f, 0.4f, 1});
+            }
+            if (std::getenv("OKAY_UI_GAMEPLAY") && ed.isPlaying()) {
+                static int gp = 0;
+                ++gp;
+                auto find = [&](const char* n) -> GameObject* {
+                    for (const auto& up : ed.scene().Objects()) if (up && up->name == n) return up.get();
+                    return nullptr;
+                };
+                if (gp == 150) {
+                    if (GameObject* door = find("Door"))
+                        if (door->transform->localPosition.y < 1.0f)
+                            if (auto* vs = door->GetComponent<VisualScriptComponent>())
+                                vs->OnTriggerEnter3D(nullptr);
+                }
+                if (gp == 220) {
+                    if (GameObject* hero = find("Hero")) hero->transform->localPosition = {10.5f, 0.5f, 1.2f};
+                }
+                if (gp == 280) {
+                    if (GameObject* hero = find("Hero"))
+                        if (auto* vs = hero->GetComponent<VisualScriptComponent>())
+                            for (int i = 0; i < 4; ++i) vs->SendEvent("hit");
+                }
+                if (gp == 340) {
+                    if (GameObject* flag = find("Flag")) {
+                        flag->transform->localPosition = {4.0f, 1.2f, 3.2f};
+                        if (auto* vs = flag->GetComponent<VisualScriptComponent>()) vs->OnTriggerEnter3D(nullptr);
+                    }
+                }
+                if (gp == 420) {
+                    if (GameObject* flag = find("Flag")) flag->transform->localPosition = {11.0f, 0.5f, 3.2f};
+                }
+                if (gp == 480) {
+                    if (GameObject* flag = find("Flag"))
+                        if (auto* vs = flag->GetComponent<VisualScriptComponent>()) vs->SendEvent("respawn");
+                }
             }
             if (std::getenv("OKAY_UI_VS") && s_focusFrames == 42) {
                 auto& vg = okay::editor::vsed::State().g;

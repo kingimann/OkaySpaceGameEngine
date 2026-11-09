@@ -196,6 +196,13 @@ component. It is not what this menu shows.
 | Camera | Camera follow, Camera zoom | Intermediate |
 | Logic | Cooldown ability | Intermediate |
 | Logic | State machine | Advanced |
+| Gameplay | Spawner, Shooter, Win or lose | Intermediate |
+| Gameplay | Line of sight | Advanced |
+| UI | Health bar | Intermediate |
+| Movement | Click to move | Intermediate |
+| Camera | Camera switch | Intermediate |
+
+Countdown is the on-screen timer. Win or lose writes You win or You lose on the object's text. Spawner and Shooter use `examples/node_playground/marker.okayprefab` and `shot.okayprefab`. Line of sight chases only when a ray hits the object named Player. Click to move uses Mouse Ground, the point where the cursor meets the floor.
 
 `tests/test_vs_templates.cpp` loads every template in a scene, presses Play, and
 checks the result (the object moved, the door opened, the score went up).

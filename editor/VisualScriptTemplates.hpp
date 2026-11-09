@@ -14,6 +14,8 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/UIBarBind.hpp"
+#include "okay/Components/UIProgressBar.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -216,10 +218,12 @@ inline std::string Pickup() {
     const int ev = g.Node("OnTrigger", nullptr, 40, 160, "OnTrigger");
     const int pts = g.Node("GetVar", "points", 40, 300);
     const int add = g.Node("AddVar", "score", 320, 160);
-    const int off = g.Node("SetActive", "self", 560, 160);
+    const int now = g.Node("GetVar", "score", 320, 300);
+    const int pub = g.Node("SetSceneVar", "score", 560, 160);
+    const int off = g.Node("SetActive", "self", 800, 160);
     g.Def(off, 0, "0");
-    g.Data(add, 0, pts);
-    g.Ex(ev, 0, add); g.Ex(add, 0, off);
+    g.Data(add, 0, pts); g.Data(pub, 0, now);
+    g.Ex(ev, 0, add); g.Ex(add, 0, pub); g.Ex(pub, 0, off);
     return g.s;
 }
 
@@ -472,6 +476,206 @@ inline std::string StateMachine() {
     return g.s;
 }
 
+inline std::string Spawner() {
+    G g;
+    g.Var("every", "1");
+    g.Note("Every second, creates a marker cube. The marker file ships with the examples.");
+    const int t = g.Node("OnTimer", "1", 40, 160, "OnTimer:1");
+    const int x = g.Node("GetX", nullptr, 40, 300);
+    const int y = g.Node("GetY", nullptr, 40, 400);
+    const int z = g.Node("GetZ", nullptr, 40, 500);
+    const int one = g.Node("Const", "1", 260, 400);
+    const int up = g.Node("Add", nullptr, 260, 320);
+    const int n = g.Node("AddVar", "made", 520, 160);
+    g.Def(n, 0, "1");
+    const int sp = g.Node("Spawn", "examples/node_playground/marker.okayprefab", 760, 160);
+    g.Data(up, 0, y); g.Data(up, 1, one);
+    g.Data(sp, 0, x); g.Data(sp, 1, up); g.Data(sp, 2, z);
+    g.Ex(t, 0, n); g.Ex(n, 0, sp);
+    return g.s;
+}
+
+inline std::string Shooter() {
+    G g;
+    g.Var("gap", "0.4");
+    g.Var("last", "-100");
+    g.Note("Press Space. A shot cube flies to the right. It cannot fire again until gap seconds pass.");
+    const int up = g.Node("OnUpdate", nullptr, 40, 40, "OnUpdate");
+    const int dt = g.Node("DeltaTime", nullptr, 40, 180);
+    const int clock = g.Node("AddVar", "clock", 280, 40);
+    g.Data(clock, 0, dt);
+    g.Ex(up, 0, clock);
+    const int key = g.Node("OnKey", "space", 40, 320, "OnKey:space");
+    const int now = g.Node("GetVar", "clock", 40, 460);
+    const int last = g.Node("GetVar", "last", 40, 560);
+    const int waited = g.Node("Sub", nullptr, 280, 500);
+    const int gap = g.Node("GetVar", "gap", 280, 620);
+    const int ready = g.Node("Compare", ">=", 500, 540);
+    const int br = g.Node("Branch", nullptr, 720, 320);
+    const int stamp = g.Node("SetVar", "last", 960, 240);
+    const int n = g.Node("AddVar", "shots", 1200, 240);
+    g.Def(n, 0, "1");
+    const int x = g.Node("GetX", nullptr, 960, 400);
+    const int y = g.Node("GetY", nullptr, 960, 500);
+    const int z = g.Node("GetZ", nullptr, 960, 600);
+    const int half = g.Node("Const", "0.8", 1200, 420);
+    const int ahead = g.Node("Add", nullptr, 1200, 340);
+    const int sp = g.Node("Spawn", "examples/node_playground/shot.okayprefab", 1440, 240);
+    g.Data(waited, 0, now); g.Data(waited, 1, last);
+    g.Data(ready, 0, waited); g.Data(ready, 1, gap); g.Data(br, 0, ready);
+    g.Data(stamp, 0, now);
+    g.Data(ahead, 0, x); g.Data(ahead, 1, half);
+    g.Data(sp, 0, ahead); g.Data(sp, 1, y); g.Data(sp, 2, z);
+    g.Ex(key, 0, br);
+    g.Ex(br, 0, stamp); g.Ex(stamp, 0, n); g.Ex(n, 0, sp);
+    return g.s;
+}
+
+inline std::string LineOfSight() {
+    G g;
+    g.Var("speed", "3");
+    g.Var("seen", "0");
+    g.Note("Looks at Player. Chases only when a straight line reaches them. A wall in between hides them.");
+    const int up = g.Node("OnUpdate", nullptr, 40, 160, "OnUpdate");
+    const int look = g.Node("LookAt", "Player", 280, 160);
+    const int self = g.Node("GetPosition", nullptr, 40, 320);
+    const int them = g.Node("ObjectPosition", "Player", 40, 440);
+    const int dir = g.Node("Vec3Sub", nullptr, 280, 380);
+    const int ray = g.Node("Raycast3D", nullptr, 520, 320);
+    g.Def(ray, 2, "30");
+    const int who = g.Node("Equals", nullptr, 760, 360);
+    const int name = g.Node("Const", "\"Player\"", 760, 480);
+    const int br = g.Node("Branch", nullptr, 980, 160);
+    const int one = g.Node("Const", "1", 1200, 40);
+    const int yes = g.Node("SetVar", "seen", 1200, 140);
+    const int sp = g.Node("GetVar", "speed", 1200, 260);
+    const int mv = g.Node("MoveTowards", "Player", 1440, 140);
+    const int zero = g.Node("Const", "0", 1200, 400);
+    const int no = g.Node("SetVar", "seen", 1200, 500);
+    g.Data(dir, 0, them); g.Data(dir, 1, self);
+    g.Data(ray, 0, self); g.Data(ray, 1, dir);
+    g.Data(who, 0, ray, 4); g.Data(who, 1, name); g.Data(br, 0, who);
+    g.Data(yes, 0, one); g.Data(mv, 0, sp); g.Data(no, 0, zero);
+    g.Ex(up, 0, look); g.Ex(look, 0, br);
+    g.Ex(br, 0, yes); g.Ex(yes, 0, mv);
+    g.Ex(br, 1, no);
+    return g.s;
+}
+
+inline std::string HealthBar() {
+    G g;
+    g.Var("health", "100");
+    g.Var("damage", "25");
+    g.Note("A hit event lowers health. The bar on this object fills from that number.");
+    const int ev = g.Node("OnEvent", "hit", 40, 160, "OnEvent:hit");
+    const int hp = g.Node("GetVar", "health", 40, 300);
+    const int dmg = g.Node("GetVar", "damage", 40, 400);
+    const int left = g.Node("Sub", nullptr, 280, 320);
+    const int set = g.Node("SetVar", "health", 500, 160);
+    const int now = g.Node("GetVar", "health", 500, 300);
+    const int pub = g.Node("SetSceneVar", "health", 740, 160);
+    g.Data(left, 0, hp); g.Data(left, 1, dmg); g.Data(set, 0, left); g.Data(pub, 0, now);
+    g.Ex(ev, 0, set); g.Ex(set, 0, pub);
+    return g.s;
+}
+
+inline std::string ClickMove() {
+    G g;
+    g.Var("speed", "4");
+    g.Note("Click the floor. This object walks there. It needs a camera.");
+    const int st = g.Node("OnStart", nullptr, 40, 40, "OnStart");
+    const int x0 = g.Node("GetX", nullptr, 40, 180);
+    const int z0 = g.Node("GetZ", nullptr, 40, 280);
+    const int stx = g.Node("SetVar", "tx", 280, 40);
+    const int stz = g.Node("SetVar", "tz", 520, 40);
+    g.Data(stx, 0, x0); g.Data(stz, 0, z0);
+    g.Ex(st, 0, stx); g.Ex(stx, 0, stz);
+    const int up = g.Node("OnUpdate", nullptr, 40, 420, "OnUpdate");
+    const int down = g.Node("MouseButtonDown", "0", 40, 560);
+    const int ground = g.Node("MouseGround", nullptr, 40, 680);
+    const int hit = g.Node("And", nullptr, 280, 600);
+    const int br = g.Node("Branch", nullptr, 500, 420);
+    const int setx = g.Node("SetVar", "tx", 740, 300);
+    const int setz = g.Node("SetVar", "tz", 980, 300);
+    const int cx = g.Node("GetX", nullptr, 740, 560);
+    const int tx = g.Node("GetVar", "tx", 740, 660);
+    const int cz = g.Node("GetZ", nullptr, 740, 780);
+    const int tz = g.Node("GetVar", "tz", 740, 880);
+    const int sp = g.Node("GetVar", "speed", 980, 700);
+    const int dt = g.Node("DeltaTime", nullptr, 980, 800);
+    const int step = g.Node("Mul", nullptr, 1200, 740);
+    const int nx = g.Node("MoveTowardsValue", nullptr, 1440, 560);
+    const int nz = g.Node("MoveTowardsValue", nullptr, 1440, 760);
+    const int y = g.Node("GetY", nullptr, 1440, 660);
+    const int pos = g.Node("SetPosition", nullptr, 1680, 420);
+    g.Data(hit, 0, down); g.Data(hit, 1, ground, 3); g.Data(br, 0, hit);
+    g.Data(setx, 0, ground, 0); g.Data(setz, 0, ground, 2);
+    g.Data(step, 0, sp); g.Data(step, 1, dt);
+    g.Data(nx, 0, cx); g.Data(nx, 1, tx); g.Data(nx, 2, step);
+    g.Data(nz, 0, cz); g.Data(nz, 1, tz); g.Data(nz, 2, step);
+    g.Data(pos, 0, nx); g.Data(pos, 1, y); g.Data(pos, 2, nz);
+    g.Ex(up, 0, br);
+    g.Ex(br, 0, setx); g.Ex(setx, 0, setz); g.Ex(setz, 0, pos);
+    g.Ex(br, 1, pos);
+    return g.s;
+}
+
+inline std::string CameraSwitch() {
+    G g;
+    g.Var("close", "0");
+    g.Note("Press C to swap the Wide camera and the Close camera. Name them Wide and Close.");
+    const int key = g.Node("OnKey", "c", 40, 160, "OnKey:c");
+    const int cur = g.Node("GetVar", "close", 40, 300);
+    const int zero = g.Node("Const", "0", 40, 400);
+    const int wideOn = g.Node("Compare", "==", 260, 320);
+    const int br = g.Node("Branch", nullptr, 480, 160);
+    const int one = g.Node("Const", "1", 700, 40);
+    const int setClose = g.Node("SetVar", "close", 700, 140);
+    const int closeOn = g.Node("SetActive", "Close", 940, 40);
+    const int wideOff = g.Node("SetActive", "Wide", 1180, 40);
+    g.Def(closeOn, 0, "1"); g.Def(wideOff, 0, "0");
+    const int setWide = g.Node("SetVar", "close", 700, 320);
+    const int wideOnN = g.Node("SetActive", "Wide", 940, 280);
+    const int closeOff = g.Node("SetActive", "Close", 1180, 280);
+    g.Def(setWide, 0, "0"); g.Def(wideOnN, 0, "1"); g.Def(closeOff, 0, "0");
+    g.Data(wideOn, 0, cur); g.Data(wideOn, 1, zero); g.Data(br, 0, wideOn);
+    g.Data(setClose, 0, one);
+    g.Ex(key, 0, br);
+    g.Ex(br, 0, setClose); g.Ex(setClose, 0, closeOn); g.Ex(closeOn, 0, wideOff);
+    g.Ex(br, 1, setWide); g.Ex(setWide, 0, wideOnN); g.Ex(wideOnN, 0, closeOff);
+    return g.s;
+}
+
+inline std::string WinLose() {
+    G g;
+    g.Var("score", "0");
+    g.Var("health", "100");
+    g.Var("goal", "10");
+    g.Note("Shows You win when score reaches goal, or You lose when health reaches 0.");
+    const int up = g.Node("OnUpdate", nullptr, 40, 160, "OnUpdate");
+    const int sc = g.Node("GetVar", "score", 40, 300);
+    const int goal = g.Node("GetVar", "goal", 40, 400);
+    const int winCmp = g.Node("Compare", ">=", 280, 320);
+    const int winBr = g.Node("Branch", nullptr, 500, 160);
+    const int won = g.Node("SetVar", "won", 740, 40);
+    const int winText = g.Node("SetText", "self", 980, 40);
+    g.Def(won, 0, "1"); g.Def(winText, 0, "\"You win\"");
+    const int hp = g.Node("GetVar", "health", 40, 560);
+    const int zero = g.Node("Const", "0", 40, 660);
+    const int loseCmp = g.Node("Compare", "<=", 280, 580);
+    const int loseBr = g.Node("Branch", nullptr, 500, 420);
+    const int lost = g.Node("SetVar", "lost", 740, 420);
+    const int loseText = g.Node("SetText", "self", 980, 420);
+    g.Def(lost, 0, "1"); g.Def(loseText, 0, "\"You lose\"");
+    g.Data(winCmp, 0, sc); g.Data(winCmp, 1, goal); g.Data(winBr, 0, winCmp);
+    g.Data(loseCmp, 0, hp); g.Data(loseCmp, 1, zero); g.Data(loseBr, 0, loseCmp);
+    g.Ex(up, 0, winBr);
+    g.Ex(winBr, 0, won); g.Ex(won, 0, winText);
+    g.Ex(winBr, 1, loseBr);
+    g.Ex(loseBr, 0, lost); g.Ex(lost, 0, loseText);
+    return g.s;
+}
+
 inline std::string WinScore() {
     G g;
     g.Var("score", "0");
@@ -505,7 +709,7 @@ inline const std::vector<VsTemplate>& VsTemplates() {
          "A Rigidbody is added on the selected object.", "Rigidbody", tpl::Jump()},
         {"Interaction", "Door", "Opens once when something enters the trigger.", VsLevel::Basic,
          "A trigger collider is added on the selected object.", "Trigger", tpl::Door()},
-        {"Interaction", "Pickup", "Adds to score and disappears when entered.", VsLevel::Basic,
+        {"Interaction", "Pickup", "Adds to score and disappears when entered. Score is also a scene variable.", VsLevel::Basic,
          "A trigger collider is added on the selected object.", "Trigger", tpl::Pickup()},
         {"Interaction", "Press E", "Press E to switch colour.", VsLevel::Basic, "", "", tpl::PressE()},
         {"Gameplay", "Health", "A hit event hurts it. At 0 it respawns.", VsLevel::Intermediate, "", "", tpl::Health()},
@@ -533,6 +737,20 @@ inline const std::vector<VsTemplate>& VsTemplates() {
         {"Logic", "Cooldown ability", "Press Space. It cannot fire again until gap seconds pass.", VsLevel::Intermediate, "", "", tpl::CooldownAbility()},
         {"Logic", "State machine", "Idles, then chases Player once they are in range.", VsLevel::Advanced,
          "Name the quarry Player.", "", tpl::StateMachine()},
+        {"Gameplay", "Spawner", "Creates a marker cube every second.", VsLevel::Intermediate,
+         "Uses examples/node_playground/marker.okayprefab.", "", tpl::Spawner()},
+        {"Gameplay", "Shooter", "Press Space. A shot flies right, then waits.", VsLevel::Intermediate,
+         "Uses examples/node_playground/shot.okayprefab.", "", tpl::Shooter()},
+        {"Gameplay", "Line of sight", "Chases Player only when nothing blocks the line.", VsLevel::Advanced,
+         "Name the quarry Player. Both need a collider; the quarry's is solid.", "Solid", tpl::LineOfSight()},
+        {"UI", "Health bar", "A hit lowers health and the bar on this object.", VsLevel::Intermediate,
+         "A progress bar is added on the selected object.", "Bar", tpl::HealthBar()},
+        {"Movement", "Click to move", "Click the floor and this object walks there.", VsLevel::Intermediate,
+         "The scene needs a camera.", "", tpl::ClickMove()},
+        {"Camera", "Camera switch", "Press C to swap the cameras named Wide and Close.", VsLevel::Intermediate,
+         "The scene needs two cameras, named Wide and Close.", "", tpl::CameraSwitch()},
+        {"Gameplay", "Win or lose", "You win at the goal score. You lose at 0 health.", VsLevel::Intermediate,
+         "A Text renderer is added on the selected object.", "Text", tpl::WinLose()},
     };
     return all;
 }
@@ -556,6 +774,16 @@ inline void VsAddTemplateComponents(GameObject* go, const char* add) {
         box->isTrigger = true;
     }
     if (has("Text") && !go->GetComponent<TextRenderer>()) go->AddComponent<TextRenderer>();
+    if (has("Solid") && !go->GetComponent<BoxCollider3D>()) go->AddComponent<BoxCollider3D>();
+    if (has("Bar")) {
+        if (!go->GetComponent<UIProgressBar>()) go->AddComponent<UIProgressBar>();
+        if (!go->GetComponent<UIBarBind>()) {
+            auto* bar = go->AddComponent<UIBarBind>();
+            bar->var = "health";
+            bar->min = 0.0f;
+            bar->max = 100.0f;
+        }
+    }
     if (has("Audio") && !go->GetComponent<AudioSource>()) {
         auto* au = go->AddComponent<AudioSource>();
         au->clip = AudioClip::Sine(523.0f, 0.18f);

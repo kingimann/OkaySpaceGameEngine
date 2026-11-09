@@ -210,6 +210,7 @@ inline const char* VsNodeHelp(const char* type) {
         {"MouseY",         "The mouse pointer's Y position on screen."},
         {"MouseButton",    "True while a mouse button is held (0 left, 1 right, 2 middle)."},
         {"MouseButtonDown","True only on the frame a mouse button is pressed."},
+        {"MouseGround",    "Where the cursor meets the floor at this object's height. Needs a camera. Example: click, then walk to X and Z."},
         {"MouseWheel",     "How far the scroll wheel moved this frame."},
         {"ShowCursor",     "Shows or hides the mouse cursor."},
         {"Time",           "Seconds since the game started."},

@@ -1,0 +1,21 @@
+okayscene 3
+gameobject 0 "Shot"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 0.35 0.35 0.35
+  mesh "Cube" 0.95 0.35 0.25 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  visualscript "node 1 OnUpdate
+node 2 DeltaTime
+node 3 Const 6
+node 4 Mul
+node 5 Translate
+data 4 0 3 0
+data 4 1 2 0
+data 5 0 4 0
+default 5 1 0
+default 5 2 0
+exec 1 0 5
+entry OnUpdate 1
+"
+end

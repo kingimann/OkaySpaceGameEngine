@@ -1,0 +1,8 @@
+okayscene 3
+gameobject 0 "Marker"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.95 0.85 0.25 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end

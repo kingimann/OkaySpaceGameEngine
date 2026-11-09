@@ -7,13 +7,18 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/UIAnchor.hpp"
+#include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include <Okay.hpp>
 #include <cmath>
+#include <filesystem>
 #include <string>
 
 using namespace okay;
@@ -42,7 +47,99 @@ const VsTemplate& T(const char* name) {
 
 } // namespace
 
+void EnsureExamplePrefabs() {
+    namespace fs = std::filesystem;
+    fs::create_directories("examples/node_playground");
+    auto save = [](const char* path, auto&& build) {
+        if (fs::exists(path)) return;
+        Scene scene("Prefab");
+        GameObject* go = build(scene);
+        CHECK(SceneSerializer::SaveObjectToFile(*go, path));
+    };
+    save("examples/node_playground/marker.okayprefab", [](Scene& scene) {
+        GameObject* go = scene.CreateGameObject("Marker");
+        auto* mesh = go->AddComponent<MeshRenderer>();
+        mesh->mesh = Mesh::Cube();
+        mesh->color = Color{0.95f, 0.85f, 0.25f, 1.0f};
+        return go;
+    });
+    save("examples/node_playground/shot.okayprefab", [](Scene& scene) {
+        GameObject* go = scene.CreateGameObject("Shot");
+        auto* mesh = go->AddComponent<MeshRenderer>();
+        mesh->mesh = Mesh::Cube();
+        mesh->color = Color{0.95f, 0.35f, 0.25f, 1.0f};
+        go->transform->localScale = {0.35f, 0.35f, 0.35f};
+        go->AddComponent<VisualScriptComponent>()->LoadFromText(
+            "node 1 OnUpdate\n"
+            "node 2 DeltaTime\n"
+            "node 3 Const 6\n"
+            "node 4 Mul\n"
+            "node 5 Translate\n"
+            "data 4 0 3 0\n"
+            "data 4 1 2 0\n"
+            "data 5 0 4 0\n"
+            "default 5 1 0\n"
+            "default 5 2 0\n"
+            "exec 1 0 5\n"
+            "entry OnUpdate 1\n");
+        return go;
+    });
+    const char* scenePath = "examples/node_playground/variables.okayscene";
+    if (fs::exists(scenePath)) return;
+    Scene scene("Variables");
+    auto* cam = scene.CreateGameObject("Main Camera");
+    cam->transform->localPosition = {0, 2.2f, 8};
+    scene.mainCamera = cam->AddComponent<Camera>();
+    auto* cube = scene.CreateGameObject("Counter");
+    cube->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+    cube->AddComponent<VisualScriptComponent>()->LoadFromText(
+        "var score 0\n"
+        "node 1 OnTimer 0.5\n"
+        "entry OnTimer:0.5 1\n"
+        "node 2 AddVar score\n"
+        "node 3 Const 1\n"
+        "data 2 0 3 0\n"
+        "node 4 GetVar score\n"
+        "node 5 SetSceneVar score\n"
+        "data 5 0 4 0\n"
+        "node 6 Const 5\n"
+        "node 7 Compare <\n"
+        "data 7 0 4 0\n"
+        "data 7 1 6 0\n"
+        "node 8 Branch\n"
+        "data 8 0 7 0\n"
+        "node 9 Translate\n"
+        "default 9 0 0.4\n"
+        "default 9 1 0\n"
+        "default 9 2 0\n"
+        "exec 1 0 2\n"
+        "exec 2 0 5\n"
+        "exec 5 0 8\n"
+        "exec 8 0 9\n");
+    auto* read = scene.CreateGameObject("Readout");
+    read->transform->localPosition = {0, 2, 0};
+    read->AddComponent<TextRenderer>()->text = "Press Play";
+    read->AddComponent<VisualScriptComponent>()->LoadFromText(
+        "node 1 OnUpdate\n"
+        "entry OnUpdate 1\n"
+        "node 2 GetSceneVar score\n"
+        "node 3 ToString\n"
+        "data 3 0 2 0\n"
+        "node 4 Const \"Score: \"\n"
+        "node 5 Concat\n"
+        "data 5 0 4 0\n"
+        "data 5 1 3 0\n"
+        "node 6 SetText self\n"
+        "data 6 0 5 0\n"
+        "exec 1 0 6\n");
+    CHECK(SceneSerializer::SaveToFile(scene, scenePath));
+}
+
 int main() {
+#ifdef OKAY_SOURCE_DIR
+    std::filesystem::current_path(OKAY_SOURCE_DIR);
+#endif
+    EnsureExamplePrefabs();
     RUN_SUITE("vs_templates");
     CHECK(VsTemplateCount() >= 16);
     for (const VsTemplate& t : VsTemplates()) {
@@ -288,6 +385,165 @@ int main() {
         CHECK(vs->GetVariable("state").AsFloat() == 1.0f);
         CHECK(vs->gameObject->transform->localPosition.x > 0.1f);
     }
+    {
+        Scene scene("Spawn");
+        auto* vs = Attach(scene, "Spawner", T("Spawner"));
+        const int before = (int)scene.Objects().size();
+        scene.Start();
+        scene.Update(1.05f);
+        CHECK(vs->GetVariable("made").AsFloat() >= 1.0f);
+        CHECK((int)scene.Objects().size() > before);
+    }
+    {
+        Scene scene("Shoot");
+        auto* vs = Attach(scene, "Gun", T("Shooter"));
+        scene.Start();
+        Keys({}); scene.Update(0.05f);
+        Keys({' '}); scene.Update(0.05f);
+        CHECK(vs->GetVariable("shots").AsFloat() == 1.0f);
+        Keys({}); scene.Update(0.05f);
+        Keys({' '}); scene.Update(0.05f);
+        CHECK(vs->GetVariable("shots").AsFloat() == 1.0f);
+        bool flew = false;
+        Keys({});
+        for (int i = 0; i < 8; ++i) scene.Update(0.1f);
+        for (const auto& up : scene.Objects())
+            if (up && up->name == "Shot" && up->transform->localPosition.x > 2.0f) flew = true;
+        CHECK(flew);
+        Keys({}); scene.Update(0.05f);
+        Keys({' '}); scene.Update(0.05f);
+        CHECK(vs->GetVariable("shots").AsFloat() == 2.0f);
+    }
+    {
+        Scene scene("Sight");
+        auto* vs = Attach(scene, "Enemy", T("Line of sight"));
+        auto* player = scene.CreateGameObject("Player");
+        player->transform->localPosition = {4, 0, 0};
+        player->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+        player->AddComponent<BoxCollider3D>();
+        scene.Start();
+        scene.Update(0.3f);
+        CHECK(vs->GetVariable("seen").AsFloat() == 1.0f);
+        CHECK(vs->gameObject->transform->localPosition.x > 0.2f);
+    }
+    {
+        Scene scene("Wall");
+        auto* vs = Attach(scene, "Enemy", T("Line of sight"));
+        auto* player = scene.CreateGameObject("Player");
+        player->transform->localPosition = {4, 0, 0};
+        player->AddComponent<BoxCollider3D>();
+        auto* wall = scene.CreateGameObject("Wall");
+        wall->transform->localPosition = {2, 0, 0};
+        wall->AddComponent<BoxCollider3D>()->size = {1, 2, 1};
+        scene.Start();
+        scene.Update(0.3f);
+        CHECK(vs->GetVariable("seen").AsFloat() == 0.0f);
+        CHECK(vs->gameObject->transform->localPosition.x < 0.05f);
+    }
+    {
+        Scene scene("Bar");
+        auto* vs = Attach(scene, "Hero", T("Health bar"));
+        auto* bar = vs->gameObject->GetComponent<UIProgressBar>();
+        CHECK(bar != nullptr);
+        scene.Start();
+        scene.Update(0.05f);
+        CHECK_NEAR(bar->value, 1.0f, 0.01f);
+        vs->SendEvent("hit");
+        scene.Update(0.05f);
+        CHECK(vs->GetVariable("health").AsFloat() == 75.0f);
+        CHECK_NEAR(bar->value, 0.75f, 0.01f);
+    }
+    {
+        UICanvas::Set(200, 200);
+        Scene scene("Click");
+        auto* camGo = scene.CreateGameObject("Camera");
+        camGo->transform->localPosition = {4, 10, 2};
+        // Cameras look down their -Z. LookAt aims +Z, so aim +Z upward and the view looks down.
+        camGo->transform->LookAt({4, 20, 2});
+        scene.mainCamera = camGo->AddComponent<Camera>();
+        auto* vs = Attach(scene, "Walker", T("Click to move"));
+        vs->gameObject->transform->localPosition = {0, 0, 2};
+        scene.Start();
+        Input::FeedMouse({100, 100}, 0);
+        scene.Update(0.05f);
+        Input::FeedMouse({100, 100}, 1);
+        scene.Update(0.05f);
+        Input::FeedMouse({100, 100}, 0);
+        for (int i = 0; i < 8; ++i) scene.Update(0.1f);
+        CHECK(vs->gameObject->transform->localPosition.x > 1.0f);
+    }
+    {
+        Scene scene("Cams");
+        auto* wideGo = scene.CreateGameObject("Wide");
+        wideGo->transform->localPosition = {0, 4, 10};
+        auto* wide = wideGo->AddComponent<Camera>();
+        wide->main = true;
+        scene.mainCamera = wide;
+        auto* closeGo = scene.CreateGameObject("Close");
+        closeGo->transform->localPosition = {0, 1, 3};
+        closeGo->AddComponent<Camera>();
+        Attach(scene, "Switch", T("Camera switch"));
+        scene.Start();
+        Keys({}); scene.Update(0.05f);
+        Keys({'c'}); scene.Update(0.05f);
+        CHECK(scene.mainCamera != nullptr);
+        CHECK(scene.mainCamera->gameObject->name == "Close");
+    }
+    {
+        Scene scene("Outcome");
+        auto* vs = Attach(scene, "Board", T("Win or lose"));
+        auto* text = vs->gameObject->GetComponent<TextRenderer>();
+        scene.Start();
+        vs->SetVariable("score", 10.0f);
+        scene.Update(0.1f);
+        CHECK(vs->GetVariable("won").AsFloat() == 1.0f);
+        CHECK(text->text.find("win") != std::string::npos);
+    }
+    {
+        Scene scene("Defeat");
+        auto* vs = Attach(scene, "Board", T("Win or lose"));
+        scene.Start();
+        vs->SetVariable("health", 0.0f);
+        scene.Update(0.1f);
+        CHECK(vs->GetVariable("lost").AsFloat() == 1.0f);
+        CHECK(vs->gameObject->GetComponent<TextRenderer>()->text.find("lose") != std::string::npos);
+    }
+    {
+        Scene scene("DoorPhys");
+        auto* door = Attach(scene, "Door", T("Door"));
+        auto* guest = scene.CreateGameObject("Guest");
+        guest->transform->localPosition = {-1.6f, 0, 0};
+        guest->AddComponent<BoxCollider3D>();
+        auto* body = guest->AddComponent<Rigidbody3D>();
+        body->bodyType = Rigidbody3D::BodyType::Kinematic;
+        body->gravityScale = 0.0f;
+        body->velocity = {3, 0, 0};
+        scene.Start();
+        for (int i = 0; i < 30 && door->GetVariable("open").AsFloat() < 1.0f; ++i) scene.Update(0.05f);
+        CHECK(door->GetVariable("open").AsFloat() == 1.0f);
+        CHECK(door->gameObject->transform->localPosition.y > 1.5f);
+    }
+    {
+        Scene scene("Vars");
+        std::string err;
+        CHECK(SceneSerializer::LoadFromFile(scene, "examples/node_playground/variables.okayscene", &err));
+        if (!err.empty()) std::printf("  playground: %s\n", err.c_str());
+        scene.Start();
+        for (int i = 0; i < 8; ++i) scene.Update(0.5f);
+        GameObject* counter = nullptr;
+        GameObject* read = nullptr;
+        for (const auto& up : scene.Objects()) {
+            if (up->name == "Counter") counter = up.get();
+            if (up->name == "Readout") read = up.get();
+        }
+        CHECK(counter != nullptr);
+        auto* vs = counter->GetComponent<VisualScriptComponent>();
+        CHECK(vs->GetVariable("score").AsFloat() >= 4.0f);
+        CHECK(counter->transform->localPosition.x > 1.0f);
+        auto* label = read->GetComponent<TextRenderer>();
+        CHECK(label->text.find("Score:") != std::string::npos);
+    }
     Keys({});
+    Input::FeedMouse({0, 0}, 0);
     TEST_MAIN_RESULT();
 }

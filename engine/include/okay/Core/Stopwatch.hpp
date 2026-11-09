@@ -1,5 +1,4 @@
 #pragma once
-#include "okay/Core/Clock.hpp"
 #include "okay/Core/Time.hpp"
 #include <chrono>
 #include <cmath>
@@ -30,9 +29,10 @@ public:
     /// A stopwatch on one of the named game clocks (Clock::Get(name)): it follows that clock's own
     /// scale and pause, so a stopwatch on "ui" runs through a game pause and one on "game" does not.
     /// The clock is looked up on every read (a clock set that removed it reads as no time).
-    static Stopwatch OnClock(const std::string& name) {
-        return Stopwatch([name] { const Clock* c = ClockSet::Global().Find(name); return c ? c->Elapsed() : 0.0; });
-    }
+    /// Defined in okay/Core/Clock.hpp (include that header to call it). Stopwatch.hpp is part of
+    /// <Okay.hpp> and must not name okay::Clock, so a program with its own `Clock` and
+    /// `using namespace okay;` keeps compiling.
+    static Stopwatch OnClock(const std::string& name);
     /// A stopwatch on the real clock that is already running.
     static Stopwatch StartNew() { Stopwatch s; s.Start(); return s; }
 

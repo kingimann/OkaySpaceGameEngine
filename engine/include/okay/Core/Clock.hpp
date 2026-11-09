@@ -20,6 +20,7 @@
 // A host calls ClockSet::Global().Tick(...) once a frame, after Time::Step; GameLoop
 // does it for you. Plain C++17, no threads, no allocation after a channel exists.
 #include "okay/Core/Game.hpp"
+#include "okay/Core/Stopwatch.hpp"
 #include "okay/Core/Time.hpp"
 #include <cmath>
 #include <cstdint>
@@ -217,5 +218,9 @@ private:
 
 inline Clock& Clock::Get(const std::string& name) { return ClockSet::Global().Get(name); }
 inline bool   Clock::Exists(const std::string& name) { return ClockSet::Global().Find(name) != nullptr; }
+
+inline Stopwatch Stopwatch::OnClock(const std::string& name) {
+    return Stopwatch([name] { const Clock* c = ClockSet::Global().Find(name); return c ? c->Elapsed() : 0.0; });
+}
 
 } // namespace okay

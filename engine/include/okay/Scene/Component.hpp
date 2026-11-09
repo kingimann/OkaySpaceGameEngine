@@ -66,6 +66,12 @@ public:
     /// for a component that is live then. They only ever alternate.
     virtual void OnEnable() {}
     virtual void OnDisable() {}
+    /// An ObjectPool is about to hand this component's object out again after it was released: put the
+    /// runtime state of the previous use back to what a fresh copy of the template has (velocities,
+    /// elapsed timers, accumulated forces). Called once per reuse, after the object's pose was reset
+    /// and before it is switched on, so OnEnable follows with the clean state. Not called for a
+    /// new object, which starts clean anyway. Rigidbody2D, Rigidbody3D and Lifetime reset themselves.
+    virtual void OnPoolReuse() {}
     /// Objects in `dying` are about to be destroyed (this component survives):
     /// drop any pointers to them or their transforms.
     virtual void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& /*dying*/) {}

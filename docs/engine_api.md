@@ -318,6 +318,20 @@ Frame timing.
 | `Time.frameCount` | `Time.frameCount` | value | - | frameCount (Number) | Frames since the game started. |
 | `Time.timeScale` | `Time.timeScale` | value | - | timeScale (Number) | How fast time passes: 1 normal, 0.5 slow motion, 0 paused. |
 | `Time.timeScale = timeScale` | `Time.timeScale=` | step | timeScale (Number) | - | How fast time passes: 1 normal, 0.5 slow motion, 0 paused. |
+| `Time.sessionTime` | `Time.sessionTime` | value | - | sessionTime (Number) | Seconds of game time since this Play began (Time.time keeps counting across Plays; this starts from 0 each time). |
+| `Time.sessionUnscaledTime` | `Time.sessionUnscaledTime` | value | - | sessionUnscaledTime (Number) | Real seconds since this Play began: a pause, slow motion and hit stops do not change it. |
+| `Time.sessionFrameCount` | `Time.sessionFrameCount` | value | - | sessionFrameCount (Number) | Frames since this Play began. |
+| `Time.unscaledDeltaTime` | `Time.unscaledDeltaTime` | value | - | unscaledDeltaTime (Number) | Real seconds since the last frame: not slowed by timeScale, a hit stop or a pause (animate a menu with it). |
+| `Time.unscaledTime` | `Time.unscaledTime` | value | - | unscaledTime (Number) | Real seconds since the game started: a pause, slow motion and hit stops do not change it. |
+| `Time.fps` | `Time.fps` | value | - | fps (Number) | Frames per second over the last half second of real frame times (0 before the first frame). |
+| `Time.hitchCount` | `Time.hitchCount` | value | - | hitchCount (Number) | How many frames took over a tenth of a second since this Play began. |
+| `Time.paused` | `Time.paused` | value | - | paused (Bool) | True while the game is paused (a menu, a cutscene or the pause button holds it). |
+| `Time.PushPause(reason)` | `Time.PushPause/1` | step | reason (Text) | - | Hold the game paused for a reason of your own ("dialogue", "shop"). The game stays paused until every reason is let go, so two scripts that pause never resume each other. |
+| `Time.PopPause(reason)` | `Time.PopPause/1` | step | reason (Text) | Result (Bool) | Let go of one hold of that reason. False when nothing held it. |
+| `Time.IsPausedBy(reason)` | `Time.IsPausedBy/1` | value | reason (Text) | Result (Bool) | True while that reason is holding the pause. |
+| `Time.HitStop(seconds, scale)` | `Time.HitStop/2` | step | seconds (Number), scale (Number) | - | A freeze frame or a brief slow-down for an impact: for some real seconds the game runs at this scale (0 = frozen), then goes back by itself. |
+| `Time.SlowMotion(scale, seconds)` | `Time.SlowMotion/2` | step | scale (Number), seconds (Number) | - | Bullet time: run at this speed (0.2 = a fifth) for some real seconds, then back to normal by itself. Composes with Time.timeScale. |
+| `Time.RampTimeScale(target, seconds)` | `Time.RampTimeScale/2` | step | target (Number), seconds (Number) | - | Ease Time.timeScale to a new value over some real seconds, in a straight line. |
 
 ## Debug
 

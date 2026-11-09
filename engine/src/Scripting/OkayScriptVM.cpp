@@ -6,6 +6,7 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
+#include "okay/Core/GameLoop.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -857,6 +858,7 @@ struct Runtime {
     /// Advance scheduled timers by dt and invoke any that come due. Once-timers
     /// are removed after firing; repeating ones re-arm by their interval.
     void TickTimers(float dt) {
+        if (!(dt > 0.0f) || !std::isfinite(dt)) dt = 0.0f;   // a NaN or negative frame time would stop every timer for good
         std::vector<std::string> due;
         const float kEps = 1e-4f;                // absorb fp dust at the boundary
         for (auto& t : timers) {
@@ -2061,6 +2063,17 @@ Value Runtime::CallLambda(const Value& f, std::vector<Value>& args, const std::v
 
 // ---- dotted property access --------------------------------------
 namespace {
+// Frames per second over the last half second of REAL frame times (the loop that is running the game keeps
+// them, GameLoop::Stats()), so a pause, a slow-motion scale or a hit stop does not change it and a stall shows.
+// Without a loop (a host that does not run one) the last frame's real time stands in.
+float RealFps() {
+    if (const GameLoop* loop = GameLoop::Current()) {
+        const double f = loop->Stats().AverageFps(30);
+        if (f > 0.0) return (float)f;
+    }
+    const float u = Time::UnscaledDeltaTime();
+    return u > 1e-6f ? 1.0f / u : 0.0f;
+}
 // Euler Z angle (degrees) of a quaternion, for transform.eulerAngles.z.
 float EulerZ(const Quat& q) {
     return std::atan2(2.0f * (q.w * q.z + q.x * q.y),
@@ -2078,8 +2091,18 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     if (name == "Time.time")       return Value{Time::ElapsedTime()};
     if (name == "Time.timeScale")  return Value{Time::TimeScale()};
     if (name == "Time.frameCount") return Value{(float)Time::FrameCount()};
-    if (name == "Time.fixedDeltaTime" || name == "Time.unscaledDeltaTime")
-        return Value{host ? host->deltaTime : 0.0f};
+    // The step of a FixedUpdate and the real frame time were both answered with this frame's SCALED delta
+    // (so Time.unscaledDeltaTime read 0 in a pause and half of itself at timeScale 0.5).
+    if (name == "Time.fixedDeltaTime")      return Value{Time::FixedDeltaTime()};
+    if (name == "Time.unscaledDeltaTime")   return Value{Time::UnscaledDeltaTime()};
+    if (name == "Time.unscaledTime")        return Value{(float)Time::UnscaledTime()};
+    // Since this Play began (the game's clocks that Time.time and Time.frameCount are the process's own).
+    if (name == "Time.sessionTime")         return Value{(float)Time::SessionTime()};
+    if (name == "Time.sessionUnscaledTime") return Value{(float)Time::SessionUnscaledTime()};
+    if (name == "Time.sessionFrameCount")   return Value{(float)Time::SessionFrameCount()};
+    if (name == "Time.fps")                 return Value{RealFps()};
+    if (name == "Time.paused")              return Value{Game::Paused()};
+    if (name == "Time.hitchCount")          return Value{(float)(GameLoop::Current() ? GameLoop::Current()->HitchCount() : 0)};
     if (name == "Space.World")     return Value{1.0f};
     if (name == "Space.Self")      return Value{0.0f};
     if (name == "null")            return Value{};
@@ -3722,18 +3745,49 @@ struct OkayScriptVM::Impl {
         // has_var("score"): is a script variable defined (in any scope)?
         b["has_var"] = [this](std::vector<Value>& a) { return Value{!a.empty() && rt.Has(a[0].AsString())}; };
         b["frame_count"]   = [](std::vector<Value>&) { return Value{(float)Time::FrameCount()}; };
+        // Time since this Play began: time() and frame_count() keep counting across Plays, these start from 0.
+        b["session_time"]          = [](std::vector<Value>&) { return Value{(float)Time::SessionTime()}; };
+        b["session_unscaled_time"] = [](std::vector<Value>&) { return Value{(float)Time::SessionUnscaledTime()}; };
+        b["session_frame_count"]   = [](std::vector<Value>&) { return Value{(float)Time::SessionFrameCount()}; };
+        b["unscaled_dt"]   = [](std::vector<Value>&) { return Value{Time::UnscaledDeltaTime()}; };   // real frame time: a pause, slow motion and hit stops do not change it
+        b["is_paused"]     = [](std::vector<Value>&) { return Value{Game::Paused()}; };
+        // Pause with a reason of your own (push_pause("dialogue") ... pop_pause("dialogue")): the game stays paused until every
+        // reason is let go, so two scripts that pause never resume each other (pause_game(true/false) is the one "manual" reason).
+        b["push_pause"]    = [](std::vector<Value>& a) { Game::PushPause(a.empty() ? std::string() : a[0].AsString()); return Value{}; };
+        b["pop_pause"]     = [](std::vector<Value>& a) { return Value{Game::PopPause(a.empty() ? std::string() : a[0].AsString())}; };
+        b["is_paused_by"]  = [](std::vector<Value>& a) { return Value{Game::IsPausedBy(a.empty() ? std::string() : a[0].AsString())}; };
+        b["hitch_count"]   = [](std::vector<Value>&) { return Value{(float)(GameLoop::Current() ? GameLoop::Current()->HitchCount() : 0)}; };
+        // hit_stop(seconds [, scale]): a freeze frame (scale 0, the default) or a brief slow-down for an impact; it runs on
+        // real time, ends by itself and composes with set_timescale. slow_motion(scale, seconds) is the same effect with
+        // the arguments the other way round, for bullet time: slow_motion(0.2, 2) runs at a fifth speed for two seconds.
+        b["hit_stop"]      = [](std::vector<Value>& a) {
+            if (!a.empty()) Time::HitStop(a[0].AsFloat(), a.size() > 1 ? a[1].AsFloat() : 0.0f);
+            return Value{};
+        };
+        b["slow_motion"]   = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Time::HitStop(a[1].AsFloat(), a[0].AsFloat());
+            return Value{};
+        };
+        // ramp_timescale(target, seconds): ease the time scale to target over that many real seconds (a straight line).
+        b["ramp_timescale"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Time::RampTimeScale(a[0].AsFloat(), a[1].AsFloat());
+            return Value{};
+        };
         b["mouse_wheel"]   = [](std::vector<Value>&) { return Value{Input::MouseWheel()}; };
         b["dt"]    = [this](std::vector<Value>&) { return Value{rt.host ? rt.host->deltaTime : 0.0f}; };
         // Scheduled callbacks: after(seconds, "fn") fires once; every(seconds,
         // "fn") repeats; cancel_timers() clears them. fn is a function in this
         // script. Great for spawn waves, respawns, cooldowns, blinking text.
         b["after"] = [this](std::vector<Value>& a) {
-            if (a.size() >= 2) rt.timers.push_back({a[0].AsFloat(), 0.0f, a[1].AsString(), false});
+            if (a.size() >= 2) {
+                float wait = a[0].AsFloat(); if (!(wait > 0.0f)) wait = 0.0f;   // negative and NaN fire on the next tick
+                rt.timers.push_back({wait, 0.0f, a[1].AsString(), false});
+            }
             return Value{};
         };
         b["every"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) {
-                float iv = a[0].AsFloat(); if (iv <= 0.0f) iv = 0.0001f;
+                float iv = a[0].AsFloat(); if (!(iv > 0.0001f)) iv = 0.0001f;   // zero, negative and NaN: the shortest interval
                 rt.timers.push_back({iv, iv, a[1].AsString(), false});
             }
             return Value{};
@@ -7692,7 +7746,8 @@ struct OkayScriptVM::Impl {
         // ---- Easing curves: map a normalized time t (0..1) to an eased 0..1 ----
         // For tweening/animation. Pass the raw progress; multiply the result into a
         // range yourself, or use with lerp(a, b, ease_out(t)).
-        auto E = [](std::vector<Value>& a) { return Mathf::Clamp01(a.empty() ? 0.0f : a[0].AsFloat()); };
+        // A NaN counts as 0 (Easing::Evaluate does the same), so a bad value cannot hand a script NaN to write into an object.
+        auto E = [](std::vector<Value>& a) { const float t = a.empty() ? 0.0f : a[0].AsFloat(); return t == t ? Mathf::Clamp01(t) : 0.0f; };
         b["ease_in"]  = [E](std::vector<Value>& a) { float t = E(a); return Value{t * t}; };
         b["ease_out"] = [E](std::vector<Value>& a) { float t = E(a); return Value{1.0f - (1.0f - t) * (1.0f - t)}; };
         b["ease_in_out"] = [E](std::vector<Value>& a) {
@@ -7723,6 +7778,14 @@ struct OkayScriptVM::Impl {
             else if (t < 2.0f / d1) { t -= 1.5f / d1;  return Value{n1 * t * t + 0.75f}; }
             else if (t < 2.5f / d1) { t -= 2.25f / d1; return Value{n1 * t * t + 0.9375f}; }
             else                    { t -= 2.625f / d1; return Value{n1 * t * t + 0.984375f}; }
+        };
+        // ease_curve(t, "OutBack" | "cubic-bezier(0.4,0,0.2,1)" | "steps(4)" | "ease-in-out"): any ease by name or as a
+        // curve (the text tween_ease takes). Text it does not know is a straight line; a curve may overshoot 0..1.
+        b["ease_curve"] = [E](std::vector<Value>& a) {
+            const float t = E(a);
+            EaseCurve c;
+            if (a.size() > 1 && a[1].IsString() && EaseCurve::Parse(a[1].AsString(), c)) return Value{c.Evaluate(t)};
+            return Value{t};
         };
         // Loop t into [0,length) (Mathf.Repeat).
         b["math_repeat"] = [](std::vector<Value>& a) {
@@ -8531,10 +8594,9 @@ struct OkayScriptVM::Impl {
                   dz = a[5].AsFloat() - a[2].AsFloat();
             return Value{Mathf::Sqrt(dx * dx + dy * dy + dz * dz)};
         };
-        b["fps"] = [this](std::vector<Value>&) -> Value {
-            float d = rt.host ? rt.host->deltaTime : 0.0f;
-            return Value{d > 1e-6f ? 1.0f / d : 0.0f};
-        };
+        // fps(): frames per second as measured, not 1 / this frame's scaled delta (which read 0 in a pause and doubled
+        // at timeScale 0.5): see RealFps above.
+        b["fps"] = [](std::vector<Value>&) -> Value { return Value{RealFps()}; };
         // 3D physics: ground/line-of-sight check via a 3D ray, and gravity.
         b["raycast_hit3"] = [this](std::vector<Value>& a) -> Value {
             if (a.size() < 6 || !rt.host || !rt.host->gameObject) return Value{false};
@@ -9067,6 +9129,9 @@ struct OkayScriptVM::Impl {
         const std::size_t kNone = (std::size_t)-1;
         auto self = go;
         auto num = [](std::vector<Value>& a, std::size_t i, float def) { return i < a.size() && !a[i].IsString() ? a[i].AsFloat() : def; };
+        // A script number as a count: NaN is `whenNaN`, and a huge value stops at about two billion (casting a float that
+        // is out of range to int is undefined, and gave a negative count: a loop count of 1e12 became "forever").
+        auto toCount = [](float v, int whenNaN) { return v != v ? whenNaN : v >= 2.0e9f ? 2000000000 : v <= -2.0e9f ? -2000000000 : (int)v; };
 
         b["tween_move"] = [self, finish](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
@@ -9136,38 +9201,38 @@ struct OkayScriptVM::Impl {
             return reg(t);
         };
         // Punch the scale out and settle back (DOPunchScale) — button presses, pickups.
-        b["tween_punch_scale"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_punch_scale"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
             const float p = a[0].AsFloat();
-            return reg(DOTween::PunchScale(g, {p, p, p}, a[1].AsFloat(), (int)num(a, 2, 6.0f)));
+            return reg(DOTween::PunchScale(g, {p, p, p}, a[1].AsFloat(), toCount(num(a, 2, 6.0f), 6)));
         };
-        b["tween_punch_pos"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_punch_pos"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
-            return reg(DOTween::PunchPosition(g, {a[0].AsFloat(), a[1].AsFloat(), 0}, a[2].AsFloat(), (int)num(a, 3, 6.0f)));
+            return reg(DOTween::PunchPosition(g, {a[0].AsFloat(), a[1].AsFloat(), 0}, a[2].AsFloat(), toCount(num(a, 3, 6.0f), 6)));
         };
-        b["tween_punch_rotate"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_punch_rotate"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
-            return reg(DOTween::PunchRotation(g, {0, 0, a[0].AsFloat()}, a[1].AsFloat(), (int)num(a, 2, 6.0f)));
+            return reg(DOTween::PunchRotation(g, {0, 0, a[0].AsFloat()}, a[1].AsFloat(), toCount(num(a, 2, 6.0f), 6)));
         };
         // Shake, fading out (camera / impact shake).
-        b["tween_shake"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_shake"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
             const float s = a[0].AsFloat();
-            return reg(DOTween::ShakePosition(g, a[1].AsFloat(), {s, s, 0}, (int)num(a, 2, 20.0f)));
+            return reg(DOTween::ShakePosition(g, a[1].AsFloat(), {s, s, 0}, toCount(num(a, 2, 20.0f), 20)));
         };
-        b["tween_shake_rotate"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_shake_rotate"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
-            return reg(DOTween::ShakeRotation(g, a[1].AsFloat(), {0, 0, a[0].AsFloat()}, (int)num(a, 2, 14.0f)));
+            return reg(DOTween::ShakeRotation(g, a[1].AsFloat(), {0, 0, a[0].AsFloat()}, toCount(num(a, 2, 14.0f), 14)));
         };
-        b["tween_shake_scale"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_shake_scale"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
             const float s = a[0].AsFloat();
-            return reg(DOTween::ShakeScale(g, a[1].AsFloat(), {s, s, s}, (int)num(a, 2, 14.0f)));
+            return reg(DOTween::ShakeScale(g, a[1].AsFloat(), {s, s, s}, toCount(num(a, 2, 14.0f), 14)));
         };
         // Jump to (x, y) in an arc `height` high: tween_jump(x, y, height, dur[, jumps][, "done"]).
-        b["tween_jump"] = [self, finish, num](std::vector<Value>& a) {
+        b["tween_jump"] = [self, finish, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 4) return Value{0.0f};
-            const int jumps = (int)num(a, 4, 1.0f);
+            const int jumps = toCount(num(a, 4, 1.0f), 1);
             const std::size_t di = a.size() > 4 && a[4].IsString() ? 4 : 5;
             auto t = DOTween::Jump(g, {a[0].AsFloat(), a[1].AsFloat(), g->transform->localPosition.z}, a[2].AsFloat(), jumps, a[3].AsFloat());
             return finish(a, t, kNone, di);
@@ -9272,16 +9337,22 @@ struct OkayScriptVM::Impl {
         b["tween_unscaled"] = setting([](Tweener& t, std::vector<Value>& a) { t.SetUpdate(a.size() > 1 ? a[1].AsBool() : true); });
         // tween_clock(id, "ui"): follow a named clock channel ("game", "ui", "cinematic", your own); "" = scene time.
         b["tween_clock"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetClock(a.size() > 1 ? a[1].AsString() : std::string{}); });
+        // tween_tag(id, "menu"): a group label for tween_kill_tag / tween_pause_tag / tween_play_tag.
+        b["tween_tag"]      = setting([](Tweener& t, std::vector<Value>& a) { t.SetTag(a.size() > 1 ? a[1].AsString() : std::string{}); });
+        // tween_speed_based(id): the duration you gave is a speed (units a second); the tween lasts distance / speed.
+        b["tween_speed_based"] = setting([](Tweener& t, std::vector<Value>& a) { t.SetSpeedBased(a.size() > 1 ? a[1].AsBool() : true); });
+        // tween_decay(id, rate): how a punch or shake dies away (0 = straight fade, 6 = snappy).
+        b["tween_decay"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetDecay(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
         b["tween_set_id"]   = setting([](Tweener& t, std::vector<Value>& a) { t.SetId(a.size() > 1 ? a[1].AsString() : std::string{}); });
         b["tween_from"]     = setting([](Tweener& t, std::vector<Value>&) { t.From(); });
         b["tween_relative"] = setting([](Tweener& t, std::vector<Value>&) { t.SetRelative(); });
         b["tween_keep"]     = setting([](Tweener& t, std::vector<Value>&) { t.SetAutoKill(false); });
         // tween_loops(id, count[, "restart" | "yoyo" | "incremental"]); count -1 = forever.
-        b["tween_loops"] = setting([](Tweener& t, std::vector<Value>& a) {
+        b["tween_loops"] = setting([toCount](Tweener& t, std::vector<Value>& a) {
             std::string ty = a.size() > 2 && a[2].IsString() ? a[2].AsString() : std::string("restart");
             for (auto& ch : ty) ch = (char)std::tolower((unsigned char)ch);
             const LoopType lt = ty == "yoyo" ? LoopType::Yoyo : ty == "incremental" ? LoopType::Incremental : LoopType::Restart;
-            t.SetLoops(a.size() > 1 ? (int)a[1].AsFloat() : 1, lt);
+            t.SetLoops(a.size() > 1 ? toCount(a[1].AsFloat(), 1) : 1, lt);   // NaN plays once; a negative count loops forever
         });
         b["tween_on_complete"] = setting([fnFromArg](Tweener& t, std::vector<Value>& a) { t.OnComplete(fnFromArg(a, 1)); });
         b["tween_on_step"]     = setting([fnFromArg](Tweener& t, std::vector<Value>& a) { t.OnStepComplete(fnFromArg(a, 1)); });
@@ -9320,6 +9391,24 @@ struct OkayScriptVM::Impl {
                 return Value{(float)n};
             };
         };
+        // Everything with a tag set by tween_tag, scene-wide: tween_kill_tag("menu"[, complete]), pause, play, complete.
+        auto byTag = [tweens](int op) {
+            return [tweens, op](std::vector<Value>& a) -> Value {
+                TweenManager* m = tweens(); if (!m || a.empty()) return Value{0.0f};
+                const std::string tag = a[0].AsString();
+                const int n = op == 0 ? m->KillByTag(tag, a.size() > 1 && a[1].AsBool())
+                            : op == 1 ? m->PauseByTag(tag) : op == 2 ? m->PlayByTag(tag) : m->CompleteByTag(tag);
+                return Value{(float)n};
+            };
+        };
+        b["tween_kill_tag"]     = byTag(0);
+        b["tween_pause_tag"]    = byTag(1);
+        b["tween_play_tag"]     = byTag(2);
+        b["tween_complete_tag"] = byTag(3);
+        b["tween_rewind_id"] = [tweens](std::vector<Value>& a) -> Value {
+            TweenManager* m = tweens(); if (!m || a.empty()) return Value{0.0f};
+            return Value{(float)m->Rewind(a[0].AsString())};
+        };
         b["tween_kill_id"]    = byId(0);
         b["tween_pause_id"]   = byId(1);
         b["tween_play_id"]    = byId(2);
@@ -9341,6 +9430,8 @@ struct OkayScriptVM::Impl {
         };
         b["seq_append"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Append(t); });
         b["seq_join"]   = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Join(t); });
+        b["seq_prepend"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Prepend(t); });
+        b["seq_join_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) { if (auto f = fnFromArg(a, 1)) s.JoinCallback(f); });
         b["seq_insert"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 2)) s.Insert(a[1].AsFloat(), t); });
         b["seq_interval"] = seqOp([](TweenSequence& s, std::vector<Value>& a) { s.AppendInterval(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
         b["seq_prepend_interval"] = seqOp([](TweenSequence& s, std::vector<Value>& a) { s.PrependInterval(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
@@ -9690,6 +9781,13 @@ struct OkayScriptVM::Impl {
         alias("repeat_every", "every");
         alias("set_time_scale", "set_timescale");
         alias("time_scale", "timescale");
+        alias("Time.PushPause", "push_pause");
+        alias("Time.PopPause", "pop_pause");
+        alias("Time.IsPausedBy", "is_paused_by");
+        alias("Time.HitStop", "hit_stop");
+        alias("Time.SlowMotion", "slow_motion");
+        alias("Time.RampTimeScale", "ramp_timescale");
+        alias("ramp_time_scale", "ramp_timescale");
         // Objects & scene
         alias("create_object", "spawn");
         alias("create_object_3d", "spawn3");

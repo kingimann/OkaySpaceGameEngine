@@ -120,6 +120,19 @@ public:
         AddImpulse(dir * (force * falloff));
     }
 
+    /// Back to rest, as a fresh body starts: no velocity, no spin, no force or torque waiting for the next
+    /// step, awake, not on terrain, and no render-interpolation or swept-collision history (so a reused body
+    /// is not drawn sliding in from where it was last). Called by an ObjectPool when it hands the object
+    /// out again.
+    void OnPoolReuse() override {
+        velocity = Vec3::Zero; angularVelocity = Vec3::Zero;
+        m_forceAccum = Vec3::Zero; m_torqueAccum = Vec3::Zero;
+        WakeUp();
+        groundedOnTerrain = false; groundNormal = Vec3{0.0f, 1.0f, 0.0f};
+        prevPos = Vec3::Zero; hasPrevPos = false;
+        poseHistory = PoseHistory{};
+    }
+
     /// 1/mass for dynamic bodies, 0 for kinematic/static (treated as infinite).
     float InvMass() const {
         return (bodyType == BodyType::Dynamic && mass > 0.0f) ? 1.0f / mass : 0.0f;

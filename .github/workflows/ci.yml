@@ -266,6 +266,31 @@ jobs:
         shell: pwsh
         run: ./tests/export/verify.ps1 -Editor winbuild/build-win-dist/Tools/OkayEngine.exe -Work "$env:RUNNER_TEMP/export"
 
+  # Real Windows process restart: the test holds a named mutex and a file lock
+  # (the same kind of single-instance lock the launcher uses), exits, and the
+  # helper must start the new process once. The install path is
+  # "Program Files (x86)" and the new process must still see --launcher plus
+  # an argument that itself contains spaces and parentheses.
+  windows-restart:
+    name: Windows updater restart
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF
+          -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_EDITOR=OFF
+          -DOKAY_BUILD_PLAYER=OFF -DOKAY_USE_SODIUM=OFF
+
+      - name: Build the restart test
+        run: cmake --build build --config Release --target test_app_restart --parallel
+
+      - name: Run the restart test
+        run: ctest --test-dir build -C Release -R "^app_restart$" --output-on-failure
+
   web-build:
     name: WebGL build (Emscripten)
     runs-on: ubuntu-latest

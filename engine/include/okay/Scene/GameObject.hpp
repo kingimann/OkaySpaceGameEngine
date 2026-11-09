@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Tags.hpp"
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <typeinfo>
@@ -14,6 +15,34 @@
 namespace okay {
 
 class GameObject;
+
+namespace detail {
+/// Moves whenever an `active` flag changes value or a parent link changes, anywhere in the process.
+/// GameObject::ActiveInHierarchy() keeps its answer for as long as this number stays the same.
+inline std::atomic<std::uint64_t> g_activeEpoch{1};
+/// How many objects ActiveInHierarchy() had to look at to compute an answer (cache hits cost nothing).
+inline std::atomic<std::uint64_t> g_activeWalkSteps{0};
+} // namespace detail
+
+/// The type of GameObject::active: a bool that notes every change of its value, so
+/// GameObject::ActiveInHierarchy() can remember its answer instead of walking the parents again for
+/// every component every frame. It reads and assigns like a bool (`if (go->active)`, `go->active = false`);
+/// assigning the value it already holds changes nothing.
+class ActiveFlag {
+public:
+    explicit constexpr ActiveFlag(bool on = true) : m_on(on) {}
+    ActiveFlag(const ActiveFlag& o) : m_on(o.m_on) {}
+    ActiveFlag& operator=(const ActiveFlag& o) { Set(o.m_on); return *this; }
+    ActiveFlag& operator=(bool on) { Set(on); return *this; }
+    operator bool() const { return m_on; }
+private:
+    void Set(bool on) {
+        if (on == m_on) return;
+        m_on = on;
+        detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);
+    }
+    bool m_on;
+};
 
 /// Process-wide, data-driven rules for AddComponent: components a type needs next to
 /// it (RequireComponent) and types that may appear once per object
@@ -45,8 +74,8 @@ public:
     std::string name;
     /// This object's own on/off flag ("activeSelf"). Inactive GameObjects are skipped
     /// by Update, Render and physics, and so are their children: what the engine
-    /// tests is ActiveInHierarchy(), which also looks at every parent.
-    bool active = true;
+    /// tests is ActiveInHierarchy(), which also looks at every parent. (An ActiveFlag: use it as a bool.)
+    ActiveFlag active{true};
     /// Scene bookkeeping: the `active` value last reported to OnEnable/OnDisable
     /// (-1 = not seen yet, so the first frame never fires either).
     signed char activeSeen = -1;
@@ -130,23 +159,30 @@ public:
 
     /// True when this object and every parent above it are active. A child of an
     /// inactive parent does not update, render or simulate even if its own `active`
-    /// is true. Walks the parent chain (a few pointer reads for a normal hierarchy).
+    /// is true. The answer is kept until some `active` flag or parent link changes anywhere
+    /// (then it is worked out again, sharing the work with the objects above it), so a frame over a
+    /// long chain costs a few reads per component, not a walk to the top of the hierarchy.
+    /// Reading it from several threads is safe while nothing is being changed.
     bool ActiveInHierarchy() const {
-        // The whole chain is walked (a hierarchy deeper than any fixed cap is still one). A loop
-        // cannot exist (SetParent refuses it); the generous bound only keeps a corrupted
-        // pointer from spinning for ever.
-        const GameObject* g = this;
-        for (long guard = 0; g && guard < (1L << 26); ++guard) {
-            if (!g->active) return false;
-            const Transform* p = g->transform ? g->transform->Parent() : nullptr;
-            g = p ? p->gameObject : nullptr;
-        }
-        return true;
+        const std::uint64_t epoch = detail::g_activeEpoch.load(std::memory_order_relaxed);
+        const std::uint64_t seen = m_activeCache.load(std::memory_order_relaxed);
+        if ((seen >> 1) == epoch) return (seen & 1u) != 0;
+        return ComputeActiveInHierarchy(epoch);
     }
+    /// Diagnostic: how many objects ActiveInHierarchy() has had to examine since the process
+    /// started. An answer that comes from the cache adds nothing; tests use the difference to show
+    /// that a frame does linear work.
+    static std::uint64_t ActiveWalkSteps() { return detail::g_activeWalkSteps.load(std::memory_order_relaxed); }
 
     /// Attach a new component of type T, forwarding constructor arguments.
     template <typename T, typename... Args>
     T* AddComponent(Args&&... args);
+
+    /// The first attached component of type T, or a new one made with `args` when there is none (the way
+    /// to say "I need a Rigidbody here" without checking first). With a RequireComponent or
+    /// DisallowMultipleComponent rule registered for T the rule applies to the one that is added.
+    template <typename T, typename... Args>
+    T* GetOrAddComponent(Args&&... args);
 
     /// Return the first attached component of type T, or nullptr.
     template <typename T>
@@ -167,6 +203,27 @@ public:
     /// The first component of type T on this object or one of its parents, nearest first.
     template <typename T>
     T* GetComponentInParent(bool includeInactive = false) const;
+    /// Every component of type T on this object and each parent above it: the object itself first, then
+    /// its parent, and so on up; an object's own components in stored order. An inactive object is
+    /// skipped (its parents are still looked at) unless `includeInactive`.
+    template <typename T>
+    std::vector<T*> GetComponentsInParent(bool includeInactive = false) const;
+
+    /// Call `fn(GameObject&)` for the objects below this one: parents before children, siblings in their
+    /// order (this object first too with `includeSelf`). When `fn` returns a bool, returning false stops the
+    /// walk at once; a function that returns nothing visits everything. An object whose own `active` is off
+    /// is skipped with everything below it unless `includeInactive` (the default visits every object); the rule
+    /// covers this object too, so with `includeInactive` false a switched-off start visits nothing. Returns
+    /// true when the whole walk ran and false when `fn` stopped it. Objects an `fn` call asks the scene to destroy are
+    /// still visited (they go at the end of the frame); a child it adds to the object it was just called for
+    /// is visited too. Uses an explicit stack, so a very deep hierarchy is fine.
+    template <typename Fn>
+    bool ForEachDescendant(Fn&& fn, bool includeInactive = true, bool includeSelf = false) const;
+
+    /// True when this object or anything below it has a component that was told OnEnable and not yet
+    /// OnDisable (see HasLiveComponent for one object). A pool uses it to tell when a released object, its
+    /// children included, has been switched off for real.
+    bool HasLiveComponentInHierarchy() const;
 
     /// Append every component assignable to T to `out` (no per-object allocation;
     /// used by Scene::FindObjectsOfType to avoid a temporary vector per object).
@@ -225,6 +282,16 @@ public:
     /// Transform itself nor any other component can be moved to index 0. Out-of-range
     /// moves or an unknown component are no-ops.
     void MoveComponent(Component* component, int delta);
+    /// Arrange the components: the ones in `first` that belong to this object come right after the
+    /// Transform, in that order; everything else follows in the order it already had. A null, the
+    /// Transform, a component of another object and a repeat are skipped. Returns true when the order
+    /// changed. Calling it with at least one component of this object (or a MoveComponent that moved)
+    /// marks the order as arranged on purpose, so the scene file keeps it (see HasCustomComponentOrder).
+    bool ReorderComponents(const std::vector<Component*>& first);
+    /// True once the component order was arranged on purpose (MoveComponent, ReorderComponents, or
+    /// loaded from a `comporder` record). The scene serializer writes the order of such an object, and
+    /// only of such an object, so an object nobody arranged saves exactly as before.
+    bool HasCustomComponentOrder() const { return m_customOrder; }
 
     /// If another component on this object needs `component` (RequireComponent),
     /// that dependent; else nullptr. Lets an editor refuse to remove it. RemoveComponent
@@ -275,9 +342,14 @@ private:
     /// Adds the components `owner` requires that are missing (guards against cycles).
     void ApplyRequirements(std::type_index owner);
 
+    /// The cache behind ActiveInHierarchy(): (epoch << 1) | answer. Valid while its epoch is current.
+    bool ComputeActiveInHierarchy(std::uint64_t epoch) const;
+    mutable std::atomic<std::uint64_t> m_activeCache{0};
+
     Scene* m_scene = nullptr;
     std::vector<std::unique_ptr<Component>> m_components;
     bool m_destroyed = false;
+    bool m_customOrder = false;
 };
 
 // ---- Template implementations -----------------------------------------
@@ -357,6 +429,37 @@ void DisallowMultipleComponent() {
     ComponentRules::SetUnique(typeid(T));
 }
 
+template <typename T, typename... Args>
+T* GameObject::GetOrAddComponent(Args&&... args) {
+    if (T* existing = GetComponent<T>()) return existing;
+    return AddComponent<T>(std::forward<Args>(args)...);
+}
+
+template <typename Fn>
+bool GameObject::ForEachDescendant(Fn&& fn, bool includeInactive, bool includeSelf) const {
+    std::vector<GameObject*> stack;   // explicit stack: pre-order, children kept in order, no recursion
+    auto pushChildren = [&stack](const GameObject* g) {
+        if (!g->transform) return;
+        const auto& kids = g->transform->Children();
+        for (std::size_t i = kids.size(); i-- > 0;)
+            if (kids[i] && kids[i]->gameObject) stack.push_back(kids[i]->gameObject);
+    };
+    auto visit = [&fn](GameObject* g) -> bool {
+        if constexpr (std::is_same<decltype(fn(*g)), bool>::value) return fn(*g);
+        else { fn(*g); return true; }
+    };
+    if (!includeInactive && !active) return true;   // switched off: it and everything below it are skipped
+    if (includeSelf && !visit(const_cast<GameObject*>(this))) return false;
+    pushChildren(this);
+    while (!stack.empty()) {
+        GameObject* g = stack.back(); stack.pop_back();
+        if (!includeInactive && !g->active) continue;
+        if (!visit(g)) return false;
+        pushChildren(g);
+    }
+    return true;
+}
+
 template <typename T>
 T* GameObject::GetComponentInChildren(bool includeInactive) const {
     std::vector<const GameObject*> stack{this};   // explicit stack: depth first, children in sibling order, no recursion
@@ -399,6 +502,17 @@ T* GameObject::GetComponentInParent(bool includeInactive) const {
         g = p ? p->gameObject : nullptr;
     }
     return nullptr;
+}
+
+template <typename T>
+std::vector<T*> GameObject::GetComponentsInParent(bool includeInactive) const {
+    std::vector<T*> result;
+    for (const GameObject* g = this; g;) {
+        if (includeInactive || g->active) g->CollectComponents<T>(result);
+        const Transform* p = g->transform ? g->transform->Parent() : nullptr;
+        g = p ? p->gameObject : nullptr;
+    }
+    return result;
 }
 
 } // namespace okay

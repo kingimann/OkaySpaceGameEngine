@@ -58,12 +58,21 @@ bullets.Release(b);          // off + kept for the next Get
 - Reset your state in `OnEnable` (and clean up in `OnDisable`). `Release` switches the object
   off; the scene delivers `OnDisable` at the start of the next frame, and `OnEnable` when it is
   switched on again. Because that is the only reliable reset point, an object released this
-  frame is **not** handed out again until the next frame (`Get` makes a new one meanwhile).
-- The root goes back to the template's local pose and has no parent. Rigidbody velocities and
-  anything else a component owns are that component's job to reset in `OnEnable`.
+  frame is **not** handed out again until the next frame (`Get` makes a new one meanwhile; an object whose
+  components never started is reusable at once).
+- A reused object is put back to a fresh copy of the template as far as the pool can tell: the root goes back to the
+  template's local pose and has no parent, and its tag, layer and `active` flag come back; the same for every object
+  below it, and the `enabled` flag of each component, as long as the hierarchy and the components still have the
+  template's shape (when a child was added or removed only the root is put back). Each component then gets
+  `OnPoolReuse()` to reset what only it knows: `Rigidbody2D` / `Rigidbody3D` (velocity, spin, waiting forces,
+  sleep, interpolation history) and `Lifetime` (elapsed time) do, your own scripts can override it.
+- A delayed `Scene::Destroy(go, seconds)` that is still waiting when the object is `Release`d is cancelled (the use it was asked for is
+  over). An object that is queued for destruction, or destroyed behind the pool's back, is never handed out and is forgotten.
 - `Release` returns false for an object that is not from this pool. Objects destroyed behind
-  the pool's back, or a cleared scene, are forgotten. `IdleCount()`, `ActiveCount()`,
-  `CreatedCount()`, `ReuseCount()` help tune the pre-warm size.
+  the pool's back, or a cleared scene, are forgotten (and do not count against `maxSize`). `IdleCount()`, `ActiveCount()`,
+  `CreatedCount()`, `ReuseCount()` help tune the pre-warm size; `Get` and `Release` look at one or two objects, the two counts
+  look at every object the pool holds once after the scene changed (`LookupCount()` counts the lookups).
+- A pool is main-thread only, like the scene, and must not outlive it.
 
 ## RequireComponent / DisallowMultipleComponent
 

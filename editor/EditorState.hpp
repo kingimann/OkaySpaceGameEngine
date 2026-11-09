@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <Okay.hpp>
 #include "okay/Core/Game.hpp"
@@ -103,20 +104,65 @@ public:
     void NewVoxelSandbox();
 
     // ---- Files ---------------------------------------------------------
-    bool Save(const std::string& path);
+    /// Write the scene to `path` (atomically: see SceneSerializer::SaveToFile). Refused while Play is
+    /// running: the scene then is the running game, not what you authored. On success the scene counts
+    /// as saved; on failure nothing changes and `error` says why.
+    bool Save(const std::string& path, std::string* error = nullptr);
     /// Write meshes edited since they were loaded from a .okaymesh file back to
     /// that file (Save does this first). Returns how many files were written.
     int SaveEditedMeshAssets(std::string* report = nullptr);
     /// Called for an object whose mesh was replaced by its re-saved asset (same
     /// vertices, triangles possibly re-ordered): mesh edit mode drops face/edge selections.
     static inline std::function<void(GameObject*)> onMeshTrianglesReordered;
+    /// Open a scene file. All or nothing: a missing or damaged file leaves the open scene, its undo
+    /// history and its saved state exactly as they were (`error` says why). A loaded scene starts a
+    /// fresh undo history, so Undo can never put the old scene's objects into the new file.
     bool Load(const std::string& path, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
 
+    // ---- Unsaved changes --------------------------------------------------------
+    /// The scene as it is now counts as saved: clears `dirty` and remembers what the scene looks like.
+    void MarkClean();
+    /// True when the open scene differs from what was last saved, loaded or created. `dirty` says so
+    /// cheaply, but an edit that forgot to raise it would be lost silently, so this also compares the
+    /// scene's saved text with the text at the last save (it serializes the scene: call it when a
+    /// decision depends on it, such as quitting or opening another scene, not every frame). While Play
+    /// is running it answers for the scene you are editing: changes made to the running game are
+    /// thrown away on Stop and never count.
+    bool HasUnsavedChanges();
+    /// Same as HasUnsavedChanges, and raises `dirty` when the text differs (so the title bar and the
+    /// autosave catch up with an edit that did not mark it). Cheap enough to call every few seconds.
+    bool SyncDirty();
+
+    // ---- A new project: all or nothing -------------------------------------------
+    struct NewProjectResult {
+        bool ok = false;
+        std::string root;    ///< the project folder
+        std::string scene;   ///< its first scene file
+        std::string error;   ///< why it failed; the open scene, project and files are as before
+    };
+    /// Make a project at `root`: its folders, then `writeFiles(root, err)` (the caller's own settings files),
+    /// then the template scene (`tpl`) saved as <root>/Assets/<sceneName>.okayscene, and open it. If any step
+    /// fails everything made is removed and the scene, path, project and undo history are put back, so a
+    /// failed Create never costs the open scene. `writeFiles` may be empty.
+    NewProjectResult CreateProject(const std::string& root, const std::string& sceneName, void (EditorState::*tpl)(),
+                                   const std::function<bool(const std::string& root, std::string& error)>& writeFiles = {});
+    /// Called when the project folder changes (open, create, close): the old folder, then the new one.
+    /// The editor uses it to save the old project's settings and load the new one's.
+    static inline std::function<void(const std::string& oldDir, const std::string& newDir)> onProjectChanged;
+    /// Called after a scene file was opened successfully (the editor clears its "last save failed" note).
+    static inline std::function<void()> onSceneLoaded;
+
     // ---- Project (a folder on disk holding the scenes + assets) ---------
     const std::string& projectDir() const { return m_projectDir; }
+    /// Make `d` the open project. Only a real change does anything: the item definitions and the string
+    /// table are that project's own and are read again, and onProjectChanged runs. Setting the folder
+    /// that is already open leaves everything (including unsaved edits to those tables) alone.
     void setProjectDir(const std::string& d) {
+        if (d == m_projectDir) return;
+        const std::string old = m_projectDir;
         m_projectDir = d;
+        if (onProjectChanged) onProjectChanged(old, d);
         okay::ItemDatabase::Get().Clear();   // each project has its own item definitions
         if (!d.empty()) okay::ItemDatabase::Get().Load(ItemDatabasePath());
         okay::Localization::Reset();         // ... and its own string table
@@ -221,6 +267,10 @@ private:
     GameLoop m_loop;   // the Play loop (set up in the constructor)
 
     std::vector<std::string> m_undo, m_redo;
+    std::uint64_t m_savedPrint = 0;       // fingerprint of the scene text at the last save / load / new
+    std::uint64_t m_playPrint = 0;        // fingerprint of the edit scene Play() put aside
+    bool m_dirtyAtPlay = false;           // `dirty` when Play started (Play-time edits are thrown away)
+    static std::uint64_t Fingerprint(const std::string& sceneText);
     bool m_suppressUndo = false;
     static constexpr std::size_t kMaxUndo = 100;
 };

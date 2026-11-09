@@ -21,10 +21,12 @@
 // clocks and keep running forward (code that stamps them, such as SaveSystem::PlayTime or a Stopwatch on
 // the game clock, would see time go backwards); play time has its own field (SaveSystem::SetPlayTime).
 // Pause reasons, hit stops, the quit request and GameLoop's debug scale are session state and are never
-// saved. A built-in clock keeps its source and "holds while paused" setting (they are the code's); only
+// saved. A Time::RampTimeScale in progress IS saved (where it is going and how long it has left): a game
+// saved while easing out of slow motion would otherwise load stuck at the half-way scale for good. A built-in clock keeps its source and "holds while paused" setting (they are the code's); only
 // a clock the snapshot has and the set does not is created, with the saved settings.
 //
-// Format: keys of the block, all optional on read: `v` (1), `timeScale`, `clocks.<i>.*`, `randoms.<i>.*`.
+// Format: keys of the block, all optional on read: `v` (1), `timeScale`, `timeRampTarget` + `timeRampLeft`
+// (only while a ramp runs), `clocks.<i>.*`, `randoms.<i>.*`.
 // Doubles are written as text with 17 digits (exact), generator states as signed 64-bit integers.
 // Reading is defensive: counts are capped, bad numbers are cleaned, and an older block that lacks a
 // field leaves that part alone. Main thread only.
@@ -66,6 +68,14 @@ struct TimeSnapshot {
     };
 
     float timeScale = 1.0f;                     ///< Time::BaseTimeScale() (the scale you set; not the pause)
+    /// False when the block Read came from did not hold a time scale: Apply then leaves the gameplay time
+    /// scale alone (it used to set it to 1, against the rule that a field an older block lacks is left as it is).
+    bool hasTimeScale = true;
+    /// A Time::RampTimeScale was running: where it was heading and the real seconds it still had. Apply
+    /// restarts it from the saved scale, in the same straight line.
+    bool timeRamping = false;
+    float timeRampTarget = 1.0f;
+    float timeRampSecondsLeft = 0.0f;
     std::vector<ClockSnapshot> clocks;
     /// Named generator states. "shared" is Random::Shared().
     std::map<std::string, Random::State> randoms;

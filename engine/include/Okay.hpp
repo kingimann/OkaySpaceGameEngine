@@ -17,6 +17,7 @@
 #include "okay/Core/EventBus.hpp"
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Tween.hpp"
+#include "okay/Core/TimerDebug.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Core/SaveData.hpp"
@@ -75,6 +76,7 @@
 #include "okay/Scene/SceneLocalization.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Scene/ObjectPool.hpp"
+#include "okay/Scene/NearestLookup.hpp"
 
 // Graphics assets
 #include "okay/Graphics/Image.hpp"

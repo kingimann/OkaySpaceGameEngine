@@ -1,5 +1,6 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
+#include <cerrno>
 #include <iostream>
 #include <charconv>
 #include <limits>
@@ -202,6 +203,15 @@ namespace okay {
 // The folder of the scene file being loaded (LoadFromFile), so mesh files it
 // points at can be found next to it in an exported game.
 static thread_local std::string g_loadingSceneDir;
+
+namespace detail {
+std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
+std::uint64_t ComponentSerializerGeneration();   // ComponentSerializer.cpp
+} // namespace detail
+
+// Defined further down; the component-order check (WriteComponents) loads one object's records into a scratch scene.
+static bool ParseInto(Scene& scene, const std::string& text, bool clear, GameObject** firstNew, std::string* error,
+                      std::vector<std::string>* warnings);
 
 namespace {
 
@@ -560,7 +570,9 @@ bool AllowsMultiple(const Component* c) {
     return dynamic_cast<const ScriptComponent*>(c) || dynamic_cast<const VisualScriptComponent*>(c) ||
            dynamic_cast<const ActionList*>(c) || dynamic_cast<const SyncVar*>(c) ||
            dynamic_cast<const NetValidator*>(c) || dynamic_cast<const TweenAnimation*>(c) ||
-           dynamic_cast<const AnimStateMachine*>(c);
+           dynamic_cast<const AnimStateMachine*>(c) ||
+           dynamic_cast<const Collider2D*>(c) || dynamic_cast<const Collider3D*>(c) ||   // compound colliders
+           dynamic_cast<const AudioSource*>(c);
 }
 
 // `compoff` records for every component that is switched off (per-component flags
@@ -575,8 +587,124 @@ void WriteDisabledComponents(std::ostream& out, const GameObject* go) {
     }
 }
 
-// Write a GameObject's Transform + all known components (no header/parent line).
-void WriteComponents(std::ostream& out, GameObject* go) {
+// `comporder "Type" "Type" ...`: the stored order of an object's components after the Transform.
+void WriteComponentOrderLine(std::ostream& out, const GameObject* go) {
+    std::string line;
+    int n = 0;
+    for (const auto& c : go->Components()) {
+        if (c.get() == static_cast<const Component*>(go->transform)) continue;
+        line += " " + Quote(ComponentSerializerRegistry::TypeKey(*c));
+        ++n;
+    }
+    if (n >= 2) out << "  comporder" << line << "\n";
+}
+
+// The type names of an object's components after the Transform, in stored order.
+std::vector<std::string> ComponentKeys(const GameObject* go) {
+    std::vector<std::string> keys;
+    for (const auto& c : go->Components()) {
+        if (c.get() == static_cast<const Component*>(go->transform)) continue;
+        keys.push_back(ComponentSerializerRegistry::TypeKey(*c));
+    }
+    return keys;
+}
+
+// Do two component lists agree on the order of the components they share? The Nth component of a type is
+// the same component in both; one that only one list has (the loader added a required one, or the writer
+// saved only the first of two) is ignored.
+bool SameSharedOrder(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+    auto number = [](const std::vector<std::string>& v) {
+        std::unordered_map<std::string, int> seen;
+        std::vector<std::string> ids;
+        ids.reserve(v.size());
+        for (const std::string& k : v) ids.push_back(k + "#" + std::to_string(seen[k]++));
+        return ids;
+    };
+    const std::vector<std::string> ia = number(a), ib = number(b);
+    const std::unordered_set<std::string> sa(ia.begin(), ia.end()), sb(ib.begin(), ib.end());
+    std::vector<const std::string*> ca, cb;
+    for (const std::string& id : ia) if (sb.count(id)) ca.push_back(&id);
+    for (const std::string& id : ib) if (sa.count(id)) cb.push_back(&id);
+    if (ca.size() != cb.size()) return false;
+    for (std::size_t i = 0; i < ca.size(); ++i) if (*ca[i] != *cb[i]) return false;
+    return true;
+}
+
+// Would a file made of these component records give the object its components in the order it has now?
+// The loader adds a component when it meets its record, so the answer is what loading the records produces:
+// found by loading them once into a scratch scene. It depends on which components there are and which records
+// they wrote, not on their values, so the answer is kept per (type names, record names) and the next object of
+// the same shape costs a lookup and no load. An answer that cannot be found (the text does not load) counts as
+// "yes": nothing is written then, as before.
+bool LoadsInStoredOrder(const GameObject* go, const std::string& records) {
+    const std::vector<std::string> live = ComponentKeys(go);
+    std::string key;
+    for (const std::string& k : live) { key += k; key += ','; }
+    key += '|';
+    for (std::size_t at = 0; at < records.size();) {   // the first word of each record line
+        std::size_t nl = records.find('\n', at);
+        if (nl == std::string::npos) nl = records.size();
+        std::size_t b = at;
+        while (b < nl && records[b] == ' ') ++b;
+        std::size_t e = b;
+        while (e < nl && records[e] != ' ') ++e;
+        key.append(records, b, e - b);
+        key += ';';
+        at = nl + 1;
+    }
+    // The answer also depends on the RequireComponent rules and on which serializers are registered: the memo is dropped when they change.
+    const std::uint64_t generation = detail::ComponentRulesGeneration() * 1000003u + detail::ComponentSerializerGeneration();
+    struct Memo { std::mutex mutex; std::unordered_map<std::string, bool> verdict; std::uint64_t generation = 0; };
+    static Memo memo;
+    {
+        std::lock_guard<std::mutex> lock(memo.mutex);
+        if (memo.generation != generation) { memo.verdict.clear(); memo.generation = generation; }
+        auto it = memo.verdict.find(key);
+        if (it != memo.verdict.end()) return it->second;
+    }
+    static thread_local bool probing = false;   // a load that saves (it should not) never starts another probe
+    if (probing) return true;
+    probing = true;
+    bool natural = true;
+    {
+        Scene probe("component order");
+        const std::string text = "okayscene 3\ngameobject 0 \"O\"\n  active 1\n  parent -1\n" + records + "end\n";
+        GameObject* root = nullptr;
+        std::string error;
+        std::vector<std::string> warnings;   // kept here so nothing is printed
+        if (ParseInto(probe, text, /*clear=*/false, &root, &error, &warnings) && root)
+            natural = SameSharedOrder(live, ComponentKeys(root));
+    }
+    probing = false;
+    std::lock_guard<std::mutex> lock(memo.mutex);
+    if (memo.generation == generation) {   // not if the rules changed while this was being worked out
+        if (memo.verdict.size() > 4096) memo.verdict.clear();   // shapes are few; this only bounds a pathological run
+        memo.verdict[key] = natural;
+    }
+    return natural;
+}
+
+// Bring an object's components into the order of a `comporder` record: the Nth name of a type is the Nth
+// component of that type; names the object has no component for are ignored, and components the record
+// does not name keep their order after the named ones.
+void ApplyComponentOrder(GameObject& go, const std::vector<std::string>& names) {
+    std::unordered_map<std::string, std::vector<Component*>> byType;
+    for (const auto& c : go.Components())
+        if (c.get() != static_cast<Component*>(go.transform)) byType[ComponentSerializerRegistry::TypeKey(*c)].push_back(c.get());
+    std::unordered_map<std::string, std::size_t> used;
+    std::vector<Component*> want;
+    for (const std::string& n : names) {
+        auto it = byType.find(n);
+        if (it == byType.end()) continue;
+        std::size_t& u = used[n];
+        if (u < it->second.size()) want.push_back(it->second[u++]);
+    }
+    go.ReorderComponents(want);
+}
+
+// Write a GameObject's Transform + all known components (no header/parent line). The records come in a fixed
+// order; WriteComponents adds the `comporder` record when the object's own order differs from what they load as.
+void WriteComponentRecords(std::ostream& out, GameObject* go) {
     Transform* t = go->transform;
     const Vec3& p = t->localPosition;
     const Quat& q = t->localRotation;
@@ -1335,22 +1463,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (rb->allowSleep ? 1 : 0)
             << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
-    if (auto* bc = go->GetComponent<BoxCollider2D>()) {
+    for (auto* bc : go->GetComponents<BoxCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
             << bc->offset.x << " " << bc->offset.y << " " << (bc->isTrigger ? 1 : 0)
             << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cc = go->GetComponent<CircleCollider2D>()) {
+    for (auto* cc : go->GetComponents<CircleCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  circlecollider2d " << cc->radius << " "
             << cc->offset.x << " " << cc->offset.y << " " << (cc->isTrigger ? 1 : 0)
             << " " << cc->layer << " " << (cc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cap = go->GetComponent<CapsuleCollider2D>()) {
+    for (auto* cap : go->GetComponents<CapsuleCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  capsulecollider2d " << cap->size.x << " " << cap->size.y << " "
             << (int)cap->direction << " " << cap->offset.x << " " << cap->offset.y << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* ec = go->GetComponent<EdgeCollider2D>()) {
+    for (auto* ec : go->GetComponents<EdgeCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  edgecollider2d " << ec->offset.x << " " << ec->offset.y << " "
             << (ec->isTrigger ? 1 : 0) << " " << ec->layer << " "
             << (ec->oneWay ? 1 : 0) << " " << ec->oneWayNormal.x << " " << ec->oneWayNormal.y
@@ -1358,7 +1486,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const Vec2& p : ec->points) out << " " << p.x << " " << p.y;
         out << "\n";
     }
-    if (auto* pc = go->GetComponent<PolygonCollider2D>()) {
+    for (auto* pc : go->GetComponents<PolygonCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  polygoncollider2d " << pc->offset.x << " " << pc->offset.y << " "
             << (pc->isTrigger ? 1 : 0) << " " << pc->layer
             << " " << pc->points.size();
@@ -1605,12 +1733,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     // Mesh + Cylinder colliders derive from Box/Capsule, so write them first and guard
     // the base records by exact shape() (else GetComponent<BoxCollider3D> matches a mesh).
-    if (auto* mc = go->GetComponent<MeshCollider3D>()) {
+    for (auto* mc : go->GetComponents<MeshCollider3D>()) {
         out << "  meshcollider3d " << mc->size.x << " " << mc->size.y << " " << mc->size.z << " "
             << mc->offset.x << " " << mc->offset.y << " " << mc->offset.z << " "
             << (mc->isTrigger ? 1 : 0) << " " << mc->layer << " " << (mc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cy = go->GetComponent<CylinderCollider3D>()) {
+    for (auto* cy : go->GetComponents<CylinderCollider3D>()) {
         out << "  cylindercollider3d " << cy->radius << " " << cy->height << " " << cy->axis << " "
             << cy->offset.x << " " << cy->offset.y << " " << cy->offset.z << " "
             << (cy->isTrigger ? 1 : 0) << " " << cy->layer << " " << (cy->autoFit ? 1 : 0) << "\n";
@@ -1642,19 +1770,26 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     const bool resized = stance && stance->captured && std::fabs(stance->curH - stance->standH) > 1e-4f;
     const float standOffY = resized ? stance->feetY + stance->standH * 0.5f : 0.0f;
-    if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
-        out << "  boxcollider3d " << bc->size.x << " " << (resized ? stance->standH : bc->size.y) << " " << bc->size.z << " "
-            << bc->offset.x << " " << (resized ? standOffY : bc->offset.y) << " " << bc->offset.z << " "
+    bool firstBox = true, firstCapsule = true;   // a crouched body resizes the first one only, as before
+    for (auto* bc : go->GetComponents<BoxCollider3D>()) {
+        if (bc->shape() != Collider3D::Shape::Box) continue;   // a Mesh collider derives from Box: its own record above
+        const bool rs = resized && firstBox;
+        firstBox = false;
+        out << "  boxcollider3d " << bc->size.x << " " << (rs ? stance->standH : bc->size.y) << " " << bc->size.z << " "
+            << bc->offset.x << " " << (rs ? standOffY : bc->offset.y) << " " << bc->offset.z << " "
             << (bc->isTrigger ? 1 : 0) << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* sc = go->GetComponent<SphereCollider3D>()) {
+    for (auto* sc : go->GetComponents<SphereCollider3D>()) {
         out << "  spherecollider3d " << sc->radius << " "
             << sc->offset.x << " " << sc->offset.y << " " << sc->offset.z << " "
             << (sc->isTrigger ? 1 : 0) << " " << sc->layer << " " << (sc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cap = go->GetComponent<CapsuleCollider3D>(); cap && cap->shape() == Collider3D::Shape::Capsule) {
-        out << "  capsulecollider3d " << cap->radius << " " << (resized ? stance->standH : cap->height) << " " << cap->axis << " "
-            << cap->offset.x << " " << (resized ? standOffY : cap->offset.y) << " " << cap->offset.z << " "
+    for (auto* cap : go->GetComponents<CapsuleCollider3D>()) {
+        if (cap->shape() != Collider3D::Shape::Capsule) continue;   // a Cylinder collider derives from Capsule: its own record above
+        const bool rs = resized && firstCapsule;
+        firstCapsule = false;
+        out << "  capsulecollider3d " << cap->radius << " " << (rs ? stance->standH : cap->height) << " " << cap->axis << " "
+            << cap->offset.x << " " << (rs ? standOffY : cap->offset.y) << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
     // Trigger tag / layer filter for the object's 3D colliders (only when set).
@@ -2589,7 +2724,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    if (auto* au = go->GetComponent<AudioSource>()) {
+    for (auto* au : go->GetComponents<AudioSource>()) {   // a music bed and a sound effect can sit on one object
         out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
             << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << " "
@@ -2829,8 +2964,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (ta->autoPlay ? 1 : 0) << " " << (ta->autoKill ? 1 : 0) << " " << (ta->unscaled ? 1 : 0)
             << " " << ta->vibrato << " " << ta->elasticity << " " << ta->jumps << " " << (ta->enabled ? 1 : 0)
             << " " << Quote(ta->id);
-        // Optional tail (older files stop after the id): clock channel, ease as text.
-        if (!ta->clock.empty() || !ta->easeCurve.empty()) out << " " << Quote(ta->clock) << " " << Quote(ta->easeCurve);
+        // Optional tail (older files stop after the id): clock channel, ease as text; then, only when one of
+        // them is set, decay, speed based and tag. A reader that stops after the ease text sees the numbers as
+        // an unknown field and steps over the rest of the line.
+        const float decay = std::isfinite(ta->decay) && ta->decay > 0.0f ? ta->decay : 0.0f;
+        const bool newTail = decay > 0.0f || ta->speedBased || !ta->tag.empty();
+        if (!ta->clock.empty() || !ta->easeCurve.empty() || newTail) out << " " << Quote(ta->clock) << " " << Quote(ta->easeCurve);
+        if (newTail) out << " " << decay << " " << (ta->speedBased ? 1 : 0) << " " << Quote(ta->tag);
         out << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
@@ -3379,6 +3519,24 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     ComponentSerializerRegistry::WriteAll(*go, out);
     WriteDisabledComponents(out, go);
 }
+
+// The components of an object come back in the order their records are written (see WriteComponentRecords), so an
+// object whose components are stored in another order (added in another order, or arranged with MoveComponent /
+// ReorderComponents) also writes a `comporder` record that puts them back. An object that already loads in its own
+// order writes no extra line, so a scene made of such objects is saved exactly as before; so is an object with one
+// component or none. An object that was arranged on purpose (HasCustomComponentOrder) always writes the record.
+void WriteComponents(std::ostream& out, GameObject* go) {
+    std::size_t others = 0;
+    for (const auto& c : go->Components()) if (c.get() != static_cast<const Component*>(go->transform)) ++others;
+    if (others < 2) { WriteComponentRecords(out, go); return; }
+    if (go->HasCustomComponentOrder()) { WriteComponentRecords(out, go); WriteComponentOrderLine(out, go); return; }
+    std::ostringstream records;   // this object's records only: they are read back to see what order they load in
+    records.copyfmt(out);
+    WriteComponentRecords(records, go);
+    const std::string text = records.str();
+    out << text;
+    if (!LoadsInStoredOrder(go, text)) WriteComponentOrderLine(out, go);
+}
 } // namespace
 
 std::string SceneSerializer::Serialize(const Scene& scene) {
@@ -3555,33 +3713,58 @@ void SceneSerializer::ClearPrefabCache() {
     PrefabCacheMap().clear();
 }
 
-bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path) {
+bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path, std::string* error) {
     ClearPrefabCacheOnExit clearPrefabCache;   // whatever happens below, the next read sees the new file
     namespace fs = std::filesystem;
-    // Atomic save: write to a temp file, then rename over the target, so a crash
-    // or full disk mid-write can never leave a truncated/corrupt scene. Keep one
-    // rolling ".bak" of the previous good file for manual recovery.
-    std::string tmp = path + ".savetmp";
-    {
-        std::ofstream f(tmp, std::ios::trunc);
-        if (!f) return false;
-        f << Serialize(scene);
-        f.flush();
-        if (!f) { std::error_code rc; fs::remove(tmp, rc); return false; }
-    }
+    // Atomic save: the new text goes to "<path>.savetmp" first and is checked, then renamed over the
+    // target, so a crash or a full disk mid-write can never leave a truncated scene. The target is
+    // never moved or removed before the new file is complete: one rolling "<path>.bak" keeps the
+    // previous good copy (a copy, so a failed rename leaves the scene exactly where it was).
+    auto fail = [&](const std::string& why) { if (error) *error = why; return false; };
     std::error_code ec;
-    if (fs::exists(path, ec)) {
-        std::string bak = path + ".bak";
-        fs::remove(bak, ec);
-        fs::rename(path, bak, ec);   // best-effort previous-version backup
-        ec.clear();
+    const fs::path target(path);
+    if (fs::exists(target, ec)) {
+        if (fs::is_directory(target, ec)) return fail("\"" + path + "\" is a folder, not a scene file.");
+        const fs::perms perm = fs::status(target, ec).permissions();
+        if (!ec && (perm & (fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write)) == fs::perms::none)
+            return fail("\"" + target.filename().string() + "\" is read-only. Make it writable, or save under another name.");
     }
-    fs::rename(tmp, path, ec);        // atomic replace on the same filesystem
+    if (target.has_parent_path() && !fs::is_directory(target.parent_path(), ec))
+        return fail("The folder \"" + target.parent_path().string() + "\" doesn't exist.");
+    const std::string text = Serialize(scene);
+    const std::string tmp = path + ".savetmp";
+    {
+        errno = 0;
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return fail("Couldn't write \"" + tmp + "\": " + (errno ? std::error_code(errno, std::generic_category()).message() : std::string("no permission")));
+        f.write(text.data(), (std::streamsize)text.size());
+        f.flush();
+        if (!f) {
+            const int e = errno;
+            f.close();
+            fs::remove(tmp, ec);
+            return fail("Couldn't write \"" + path + "\": " + (e ? std::error_code(e, std::generic_category()).message() : std::string("the disk may be full")));
+        }
+    }
+    const std::uintmax_t written = fs::file_size(tmp, ec);
+    if (ec || written != text.size()) {
+        fs::remove(tmp, ec);
+        return fail("Couldn't write \"" + path + "\": the file came out the wrong size (is the disk full?).");
+    }
+    if (fs::exists(target, ec)) {   // best-effort previous-version backup; the target itself stays put
+        std::error_code be;
+        fs::copy_file(target, path + ".bak", fs::copy_options::overwrite_existing, be);
+    }
+    ec.clear();
+    fs::rename(tmp, target, ec);      // atomic replace on the same filesystem
     if (ec) {
-        // Cross-device or locked: fall back to a direct overwrite copy.
-        std::error_code ce; fs::copy_file(tmp, path, fs::copy_options::overwrite_existing, ce);
-        std::error_code rc; fs::remove(tmp, rc);
-        return !ce;
+        // Locked or a platform that won't rename over an existing file: overwrite by copy. The old file is
+        // still in place until this succeeds, and the backup above holds its content if it half-fails.
+        std::error_code ce;
+        fs::copy_file(tmp, target, fs::copy_options::overwrite_existing, ce);
+        std::error_code rc;
+        fs::remove(tmp, rc);
+        if (ce) return fail("Couldn't replace \"" + path + "\": " + ce.message());
     }
     return true;
 }
@@ -3850,6 +4033,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             std::string field;
             bool sawEnd = false;
             std::vector<std::pair<std::string, int>> compOff;   // (type key, occurrence) switched off
+            std::vector<std::string> compOrder;                  // `comporder`: type keys in the saved component order
             while (in >> field) {
                 if (field == "end") { sawEnd = true; break; }
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
@@ -7278,11 +7462,19 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ta->relative = rel != 0; ta->from = frm != 0; ta->autoPlay = ap != 0; ta->autoKill = ak != 0;
                     ta->unscaled = us != 0; ta->enabled = en != 0;
                     ta->id = ReadQuoted(in);
-                    in >> std::ws;   // optional tail: clock channel, ease as text
+                    in >> std::ws;   // optional tail: clock channel, ease as text, then decay, speed based, tag
                     if (in.peek() == '"') {
                         ta->clock = ReadQuoted(in);
                         in >> std::ws;
                         if (in.peek() == '"') ta->easeCurve = ReadQuoted(in);
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) {   // a number: the writer's second part (a quoted field would be a newer build's)
+                            int sb = 0;
+                            in >> ta->decay >> sb;
+                            ta->speedBased = sb != 0;
+                            in >> std::ws;
+                            if (in.peek() == '"') ta->tag = ReadQuoted(in);
+                        }
                     }
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
@@ -8135,6 +8327,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "compoff") {
                     std::string key = ReadQuoted(in); int occ = 0; in >> occ;
                     compOff.push_back({key, occ});
+                } else if (field == "comporder") {
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream ls(rest);
+                    while (ls >> std::ws && ls.peek() == '"') compOrder.push_back(ReadQuoted(ls));
                 } else if (field == "override") {
                     GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
                     if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);
@@ -8164,6 +8360,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         break;
                     }
             }
+            if (!compOrder.empty()) ApplyComponentOrder(*go, compOrder);   // after the flags: they were counted in the writer's order
             // Single-instance components appear once per object: a second record of
             // the same type loads (both exist) but is reported.
             {
@@ -8297,6 +8494,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             if (!ParseCore(probe, text, true, nullptr, error, &found)) return false;
         }
         report();
+        if (scene.IsUpdating()) { scene.RequestLoadText(text); return true; }   // objects are in use: loaded at the end of the frame
         scene.Clear();
         return ParseCore(scene, text, true, firstNew, error, nullptr);   // accepted above
     }
@@ -8590,6 +8788,7 @@ bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::s
     std::string raw = ss.str();
     std::string text = DataPack::Unpack(raw);   // decode if obfuscated (plaintext passes through)
     if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
+    if (scene.IsUpdating()) { scene.RequestLoad(path); return true; }   // objects are in use (a callback): loaded at the end of the frame
     // Mesh files the scene points at are also looked for next to it.
     const std::size_t slash = path.find_last_of("/\\");
     const std::string prevDir = g_loadingSceneDir;
@@ -8704,10 +8903,12 @@ std::string FirstToken(const std::string& line) {
 }
 
 // Records that describe the object's link to its prefab or its place in a
-// document, not its content: never overridden.
+// document, not its content: never overridden. `comporder` is derived from the components the object has and the
+// order they were added in, which a plain AddComponent now records (an instance that gained a component also
+// reads as having a different order); the component record is what differs, so this one is not listed twice.
 bool IsBookkeepingRecord(const std::string& tok) {
     return tok == "prefab" || tok == "override" || tok == "guid" || tok == "sibling" || tok == "parent" ||
-           tok == "srcscene" || tok == "locked" || tok.empty();
+           tok == "srcscene" || tok == "locked" || tok == "comporder" || tok.empty();
 }
 
 // A record's identity inside one object: its name plus which occurrence of it (so two

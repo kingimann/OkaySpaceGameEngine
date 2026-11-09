@@ -340,8 +340,11 @@ static void TestDamagedFiles() {
     const std::string good = Read(f.lamp);
     std::string err;
 
-    // Cut off in the middle of an object.
-    Write(f.lamp, good.substr(0, good.size() / 2));
+    // Cut off in the middle of an object (the last one: the text ends before its `end`, wherever the records of the
+    // earlier objects happen to leave the halfway mark).
+    const std::size_t lastEnd = good.rfind("\nend\n");
+    CHECK(lastEnd != std::string::npos && lastEnd > 8);
+    Write(f.lamp, good.substr(0, lastEnd - 4));
     const std::string cut = Read(f.lamp);
     PrefabDiff d;
     CHECK(!PrefabTools::Diff(*inst, d, &err) && !err.empty());

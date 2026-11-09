@@ -43,6 +43,7 @@
 #include "okay/Core/Time.hpp"
 #include <cstdint>
 #include <functional>
+#include <string>
 
 namespace okay {
 
@@ -96,6 +97,18 @@ public:
         bool stopAtPlaybackEnd = true;
         /// Frames of real time kept by Stats(); 0 turns the statistics off.
         int statsWindow = 240;
+        /// With a FramePlayer attached: a replayed frame the recording marks as paused is run paused even
+        /// when the game is not (the loop holds the pause reason kReplayPause for it and lets go on the next
+        /// frame that was running). Without it a replay only reproduces the pauses the host reproduces
+        /// itself, so a pause the recorded run got from somewhere the replay does not have (the pause that
+        /// RunFrames ends with, the editor's Pause button, a menu the inputs are not replayed for) is a
+        /// stretch of frames where the replay's game keeps moving and the Time values part ways.
+        bool replayPauses = false;
+        /// With a FramePlayer attached whose recording carries the shared random stream's state (a
+        /// FrameRecorder stores it with the first frame): put Random::Shared() back to it when the replay
+        /// starts (and each time a looping replay starts over), so the replayed game draws the numbers the
+        /// recorded one did. Recordings made before this existed carry none and are replayed as they were.
+        bool replayRandom = true;
     };
 
     /// Largest debug time scale; a debug step may not be longer than kMaxStepDelta seconds;
@@ -110,6 +123,16 @@ public:
 
     GameLoop() = default;
     explicit GameLoop(const Options& options) : m_opt(options) { Apply(); }
+    GameLoop(const GameLoop&) = default;
+    GameLoop& operator=(const GameLoop&) = default;
+    ~GameLoop() { if (s_current == this) s_current = nullptr; }
+
+    /// The loop that ran the latest frame (nullptr before any, and after it was destroyed). Code with no
+    /// handle on the loop reads the performance numbers through it: a script's `Time.fps`, a debug overlay.
+    /// With two loops in one process it is the one that ran last. Main thread only, like the loop itself.
+    static GameLoop* Current() { return s_current; }
+    /// The pause reason replayPauses holds a recorded paused frame with.
+    static constexpr const char* kReplayPause = "replay";
 
     // ---- callbacks -----------------------------------------------------------
     std::function<void(float)> OnFixedUpdate;   ///< (fixedStepSeconds), 0..maxFixedSteps times a frame
@@ -123,6 +146,9 @@ public:
     std::function<void(float, int)> OnStep;
     /// The frame that ran the last requested debug step has finished (after OnLateUpdate).
     std::function<void()> OnStepsFinished;
+    /// RunFrames' last frame has run and the loop has paused the game (see RunFrames). Fires at the end
+    /// of that frame, after OnLateUpdate; Game::Paused() already reads true.
+    std::function<void()> OnRunFramesDone;
 
     /// Run one frame for `realDeltaSeconds` of real time. Returns false when the loop
     /// should stop: Game::QuitRequested() (a PauseMenu, a script, a guarded RequestQuit
@@ -184,6 +210,30 @@ public:
     /// What the next step advances, in seconds.
     float StepDelta() const;
 
+    // ---- run N frames, then pause ------------------------------------------------------------
+    // The "play ten frames and stop" button of a debugger, and the missing half of RequestStep (which
+    // only works on a game that is already paused):
+    //
+    //     loop.RunFrames(10, 1.0f / 60.0f);          // ten frames of exactly 1/60 s, then paused
+    //     loop.OnRunFramesDone = [&] { ShowPausedBanner(); };
+    //
+    /// Run exactly `frames` more frames of a RUNNING game, then pause it (the reason `pauseReason`, by
+    /// default "manual", so Game::SetPaused(false) resumes it; a host with its own pause flag passes its
+    /// own reason and sets the flag from OnRunFramesDone). `frameSeconds` > 0 makes each of those frames
+    /// exactly that long, whatever the machine measured (an exact frame, like a capture or step frame: not
+    /// clamped, smoothed or counted as a hitch, and recorded as a synthetic one), so the run is
+    /// reproducible; <= 0 uses the host's own time. A frame counts when the game was running at its
+    /// start: frames spent paused by somebody else (a menu opened meanwhile) do not use the count up.
+    /// A second call replaces the first. On a game that is ALREADY paused this is RequestStep(frames,
+    /// frameSeconds): the steps run and the game stays paused (OnStepsFinished tells you when). False,
+    /// and nothing changes, for frames < 1. The count is capped at kMaxStepRequest, a frame length at
+    /// kMaxStepDelta. Cleared by Reset() and BeginSession().
+    bool RunFrames(int frames, float frameSeconds = 0.0f, const std::string& pauseReason = "manual");
+    void CancelRunFrames() { m_runLeft = 0; m_runDelta = 0.0f; }
+    bool IsRunningFrames() const { return m_runLeft > 0; }
+    /// Frames of the run still to go (0 when none).
+    int  RunFramesRemaining() const { return m_runLeft; }
+
     // ---- debug time scale -----------------------------------------------------------------
     /// Slow motion (< 1) or fast forward (> 1) for debugging, applied to the frame time before
     /// Time sees it: the whole game runs as if the machine were that much slower or faster. It
@@ -194,6 +244,13 @@ public:
     /// kMaxDebugTimeScale. 0 stops the clock without pausing the game.
     bool  SetDebugTimeScale(float scale);
     float DebugTimeScale() const { return m_debugScale; }
+    /// The steps of a "slower" / "faster" button pair: 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 16, 32.
+    static constexpr int   kDebugScalePresetCount = 10;
+    static constexpr float kDebugScalePresets[kDebugScalePresetCount] = {0.05f, 0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f};
+    /// The preset strictly above (`direction` > 0) or below (< 0) `current`, staying at the ends; 0 gives
+    /// `current` back. A scale that is not a finite number >= 0 counts as 1. Feed it DebugTimeScale() and
+    /// pass the result to SetDebugTimeScale.
+    static float NextDebugTimeScale(float current, int direction);
 
     // ---- capture mode -----------------------------------------------------------------------
     /// Run at a fixed frame rate whatever the real time is: each BeginFrame takes exactly
@@ -214,7 +271,7 @@ public:
     /// one is attached the real time is rounded to whole microseconds so a replay is exact.
     void AttachRecorder(FrameRecorder* recorder) { m_recorder = recorder; }
     /// Take the frame times from `player` instead of the host (not owned; nullptr detaches).
-    void AttachPlayer(FramePlayer* player) { m_player = player; }
+    void AttachPlayer(FramePlayer* player) { if (player != m_player) ReleaseReplayHold(); m_player = player; }
     FrameRecorder* Recorder() const { return m_recorder; }
     FramePlayer*   Player() const { return m_player; }
     /// Did the last BeginFrame replay a recorded frame? / Is the recording used up (and the
@@ -255,6 +312,7 @@ public:
 
 private:
     void Apply();
+    void ReleaseReplayHold();
     bool BudgetSpent() const;
     int  EffectiveMaxSteps() const;
     Options m_opt;
@@ -265,6 +323,9 @@ private:
     float  m_debugScale = 1.0f;
     int    m_stepsLeft = 0;
     float  m_stepDeltaReq = 0.0f;
+    int    m_runLeft = 0;
+    float  m_runDelta = 0.0f;
+    std::string m_runReason;
     int    m_marker = 0, m_frameMarker = 0;
     std::uint64_t m_budgetBase = 0;
     bool   m_inFrame = false, m_inStepFrame = false, m_wasStep = false, m_replaying = false;
@@ -277,6 +338,8 @@ private:
     float  m_lastHitch = 0.0f, m_worstHitch = 0.0f;
     bool   m_wasPaused = false;
     bool   m_stop = false;
+    bool   m_replayHold = false;   // this loop holds kReplayPause (replayPauses)
+    static inline GameLoop* s_current = nullptr;
 };
 
 } // namespace okay

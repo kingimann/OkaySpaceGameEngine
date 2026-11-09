@@ -934,6 +934,10 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             if (!pinOk(x.pin)) return fail("default " + pinRange);
             x.v = ParseValue(tok[3]);
             defaults.push_back(x);
+        } else if (kind == "var") {
+            // var <name> <value>: a starting value, shown in the Inspector.
+            if (tok.size() < 3) return fail("var needs <name> <value>");
+            graph->AddExposedVar(tok[1], ParseValue(tok[2]));
         } else if (kind == "pos" || kind == "comment") {
             // Editor layout (node positions, comment frames): nothing to run.
         } else {

@@ -29075,6 +29075,48 @@ void DrawInspector(EditorState& ed) {
                 if (vsc->Reload(&err)) ConsoleLog("Reloaded " + nm);
                 else ConsoleLog("Reload failed: " + err, 2);
             }
+            if (vsc->Graph() && !vsc->Graph()->ExposedVars().empty()) {
+                ImGui::TextDisabled("Change these, then press Play.");
+                for (const auto& v : vsc->Graph()->ExposedVars()) {
+                    ImGui::PushID(v.name.c_str());
+                    bool edited = false;
+                    std::string literal;
+                    if (v.value.IsNumber()) {
+                        float f = v.value.AsFloat();
+                        if (ed.isPlaying()) {
+                            auto it = vsc->Variables().find(v.name);
+                            if (it != vsc->Variables().end() && it->second.IsNumber()) f = it->second.AsFloat();
+                        }
+                        if (ImGui::DragFloat(v.name.c_str(), &f, 0.05f)) {
+                            edited = true;
+                            literal = std::to_string(f);
+                            if (ed.isPlaying()) vsc->SetVariable(v.name, okay::vs::VsValue(f));
+                        }
+                    } else {
+                        char buf[128];
+                        std::snprintf(buf, sizeof(buf), "%s", v.value.AsString().c_str());
+                        if (ImGui::InputText(v.name.c_str(), buf, sizeof(buf))) {
+                            edited = true;
+                            literal = std::string("\"") + buf + "\"";
+                            if (ed.isPlaying()) vsc->SetVariable(v.name, okay::vs::VsValue(std::string(buf)));
+                        }
+                    }
+                    if (edited && !ed.isPlaying()) {
+                        std::string src = vsc->Source();
+                        const std::string prefix = "var " + v.name + " ";
+                        const auto at = src.find(prefix);
+                        if (at != std::string::npos) {
+                            const auto end = src.find('\n', at);
+                            src.replace(at, end == std::string::npos ? std::string::npos : end - at, prefix + literal);
+                            std::string err;
+                            vsc->LoadFromText(src, &err);
+                            if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
+                            ed.dirty = true;
+                        }
+                    }
+                    ImGui::PopID();
+                }
+            }
             if (ed.isPlaying() && !vsc->Variables().empty() && ImGui::TreeNode("Variables##vsc")) {
                 for (const auto& kv : vsc->Variables())
                     ImGui::Text("%s = %s", kv.first.c_str(), kv.second.AsString().c_str());
@@ -45025,6 +45067,34 @@ int main(int argc, char** argv) {
                 okay::editor::vsed::State().g.load(vf);
                 okay::editor::vsed::State().frameAll = true;
                 g_showVisualScript = true;
+            }
+            if (const char* tp = std::getenv("OKAY_UI_VSTPL"); tp && std::strcmp(tp, "picker") == 0 && s_focusFrames == 55) {
+                g_showVisualScript = true;
+                okay::editor::vsed::State().openTemplates = true;
+            }
+            if (std::getenv("OKAY_UI_TPLDEMO") && s_focusFrames == 36) {
+                ed.view3D = true;
+                auto place = [&](const char* name, const char* which, okay::Vec3 at, okay::Color color) {
+                    GameObject* go = ed.scene().CreateGameObject(name);
+                    go->transform->localPosition = at;
+                    auto* mesh = go->AddComponent<MeshRenderer>();
+                    mesh->mesh = Mesh::Cube();
+                    mesh->color = color;
+                    const okay::editor::vsed::VsTemplate* t = okay::editor::vsed::VsTemplateNamed(which);
+                    if (!t) return;
+                    okay::editor::vsed::VsAddTemplateComponents(go, t->add);
+                    go->AddComponent<VisualScriptComponent>()->LoadFromText(t->graph);
+                };
+                place("Spinner", "Spin", {-3.2f, 0.6f, 0}, {0.95f, 0.45f, 0.25f, 1});
+                place("Floater", "Float", {-0.4f, 0.6f, 0}, {0.35f, 0.75f, 0.95f, 1});
+                place("Walker", "Patrol", {2.6f, 0.6f, 0}, {0.45f, 0.85f, 0.45f, 1});
+                place("Clock", "Countdown", {0, 2.2f, 0}, {0.95f, 0.9f, 0.4f, 1});
+                if (!ed.scene().mainCamera) {
+                    GameObject* cam = ed.scene().CreateGameObject("Camera");
+                    cam->transform->localPosition = {0, 2.4f, -8};
+                    ed.scene().mainCamera = cam->AddComponent<Camera>();
+                }
+                place("Shaker", "Camera shake", {0, -1.2f, 0}, {0.7f, 0.55f, 0.95f, 1});
             }
             if (std::getenv("OKAY_UI_VS") && s_focusFrames == 42) {
                 auto& vg = okay::editor::vsed::State().g;

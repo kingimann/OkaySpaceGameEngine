@@ -603,6 +603,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     struct Exec { int from, pin, to; };
     std::vector<Exec> execList;
     std::set<int> entries, hasExecOut;
+    std::set<std::string> exposed;   // `var name value` lines: a default the Inspector can edit
     std::map<std::pair<int, int>, std::string> typed;   // (node, pin) -> value typed into the pin
     std::istringstream in(text);
     std::string line;
@@ -627,6 +628,8 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                 std::string v;
                 for (std::size_t i = 3; i < t.size(); ++i) v += (i > 3 ? " " : "") + t[i];
                 typed[{std::stoi(t[1]), std::stoi(t[2])}] = Unquote(v);
+            } else if (t[0] == "var" && t.size() >= 2) {
+                exposed.insert(Unquote(t[1]));
             }
         } catch (...) {}
     }
@@ -807,8 +810,9 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         }
     }
 
-    // 3) Variables read but never written by this graph.
-    std::set<std::string> written;
+    // 3) Variables read but never written by this graph. A `var` line is a
+    // default (shown in the Inspector), so reading it is not a missing write.
+    std::set<std::string> written = exposed;
     for (const auto& kv : nodes)
         if (kv.second.type == "SetVar" || kv.second.type == "AddVar" || kv.second.type == "Toggle")
             written.insert(kv.second.arg.empty() ? "x" : kv.second.arg);

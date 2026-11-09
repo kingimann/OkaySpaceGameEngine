@@ -17,6 +17,7 @@
 #include "VisualScriptNames.hpp"
 #include "VisualScriptCategories.hpp"
 #include "VisualScriptLevels.hpp"
+#include "VisualScriptTemplates.hpp"
 #include "VsCanvasTools.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -757,6 +758,9 @@ struct VsEditGraph {
     std::vector<VsExecLink> execLinks;
     std::vector<VsDataLink> dataLinks;
     std::vector<VsComment> comments;
+    // `var name value` lines: starting values the Inspector edits. Kept across save.
+    struct Exposed { std::string name; std::string value; };
+    std::vector<Exposed> vars;
     int nextId = 1;
     std::string path;      // .okayvs file (empty = unsaved)
     bool dirty = false;
@@ -817,6 +821,7 @@ struct VsEditGraph {
     std::string toText() const {
         std::ostringstream o;
         o << "# OkayVS graph (edited in the Visual Script editor)\n";
+        for (const auto& v : vars) o << "var " << v.name << ' ' << okay::vs::QuoteIfNeeded(v.value) << "\n";
         for (const auto& n : nodes) {
             o << "node " << n.id << ' ' << n.type;
             if (!n.arg.empty()) o << ' ' << (n.type == "Const" ? VsConstField(n.arg) : okay::vs::QuoteIfNeeded(n.arg));
@@ -841,7 +846,7 @@ struct VsEditGraph {
         f << toText();
         path = p; dirty = false; return true;
     }
-    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); nextId = 1; path.clear(); dirty = false; }
+    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); vars.clear(); nextId = 1; path.clear(); dirty = false; }
     bool load(const std::string& p) {
         std::ifstream f(p, std::ios::binary);
         if (!f) return false;
@@ -891,6 +896,11 @@ struct VsEditGraph {
             } else if (kind == "data") {
                 VsDataLink l{};
                 if (ls >> l.consumer >> l.inPin >> l.producer >> l.outPin) dataLinks.push_back(l);
+            } else if (kind == "var") {
+                std::string name;
+                ls >> name;
+                std::string v = restOf(ls);
+                if (!name.empty()) vars.push_back({name, v});
             } else if (kind == "comment") {
                 VsComment c;
                 if (!VsReadCoord(ls, c.x) || !VsReadCoord(ls, c.y) || !VsReadCoord(ls, c.w) || !VsReadCoord(ls, c.h)) continue;
@@ -1881,6 +1891,8 @@ struct VsEditState {
     int    focusNode = -1;       // centre the view on this node next frame
     bool   addAtCenter = false;  // "+ Add" in the toolbar: palette, node placed mid-view
     bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
+    bool   openTemplates = false;   // dev hook and the Templates menu: open the picker
+    const char* templateAdd = "";   // components to add on the selected object when the template lands
     bool   frameSel = false;     // fit the selected nodes (F)
     bool   needsEvent = false;   // nodes but no event node: hint on the canvas
     // The graph checker's findings for the graph on screen (recomputed when it changes).
@@ -2044,6 +2056,12 @@ inline std::set<int> VsPasteText(VsEditGraph& g, const std::string& text, float 
         if (has(l.from) && has(l.to)) g.execLinks.push_back({remap[l.from], l.pin, remap[l.to]});
     for (const auto& l : part.dataLinks)
         if (has(l.consumer) && has(l.producer)) g.dataLinks.push_back({remap[l.consumer], l.inPin, remap[l.producer], l.outPin});
+    for (const auto& v : part.vars) {
+        bool have = false;
+        for (const auto& e : g.vars) if (e.name == v.name) have = true;
+        if (!have) g.vars.push_back(v);
+    }
+    for (auto c : part.comments) { c.x = c.x - minX + wx; c.y = c.y - minY + wy; g.comments.push_back(c); }
     g.dirty = true;
     return made;
 }
@@ -2200,7 +2218,7 @@ inline void Draw(EditorState& ed, bool* open) {
             if (ImGui::MenuItem("Bottom")) alignReq = 4;
             ImGui::EndMenu();
         }
-        if (TemplatePicker && ImGui::MenuItem("Templates...")) openTpl = true;
+        if (ImGui::MenuItem("Templates...")) st.openTemplates = true;
         ImGui::Separator();
         ImGui::MenuItem("Outline", nullptr, &st.showOutline);
         ImGui::MenuItem("Node details", nullptr, &st.showDetails);
@@ -2211,6 +2229,91 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::Separator();
         ImGui::TextDisabled("Right-click or Space adds a node");
         ImGui::TextDisabled("Scroll zooms. Home fits everything. F fits the selection.");
+        ImGui::EndPopup();
+    }
+    if (st.openTemplates) { ImGui::OpenPopup("##vsgraphtemplates"); st.openTemplates = false; }
+    ImGui::SetNextWindowSize(ImVec2(560, 620), ImGuiCond_Appearing);
+    if (ImGui::BeginPopup("##vsgraphtemplates")) {
+        ImGui::TextUnformatted("Templates");
+        ImGui::TextDisabled("Replaces this graph. If an object is selected, it is attached and missing parts are added.");
+        static char tf[64] = "";
+        static int tlevel = 0;
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##tplfind", "Search templates", tf, sizeof(tf));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 2));
+        for (int i = 0; i < 4; ++i) {
+            if (i) ImGui::SameLine();
+            const bool on = tlevel == i;
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 110, 160, 255));
+            if (ImGui::Button(VsLevelFilterName((VsLevelFilter)i), ImVec2(120, 0))) tlevel = i;
+            if (on) ImGui::PopStyleColor();
+        }
+        ImGui::PopStyleVar();
+        std::string needle = tf;
+        for (char& c : needle) c = (char)std::tolower((unsigned char)c);
+        ImGui::BeginChild("##tpllist", ImVec2(0, 460), ImGuiChildFlags_Borders);
+        const char* group = nullptr;
+        for (const VsTemplate& t : VsTemplates()) {
+            if (!VsLevelPasses(t.level, (VsLevelFilter)tlevel)) continue;
+            std::string hay = std::string(t.name) + " " + t.blurb + " " + t.category;
+            for (char& c : hay) c = (char)std::tolower((unsigned char)c);
+            if (!needle.empty() && hay.find(needle) == std::string::npos) continue;
+            if (!group || std::strcmp(group, t.category) != 0) {
+                group = t.category;
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", t.category);
+            }
+            ImGui::PushID(t.name);
+            const bool pick = ImGui::Selectable("##tpl", false, 0, ImVec2(0, ImGui::GetTextLineHeight() + 8));
+            const ImVec2 p = ImGui::GetItemRectMin();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddText(ImVec2(p.x + 4, p.y + 2), ImGui::GetColorU32(ImGuiCol_Text), t.name);
+            const char* badge = VsLevelBadge(t.level);
+            const float bw = ImGui::CalcTextSize(badge).x + 10;
+            const ImU32 bg = t.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
+                           : t.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255)
+                           : IM_COL32(52, 78, 120, 255);
+            dl->AddRectFilled(ImVec2(p.x + 220, p.y + 3), ImVec2(p.x + 220 + bw, p.y + ImGui::GetTextLineHeight() + 4), bg, 3);
+            dl->AddText(ImVec2(p.x + 225, p.y + 3), IM_COL32(230, 236, 244, 255), badge);
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(320);
+                ImGui::TextUnformatted(t.blurb);
+                if (t.needs && t.needs[0]) ImGui::TextDisabled("%s", t.needs);
+                // A small sketch of the graph: one block per node, in file order.
+                int shown = 0;
+                float x = 0;
+                for (std::size_t i = 0; i + 5 < t.graph.size() && shown < 8; ++i) {
+                    if (t.graph.compare(i, 5, "node ") != 0) continue;
+                    dl = ImGui::GetWindowDrawList();
+                    const ImVec2 a = ImGui::GetCursorScreenPos();
+                    ImGui::Dummy(ImVec2(36, 16));
+                    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(a.x + x, a.y), ImVec2(a.x + x + 28, a.y + 14),
+                                                              IM_COL32(80, 120, 160, 255), 2);
+                    x += 32; ++shown; i += 4;
+                }
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+            if (pick) {
+                g.fromText(t.graph);
+                ResetEditState(st);
+                st.frameAll = true;
+                g.dirty = true;
+                if (GameObject* go = ed.selected()) {
+                    auto* vs = go->GetComponent<VisualScriptComponent>();
+                    if (!vs) vs = go->AddComponent<VisualScriptComponent>();
+                    std::string err;
+                    vs->LoadFromText(g.toText(), &err);
+                    vs->SetPath("");
+                    VsAddTemplateComponents(go, t.add);
+                    ed.dirty = true;
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
         ImGui::EndPopup();
     }
     if (openTpl) ImGui::OpenPopup("##vstemplates");

@@ -143,6 +143,9 @@ void VisualScriptComponent::Start() {
     if (!m_graph) return;
     ScanPolledEvents();
     m_started = true;
+    // Starting values from `var` lines, unless something already set them.
+    for (const auto& v : m_graph->ExposedVars())
+        if (!m_ctx.variables.count(v.name)) m_ctx.variables[v.name] = v.value;
     Fire("OnEnable", nullptr);   // like a script: OnEnable, then Start
     if (m_graph) m_graph->RunEntries("OnStart", m_ctx);
     CheckWatches();

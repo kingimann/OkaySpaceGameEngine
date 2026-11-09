@@ -1749,6 +1749,11 @@ add_executable(test_random_extras test_random_extras.cpp)
 target_link_libraries(test_random_extras PRIVATE okay::engine)
 add_test(NAME random_extras COMMAND test_random_extras)
 
+# 1.1 fourth pass (docs/loop_and_time.md): Random / RandomExtras audit, SampleIndices, PoissonDisk2D, saving a bag or table
+add_executable(test_random_wave4 test_random_wave4.cpp)
+target_link_libraries(test_random_wave4 PRIVATE okay::engine)
+add_test(NAME random_wave4 COMMAND test_random_wave4)
+
 add_executable(test_application_loop test_application_loop.cpp)
 target_link_libraries(test_application_loop PRIVATE okay::engine)
 add_test(NAME application_loop COMMAND test_application_loop)

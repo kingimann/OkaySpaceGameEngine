@@ -1678,6 +1678,33 @@ add_test(NAME playtest_runner COMMAND okay-playtest --junit ${CMAKE_CURRENT_BINA
                                                       --text ${CMAKE_CURRENT_BINARY_DIR}/okay-playtest.txt)
 add_test(NAME playtest_runner_list COMMAND okay-playtest --list)
 set_tests_properties(playtest_runner_list PROPERTIES PASS_REGULAR_EXPRESSION "selftest\\.script_moves_object")
+
+# 1.1 Loop and time (docs/loop_and_time.md): GameLoop, Time effects + clocks, Game pause reasons /
+# quit guard, Random extras, Application on the shared loop. Deterministic: fake frame times,
+# fixed seeds, no sleeping except the Application config checks (a few tens of milliseconds).
+add_executable(test_game_loop test_game_loop.cpp)
+target_link_libraries(test_game_loop PRIVATE okay::engine)
+add_test(NAME game_loop COMMAND test_game_loop)
+
+add_executable(test_clock test_clock.cpp)
+target_link_libraries(test_clock PRIVATE okay::engine)
+add_test(NAME clock COMMAND test_clock)
+
+add_executable(test_time_extras test_time_extras.cpp)
+target_link_libraries(test_time_extras PRIVATE okay::engine)
+add_test(NAME time_extras COMMAND test_time_extras)
+
+add_executable(test_game_state test_game_state.cpp)
+target_link_libraries(test_game_state PRIVATE okay::engine)
+add_test(NAME game_state COMMAND test_game_state)
+
+add_executable(test_random_extras test_random_extras.cpp)
+target_link_libraries(test_random_extras PRIVATE okay::engine)
+add_test(NAME random_extras COMMAND test_random_extras)
+
+add_executable(test_application_loop test_application_loop.cpp)
+target_link_libraries(test_application_loop PRIVATE okay::engine)
+add_test(NAME application_loop COMMAND test_application_loop)
 # ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, per-field apply / revert
 add_executable(test_prefab_nested test_prefab_nested.cpp)
 target_link_libraries(test_prefab_nested PRIVATE okay::engine)

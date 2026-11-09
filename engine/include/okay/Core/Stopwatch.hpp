@@ -7,7 +7,7 @@
 namespace okay {
 
 /// Start / stop / lap timer. By default it measures real (wall-clock) seconds; with
-/// Stopwatch::GameTime() it follows the game clock (Time::ElapsedTime), so it stops
+/// Stopwatch::GameTime() it follows the game clock (Time::ElapsedTimeD, full precision), so it stops
 /// while the game is paused. A custom time source (seconds, increasing) can also be
 /// given, which is how tests drive it.
 ///
@@ -23,7 +23,7 @@ public:
     Stopwatch() : m_source(RealSource) {}
     explicit Stopwatch(Source source) : m_source(source ? std::move(source) : Source(RealSource)) {}
     /// A stopwatch on the game clock: paused games do not advance it.
-    static Stopwatch GameTime() { return Stopwatch([] { return (double)Time::ElapsedTime(); }); }
+    static Stopwatch GameTime() { return Stopwatch([] { return Time::ElapsedTimeD(); }); }
     /// A stopwatch on the real clock that is already running.
     static Stopwatch StartNew() { Stopwatch s; s.Start(); return s; }
 

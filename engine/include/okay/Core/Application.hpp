@@ -1,5 +1,7 @@
 #pragma once
+#include "okay/Core/GameLoop.hpp"
 #include "okay/Render/Renderer.hpp"
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -21,6 +23,11 @@ public:
         bool  smoothDt     = true;   // step by an evened-out frame time (Time::SmoothDelta)
         bool  clearScreen  = true;   // console backend clears the terminal each frame
         char  quitKey      = 'q';    // pressing it ends the loop; 0 = no quit key
+        float maxDelta     = 0.25f;  // a frame longer than this (a breakpoint, a stall) steps one target frame instead; <= 0 = no clamp
+        float fixedStep    = 0.0f;   // seconds per fixed step for loop().OnFixedUpdate; 0 = Time::FixedDeltaTime()
+        int   maxFixedSteps = 5;     // fixed steps one frame may run (the rest is dropped)
+        bool  catchExceptions = false; // true: an exception from the scene is logged, the loop ends and
+                                       // ExitCode() is 1 (Run returns); false: it is rethrown after cleanup
     };
 
     explicit Application(Config config);
@@ -30,6 +37,11 @@ public:
     void SetRenderer(std::unique_ptr<IRenderer> renderer);
 
     /// Run the main loop against the given scene until it quits.
+    ///
+    /// The terminal (raw input) is given back however Run ends, including when a script
+    /// or component throws. With Config::catchExceptions false (the default) the exception
+    /// then continues up to the caller; with it true Run logs it, records LastError() and
+    /// ExitCode() == 1 and returns normally.
     void Run(Scene& scene);
 
     /// Whether the loop should end after this frame: the game asked to quit
@@ -38,8 +50,18 @@ public:
         return quitRequested || (config.quitKey != 0 && keyPressed);
     }
 
-    /// Request a graceful shutdown of the loop.
+    /// Request a graceful shutdown of the loop (safe from another thread).
     void Quit() { m_running = false; }
+
+    /// The per-frame driver Run uses: set OnFixedUpdate / OnPause / OnResume on it before
+    /// Run, and read its hitch counters afterwards. OnUpdate is taken by Run (it updates
+    /// the scene); use a Component for per-frame work, as before.
+    GameLoop& loop() { return m_loop; }
+    /// What ended the last Run on an error: the exception's message ("" when it ended normally).
+    const std::string& LastError() const { return m_lastError; }
+    /// The process exit code: what Game::RequestQuit(reason, code) asked for, or 1 when
+    /// Run ended on an exception (with catchExceptions).
+    int ExitCode() const { return m_exitCode; }
 
     IRenderer& renderer() { return *m_renderer; }
     const Config& config() const { return m_config; }
@@ -47,7 +69,10 @@ public:
 private:
     Config m_config;
     std::unique_ptr<IRenderer> m_renderer;
-    bool m_running = false;
+    std::atomic<bool> m_running{false};
+    GameLoop m_loop;
+    std::string m_lastError;
+    int m_exitCode = 0;
 };
 
 } // namespace okay

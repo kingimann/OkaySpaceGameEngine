@@ -2,6 +2,8 @@
 #include <Okay.hpp>
 #include <algorithm>
 #include <climits>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <numeric>
 
@@ -154,6 +156,27 @@ int main() {
         CHECK(picked[0] > 700 && picked[1] > 700 && picked[2] > 700);   // each about 1000 of 3000
         CHECK(orders.size() == 6);                                       // all six orders appear
         CHECK(orders[123] > 250 && orders[123] < 750);                   // including the identity
+    }
+
+    // --- Range(float) over a span wider than a float (FLT_MAX - -FLT_MAX overflowed to infinity and always returned max) ---
+    {
+        Random r(77);
+        float lo = 0.0f, hi = 0.0f;
+        bool inRange = true;
+        for (int i = 0; i < 2000; ++i) {
+            const float v = r.Range(-3.4e38f, 3.4e38f);
+            if (!(v >= -3.4e38f && v < 3.4e38f) || !std::isfinite(v)) inRange = false;
+            lo = std::min(lo, v); hi = std::max(hi, v);
+        }
+        CHECK(inRange);
+        CHECK(lo < -1.0e38f && hi > 1.0e38f);                 // spread over the span, not stuck at one end
+        // a NaN or infinite limit gives a finite answer instead of poisoning the caller
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        CHECK(std::isfinite(r.Range(nan, 1.0f)) && std::isfinite(r.Range(0.0f, nan)));
+        CHECK(std::isfinite(r.Range(0.0f, std::numeric_limits<float>::infinity())));
+        // ordinary ranges still behave (and keep their old values: the common path is untouched)
+        for (int i = 0; i < 1000; ++i) { const float v = r.Range(2.0f, 3.0f); CHECK(v >= 2.0f && v < 3.0f); }
+        CHECK(r.Range(5.0f, 5.0f) == 5.0f);
     }
 
     TEST_MAIN_RESULT();

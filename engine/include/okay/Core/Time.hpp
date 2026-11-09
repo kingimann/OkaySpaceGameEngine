@@ -40,6 +40,17 @@ public:
     /// reads it and writes it back (a cutscene restoring the speed) never captures a
     /// hit stop; divide by this one to get back to the unscaled frame time.
     static float EffectiveTimeScale() { return s_frozen ? 0.0f : s_timeScale * s_hitMul; }
+    /// The real frame time a scaled step `dt` stands for (what "unscaled" timers and
+    /// tweens run on). Given this frame's DeltaTime() it returns the frame's exact
+    /// UnscaledDeltaTime(): dividing by EffectiveTimeScale() is wrong in a frame where a
+    /// hit stop ends or a ramp moves the scale, because DeltaTime integrated the scale
+    /// over the frame but the scale read afterwards is the end value. For any other `dt`
+    /// it undoes the effective scale, and at scale 0 falls back to UnscaledDeltaTime().
+    static float UnscaledFor(float dt) {
+        if (dt == s_deltaTime) return s_unscaledDeltaTime;
+        const float ts = EffectiveTimeScale();
+        return ts > 1e-6f ? dt / ts : s_unscaledDeltaTime;
+    }
 
     // ---- Time effects (Time.cpp) ------------------------------------------------
     // Both are measured in REAL seconds, keep running while the game is paused, and
@@ -164,6 +175,14 @@ public:
         s_fixedTime = 0.0; s_inFixed = false;
         ClearEffects();
     }
+    /// Forget SmoothDelta's history and vsync carry: a new session or scene starts its
+    /// first frames from its own measurements, not the previous scene's. (GameLoop's
+    /// BeginSession calls it.)
+    static void ResetSmoothing() {
+        s_rawPending = -1.0f;
+        for (float& h : s_hist) h = 0.0f;
+        s_histAt = 0; s_histN = 0; s_carry = 0.0f;
+    }
     /// Drop every hit stop and ramp and restore a plain scale path. The scale itself stays.
     /// Game::Reset calls it so one Play session's effects never leak into the next.
     static void ClearEffects();
@@ -277,7 +296,10 @@ public:
 
     /// How far into the next step the leftover time is: 0 (just stepped) up to
     /// just under 1. Blend the previous and current state with it.
-    float Alpha() const { return (float)(m_acc / m_step); }
+    float Alpha() const {
+        const double a = m_acc / m_step;   // can pass 1 after SetStep shrank the step, until the next Advance
+        return a <= 0.0 ? 0.0f : (a >= 1.0 ? std::nextafter(1.0f, 0.0f) : (float)a);
+    }
     /// Time carried toward the next step, seconds.
     float Accumulated() const { return (float)m_acc; }
     /// Steps the last Advance returned, and every step returned so far.

@@ -1,6 +1,7 @@
 #include "okay/Core/RandomExtras.hpp"
 
 #include <cmath>
+#include <cstdio>
 
 namespace okay {
 
@@ -11,6 +12,26 @@ constexpr int kMaxDice   = 1000;
 constexpr int kMaxSides  = 100000;
 constexpr int kMaxTerms  = 16;
 constexpr int kMaxConst  = 1000000;
+
+// The character at byte `i` as something a log line or a label can show: a whole UTF-8
+// character when the bytes form one, otherwise \xNN (a control character, half a character,
+// a stray byte). A raw byte of a multi-byte character used to go into the message alone.
+std::string Show(const std::string& s, std::size_t i) {
+    const unsigned char c = (unsigned char)s[i];
+    if (c >= 0x20 && c < 0x7F) return std::string(1, (char)c);
+    int n = 0;
+    if (c >= 0xC2 && c <= 0xDF) n = 2;
+    else if (c >= 0xE0 && c <= 0xEF) n = 3;
+    else if (c >= 0xF0 && c <= 0xF4) n = 4;
+    if (n > 0 && i + (std::size_t)n <= s.size()) {
+        bool ok = true;
+        for (int k = 1; k < n; ++k) if (((unsigned char)s[i + (std::size_t)k] & 0xC0) != 0x80) ok = false;
+        if (ok) return s.substr(i, (std::size_t)n);
+    }
+    char buf[8];
+    std::snprintf(buf, sizeof buf, "\\x%02X", (unsigned)c);
+    return buf;
+}
 
 struct Parser {
     const std::string& s;
@@ -54,7 +75,7 @@ struct Parser {
         if (!isDice) {
             if (!haveFirst) {
                 if (i >= s.size()) return Fail(DiceError::ExpectedNumber, i, "expected a number or dice after the operator");
-                return Fail(DiceError::UnexpectedCharacter, i, std::string("unexpected '") + s[i] + "'");
+                return Fail(DiceError::UnexpectedCharacter, i, "unexpected '" + Show(s, i) + "'");
             }
             if (first > kMaxConst) return Fail(DiceError::NumberTooLarge, termStart, "constant is too large");
             t.count = (int)first;
@@ -106,7 +127,7 @@ struct Parser {
             if (!Term(sign, terms)) return std::move(out);
             Ws();
             if (i >= s.size()) break;
-            if (s[i] != '+' && s[i] != '-') { Fail(DiceError::UnexpectedCharacter, i, std::string("unexpected '") + s[i] + "'"); return std::move(out); }
+            if (s[i] != '+' && s[i] != '-') { Fail(DiceError::UnexpectedCharacter, i, "unexpected '" + Show(s, i) + "'"); return std::move(out); }
             sign = s[i] == '-' ? -1 : 1;
             ++i;
             Ws();

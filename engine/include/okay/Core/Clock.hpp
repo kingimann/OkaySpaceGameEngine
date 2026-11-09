@@ -139,18 +139,20 @@ public:
     }
 
     /// Advance every clock by this frame's times.
+    /// Remembers Time::FrameCount() so TickOncePerFrame() will not tick the same frame again.
     void Tick(float scaledDt, float unscaledDt, bool gamePaused) {
         for (auto& c : m_clocks) c->Tick(scaledDt, unscaledDt, gamePaused);
+        m_lastFrame = Time::FrameCount();
     }
     /// Tick(Time::DeltaTime(), Time::UnscaledDeltaTime(), Game::Paused()).
     void TickFromTime() { Tick(Time::DeltaTime(), Time::UnscaledDeltaTime(), Game::Paused()); }
-    /// TickFromTime, but only once for each Time::FrameCount() (a host that cannot tell
+    /// TickFromTime, but only once for each Time::FrameCount(): a frame that GameLoop or an
+    /// earlier Tick / TickFromTime already ticked is skipped (a host that cannot tell
     /// whether the loop already ticked the set calls this). Where Time is never stepped
     /// (frame count stuck at 0) it ticks every call.
     void TickOncePerFrame() {
         const std::uint64_t f = Time::FrameCount();
         if (f != 0 && f == m_lastFrame) return;
-        m_lastFrame = f;
         TickFromTime();
     }
     /// Every clock back to its start (a new Play session).

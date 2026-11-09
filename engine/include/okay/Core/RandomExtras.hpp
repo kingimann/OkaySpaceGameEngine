@@ -105,9 +105,15 @@ template <class G> std::size_t IndexBelow(G& g, std::size_t n) {
 template <class T>
 class ShuffleBag {
 public:
+    /// At most kMaxSlots copies in all (a million): more are dropped, so a typo of a
+    /// weight cannot ask for gigabytes of slots.
+    static constexpr std::size_t kMaxSlots = std::size_t(1) << 20;
+
     void Add(const T& item, int copies = 1) {
         if (copies <= 0) return;
         if (copies > 100000) copies = 100000;
+        if (m_slots.size() >= kMaxSlots) return;
+        if (m_slots.size() + (std::size_t)copies > kMaxSlots) copies = (int)(kMaxSlots - m_slots.size());
         m_items.push_back(item);
         m_copies.push_back(copies);
         for (int i = 0; i < copies; ++i) m_slots.push_back(m_items.size() - 1);

@@ -144,6 +144,7 @@
 #include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/AntiCheatConfig.hpp"
 #include "okay/Components/NetValidator.hpp"
+#include "okay/Testing/SceneValidator.hpp"
 #include <cmath>
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
@@ -8892,29 +8893,30 @@ GameObject* SceneSerializer::ReapplyPrefab(Scene& scene, GameObject& instanceRoo
 
 // ---- Validation ---------------------------------------------------------
 
-SceneValidationReport SceneSerializer::Validate(const std::string& text, const std::string& assetRoot) {
-    namespace fs = std::filesystem;
-    SceneValidationReport report;
+namespace {
+
+struct ScanObj { int index = -1; std::string name; int parent = -1; };
+
+// The text pass both validators share: object names, parent links and guids, read straight from the
+// scene text (one record per line) before anything is loaded, because the loader repairs these things
+// (a duplicate guid is renamed, a parent link into nowhere is dropped) and would hide them.
+void ScanSceneLinks(const std::string& text, std::vector<ScanObj>& objs, SceneValidationReport& report) {
     auto add = [&](SceneIssue::Kind k, std::string obj, std::string msg) {
         report.issues.push_back(SceneIssue{k, std::move(obj), std::move(msg)});
     };
-
-    // Text pass: object names, parent links, guids. Records are one per line.
-    struct Obj { int index = -1; std::string name; int parent = -1; };
-    std::vector<Obj> objs;
     std::unordered_map<std::string, std::string> guidOwner;   // guid -> object label
     std::unordered_map<int, bool> known;
     {
         std::istringstream in(text);
         std::string line;
-        Obj* cur = nullptr;
+        ScanObj* cur = nullptr;
         while (std::getline(in, line)) {
             std::istringstream ls(line);
             std::string word;
             if (!(ls >> word)) continue;
             const bool indented = !line.empty() && (line[0] == ' ' || line[0] == '\t');
             if (!indented && word == "gameobject") {
-                Obj o; ls >> o.index; o.name = ReadQuoted(ls);
+                ScanObj o; ls >> o.index; o.name = ReadQuoted(ls);
                 objs.push_back(o); cur = &objs.back();
                 known[o.index] = true;
             } else if (!indented && word == "end") {
@@ -8930,10 +8932,30 @@ SceneValidationReport SceneSerializer::Validate(const std::string& text, const s
             }
         }
     }
-    for (const Obj& o : objs)
+    for (const ScanObj& o : objs)
         if (o.parent >= 0 && !known.count(o.parent))
             add(SceneIssue::Kind::BrokenParentLink, o.name + " (#" + std::to_string(o.index) + ")",
                 "parent " + std::to_string(o.parent) + " is not in the scene");
+}
+
+} // namespace
+
+SceneValidationReport ValidateSceneLinks(const std::string& text) {
+    std::vector<ScanObj> objs;
+    SceneValidationReport report;
+    ScanSceneLinks(text, objs, report);
+    return report;
+}
+
+SceneValidationReport SceneSerializer::Validate(const std::string& text, const std::string& assetRoot) {
+    SceneValidationReport report;
+    auto add = [&](SceneIssue::Kind k, std::string obj, std::string msg) {
+        report.issues.push_back(SceneIssue{k, std::move(obj), std::move(msg)});
+    };
+
+    using Obj = ScanObj;
+    std::vector<Obj> objs;
+    ScanSceneLinks(text, objs, report);
 
     // Load pass in a throwaway scene: unknown records, and the assets the loaded scene points at.
     Scene probe("validate");
@@ -8976,11 +8998,28 @@ SceneValidationReport SceneSerializer::Validate(const std::string& text, const s
         for (const auto& o : probe.Objects())
             if (!o->tag.empty() && !Tags::Contains(o->tag))
                 add(SceneIssue::Kind::UnknownTag, o->name, "tag '" + std::string(o->tag) + "' is not in the project tag list");
+    // Whether a file exists is decided once, in SceneValidator::AssetExists (the same rule the semantic validator
+    // uses): a built-in "proc:" texture or a URL is not a missing file, and the working directory is tried as well
+    // as the asset root.
+    testing::ValidatorOptions vopt;
+    vopt.assetRoot = assetRoot;
+    vopt.searchDirs.push_back("");
+    std::unordered_set<std::string> reported;
     for (const std::string& p : CollectAssetPaths(probe)) {
-        std::error_code ec;
-        if (fs::exists(fs::path(p), ec)) continue;
-        if (!assetRoot.empty() && fs::exists(fs::path(assetRoot) / p, ec)) continue;
+        if (testing::SceneValidator::AssetExists(p, vopt)) continue;
+        reported.insert(p);
         add(SceneIssue::Kind::MissingAsset, "", "file not found: " + p);
+    }
+    // CollectAssetPaths lists what a build must ship, so it follows the first component of each kind and leaves out
+    // fonts. The per-object list that SceneValidator keeps (every component, fonts, voxel terrain, ...) fills the gap
+    // and says which object points at the file.
+    for (const auto& up : probe.Objects()) {
+        if (up->IsDestroyed()) continue;
+        for (const testing::AssetRef& ref : testing::SceneValidator::AssetReferences(*up)) {
+            if (reported.count(ref.path) || testing::SceneValidator::AssetExists(ref.path, vopt)) continue;
+            reported.insert(ref.path);
+            add(SceneIssue::Kind::MissingAsset, up->name, "file not found: " + ref.path + " (" + ref.component + "." + ref.field + ")");
+        }
     }
     return report;
 }
@@ -8993,7 +9032,14 @@ SceneValidationReport SceneSerializer::ValidateFile(const std::string& path, con
         return r;
     }
     std::stringstream ss; ss << f.rdbuf();
-    return Validate(DataPack::Unpack(ss.str()), assetRoot);
+    bool packOk = true; std::string packError;
+    const std::string text = DataPack::Unpack(ss.str(), &packOk, &packError);
+    if (!packOk) {   // a damaged pack is not an empty scene: say so (it used to unpack to "" and validate as clean)
+        SceneValidationReport r;
+        r.issues.push_back(SceneIssue{SceneIssue::Kind::LoadError, "", "tampered or unreadable " + path + " (" + packError + ")"});
+        return r;
+    }
+    return Validate(text, assetRoot);
 }
 
 } // namespace okay

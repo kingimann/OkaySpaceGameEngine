@@ -96,7 +96,33 @@ std::cerr << r.ToString();
 | `LoadError` | the text could not be loaded at all |
 
 Limits: unknown keys inside a known key=value record are skipped silently by the loader and
-are not reported; the asset check covers what `CollectAssetPaths` knows about.
+are not reported.
+
+### Which validator? (core wave 6)
+
+There are two, on purpose, and they now share the parts that overlapped:
+
+| | `Scene::Validate`, `SceneSerializer::Validate(Text/File)` | `testing::SceneValidator::Validate(/Text/File)` (see `automated_testing.md`) |
+| --- | --- | --- |
+| Works on | the scene text (no scene needed; usable by a diff, merge or migration tool) | a loaded `Scene` (the Text and File forms load into a scratch scene) |
+| Answers | is the file intact: unknown records and component types, broken parent links, duplicate guids, bad layers, unknown tags, missing assets, does it load | does the scene make sense: missing assets (per object and component), cameras, duplicate names, scripts that do not compile, bad references, NaN transforms, a Rigidbody without a Collider |
+| Report | `SceneValidationReport` (kinds) | `ValidationReport` (codes, severities, JSON) |
+
+For CI and "check before you ship" use `SceneValidator::ValidateFile`: its report also carries the two findings only the
+text shows (`scene.duplicate_guid`, `scene.broken_parent`, switch `checkLinks`) next to the load warnings. Use the text
+validator where there is no scene. What they share:
+
+- "Does this file exist" is decided in one place, `SceneValidator::AssetExists`: a built-in `proc:` texture and a URL are not
+  missing files (the text validator used to report `proc:checker` as "file not found"), and the working directory is tried
+  as well as the asset root.
+- The text validator now also walks the per-object list `SceneValidator::AssetReferences` (every component, fonts, voxel
+  terrain), so a missing font is found and the message names the object (`"Label"`, `TextRenderer.fontPath`). The list
+  `CollectAssetPaths` keeps is for builds (what must ship: the first component of each kind, a sequence's audio cues, the item
+  database) and is still checked first.
+- `ValidateSceneLinks(text)` is the one text pass behind both for duplicate guids and broken parent links.
+- A damaged data pack is a `LoadError` in `SceneSerializer::ValidateFile` ("tampered or unreadable"), as it is in
+  `SceneValidator::ValidateFile` (`scene.load`); it used to unpack to an empty text and validate as clean.
+- A parent cycle is a load error in both (the loader refuses the file).
 
 ## What changed: scene graph audit (1.3)
 
@@ -259,3 +285,11 @@ for (const std::string& line : scene.Stats().Lines(3)) overlay.Add(line);   // "
 * The wide and deep destroy checks in `scene_graph_perf` rely on size (a 100000-deep chain built leaf first would have taken about 8 minutes
   before, by the growth measured at 20000 deep; 100000 children took 4.7 s); the test has a ctest `TIMEOUT` of 240 s instead of a clock inside it.
 
+## What changed: validators (core wave 6)
+
+See "Which validator?" above. Fixed: `proc:` textures reported as missing files; a damaged data pack validating as clean;
+missing fonts and voxel terrain textures not reported by `Scene::Validate`; the two validators disagreeing on where a
+file may be. Added: `ValidatorOptions::checkLinks` with `scene.duplicate_guid` and `scene.broken_parent`, and
+`ValidateSceneLinks`. Tests: `core_validation`. Not done: the third list, `AssetDatabase::FindMissing` (33.2), is a
+different question (what is not in the project's database), and `CollectAssetPaths` was left alone because builds
+depend on it.

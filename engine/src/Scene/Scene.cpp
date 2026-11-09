@@ -352,6 +352,7 @@ void Scene::Update(float deltaTime) {
     // Drop any components removed last frame (their slots were nulled).
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
     DispatchActivation();
+    ++m_updateCount;   // everything switched off before this point has now heard about it (see UpdateCount)
     LocalizeScene(*this);   // localized text follows the language (a no-op when nothing changed)
 
     // Physics debug view: this frame's rays / contacts replace last frame's.
@@ -691,6 +692,19 @@ void Scene::Destroy(GameObject* go, float seconds) {
     m_delayedDestroy.push_back({go->InstanceId(), seconds});
 }
 
+bool Scene::CancelDelayedDestroy(const GameObject* go) {
+    if (!go) return false;
+    const auto waiting = m_delayedIndex.find(go->InstanceId());
+    if (waiting == m_delayedIndex.end()) return false;
+    m_delayedDestroy[waiting->second].first = 0;   // no object has id 0: the next tick drops the entry
+    m_delayedIndex.erase(waiting);
+    return true;
+}
+
+bool Scene::IsDestroyPending(const GameObject* go) const {
+    return go && (m_destroyQueued.count(go) != 0 || m_delayedIndex.count(go->InstanceId()) != 0);
+}
+
 void Scene::DestroyImmediate(GameObject* go) {
     if (!go || go->IsDestroyed()) return;
     Destroy(go);
@@ -776,7 +790,7 @@ void Scene::DetachDying(const std::vector<GameObject*>& batch, const std::unorde
             }
             order.push_back({t, parent});
             frozen.push_back(f);
-            const auto& kids = t->m_children;
+            const auto& kids = t->Kids();
             for (std::size_t i = kids.size(); i-- > 0;)
                 if (dying(kids[i])) stack.push_back({kids[i], me});
         }
@@ -790,12 +804,9 @@ void Scene::DetachDying(const std::vector<GameObject*>& batch, const std::unorde
         t->localRotation = f.rotation.Normalized();
         t->localScale = f.scale;
     }
-    auto trim = [&dying](Transform* list) {   // the dying children leave this list together; the others keep their order
-        auto& kids = list->m_children;
-        kids.erase(std::remove_if(kids.begin(), kids.end(), dying), kids.end());
-    };
+    auto trim = [&dying](Transform* list) { list->RemoveChildrenIf(dying); };   // the dying children leave this list together; the others keep their order
     for (Transform* p : survivingParents) trim(p);
-    for (const Entry& e : order) if (!e.t->m_children.empty()) trim(e.t);
+    for (const Entry& e : order) if (e.t->ChildCount() > 0) trim(e.t);
     detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);   // parent links changed
 }
 
@@ -910,28 +921,52 @@ GameObject* Scene::Find(const std::string& name) const {
     return nullptr;
 }
 
+namespace {
+// The objects a path names, in scene order, stopping after `limit` matches. A path is read from the left: an
+// object matches when its name is what the path starts with, followed by '/' or the end; the next level
+// then has to match the rest. So an object called "a/b" is found by its whole name, and two siblings with the
+// same name are both tried (an object whose subtree has no match is not the end of the search). Runs of '/' count
+// as one, a leading and a trailing '/' are allowed. An explicit stack keeps a very long path from recursing.
+std::vector<GameObject*> CollectByPath(const std::vector<std::unique_ptr<GameObject>>& objects, const std::string& path,
+                                       std::size_t limit) {
+    std::vector<GameObject*> out;
+    std::size_t first = path.find_first_not_of('/');
+    if (first == std::string::npos || limit == 0) return out;
+    struct Frame { GameObject* go; std::size_t at; };   // `at`: where in the path this object's name has to start
+    std::vector<Frame> stack;
+    for (std::size_t i = objects.size(); i-- > 0;)
+        if (!objects[i]->transform || !objects[i]->transform->Parent()) stack.push_back({objects[i].get(), first});
+    while (!stack.empty()) {
+        const Frame f = stack.back();
+        stack.pop_back();
+        const std::string& name = f.go->name;
+        if (name.empty() || path.compare(f.at, name.size(), name) != 0) continue;
+        std::size_t after = f.at + name.size();
+        if (after < path.size()) {
+            if (path[after] != '/') continue;                 // the name is only the start of a longer one
+            after = path.find_first_not_of('/', after);
+        }
+        if (after == std::string::npos || after >= path.size()) {   // the path ends here (maybe with a '/')
+            out.push_back(f.go);
+            if (out.size() >= limit) return out;
+            continue;
+        }
+        if (!f.go->transform) continue;
+        const auto& kids = f.go->transform->Children();
+        for (std::size_t i = kids.size(); i-- > 0;)
+            if (kids[i] && kids[i]->gameObject) stack.push_back({kids[i]->gameObject, after});
+    }
+    return out;
+}
+} // namespace
+
 GameObject* Scene::FindByPath(const std::string& path) const {
-    std::vector<std::string> parts;
-    std::size_t start = 0;
-    while (start <= path.size()) {
-        std::size_t slash = path.find('/', start);
-        std::string part = path.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
-        if (!part.empty()) parts.push_back(std::move(part));   // skips a leading / doubled '/'
-        if (slash == std::string::npos) break;
-        start = slash + 1;
-    }
-    if (parts.empty()) return nullptr;
-    GameObject* cur = nullptr;
-    for (const auto& o : m_objects)
-        if (o->name == parts[0] && (!o->transform || !o->transform->Parent())) { cur = o.get(); break; }
-    for (std::size_t i = 1; cur && i < parts.size(); ++i) {
-        GameObject* next = nullptr;
-        if (cur->transform)
-            for (const Transform* ch : cur->transform->Children())
-                if (ch && ch->gameObject && ch->gameObject->name == parts[i]) { next = ch->gameObject; break; }
-        cur = next;
-    }
-    return cur;
+    const std::vector<GameObject*> hit = CollectByPath(m_objects, path, 1);
+    return hit.empty() ? nullptr : hit.front();
+}
+
+std::vector<GameObject*> Scene::FindAllByPath(const std::string& path) const {
+    return CollectByPath(m_objects, path, std::numeric_limits<std::size_t>::max());
 }
 
 std::vector<GameObject*> Scene::Roots() const {

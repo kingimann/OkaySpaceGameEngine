@@ -116,7 +116,13 @@ public:
     int   maxJumps = 1;                 // 1 = single jump, 2 = double jump, etc.
 
     // ---- Camera orbit ----
-    float mouseSensitivity = 0.2f;      // degrees per pixel
+    float mouseSensitivity = 0.2f;      // degrees per pixel with a free cursor
+    /// Degrees per pixel while the cursor is locked or confined. A captured
+    /// delta is raw device motion, so this stays gentler than a free cursor.
+    float capturedSensitivity = 0.20f;
+    /// One captured frame cannot spend more than this many pixels. A warp that
+    /// arrives as a single relative event cannot pitch through the floor.
+    float capturedPixelCap = 220.0f;
     bool  invertY = false;              // invert vertical mouse look
     bool  invertX = false;             // invert horizontal mouse look
     bool  lockCursor = true;            // hide + lock the cursor while playing (off: keep the pointer for UI)
@@ -306,12 +312,24 @@ public:
         in.yaw = yaw; in.pitch = pitch;
         const int mouseSpace = MouseSpaceGeneration();
         const bool spaceChanged = mouseSpace != m_mouseSpace;
-        if (m_haveMouse && !uiBlocked && !spaceChanged) {
-            float sens = mouseSensitivity * (aimWithRightMouse && aim ? aimSensitivity : 1.0f);
+        float pdx = 0.0f, pdy = 0.0f;
+        if (m_haveMouse) { pdx = mp.x - m_lastMouse.x; pdy = mp.y - m_lastMouse.y; }
+        const bool captured = Cursor::IsLocked() || Cursor::IsConfined();
+        const bool handoff = !m_haveMouse || uiBlocked
+            ? false
+            : DropLookHandoff(spaceChanged, m_dropLook, pdx, pdy);
+        if (!m_haveMouse && spaceChanged) m_dropLook = true;
+        if (m_haveMouse && !uiBlocked && !handoff) {
+            float sens = (captured ? capturedSensitivity : mouseSensitivity)
+                * (aimWithRightMouse && aim ? aimSensitivity : 1.0f);
             // Pixels, then degrees. m_lookDt is only the idle timer below; it
             // does not scale the look, so a hitch cannot swing the orbit.
-            float pdx = mp.x - m_lastMouse.x, pdy = mp.y - m_lastMouse.y;
             LookPixels(pdx, pdy);
+            if (captured) {
+                const float cap = capturedPixelCap > 1.0f ? capturedPixelCap : 1.0f;
+                if (pdx > cap) pdx = cap; else if (pdx < -cap) pdx = -cap;
+                if (pdy > cap) pdy = cap; else if (pdy < -cap) pdy = -cap;
+            }
             float dx = pdx * sens, dy = pdy * sens;
             if (std::fabs(pdx) + std::fabs(pdy) > 0.5f) m_mouseIdle = 0.0f;
             else m_mouseIdle += m_lookDt;
@@ -856,6 +874,7 @@ private:
 
     Vec2 m_lastMouse{0, 0};
     int m_mouseSpace = 0;            // MouseSpaceGeneration last applied; a change is a cursor warp
+    bool m_dropLook = false;         // the next nonzero sample after a warp is not a look
     float m_lookDt = 0.0f;           // this frame's dt, for the look smoothing in ReadLocalInput
     bool m_haveMouse = false;
     bool m_runToggled = false;
@@ -890,6 +909,9 @@ private:
     void ApplyCursorMode() {
         if (cursorMode <= 0) {
             lockCursor = false;
+            // A stale lock (the view was captured, then set to None) would keep
+            // feeding raw relative motion at the captured sensitivity.
+            if (Cursor::IsLocked() || Cursor::IsConfined()) Cursor::Capture(false);
             return;
         }
         lockCursor = true;

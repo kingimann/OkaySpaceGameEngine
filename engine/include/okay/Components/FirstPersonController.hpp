@@ -65,6 +65,10 @@ public:
     float jumpBufferTime = 0.12f;
     int   maxJumps = 1;                 // 1 = single jump, 2 = double jump, etc.
     float mouseSensitivity = 0.15f;     // degrees per pixel of mouse movement
+    /// Degrees per pixel while the cursor is locked or confined.
+    float capturedSensitivity = 0.15f;
+    /// One captured frame cannot spend more than this many pixels.
+    float capturedPixelCap = 220.0f;
     float minPitch = -89.0f, maxPitch = 89.0f;
     bool  invertY = false;              // invert vertical mouse look
     // View bob: up and down only, in step with walking. No sideways sway and no
@@ -285,6 +289,7 @@ public:
         // Keep the cursor hidden + locked while playing (re-assert if something freed
         // it). Turn lockCursor off to author with a normal pointer / click screen UI.
         if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
+        else if (!lockCursor && (Cursor::IsLocked() || Cursor::IsConfined())) Cursor::Capture(false);
         Simulate(ReadLocalInput(), dt);
     }
 
@@ -301,12 +306,24 @@ public:
         in.yaw = yaw; in.pitch = pitch;
         const int mouseSpace = MouseSpaceGeneration();
         const bool spaceChanged = mouseSpace != m_mouseSpace;
-        if (m_haveMouse && !uiBlocked && !spaceChanged) {
-            float sens = mouseSensitivity * (zoomWithRightMouse && zoom ? zoomSensitivity : 1.0f);
+        float pdx = 0.0f, pdy = 0.0f;
+        if (m_haveMouse) { pdx = mp.x - m_lastMouse.x; pdy = mp.y - m_lastMouse.y; }
+        const bool captured = Cursor::IsLocked() || Cursor::IsConfined();
+        const bool handoff = !m_haveMouse || uiBlocked
+            ? false
+            : DropLookHandoff(spaceChanged, m_dropLook, pdx, pdy);
+        if (!m_haveMouse && spaceChanged) m_dropLook = true;
+        if (m_haveMouse && !uiBlocked && !handoff) {
+            float sens = (captured ? capturedSensitivity : mouseSensitivity)
+                * (zoomWithRightMouse && zoom ? zoomSensitivity : 1.0f);
             // Pixels, then degrees. Frame time is not part of this: a long frame
             // must not turn a small move into a flip.
-            float pdx = mp.x - m_lastMouse.x, pdy = mp.y - m_lastMouse.y;
             LookPixels(pdx, pdy);
+            if (captured) {
+                const float cap = capturedPixelCap > 1.0f ? capturedPixelCap : 1.0f;
+                if (pdx > cap) pdx = cap; else if (pdx < -cap) pdx = -cap;
+                if (pdy > cap) pdy = cap; else if (pdy < -cap) pdy = -cap;
+            }
             float dx = pdx * sens, dy = pdy * sens;
             in.yaw   -= dx;
             in.pitch += (invertY ? 1.0f : -1.0f) * dy;
@@ -746,6 +763,14 @@ public:
             const float shownPitch = lookSmoothing > 0.0f ? m_smooth.Pitch() : pitch;
             cam->localRotation = Quat::Euler(shownPitch, 0.0f, -m_lean * leanAngle);
         }
+        {
+            Vec3 eye = cam->Position();
+            const float minY = transform->Position().y + 0.35f;
+            if (eye.y < minY) {
+                eye.y = minY;
+                cam->SetPosition(eye);
+            }
+        }
         if (Character* ch = FindCharacter()) ch->RefreshOwnerArm();
     }
 
@@ -894,6 +919,7 @@ private:
     Vec2 m_lastMouse{0, 0};
     int m_mouseSpace = 0;
     bool m_haveMouse = false;
+    bool m_dropLook = false;         // the next nonzero sample after a warp is not a look
     float m_lookDt = 0.0f;           // this frame's dt, for the look smoothing in ReadLocalInput
     bool m_runToggled = false;
     Stance m_stance = Stance::Stand;

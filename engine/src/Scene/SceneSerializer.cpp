@@ -2187,7 +2187,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
          ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
          ("walkA", fp->walkAcceleration)("steer", fp->steerRate)
-         .b("dive", fp->diveOnProneWhileSprinting)("diveHop", fp->diveHop)("diveSlide", fp->diveSlideTime);
+         .b("dive", fp->diveOnProneWhileSprinting)("diveHop", fp->diveHop)("diveSlide", fp->diveSlideTime)
+         ("capSens", fp->capturedSensitivity)("capPx", fp->capturedPixelCap);
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -2226,7 +2227,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
          ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
          ("walkA", tp->walkAcceleration)("steer", tp->steerRate)
-         .b("dive", tp->diveOnProneWhileSprinting)("diveHop", tp->diveHop)("diveSlide", tp->diveSlideTime);
+         .b("dive", tp->diveOnProneWhileSprinting)("diveHop", tp->diveHop)("diveSlide", tp->diveSlideTime)
+         ("capSens", tp->capturedSensitivity)("capPx", tp->capturedPixelCap);
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -6089,6 +6091,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         k.f("proneH", c->proneHeight); k.i("pad", c->stanceGamepadButton); k.f("hold", c->proneHoldTime);
                         k.f("walkA", c->walkAcceleration); k.f("steer", c->steerRate);
                         k.b("dive", c->diveOnProneWhileSprinting); k.f("diveHop", c->diveHop); k.f("diveSlide", c->diveSlideTime);
+                        k.f("capSens", c->capturedSensitivity); k.f("capPx", c->capturedPixelCap);
                         // Saved crouched / prone: start that way (the collider was saved standing).
                         int st = 0; k.i("stance", st);
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;

@@ -1147,6 +1147,10 @@ add_executable(test_clear_spawn test_clear_spawn.cpp)
 target_link_libraries(test_clear_spawn PRIVATE okay::engine)
 add_test(NAME clear_spawn COMMAND test_clear_spawn)
 
+add_executable(test_play_look test_play_look.cpp)
+target_link_libraries(test_play_look PRIVATE okay::engine)
+add_test(NAME play_look COMMAND test_play_look)
+
 add_executable(test_gap_stuck test_gap_stuck.cpp)
 target_link_libraries(test_gap_stuck PRIVATE okay::engine)
 add_test(NAME gap_stuck COMMAND test_gap_stuck)

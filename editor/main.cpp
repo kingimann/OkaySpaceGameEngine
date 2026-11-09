@@ -293,24 +293,35 @@ struct PlayPointerFrame {
     bool released = false;
     bool editorSeesMouse = true;
     bool feedEscapeToGame = false;
+    /// This frame entered Play, or the user clicked the Game view, while a
+    /// text field still owned the keyboard. Clear it and feed the game.
+    bool clearTextFocus = false;
+    /// Keys and mouse go to the game. False while the user is typing in a
+    /// field they clicked during Play.
+    bool feedGame = false;
 };
 
 static PlayPointerFrame DecidePlayPointer(bool playing, bool wantText, bool escapeEdge,
                                          bool escapeHeld, bool wasReleased, bool grabbed,
-                                         bool gameClicked = false) {
+                                         bool gameClicked = false, bool playStarted = false) {
     PlayPointerFrame d;
     if (!playing) return d;
     const bool esc = escapeEdge || escapeHeld;
-    // A text field releases the pointer, but a click on the Game view takes it
-    // back in the same frame. Otherwise a focused Script Editor forces the
-    // cursor free forever and there is no way to lock it.
-    d.released = wasReleased || esc || (wantText && !gameClicked);
-    if (gameClicked && !esc) d.released = false;
+    // Play, or a click on the Game view, takes the keyboard away from a field
+    // that was focused in edit mode (an Inspector number, the script editor).
+    // A field the user clicks during Play is neither of those, so it keeps
+    // the keys and the cursor stays free.
+    const bool takeGame = (gameClicked || playStarted) && !esc;
+    d.clearTextFocus = wantText && takeGame;
+    const bool textHolds = wantText && !d.clearTextFocus;
+    d.released = wasReleased || esc || textHolds;
+    if (takeGame) d.released = false;
     // The press that frees the cursor is the editor's. A new tap once the
     // cursor is already free can still open a pause menu. A hold that began
     // during the grab must not become that tap on the next frame.
     d.feedEscapeToGame = escapeEdge && wasReleased && !wantText;
-    d.editorSeesMouse = !grabbed || escapeEdge || wantText;
+    d.editorSeesMouse = !grabbed || escapeEdge || textHolds;
+    d.feedGame = !textHolds;
     return d;
 }
 
@@ -390,8 +401,14 @@ static int RunSelfTest() {
         PlayPointerFrame typed = DecidePlayPointer(true, true, false, false, false, false, false);
         check(typed.released, "a text field keeps the cursor released");
         PlayPointerFrame clicked = DecidePlayPointer(true, true, false, false, true, false, true);
-        check(!clicked.released && clicked.editorSeesMouse,
+        check(!clicked.released && clicked.editorSeesMouse && clicked.clearTextFocus && clicked.feedGame,
               "a click on the Game view locks the cursor even while a text field wanted input");
+        PlayPointerFrame started = DecidePlayPointer(true, true, false, false, false, false, false, true);
+        check(started.clearTextFocus && started.feedGame && !started.released,
+              "Play clears a focused field and gives keys to the game");
+        PlayPointerFrame typing = DecidePlayPointer(true, true, false, false, false, false, false, false);
+        check(!typing.clearTextFocus && !typing.feedGame && typing.released,
+              "a field clicked during Play still takes the keyboard");
         check(PlayStopShortcut(true, true), "Ctrl+P works while the script editor is focused");
         {
             EditorState spawn;
@@ -3470,6 +3487,9 @@ bool   g_gameMouseCapture = false;
 // keeps asking for a locked one (FPS/TPS controllers re-lock every frame); clicking
 // in the Game view gives it to the game again.
 bool   g_gameCursorReleased = false;
+// Set on the frame Play is entered from the editor. The input poll may run
+// before or after that click; it consumes the flag and clears text focus.
+static bool g_playTextHandoff = false;
 // Previous frame locked the play cursor. The poll uses this so a click cannot
 // land on the Play button at the frozen absolute position.
 static bool g_playPointerGrabbed = false;
@@ -6500,6 +6520,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             CompileOpenScriptBuffers(ed.scene());
             NavigationBeforePlay(ed);   // surfaces set to bake before Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+            g_playTextHandoff = true; ImGui::ClearActiveID();
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         } else {
             okay::editor::apreview::Stop(ed.scene());   // before Stop destroys the play copy
@@ -15848,6 +15869,7 @@ void HandleShortcuts(EditorState& ed) {
             CompileOpenScriptBuffers(ed.scene());
             NavigationBeforePlay(ed);
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+            g_playTextHandoff = true; ImGui::ClearActiveID();
             g_showGame = true; g_focusGameOnPlay = true;
         }
     }
@@ -33507,6 +33529,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Coyote Time##fp", &fp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::DragFloat("Jump Buffer##fp", &fp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::DragFloat("Mouse Sensitivity##fp", &fp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Captured Sensitivity##fp", &fp->capturedSensitivity, 0.005f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Degrees per pixel while the cursor is locked or confined.");
+            if (ImGui::DragFloat("Captured Pixel Cap##fp", &fp->capturedPixelCap, 1.0f, 4.0f, 120.0f, "%.0f px")) ed.dirty = true;
             if (ImGui::Checkbox("Invert Y##fp", &fp->invertY)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##fp", &fp->canJump)) ed.dirty = true;
             if (fp->canJump) { ImGui::SameLine(); ImGui::SetNextItemWidth(90);
@@ -33713,6 +33738,10 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Camera");
             if (ImGui::DragFloat("Mouse Sensitivity##tp", &tp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Captured Sensitivity##tp", &tp->capturedSensitivity, 0.005f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Degrees per pixel while the cursor is locked or confined.\nA captured delta is raw device motion, so this stays gentler than a free cursor.");
+            if (ImGui::DragFloat("Captured Pixel Cap##tp", &tp->capturedPixelCap, 1.0f, 4.0f, 120.0f, "%.0f px")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One captured frame cannot turn more than this many pixels.\nStops a warp, or one injected move, from pitching the camera through the ground.");
             if (ImGui::Checkbox("Invert X##tp", &tp->invertX)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Invert Y##tp", &tp->invertY)) ed.dirty = true;
@@ -44653,12 +44682,17 @@ int main(int argc, char** argv) {
         const bool wasReleased = g_gameCursorReleased;
         const bool gameClicked = ed.isPlaying() && g_gameCanvasHovered &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !escapeEdge && !escapeHeld;
-        if (gameClicked && io.WantTextInput) ImGui::ClearActiveID();
+        const bool playStarted = g_playTextHandoff;
+        g_playTextHandoff = false;
+        // Play, a click on the Game view, or the capture those start, drops a
+        // field that was focused in edit mode. io.WantTextInput stays true until
+        // the next frame, so the decision feeds the game on this frame too.
+        if ((playStarted || gameClicked) && io.WantTextInput) ImGui::ClearActiveID();
         const PlayPointerFrame pointer = DecidePlayPointer(
             ed.isPlaying(), io.WantTextInput, escapeEdge, escapeHeld, wasReleased, g_playPointerGrabbed,
-            gameClicked);
+            gameClicked, playStarted);
         g_gameCursorReleased = pointer.released;
-        if (ed.isPlaying() && (!io.WantTextInput || gameClicked)) {
+        if (ed.isPlaying() && pointer.feedGame) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
             for (char c = 'a'; c <= 'z'; ++c)
@@ -45192,6 +45226,7 @@ int main(int argc, char** argv) {
                 okay::editor::apreview::Stop(ed.scene());
                 CompileOpenScriptBuffers(ed.scene());
                 ed.Play(); g_paused = false; ConsoleLog("Play");
+                g_playTextHandoff = true; ImGui::ClearActiveID();
             }
             // OKAY_UI_UIADD=Lobby: the UI editing view with that prebuilt screen added
             // (screenshots of the UI editor and its "+ Add" menu).

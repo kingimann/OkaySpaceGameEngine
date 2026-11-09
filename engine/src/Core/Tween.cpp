@@ -384,7 +384,10 @@ void TweenManager::Update(float dt, float unscaledDt) {
         if (t->m_killed) continue;
         try {
             float step = t->unscaledTime ? unscaledDt : dt;
-            if (!t->clock.empty()) step = t->m_clockCursor.Take((m_clocks ? *m_clocks : ClockSet::Global()).Get(t->clock));
+            if (!t->clock.empty()) {
+                const Clock& c = (m_clocks ? *m_clocks : ClockSet::Global()).Get(t->clock);
+                step = t->m_clockCursor.Take(c.Ticks(), c.Elapsed(), c.Delta());
+            }
             t->Advance(step);
             if (t->m_owner != this) continue;   // a callback moved it into a sequence: that drives it now
             if (!t->m_killed && t->m_complete && t->autoKill && !t->backwards) t->Kill();

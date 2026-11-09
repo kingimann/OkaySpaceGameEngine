@@ -11,11 +11,12 @@
 
 namespace okay {
 
-class Clock;
-
 struct ClockCursor {
-    /// Seconds `clock` advanced since the last Take (0 while it is paused or held).
-    float Take(const Clock& clock);
+    /// Seconds a Clock advanced since the last Take (0 while it is paused or held). Pass the
+    /// clock's Ticks(), Elapsed() and Delta(). (Takes the numbers, not the Clock: this header is
+    /// part of <Okay.hpp> and must not name okay::Clock, so a program with its own `Clock` and
+    /// `using namespace okay;` keeps compiling.)
+    float Take(std::uint64_t clockTicks, double clockElapsed, float clockDelta);
 
     bool primed = false;
     std::uint64_t ticks = 0;

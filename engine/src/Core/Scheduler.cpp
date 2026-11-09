@@ -283,17 +283,15 @@ void Scheduler::TickGlobal(const void* caller, float dt) {
 
 void Scheduler::Update(float dt) { Update(dt, UnscaledFrom(dt)); }
 
-float ClockCursor::Take(const Clock& clock) {
-    const std::uint64_t t = clock.Ticks();
-    const double e = clock.Elapsed();
+float ClockCursor::Take(std::uint64_t t, double e, float delta) {
     if (!primed) {                   // the first look takes this frame's share, like a scene-time task would
         primed = true;
         ticks = t > 0 ? t - 1 : 0;
-        elapsed = e - (double)clock.Delta();
+        elapsed = e - (double)delta;
     }
     if (t == ticks) { elapsed = e; return 0.0f; }
     if (t < ticks || e < elapsed) { ticks = t; elapsed = e; return 0.0f; }   // the clock was reset: resync
-    const float d = t - ticks == 1 ? clock.Delta() : (float)(e - elapsed);   // one tick: its exact delta
+    const float d = t - ticks == 1 ? delta : (float)(e - elapsed);           // one tick: its exact delta
     ticks = t;
     elapsed = e;
     return d > 0.0f && std::isfinite(d) ? d : 0.0f;
@@ -303,7 +301,8 @@ float ClockCursor::Take(const Clock& clock) {
 // since it last looked (also while paused, so a pause does not bank time).
 float Scheduler::TaskStep(Task& t, float dt, float unscaledDt) {
     if (t.clock.empty()) return t.unscaled ? unscaledDt : dt;
-    return t.cursor.Take((m_clocks ? *m_clocks : ClockSet::Global()).Get(t.clock));
+    const Clock& c = (m_clocks ? *m_clocks : ClockSet::Global()).Get(t.clock);
+    return t.cursor.Take(c.Ticks(), c.Elapsed(), c.Delta());
 }
 
 void Scheduler::RunTask(std::size_t i, float dt, float unscaledDt) {

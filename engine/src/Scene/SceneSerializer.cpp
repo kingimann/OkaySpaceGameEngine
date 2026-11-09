@@ -186,6 +186,7 @@
 #include <functional>
 #include "okay/Core/DataPack.hpp"   // transparent unpack of obfuscated game data
 #include <fstream>
+#include <chrono>
 #include <filesystem>
 #include <sstream>
 #include <type_traits>
@@ -3461,7 +3462,27 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     return out.str();
 }
 
+namespace {
+// The decoded text of recently read prefab files, keyed by path and checked against the file's
+// size and time, so spawning the same prefab again does not reopen and decode it. A file that was
+// modified in the last two seconds is never cached (its time cannot yet tell two writes apart),
+// and every write the engine makes clears the cache.
+struct CachedPrefab { std::filesystem::file_time_type time; std::uintmax_t size = 0; std::string text; };
+std::mutex& PrefabCacheMutex() { static std::mutex m; return m; }
+std::unordered_map<std::string, CachedPrefab>& PrefabCacheMap() {
+    static std::unordered_map<std::string, CachedPrefab> c;
+    return c;
+}
+struct ClearPrefabCacheOnExit { ~ClearPrefabCacheOnExit() { SceneSerializer::ClearPrefabCache(); } };
+} // namespace
+
+void SceneSerializer::ClearPrefabCache() {
+    std::lock_guard<std::mutex> lock(PrefabCacheMutex());
+    PrefabCacheMap().clear();
+}
+
 bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path) {
+    ClearPrefabCacheOnExit clearPrefabCache;   // whatever happens below, the next read sees the new file
     namespace fs = std::filesystem;
     // Atomic save: write to a temp file, then rename over the target, so a crash
     // or full disk mid-write can never leave a truncated/corrupt scene. Keep one
@@ -8332,6 +8353,7 @@ GameObject* SceneSerializer::Instantiate(Scene& scene, const GameObject& prefab)
 }
 
 bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string& path) {
+    ClearPrefabCacheOnExit clearPrefabCache;
     std::ofstream f(path);
     if (!f) return false;
     f << SerializeObject(root);
@@ -8340,11 +8362,8 @@ bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string
 
 GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string& path,
                                                  std::string* error, std::vector<std::string>* warnings) {
-    // The decoded text of recently read prefab files, keyed by path and checked against the
-    // file's size and time, so spawning the same prefab again does not reopen and decode it.
-    struct CachedPrefab { std::filesystem::file_time_type time; std::uintmax_t size = 0; std::string text; };
-    static std::mutex cacheMutex;
-    static std::unordered_map<std::string, CachedPrefab> cache;
+    std::mutex& cacheMutex = PrefabCacheMutex();
+    auto& cache = PrefabCacheMap();
     std::string text;
     {
         std::error_code ec1, ec2;
@@ -8362,7 +8381,7 @@ GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string
             std::stringstream ss; ss << f.rdbuf();
             text = DataPack::Unpack(ss.str());   // decode if obfuscated
             if (text.empty() && DataPack::IsPacked(ss.str())) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
-            if (!ec1 && !ec2) {
+            if (!ec1 && !ec2 && (std::filesystem::file_time_type::clock::now() - mtime) > std::chrono::seconds(2)) {
                 std::lock_guard<std::mutex> lock(cacheMutex);
                 if (cache.size() >= 32) cache.clear();   // small and simple: start over when full
                 cache[path] = CachedPrefab{mtime, fsize, text};

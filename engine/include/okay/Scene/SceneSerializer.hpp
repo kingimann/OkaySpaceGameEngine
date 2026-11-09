@@ -81,6 +81,9 @@ public:
     static std::string Serialize(const Scene& scene);
     /// Write a scene to a file. Returns false on I/O error.
     static bool SaveToFile(const Scene& scene, const std::string& path);
+    /// Forget the decoded prefab text InstantiateFromFile keeps for recently read files. The engine's
+    /// own writers call this; call it after changing a prefab file by other means.
+    static void ClearPrefabCache();
 
     /// Rebuild `scene` (cleared first, but only once the text has parsed) from
     /// serialized text. Returns false on a parse error, with details in `error`.

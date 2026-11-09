@@ -1856,6 +1856,10 @@ float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
 bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
+bool g_gameStatsGraph  = true;   // ... with the frame-rate graph under the performance lines (persisted)
+bool g_gameStatsScene  = true;   // ... and the scene's counts: objects, components, the biggest types (persisted)
+bool g_gameStatsTimers = false;  // ... and the timers and tweens (what the scheduler and TweenManager hold) (persisted)
+int  g_runFramesN      = 10;     // the toolbar's "Run N frames then pause" count (persisted)
 // Physics debug view (Scene + Game views): colliders, triggers, contacts and rays.
 bool g_physDebug = false;        // the master toggle (persisted)
 bool g_physDebugRays = true;     // ...also draw rays / casts made by scripts (persisted)
@@ -2092,6 +2096,10 @@ void LoadSettings() {
         else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
+        else if (k == "gamestatsgraph") g_gameStatsGraph = (v != 0);
+        else if (k == "gamestatsscene") g_gameStatsScene = (v != 0);
+        else if (k == "gamestatstimers") g_gameStatsTimers = (v != 0);
+        else if (k == "runframesn") g_runFramesN = (v < 1 ? 1 : (v > 100000 ? 100000 : v));
         else if (k == "physdebug") g_physDebug = (v != 0);
         else if (k == "physdebugrays") g_physDebugRays = (v != 0);
         else if (k == "gamecustomw") g_gameCustomW = (v < 16 ? 16 : (v > 8192 ? 8192 : v));
@@ -2143,6 +2151,10 @@ void SaveSettings() {
       << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
       << "gameres " << g_gameResPreset << "\n"
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
+      << "gamestatsgraph " << (g_gameStatsGraph ? 1 : 0) << "\n"
+      << "gamestatsscene " << (g_gameStatsScene ? 1 : 0) << "\n"
+      << "gamestatstimers " << (g_gameStatsTimers ? 1 : 0) << "\n"
+      << "runframesn " << g_runFramesN << "\n"
       << "physdebug " << (g_physDebug ? 1 : 0) << "\n"
       << "physdebugrays " << (g_physDebugRays ? 1 : 0) << "\n"
       << "gamecustomw " << g_gameCustomW << "\n"
@@ -2864,27 +2876,30 @@ void LoadProjectSettings() {
         else if (k == "splash_accent") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashAccent[0], &g_project.splashAccent[1], &g_project.splashAccent[2]);
     }
 }
+// Give a layer a name (empty = back to the default), save the project file, or say why not in `err`. Shared by the
+// right-click rename in the layer lists and the Tags and Layers section of Project Settings.
+static bool TryRenameLayer(int layer, const std::string& name, std::string& err) {
+    err.clear();
+    const bool ok = name.empty() ? okay::Layers::ClearName(layer) : okay::Layers::SetName(layer, name);
+    if (ok) { SaveProjectSettings(); return true; }
+    err = name.empty() ? "Layer 0 always keeps a name"
+        : !okay::Layers::IsValidName(name) ? "1 to 32 characters; no comma or !, no space at either end, not only digits"
+        : "another layer already has that name";
+    return false;
+}
 // A layer's name is a project setting (okay::Layers, saved in project.okayproj with the tag list). Right-click a
 // layer in a list to rename it: Enter applies, an empty box (or Reset) goes back to the default name, which
 // the box shows as its hint. Call it right after the layer's own item, inside the list's popup.
 static void LayerRenameMenu(int layer) {
     if (!okay::Layers::IsValid(layer)) return;
     if (!ImGui::BeginPopupContextItem((std::string("layerctx") + std::to_string(layer)).c_str())) return;
-    static char buf[48] = "";
+    static char buf[okay::Layers::kMaxNameLength * 4 + 1] = "";   // sized for 4 bytes a character (the limit may be counted in characters)
     static std::string err;
     if (ImGui::IsWindowAppearing()) {
         std::snprintf(buf, sizeof(buf), "%s", okay::Layers::IsNamed(layer) ? okay::Layers::Name(layer).c_str() : "");
         err.clear();
     }
-    auto apply = [&](const std::string& name) {
-        err.clear();
-        const bool ok = name.empty() ? okay::Layers::ClearName(layer) : okay::Layers::SetName(layer, name);
-        if (ok) { SaveProjectSettings(); return true; }
-        err = name.empty() ? "Layer 0 always keeps a name"
-            : !okay::Layers::IsValidName(name) ? "1 to 32 characters; no comma or !, no space at either end, not only digits"
-            : "another layer already has that name";
-        return false;
-    };
+    auto apply = [&](const std::string& name) { return TryRenameLayer(layer, name, err); };
     ImGui::TextDisabled("Layer %d name", layer);
     ImGui::SetNextItemWidth(170);
     const std::string hint = okay::Layers::DefaultName(layer)[0] ? okay::Layers::DefaultName(layer) : "Layer " + std::to_string(layer);
@@ -2899,7 +2914,7 @@ static void LayerRenameMenu(int layer) {
 // The right-click menu of a custom tag: rename it (the list, and the tag on every object of this scene that
 // carries it) before "Remove tag from list".
 static void TagRenameMenu(EditorState& ed, const std::string& tag) {
-    static char buf[80] = "";
+    static char buf[okay::Tags::kMaxLength * 4 + 1] = "";
     static std::string err;
     if (ImGui::IsWindowAppearing()) { std::snprintf(buf, sizeof(buf), "%s", tag.c_str()); err.clear(); }
     ImGui::SetNextItemWidth(170);
@@ -5649,6 +5664,89 @@ static void StopAnimPreview();
 static void StopModelScenePreview(EditorState& ed);
 static void StopLivePreview(EditorState& ed);
 
+// The toolbar's playback-speed group, shown while the game runs: [slower] [current speed v] [faster]. The speed is the
+// Play loop's debug time scale (okay::GameLoop::SetDebugTimeScale): only the editor's frame time is scaled, the game's
+// own Time.timeScale is untouched, and Stop puts it back to 1x. Clicking the speed opens the preset list and
+// "Run N frames, then pause" (EditorState::RunFrames: N frames of exactly 1/60 s, so a bug repeats, then the Pause
+// button takes over; while already paused it steps N frames and stays paused).
+static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
+    const float sc = ed.debugTimeScale();
+    const bool off1x = sc != 1.0f;
+    char lbl[24];
+    std::snprintf(lbl, sizeof(lbl), "%gx", sc);
+    const float sw = tb * 1.0f;                                              // the slower / faster buttons
+    const float lw = std::max(tb * 1.35f, ImGui::CalcTextSize("0.25x").x + 16.0f);
+    ImGui::SameLine(0, 8.0f);
+    const ImVec2 gp = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(gp, ImVec2(gp.x + sw * 2.0f + lw, gp.y + tb),
+                      off1x ? IM_COL32(150, 112, 30, 215) : ImGui::GetColorU32(ImGuiCol_FrameBg), tb * 0.3f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, tb * 0.3f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+    const ImU32 ic = IM_COL32(215, 219, 228, 235);
+    auto centre = [] { const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                       return ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f); };
+    // Slower: two triangles pointing left (rewind).
+    if (ImGui::Button("##tslower", ImVec2(sw, tb))) ed.StepDebugTimeScale(-1);
+    {
+        const ImVec2 c = centre(); const float h = tb * 0.17f;
+        for (int k = 0; k < 2; ++k) {
+            const float x = c.x + (k ? h * 0.95f : -h * 0.05f);
+            dl->AddTriangleFilled(ImVec2(x, c.y - h), ImVec2(x, c.y + h), ImVec2(x - h * 1.05f, c.y), ic);
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slower: slow motion for debugging\n(0.5x, 0.25x, 0.1x, 0.05x). Only the editor's\nframe time is scaled; Time.timeScale is untouched.");
+    // The current speed: a click opens the presets and "Run N frames".
+    ImGui::SameLine();
+    const bool lblHit = ImGui::Button("##tspeed", ImVec2(lw, tb));
+    {
+        const ImVec2 ts = ImGui::CalcTextSize(lbl), c = centre();
+        dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), off1x ? IM_COL32(255, 238, 190, 255) : ic, lbl);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback speed %s. Click for all speeds and\n\"Run N frames, then pause\".", lbl);
+    if (lblHit) ImGui::OpenPopup("##speedpop");
+    // Faster: two triangles pointing right (fast forward).
+    ImGui::SameLine();
+    if (ImGui::Button("##tfaster", ImVec2(sw, tb))) ed.StepDebugTimeScale(+1);
+    {
+        const ImVec2 c = centre(); const float h = tb * 0.17f;
+        for (int k = 0; k < 2; ++k) {
+            const float x = c.x + (k ? h * 0.05f : -h * 0.95f);
+            dl->AddTriangleFilled(ImVec2(x, c.y - h), ImVec2(x, c.y + h), ImVec2(x + h * 1.05f, c.y), ic);
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Faster: fast forward (2x up to 32x)");
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    if (ImGui::BeginPopup("##speedpop")) {
+        ImGui::TextDisabled("Playback speed (debug)");
+        for (int i = 0; i < GameLoop::kDebugScalePresetCount; ++i) {
+            const float v = GameLoop::kDebugScalePresets[i];
+            char b[16]; std::snprintf(b, sizeof(b), "%gx", v);
+            if (i % 5) ImGui::SameLine();
+            if (ImGui::Selectable(b, v == sc, 0, ImVec2(46, 0))) ed.playLoop().SetDebugTimeScale(v);
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("Run frames, then pause");
+        ImGui::SetNextItemWidth(150);
+        ImGui::InputInt("##runframes", &g_runFramesN, 1, 10);
+        g_runFramesN = g_runFramesN < 1 ? 1 : (g_runFramesN > 100000 ? 100000 : g_runFramesN);
+        ImGui::SameLine();
+        if (ImGui::Button("Run")) {
+            if (ed.RunFrames(g_runFramesN, 1.0f / 60.0f)) { SaveSettings(); ConsoleLog("Run " + std::to_string(g_runFramesN) + " frames, then pause"); ImGui::CloseCurrentPopup(); }
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("1")) g_runFramesN = 1;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("10")) g_runFramesN = 10;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("60")) g_runFramesN = 60;
+        ImGui::TextDisabled("Every frame is exactly 1/60 s, so a bug repeats.\nPaused: steps those frames and stays paused.");
+        ImGui::EndPopup();
+    }
+}
+
 void DrawMenuAndToolbar(EditorState& ed) {
     SceneBuildSync(ed);
     // play tint: while the game runs, darken the editor chrome a
@@ -6423,9 +6521,21 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImU32 col = playing || g_paused ? kIconWhite : IM_COL32(200, 204, 212, 200);
         dl->AddRectFilled(ImVec2(c.x - w * 2.4f, c.y - s), ImVec2(c.x - w * 0.6f, c.y + s), col, 1.0f);
         dl->AddRectFilled(ImVec2(c.x + w * 0.6f, c.y - s), ImVec2(c.x + w * 2.4f, c.y + s), col, 1.0f);
+        // A Step or "Run N frames" that has not run yet: its count sits on the button's corner, counting down.
+        if (const int pend = playing ? ed.PendingFrames() : 0; pend > 0) {
+            char pb[16]; std::snprintf(pb, sizeof(pb), "%d", pend);
+            const ImVec2 mx = ImGui::GetItemRectMax(), ts = ImGui::CalcTextSize(pb);
+            const ImVec2 b1(mx.x - 2.0f, mx.y - 1.0f), b0(b1.x - ts.x - 6.0f, b1.y - ts.y - 1.0f);
+            dl->AddRectFilled(b0, b1, IM_COL32(20, 22, 28, 235), 4.0f);
+            dl->AddText(ImVec2(b0.x + 3.0f, b0.y), IM_COL32(245, 205, 90, 255), pb);
+        }
     }
     if (pauseHit && playing) g_paused = !g_paused;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip(!playing ? "Pause (while playing)" : g_paused ? "Resume" : "Pause");
+    if (ImGui::IsItemHovered()) {
+        const int pend = playing ? ed.PendingFrames() : 0;
+        if (pend > 0) ImGui::SetTooltip("%s\n%d frame%s still to run (Step / Run N frames)", g_paused ? "Resume" : "Pause", pend, pend == 1 ? "" : "s");
+        else ImGui::SetTooltip(!playing ? "Pause (while playing)" : g_paused ? "Resume" : "Pause");
+    }
     // Step one frame
     ImGui::SameLine();
     bool stepHit = ImGui::Button("##tstep", ImVec2(bw, tb));
@@ -6440,6 +6550,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
+    if (playing) DrawPlaybackSpeedControls(ed, tb);   // slow motion and "Run N frames", while the game runs
     // Build: a quiet outlined button beside the transport.
     ImGui::SameLine(0, 8.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
@@ -11397,13 +11508,20 @@ void DrawScriptDocs() {
         fapi("tween_loops(id, n[, \"yoyo\"|\"incremental\"]) / tween_delay(id, s)", "repeat (-1 forever) / wait first");
         fapi("tween_ease(id, e) / tween_speed(id, x) / tween_unscaled(id)", "ease / speed / ignore time scale");
         fapi("tween_clock(id, channel)", "follow a Clock channel (\"ui\", \"cinematic\", your own); \"\" = scene time");
+        fapi("tween_tag(id, \"menu\")", "a group label for the _tag calls below (many tweens can share one)");
+        fapi("tween_speed_based(id)", "the duration is a speed (units a second): lasts distance / speed");
+        fapi("tween_decay(id, rate)", "how a punch or shake dies away: 0 = straight fade, 6 = snappy");
         fapi("tween_prop(path, to, dur[, ease][, \"done\"])", "tween any property by path (\"Light.intensity\")");
         fapi("tween_from(id) / tween_relative(id) / tween_set_id(id, \"name\")", "from the end value / offset / name it");
         fapi("tween_on_complete(id, \"fn\") / tween_on_step / tween_on_start", "callbacks");
         fapi("tween_pause / play / restart / rewind / complete / kill(id)", "control one tween");
         fapi("tween_kill_all() / tween_play_id(\"name\") / is_tweening()", "this object / by name");
+        fapi("tween_kill_tag(\"tag\"[, complete])", "kill every tween with that tag, scene-wide");
+        fapi("tween_pause_tag / tween_play_tag / tween_complete_tag(\"tag\")", "pause / play / finish every tween with that tag");
+        fapi("tween_rewind_id(\"name\")", "put the tweens with that Id back at the start");
         fapi("seq_new() / seq_append(s, id) / seq_join(s, id)", "sequence: after / together");
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
+        fapi("seq_prepend(s, id) / seq_join_callback(s, \"fn\")", "play before everything / call when the last tween starts");
         fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
         ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce,\nor a curve as text: \"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\".");
@@ -11735,6 +11853,8 @@ static const std::vector<std::string>& ScriptCompletions() {
         "tween_play_all","is_tweening","tween_kill_id","tween_pause_id","tween_play_id",
         "tween_restart_id","seq_new","seq_append","seq_join","seq_insert","seq_interval",
         "seq_prepend_interval","seq_callback","seq_insert_callback",
+        "tween_tag","tween_speed_based","tween_decay","tween_kill_tag","tween_pause_tag","tween_play_tag",
+        "tween_complete_tag","tween_rewind_id","seq_prepend","seq_join_callback",
         // networking
         "net_host","net_join","net_send","net_poll","net_is_server",
         // ui
@@ -11846,6 +11966,11 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"tween_move","tween_move(x, y, dur)"}, {"tween_move3","tween_move3(x, y, z, dur)"},
         {"tween_scale","tween_scale(s, dur)"}, {"tween_rotate","tween_rotate(deg, dur)"},
         {"tween_fade","tween_fade(a, dur)"},
+        {"tween_tag","tween_tag(id, \"menu\")"}, {"tween_speed_based","tween_speed_based(id)"}, {"tween_decay","tween_decay(id, rate)"},
+        {"tween_kill_tag","tween_kill_tag(\"tag\"[, complete])"}, {"tween_pause_tag","tween_pause_tag(\"tag\")"},
+        {"tween_play_tag","tween_play_tag(\"tag\")"}, {"tween_complete_tag","tween_complete_tag(\"tag\")"},
+        {"tween_rewind_id","tween_rewind_id(\"name\")"},
+        {"seq_prepend","seq_prepend(seq, id)"}, {"seq_join_callback","seq_join_callback(seq, \"fn\")"},
         // ui (immediate-mode + named)
         {"ui_begin","ui_begin(\"Title\", x, y, w, h)"}, {"ui_text","ui_text(\"s\")"}, {"ui_button","ui_button(\"Label\")"},
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
@@ -17059,6 +17184,111 @@ void DrawAboutPopup() {
     }
 }
 
+// Project Settings > Tags and Layers: the project's tag list (okay::Tags, saved as tag= lines) with a Strict switch
+// (Tags::Strict: SetTag refuses a tag that is not listed) and the 32 layer names (okay::Layers, layer_name_N= lines).
+// Everything here is written to project.okayproj at once, like the right-click menus of the Inspector's lists.
+static void DrawTagsAndLayersSettings(EditorState& ed) {
+    const ImVec4 bad(0.95f, 0.45f, 0.40f, 1.0f), warn(0.95f, 0.75f, 0.30f, 1.0f);
+    bool strict = okay::Tags::Strict();
+    if (ImGui::Checkbox("Strict tags##ps", &strict)) { okay::Tags::Strict() = strict; SaveProjectSettings(); }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("On: only tags on this list can be given to an object (the Inspector, scripts and SetTag refuse the rest),\nso a typo such as \"Enmey\" is caught. Off: any text is a valid tag.");
+    // Tags the open scene uses that the list lacks (an old scene, a typo): say so, and offer to list them.
+    const std::vector<std::string> unlisted = ed.scene().UnlistedTags();
+    if (!unlisted.empty()) {
+        std::string names;
+        for (std::size_t i = 0; i < unlisted.size() && i < 4; ++i) names += (i ? ", " : "") + unlisted[i];
+        if (unlisted.size() > 4) names += ", ...";
+        ImGui::TextColored(strict ? bad : warn, "%d tag%s in this scene %s not on the list: %s", (int)unlisted.size(),
+                           unlisted.size() == 1 ? "" : "s", unlisted.size() == 1 ? "is" : "are", names.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Add them##unlisted")) {
+            for (const std::string& t : unlisted) okay::Tags::Add(t);
+            SaveProjectSettings();
+        }
+    }
+    ImGui::Spacing();
+    ImGui::TextDisabled("Tags");
+    {   // built-in tags: always there, cannot be renamed or removed
+        std::string b;
+        for (const std::string& t : okay::Tags::Builtin()) b += (b.empty() ? "" : "  ") + t;
+        ImGui::TextWrapped("Built in: %s", b.c_str());
+    }
+    {
+        const std::vector<std::string> custom = okay::Tags::Custom();   // a copy: a row below edits the list
+        if (custom.empty()) ImGui::TextDisabled("No custom tags yet.");
+        const float rowH = ImGui::GetFrameHeightWithSpacing() + 2.0f;
+        if (!custom.empty()) ImGui::BeginChild("##pstags", ImVec2(0, std::min(rowH * 4.5f, 12.0f + rowH * (float)custom.size())), ImGuiChildFlags_Borders);
+        ImGuiListClipper clip;
+        clip.Begin((int)custom.size(), rowH);
+        while (clip.Step()) {
+            for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
+                const std::string& t = custom[(std::size_t)i];
+                ImGui::PushID(i);
+                const int used = ed.scene().CountWithTag(t);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(t.c_str());
+                ImGui::SameLine(150.0f);
+                ImGui::TextDisabled("%d object%s", used, used == 1 ? "" : "s");
+                ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 150.0f);
+                if (ImGui::SmallButton("Rename")) ImGui::OpenPopup("##pstagren");
+                if (ImGui::BeginPopup("##pstagren")) { TagRenameMenu(ed, t); ImGui::EndPopup(); }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) { okay::Tags::Remove(t); SaveProjectSettings(); }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Take it off the list. Objects that carry it keep it.");
+                ImGui::PopID();
+            }
+        }
+        if (!custom.empty()) ImGui::EndChild();
+    }
+    static char newTag[okay::Tags::kMaxLength * 4 + 1] = "";
+    static std::string tagErr;
+    ImGui::SetNextItemWidth(190);
+    const bool enter = ImGui::InputTextWithHint("##psnewtag", "new tag name", newTag, sizeof(newTag), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if (ImGui::Button("Add tag##ps") || enter) {
+        const std::string nt = newTag;
+        if (okay::Tags::Contains(nt)) tagErr = "that tag is already on the list";
+        else if (okay::Tags::Add(nt)) { SaveProjectSettings(); newTag[0] = '\0'; tagErr.clear(); }
+        else tagErr = okay::Tags::IsValidName(nt) ? "the tag list is full" : okay::Tags::WhyInvalid(nt);
+    }
+    if (!tagErr.empty()) ImGui::TextColored(bad, "%s", tagErr.c_str());
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Layers (0 to 31)");
+    ImGui::BeginChild("##pslayers", ImVec2(0, 300), ImGuiChildFlags_Borders);
+    static std::string layerErr;
+    static int layerErrAt = -1;
+    for (int i = 0; i < okay::Layers::kCount; ++i) {
+        ImGui::PushID(i);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%2d", i);
+        ImGui::SameLine(34.0f);
+        char buf[okay::Layers::kMaxNameLength * 4 + 1];
+        std::snprintf(buf, sizeof(buf), "%s", okay::Layers::IsNamed(i) ? okay::Layers::Name(i).c_str() : "");
+        const std::string hint = okay::Layers::DefaultName(i)[0] ? std::string(okay::Layers::DefaultName(i)) : "Layer " + std::to_string(i);
+        ImGui::SetNextItemWidth(200);
+        const bool enterHit = ImGui::InputTextWithHint("##lname", hint.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue);
+        if (enterHit || ImGui::IsItemDeactivatedAfterEdit()) {
+            std::string e;
+            if (TryRenameLayer(i, buf, e)) { if (layerErrAt == i) layerErr.clear(); }
+            else { layerErr = e; layerErrAt = i; }
+        }
+        if (okay::Layers::IsNamed(i) && std::string(okay::Layers::DefaultName(i)) != okay::Layers::Name(i)) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset")) {
+                std::string e;
+                const std::string def = okay::Layers::DefaultName(i);
+                if (!TryRenameLayer(i, def, e)) { layerErr = e; layerErrAt = i; }
+            }
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    if (!layerErr.empty()) ImGui::TextColored(bad, "Layer %d: %s", layerErrAt, layerErr.c_str());
+    if (ImGui::SmallButton("Reset all layer names##ps")) { okay::Layers::ResetNames(); layerErr.clear(); SaveProjectSettings(); }
+}
+
 // Edit > Project Settings: project-wide defaults that builds inherit, plus
 // quick "apply to current scene" for physics/rendering.
 void DrawProjectSettings(EditorState& ed) {
@@ -17091,6 +17321,7 @@ void DrawProjectSettings(EditorState& ed) {
                 ed.dirty = true; ConsoleLog("Applied project rendering to the scene");
             }
         }
+        if (ImGui::CollapsingHeader("Tags and Layers")) DrawTagsAndLayersSettings(ed);
         if (ImGui::CollapsingHeader("Loading screen")) {
             ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
             const char* pngFilt[] = {"*.png"};
@@ -17550,6 +17781,7 @@ void DrawHierarchy(EditorState& ed) {
     std::vector<GameObject*> visRows;       // visible rows in draw order (arrow-key nav)
     GameObject* rangeClick = nullptr;       // Shift+click target — resolved after the draw
     bool cutPending = false;                // menu Cut: delete the selection after the draw
+    bool deleteKidsPending = false;         // menu Delete Children: done after the draw (the rows below are still being walked)
     std::string curSceneSection = "\x01";   // sentinel distinct from any real value (incl. "")
     // The selection changed this frame: open its parents once so it's visible.
     static GameObject* s_revealFor = nullptr;
@@ -17830,6 +18062,8 @@ void DrawHierarchy(EditorState& ed) {
                 if (ImGui::MenuItem(g_isolate == node ? "Exit Isolation" : "Isolate", "Shift+I"))
                     g_isolate = (g_isolate == node) ? nullptr : node;
                 if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+                if (ImGui::MenuItem("Delete Children", nullptr, false, childCount > 0))   // empties a container, keeps the object
+                    deleteKidsPending = true;
                 if (node->GetComponent<Character>() || node->GetComponent<ModelAnimator>() || node->GetComponent<FullBodyIK>()) {
                     if (ImGui::BeginMenu("Add IK Target")) {
                         auto addLimb = [&](int limb, const char* label) {
@@ -18000,6 +18234,10 @@ void DrawHierarchy(EditorState& ed) {
     }
     g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
     if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
+    if (deleteKidsPending) {
+        const int n = ed.DeleteChildrenOfSelected();
+        ConsoleLog("Deleted " + std::to_string(n) + " child" + (n == 1 ? "" : "ren") + " (and everything below them)");
+    }
     // Shift+click: select the whole range between the active object and the
     // clicked row, in visible order.
     if (rangeClick) {
@@ -27742,7 +27980,7 @@ void DrawInspector(EditorState& ed) {
         ImGui::Separator();
         // Add a brand-new tag: type a name, press Enter or click Add → it's saved to
         // the project tag list and applied to this object immediately.
-        static char newTag[72] = "";
+        static char newTag[okay::Tags::kMaxLength * 4 + 1] = "";
         static std::string newTagErr;
         if (ImGui::IsWindowAppearing()) newTagErr.clear();
         ImGui::SetNextItemWidth(120);
@@ -43221,7 +43459,19 @@ void DrawGameView(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock + hide the cursor for FPS/TPS mouselook while testing.\nEsc shows the cursor again; click the Game view to give it back.\nGames that lock the cursor (FPS/TPS controllers) grab it automatically.");
     ImGui::SameLine();
     if (ImGui::Checkbox("Stats", &g_gameStatsOverlay)) SaveSettings();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("FPS / frame time / object + triangle counts, overlaid on the view");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame rate and frame times (average, 1% low, hitches), the time scale, what paused the game,\nobject + triangle counts and, optionally, the timers: overlaid on the view.\nThe arrow picks what to show.");
+    ImGui::SameLine(0, 2);
+    if (ImGui::ArrowButton("##statsopts", ImGuiDir_Down)) ImGui::OpenPopup("##statsoptspop");
+    if (ImGui::BeginPopup("##statsoptspop")) {
+        ImGui::TextDisabled("Stats overlay shows");
+        bool changed = false;
+        changed |= ImGui::Checkbox("Frame-rate graph", &g_gameStatsGraph);
+        changed |= ImGui::Checkbox("Scene counts (objects, components)", &g_gameStatsScene);
+        changed |= ImGui::Checkbox("Timers and tweens", &g_gameStatsTimers);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("What the scene's scheduler (Invoke, InvokeRepeating, delays) and\ntween manager are running, refreshed four times a second.");
+        if (changed) { g_gameStatsOverlay = true; SaveSettings(); }   // ticking a part means you want to see it
+        ImGui::EndPopup();
+    }
     ImGui::SameLine();
     if (ImGui::Checkbox("Physics", &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Physics debug view: colliders (green), triggers (blue), contact points\nand normals (red), and rays cast from scripts, in the Scene and Game views.\nMore options in View > Scene Overlays > Physics Debug.");
@@ -43364,26 +43614,94 @@ void DrawGameView(EditorState& ed) {
                           IM_COL32(0, 0, 0, 120), 3.0f);
         dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);
     }
-    // In-view Stats overlay: FPS, frame time, object
-    // and triangle counts, drawn over the running game's top-right corner.
+    // In-view Stats overlay, drawn over the view's top-right corner: while playing, the Play loop's performance
+    // text (okay::FrameOverlay: fps, frame times, 1% low, hitches, time scale, what paused the game) with a
+    // frame-rate graph, then the scene's counts (Scene::Stats) and the mesh / triangle totals; optionally a
+    // second box with the timers and tweens (okay::TimerDebug). The text is rebuilt four times a second (the
+    // scene is walked once per refresh), the graph every frame. In edit mode only the editor's own FPS and the counts.
     if (g_gameStatsOverlay) {
-        int objs = 0, tris = 0, active3d = 0;
-        for (const auto& up : ed.scene().Objects()) {
-            if (!up) continue;
-            ++objs;
-            if (!up->active) continue;
-            if (auto* mr = up->GetComponent<MeshRenderer>())
-                if (mr->enabled && !mr->mesh.triangles.empty()) { ++active3d; tris += (int)mr->mesh.triangles.size() / 3; }
+        struct OverlayText { double stamp = -1.0; std::vector<std::string> perf, scene, timers; };
+        static OverlayText ov;
+        const double nowT = ImGui::GetTime();
+        const bool playingNow = ed.isPlaying();
+        // (Not while the game is frozen mid-tick at a visual-script breakpoint: the scheduler and the scene are
+        // half way through an update then, so the last text stays.)
+        if ((ov.stamp < 0.0 || nowT - ov.stamp > 0.25 || nowT < ov.stamp) && !g_gameFiber.Suspended()) {
+            ov.stamp = nowT;
+            ov.perf = ed.PerfLines();
+            if (!playingNow) {
+                char fl[64];
+                const float fr = ImGui::GetIO().Framerate > 1e-3f ? ImGui::GetIO().Framerate : 1.0f;
+                std::snprintf(fl, sizeof(fl), "%.0f FPS  (%.2f ms)  editor", ImGui::GetIO().Framerate, 1000.0f / fr);
+                ov.perf.push_back(fl);
+            }
+            ov.scene.clear();
+            if (g_gameStatsScene) {
+                ov.scene = ed.SceneLines(3);
+                int active3d = 0, tris = 0;
+                for (const auto& up : ed.scene().Objects()) {
+                    if (!up || !up->active) continue;
+                    if (auto* mr = up->GetComponent<MeshRenderer>())
+                        if (mr->enabled && !mr->mesh.triangles.empty()) { ++active3d; tris += (int)mr->mesh.triangles.size() / 3; }
+                }
+                char ml[96];
+                if (tris < 10000) std::snprintf(ml, sizeof(ml), "%d meshes  %d tris", active3d, tris);
+                else              std::snprintf(ml, sizeof(ml), "%d meshes  %dk tris", active3d, tris / 1000);
+                ov.scene.push_back(ml);
+            }
+            ov.timers = g_gameStatsTimers ? ed.TimerLines(64) : std::vector<std::string>();
         }
-        char st[160];
-        std::snprintf(st, sizeof(st), "%.0f FPS  (%.2f ms)\n%d objects\n%d meshes  %dk tris",
-                      ImGui::GetIO().Framerate, 1000.0f / (ImGui::GetIO().Framerate > 1e-3f ? ImGui::GetIO().Framerate : 1.0f),
-                      objs, active3d, tris / 1000);
-        ImVec2 ts2 = ImGui::CalcTextSize(st);
-        ImVec2 p1(canvasEnd.x - ts2.x - 14, canvasPos.y + 6);
-        dl->AddRectFilled(ImVec2(p1.x - 6, p1.y - 4), ImVec2(p1.x + ts2.x + 6, p1.y + ts2.y + 4),
-                          IM_COL32(0, 0, 0, 160), 4.0f);
-        dl->AddText(p1, IM_COL32(225, 228, 235, 235), st);
+        const float lh = ImGui::GetTextLineHeight();
+        const float pad = 6.0f, graphH = lh * 2.6f;
+        const bool graphOn = g_gameStatsGraph && playingNow;
+        const ImU32 txt = IM_COL32(225, 228, 235, 235), dim = IM_COL32(170, 178, 192, 220), warn = IM_COL32(245, 205, 90, 255);
+        dl->PushClipRect(canvasPos, canvasEnd, true);
+        float top = canvasPos.y + 6.0f;
+        // One box: the rows in `rows` (a row starting with two spaces is a detail line), the graph above them when asked.
+        auto box = [&](const std::vector<const std::vector<std::string>*>& groups, bool withGraph) {
+            std::size_t n = 0; float w = withGraph ? 190.0f : 0.0f;
+            for (const auto* g : groups) for (const std::string& r : *g) { ++n; w = std::max(w, ImGui::CalcTextSize(r.c_str()).x); }
+            if (n == 0 && !withGraph) return;
+            const float h = (float)n * lh + (withGraph ? graphH + 4.0f : 0.0f);
+            const float x1 = canvasEnd.x - 8.0f, x0 = x1 - w;
+            dl->AddRectFilled(ImVec2(x0 - pad, top - 4.0f), ImVec2(x1 + pad, top + h + 4.0f), IM_COL32(0, 0, 0, 165), 4.0f);
+            float y = top;
+            if (withGraph) {   // the last 90 frames as frames per second, newest at the right, auto-scaled
+                const std::vector<float> fps = ed.RecentFps(90);
+                float peak = 30.0f;
+                for (float f : fps) peak = std::max(peak, f);
+                peak *= 1.15f;
+                const float gx0 = x0, gx1 = x1, gy0 = y + graphH, gy1 = y;
+                dl->AddRectFilled(ImVec2(gx0, gy1), ImVec2(gx1, gy0), IM_COL32(255, 255, 255, 14), 2.0f);
+                const float ref[] = {30.0f, 60.0f, 120.0f};   // faint guide lines at common targets
+                for (float rf : ref) {
+                    if (rf > peak) break;
+                    const float ry = gy0 - graphH * (rf / peak);
+                    dl->AddLine(ImVec2(gx0, ry), ImVec2(gx1, ry), IM_COL32(255, 255, 255, 36), 1.0f);
+                    char rl[16]; std::snprintf(rl, sizeof(rl), "%.0f", rf);
+                    dl->AddText(ImVec2(gx0 + 2.0f, ry + 1.0f), IM_COL32(255, 255, 255, 90), rl);
+                }
+                std::vector<ImVec2> pts;
+                pts.reserve(fps.size());
+                const std::size_t cnt = fps.size();
+                for (std::size_t i = 0; i < cnt; ++i) {
+                    if (fps[i] <= 0.0f) continue;   // frames that did not happen yet
+                    pts.push_back(ImVec2(gx0 + (gx1 - gx0) * ((float)i / (float)(cnt > 1 ? cnt - 1 : 1)), gy0 - graphH * std::min(1.0f, fps[i] / peak)));
+                }
+                if (pts.size() >= 2) dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(110, 225, 140, 235), ImDrawFlags_None, 1.6f);
+                y += graphH + 4.0f;
+            }
+            for (const auto* g : groups) for (const std::string& r : *g) {
+                const bool detail = r.size() > 1 && r[0] == ' ';
+                const bool hot = r.rfind("paused by", 0) == 0 || r.find("debug x") != std::string::npos || r.find("hitches") != std::string::npos;
+                dl->AddText(ImVec2(x0, y), hot ? warn : (detail ? dim : txt), r.c_str());
+                y += lh;
+            }
+            top += h + 12.0f;
+        };
+        box({&ov.perf, &ov.scene}, graphOn);
+        if (!ov.timers.empty()) box({&ov.timers}, false);
+        dl->PopClipRect();
     }
     ImGui::End();
 }
@@ -44642,6 +44960,7 @@ int main(int argc, char** argv) {
                 }
                 if (ed.isPlaying()) {
                     if (!ed.playTick) ed.playTick = [&ed](float gdt) { TickGame(ed, gdt); };   // the Play loop's update (debugger fiber aware)
+                    if (!ed.onRunFramesDone) ed.onRunFramesDone = [] { g_paused = true; };   // "Run N frames" ended: the Pause button follows the loop's pause
                     ed.SetPaused(g_paused);   // the Pause button = Game::PushPause("editor")
                     // Steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the
                     // scene by the scaled delta: 0 while the game or the editor is paused, as before.

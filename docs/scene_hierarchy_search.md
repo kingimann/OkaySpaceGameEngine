@@ -229,7 +229,7 @@ See `scene_serializer.md`: `GameObject::MoveComponent` and the new `ReorderCompo
 | --- | --- |
 | `go->GetComponentsInParent<T>(includeInactive = false)` | every match on the object and each parent, nearest first |
 | `go->ReorderComponents({a, b})`, `go->HasCustomComponentOrder()` | the named components come right after the Transform, in that order; saved |
-| `scene.DestroyChildren(go)` | queue every child of `go`; returns how many direct children were asked |
+| `scene.DestroyChildren(go)` | queue every child of `go`; returns how many direct children were asked (the editor's Hierarchy right-click **Delete Children** calls it through `EditorState::DeleteChildrenOfSelected()`: one undo step, the children leave the selection first) |
 | `transform->SetPositionAndRotation(pos, rot)` / `SetLocalPositionAndRotation(pos, rot)` | both at once (world / parent frame; the rotation is normalized) |
 | `transform->SetParent(parent, keepWorld, siblingIndex)` | reparent and place among the new siblings (clamped; `nullptr` = among the scene's roots) |
 | `scene.RequestClear()`, `HasPendingClear()`, `IsUpdating()` | see above |
@@ -243,6 +243,8 @@ Already there, so not added: `FindByPath`, `GetComponentInChildren(s)` with an i
 ```cpp
 for (const std::string& line : scene.Stats().Lines(3)) overlay.Add(line);   // "Objects: 120 (3 roots, 40 inactive, depth 4)" ...
 ```
+
+The editor's Game view **Stats** overlay prints these lines (`EditorState::SceneLines()`), under the loop's frame statistics while playing.
 
 ### Notes
 

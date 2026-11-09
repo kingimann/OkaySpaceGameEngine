@@ -6354,7 +6354,16 @@ void DrawMenuAndToolbar(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
-    if (playing) DrawPlaybackSpeedControls(ed, tb);   // slow motion and "Run N frames", while the game runs
+    if (playing) {   // slow motion and "Run N frames", while the game runs, when the bar has room for them
+        // What sits at the right of the bar (the Layout dropdown, the state dot and "v2.854.0  PLAYING  100 FPS") and the
+        // Build button that follows: the group must end, with Build after it, before them.
+        const float groupW = 8.0f + tb * 2.0f + std::max(tb * 1.35f, ImGui::CalcTextSize("0.25x").x + 16.0f);
+        const float rightEdge = ImGui::GetWindowPos().x + ImGui::GetWindowWidth()
+            - ImGui::CalcTextSize((std::string("v") + OKAY_ENGINE_VERSION + "   PAUSED   000 FPS").c_str()).x
+            - ImGui::GetFontSize() * 0.56f - 8.0f
+            - (ImGui::CalcTextSize(g_layoutName.empty() ? "Layout" : g_layoutName.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFontSize() * 0.9f) - 18.0f;
+        if (ImGui::GetItemRectMax().x + groupW + 8.0f + buildW <= rightEdge) DrawPlaybackSpeedControls(ed, tb);
+    }
     // Build: a quiet outlined button beside the transport.
     ImGui::SameLine(0, 8.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);

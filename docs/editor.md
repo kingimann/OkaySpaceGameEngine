@@ -308,7 +308,9 @@ Recent additions (v2.12–2.14):
   frames, then pause**: it runs exactly N frames of 1/60 s each (so a bug repeats),
   then pauses; while already paused it steps N frames and stays paused. A Step or a
   run that has not finished shows its remaining frame count on the **Pause**
-  button.
+  button. The speed group is left out when the window is too narrow for it (about
+  1250 px or less, depending on the layout name), so it never sits on top of Build
+  or the Layout menu.
 
 ### Graphics quality
 

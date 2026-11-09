@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <locale>
 #include <cstdlib>
 #include <fstream>
@@ -20,6 +21,7 @@ std::map<std::string, std::unique_ptr<Cvar>>& Registry() {
 std::map<std::string, std::string>& Held() {   // loaded values for cvars not registered yet
     static std::map<std::string, std::string> h; return h;
 }
+bool g_cheats = false;
 std::string Lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
 std::string Trim(const std::string& s) {
     std::size_t a = 0, b = s.size();
@@ -38,8 +40,24 @@ const char* Cvar::TypeName() const {
     switch (m_type) { case Type::Int: return "int"; case Type::Float: return "float";
                       case Type::Bool: return "bool"; default: return "string"; }
 }
-int   Cvar::AsInt() const   { return m_type == Type::String ? std::atoi(m_text.c_str()) : (int)m_value; }
-float Cvar::AsFloat() const { return m_type == Type::String ? (float)std::atof(m_text.c_str()) : (float)m_value; }
+namespace {
+// Float -> int that saturates (a plain cast of 1e20 is undefined behaviour); NaN reads as 0.
+int ToIntSat(double v) {
+    if (v != v) return 0;
+    if (v >= 2147483647.0) return 2147483647;
+    if (v <= -2147483648.0) return (-2147483647 - 1);
+    return (int)v;
+}
+float ToFloatSat(double v) {   // an out-of-range double gives +-infinity, not undefined behaviour
+    if (v != v) return 0.0f;
+    const double lim = 3.4028234663852886e38;
+    if (v > lim) return std::numeric_limits<float>::infinity();
+    if (v < -lim) return -std::numeric_limits<float>::infinity();
+    return (float)v;
+}
+}
+int   Cvar::AsInt() const   { return ToIntSat(m_type == Type::String ? std::strtod(m_text.c_str(), nullptr) : m_value); }
+float Cvar::AsFloat() const { return ToFloatSat(m_type == Type::String ? std::strtod(m_text.c_str(), nullptr) : m_value); }
 bool  Cvar::AsBool() const {
     if (m_type == Type::String) { const std::string l = Lower(m_text); return !(l.empty() || l == "0" || l == "false" || l == "off" || l == "no"); }
     return m_value != 0.0;
@@ -69,7 +87,31 @@ void Cvar::Assign(double number, const std::string& text) {
     for (const Cb& cb : snapshot) cb.fn(*this);
 }
 
+Cvar& Cvar::SetFlags(unsigned flags) {
+    m_flags = flags & (kReadOnly | kCheat | kRestartRequired);
+    // A value a settings file supplied before this variable was registered must not stand on a variable the
+    // player may not change (the file is player input): back to the default.
+    if (m_fromFile && (ReadOnly() || Cheat())) { m_fromFile = false; Reset(); MarkApplied(); }
+    return *this;
+}
+
+bool Cvar::CanSetFromText(std::string* why) const {
+    if (ReadOnly()) { if (why) *why = m_name + " is read only"; return false; }
+    if (Cheat() && !g_cheats) { if (why) *why = m_name + " needs cheats enabled"; return false; }
+    return true;
+}
+
+bool Cvar::RestartPending() const {
+    return RestartRequired() && (m_type == Type::String ? m_text != m_appliedText : m_value != m_applied);
+}
+void Cvar::MarkApplied() { m_applied = m_value; m_appliedText = m_text; }
+
 bool Cvar::Set(const std::string& text, std::string* error) {
+    if (!CanSetFromText(error)) return false;
+    return SetUnchecked(text, error);
+}
+
+bool Cvar::SetUnchecked(const std::string& text, std::string* error) {
     auto fail = [&](const std::string& why) { if (error) *error = why; return false; };
     if (m_type == Type::String) { Assign(0.0, text); return true; }
     const std::string t = Trim(text);
@@ -82,9 +124,12 @@ bool Cvar::Set(const std::string& text, std::string* error) {
     if (t.empty()) return fail(m_name + " needs a " + TypeName());
     char* end = nullptr; errno = 0;
     const double v = m_type == Type::Int ? (double)std::strtoll(t.c_str(), &end, 10) : std::strtod(t.c_str(), &end);
-    if (errno != 0 || !end || *end != '\0' || v != v) return fail(m_name + " needs a " + TypeName() + ", not '" + t + "'");
-    if (m_type == Type::Int) SetInt((int)std::max(-2147483648.0, std::min(2147483647.0, v)));
-    else SetFloat((float)v);
+    // A result too small for a double (1e-999) is just 0 and fine; one too big, "inf" and "nan" are not numbers to keep.
+    const bool tooBig = errno != 0 && std::fabs(v) > 1.0;
+    const bool beyondFloat = m_type == Type::Float && std::fabs(v) > 3.4028234663852886e38;   // would become infinity as a float
+    if (tooBig || beyondFloat || !end || *end != '\0' || !std::isfinite(v)) return fail(m_name + " needs a " + TypeName() + ", not '" + t + "'");
+    if (m_type == Type::Int) SetInt(ToIntSat(v));
+    else SetFloat(ToFloatSat(v));
     return true;
 }
 
@@ -109,7 +154,7 @@ void Cvar::SetBool(bool v) {
 }
 void Cvar::SetString(const std::string& v) {
     if (m_type == Type::String) { Assign(0.0, v); return; }
-    Set(v);
+    SetUnchecked(v, nullptr);
 }
 void Cvar::Reset() { Assign(m_default, m_defaultText); }
 
@@ -136,7 +181,8 @@ Cvar& Cvars::Int(const std::string& name, int def, const std::string& desc, int 
     c->m_value = c->m_default = d;
     Registry()[name].reset(c);
     auto h = Held().find(name);
-    if (h != Held().end()) { std::string v = h->second; Held().erase(h); c->Set(v); }
+    if (h != Held().end()) { std::string v = h->second; Held().erase(h); c->m_fromFile = c->Set(v); }
+    c->MarkApplied();
     return *c;
 }
 Cvar& Cvars::Float(const std::string& name, float def, const std::string& desc, float lo, float hi, bool persist) {
@@ -149,7 +195,8 @@ Cvar& Cvars::Float(const std::string& name, float def, const std::string& desc, 
     c->m_value = c->m_default = d;
     Registry()[name].reset(c);
     auto h = Held().find(name);
-    if (h != Held().end()) { std::string v = h->second; Held().erase(h); c->Set(v); }
+    if (h != Held().end()) { std::string v = h->second; Held().erase(h); c->m_fromFile = c->Set(v); }
+    c->MarkApplied();
     return *c;
 }
 Cvar& Cvars::Bool(const std::string& name, bool def, const std::string& desc, bool persist) {
@@ -159,7 +206,8 @@ Cvar& Cvars::Bool(const std::string& name, bool def, const std::string& desc, bo
     c->m_value = c->m_default = def ? 1.0 : 0.0;
     Registry()[name].reset(c);
     auto h = Held().find(name);
-    if (h != Held().end()) { std::string v = h->second; Held().erase(h); c->Set(v); }
+    if (h != Held().end()) { std::string v = h->second; Held().erase(h); c->m_fromFile = c->Set(v); }
+    c->MarkApplied();
     return *c;
 }
 Cvar& Cvars::String(const std::string& name, const std::string& def, const std::string& desc, bool persist) {
@@ -169,7 +217,8 @@ Cvar& Cvars::String(const std::string& name, const std::string& def, const std::
     c->m_text = c->m_defaultText = def;
     Registry()[name].reset(c);
     auto h = Held().find(name);
-    if (h != Held().end()) { std::string v = h->second; Held().erase(h); c->Set(v); }
+    if (h != Held().end()) { std::string v = h->second; Held().erase(h); c->m_fromFile = c->Set(v); }
+    c->MarkApplied();
     return *c;
 }
 
@@ -199,12 +248,22 @@ bool Cvars::SetFromAssignment(const std::string& a, std::string* error) {
 
 void Cvars::ResetAll() { for (auto& kv : Registry()) kv.second->Reset(); }
 
+void Cvars::SetCheatsEnabled(bool on) { g_cheats = on; }
+bool Cvars::CheatsEnabled() { return g_cheats; }
+
+std::vector<std::string> Cvars::RestartPending() {
+    std::vector<std::string> out;
+    for (auto& kv : Registry()) if (kv.second->RestartPending()) out.push_back(kv.first);
+    return out;
+}
+void Cvars::MarkAllApplied() { for (auto& kv : Registry()) kv.second->MarkApplied(); }
+
 bool Cvars::Save(const std::string& path) {
     std::map<std::string, std::string> lines;
     for (auto& kv : Held()) lines[kv.first] = kv.second;
     for (auto& kv : Registry()) {
         const Cvar& c = *kv.second;
-        if (!c.Persist() || c.IsDefault()) { lines.erase(kv.first); continue; }
+        if (!c.Persist() || c.IsDefault() || c.ReadOnly() || c.Cheat()) { lines.erase(kv.first); continue; }
         std::string v = c.AsString();
         std::replace(v.begin(), v.end(), '\n', ' ');
         std::replace(v.begin(), v.end(), '\r', ' ');
@@ -219,7 +278,10 @@ bool Cvars::Load(const std::string& path) {
     std::ifstream f(path);
     if (!f) return false;
     std::string line;
+    bool first = true;
     while (std::getline(f, line)) {
+        if (first && line.compare(0, 3, "\xEF\xBB\xBF") == 0) line.erase(0, 3);   // a byte order mark from a text editor
+        first = false;
         line = Trim(line);
         if (line.empty() || line[0] == '#') continue;
         const std::size_t sp = line.find_first_of(" \t");
@@ -231,6 +293,6 @@ bool Cvars::Load(const std::string& path) {
     return true;
 }
 
-void Cvars::Clear() { Registry().clear(); Held().clear(); }
+void Cvars::Clear() { Registry().clear(); Held().clear(); g_cheats = false; }
 
 } // namespace okay

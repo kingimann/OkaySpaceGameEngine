@@ -18,8 +18,9 @@ namespace okay {
 ///     sm.Update(dt);
 ///
 /// Changing state from inside a callback is allowed: the machine is already in the
-/// new state when its enter callback runs, and a Change made from an enter callback
-/// is carried out after that callback returns.
+/// new state when its enter callback runs, and a Change made from an enter or an exit
+/// callback is carried out after the transition it was made in has finished (it returns
+/// true and runs then; it never re-enters the callback that asked for it).
 template <typename State>
 class StateMachine {
 public:
@@ -46,7 +47,7 @@ public:
         Enter();
     }
     /// Leave the current state (runs its exit callback) and become empty.
-    void Stop() { if (m_has) { Exit(); m_has = false; } }
+    void Stop() { if (m_has) { Exit(); m_has = false; m_pending = false; } }
 
     /// Whether a change from the current state to `to` would be accepted.
     bool CanChange(const State& to) const {
@@ -88,15 +89,20 @@ public:
 private:
     void Enter() {
         auto it = m_handlers.find(m_current);
-        if (it == m_handlers.end() || !it->second.onEnter) return;
-        m_busy = true;
-        it->second.onEnter();
-        m_busy = false;
-        if (m_pending) { m_pending = false; Change(m_pendingTo); }
+        if (it != m_handlers.end() && it->second.onEnter) {
+            m_busy = true;
+            it->second.onEnter();
+            m_busy = false;
+        }
+        if (m_pending) { m_pending = false; Change(m_pendingTo); }   // asked for from an exit or enter callback
     }
     void Exit() {
         auto it = m_handlers.find(m_current);
-        if (it != m_handlers.end() && it->second.onExit) it->second.onExit();
+        if (it == m_handlers.end() || !it->second.onExit) return;
+        const bool wasBusy = m_busy;
+        m_busy = true;       // a Change from inside onExit waits for the transition to finish
+        it->second.onExit();
+        m_busy = wasBusy;
     }
 
     std::map<State, Handlers> m_handlers;

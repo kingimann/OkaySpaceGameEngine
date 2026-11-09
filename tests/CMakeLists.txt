@@ -299,6 +299,11 @@ add_executable(test_log test_log.cpp)
 target_link_libraries(test_log PRIVATE okay::engine)
 add_test(NAME log COMMAND test_log)
 
+# Core wave 6, 1.10: $OKAY_LOG vs Configure, log file cap / flush / failing disk, sink recursion, profiler bounds, threads and trace validity
+add_executable(test_core_log_profiler test_core_log_profiler.cpp)
+target_link_libraries(test_core_log_profiler PRIVATE okay::engine)
+add_test(NAME core_log_profiler COMMAND test_core_log_profiler)
+
 # Profiling & debugging data layers (okay/Debug): frame history, GPU/render stats, memory, frame debugger, console, overlay
 add_executable(test_debug_frame_history test_debug_frame_history.cpp)
 target_link_libraries(test_debug_frame_history PRIVATE okay::engine)
@@ -626,6 +631,11 @@ add_test(NAME animator COMMAND test_animator)
 add_executable(test_dataasset test_dataasset.cpp)
 target_link_libraries(test_dataasset PRIVATE okay::engine)
 add_test(NAME dataasset COMMAND test_dataasset)
+
+# Core wave 6, 1.14: DataAsset BOM / numbers / typed getters / safe Invalidate, DataPack damage and size cases
+add_executable(test_core_data test_core_data.cpp)
+target_link_libraries(test_core_data PRIVATE okay::engine)
+add_test(NAME core_data COMMAND test_core_data)
 
 add_executable(test_item_dragdrop test_item_dragdrop.cpp)
 target_link_libraries(test_item_dragdrop PRIVATE okay::engine)
@@ -1661,6 +1671,10 @@ add_test(NAME core_cli COMMAND test_core_cli)
 add_executable(test_core_console test_core_console.cpp)
 target_link_libraries(test_core_console PRIVATE okay::engine)
 add_test(NAME core_console COMMAND test_core_console)
+# Core wave 6, 1.18: CommandLine defaults, Cvar extremes and flags (read-only, cheat, restart required), Console nesting, StateMachine exit
+add_executable(test_core_utils_audit test_core_utils_audit.cpp)
+target_link_libraries(test_core_utils_audit PRIVATE okay::engine)
+add_test(NAME core_utils_audit COMMAND test_core_utils_audit)
 # Localization formatting + plural rules, typed Prefs, FixedTimestep (docs/localization_prefs_time.md)
 add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
 target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
@@ -1669,6 +1683,11 @@ add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
 add_executable(test_ecs_commands test_ecs_commands.cpp)
 target_link_libraries(test_ecs_commands PRIVATE okay::engine)
 add_test(NAME ecs_commands COMMAND test_ecs_commands)
+
+# Core wave 6, 1.9: Subscription::Active, throwing handlers, SystemScheduler changes while running, entity id wrap, SceneBridge
+add_executable(test_core_events_ecs test_core_events_ecs.cpp)
+target_link_libraries(test_core_events_ecs PRIVATE okay::engine)
+add_test(NAME core_events_ecs COMMAND test_core_events_ecs)
 
 # Multi-frame scene loads (progress, additive load + unload by handle), ObjectPool, RequireComponent rules
 add_executable(test_scene_load_pool test_scene_load_pool.cpp)
@@ -1790,6 +1809,11 @@ add_executable(test_scene_validator test_scene_validator.cpp)
 target_link_libraries(test_scene_validator PRIVATE okay::engine)
 target_compile_definitions(test_scene_validator PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME scene_validator COMMAND test_scene_validator)
+
+# Core wave 6, 1.17: the two validators agree (asset rule, damaged packs, fonts) and the semantic one carries the file-level checks
+add_executable(test_core_validation test_core_validation.cpp)
+target_link_libraries(test_core_validation PRIVATE okay::engine)
+add_test(NAME core_validation COMMAND test_core_validation)
 
 # 33.3 regression helpers: golden text/binary files, the scene digest, golden images
 # (the software renderer drawn into memory and compared with tests/golden/regression/cube.png;

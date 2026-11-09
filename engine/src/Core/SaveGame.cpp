@@ -73,6 +73,16 @@ std::map<int, std::function<bool(std::string&, std::string*)>>& Migrations() {
     return m;
 }
 
+// Up to `n` floats from "x y z" or "x,y,z" text (a part that isn't a number keeps `out`'s value).
+void ParseFloats(const std::string& text, float* out, int n) {
+    std::string q = text;
+    std::replace(q.begin(), q.end(), ',', ' ');
+    std::istringstream is(q);
+    is.imbue(std::locale::classic());
+    std::string word;
+    for (int i = 0; i < n && (is >> word); ++i) out[i] = savefmt::ParseFloat(word, out[i]);
+}
+
 // A script value as "f:1.5", "b:1", "s:text", "v:1,2,3"; "" for kinds a save can't hold.
 std::string Encode(const vs::VsValue& v) {
     if (v.IsNumber()) return "f:" + Num(v.AsFloat());
@@ -89,8 +99,9 @@ bool Decode(const std::string& t, vs::VsValue& out) {
         case 'b': out = vs::VsValue{p == "1"}; return true;
         case 's': out = vs::VsValue{Unescape(p)}; return true;
         case 'v': {
-            Vec3 v; std::string q = p; std::replace(q.begin(), q.end(), ',', ' ');
-            std::istringstream is(q); is.imbue(std::locale::classic()); is >> v.x >> v.y >> v.z;
+            Vec3 v; float c[3] = {0, 0, 0};
+            ParseFloats(p, c, 3);
+            v.x = c[0]; v.y = c[1]; v.z = c[2];
             out = vs::VsValue{v}; return true;
         }
     }
@@ -104,6 +115,26 @@ std::vector<std::string> SplitTabs(const std::string& line) {
         if (i == line.size() || line[i] == '\t') { out.push_back(line.substr(start, i - start)); start = i + 1; }
     return out;
 }
+
+// One header line (label, scene, time, ...) into the slot's info; unknown lines are ignored,
+// so a file from a newer build with more lines still reads.
+void ApplyHeaderLine(SaveSlotInfo& info, const std::vector<std::string>& cols) {
+    if (cols.size() < 2) return;
+    if (cols[0] == "label") info.label = Unescape(cols[1]);
+    else if (cols[0] == "scene") info.scene = Unescape(cols[1]);
+    else if (cols[0] == "savedAt") { info.savedAt = std::atoll(cols[1].c_str()); info.savedAtMs = info.savedAt * 1000; }
+    else if (cols[0] == "playTime") info.playTime = savefmt::ParseFloat(cols[1]);
+    else if (cols[0] == "gameVersion") info.gameVersion = Unescape(cols[1]);
+    else if (cols[0] == "thumbnail") info.thumbnail = Unescape(cols[1]);
+    else if (cols[0] == "field" && cols.size() >= 3) info.fields[Unescape(cols[1])] = Unescape(cols[2]);
+}
+
+// A file name with no folder part: it lives in the saves folder next to the slots.
+bool IsBareName(const std::string& name) {
+    return !name.empty() && name.find_first_of("/\\") == std::string::npos && name != "." && name != ".." &&
+           name.find(':') == std::string::npos;
+}
+std::string SavesFolderFile(const std::string& name) { return Save::Resolve("saves/" + name); }
 
 struct Parsed {
     SaveSlotInfo info;
@@ -140,15 +171,10 @@ bool VerifyChecksum(const std::string& text, std::string* why) {
 
 enum class ReadResult { Ok, Missing, Damaged, Newer };
 
-ReadResult ReadSaveFile(const std::string& path, const std::string& slot, Parsed& out, std::string* error) {
-    std::error_code ec;
-    if (!fs::exists(path, ec)) { if (error) *error = "No save in slot \"" + slot + "\""; return ReadResult::Missing; }
-    std::string text, why;
-    if (!savefmt::ReadFileCapped(path, g_maxBytes, text, &why)) {
-        if (error) *error = "Slot \"" + slot + "\" can't be read: " + why;
-        return ReadResult::Damaged;
-    }
-    int version = 1;
+// The header, version and checksum of a slot file's text. Ok means it is a save this build
+// reads whole; `version` is what the file says.
+ReadResult ClassifyText(const std::string& text, const std::string& slot, int& version, std::string* error) {
+    version = 1;
     const std::size_t nl = text.find('\n');
     if (!ParseHeaderLine(text.substr(0, nl), version)) {
         if (error) *error = "Slot \"" + slot + "\" isn't a save game";
@@ -159,10 +185,25 @@ ReadResult ReadSaveFile(const std::string& path, const std::string& slot, Parsed
                             std::to_string(version) + ", this build reads up to " + std::to_string(SaveGame::kFormatVersion) + ")";
         return ReadResult::Newer;
     }
+    std::string why;
     if (version >= 2 && !VerifyChecksum(text, &why)) {
         if (error) *error = "Slot \"" + slot + "\" " + why;
         return ReadResult::Damaged;
     }
+    return ReadResult::Ok;
+}
+
+ReadResult ReadSaveFile(const std::string& path, const std::string& slot, Parsed& out, std::string* error) {
+    std::error_code ec;
+    if (!fs::exists(path, ec)) { if (error) *error = "No save in slot \"" + slot + "\""; return ReadResult::Missing; }
+    std::string text, why;
+    if (!savefmt::ReadFileCapped(path, g_maxBytes, text, &why)) {
+        if (error) *error = "Slot \"" + slot + "\" can't be read: " + why;
+        return ReadResult::Damaged;
+    }
+    int version = 1;
+    const ReadResult classified = ClassifyText(text, slot, version, error);
+    if (classified != ReadResult::Ok) return classified;
     // Older saves are brought forward one version at a time (no hook for a step = nothing to change).
     for (int v = version; v < SaveGame::kFormatVersion; ++v) {
         auto it = Migrations().find(v);
@@ -174,6 +215,7 @@ ReadResult ReadSaveFile(const std::string& path, const std::string& slot, Parsed
         }
     }
     out.info.slot = slot; out.info.exists = true; out.info.version = version;
+    const std::size_t nl = text.find('\n');   // after the migrations: a step may change the header line
     int section = 0;   // 0 header, 1 scene, 2 state, 3 after the end marker
     std::size_t lines = 0, pos = (nl == std::string::npos) ? text.size() : nl + 1;
     std::string sceneText;
@@ -194,10 +236,7 @@ ReadResult ReadSaveFile(const std::string& path, const std::string& slot, Parsed
         if (section == 1) { sceneText += line; sceneText += '\n'; continue; }
         auto cols = SplitTabs(line);
         if (section == 0 && cols.size() >= 2) {
-            if (cols[0] == "label") out.info.label = Unescape(cols[1]);
-            else if (cols[0] == "scene") out.info.scene = Unescape(cols[1]);
-            else if (cols[0] == "savedAt") out.info.savedAt = std::atoll(cols[1].c_str());
-            else if (cols[0] == "playTime") out.info.playTime = savefmt::ParseFloat(cols[1]);
+            ApplyHeaderLine(out.info, cols);
         } else if (section == 2 && !cols.empty()) {
             if (cols[0] == "kv") {
                 // A bad key row makes the whole slot unusable: it would replace the game's save keys.
@@ -249,12 +288,16 @@ void ApplyState(Scene& scene, const Parsed& p) {
         if (kind == "body3" && c.size() >= 3) {
             if (GameObject* g = find(c[1]))
                 if (auto* rb = g->GetComponent<Rigidbody3D>()) {
-                    std::istringstream is(c[2]); is.imbue(std::locale::classic()); is >> rb->velocity.x >> rb->velocity.y >> rb->velocity.z;
+                    float v[3] = {rb->velocity.x, rb->velocity.y, rb->velocity.z};
+                    ParseFloats(c[2], v, 3);
+                    rb->velocity.x = v[0]; rb->velocity.y = v[1]; rb->velocity.z = v[2];
                 }
         } else if (kind == "body2" && c.size() >= 3) {
             if (GameObject* g = find(c[1]))
                 if (auto* rb = g->GetComponent<Rigidbody2D>()) {
-                    std::istringstream is(c[2]); is.imbue(std::locale::classic()); is >> rb->velocity.x >> rb->velocity.y;
+                    float v[2] = {rb->velocity.x, rb->velocity.y};
+                    ParseFloats(c[2], v, 2);
+                    rb->velocity.x = v[0]; rb->velocity.y = v[1];
                 }
         } else if ((kind == "script" || kind == "graph") && c.size() >= 5) {
             GameObject* g = find(c[1]);
@@ -287,23 +330,36 @@ bool SaveGame::ValidSlot(const std::string& slot) {
     if (slot.empty() || slot.size() > 64) return false;
     for (char c : slot)
         if (!std::isalnum((unsigned char)c) && c != '-' && c != '_') return false;
-    return true;
+    return !savefmt::IsReservedDeviceName(slot);
 }
 
 std::string SaveGame::SlotPath(const std::string& slot) {
     return Save::Resolve("saves/" + slot + ".okaygame");
 }
 
+std::string SaveGame::ThumbnailPath(const std::string& slot) {
+    return SavesFolderFile(slot + ".png");
+}
+
 float SaveGame::PlayTime() { return PlayBase() + std::max(0.0f, Time::ElapsedTime() - PlayBaseAt()); }
 
 bool SaveGame::Save(Scene& scene, const std::string& slot, const std::string& label, std::string* error) {
+    SaveOptions options;
+    options.label = label;
+    return Save(scene, slot, options, error);
+}
+
+bool SaveGame::Save(Scene& scene, const std::string& slot, const SaveOptions& options, std::string* error) {
     if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name (letters, digits, - and _)"; return false; }
     std::ostringstream out;
     out << "okaygame " << kFormatVersion << "\n";
-    out << "label\t" << Escape(label) << "\n";
+    out << "label\t" << Escape(options.label) << "\n";
     out << "scene\t" << Escape(scene.Name()) << "\n";
     out << "savedAt\t" << (long long)std::time(nullptr) << "\n";
     out << "playTime\t" << Num(PlayTime()) << "\n";
+    if (!options.gameVersion.empty()) out << "gameVersion\t" << Escape(options.gameVersion) << "\n";
+    if (!options.thumbnail.empty()) out << "thumbnail\t" << Escape(options.thumbnail) << "\n";
+    for (const auto& kv : options.fields) out << "field\t" << Escape(kv.first) << "\t" << Escape(kv.second) << "\n";
     out << "--scene--\n" << SceneSerializer::Serialize(scene);
     out << "--state--\n";
     for (const auto& up : scene.Objects()) {
@@ -344,18 +400,28 @@ bool SaveGame::Save(Scene& scene, const std::string& slot, const std::string& la
     const std::string path = SlotPath(slot);
     std::error_code ec;
     fs::create_directories(fs::path(path).parent_path(), ec);
-    // Keep the previous save as .bak, but only if it was a good one, so a damaged
-    // file never replaces the last good copy.
+    // What is there now: a good file becomes the .bak (a damaged one never replaces the last
+    // good copy); a file from a newer build is kept as .newer.bak, so going back to that build
+    // finds it.
     if (fs::is_regular_file(path, ec)) {
         std::string old, why;
         int v = 1;
-        if (savefmt::ReadFileCapped(path, g_maxBytes, old, &why) && ParseHeaderLine(old.substr(0, old.find('\n')), v) &&
-            v <= kFormatVersion && (v < 2 || VerifyChecksum(old, &why)))
-            savefmt::AtomicWrite(path + ".bak", old);
+        if (savefmt::ReadFileCapped(path, g_maxBytes, old, &why) && ParseHeaderLine(old.substr(0, old.find('\n')), v)) {
+            if (v > kFormatVersion) {
+                std::string kept;
+                const std::string newer = path + ".newer.bak";
+                if (!(savefmt::ReadFileCapped(newer, g_maxBytes, kept, nullptr) && kept == old)) savefmt::AtomicWrite(newer, old);
+            } else if (v < 2 || VerifyChecksum(old, &why)) {
+                savefmt::AtomicWrite(path + ".bak", old);
+            }
+        }
     }
     // Write beside it, then swap in, so a crash mid-save never leaves a broken slot.
-    if (!savefmt::AtomicWrite(path, text)) {
-        if (error) *error = "Couldn't write " + path;
+    savefmt::WriteOptions wopt;
+    wopt.sync = true;
+    std::string werr;
+    if (!savefmt::AtomicWriteChecked(path, text, &werr, wopt)) {
+        if (error) *error = "Couldn't save slot \"" + slot + "\": " + werr + " (the slot was not changed)";
         return false;
     }
     Log::Info("Saved game to slot ", slot);
@@ -393,54 +459,136 @@ bool SaveGame::Exists(const std::string& slot) {
 bool SaveGame::Delete(const std::string& slot) {
     std::error_code ec;
     if (!ValidSlot(slot)) return false;
-    fs::remove(SlotPath(slot) + ".bak", ec);
-    fs::remove(SlotPath(slot) + ".tmp", ec);
+    const SaveSlotInfo info = Info(slot);
+    // A thumbnail named without a folder lives in the saves folder with the slot.
+    if (info.exists && !info.thumbnail.empty()) {
+        // Info resolves a bare name into the saves folder; a path the game gave is left alone.
+        const std::string bare = fs::path(info.thumbnail).filename().string();
+        if (info.thumbnail == SavesFolderFile(bare) && IsBareName(bare)) fs::remove(info.thumbnail, ec);
+    }
+    for (const char* suffix : {".bak", ".tmp", ".newer.bak", ".corrupt", ".swap"}) fs::remove(SlotPath(slot) + suffix, ec);
     return fs::remove(SlotPath(slot), ec);
 }
 
 namespace {
-// Just the header lines of one slot file (label, scene, time), read without the scene.
-bool ReadHeaderOnly(const std::string& path, const std::string& slot, SaveSlotInfo& info) {
+
+enum class HeaderResult { Ok, Newer, NotASave };
+
+// Just the header lines of one slot file (label, scene, time, ...), read without the scene.
+// The file is read in pieces until its scene or state section starts, so a long label can't
+// push the time out of view; at most kMaxHeaderBytes.
+HeaderResult ReadHeaderOnly(const std::string& path, const std::string& slot, SaveSlotInfo& info) {
+    constexpr std::size_t kMaxHeaderBytes = 1024u * 1024u;
     std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
+    if (!f) return HeaderResult::NotASave;
+    std::string text;
     char buf[8192];
-    f.read(buf, sizeof(buf));
-    const std::string text(buf, (std::size_t)f.gcount());
+    while (text.size() < kMaxHeaderBytes) {
+        f.read(buf, sizeof(buf));
+        const std::size_t got = (std::size_t)f.gcount();
+        if (got == 0) break;
+        text.append(buf, got);
+        if (text.find("\n--scene--\n") != std::string::npos || text.find("\n--state--\n") != std::string::npos) break;
+        if (!f) break;
+    }
     int version = 1;
     std::size_t pos = text.find('\n');
-    if (!ParseHeaderLine(text.substr(0, pos), version) || version > SaveGame::kFormatVersion) return false;
+    if (!ParseHeaderLine(text.substr(0, pos), version)) return HeaderResult::NotASave;
     info = SaveSlotInfo();
     info.slot = slot; info.exists = true; info.version = version;
     while (pos != std::string::npos && pos + 1 < text.size()) {
         const std::size_t start = pos + 1;
         pos = text.find('\n', start);
-        if (pos == std::string::npos) break;   // a line cut by the buffer end: header is done
+        if (pos == std::string::npos) break;   // a line cut by the end of what was read: header is done
         std::string line = text.substr(start, pos - start);
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line == "--scene--" || line == "--state--") break;
-        auto cols = SplitTabs(line);
-        if (cols.size() < 2) continue;
-        if (cols[0] == "label") info.label = Unescape(cols[1]);
-        else if (cols[0] == "scene") info.scene = Unescape(cols[1]);
-        else if (cols[0] == "savedAt") info.savedAt = std::atoll(cols[1].c_str());
-        else if (cols[0] == "playTime") info.playTime = savefmt::ParseFloat(cols[1]);
+        ApplyHeaderLine(info, SplitTabs(line));
     }
-    return true;
+    if (version > SaveGame::kFormatVersion) return HeaderResult::Newer;
+    return HeaderResult::Ok;
 }
+
+std::string NewerMessage(const std::string& slot, int version) {
+    return "Slot \"" + slot + "\" was saved by a newer version of the game (save format " +
+           std::to_string(version) + ", this build reads up to " + std::to_string(SaveGame::kFormatVersion) + ")";
+}
+
+// A thumbnail named without a folder is a file in the saves folder: give its full path.
+void ResolveThumbnail(SaveSlotInfo& info) {
+    if (!info.thumbnail.empty() && IsBareName(info.thumbnail)) info.thumbnail = SavesFolderFile(info.thumbnail);
+}
+
 } // namespace
 
-SaveSlotInfo SaveGame::Info(const std::string& slot) {
+bool SaveGame::Check(const std::string& slot, std::string* error) {
+    if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name"; return false; }
+    auto check = [&](const std::string& path, std::string* why) {
+        std::error_code ec;
+        if (!fs::exists(path, ec)) { *why = "No save in slot \"" + slot + "\""; return ReadResult::Missing; }
+        std::string text, readWhy;
+        if (!savefmt::ReadFileCapped(path, g_maxBytes, text, &readWhy)) { *why = "Slot \"" + slot + "\" can't be read: " + readWhy; return ReadResult::Damaged; }
+        int version = 1;
+        return ClassifyText(text, slot, version, why);
+    };
+    const std::string path = SlotPath(slot);
+    std::string why;
+    const ReadResult r = check(path, &why);
+    if (r == ReadResult::Ok) return true;
+    if (r == ReadResult::Damaged) {
+        std::string bwhy;
+        if (check(path + ".bak", &bwhy) == ReadResult::Ok) {
+            if (error) *error = "Slot \"" + slot + "\" was damaged (" + why + "); its backup is fine";
+            return true;
+        }
+    }
+    if (error) *error = why;
+    return false;
+}
+
+SaveSlotInfo SaveGame::Info(const std::string& slot, bool verify) {
     SaveSlotInfo i; i.slot = slot;
     if (!ValidSlot(slot)) return i;
     const std::string path = SlotPath(slot);
     std::error_code ec;
     if (!fs::exists(path, ec)) return i;
-    if (!ReadHeaderOnly(path, slot, i)) {
+    const auto size = fs::file_size(path, ec);
+    const long long sizeBytes = ec ? 0 : (long long)size;
+    SaveSlotInfo head;
+    HeaderResult h = ReadHeaderOnly(path, slot, head);
+    if (h == HeaderResult::NotASave) {
         SaveSlotInfo b;
-        if (ReadHeaderOnly(path + ".bak", slot, b)) return b;   // main file unreadable: show the backup's
-        i = SaveSlotInfo(); i.slot = slot;
+        if (ReadHeaderOnly(path + ".bak", slot, b) == HeaderResult::Ok) {   // main file unreadable: show the backup's
+            b.fromBackup = true;
+            b.error = "Slot \"" + slot + "\" was damaged; these are the backup's values";
+            b.sizeBytes = sizeBytes;
+            ResolveThumbnail(b);
+            return b;
+        }
+        i.exists = true; i.corrupt = true; i.sizeBytes = sizeBytes;
+        i.error = "Slot \"" + slot + "\" isn't a save game";
+        return i;
     }
-    return i;
+    head.sizeBytes = sizeBytes;
+    ResolveThumbnail(head);
+    if (h == HeaderResult::Newer) {
+        head.incompatible = true;
+        head.error = NewerMessage(slot, head.version);
+        return head;
+    }
+    if (verify) {
+        std::string why;
+        if (!Check(slot, &why)) { head.corrupt = true; head.error = why; }
+        else if (!why.empty()) {   // the main file failed but the backup is fine: show the backup
+            SaveSlotInfo b;
+            if (ReadHeaderOnly(path + ".bak", slot, b) == HeaderResult::Ok) {
+                b.fromBackup = true; b.error = why; b.sizeBytes = sizeBytes;
+                ResolveThumbnail(b);
+                return b;
+            }
+        }
+    }
+    return head;
 }
 
 bool SaveGame::LastLoadUsedBackup() { return g_usedBackup; }
@@ -455,7 +603,7 @@ void SaveGame::SetMigration(int fromVersion, Migration fn) {
     else Migrations().erase(fromVersion);
 }
 
-std::vector<SaveSlotInfo> SaveGame::List() {
+std::vector<SaveSlotInfo> SaveGame::List(bool verify) {
     std::vector<SaveSlotInfo> out;
     std::error_code ec;
     const fs::path dir = fs::path(SlotPath("x")).parent_path();
@@ -463,10 +611,14 @@ std::vector<SaveSlotInfo> SaveGame::List() {
         if (it->path().extension() != ".okaygame") continue;
         const std::string slot = it->path().stem().string();
         if (!ValidSlot(slot)) continue;
-        SaveSlotInfo i = Info(slot);
+        SaveSlotInfo i = Info(slot, verify);
         if (i.exists) out.push_back(std::move(i));
     }
-    std::sort(out.begin(), out.end(), [](const SaveSlotInfo& a, const SaveSlotInfo& b) { return a.savedAt > b.savedAt; });
+    // Newest first; slots without a known time (damaged ones) go last, by name.
+    std::sort(out.begin(), out.end(), [](const SaveSlotInfo& a, const SaveSlotInfo& b) {
+        if (a.savedAt != b.savedAt) return a.savedAt > b.savedAt;
+        return a.slot < b.slot;
+    });
     return out;
 }
 

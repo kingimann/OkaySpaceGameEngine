@@ -106,6 +106,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/DialogueRunner.hpp"   // dialogue / story / quest builtins
 #include "okay/Components/QuestLog.hpp"
@@ -5359,6 +5360,28 @@ struct OkayScriptVM::Impl {
         b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
         b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
         b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
+        // Load menus: save_slots() lists every slot (newest first, damaged ones included), save_valid
+        // says whether a slot would load, and one slot's details come as text a menu can show.
+        b["save_slots"]  = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const SaveSlotInfo& i : SaveGame::List()) list.AsArray()->push_back(Value{i.slot});
+            return list;
+        };
+        b["save_valid"]     = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Check(slotArg(a)) ? 1.0f : 0.0f}; };
+        b["save_scene"]     = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).scene}; };
+        b["save_play_time"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).playTime}; };
+        b["save_play_text"] = [slotArg](std::vector<Value>& a) {   // "1h 05m"
+            const SaveSlotInfo i = SaveGame::Info(slotArg(a));
+            return Value{i.exists ? SaveMenuModel::FormatPlayTime(i.playTime) : std::string()};
+        };
+        b["save_date"] = [slotArg](std::vector<Value>& a) {   // "2026-11-08 14:03" (UTC)
+            const SaveSlotInfo i = SaveGame::Info(slotArg(a));
+            return Value{i.exists && i.savedAt > 0 ? SaveMenuModel::FormatDateTime(i.savedAt, 0) : std::string()};
+        };
+        b["save_ago"] = [slotArg](std::vector<Value>& a) {   // "5 minutes ago"
+            const SaveSlotInfo i = SaveGame::Info(slotArg(a));
+            return Value{i.exists && i.savedAt > 0 ? SaveMenuModel::FormatAgo((long long)Time::UnixSeconds() - i.savedAt) : std::string()};
+        };
         // Localization (docs/localization.md): loc("key", args...) is the key's text in
         // the player's language with {0}, {1}... filled from the arguments, or {name}
         // from a map (loc("greet", map_set(map(), "player", name))); set_language("fr") switches and

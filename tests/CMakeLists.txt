@@ -1561,6 +1561,11 @@ add_executable(test_durable_saves test_durable_saves.cpp)
 target_link_libraries(test_durable_saves PRIVATE okay::engine)
 add_test(NAME durable_saves COMMAND test_durable_saves)
 
+# Saves and prefs hardening: the shared atomic write, SaveFile checksum and backup, Prefs recovery, SaveGame listing
+add_executable(test_save_hardening test_save_hardening.cpp)
+target_link_libraries(test_save_hardening PRIVATE okay::engine)
+add_test(NAME save_hardening COMMAND test_save_hardening)
+
 # Save game framework: typed blocks, slot files + headers, migration chain, forward
 # compatibility, sync backends, menu model (no scene needed).
 add_executable(test_save_framework test_save_framework.cpp)

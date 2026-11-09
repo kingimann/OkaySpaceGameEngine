@@ -1,4 +1,5 @@
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/PrefabTools.hpp"
 #include <iostream>
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
@@ -8304,6 +8305,7 @@ GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string
     std::stringstream ss; ss << f.rdbuf();
     std::string text = DataPack::Unpack(ss.str());   // decode if obfuscated
     if (text.empty() && DataPack::IsPacked(ss.str())) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
+    if (PrefabTools::UsesPrefabStructure(text)) return PrefabTools::Instantiate(scene, path, {}, error, warnings);   // nested prefabs / variant
     GameObject* root = nullptr;
     if (!ParseInto(scene, text, /*clear=*/false, &root, error, warnings)) return nullptr;
     // Link the new instance to its source prefab so the editor can apply/revert
@@ -8564,6 +8566,7 @@ bool SceneSerializer::CapturePrefabOverrides(GameObject& instanceRoot, std::stri
     if (instanceRoot.prefabSource.empty()) { if (error) *error = "object is not a prefab instance"; return false; }
     std::string fileText;
     if (!ReadFileText(instanceRoot.prefabSource, fileText, error)) return false;
+    if (PrefabTools::UsesPrefabStructure(fileText)) return PrefabTools::CaptureOverrides(instanceRoot, error);   // nested prefabs / variant
     // Canonical form of the prefab: load it into a scratch scene and write it back out,
     // so both sides of the comparison come from the same writer.
     Scene scratch("prefab");
@@ -8606,6 +8609,7 @@ GameObject* SceneSerializer::InstantiatePrefab(Scene& scene, const std::string& 
                                                std::string* error, std::vector<std::string>* warnings) {
     std::string fileText;
     if (!ReadFileText(path, fileText, error)) return nullptr;
+    if (PrefabTools::UsesPrefabStructure(fileText)) return PrefabTools::Instantiate(scene, path, overrides, error, warnings);   // nested prefabs / variant
     std::vector<std::string> own;
     const std::string text = SpliceOverrides(fileText, overrides, &own);
     GameObject* root = nullptr;
@@ -8618,6 +8622,7 @@ GameObject* SceneSerializer::InstantiatePrefab(Scene& scene, const std::string& 
 GameObject* SceneSerializer::ReapplyPrefab(Scene& scene, GameObject& instanceRoot, std::string* error,
                                            std::vector<std::string>* warnings) {
     if (instanceRoot.prefabSource.empty()) { if (error) *error = "object is not a prefab instance"; return nullptr; }
+    if (PrefabTools::FileUsesPrefabStructure(instanceRoot.prefabSource)) return PrefabTools::Reapply(scene, instanceRoot, error, warnings);
     GameObject* fresh = InstantiatePrefab(scene, instanceRoot.prefabSource, instanceRoot.prefabOverrides, error, warnings);
     if (!fresh) return nullptr;   // nothing was added, the instance is as it was
     // The new instance takes the old one's place: same name, parent, sibling slot, and

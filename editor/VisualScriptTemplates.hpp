@@ -191,8 +191,17 @@ inline std::string Door() {
     G g;
     g.Var("lift", "2");
     g.Var("open", "0");
-    g.Note("Opens once, when something enters this trigger.");
+    g.Note("Opens once, when a collider overlaps it. A fast mover is not missed between frames.");
     const int ev = g.Node("OnTrigger", nullptr, 40, 160, "OnTrigger");
+    const int stay = g.Node("OnTriggerStay", nullptr, 40, 280, "OnTriggerStay");
+    const int up = g.Node("OnUpdate", nullptr, 40, 400, "OnUpdate");
+    const int here = g.Node("GetPosition", nullptr, 40, 540);
+    const int half = g.Node("MakeVec3", nullptr, 280, 540);
+    g.Def(half, 0, "1.2"); g.Def(half, 1, "1.2"); g.Def(half, 2, "1.2");
+    const int box = g.Node("OverlapBox3D", nullptr, 520, 480);
+    const int zeroN = g.Node("Const", "0", 520, 640);
+    const int any = g.Node("Compare", ">", 760, 560);
+    const int gate = g.Node("Branch", nullptr, 980, 400);
     const int open = g.Node("GetVar", "open", 40, 300);
     const int zero = g.Node("Const", "0", 40, 400);
     const int shut = g.Node("Compare", "==", 260, 320);
@@ -203,10 +212,14 @@ inline std::string Door() {
     const int lift = g.Node("GetVar", "lift", 700, 400);
     const int gz = g.Node("GetZ", nullptr, 700, 500);
     const int pos = g.Node("SetPosition", nullptr, 940, 180);
+    g.Data(box, 0, here); g.Data(box, 1, half);
+    g.Data(any, 0, box, 0); g.Data(any, 1, zeroN); g.Data(gate, 0, any);
     g.Data(shut, 0, open); g.Data(shut, 1, zero); g.Data(br, 0, shut);
     g.Data(set, 0, one);
     g.Data(pos, 0, gx); g.Data(pos, 1, lift); g.Data(pos, 2, gz);
     g.Ex(ev, 0, br);
+    g.Ex(stay, 0, br);
+    g.Ex(up, 0, gate); g.Ex(gate, 0, br);
     g.Ex(br, 0, set); g.Ex(set, 0, pos);
     return g.s;
 }
@@ -698,7 +711,8 @@ inline std::string WinScore() {
 
 inline const std::vector<VsTemplate>& VsTemplates() {
     static const std::vector<VsTemplate> all = {
-        {"Movement", "Move with WASD", "Slides with W A S D or the arrow keys.", VsLevel::Basic, "", "", tpl::MoveWasd()},
+        {"Movement", "Move with WASD", "Slides with W A S D or the arrow keys. A collider is added so it can open doors.", VsLevel::Basic,
+         "A box collider is added on the selected object.", "Solid", tpl::MoveWasd()},
         {"Movement", "Spin", "Turns around at a steady speed.", VsLevel::Basic, "", "", tpl::Spin()},
         {"Movement", "Float", "Bobs up and down.", VsLevel::Basic, "", "", tpl::Float()},
         {"Movement", "Follow a target", "Walks toward an object named Player.", VsLevel::Intermediate,

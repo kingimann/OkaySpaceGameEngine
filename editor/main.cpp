@@ -274,6 +274,8 @@ static void CompileOpenScriptBuffers(okay::Scene& scene) {
 // ----------------------------------------------------------------------------
 // Headless self-test: verifies the editor's model logic with no GUI.
 // ----------------------------------------------------------------------------
+static void RunEditorPlayKeyTest(int& failures);
+
 static int RunSelfTest() {
     using namespace okay;
     using namespace okay::editor;
@@ -315,6 +317,8 @@ static int RunSelfTest() {
               "play compiled the open script buffer");
         ped.Stop();
     }
+
+    RunEditorPlayKeyTest(failures);
 
     // Play / stop restores edit state (move during play is reverted).
     ed.Play();
@@ -514,6 +518,59 @@ int main(int argc, char** argv) {
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
+#include "EditorPlayInput.hpp"     // Play keyboard: SDL state -> the keys scripts read
+
+// Holding D in EditorState::Play, through CollectEditorPlayKeys, walks a Move
+// with WASD cube into a Door. E then changes the Press E colour.
+static void RunEditorPlayKeyTest(int& failures) {
+    using namespace okay;
+    using namespace okay::editor;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) { ++failures; std::cerr << "  FAIL: " << what << "\n"; }
+    };
+    if (SDL_WasInit(SDL_INIT_EVENTS) == 0) SDL_Init(SDL_INIT_EVENTS);
+    EditorState ped;
+    auto place = [&](const char* name, const char* which, Vec3 at) {
+        GameObject* go = ped.scene().CreateGameObject(name);
+        go->transform->localPosition = at;
+        go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+        const auto* t = vsed::VsTemplateNamed(which);
+        check(t != nullptr, which);
+        if (!t) return go;
+        vsed::VsAddTemplateComponents(go, t->add);
+        go->AddComponent<VisualScriptComponent>()->LoadFromText(t->graph);
+        return go;
+    };
+    GameObject* player = place("Player", "Move with WASD", {-1.4f, 0, 0});
+    GameObject* door = place("Door", "Door", {0.6f, 0, 0});
+    GameObject* sw = place("Switch", "Press E", {4, 0, 2});
+    if (auto* mesh = sw->GetComponent<MeshRenderer>()) mesh->color = {0.9f, 0.2f, 0.2f, 1};
+    ped.Play();
+    Uint8 ks[SDL_NUM_SCANCODES] = {};
+    ks[SDL_SCANCODE_D] = 1;
+    for (int i = 0; i < 70; ++i) {
+        std::vector<char> down;
+        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        Input::FeedKeys(down);
+        ped.Tick(1.0f / 60.0f);
+    }
+    check(player && player->transform->localPosition.x > -0.2f, "editor play: D moved the WASD cube");
+    check(door && door->transform->localPosition.y > 1.2f, "editor play: walking into the door opened it");
+    ks[SDL_SCANCODE_D] = 0;
+    Input::FeedKeys({});
+    ped.Tick(1.0f / 60.0f);
+    ks[SDL_SCANCODE_E] = 1;
+    {
+        std::vector<char> down;
+        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        Input::FeedKeys(down);
+        ped.Tick(1.0f / 60.0f);
+    }
+    auto* swMesh = sw ? sw->GetComponent<MeshRenderer>() : nullptr;
+    check(swMesh && swMesh->color.g > 0.5f, "editor play: E changed the switch colour");
+    ped.Stop();
+    Input::FeedKeys({});
+}
 #include "NodePlayground.hpp"      // File > Examples > Node Playground
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
@@ -3386,6 +3443,7 @@ bool   g_gameMouseCapture = false;
 // in the Game view gives it to the game again.
 bool   g_gameCursorReleased = false;
 bool   g_gameCanvasHovered = false;   // mouse over the Game view's picture (last frame)
+bool   g_sceneViewHovered = false;    // mouse over the Scene view (Play keys still reach the game)
 int    g_gameCanvasHoveredFrame = -10; // ImGui frame g_gameCanvasHovered was last set (the Game view may be hidden)
 
 // Shortest distance (pixels) from point p to the segment a-b, for handle picking.
@@ -13645,7 +13703,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Movement", "Jump on Space", "Upward push when Space is pressed (needs a Rigidbody).",
                     "if (key_down(\"space\")) jump(8)   // no braces needed for one line\n"},
                 {"Movement", "Shoot on a cooldown", "Fire at most a few times a second — cooldown() gates the rate.",
-                    "update(dt) {\n    if (mouse(0) && cooldown(\"shoot\", 0.25)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                    "update(dt) {\n    if (mouse(0) && cooldown(\"shoot\", 0.25)) {\n        spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 {"Movement", "Follow the player", "One line: walk toward the object named Player.",
                     "follow(\"Player\", 3)\n"},
                 {"Movement", "Smooth follow", "Glides toward Player with easing (softer than follow).",
@@ -13655,22 +13713,22 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Movement", "Spin forever", "One line: smooth rotation, degrees per second.",
                     "spin(90)\n"},
                 {"Movement", "Key event -> function", "Call your own function the frame a key is pressed.",
-                    "on_key(\"space\", \"shoot\")\n\nshoot() {\n    spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n}\n"},
+                    "on_key(\"space\", \"shoot\")\n\nshoot() {\n    spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n}\n"},
                 {"Movement", "Shoot on click", "Spawn a bullet where we are when clicked.",
-                    "update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                    "update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 // ---- Gameplay ----
                 {"Gameplay", "Health + take damage", "A hp value that drops on collision and dies at 0.",
                     "start() {\n    hp = 100\n}\n\non_collision(other) {\n    hp = hp - 10\n    if (hp <= 0) {\n        destroy()\n    }\n}\n"},
                 {"Gameplay", "Collect coin (+score)", "One line + remove: add_score does the shared score.",
                     "on_collision(other) {\n    add_score(1)\n    destroy()\n}\n"},
                 {"Gameplay", "Spawn on a timer", "One line with timer() - no accumulator needed.",
-                    "if (timer(\"spawn\", 2)) {\n    spawn(\"enemy.okayprefab\", pos_x(), pos_y())\n}\n"},
+                    "if (timer(\"spawn\", 2)) {\n    spawn(\"examples/node_playground/marker.okayprefab\", pos_x(), pos_y())\n}\n"},
                 {"Gameplay", "Countdown to a scene", "Tick a timer down, then load a scene.",
-                    "start() {\n    timeLeft = 10\n}\n\nupdate(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        load_scene(\"GameOver\")\n    }\n}\n"},
+                    "start() {\n    timeLeft = 10\n}\n\nupdate(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        print(\"Game over\")\n    }\n}\n"},
                 {"Gameplay", "When the player is close", "Prints a line while this object is within 3 units of Player.",
                     "update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        print(\"Player is close\")\n    }\n}\n"},
                 {"Gameplay", "Spawn a wave (loop)", "Create a row of enemies at start.",
-                    "start() {\n    // Spawn 5 enemies in a row.\n    for (i = 0; i < 5; i = i + 1) {\n        spawn(\"enemy.okayprefab\", i * 2, 0)\n    }\n}\n"},
+                    "start() {\n    // Spawn 5 enemies in a row.\n    for (i = 0; i < 5; i = i + 1) {\n        spawn(\"examples/node_playground/marker.okayprefab\", i * 2, 0)\n    }\n}\n"},
                 // ---- HUD (on-screen UI from script) ----
                 {"HUD", "Health bar + buttons", "A draggable window with a bar and two buttons.",
                     "start() {\n    hp = 100\n}\n\nupdate(dt) {\n    ui_begin(\"HUD\", 24, 24, 240, 130)\n    ui_text(\"Health\")\n    ui_progress(hp / 100)\n    if (ui_button(\"Heal\")) { hp = 100 }\n    ui_sameline()\n    if (ui_button(\"Hurt\")) { hp = hp - 10 }\n    ui_end()\n}\n"},
@@ -13697,7 +13755,7 @@ void DrawScriptEditor(EditorState& ed) {
                     "flee(\"Player\", 3)\n"},
                 // ---- Abilities ----
                 {"Abilities", "Ability with cooldown", "Fire on Space, but only every 1.5s.",
-                    "start() {\n    cd = 0\n}\n\nupdate(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                    "start() {\n    cd = 0\n}\n\nupdate(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 {"Abilities", "Delay then act (once)", "Wait 3 seconds after start, then do something.",
                     "start() {\n    t = 0\n    done = 0\n}\n\nupdate(dt) {\n    if (done == 0) {\n        t = t + dt\n        if (t >= 3) {\n            done = 1\n            // ... runs once, 3 seconds in ...\n        }\n    }\n}\n"},
                 // ---- Effects ----
@@ -13761,16 +13819,16 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Movement", "Move to a spot", "One line: walk to a point and stop there.",
                     "move_to(0, 5, 3)   // go to (0,5) at speed 3\n"},
                 {"Spawning", "Spawn a ring (wave)", "Spawn N enemies in a ring around you, once.",
-                    "start() {\n    spawn_wave(\"enemy.okayprefab\", 8, 3)\n}\n"},
+                    "start() {\n    spawn_wave(\"examples/node_playground/marker.okayprefab\", 8, 3)\n}\n"},
                 {"Abilities", "Auto-fire at the player", "Fire a bullet at the player twice a second.",
-                    "start() {\n    every(0.5, \"fire\")\n}\n\nfunction fire() {\n    shoot_at(\"Player\", \"bullet.okayprefab\", 6)\n}\n"},
+                    "start() {\n    every(0.5, \"fire\")\n}\n\nfunction fire() {\n    shoot_at(\"Player\", \"examples/node_playground/shot.okayprefab\", 6)\n}\n"},
                 {"Motion", "Grow while Up held", "Scale up as long as the Up key is down.",
                     "start() {\n    s = 1\n}\n\nupdate(dt) {\n    if (key(\"up\")) {\n        s = s + dt\n        set_scale(s)\n    }\n}\n"},
                 // ---- Enemy AI (more) ----
                 {"Enemy AI", "Patrol or chase (state)", "Chase when close, otherwise walk right.",
                     "update(dt) {\n    if (dist_to(\"Player\") < 5) {\n        follow(\"Player\", 3)\n    } else {\n        walk(1, 0, 2)\n    }\n}\n"},
                 {"Enemy AI", "Random chance spawner", "Every second, 50% chance to spawn from above.",
-                    "start() {\n    t = 0\n}\n\nupdate(dt) {\n    t = t + dt\n    if (t >= 1) {\n        t = 0\n        if (chance(0.5)) {\n            spawn(\"enemy.okayprefab\", rand(-4, 4), 3)\n        }\n    }\n}\n"},
+                    "start() {\n    t = 0\n}\n\nupdate(dt) {\n    t = t + dt\n    if (t >= 1) {\n        t = 0\n        if (chance(0.5)) {\n            spawn(\"examples/node_playground/marker.okayprefab\", rand(-4, 4), 3)\n        }\n    }\n}\n"},
                 // ---- Gameplay (more) ----
                 {"Gameplay", "Regenerate health (capped)", "Heal over time up to 100.",
                     "start() {\n    hp = 100\n}\n\nupdate(dt) {\n    if (hp < 100) {\n        hp = clamp(hp + 10 * dt, 0, 100)\n    }\n}\n"},
@@ -34155,7 +34213,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Combo("Fire Button##t2", &fbi, mb, 4)) { t2->fireButton = fbi - 1; ed.dirty = true; }
             {
                 char pb[128]; std::strncpy(pb, t2->projectile.c_str(), sizeof(pb) - 1); pb[sizeof(pb) - 1] = '\0';
-                if (ImGui::InputTextWithHint("Projectile##t2", "bullet.okayprefab", pb, sizeof(pb))) { t2->projectile = pb; ed.dirty = true; }
+                if (ImGui::InputTextWithHint("Projectile##t2", "examples/node_playground/shot.okayprefab", pb, sizeof(pb))) { t2->projectile = pb; ed.dirty = true; }
                 if (AcceptAssetPathField(t2->projectile)) ed.dirty = true;   // drop a prefab from Project
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Prefab spawned as a bullet — give it a Rigidbody2D (+ Lifetime).");
             }
@@ -39292,6 +39350,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
 void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
+    if (!gameView) g_sceneViewHovered = hovered;
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
 
     // Orbit controls (Scene view only).
@@ -44475,23 +44534,24 @@ int main(int argc, char** argv) {
         // cursor; the lock's warp is not a look, or Play opens pitched at the sky.
         static bool s_playLookLocked = false;
         static Vec2 s_playLookAnchor{0, 0};
-        if (ed.isPlaying() && !io.WantTextInput) {
-            const Uint8* ks = SDL_GetKeyboardState(nullptr);
+        // A text field only swallows keys while it is the thing being typed in
+        // and the pointer is not over the Scene or Game view. Hovering the view
+        // (or clicking it) keeps D / E / WASD on the game.
+        const bool typingElsewhere = io.WantTextInput && !g_gameCanvasHovered && !g_sceneViewHovered;
+        if (ed.isPlaying() && (g_gameCanvasHovered || g_sceneViewHovered) && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            ImGui::ClearActiveID();
+        if (ed.isPlaying() && !typingElsewhere) {
+            int nkeys = 0;
+            const Uint8* ks = SDL_GetKeyboardState(&nkeys);
             std::vector<char> down;
-            for (char c = 'a'; c <= 'z'; ++c)
-                if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
-            for (char c = '0'; c <= '9'; ++c)
-                if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
-            if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
-            if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
-            if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
-            if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
-            if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
-            if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
-            if (ks[SDL_SCANCODE_UP])    { down.push_back('w'); down.push_back(Input::KeyUp); }
-            if (ks[SDL_SCANCODE_LEFT])  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-            if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
-            if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
+            okay::editor::CollectEditorPlayKeys(down, ks, nkeys);
+            auto addHeld = [&](ImGuiKey key, char c) {
+                if (!ImGui::IsKeyDown(key)) return;
+                if (std::find(down.begin(), down.end(), c) == down.end()) down.push_back(c);
+            };
+            addHeld(ImGuiKey_A, 'a'); addHeld(ImGuiKey_D, 'd');
+            addHeld(ImGuiKey_W, 'w'); addHeld(ImGuiKey_S, 's');
+            addHeld(ImGuiKey_E, 'e'); addHeld(ImGuiKey_Space, ' ');
 
             FeedSdlGamepad(g_pad, down);
             Input::FeedKeys(down);
@@ -45099,8 +45159,8 @@ int main(int argc, char** argv) {
             // OKAY_UI_GAMEPLAY=1: the gameplay templates in one scene (Play proof).
             if (std::getenv("OKAY_UI_GAMEPLAY") && s_focusFrames == 36) {
                 ed.view3D = true;
-                ed.camTarget = {1.0f, 0.8f, 0.4f};
-                ed.camDist = 13.0f;
+                ed.camTarget = {0.4f, 0.8f, 0.2f};
+                ed.camDist = 11.0f;
                 ed.camPitch = 28.0f;
                 ed.camYaw = -25.0f;
                 auto place = [&](const char* name, const char* which, okay::Vec3 at, okay::Color color) {
@@ -45115,20 +45175,10 @@ int main(int argc, char** argv) {
                     go->AddComponent<VisualScriptComponent>()->LoadFromText(t->graph);
                     return go;
                 };
-                place("Player", "Move with WASD", {-3.6f, 0.5f, 1.6f}, {0.25f, 0.55f, 0.95f, 1});
-                place("Enemy", "Chase", {-3.6f, 0.5f, 3.4f}, {0.85f, 0.25f, 0.25f, 1});
-                GameObject* door = place("Door", "Door", {-1.2f, 0.5f, -1.4f}, {0.55f, 0.38f, 0.22f, 1});
-                if (auto* box = door->GetComponent<BoxCollider3D>()) box->size = {1.6f, 1.6f, 1.6f};
-                GameObject* guest = ed.scene().CreateGameObject("Guest");
-                guest->transform->localPosition = {-3.5f, 0.5f, -1.4f};
-                auto* gm = guest->AddComponent<MeshRenderer>();
-                gm->mesh = Mesh::Cube();
-                gm->color = {0.9f, 0.9f, 0.95f, 1};
-                guest->AddComponent<BoxCollider3D>();
-                auto* gb = guest->AddComponent<Rigidbody3D>();
-                gb->bodyType = Rigidbody3D::BodyType::Kinematic;
-                gb->gravityScale = 0.0f;
-                gb->velocity = {1.8f, 0, 0};
+                place("Player", "Move with WASD", {-2.2f, 0.5f, 0}, {0.25f, 0.55f, 0.95f, 1});
+                place("Enemy", "Chase", {-2.2f, 0.5f, 2.2f}, {0.85f, 0.25f, 0.25f, 1});
+                GameObject* door = place("Door", "Door", {1.4f, 0.5f, 0}, {0.55f, 0.38f, 0.22f, 1});
+                if (auto* box = door->GetComponent<BoxCollider3D>()) box->size = {1.4f, 2.0f, 1.4f};
                 GameObject* coin = place("Coin", "Pickup", {2.0f, 0.5f, -1.4f}, {0.95f, 0.8f, 0.2f, 1});
                 if (auto* box = coin->GetComponent<BoxCollider3D>()) box->size = {1.4f, 1.4f, 1.4f};
                 GameObject* collector = ed.scene().CreateGameObject("Collector");
@@ -45142,8 +45192,11 @@ int main(int argc, char** argv) {
                 cb->gravityScale = 0.0f;
                 cb->velocity = {1.4f, 0, 0};
                 GameObject* board = ed.scene().CreateGameObject("Scoreboard");
-                board->transform->localPosition = {2.0f, 2.2f, -1.4f};
-                board->AddComponent<TextRenderer>()->text = "Score: 0";
+                board->transform->localPosition = {2.0f, 2.0f, -1.4f};
+                auto* scoreText = board->AddComponent<TextRenderer>();
+                scoreText->text = "Score: 0";
+                scoreText->pixelSize = 0.8f;
+                scoreText->color = {1, 1, 1, 1};
                 board->AddComponent<VisualScriptComponent>()->LoadFromText(
                     "node 1 OnUpdate\nentry OnUpdate 1\n"
                     "node 2 GetSceneVar score\nnode 3 ToString\ndata 3 0 2 0\n"
@@ -45161,12 +45214,6 @@ int main(int argc, char** argv) {
                     for (const auto& up : ed.scene().Objects()) if (up && up->name == n) return up.get();
                     return nullptr;
                 };
-                if (gp == 150) {
-                    if (GameObject* door = find("Door"))
-                        if (door->transform->localPosition.y < 1.0f)
-                            if (auto* vs = door->GetComponent<VisualScriptComponent>())
-                                vs->OnTriggerEnter3D(nullptr);
-                }
                 if (gp == 220) {
                     if (GameObject* hero = find("Hero")) hero->transform->localPosition = {10.5f, 0.5f, 1.2f};
                 }

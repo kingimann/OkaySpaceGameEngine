@@ -110,8 +110,8 @@ whole file and check it (use them for one slot, not a long list of big saves).
 - A file written by a **newer** version of the game is refused with a message
   ("saved by a newer version ..."); it is never half loaded. It is still listed
   (`incompatible`), and if this older build saves over that slot the newer file is
-  first kept as `<slot>.okaygame.newer.bak`, so going back to the newer build finds it. To upgrade older
-  files when you change the format, register a step with
+  first kept as `<slot>.okaygame.newer.bak`, so going back to the newer build finds it.
+  To upgrade older files when you change the format, register a step with
   `SaveGame::SetMigration(fromVersion, fn)`; the steps run in order on the
   file's text before it is read.
 - When a slot is saved over, the previous good file is kept as
@@ -137,7 +137,8 @@ whole file and check it (use them for one slot, not a long list of big saves).
 - **One crash-safe write for everything.** `savefmt::AtomicWriteChecked` (`Core/SaveData.hpp`,
   code in `Core/SaveFile.cpp`) is the single write that `SaveGame`, `SaveFile`, `Prefs`, the
   save framework, string tables and the other writers share: temp file, flush, optional
-  `fsync` (`WriteOptions::sync`, on for slots and prefs), rename, with a reason on failure.
+  `fsync` (`WriteOptions::sync`: on for slots and prefs, off for the `Save` facade, which
+  writes on every `Set`), rename, with a reason on failure.
   Two threads writing one path take turns (they used to share the temp file and one write
   could fail or mix); it no longer deletes the old file before a rename that might fail.
 - **`SaveFile` (the `save("gold", 120)` store) notices damage.** New files start `okaysave 3` and

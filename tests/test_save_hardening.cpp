@@ -494,6 +494,15 @@ int main() {
 #endif
         CHECK(!SaveGame::Save(s, "con", "x", &err) && Contains(err, "valid slot name"));
 
+        // A migration step that shortens the header line must not shift the parse (the play time
+        // line right after it used to be read from the wrong offset and lost).
+        WriteText(SaveGame::SlotPath("mig"), "okaygame 1\nplayTime\t30\n--scene--\n" + SceneSerializer::Serialize(s) + "--state--\n");
+        SaveGame::SetMigration(1, [](std::string& text, std::string*) { text.replace(0, 10, "okaygame"); return true; });
+        Scene mig("mig");
+        CHECK(SaveGame::LoadNow(mig, "mig", &err));
+        CHECK(SaveGame::PlayTime() >= 29.5f);
+        SaveGame::SetMigration(1, nullptr);
+
         // The script builtins a load menu uses.
         CHECK(SaveGame::Save(s, "menu1", "Menu One", &err));
         auto run = [&](const std::string& src, const char* var) {

@@ -85,6 +85,16 @@ DisallowMultipleComponent<Solo>();        // a second AddComponent<Solo> returns
   so scene teardown and scripts keep working.
 - `ComponentRules::Clear()` drops every rule (tests).
 
+## Spawning and destroying objects
+
+`Scene::Instantiate` has overloads for a world position and rotation and for a parent, and
+`Scene::Duplicate(go)` copies an object next to itself under the same parent with a unique name
+(`Scene::UniqueName`). `Scene::Destroy(go)` stays deferred to the end of the frame;
+`Scene::DestroyImmediate(go)` is for tools and tests (from inside an `Update` it queues like
+`Destroy`). An object a handler parents under a dying one during `OnDestroy` becomes a root instead
+of hanging under the dead shell. Details in `scene_hierarchy_search.md`.
+
 ## Tests
 
-`tests/test_scene_load_pool.cpp` (ctest name `scene_load_pool`).
+`tests/test_scene_load_pool.cpp` (ctest name `scene_load_pool`); spawning: `tests/test_scene_spawn.cpp`
+(`scene_spawn`).

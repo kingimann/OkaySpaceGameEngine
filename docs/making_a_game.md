@@ -151,3 +151,28 @@ share these movement niceties:
   Body, speeds, heights). Top Down starts with prone off; Click To Move and
   NPC have no keys by default. A script, a cutscene or an AI sets the stance
   with `SetStance(0 stand / 1 crouch / 2 prone)` on any of the controllers.
+
+## Mover, Spinner, Lifetime and spawning
+
+The no-code motion components take a **Space**:
+
+- **Mover** (default Local): *Local* moves in the parent's frame (the world frame for an object with
+  no parent), *World* moves in world units per second whatever the parent does, *Self* flies along the
+  object's own axes (a bullet that moves where it points).
+- **Spinner** (default Self): the vector is the axis of spin and its length the degrees per second.
+  *Self* spins around the object's own axes, *Local* around the parent's, *World* around the scene's.
+  A spin about several axes comes out the same at 30 and 240 FPS.
+- **Lifetime** destroys the object (and its children) after **Seconds**. Zero or less ends it on the
+  first frame, a very large number is as good as forever. Disabling the component pauses the timer,
+  and a saved game keeps the seconds already lived.
+
+From C++ (a script component, a spawner):
+
+```cpp
+GameObject* b = scene.Instantiate(*bulletTemplate, muzzle->Position(), muzzle->Rotation());
+GameObject* c = scene.Duplicate(*crate);                  // "Crate (1)", same parent, next to the original
+scene.Destroy(b, 2.0f);                                   // in two seconds; DestroyImmediate(b) for tools and tests
+```
+
+See `scene_hierarchy_search.md` for the full list (Transform helpers, queries, bounds) and
+`layers_tags_cameras.md` for tags, layer names and the collision matrix.

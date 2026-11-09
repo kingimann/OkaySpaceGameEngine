@@ -64,6 +64,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
     LocalizationWindow.cpp                                             # the Localization window (string table)
+    ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
     ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)  # native file dialogs
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})

@@ -541,6 +541,8 @@ int main(int argc, char** argv) {
 #  include <sys/file.h>   // flock() for the single-instance lock
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
+#include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
+#include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
 
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
@@ -1579,25 +1581,8 @@ std::string RawUrl(const std::string& ref, const std::string& name) {
     return "https://github.com/kingimann/OkaySpaceGameEngine/releases/latest/download/" + name;
 }
 
-// Compare dotted versions ("1.4.0"); returns -1 / 0 / 1 for a<b / a==b / a>b.
-int CompareVersions(const std::string& a, const std::string& b) {
-    auto parse = [](const std::string& s) {
-        std::vector<int> v; std::stringstream ss(s); std::string tok;
-        while (std::getline(ss, tok, '.')) {
-            int n = 0; try { n = std::stoi(tok); } catch (...) { n = 0; }
-            v.push_back(n);
-        }
-        return v;
-    };
-    std::vector<int> va = parse(a), vb = parse(b);
-    std::size_t n = std::max(va.size(), vb.size());
-    for (std::size_t i = 0; i < n; ++i) {
-        int x = i < va.size() ? va[i] : 0;
-        int y = i < vb.size() ? vb[i] : 0;
-        if (x != y) return x < y ? -1 : 1;
-    }
-    return 0;
-}
+// Compare dotted versions ("1.4.0"); returns -1 / 0 / 1 for a<b / a==b / a>b (shared/ProjectVersion.hpp, which the launcher uses too).
+int CompareVersions(const std::string& a, const std::string& b) { return okayver::CompareVersions(a, b); }
 
 // Result of an update check: the running version, the published version, the
 // release notes (if any) and whether an upgrade is actually available.
@@ -2633,7 +2618,7 @@ SDL_Texture* g_editorSplashLogo = nullptr;   // loaded from g_project.splashLogo
 // working folder's file as before projects had their own).
 std::string g_settingsProjectDir;
 bool SaveProjectSettingsTo(const std::string& dir) {
-    return okayproj::WriteTextAtomic(ProjectSettingsFile(dir), WriteProjectSettings(g_project), &g_lastSaveError);
+    return okayproj::WriteTextAtomic(ProjectSettingsFile(dir), ProjectFileTextForSave(ProjectSettingsFile(dir), WriteProjectSettings(g_project)), &g_lastSaveError);
 }
 void SaveProjectSettings() { SaveProjectSettingsTo(g_settingsProjectDir); }
 
@@ -5470,6 +5455,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("New Project...")) g_openNewProjectDialog = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make a new project folder from a template and open it.\n(The launcher's Create page makes the same thing.)");
         if (ImGui::MenuItem("Open Project Folder...")) OpenProjectFolderDialog(ed, DefaultProjectsLocation());
+        ProjectUpgradeMenuItem(ed);   // upgrade this project to the editor's version, or restore a backup
         ImGui::Separator();
         if (ImGui::MenuItem("New 2D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene2D(); ConsoleLog("New 2D scene"); });
         if (ImGui::MenuItem("New 3D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene3D(); ConsoleLog("New 3D scene"); });
@@ -5487,11 +5473,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 std::error_code fec;
                 bool exists = std::filesystem::exists(p, fec);   // moved/deleted files gray out
                 if (ImGui::MenuItem((exists ? p : p + "   (missing)").c_str(), nullptr, false, exists)) {
-                    RunAfterSavePrompt(ed, "opening another scene", [&ed, p] {
+                    RunAfterSavePrompt(ed, "opening another scene", [&ed, p] { RunAfterProjectCheck(ed, p, [&ed, p] {
                         std::string err;
                         if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
                         else ShowErrorPopup("Couldn't open the scene", "\"" + p + "\": " + err + "\n\nThe scene you had open is still open.");
-                    });
+                    }); });
                 }
                 if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     ImGui::SetTooltip("File not found (moved or deleted)");
@@ -6269,7 +6255,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     // Right-aligned status: a coloured state dot + a v<version> · MODE · FPS readout.
     char status[96];
     const char* mode = !ed.isPlaying() ? "EDIT" : (g_paused ? "PAUSED" : "PLAYING");
-    std::snprintf(status, sizeof(status), "v%s   %s   %.0f FPS", OKAY_ENGINE_VERSION,
+    std::snprintf(status, sizeof(status), "%s   %s   %.0f FPS", EditorVersionLabel(ed.projectDir()).c_str(),   // "v2.850.0 (kept)" for a project kept at its version
                   mode, ImGui::GetIO().Framerate);
     ImVec4 dotCol = !ed.isPlaying() ? ImVec4(0.55f, 0.57f, 0.60f, 1.0f)
                   : (g_paused ? ImVec4(0.95f, 0.70f, 0.20f, 1.0f) : ImVec4(0.35f, 0.85f, 0.42f, 1.0f));
@@ -6413,7 +6399,8 @@ void DrawStatusBar(EditorState& ed) {
     if (g_consoleCounts[2] > 0) std::snprintf(ce, sizeof(ce), "x %d", g_consoleCounts[2]);
     const char* toolName = g_tool == Tool::Move ? "Move" : g_tool == Tool::Rotate ? "Rotate" : "Scale";
     const char* mode = ed.isPlaying() ? "PLAY" : "EDIT";
-    const char* ver = "v" OKAY_ENGINE_VERSION;
+    const std::string verLabel = EditorVersionLabel(ed.projectDir());   // "v2.850.0 (kept)" for a project kept at its version
+    const char* ver = verLabel.c_str();
     const float gap = 16.0f;
     float wTool = ImGui::CalcTextSize(toolName).x + st.FramePadding.x * 2.0f;
     float total = ImGui::CalcTextSize(c1).x + gap + wTool + gap +
@@ -9200,11 +9187,11 @@ void DrawProject(EditorState& ed) {
     auto openAsset = [&](const std::string& full, const std::string& ext, bool isDir) {
         if (isDir) std::strncpy(dirBuf, full.c_str(), sizeof(dirBuf) - 1);
         else if (ext == ".okayscene") {
-            RunAfterSavePrompt(ed, "opening another scene", [&ed, full] {
+            RunAfterSavePrompt(ed, "opening another scene", [&ed, full] { RunAfterProjectCheck(ed, full, [&ed, full] {
                 std::string err;
                 if (ed.Load(full, &err)) { ConsoleLog("Opened " + full); AddRecent(full); }
                 else ShowErrorPopup("Couldn't open the scene", "\"" + full + "\": " + err + "\n\nThe scene you had open is still open.");
-            });
+            }); });
         } else if (ext == ".okayprefab") {
             ed.PushUndo();
             std::string err;
@@ -15824,11 +15811,11 @@ void DrawFileDialogs(EditorState& ed) {
         }
         if (ImGui::Button("Open", ImVec2(120, 0)) || openGo) {
             const std::string openPath = g_pathBuf;
-            RunAfterSavePrompt(ed, "opening another scene", [&ed, openPath] {
+            RunAfterSavePrompt(ed, "opening another scene", [&ed, openPath] { RunAfterProjectCheck(ed, openPath, [&ed, openPath] {
                 std::string err;
                 if (ed.Load(openPath, &err)) { ConsoleLog("Opened " + openPath); AddRecent(openPath); }
                 else ShowErrorPopup("Couldn't open the scene", "\"" + openPath + "\": " + err + "\n\nThe scene you had open is still open.");
-            });
+            }); });
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -16957,8 +16944,8 @@ static void DrawNewProjectDialog(EditorState& ed) {
 void DrawProjectGate(EditorState& ed) {
     static const bool allow = std::getenv("OKAY_ALLOW_NO_PROJECT") != nullptr;
     if (allow || !ed.projectDir().empty() || !g_openScenePath.empty() || !g_newProjectRoot.empty() ||
-        !g_newProjectTemplate.empty() || ed.isPlaying())
-        return;
+        !g_newProjectTemplate.empty() || ed.isPlaying() || ProjectGateBusy() || g_openUpdatePopup || ImGui::IsPopupOpen("Engine Update"))
+        return;   // (a question, or the update window the question's "Update OkaySpace" opened, is on screen: the chooser waits)
     namespace fs = std::filesystem;
     ImGui::OpenPopup("Open a project");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -17031,15 +17018,20 @@ void DrawNewProjectPopup(EditorState& ed) {
     if (!g_openScenePath.empty()) {
         const std::string p = g_openScenePath;
         g_openScenePath.clear();
-        std::string err;
-        if (ed.Load(p, &err)) {
-            AddRecent(p);
-            // Root the Project panel at the project folder (the scene's dir, or its parent when the scene lives in <root>/Assets).
-            const fs::path dir = ProjectRootOfScene(p);
-            std::error_code ec;
-            if (!dir.empty() && fs::is_directory(dir, ec)) ed.setProjectDir(dir.string());
-            ConsoleLog("Opened " + p);
-        } else ShowErrorPopup("Couldn't open the project", "\"" + p + "\" could not be opened: " + err + "\n\nThe scene you had open is still open.");
+        // The project's version is asked about first (File > Open, the chooser, the launcher: they all arrive here); nothing in the
+        // project is read for writing until that is answered.
+        RunAfterProjectCheck(ed, p, [&ed, p] {
+            std::string err;
+            if (ed.Load(p, &err)) {
+                AddRecent(p);
+                // Root the Project panel at the project folder (the scene's dir, or its parent when the scene lives in <root>/Assets).
+                fs::path dir = okayup::ProjectRootForScene(p);
+                if (dir.empty()) dir = ProjectRootOfScene(p);
+                std::error_code ec;
+                if (!dir.empty() && fs::is_directory(dir, ec)) ed.setProjectDir(dir.string());
+                ConsoleLog("Opened " + p);
+            } else ShowErrorPopup("Couldn't open the project", "\"" + p + "\" could not be opened: " + err + "\n\nThe scene you had open is still open.");
+        });
         return;
     }
     if (g_newProjectRoot.empty() && g_newProjectTemplate.empty()) return;
@@ -17066,7 +17058,7 @@ void DrawNewProjectPopup(EditorState& ed) {
     // opens, so the project is complete from its first moment.)
     const std::string folder = plan.folder;
     auto writeFiles = [&folder](const std::string& rt, std::string& err) {
-        if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), WriteProjectSettings(ProjectSettings{}, ""), &err)) return false;
+        if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(ProjectSettings{}, "")), &err)) return false;   // stamped with this version from the first moment
         BuildProfile live;
         live.productName = folder;
         live.outputDir = "build/" + folder;
@@ -17078,6 +17070,7 @@ void DrawNewProjectPopup(EditorState& ed) {
         ShowErrorPopup("Couldn't create the project", r.error + "\n\nNothing was changed: the scene you had open is still open.");
         return;
     }
+    NoteProjectCreated(r.root);   // made in this session: never asked about
     AddRecent(r.scene);
     g_lastSavedAt = SDL_GetTicks64();
     ConsoleLog("Created project \"" + plan.folder + "\" at " + r.root);
@@ -18279,11 +18272,11 @@ void DrawHierarchy(EditorState& ed) {
                     ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + path);
                 } else ConsoleLog("Prefab load failed: " + err);
             } else if (ext == ".okayscene") {
-                RunAfterSavePrompt(ed, "opening another scene", [&ed, path] {
+                RunAfterSavePrompt(ed, "opening another scene", [&ed, path] { RunAfterProjectCheck(ed, path, [&ed, path] {
                     std::string err;
                     if (ed.Load(path, &err)) { ConsoleLog("Opened " + path); AddRecent(path); }
                     else ShowErrorPopup("Couldn't open the scene", "\"" + path + "\": " + err + "\n\nThe scene you had open is still open.");
-                });
+                }); });
             }
         }
         ImGui::EndDragDropTarget();
@@ -42277,11 +42270,11 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
                 if (!placed) ConsoleLog("Prefab load failed: " + err);
             } else if (ext == ".okayscene") {
-                RunAfterSavePrompt(ed, "opening another scene", [&ed, path] {
+                RunAfterSavePrompt(ed, "opening another scene", [&ed, path] { RunAfterProjectCheck(ed, path, [&ed, path] {
                     std::string err;
                     if (ed.Load(path, &err)) { ConsoleLog("Opened " + path); AddRecent(path); }
                     else ShowErrorPopup("Couldn't open the scene", "\"" + path + "\": " + err + "\n\nThe scene you had open is still open.");
-                });
+                }); });
             } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
                 ed.PushUndo();
                 std::filesystem::path fp(path);
@@ -43528,6 +43521,7 @@ static bool SaveSceneTo(EditorState& ed, std::string p) {
     g_lastSaveError.clear();
     g_lastSavedAt = SDL_GetTicks64();
     ConsoleLog("Saved scene: " + p);
+    StampProjectAfterSave(ed.projectDir());   // project.okayproj says which version last saved the project
     AddRecent(p); ed.Achievement("FIRST_SAVE");
     fs::remove(p + ".autosave", ec);
     return true;
@@ -43748,6 +43742,7 @@ static void WriteHandoff() {
     if (!g_newProjectRoot.empty())     body += "new-project\t" + g_newProjectRoot + "\n";
     if (!g_newProjectTemplate.empty()) body += "template\t"    + g_newProjectTemplate + "\n";
     if (!g_openScenePath.empty())      body += "open\t"        + g_openScenePath + "\n";
+    if (!g_openScenePath.empty() && KeepVersionRequested()) body += "keep-version\t" + RunningVersion() + "\n";   // the version this editor is: honored only by an editor of that version
     if (body.empty()) body = "focus\t1\n";   // plain "Open Editor": just bring to front
     std::error_code ec;
     std::filesystem::path f = OkayHandoffPath();
@@ -43767,7 +43762,7 @@ static bool PollHandoff(bool& raiseWindow) {
     std::filesystem::path f = OkayHandoffPath();
     if (!std::filesystem::exists(f, ec)) return false;
     std::ifstream in(f, std::ios::binary);
-    std::string line; bool request = false;
+    std::string line, keepVersion; bool request = false;
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         auto tab = line.find('\t');
@@ -43776,9 +43771,11 @@ static bool PollHandoff(bool& raiseWindow) {
         if      (k == "new-project") { g_newProjectRoot = v;     request = true; }
         else if (k == "template")    { g_newProjectTemplate = v; request = true; }
         else if (k == "open")        { g_openScenePath = v;      request = true; }
+        else if (k == "keep-version") { keepVersion = v; }
         else if (k == "focus")       { /* just raise */ }
     }
     in.close();
+    if (!keepVersion.empty() && !g_openScenePath.empty()) NoteKeepVersionHandoff(g_openScenePath, keepVersion);
     std::filesystem::remove(f, ec);
     raiseWindow = true;
     return request;
@@ -44077,6 +44074,8 @@ int main(int argc, char** argv) {
         else if (a.rfind("--open=", 0) == 0) g_openScenePath = a.substr(7);
     }
 
+    ProjectUpgradeInit(argc, argv);   // --keep-version, and the version question that comes before any project is opened
+
     // Single-instance: if an editor is already running, hand this launch's
     // request to it and exit instead of opening a second window.
     if (!AcquireSingleInstance()) {
@@ -44152,6 +44151,8 @@ int main(int argc, char** argv) {
             std::filesystem::path d = std::filesystem::path(g_openScenePath).parent_path();
             if (d.filename() == "Assets") d = d.parent_path();
             startDir = d.string();
+            // A project whose version has not been asked about yet is not even looked at (reading its settings can create files in it).
+            if (!ProjectMayOpenSilently(g_openScenePath)) startDir.clear();
         }
         LoadProjectSettingsFrom(startDir);
         NoteProjectFilesSaved();
@@ -44380,6 +44381,15 @@ int main(int argc, char** argv) {
         (void)ed;
     };
     EditorState::onSceneLoaded = [] { g_lastSaveError.clear(); };   // a scene opened from disk starts without a failed-save note
+    g_upgradeHooks.openUpdateDialog = [] {   // the version question's "Update OkaySpace": the same window as Engine > Check for Updates
+        g_update = updater::CheckLatest();
+        g_openUpdatePopup = true;
+    };
+    g_upgradeHooks.reloadProjectFiles = [&ed] {   // after a backup was restored: what is in memory must not be written over the restored files
+        LoadProjectSettingsFrom(g_settingsProjectDir);
+        LoadBuildProfilesFrom(ed.projectDir());
+        NoteProjectFilesSaved();
+    };
     {   // a request left over from an earlier session must not close this one
         std::error_code ec;
         std::filesystem::remove(LauncherIpcPath("okay_ipc_request.txt"), ec);
@@ -45022,7 +45032,7 @@ int main(int argc, char** argv) {
             if (raise && window) { SDL_RestoreWindow(window); SDL_RaiseWindow(window); SDL_ShowWindow(window); }
         }
 
-        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawErrorPopup(); }
+        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
         {   // dev screenshot hook: OKAY_UI_FOCUS="Inspector,Project" brings those dock tabs forward
             static int s_focusFrames = 0;
             if (s_focusFrames < 90) ++s_focusFrames;
@@ -45279,7 +45289,7 @@ int main(int argc, char** argv) {
             }
         }
         { OKAY_PROFILE("UI.FileDialogs"); DrawFileDialogs(ed); }
-        { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); }
+        { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); if (ProjectUpgradeExitRequested()) running = false; }
         PollLauncherRequest(ed, running);   // the launcher asked us to save and close
         { OKAY_PROFILE("UI.UpdatePopup"); DrawUpdatePopup(ed); }
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
@@ -45495,6 +45505,7 @@ int main(int argc, char** argv) {
     }
     FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
+    ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();

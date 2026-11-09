@@ -123,12 +123,43 @@ public:
         return *this;
     }
 
+    // ---- Fields of a nested struct ---------------------------------------------------
+    // A field of a struct member: `AddFloat("agentRadius", &Surface::settings, &Settings::agentRadius)`.
+    template <class Owner, class Inner> PropertyBuilder& AddBool(const char* name, Inner Owner::*outer, bool Inner::*inner) {
+        return Prop(name, PropertyType::Bool,
+            [outer, inner](const Component& c) { return PropertyValue::MakeBool((As<Owner>(c).*outer).*inner); },
+            [outer, inner](Component& c, const PropertyValue& v) { (As<Owner>(c).*outer).*inner = v.AsBool(); return true; });
+    }
+    template <class Owner, class Inner, class I> PropertyBuilder& AddInt(const char* name, Inner Owner::*outer, I Inner::*inner) {
+        static_assert(std::is_integral<I>::value && !std::is_same<I, bool>::value, "AddInt needs an integer field");
+        Prop(name, PropertyType::Int,
+            [outer, inner](const Component& c) { return PropertyValue::MakeInt(static_cast<long long>((As<Owner>(c).*outer).*inner)); },
+            [outer, inner](Component& c, const PropertyValue& v) { (As<Owner>(c).*outer).*inner = static_cast<I>(v.AsInt()); return true; });
+        PropertyDesc& d = m_info.properties.back();
+        d.hasRange = true;
+        d.rangeMin = static_cast<double>(std::numeric_limits<I>::lowest());
+        d.rangeMax = static_cast<double>(std::numeric_limits<I>::max());
+        if (d.rangeMax > 9.2e18) d.rangeMax = 9.2e18;
+        return *this;
+    }
+    template <class Owner, class Inner> PropertyBuilder& AddFloat(const char* name, Inner Owner::*outer, float Inner::*inner) {
+        return Prop(name, PropertyType::Float,
+            [outer, inner](const Component& c) { return PropertyValue::MakeFloat((As<Owner>(c).*outer).*inner); },
+            [outer, inner](Component& c, const PropertyValue& v) { (As<Owner>(c).*outer).*inner = v.AsFloat(); return true; });
+    }
+    template <class Owner, class Inner> PropertyBuilder& AddVec3(const char* name, Inner Owner::*outer, Vec3 Inner::*inner) {
+        return Prop(name, PropertyType::Vec3,
+            [outer, inner](const Component& c) { return PropertyValue::MakeVec3((As<Owner>(c).*outer).*inner); },
+            [outer, inner](Component& c, const PropertyValue& v) { (As<Owner>(c).*outer).*inner = v.AsVec3(); return true; });
+    }
+
     // ---- Computed properties -----------------------------------------------------
     /// A property with its own accessors, for values that are not one plain field.
     /// `setter` gets a value already checked against the descriptor and may refuse.
     PropertyBuilder& Custom(const char* name, PropertyType type,
                             std::function<PropertyValue(const C&)> getter,
                             std::function<bool(C&, const PropertyValue&)> setter) {
+        if (!getter) return *this;   // nothing to read: not a property (modifiers then apply to the one before)
         return Prop(name, type,
             [getter](const Component& c) { return getter(As<C>(c)); },
             [setter](Component& c, const PropertyValue& v) { return setter ? setter(As<C>(c), v) : false; });
@@ -136,6 +167,7 @@ public:
     /// Same, for an Enum with option names.
     PropertyBuilder& CustomEnum(const char* name, std::vector<std::string> options,
                                 std::function<int(const C&)> getter, std::function<bool(C&, int)> setter) {
+        if (!getter) return *this;
         Prop(name, PropertyType::Enum,
             [getter](const Component& c) { return PropertyValue::MakeEnum(getter(As<C>(c))); },
             [setter](Component& c, const PropertyValue& v) { return setter ? setter(As<C>(c), v.AsEnum()) : false; });
@@ -165,6 +197,9 @@ public:
 
     /// The component cannot be added through the registry (a Transform).
     PropertyBuilder& NoAdd() { m_info.add = nullptr; return *this; }
+    /// How the registry adds this component to an object, when `AddComponent<C>()` alone is
+    /// not enough (a controller that also needs its parts). Return null when it cannot be added.
+    PropertyBuilder& Adder(std::function<Component*(GameObject&)> add) { m_info.add = std::move(add); return *this; }
 
     /// Fill in default values from a freshly made component (when C can be made
     /// without arguments), then register.
@@ -198,10 +233,13 @@ private:
         m_info.properties.push_back(std::move(d));
         return *this;
     }
-    PropertyDesc& Last() { return m_info.properties.back(); }
+    // The property the modifiers apply to. Before any property was added there is none:
+    // the modifier then lands on a scratch descriptor that is thrown away.
+    PropertyDesc& Last() { return m_info.properties.empty() ? m_scratch : m_info.properties.back(); }
 
     ComponentTypeInfo m_info;
     std::string m_section;
+    PropertyDesc m_scratch;
 };
 
 } // namespace okay

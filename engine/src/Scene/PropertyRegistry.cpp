@@ -12,12 +12,19 @@ namespace okay {
 namespace {
 
 struct HookEntry { int id; PropertyRegistry::ChangeHook fn; };
+using HookList = std::vector<HookEntry>;
 
 struct Table {
     std::mutex mutex;
     std::vector<std::shared_ptr<const ComponentTypeInfo>> infos;
     std::unordered_map<std::type_index, std::size_t> byType;
-    std::vector<HookEntry> hooks;
+    // Name lookups without scanning every type: exact type name, exact record name,
+    // and the lower-cased form of both (first registered wins, as the scan did).
+    std::unordered_map<std::string, std::size_t> byName, byRecord, byLower;
+    // The hook list is never edited in place: Add/Remove build a new one and swap the
+    // pointer, so a change that is being announced keeps walking the list it started with.
+    std::shared_ptr<const HookList> hooks = std::make_shared<const HookList>();
+    std::atomic<std::size_t> hookCount{0};   // size of `hooks`, readable without the lock
     int nextHook = 1;
     std::recursive_mutex builtinMutex;
     std::atomic<bool> builtinsDone{false};
@@ -25,6 +32,11 @@ struct Table {
 Table& GetTable() { static Table t; return t; }
 
 thread_local int t_suppress = 0;
+// How many announcements are being delivered on this thread right now. A hook that
+// writes the property it was told about (a clamp it disagrees with, two hooks that undo
+// each other) would otherwise recurse until the stack ends.
+thread_local int t_fireDepth = 0;
+constexpr int kMaxFireDepth = 32;
 
 std::string Lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -113,20 +125,34 @@ bool Wanted(const PropertyDesc& d, const PropertySnapshotOptions& o) {
     return true;
 }
 
+// Still subscribed? A hook that an earlier hook of the same change removed must not run.
+bool StillSubscribed(const std::shared_ptr<const HookList>& walking, int id) {
+    Table& t = GetTable();
+    std::lock_guard<std::mutex> lock(t.mutex);
+    if (t.hooks == walking) return true;   // nothing was added or removed since the walk began
+    for (const HookEntry& h : *t.hooks) if (h.id == id) return true;
+    return false;
+}
+
 void Fire(const PropertyChange& ch) {
-    if (t_suppress > 0) return;
-    std::vector<HookEntry> copy;
+    if (t_suppress > 0 || t_fireDepth >= kMaxFireDepth) return;
+    std::shared_ptr<const HookList> list;
     {
         Table& t = GetTable();
         std::lock_guard<std::mutex> lock(t.mutex);
-        copy = t.hooks;
+        list = t.hooks;
     }
-    for (const HookEntry& h : copy) {
-        try { if (h.fn) h.fn(ch); } catch (...) {}
+    if (list->empty()) return;
+    struct Depth { Depth() { ++t_fireDepth; } ~Depth() { --t_fireDepth; } } depth;
+    for (const HookEntry& h : *list) {
+        if (!h.fn || !StillSubscribed(list, h.id)) continue;
+        try { h.fn(ch); } catch (...) {}
     }
 }
 
 void FireFor(const PropertyRef& ref, const PropertyDesc& d, const PropertyValue& oldValue, const PropertyValue& newValue) {
+    // Nobody listening (the usual case for a tween writing every frame): build nothing.
+    if (t_suppress > 0 || t_fireDepth >= kMaxFireDepth || GetTable().hookCount.load(std::memory_order_relaxed) == 0) return;
     PropertyChange ch;
     ch.component = ref.component;
     ch.object = ref.component->gameObject;
@@ -197,12 +223,46 @@ const PropertyDesc* ComponentTypeInfo::Find(const std::string& propertyName) con
 
 // ---- Registry ----------------------------------------------------------------------
 
+namespace {
+// A name a path can address: no '.' (property and sub-field separator), no '#'
+// (component index), no white space, and not empty.
+bool AddressableName(const std::string& n) {
+    if (n.empty()) return false;
+    for (unsigned char c : n) if (c == '.' || c == '#' || std::isspace(c)) return false;
+    return true;
+}
+
+// Rebuild the name tables after the entry list changed (caller holds the mutex).
+void ReindexLocked(Table& t) {
+    t.byType.clear(); t.byName.clear(); t.byRecord.clear(); t.byLower.clear();
+    for (std::size_t i = 0; i < t.infos.size(); ++i) {
+        const ComponentTypeInfo& e = *t.infos[i];
+        if (e.type != std::type_index(typeid(void))) t.byType[e.type] = i;
+        t.byName.emplace(e.name, i);
+        if (!e.recordName.empty()) t.byRecord.emplace(e.recordName, i);
+        t.byLower.emplace(Lower(e.name), i);
+        if (!e.recordName.empty()) t.byLower.emplace(Lower(e.recordName), i);
+    }
+}
+} // namespace
+
 void PropertyRegistry::Register(ComponentTypeInfo info) {
-    if (info.name.empty()) return;
-    // A property needs a name, a type and a getter; drop the ones that do not.
-    info.properties.erase(std::remove_if(info.properties.begin(), info.properties.end(), [](const PropertyDesc& d) {
-        return d.name.empty() || d.type == PropertyType::None || !d.getter;
-    }), info.properties.end());
+    // A type a path cannot name could never be reached: ignore it.
+    if (!AddressableName(info.name)) return;
+    if (!info.recordName.empty() && !AddressableName(info.recordName)) info.recordName.clear();
+    // A property needs a name a path can address, a type and a getter, and each name
+    // may appear once (the first one stays); drop the ones that do not qualify.
+    {
+        std::vector<PropertyDesc> kept;
+        kept.reserve(info.properties.size());
+        for (PropertyDesc& d : info.properties) {
+            if (!AddressableName(d.name) || d.type == PropertyType::None || !d.getter) continue;
+            bool dup = false;
+            for (const PropertyDesc& k : kept) if (k.name == d.name) { dup = true; break; }
+            if (!dup) kept.push_back(std::move(d));
+        }
+        info.properties = std::move(kept);
+    }
     auto sp = std::make_shared<const ComponentTypeInfo>(std::move(info));
     Table& t = GetTable();
     std::lock_guard<std::mutex> lock(t.mutex);
@@ -216,20 +276,20 @@ void PropertyRegistry::Register(ComponentTypeInfo info) {
             if (t.infos[i]->type == sp->type) at = i;
     if (at == t.infos.size()) t.infos.push_back(sp);
     else t.infos[at] = sp;
-    t.byType.clear();
-    for (std::size_t i = 0; i < t.infos.size(); ++i)
-        if (t.infos[i]->type != std::type_index(typeid(void))) t.byType[t.infos[i]->type] = i;
+    ReindexLocked(t);
 }
 
 std::shared_ptr<const ComponentTypeInfo> PropertyRegistry::FindByName(const std::string& name) {
     EnsureBuiltins();
+    if (name.empty()) return nullptr;
     Table& t = GetTable();
     std::lock_guard<std::mutex> lock(t.mutex);
-    for (auto& e : t.infos) if (e->name == name) return e;
-    for (auto& e : t.infos) if (!e->recordName.empty() && e->recordName == name) return e;
-    const std::string low = Lower(name);
-    for (auto& e : t.infos) if (Lower(e->name) == low || (!e->recordName.empty() && Lower(e->recordName) == low)) return e;
-    return nullptr;
+    auto it = t.byName.find(name);
+    if (it != t.byName.end()) return t.infos[it->second];
+    it = t.byRecord.find(name);
+    if (it != t.byRecord.end()) return t.infos[it->second];
+    it = t.byLower.find(Lower(name));
+    return it == t.byLower.end() ? nullptr : t.infos[it->second];
 }
 
 std::shared_ptr<const ComponentTypeInfo> PropertyRegistry::FindByType(std::type_index type) {
@@ -257,7 +317,7 @@ void PropertyRegistry::Clear() {
     {
         std::lock_guard<std::mutex> lock(t.mutex);
         t.infos.clear();
-        t.byType.clear();
+        ReindexLocked(t);
     }
     t.builtinsDone.store(false, std::memory_order_release);
 }
@@ -349,6 +409,42 @@ bool PropertyRegistry::SetComponentProperty(Component& c, const std::string& pro
     return StoreAndNotify(ref, value, error);
 }
 
+namespace {
+PropertyWriteResult WriteResolved(const PropertyRef& ref, const PropertyValue& value) {
+    PropertyWriteResult r;
+    r.path = MakePath(ref.info->name, ref.componentIndex, ref.desc->name);
+    r.componentIndex = ref.componentIndex;
+    const PropertyValue before = ref.desc->Get(*ref.component);
+    if (!StoreAndNotify(ref, value, &r.error)) return r;
+    r.ok = true;
+    r.oldValue = before;
+    r.newValue = ref.desc->Get(*ref.component);
+    r.changed = r.newValue != before;
+    return r;
+}
+} // namespace
+
+PropertyWriteResult PropertyRegistry::WriteProperty(GameObject& go, const std::string& path, const PropertyValue& value) {
+    PropertyRef ref;
+    std::string error;
+    if (!Resolve(go, path, ref, &error)) { PropertyWriteResult r; r.error = error; return r; }
+    return WriteResolved(ref, value);
+}
+
+PropertyWriteResult PropertyRegistry::WritePropertyFromText(GameObject& go, const std::string& path, const std::string& text) {
+    PropertyRef ref;
+    PropertyWriteResult r;
+    if (!Resolve(go, path, ref, &r.error)) return r;
+    PropertyValue v;
+    const bool parsed = ref.subField.empty() ? ref.desc->ParseText(text, v)
+                                             : PropertyValue::FromString(PropertyType::Float, text, v);
+    if (!parsed) {
+        r.error = "cannot read '" + text + "' as " + (ref.subField.empty() ? PropertyTypeName(ref.desc->type) : "Float");
+        return r;
+    }
+    return WriteResolved(ref, v);
+}
+
 PropertyValue PropertyRegistry::GetComponentProperty(const Component& c, const std::string& property) {
     auto info = FindFor(c);
     if (!info) return PropertyValue();
@@ -370,14 +466,20 @@ int PropertyRegistry::AddChangeHook(ChangeHook hook) {
     Table& t = GetTable();
     std::lock_guard<std::mutex> lock(t.mutex);
     const int id = t.nextHook++;
-    t.hooks.push_back({id, std::move(hook)});
+    auto next = std::make_shared<HookList>(*t.hooks);
+    next->push_back({id, std::move(hook)});
+    t.hookCount.store(next->size(), std::memory_order_relaxed);
+    t.hooks = std::move(next);
     return id;
 }
 
 void PropertyRegistry::RemoveChangeHook(int id) {
     Table& t = GetTable();
     std::lock_guard<std::mutex> lock(t.mutex);
-    t.hooks.erase(std::remove_if(t.hooks.begin(), t.hooks.end(), [id](const HookEntry& h) { return h.id == id; }), t.hooks.end());
+    auto next = std::make_shared<HookList>(*t.hooks);
+    next->erase(std::remove_if(next->begin(), next->end(), [id](const HookEntry& h) { return h.id == id; }), next->end());
+    t.hookCount.store(next->size(), std::memory_order_relaxed);
+    t.hooks = std::move(next);
 }
 
 PropertyRegistry::ScopedHookSuppression::ScopedHookSuppression() { ++t_suppress; }

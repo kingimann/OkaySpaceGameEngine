@@ -8,11 +8,13 @@
 #include "okay/Scene/PropertyBuilder.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cfloat>
 #include <climits>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
@@ -1108,13 +1110,10 @@ static void TestSerializerCrossCheck() {
     CHECK(checked >= 250);
 }
 
-static void TestSerializerCrossCheckIsolated() {
-    RUN_SUITE("cross-check, one property at a time (shows what the file stores unconditionally)");
-    RegisterBuiltinProperties();
-    // The scene file writes these only together with another field (see
-    // SceneSerializer.cpp: the shader record needs a non-Standard shader, the rim
-    // record a rim strength, ...), so alone they would be lost: each rides on its companion.
-    const std::map<std::string, std::pair<std::string, PropertyValue>> companion = {
+// Properties the scene file writes only together with another one: each rides on its
+// companion when it is set alone (see docs/properties.md, "What the cross-check showed").
+static const std::map<std::string, std::pair<std::string, PropertyValue>>& Companions() {
+    static const std::map<std::string, std::pair<std::string, PropertyValue>> companion = {
         {"MeshRenderer.toonBands", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},
         {"MeshRenderer.gradientTop", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},
         {"MeshRenderer.gradientBottom", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},
@@ -1125,6 +1124,16 @@ static void TestSerializerCrossCheckIsolated() {
         {"MeshRenderer.normalStrength", {"MeshRenderer.normalMap", PropertyValue::MakeAssetPath("n.png")}},
         {"MeshRenderer.aoStrength", {"MeshRenderer.aoMap", PropertyValue::MakeAssetPath("ao.png")}},
     };
+    return companion;
+}
+
+static void TestSerializerCrossCheckIsolated() {
+    RUN_SUITE("cross-check, one property at a time (shows what the file stores unconditionally)");
+    RegisterBuiltinProperties();
+    // The scene file writes these only together with another field (see
+    // SceneSerializer.cpp: the shader record needs a non-Standard shader, the rim
+    // record a rim strength, ...), so alone they would be lost: each rides on its companion.
+    const auto& companion = Companions();
     int checked = 0, viaCompanion = 0;
     for (const auto& info : PropertyRegistry::All()) {
         for (const PropertyDesc& d : info->properties) {
@@ -1290,6 +1299,499 @@ static void TestCustomComponent() {
     CHECK(PropertyRegistry::FindByType(typeid(void)) == nullptr);
 }
 
+// ---- Audit: hooks while firing, the type table, text coercion ---------------------------------------------
+
+static void TestAuditHooksWhileFiring() {
+    RUN_SUITE("audit: hooks added, removed and nested while a change is announced");
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    Light* light = go->AddComponent<Light>();
+
+    {   // a hook removed by an earlier hook of the same change does not run afterwards
+        int aCalls = 0, bCalls = 0, idB = 0;
+        const int idA = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++aCalls; PropertyRegistry::RemoveChangeHook(idB); });
+        idB = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++bCalls; });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(21.0f)));
+        CHECK(aCalls == 1 && bCalls == 0);
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(22.0f)));
+        CHECK(aCalls == 2 && bCalls == 0);   // and it stays gone
+        PropertyRegistry::RemoveChangeHook(idA);
+    }
+    {   // a hook added while a change is announced first sees the next change
+        int late = 0, lateId = 0;
+        const int idA = PropertyRegistry::AddChangeHook([&](const PropertyChange&) {
+            if (!lateId) lateId = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++late; });
+        });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(23.0f)));
+        CHECK(late == 0 && lateId > 0);
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(24.0f)));
+        CHECK(late == 1);
+        PropertyRegistry::RemoveChangeHook(idA);
+        PropertyRegistry::RemoveChangeHook(lateId);
+    }
+    {   // a hook that removes itself runs once; hooks run in the order they were added
+        std::string order;
+        int selfId = 0, selfCalls = 0;
+        const int first = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { order += 'a'; });
+        selfId = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { order += 'b'; ++selfCalls; PropertyRegistry::RemoveChangeHook(selfId); });
+        const int third = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { order += 'c'; });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(25.0f)));
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(26.0f)));
+        CHECK(order == "abcac" && selfCalls == 1);
+        PropertyRegistry::RemoveChangeHook(first);
+        PropertyRegistry::RemoveChangeHook(third);
+    }
+    {   // a hook that keeps writing the property it was told about ends: the writes happen,
+        // delivery stops at a fixed nesting depth instead of overflowing the stack
+        int calls = 0;
+        const int id = PropertyRegistry::AddChangeHook([&](const PropertyChange& c) {
+            if (c.path != "Light.range" || calls >= 1000) return;
+            ++calls;
+            PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(c.newValue.AsFloat() + 1.0f));
+        });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(100.0f)));
+        CHECK(calls >= 8 && calls <= 40);
+        CHECK(light->range >= 108.0f);
+        PropertyRegistry::RemoveChangeHook(id);
+        // afterwards the registry delivers normally again (the depth is not left raised)
+        int seen = 0;
+        const int id2 = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++seen; });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(5.0f)));
+        CHECK(seen == 1);
+        PropertyRegistry::RemoveChangeHook(id2);
+    }
+    {   // two hooks that undo each other's change end too
+        int calls = 0;
+        const int a = PropertyRegistry::AddChangeHook([&](const PropertyChange& c) {
+            if (c.path == "Light.range" && calls < 1000) { ++calls; PropertyRegistry::SetProperty(*go, "Light.ambient", PropertyValue::MakeFloat(c.newValue.AsFloat() > 50.0f ? 0.2f : 0.7f)); }
+        });
+        const int b = PropertyRegistry::AddChangeHook([&](const PropertyChange& c) {
+            if (c.path == "Light.ambient" && calls < 1000) { ++calls; PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(c.newValue.AsFloat() > 0.5f ? 90.0f : 10.0f)); }
+        });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(70.0f)));
+        CHECK(calls <= 100);
+        PropertyRegistry::RemoveChangeHook(a);
+        PropertyRegistry::RemoveChangeHook(b);
+    }
+}
+
+static void TestAuditWriteResult() {
+    RUN_SUITE("audit: WriteProperty reports the old and the stored value");
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    go->AddComponent<Light>();
+    go->AddComponent<Camera>();
+    Camera* cam2 = go->AddComponent<Camera>();
+    cam2->depth = 3.0f;
+
+    int fires = 0;
+    const int hook = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++fires; });
+    PropertyWriteResult r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeFloat(2.5f));
+    CHECK(r.ok && r.changed && r.path == "Light.intensity" && r.error.empty());
+    CHECK(r.oldValue == PropertyValue::MakeFloat(1.0f) && r.newValue == PropertyValue::MakeFloat(2.5f));
+    CHECK(fires == 1);
+    // the stored value, not the asked-for one
+    r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeFloat(99999.0f));
+    CHECK(r.ok && r.changed && r.oldValue == PropertyValue::MakeFloat(2.5f) && r.newValue == PropertyValue::MakeFloat(1000.0f));
+    // the same value: accepted, nothing changed, no hook
+    fires = 0;
+    r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeFloat(5000.0f));
+    CHECK(r.ok && !r.changed && r.oldValue == r.newValue && fires == 0);
+    // a sub-field path reports the whole property
+    go->transform->localPosition = Vec3{1, 2, 3};
+    r = PropertyRegistry::WriteProperty(*go, "transform.POSITION.y", PropertyValue::MakeFloat(8.0f));
+    CHECK(r.ok && r.changed && r.path == "Transform.position");
+    CHECK(r.oldValue == PropertyValue::MakeVec3(Vec3{1, 2, 3}) && r.newValue == PropertyValue::MakeVec3(Vec3{1, 8, 3}));
+    // the second component of a type
+    r = PropertyRegistry::WriteProperty(*go, "camera#1.depth", PropertyValue::MakeFloat(4.0f));
+    CHECK(r.ok && r.path == "Camera#1.depth" && r.componentIndex == 1 && r.oldValue.AsFloat() == 3.0f && cam2->depth == 4.0f);
+    // refusals say why and leave both values invalid
+    r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeBool(true));
+    CHECK(!r.ok && !r.changed && !r.error.empty() && !r.oldValue.IsValid() && !r.newValue.IsValid());
+    r = PropertyRegistry::WriteProperty(*go, "Light.nope", PropertyValue::MakeFloat(1.0f));
+    CHECK(!r.ok && !r.error.empty());
+    r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeFloat(NAN));
+    CHECK(!r.ok && !r.error.empty());
+    // text
+    r = PropertyRegistry::WritePropertyFromText(*go, "Light.type", "spot");
+    CHECK(r.ok && r.changed && r.newValue.EnumName() == "Spot" && r.oldValue.EnumName() == "Directional");
+    r = PropertyRegistry::WritePropertyFromText(*go, "Light.type", "square");
+    CHECK(!r.ok && r.error.find("square") != std::string::npos);
+    // undoing with the reported old value puts everything back
+    r = PropertyRegistry::WriteProperty(*go, "Light.range", PropertyValue::MakeFloat(77.0f));
+    CHECK(r.ok && r.changed);
+    {
+        PropertyRegistry::ScopedHookSuppression quiet;
+        CHECK(PropertyRegistry::WriteProperty(*go, r.path, r.oldValue).ok);
+    }
+    CHECK(PropertyRegistry::GetProperty(*go, "Light.range") == r.oldValue);
+    PropertyRegistry::RemoveChangeHook(hook);
+}
+
+static void TestAuditRegistryTable() {
+    RUN_SUITE("audit: registering types, names and duplicates");
+    PropertyRegistry::Clear();   // the built-ins only, whatever earlier suites added
+    RegisterBuiltinProperties();
+    const std::size_t before = PropertyRegistry::All().size();
+
+    // A type no path can name is not registered at all.
+    for (const char* name : {"", "Has Space", "a.b", "x#1", "tab\tname"}) {
+        ComponentTypeInfo info;
+        info.name = name;
+        info.type = std::type_index(typeid(Probe));
+        PropertyRegistry::Register(info);
+    }
+    CHECK(PropertyRegistry::All().size() == before);
+
+    // Property names a path cannot address are dropped, and a name appears once (the first stays).
+    ComponentTypeInfo info;
+    info.name = "AuditType";
+    info.recordName = "audit type";    // not addressable: the type still registers, without it
+    info.type = std::type_index(typeid(Probe));
+    auto named = [](const char* n, PropertyType t) { PropertyDesc d = MakeDesc(t); d.name = n; return d; };
+    info.properties = {named("a", PropertyType::Float), named("a", PropertyType::Int), named("b.c", PropertyType::Bool),
+                       named("has space", PropertyType::Bool), named("d#1", PropertyType::Bool), named("e", PropertyType::Bool)};
+    PropertyRegistry::Register(info);
+    auto got = PropertyRegistry::FindByName("AuditType");
+    CHECK(got != nullptr && got->properties.size() == 2);
+    if (got && got->properties.size() == 2) {
+        CHECK(got->properties[0].name == "a" && got->properties[0].type == PropertyType::Float);
+        CHECK(got->properties[1].name == "e");
+    }
+    CHECK(got && got->recordName.empty());
+    CHECK(PropertyRegistry::All().size() == before + 1);
+
+    // Registering the same name again replaces it; so does the same exact type under a new name,
+    // and the old names (type and record) stop resolving.
+    ComponentTypeInfo second = info;
+    second.recordName = "audit_one";
+    second.properties = {named("z", PropertyType::Float)};
+    PropertyRegistry::Register(second);
+    CHECK(PropertyRegistry::All().size() == before + 1);
+    CHECK(PropertyRegistry::FindByName("AuditType")->properties.size() == 1);
+    CHECK(PropertyRegistry::FindByName("audit_one") == PropertyRegistry::FindByName("AuditType"));
+    CHECK(PropertyRegistry::FindByName("AUDIT_ONE") == PropertyRegistry::FindByName("AuditType"));
+    ComponentTypeInfo renamed = second;
+    renamed.name = "AuditRenamed";
+    renamed.recordName = "audit_two";
+    PropertyRegistry::Register(renamed);
+    CHECK(PropertyRegistry::All().size() == before + 1);
+    CHECK(PropertyRegistry::FindByName("AuditType") == nullptr);
+    CHECK(PropertyRegistry::FindByName("audit_one") == nullptr);
+    CHECK(PropertyRegistry::FindByName("audit_two") && PropertyRegistry::FindByName("AuditRenamed") == PropertyRegistry::FindByName("audit_two"));
+    CHECK(PropertyRegistry::FindByType(typeid(Probe)) == PropertyRegistry::FindByName("AuditRenamed"));
+
+    // Lookups with odd names find nothing and never throw.
+    for (const char* name : {" ", " Light", "Light ", "Light.", "Light#1", "Li ght", "\n", "LIGHTS"})
+        CHECK(PropertyRegistry::FindByName(name) == nullptr);
+    CHECK(PropertyRegistry::FindByName(std::string(100000, 'x')) == nullptr);
+    CHECK(PropertyRegistry::FindByName("lIgHt") == PropertyRegistry::FindByName("Light"));
+
+    // Every built-in property is addressable, and no two share a name in any case.
+    for (const auto& type : PropertyRegistry::All()) {
+        std::set<std::string> seen;
+        for (const PropertyDesc& d : type->properties) {
+            std::string low = d.name;
+            for (char& c : low) c = (char)std::tolower((unsigned char)c);
+            CHECK(seen.insert(low).second);
+        }
+    }
+
+    // Two types can be registered from many threads while others look names up.
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t)
+        threads.emplace_back([t] {
+            for (int i = 0; i < 40; ++i) {
+                ComponentTypeInfo racer;
+                racer.name = "AuditRacer" + std::to_string(t);
+                racer.recordName = "auditracer" + std::to_string(t);
+                racer.properties = {[&] { PropertyDesc d = MakeDesc(PropertyType::Bool); d.name = "x"; return d; }()};
+                PropertyRegistry::Register(racer);
+                auto f = PropertyRegistry::FindByName("AUDITRACER" + std::to_string(t));
+                if (!f || f->properties.size() != 1) std::abort();
+                PropertyRegistry::FindByName("Light");
+                PropertyRegistry::All();
+            }
+        });
+    for (auto& th : threads) th.join();
+    CHECK(PropertyRegistry::All().size() == before + 1 + 4);
+    PropertyRegistry::Clear();
+    CHECK(PropertyRegistry::All().size() == before);
+}
+
+static void TestAuditBuilderEdges() {
+    RUN_SUITE("audit: builder modifiers before any property, empty accessors");
+    // A modifier before the first property used to write through back() of an empty list.
+    PropertyBuilder<TestWidget> early("AuditEarly", "auditearly", "Test", /*withEnabled=*/false);
+    early.Tooltip("nothing to describe yet").Range(0, 1).Group("g").ReadOnly().Hidden().Default(PropertyValue::MakeFloat(1.0f));
+    early.AddFloat("speed", &TestWidget::speed).Range(0, 10);
+    early.Commit();
+    auto info = PropertyRegistry::FindByName("AuditEarly");
+    CHECK(info && info->properties.size() == 1);
+    if (info && info->properties.size() == 1) {
+        const PropertyDesc& d = info->properties[0];
+        CHECK(d.name == "speed" && d.tooltip.empty() && d.group.empty() && !d.IsReadOnly() && !d.IsHidden());
+        CHECK(d.hasRange && d.rangeMax == 10.0);
+    }
+    // An empty getter makes no property (it used to throw when the value was read).
+    PropertyBuilder<TestWidget> empty("AuditEmpty", "", "Test", false);
+    empty.Custom("broken", PropertyType::Float, std::function<PropertyValue(const TestWidget&)>(), std::function<bool(TestWidget&, const PropertyValue&)>());
+    empty.CustomEnum("brokenEnum", {"A", "B"}, std::function<int(const TestWidget&)>(), std::function<bool(TestWidget&, int)>());
+    empty.AddFloat("ok", &TestWidget::speed);
+    empty.Commit();
+    auto e = PropertyRegistry::FindByName("AuditEmpty");
+    CHECK(e && e->properties.size() == 1 && e->properties[0].name == "ok");
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("w");
+    go->AddComponent<TestWidget>();
+    CHECK(PropertyRegistry::GetProperty(*go, "AuditEmpty.ok").IsValid());
+    CHECK(!PropertyRegistry::GetProperty(*go, "AuditEmpty.broken").IsValid());
+    PropertyRegistry::Clear();
+}
+
+static void TestAuditTextCoercion() {
+    RUN_SUITE("audit: text coercion per type");
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    Light* light = go->AddComponent<Light>();
+    Camera* cam = go->AddComponent<Camera>();
+    SpriteRenderer* sprite = go->AddComponent<SpriteRenderer>();
+    std::string err;
+    auto set = [&](const char* path, const char* text) { return PropertyRegistry::SetPropertyFromText(*go, path, text, &err); };
+
+    // Int: plain decimal, a sign and spaces around are fine; nothing else is
+    CHECK(set("GameObject.layer", " 7 ") && go->layer == 7);
+    CHECK(set("GameObject.layer", "+9") && go->layer == 9);
+    CHECK(set("GameObject.layer", "-5") && go->layer == 0);     // clamped into 0..31
+    for (const char* bad : {"7.0", "1e1", "0x10", "7 8", "", " ", "--1", "+", "99999999999999999999", "seven", "7,5", "٣"}) {
+        go->layer = 4;
+        CHECK(!set("GameObject.layer", bad) && go->layer == 4);
+    }
+    // an integer wider than the field is clamped, not wrapped
+    CHECK(PropertyRegistry::SetProperty(*go, "Camera.cullingMask", PropertyValue::MakeInt(1LL << 40)) && cam->cullingMask == INT_MAX);
+    CHECK(PropertyRegistry::SetProperty(*go, "Camera.cullingMask", PropertyValue::MakeInt(-(1LL << 40))) && cam->cullingMask == INT_MIN);
+    CHECK(PropertyRegistry::SetProperty(*go, "Camera.cullingMask", PropertyValue::MakeInt(LLONG_MAX)) && cam->cullingMask == INT_MAX);
+
+    // Float
+    CHECK(set("Light.intensity", " 1.5 ") && light->intensity == 1.5f);
+    CHECK(set("Light.intensity", "1e2") && light->intensity == 100.0f);
+    CHECK(set("Light.intensity", ".5") && light->intensity == 0.5f);
+    CHECK(set("Light.intensity", "5.") && light->intensity == 5.0f);
+    CHECK(set("Light.intensity", "-0") && light->intensity == 0.0f);
+    light->intensity = 3.0f;
+    for (const char* bad : {"1,5", "inf", "-inf", "nan", "1e39", "0x1p3", "1.2.3", "1e", "e5", ".", "-", "1 2", "", "1f", "1_0"}) {
+        CHECK(!set("Light.intensity", bad) && light->intensity == 3.0f);
+    }
+
+    // Bool
+    sprite->flipX = false;
+    CHECK(set("SpriteRenderer.flipX", "TRUE") && sprite->flipX);
+    CHECK(set("SpriteRenderer.flipX", " off ") && !sprite->flipX);
+    CHECK(set("SpriteRenderer.flipX", "1") && sprite->flipX);
+    for (const char* bad : {"2", "", "yes please", "tru", "-1", "0.0"}) CHECK(!set("SpriteRenderer.flipX", bad) && sprite->flipX);
+
+    // Vectors and colors
+    CHECK(set("Transform.position", "[1, 2, 3]") && go->transform->localPosition.z == 3.0f);
+    CHECK(set("Transform.position", "{4 5 6}") && go->transform->localPosition.x == 4.0f);
+    CHECK(set("Transform.position", "  7,8,9  ") && go->transform->localPosition.y == 8.0f);
+    for (const char* bad : {"1 2", "1 2 3 4", "1,2,,3", "(1 2 3", "1 2 x", "nan 0 0", "inf 0 0", "", "1;2;3", "[[1 2 3]]"}) {
+        go->transform->localPosition = Vec3{1, 1, 1};
+        CHECK(!set("Transform.position", bad) && go->transform->localPosition.x == 1.0f);
+    }
+    CHECK(set("Light.color", "#ff8800") && light->color.r == 1.0f && std::fabs(light->color.g - 136.0f / 255.0f) < 1e-6f && light->color.b == 0.0f && light->color.a == 1.0f);
+    CHECK(set("Light.color", "#00000080") && std::fabs(light->color.a - 128.0f / 255.0f) < 1e-6f);
+    light->color = Color{0.25f, 0.25f, 0.25f, 1.0f};
+    for (const char* bad : {"#fff", "#ff88", "#gg0000", "ff8800", "#ff88001", "#", "1 2 3", ""}) CHECK(!set("Light.color", bad) && light->color.r == 0.25f);
+    // a color component past the range is clamped
+    CHECK(set("Light.color", "40 0.5 -3 1") && light->color.r == 16.0f && light->color.b == 0.0f);
+
+    // Enum: a name (any case), a number, or "number name"; a name that contradicts the number is refused
+    CHECK(set("Camera.projection", "orthographic") && cam->projection == Camera::Projection::Orthographic);
+    CHECK(set("Camera.projection", "1") && cam->projection == Camera::Projection::Perspective);
+    CHECK(set("Camera.projection", "0 Orthographic") && cam->projection == Camera::Projection::Orthographic);
+    CHECK(set("Camera.projection", "1 Perspective") && cam->projection == Camera::Projection::Perspective);
+    CHECK(set("Camera.projection", "0 gone_since_renamed") && cam->projection == Camera::Projection::Orthographic);   // an unknown name: the number decides
+    CHECK(!set("Camera.projection", "1 Orthographic") && cam->projection == Camera::Projection::Orthographic);
+    CHECK(!set("Camera.projection", "0 perspective") && cam->projection == Camera::Projection::Orthographic);
+    for (const char* bad : {"2", "-1", "Fisheye", "", "Orthographic 0", "1.0"}) CHECK(!set("Camera.projection", bad) && cam->projection == Camera::Projection::Orthographic);
+    {
+        PropertyValue v;
+        auto info = PropertyRegistry::FindByName("Camera");
+        const PropertyDesc* d = info->Find("projection");
+        CHECK(d->ParseText("1 Perspective", v) && v.AsEnum() == 1);
+        CHECK(!d->ParseText("1 Orthographic", v));
+        CHECK(d->ParseText(d->FormatText(PropertyValue::MakeEnum(1, "Perspective")), v) && v.AsEnum() == 1);
+    }
+
+    // Strings keep their spaces and symbols; control characters are refused
+    CHECK(set("GameObject.name", "  two  spaces # and \"quotes\" \\ ") && go->name == "  two  spaces # and \"quotes\" \\ ");
+    CHECK(set("GameObject.name", "") && go->name.empty());
+    go->name = "keep";
+    CHECK(!set("GameObject.name", "a\tb") && !set("GameObject.name", "a\nb") && !set("GameObject.name", "a\rb") && go->name == "keep");
+    CHECK(!PropertyRegistry::SetProperty(*go, "GameObject.name", PropertyValue::MakeString(std::string("nul\0x", 5))) && go->name == "keep");
+    CHECK(!PropertyRegistry::SetProperty(*go, "GameObject.name", PropertyValue::MakeString("del\x7f")) && go->name == "keep");
+
+    // Object references: only an object of the same scene, never a loop
+    GameObject* child = s.CreateGameObject("Child");
+    GameObject* grandchild = s.CreateGameObject("Grandchild");
+    CHECK(PropertyRegistry::SetProperty(*child, "Transform.parent", PropertyValue::MakeObjectRef(go->Guid())) && child->transform->Parent() == go->transform);
+    CHECK(PropertyRegistry::SetProperty(*grandchild, "Transform.parent", PropertyValue::MakeObjectRef(child->Guid())));
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.parent", PropertyValue::MakeObjectRef(grandchild->Guid())) && go->transform->Parent() == nullptr);   // a loop
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.parent", PropertyValue::MakeObjectRef(go->Guid())) && go->transform->Parent() == nullptr);          // itself
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.parent", PropertyValue::MakeObjectRef("deadbeef")) && go->transform->Parent() == nullptr);          // no such object
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.parent", PropertyValue::MakeObjectRef("NOT-A-GUID")));
+    CHECK(PropertyRegistry::SetProperty(*grandchild, "Transform.parent", PropertyValue::MakeObjectRef("")) && grandchild->transform->Parent() == nullptr);
+
+    // Quaternions: any non-zero finite one is normalised; a sub-field write that would zero it is refused
+    CHECK(set("Transform.rotation", "0 0 0 3") && go->transform->localRotation.w == 1.0f);
+    CHECK(set("Transform.rotation", "0, 3, 0, 4") && std::fabs(go->transform->localRotation.y - 0.6f) < 1e-6f);
+    CHECK(!set("Transform.rotation", "0 0 0 0") && std::fabs(go->transform->localRotation.y - 0.6f) < 1e-6f);
+    CHECK(set("Transform.rotation", "0 0 0 1"));
+    CHECK(!set("Transform.rotation.w", "0") && go->transform->localRotation.w == 1.0f);
+    CHECK(!set("Transform.rotation.w", "nan") && go->transform->localRotation.w == 1.0f);
+
+    // a type mismatch from code is always refused, for every property type
+    CHECK(!PropertyRegistry::SetProperty(*go, "Camera.projection", PropertyValue::MakeInt(1)));
+    CHECK(!PropertyRegistry::SetProperty(*go, "Light.intensity", PropertyValue::MakeInt(1)));
+    CHECK(!PropertyRegistry::SetProperty(*go, "GameObject.layer", PropertyValue::MakeFloat(1.0f)));
+    CHECK(!PropertyRegistry::SetProperty(*go, "GameObject.name", PropertyValue::MakeAssetPath("x")));
+    CHECK(!PropertyRegistry::SetProperty(*go, "SpriteRenderer.texture", PropertyValue::MakeString("x")));
+    CHECK(!PropertyRegistry::SetProperty(*go, "Light.color", PropertyValue::MakeVec4(Vec4{1, 1, 1, 1})));
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.rotation", PropertyValue::MakeVec4(Vec4{0, 0, 0, 1})));
+    CHECK(!PropertyRegistry::SetProperty(*go, "SpriteRenderer.flipX", PropertyValue::MakeInt(1)));
+}
+
+
+// ---- Audit: what the scene file keeps at the edges of a property's range ---------------------------------
+
+// Set `v`, save the scene, load it and read the property back from the loaded object.
+// Empty result = it survived; otherwise what went wrong.
+static std::string SceneRoundTripOf(const ComponentTypeInfo& info, const PropertyDesc& d, const PropertyValue& v, const std::string& path, bool lenient) {
+    Scene s1("s1");
+    GameObject* go = MakeSubject(s1, info);
+    const auto comp = Companions().find(path);
+    if (comp != Companions().end() && !PropertyRegistry::SetProperty(*go, comp->second.first, comp->second.second)) return "companion refused";
+    std::string err;
+    if (!PropertyRegistry::SetProperty(*go, path, v, &err)) return "refused: " + err;
+    const PropertyValue want = PropertyRegistry::GetProperty(*go, path);
+    Scene s2("s2");
+    std::string loadErr;
+    if (!SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s1), &loadErr)) return "scene did not load: " + loadErr;
+    GameObject* back = s2.FindByGuid(go->Guid());
+    if (!back) return "object lost";
+    const PropertyValue got = PropertyRegistry::GetProperty(*back, path);
+    const bool same = lenient ? Close(got, want) : got == want;
+    if (same) return std::string();
+    (void)d;
+    return "set '" + want.ToString() + "' read back '" + got.ToString() + "'";
+}
+
+static void TestAuditSceneEdges() {
+    RUN_SUITE("audit: values at the edges of every range survive the scene file");
+    RegisterBuiltinProperties();
+    int cases = 0, failures = 0;
+    for (const auto& info : PropertyRegistry::All()) {
+        for (const PropertyDesc& d : info->properties) {
+            if (!Authored(d)) continue;
+            const std::string path = info->name + "." + d.name;
+            std::vector<PropertyValue> values;
+            const bool rgbOnly = kRgbOnly.count(path) != 0;
+            switch (d.type) {
+                case PropertyType::Bool: values = {PropertyValue::MakeBool(true), PropertyValue::MakeBool(false)}; break;
+                case PropertyType::Enum:
+                    for (int i = 0; i < (int)d.enumOptions.size(); ++i) values.push_back(PropertyValue::MakeEnum(i));
+                    break;
+                case PropertyType::Int:
+                    if (d.hasRange) { values.push_back(PropertyValue::MakeInt((long long)d.rangeMin)); values.push_back(PropertyValue::MakeInt((long long)d.rangeMax)); }
+                    values.push_back(PropertyValue::MakeInt(0));
+                    values.push_back(PropertyValue::MakeInt(-1));
+                    break;
+                case PropertyType::Float:
+                    if (d.hasRange) { values.push_back(PropertyValue::MakeFloat((float)d.rangeMin)); values.push_back(PropertyValue::MakeFloat((float)d.rangeMax)); }
+                    values.push_back(PropertyValue::MakeFloat(0.0f));
+                    break;
+                case PropertyType::Vec2: case PropertyType::Vec3: case PropertyType::Vec4: case PropertyType::Color: {
+                    if (!d.hasRange) break;
+                    for (double edge : {d.rangeMin, d.rangeMax}) {
+                        const float f = (float)edge;
+                        switch (d.type) {
+                            case PropertyType::Vec2: values.push_back(PropertyValue::MakeVec2(Vec2{f, f})); break;
+                            case PropertyType::Vec3: values.push_back(PropertyValue::MakeVec3(Vec3{f, f, f})); break;
+                            case PropertyType::Vec4: values.push_back(PropertyValue::MakeVec4(Vec4{f, f, f, f})); break;
+                            default: values.push_back(PropertyValue::MakeColor(Color{f, f, f, rgbOnly ? 1.0f : f})); break;
+                        }
+                    }
+                    break;
+                }
+                case PropertyType::String:
+                    for (const char* t : {"a b", "  lead and trail  ", "quote\"inside", "back\\slash", "caf\xC3\xA9 \xE2\x9C\x93", "#hash = x", "ends with backslash \\", "-", "0"})
+                        values.push_back(PropertyValue::MakeString(t));
+                    values.push_back(PropertyValue::MakeString(std::string(3000, 'q')));
+                    break;
+                case PropertyType::AssetPath:
+                    for (const char* t : {"a b/c d.png", "dir\\file.png", "quote\"in.png", "caf\xC3\xA9.png"})
+                        values.push_back(PropertyValue::MakeAssetPath(t));
+                    break;
+                default: break;
+            }
+            for (const PropertyValue& v : values) {
+                if (d.name == "tag" || (info->name == "GameObject" && d.name == "name" && v.AsString().empty())) continue;
+                ++cases;
+                const std::string why = SceneRoundTripOf(*info, d, v, path, true);
+                if (!why.empty()) {
+                    ++failures;
+                    std::cerr << "  EDGE " << path << " (" << v.ToString().substr(0, 40) << "): " << why << "\n";
+                }
+            }
+        }
+    }
+    std::cout << "  " << cases << " edge values checked\n";
+    CHECK(failures == 0);
+    CHECK(cases >= 600);
+}
+
+// Hooks, writers and lookups all at once from several threads: nothing crashes, no count is lost.
+static void TestAuditThreadedUse() {
+    RUN_SUITE("audit: concurrent writes, hooks and lookups");
+    RegisterBuiltinProperties();
+    std::atomic<int> announced{0};
+    const int hook = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { announced.fetch_add(1); });
+    constexpr int kThreads = 4, kRounds = 200;
+    std::vector<std::unique_ptr<Scene>> scenes;
+    std::vector<GameObject*> objects;
+    for (int t = 0; t < kThreads; ++t) {
+        scenes.push_back(std::make_unique<Scene>("s" + std::to_string(t)));
+        GameObject* go = scenes.back()->CreateGameObject("o");
+        go->AddComponent<Light>();
+        objects.push_back(go);
+    }
+    std::atomic<int> wrong{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&, t] {
+            GameObject* go = objects[(std::size_t)t];
+            for (int i = 0; i < kRounds; ++i) {
+                // each thread writes its own object: every write is a change, so every one is announced
+                const float want = 1.0f + (float)i;
+                if (!PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(want))) wrong.fetch_add(1);
+                if (PropertyRegistry::GetProperty(*go, "light.RANGE") != PropertyValue::MakeFloat(want)) wrong.fetch_add(1);
+                // hooks come and go while others are being announced
+                int mine = PropertyRegistry::AddChangeHook([](const PropertyChange&) {});
+                PropertyRegistry::RemoveChangeHook(mine);
+                if (!PropertyRegistry::FindByName("Camera")) wrong.fetch_add(1);
+                PropertyRegistry::All();
+                // a suppressed write on this thread is silent
+                PropertyRegistry::ScopedHookSuppression quiet;
+                PropertyRegistry::SetProperty(*go, "Light.ambient", PropertyValue::MakeFloat(i % 2 ? 0.25f : 0.75f));
+            }
+        });
+    }
+    for (auto& th : threads) th.join();
+    PropertyRegistry::RemoveChangeHook(hook);
+    CHECK(wrong.load() == 0);
+    CHECK(announced.load() == kThreads * kRounds);
+}
+
 int main() {
     TestValueRoundTrip();
     TestValueBadInput();
@@ -1303,6 +1805,13 @@ int main() {
     TestSerializerCrossCheck();
     TestSerializerCrossCheckIsolated();
     TestCustomComponent();
+    TestAuditHooksWhileFiring();
+    TestAuditWriteResult();
+    TestAuditBuilderEdges();
+    TestAuditTextCoercion();
+    TestAuditRegistryTable();
+    TestAuditSceneEdges();
+    TestAuditThreadedUse();
     TestThreadSafeRegistration();
     TEST_MAIN_RESULT();
 }

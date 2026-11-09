@@ -287,6 +287,36 @@ add_executable(test_log test_log.cpp)
 target_link_libraries(test_log PRIVATE okay::engine)
 add_test(NAME log COMMAND test_log)
 
+# Profiling & debugging data layers (okay/Debug): frame history, GPU/render stats, memory, frame debugger, console, overlay
+add_executable(test_debug_frame_history test_debug_frame_history.cpp)
+target_link_libraries(test_debug_frame_history PRIVATE okay::engine)
+add_test(NAME debug_frame_history COMMAND test_debug_frame_history)
+
+add_executable(test_debug_gpu_stats test_debug_gpu_stats.cpp)
+target_link_libraries(test_debug_gpu_stats PRIVATE okay::engine)
+add_test(NAME debug_gpu_stats COMMAND test_debug_gpu_stats)
+
+add_executable(test_debug_memory test_debug_memory.cpp)
+target_link_libraries(test_debug_memory PRIVATE okay::engine)
+add_test(NAME debug_memory COMMAND test_debug_memory)
+
+# The one test that turns the opt-in operator new/delete hooks on (OKAY_ENABLE_MEMORY_HOOKS, defined in the file itself)
+add_executable(test_debug_memory_hooks test_debug_memory_hooks.cpp)
+target_link_libraries(test_debug_memory_hooks PRIVATE okay::engine)
+add_test(NAME debug_memory_hooks COMMAND test_debug_memory_hooks)
+
+add_executable(test_debug_draw_calls test_debug_draw_calls.cpp)
+target_link_libraries(test_debug_draw_calls PRIVATE okay::engine)
+add_test(NAME debug_draw_calls COMMAND test_debug_draw_calls)
+
+add_executable(test_debug_console test_debug_console.cpp)
+target_link_libraries(test_debug_console PRIVATE okay::engine)
+add_test(NAME debug_console COMMAND test_debug_console)
+
+add_executable(test_debug_overlay test_debug_overlay.cpp)
+target_link_libraries(test_debug_overlay PRIVATE okay::engine)
+add_test(NAME debug_overlay COMMAND test_debug_overlay)
+
 add_executable(test_datapack test_datapack.cpp)
 target_link_libraries(test_datapack PRIVATE okay::engine)
 add_test(NAME datapack COMMAND test_datapack)
@@ -922,6 +952,21 @@ add_test(NAME sequence COMMAND test_sequence)
 add_executable(test_localization test_localization.cpp)
 target_link_libraries(test_localization PRIVATE okay::engine)
 add_test(NAME localization COMMAND test_localization)
+
+# Localization tools: translation grid, CSV / JSON, checker, key scanner, previews, font coverage
+add_executable(test_loc_tools test_loc_tools.cpp)
+target_link_libraries(test_loc_tools PRIVATE okay::engine)
+add_test(NAME loc_tools COMMAND test_loc_tools)
+
+# Accessibility: colour vision, safe palette, subtitles and captions, settings
+add_executable(test_accessibility test_accessibility.cpp)
+target_link_libraries(test_accessibility PRIVATE okay::engine)
+add_test(NAME accessibility COMMAND test_accessibility)
+
+# Focus graph (gamepad / keyboard UI navigation), the scene adapter, and the controls-screen model
+add_executable(test_focus_remap test_focus_remap.cpp)
+target_link_libraries(test_focus_remap PRIVATE okay::engine)
+add_test(NAME focus_remap COMMAND test_focus_remap)
 
 add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
@@ -1565,6 +1610,30 @@ add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
 add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
 target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
 add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
+# Optimization tools (27): mesh simplification, LOD chains, LOD group selection
+add_executable(test_optimize_simplify test_optimize_simplify.cpp)
+target_link_libraries(test_optimize_simplify PRIVATE okay::engine)
+add_test(NAME optimize_simplify COMMAND test_optimize_simplify)
+
+# Optimization tools (27): CPU occlusion buffer and portal / cell visibility
+add_executable(test_optimize_occlusion test_optimize_occlusion.cpp)
+target_link_libraries(test_optimize_occlusion PRIVATE okay::engine)
+add_test(NAME optimize_occlusion COMMAND test_optimize_occlusion)
+
+# Optimization tools (27): draw call batching planner and static mesh merge
+add_executable(test_optimize_batching test_optimize_batching.cpp)
+target_link_libraries(test_optimize_batching PRIVATE okay::engine)
+add_test(NAME optimize_batching COMMAND test_optimize_batching)
+
+# Optimization tools (27): streaming cell grid and texture mip budget
+add_executable(test_optimize_streaming test_optimize_streaming.cpp)
+target_link_libraries(test_optimize_streaming PRIVATE okay::engine)
+add_test(NAME optimize_streaming COMMAND test_optimize_streaming)
+
+# Optimization tools (27): scene optimization report (JSON / text)
+add_executable(test_optimize_report test_optimize_report.cpp)
+target_link_libraries(test_optimize_report PRIVATE okay::engine)
+add_test(NAME optimize_report COMMAND test_optimize_report)
 
 # ---- Automated testing (feature map area 33) --------------------------------
 # 33.1 play-mode tests: the registry / runner, then PlayTest (headless frame stepping,

@@ -257,7 +257,7 @@ void Scene::Update(float deltaTime) {
     m_scheduler.Update(deltaTime);
     UpdateWeather(*this, deltaTime);   // the scene's weather preset -> emitters, wind, lightning
     {   // Tweens set to ignore the time scale use the real frame time.
-        const float ts = Time::TimeScale();
+        const float ts = Time::EffectiveTimeScale();   // scale x hit stop: what deltaTime was multiplied by
         m_tweens.Update(deltaTime, ts > 1e-6f ? deltaTime / ts : Time::UnscaledDeltaTime());
     }
 

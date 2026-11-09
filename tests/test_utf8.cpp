@@ -66,6 +66,36 @@ int main() {
         CHECK(ok);
     }
 
+    // A surrogate is not a character: Append writes U+FFFD, not the three bytes ED A0 80 that
+    // no decoder reads back as one code point.
+    {
+        for (std::uint32_t cp : {0xD800u, 0xDBFFu, 0xDC00u, 0xDFFFu, 0x110000u, 0xFFFFFFFFu}) {
+            std::string out; utf8::Append(out, cp);
+            CHECK(out == "\xEF\xBF\xBD");
+            CHECK(utf8::Length(out) == 1);
+        }
+        std::string edge; utf8::Append(edge, 0xD7FFu); utf8::Append(edge, 0xE000u);   // neighbours stay valid
+        auto cps = Decode(edge);
+        CHECK(cps.size() == 2 && cps[0] == 0xD7FF && cps[1] == 0xE000);
+    }
+
+    // Next at or past the end reads nothing and stays inside the string.
+    {
+        std::string s = "ab";
+        std::size_t i = 2;
+        CHECK(utf8::Next(s, i) == 0 && i == 2);              // used to walk to 3
+        i = 99;
+        CHECK(utf8::Next(s, i) == 0 && i == 2);              // used to read out of bounds
+        const char* p = s.data() + s.size();
+        CHECK(utf8::Next(p, s.data() + s.size()) == 0 && p == s.data() + s.size());
+        std::string empty; i = 0;
+        CHECK(utf8::Next(empty, i) == 0 && i == 0);
+        // a loop guarded by i < size still decodes everything
+        std::string t = "a\xC3\xA9\xE2\x82\xAC";
+        std::size_t n = 0; for (std::size_t k = 0; k < t.size();) { utf8::Next(t, k); ++n; }
+        CHECK(n == 3);
+    }
+
     CHECK(utf8::Length("h\xC3\xA9llo") == 5);
     CHECK(utf8::Offset("h\xC3\xA9llo", 2) == 3);
 

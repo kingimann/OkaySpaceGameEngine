@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <string>
 
 namespace okay {
 
@@ -24,8 +25,45 @@ public:
     /// Multiplier applied to DeltaTime (1 = normal, 0 = paused).
     /// Reads 0 while Game has the time frozen (paused), whatever scale is remembered.
     static float TimeScale()   { return s_frozen ? 0.0f : s_timeScale; }
-    /// Negative (and NaN) scales are clamped to 0 so DeltaTime never runs backwards.
-    static void  SetTimeScale(float scale) { s_timeScale = scale > 0.0f ? scale : 0.0f; }
+    /// Negative (and NaN) scales are clamped to 0 so DeltaTime never runs backwards, and
+    /// the scale is capped at kMaxTimeScale (an infinite scale made 0 * inf = NaN
+    /// poison ElapsedTime for the rest of the run). Setting it cancels a running ramp.
+    static void  SetTimeScale(float scale) {
+        s_timeScale = scale > 0.0f ? (scale < kMaxTimeScale ? scale : kMaxTimeScale) : 0.0f;
+        if (s_fxActive) CancelRamp();
+    }
+    static constexpr float kMaxTimeScale = 100.0f;
+    /// The scale as last set (a ramp moves it), ignoring the freeze and any hit stop.
+    static float BaseTimeScale() { return s_timeScale; }
+    /// The multiplier DeltaTime actually used: the scale, 0 while frozen, times the
+    /// strongest running hit stop. TimeScale() stays the scale you set, so code that
+    /// reads it and writes it back (a cutscene restoring the speed) never captures a
+    /// hit stop; divide by this one to get back to the unscaled frame time.
+    static float EffectiveTimeScale() { return s_frozen ? 0.0f : s_timeScale * s_hitMul; }
+
+    // ---- Time effects (Time.cpp) ------------------------------------------------
+    // Both are measured in REAL seconds, keep running while the game is paused, and
+    // compose with the scale instead of overwriting it, so a script's own SetTimeScale
+    // is never lost. DeltaTime integrates the scale over the frame, so a 0.1 s stop
+    // takes exactly 0.1 s * scale of game time out, whatever the frame length.
+
+    /// A brief slow-down for impacts: for `seconds` of real time the game runs at
+    /// `scale` (0 = a full freeze frame) times the current scale, then goes back by
+    /// itself. Several at once: the strongest (lowest scale) applies; each ends on its
+    /// own clock. Ignored for a duration that is not a positive finite number.
+    static void HitStop(float seconds, float scale = 0.0f);
+    static bool  HitStopActive() { return s_hitCount > 0; }
+    /// Real seconds until the last running hit stop ends (0 when none).
+    static float HitStopRemaining();
+    static void  CancelHitStop();
+
+    /// Move the scale to `target` over `seconds` of real time, in a straight line
+    /// (slow-motion ease in/out, a pause menu fading the world to a stop). SetTimeScale
+    /// (or another ramp) takes over from wherever it was. `seconds` <= 0 sets it at once.
+    static void RampTimeScale(float target, float seconds);
+    static bool IsRamping();
+    static float RampTarget();
+    static void CancelRamp();
 
     /// Hold DeltaTime at 0 without touching the scale: SetTimeScale calls made while
     /// frozen are remembered and apply when it is lifted. Game::SetPaused drives this.
@@ -37,6 +75,33 @@ public:
     /// is built without a step. A step that is not a finite positive number is ignored.
     static float FixedDeltaTime() { return s_fixedDelta; }
     static void  SetFixedDeltaTime(float step) { if (step > 0.0f && std::isfinite(step)) s_fixedDelta = step; }
+    /// The simulated clock of the fixed steps: the start of the step being run inside
+    /// a fixed update, else the total fixed time run so far. Only a driver that runs
+    /// fixed steps (GameLoop) advances it; InFixedStep() is true while one runs.
+    static double FixedTime() { return s_fixedTime; }
+    static bool   InFixedStep() { return s_inFixed; }
+    /// For the driver: bracket each fixed update with these.
+    static void BeginFixedStep() { s_inFixed = true; }
+    static void EndFixedStep(float step) { s_inFixed = false; if (step > 0.0f && std::isfinite(step)) s_fixedTime += (double)step; }
+    static void ResetFixedTime() { s_fixedTime = 0.0; s_inFixed = false; }
+
+    // ---- Real and wall-clock time (Time.cpp) -----------------------------------
+    // The game clocks above only move when a frame is stepped. These read the machine.
+    using ClockFn = double (*)();
+    /// Seconds on a monotonic clock since the process started: never goes backwards,
+    /// ignores the time scale, pause and any clamped hitch.
+    static double RealtimeSinceStartup();
+    /// Wall-clock seconds since 1970-01-01 UTC (can jump when the user sets the clock).
+    static double UnixSeconds();
+    /// Test hook: replace the monotonic clock (seconds) and/or the wall clock (Unix
+    /// seconds) with your own so output is deterministic. nullptr puts the real one back.
+    static void SetClockSources(ClockFn monotonic, ClockFn unixSeconds);
+    /// "1h 02m 03s", "2m 05s", "7s", "2d 03h 04m 05s". Whole seconds, rounded down so
+    /// it never shows a moment that has not happened yet. Negative gets a leading "-".
+    static std::string FormatDuration(double seconds);
+    /// A clock face: "MM:SS" under an hour, "H:MM:SS" from one hour; `millis` adds
+    /// ".mmm" ("01:02.500"). Rounded down; negative gets a leading "-".
+    static std::string FormatClock(double seconds, bool millis = false);
 
     /// Frames per second, smoothed, from the measured frame times.
     static float SmoothedFPS() { return s_fps; }
@@ -54,8 +119,8 @@ public:
     /// 0 (paused) stays 0. Call it once a frame on the measured time, then pass
     /// the result to Step.
     static float SmoothDelta(float raw, float refreshHz = 0.0f) {
+        if (!(raw > 0.0f) || !std::isfinite(raw)) { s_rawPending = 0.0f; return 0.0f; }   // paused, NaN or infinite: no step
         s_rawPending = raw;
-        if (!(raw > 0.0f)) return 0.0f;
         s_hist[s_histAt] = raw;
         s_histAt = (s_histAt + 1) % 4;
         if (s_histN < 4) ++s_histN;
@@ -79,7 +144,9 @@ public:
 
     /// Advance global time by one frame of `unscaledDt` seconds. The Application
     /// loop calls this automatically; standalone runtimes (the player) call it so
-    /// `ElapsedTime()`, `DeltaTime()`, and `timeScale` work there too.
+    /// `ElapsedTime()`, `DeltaTime()`, and `timeScale` work there too. A time that is
+    /// not a finite number >= 0 (NaN, infinity, negative) counts as a 0 s frame: it
+    /// used to turn ElapsedTime into NaN for good, or run it backwards.
     static void Step(float unscaledDt) { Advance(unscaledDt); }
 
     /// Put every clock back to its start-up state: zero elapsed time and frame
@@ -90,17 +157,24 @@ public:
         s_deltaTime = s_unscaledDeltaTime = 0.0f;
         s_time = s_unscaledTime = 0.0;
         s_timeScale = 1.0f; s_frozen = false;
-        s_fps = 0.0f; s_frameCount = 0;
+        s_fps = 0.0f; s_fpsSamples = 0; s_frameCount = 0;
         s_rawDeltaTime = 0.0f; s_rawPending = -1.0f;
         for (float& h : s_hist) h = 0.0f;
         s_histAt = 0; s_histN = 0; s_carry = 0.0f;
+        s_fixedTime = 0.0; s_inFixed = false;
+        ClearEffects();
     }
+    /// Drop every hit stop and ramp and restore a plain scale path. The scale itself stays.
+    /// Game::Reset calls it so one Play session's effects never leak into the next.
+    static void ClearEffects();
 
 private:
     friend class Application;
     static void Advance(float unscaledDt) {
+        if (!(unscaledDt > 0.0f) || !std::isfinite(unscaledDt)) unscaledDt = 0.0f;
         s_unscaledDeltaTime = unscaledDt;
-        s_deltaTime = unscaledDt * TimeScale();
+        // With a hit stop or ramp running the scale changes inside the frame: integrate it.
+        s_deltaTime = s_fxActive ? (float)StepEffects(unscaledDt) : unscaledDt * TimeScale();
         s_time += (double)s_deltaTime;
         s_unscaledTime += (double)unscaledDt;
         ++s_frameCount;
@@ -108,10 +182,20 @@ private:
         s_rawDeltaTime = s_rawPending >= 0.0f ? s_rawPending : unscaledDt;
         s_rawPending = -1.0f;
         if (s_rawDeltaTime > 0.0f) {
-            float instant = 1.0f / s_rawDeltaTime;
-            s_fps = s_fps <= 0.0f ? instant : s_fps * 0.9f + instant * 0.1f;
+            // The very first measured frame is not a frame time worth showing (it holds the
+            // start-up: 1e-5 s read as 100000 FPS for the next hundred frames), so it is
+            // skipped; after that a running average (1/n while warming up, then 0.9/0.1).
+            if (s_fpsSamples++ > 0) {
+                const float instant = 1.0f / s_rawDeltaTime;
+                const float a = s_fpsSamples <= 10 ? 1.0f / (float)(s_fpsSamples - 1) : 0.1f;
+                s_fps = s_fps <= 0.0f ? instant : s_fps + (instant - s_fps) * a;
+            }
         }
     }
+    /// Time.cpp: integrate the scale over `unscaledDt` seconds while hit stops / a ramp
+    /// run, and advance them. Returns the scaled delta.
+    static double StepEffects(float unscaledDt);
+    static void RefreshFx();
 
     static inline float        s_deltaTime         = 0.0f;
     static inline float        s_unscaledDeltaTime = 0.0f;
@@ -121,12 +205,19 @@ private:
     static inline float        s_fixedDelta        = 1.0f / 50.0f;
     static inline bool         s_frozen            = false;
     static inline float        s_fps               = 0.0f;
+    static inline int          s_fpsSamples        = 0;       // measured frames seen by the FPS average
     static inline std::uint64_t s_frameCount       = 0;
     static inline float        s_rawDeltaTime      = 0.0f;
     static inline float        s_rawPending        = -1.0f;   // SmoothDelta's input this frame (-1 = none)
     static inline float        s_hist[4]           = {0.0f, 0.0f, 0.0f, 0.0f};
     static inline int          s_histAt = 0, s_histN = 0;
     static inline float        s_carry             = 0.0f;    // vsync snapping: measured minus stepped
+    // Effects (state in Time.cpp; these are the parts the inline accessors read).
+    static inline bool         s_fxActive          = false;   // a hit stop or ramp is running
+    static inline float        s_hitMul            = 1.0f;    // strongest running hit stop (1 = none)
+    static inline int          s_hitCount          = 0;
+    static inline double       s_fixedTime         = 0.0;
+    static inline bool         s_inFixed           = false;
 };
 
 /// A fixed-timestep accumulator for gameplay code outside physics: feed it each

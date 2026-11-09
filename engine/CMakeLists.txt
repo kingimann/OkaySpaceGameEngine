@@ -437,6 +437,15 @@ endif()
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
 
+# 1.1 Loop and time (docs/loop_and_time.md): Time effects + clocks, Game pause reasons /
+# quit guard, the shared GameLoop driver, dice parser. Clock.hpp and RandomExtras'
+# templates are header-only.
+target_sources(okay_engine PRIVATE
+    src/Core/Time.cpp
+    src/Core/Game.cpp
+    src/Core/GameLoop.cpp
+    src/Core/RandomExtras.cpp
+)
 # ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, unpack,
 # per-record / per-field apply and revert, prefab queries and the asset validator.
 target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)

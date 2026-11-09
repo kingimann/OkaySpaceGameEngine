@@ -155,8 +155,12 @@ Recent additions (v2.12–2.14):
   cameras are easy to see and pick even with no mesh.
 - **Project Settings** (Edit ▸ Project Settings) and a larger **Build** dialog
   (Quit-on-Escape, Master Volume, Show-FPS).
-- **Crash-safe autosave** (File ▸ Autosave) writes a `<scene>.autosave` recovery
-  copy and offers to restore it after an unclean exit.
+- **Crash-safe autosave** (File ▸ Autosave) writes unsaved graphs, scripts and
+  the scene into the recovery folder (about every 30 seconds, and when the
+  window loses focus). It does not overwrite the real files unless **Also save
+  the real file** is on. A leftover `<scene>.autosave` from an older editor is
+  still offered on open when it is newer than the scene; new sessions do not
+  write that sidecar.
 - **Crash reports**: if the editor crashes, it saves a report beside the editor
   executable. The report records what the editor was doing, the error, and a
   backtrace (Windows, Linux and macOS). The launcher then notifies you and lists

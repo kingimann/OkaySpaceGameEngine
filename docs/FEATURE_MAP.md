@@ -563,9 +563,9 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
 | [22.1](feature_map/20-35-planned.md#221-undo-history) | Undo history | Partial | Step back and forward through your edits with Ctrl+Z and Ctrl+Y, and jump to any earlier step from a history list. | each snapshot is a full scene text (memory grows with scene size); three separate stacks can confuse Ctrl+Z; behaviour of the... |
-| [22.2](feature_map/20-35-planned.md#222-autosave) | Autosave | Partial | The editor quietly saves a recovery copy of your work every few minutes so a crash costs little. | possible gap: a new scene that was never saved has no autosave (path empty); only scenes are covered, not script buffers or... |
+| [22.2](feature_map/20-35-planned.md#222-autosave) | Autosave | Partial | The editor quietly saves a recovery copy of your work every few minutes so a crash costs little. | a leftover `.autosave` from an older editor can still sit beside the scene until it is recovered or discarded; a project under... |
 | [22.3](feature_map/20-35-planned.md#223-crash-recovery) | Crash recovery | Partial | After a crash or a killed editor, offer the last autosave, and keep a record of what crashed. | the report format is only parsed by the launcher; no upload; the player has no handler. |
-| [22.4](feature_map/20-35-planned.md#224-backups) | Backups | Partial | Older versions of your files are kept so a bad save or a bad edit can be rolled back. | `.bak` and `.autosave` files sit beside the scene; a project under git may pick them up. |
+| [22.4](feature_map/20-35-planned.md#224-backups) | Backups | Partial | Older versions of your files are kept so a bad save or a bad edit can be rolled back. | a scene save still keeps one `.bak` beside the scene, and a leftover `.autosave` from an older editor may too; a project under... |
 
 ## 23. Profiling & debugging (Critical)
 

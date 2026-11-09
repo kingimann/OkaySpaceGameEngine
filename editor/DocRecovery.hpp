@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -85,6 +86,34 @@ inline bool DecodeBundle(const std::string& in, std::vector<Buffer>& out, std::s
 inline bool BufferWorthRestoring(const std::string& recovered, const std::string& onDisk, bool fileExists) {
     if (!fileExists) return !recovered.empty();
     return recovered != onDisk;
+}
+
+/// Older editors wrote `<scene>.autosave` beside the scene file. New sessions
+/// do not. RecoveryManager is the recovery copy. This stays false so a test
+/// can catch a regression that starts writing the sidecar again.
+inline bool WritesLegacySceneSidecar() { return false; }
+
+/// Path of a leftover `<scene>.autosave` that is newer than the scene, or empty.
+/// Reads only. A missing scene counts as older than any sidecar, matching the
+/// prompt that used to run on open.
+inline std::string NewerLegacySceneAutosave(const std::string& scenePath) {
+    if (scenePath.empty()) return {};
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path side(scenePath + ".autosave");
+    // A missing sidecar is not an error. exists() clears ec in that case;
+    // is_regular_file() can leave ENOENT set, which would hide a real file.
+    if (!fs::exists(side, ec) || ec || !fs::is_regular_file(side, ec) || ec) return {};
+    const auto sideTime = fs::last_write_time(side, ec);
+    if (ec) return {};
+    auto sceneTime = fs::file_time_type::min();
+    ec.clear();
+    if (fs::exists(scenePath, ec) && !ec) {
+        sceneTime = fs::last_write_time(scenePath, ec);
+        if (ec) return {};
+    }
+    if (sideTime > sceneTime) return side.string();
+    return {};
 }
 
 /// Backups of one file: the newest `keepLast`, and no extra daily copies.

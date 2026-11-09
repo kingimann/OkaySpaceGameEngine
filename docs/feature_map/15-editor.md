@@ -185,7 +185,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Parts:**
   - 15.9.1 Editor model - `editor/EditorState.*` - scene, selection, create helpers, Play and Stop with snapshot restore, editor camera; free of ImGui so tests can use it
   - 15.9.2 Undo and redo - `editor/EditorState.*` - snapshot-based: the whole scene as text, up to 100 steps; History panel jumps to any step (`DrawHistory` ~6709)
-  - 15.9.3 Autosave and recovery - `editor/main.cpp` (~1993, recovery popup ~16841) - periodic `<scene>.autosave` copy and a prompt to restore after a crash
+  - 15.9.3 Autosave and recovery - `editor/main.cpp`, `editor/DocRecovery.hpp` - recovery-folder copies of dirty graphs, scripts and the scene; a newer leftover `<scene>.autosave` is still offered and is not written again
   - 15.9.4 Panel tabs and layouts - `editor/EditorTabs.hpp`, `editor/main.cpp` (~4337-5388) - saved named layouts, presets (Default, Tall, Wide, 2 by 3, Scripting, Animation), Ctrl+Tab switcher, tab overflow, side tabs
   - 15.9.5 Edit-mode undo for meshes - `editor/main.cpp` (~3021) - undo inside mesh edit mode
   - 15.9.6 Focus-aware undo - `editor/LocalizationWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/DialogueWindow.*`, `editor/TimelineWindow.*` - while one of these windows has focus, Ctrl+Z and Ctrl+Y act on its own file (string table, tree, dialogue, sequence), not on the scene

@@ -2032,10 +2032,8 @@ static void EmptyState(const char* glyph, const char* title, const char* hint = 
     centered(title, ImVec4(0.66f, 0.68f, 0.72f, 1.0f), 1.0f);
     if (hint) { ImGui::Spacing(); centered(hint, ImVec4(0.46f, 0.47f, 0.51f, 1.0f), 1.0f); }
 }
-bool g_autosave = true;          // periodically write a crash-recovery sidecar
-double g_lastAutosave = 0.0;     // seconds since last autosave
-float  g_autosaveInterval = 120.0f;  // seconds between scene autosaves (legacy sidecar)
-float  g_docAutosaveSec = 30.0f;     // graphs and scripts, via RecoveryManager
+bool g_autosave = true;          // recovery-folder autosave (File > Autosave)
+float  g_docAutosaveSec = 30.0f;     // seconds between recovery copies (graphs, scripts, scene)
 bool   g_autosaveToFile = false;     // also overwrite the real file (off unless chosen)
 double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI)
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
@@ -5727,16 +5725,14 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::BeginMenu("Autosave")) {
             ImGui::MenuItem("Enabled", nullptr, &g_autosave);
             ImGui::SetNextItemWidth(150);
-            ImGui::SliderFloat("Interval (s)", &g_autosaveInterval, 30.0f, 600.0f, "%.0f");
+            if (ImGui::SliderFloat("Interval (s)", &g_docAutosaveSec, 5.0f, 300.0f, "%.0f")) SaveSettings();
             if (g_autosaveStamp > 0.0)
                 ImGui::TextDisabled("Last autosave: %.0fs ago",
                                     SDL_GetTicks64() / 1000.0 - g_autosaveStamp);
-            ImGui::TextDisabled("Writes a <scene>.autosave recovery copy;");
-            ImGui::TextDisabled("offered on next open if it's newer than the scene.");
-            ImGui::Separator();
-            ImGui::TextDisabled("Graphs and scripts");
-            ImGui::SetNextItemWidth(150);
-            if (ImGui::SliderFloat("Recovery interval (s)", &g_docAutosaveSec, 5.0f, 300.0f, "%.0f")) SaveSettings();
+            ImGui::TextDisabled("Unsaved graphs, scripts and the scene go to the");
+            ImGui::TextDisabled("recovery folder. Real files stay as you saved them.");
+            ImGui::TextDisabled("A leftover <scene>.autosave is still offered on open");
+            ImGui::TextDisabled("when it is newer than the scene. New ones are not written.");
             if (ImGui::MenuItem("Also save the real file", nullptr, &g_autosaveToFile)) SaveSettings();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: recovery copies only. On: also overwrite the file you saved.");
             ImGui::EndMenu();
@@ -44663,7 +44659,7 @@ int main(int argc, char** argv) {
                 g_quitRequested = true;
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                 if (ed.isPlaying()) g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
-                DocRecovery().Autosave();
+                if (g_autosave) DocRecovery().Autosave();
             }
             // Route typed characters to the playing game's UI input fields (but not
             // while an ImGui field — inspector/markup box — is capturing text).
@@ -45052,51 +45048,33 @@ int main(int argc, char** argv) {
         }
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
-        // When the open scene changes, reset the autosave timer and look for a
-        // newer "<scene>.autosave" (a recovery copy from a crash/unclean exit).
+        // A leftover "<scene>.autosave" from an older editor is still offered
+        // when it is newer than the scene. New sessions do not write one.
         {
             static std::string s_watchedScene = "\x01";  // force first check
             if (ed.path() != s_watchedScene) {
                 s_watchedScene = ed.path();
-                g_lastAutosave = SDL_GetTicks64() / 1000.0;
-                g_recoverPath.clear();
-                if (!ed.path().empty()) {
-                    std::error_code rc;
-                    std::string side = ed.path() + ".autosave";
-                    if (std::filesystem::exists(side, rc)) {
-                        auto ts = std::filesystem::last_write_time(side, rc);
-                        auto os = std::filesystem::exists(ed.path(), rc)
-                                  ? std::filesystem::last_write_time(ed.path(), rc)
-                                  : std::filesystem::file_time_type::min();
-                        if (!rc && ts > os) g_recoverPath = side;
-                    }
-                }
+                g_recoverPath = okay::editor::docrec::NewerLegacySceneAutosave(ed.path());
             }
         }
 
-        // Autosave a crash-recovery sidecar ("<scene>.autosave") while editing —
-        // never mid-Play, and without touching the real file or the dirty flag.
+        // Recovery copies of dirty graphs, scripts and the scene. The real files
+        // are overwritten only when "Also save the real file" is on.
         DocRecovery().SetInterval(g_docAutosaveSec);
-        if (DocRecovery().Tick(dt) && g_autosaveToFile) {
-            okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
-            for (okay::ScriptComponent* t : g_scriptTabs) {
-                if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
-                const char* live = PeekCodeBuffer(t);
-                if (live && SaveEditorDocument(t->Path(), live)) g_scriptSaved[t] = live;
+        DocRecovery().SetEnabled(g_autosave);
+        if (g_autosave && DocRecovery().Tick(dt)) {
+            g_autosaveStamp = SDL_GetTicks64() / 1000.0;
+            if (g_autosaveToFile) {
+                okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
+                for (okay::ScriptComponent* t : g_scriptTabs) {
+                    if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
+                    const char* live = PeekCodeBuffer(t);
+                    if (live && SaveEditorDocument(t->Path(), live)) g_scriptSaved[t] = live;
+                }
+                if (ed.dirty && !ed.isPlaying() && !ed.path().empty()) SaveSceneTo(ed, ed.path());
             }
-            if (ed.dirty && !ed.isPlaying() && !ed.path().empty()) SaveSceneTo(ed, ed.path());
         }
         if (!AnyUnsavedWork(ed)) DocRecovery().OnSaved();
-        if (g_autosave && !ed.isPlaying() && ed.dirty && !ed.path().empty()) {
-            double t = SDL_GetTicks64() / 1000.0;
-            if (t - g_lastAutosave > (double)g_autosaveInterval) {
-                g_lastAutosave = t;
-                if (SceneSerializer::SaveToFile(ed.scene(), ed.path() + ".autosave")) {
-                    g_autosaveStamp = t;
-                    ConsoleLog("Autosaved recovery copy: " + ed.path() + ".autosave");
-                }
-            }
-        }
 
         // Pump audio while playing (stereo float, queued). Top the queue up to a
         // fixed ~70 ms rather than rendering dt worth, which drifts against the

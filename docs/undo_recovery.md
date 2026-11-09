@@ -300,9 +300,8 @@ The editor needs no data model change to start:
    a group. Each one stops serializing the whole scene.
 3. Use `IsDirty()` for the title-bar asterisk and the "save before closing?" prompt instead of a
    separate flag.
-4. Replace the `<scene>.autosave` sidecar with a `RecoveryManager`: `StartSession()` at launch,
-   `Tick(dt)` each frame, `EndSession()` on a clean exit, `OnSaved()` after Save, and show
-   `FindRecoverable()` in the "Recover" popup.
+4. Done for editor documents: `RecoveryManager` autosaves graphs, scripts and the scene.
+   A leftover `<scene>.autosave` is still offered on open and is not written anymore.
 5. Route `Save` through `BackupManager::SaveWithBackup`, and list `List(path)` in a
    "File > Restore from backup" window.
 

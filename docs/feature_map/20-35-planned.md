@@ -272,7 +272,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 22.2 Autosave
 - **What:** The editor quietly saves a recovery copy of your work every few minutes so a crash costs little.
 - **Parts:**
-  - 22.2.1 Scene autosave sidecar - `editor/main.cpp` - writes `<scene>.autosave` every 120 s by default (30-600 s) while the scene has unsaved edits and is not playing; File > Autosave
+  - 22.2.1 Scene autosave sidecar - `editor/main.cpp`, `editor/DocRecovery.hpp` - leftover `<scene>.autosave` files are still offered on open when newer than the scene; new sessions do not write one (test `doc_recovery`)
   - 22.2.2 Rotating autosave with session locks (#572) - `Core/Recovery`, `editor/DocRecovery.hpp`, `editor/main.cpp` - `RecoveryManager` autosaves dirty graphs, scripts and the scene into `okay_recovery` every 30 s (File > Autosave) and when the window loses focus; atomic checksummed slots; untitled documents included; the real file is overwritten only if "Also save the real file" is on
   - 22.2.3 In-game Auto Save component - `Components/AutoSave` - saves the game (not the editor scene) to a slot on a timer or when a scene starts; see 35.2
 - **Code:** `editor/main.cpp`, `Core/Recovery`, `Components/AutoSave`
@@ -280,14 +280,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** File > Autosave submenu
 - **Docs:** `docs/editor.md`; `docs/undo_recovery.md`
 - **Tests:** `recovery`, `doc_recovery`
-- **Status:** Partial - graphs, scripts and the scene now autosave through `RecoveryManager` (test `doc_recovery`); the older `<scene>.autosave` sidecar is still written as well.
-- **Exists today:** One `<scene>.autosave` per open scene, saved with `SceneSerializer::SaveToFile`. Nothing is kept for an unsaved new scene without a path (the code requires `ed.path()` non-empty).
+- **Status:** Partial - graphs, scripts and the scene autosave through `RecoveryManager` (test `doc_recovery`). The older `<scene>.autosave` sidecar is read when it is newer than the scene and is no longer written.
+- **Exists today:** Recovery copies go to `okay_recovery`, including untitled graphs and scripts. A leftover `<scene>.autosave` that is newer than the scene is still offered by Recover Autosave. `WritesLegacySceneSidecar()` is false.
 - **Work packages:**
   1. M - Replace the sidecar with `RecoveryManager` (rotating slots, per-session lock, clean-exit cleanup). Depends on: #572 (on main).
   2. S - Autosave unsaved "Untitled" scenes too (recovery folder under the project). Depends on: package 1.
   3. S - Autosave interval and slot count in the project settings window. Depends on: package 1, 25.2.
   4. M - Autosave other editor documents (script tabs, visual scripts, dialogue graphs). Depends on: package 1.
-- **Open:** possible gap: a new scene that was never saved has no autosave (path empty); only scenes are covered, not script buffers or graphs; the sidecar sits next to the scene and may be committed by accident.
+- **Open:** a leftover `.autosave` from an older editor can still sit beside the scene until it is recovered or discarded; a project under git may pick that file up.
 - **Related:** 22.3, 22.4, 15.9
 - **Words:** autosave, recovery copy, `.autosave`, RecoveryManager, interval, auto backup, Untitled scene
 - **Seen as:** lost an hour of work after a crash; autosave file shows up in git; no autosave for a scene I never saved
@@ -335,7 +335,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   2. M - File > Restore from Backup window (list, preview time and size, restore). Depends on: package 1.
   3. S - Backups of prefabs, materials and other text assets on save. Depends on: package 1.
   4. S - Backup settings (count, days, size) in project settings. Depends on: 25.2.
-- **Open:** `.bak` and `.autosave` files sit beside the scene; a project under git may pick them up.
+- **Open:** a scene save still keeps one `.bak` beside the scene, and a leftover `.autosave` from an older editor may too; a project under git may pick them up.
 - **Related:** 22.2, 28.3, 35.4, 1.7
 - **Words:** backup, `.bak`, restore from backup, BackupManager, previous version, rollback, prune
 - **Seen as:** saved over the wrong scene; scene file broken and no older copy; too many backup files

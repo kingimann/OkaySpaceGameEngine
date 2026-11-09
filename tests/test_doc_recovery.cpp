@@ -5,6 +5,7 @@
 #include "okay/Core/Backup.hpp"
 #include "okay/Core/Recovery.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -100,6 +101,31 @@ int main() {
             CHECK(newest == "version 6");
             CHECK(oldest == "version 2");
         }
+    }
+
+    // The old <scene>.autosave sidecar is read, never written.
+    {
+        CHECK(!WritesLegacySceneSidecar());
+        const std::string scene = dir + "/Town.okayscene";
+        const std::string side = scene + ".autosave";
+        WriteFile(scene, "scene v1\n");
+        WriteFile(side, "recovered scene\n");
+        const auto sceneTime = std::filesystem::last_write_time(scene);
+        std::filesystem::last_write_time(side, sceneTime + std::chrono::seconds(60));
+        CHECK(NewerLegacySceneAutosave(scene) == side);
+        std::filesystem::last_write_time(side, sceneTime);
+        CHECK(NewerLegacySceneAutosave(scene).empty());
+        std::filesystem::last_write_time(side, sceneTime - std::chrono::seconds(120));
+        CHECK(NewerLegacySceneAutosave(scene).empty());
+        std::filesystem::remove(side);
+        CHECK(NewerLegacySceneAutosave(scene).empty());
+        CHECK(!std::filesystem::exists(side));
+        CHECK(NewerLegacySceneAutosave("").empty());
+        const std::string gone = dir + "/Missing.okayscene";
+        WriteFile(gone + ".autosave", "only the sidecar\n");
+        CHECK(NewerLegacySceneAutosave(gone) == gone + ".autosave");
+        std::filesystem::remove(gone + ".autosave");
+        CHECK(!std::filesystem::exists(gone + ".autosave"));
     }
 
     std::filesystem::remove_all(dir);

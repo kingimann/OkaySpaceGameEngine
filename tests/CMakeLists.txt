@@ -1803,6 +1803,11 @@ add_executable(test_random_wave4 test_random_wave4.cpp)
 target_link_libraries(test_random_wave4 PRIVATE okay::engine)
 add_test(NAME random_wave4 COMMAND test_random_wave4)
 
+# 1.1 fifth pass: Random::Shared() is thread safe (std::thread tests; header-only, also built standalone under a thread sanitizer)
+add_executable(test_random_threads test_random_threads.cpp)
+target_link_libraries(test_random_threads PRIVATE okay::engine)
+add_test(NAME random_threads COMMAND test_random_threads)
+
 add_executable(test_application_loop test_application_loop.cpp)
 target_link_libraries(test_application_loop PRIVATE okay::engine)
 add_test(NAME application_loop COMMAND test_application_loop)

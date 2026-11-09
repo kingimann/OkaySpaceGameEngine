@@ -2,8 +2,10 @@
 #include "rig_harness.hpp"
 #include "okay/Animation/HumanoidBones.hpp"
 #include "okay/Animation/HumanoidLibrary.hpp"
+#include "okay/Components/AimOffset.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/ControllerFeel.hpp"
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/PlayerController.hpp"
@@ -492,5 +494,295 @@ int main() {
     }
 
     (void)walk60;
+
+    // Camera orbit alone (no walk). A steady mouse and a noisy one, at several rates.
+    // Body yaw, head and camera must not reverse every frame.
+    {
+        const float rates[] = {1.0f / 11.0f, 1.0f / 30.0f, 1.0f / 60.0f, 1.0f / 144.0f};
+        const char* tags[] = {"11", "30", "60", "144"};
+        for (int ri = 0; ri < 4; ++ri) {
+            const float dt = rates[ri];
+            righarness::Rig R = righarness::PlayableFromFile("mixamo_t_cm_clips.glb");
+            CHECK(R.player != nullptr);
+            if (!R.player) continue;
+            auto* tp = R.player->GetComponent<ThirdPersonController>();
+            if (tp) tp->lockCursor = false;
+            Transform* head = R.Bone(humanoid::Head);
+            Transform* spine = R.Bone(humanoid::Torso);
+            Camera* cam = R.scene->mainCamera;
+            const Vec3 bodyF = R.player->transform->Rotation() * Vec3{0, 0, -1};
+            const Vec3 headAxis = head ? FacingAxis(head->Rotation(), bodyF) : Vec3{0, 0, 1};
+            const Vec3 spineAxis = spine ? FacingAxis(spine->Rotation(), bodyF) : Vec3{0, 0, 1};
+            Sampler sh, ss, sc;
+            sh.Begin(head, headAxis, "head");
+            ss.Begin(spine, spineAxis, "spine");
+            sc.Begin(cam && cam->transform ? cam->transform : nullptr, Vec3{0, 0, -1}, "camera");
+            Vec2 mouse{400.0f, 300.0f};
+            Input::FeedMouse(mouse, 0);
+            Input::FeedKeys({});
+            R.scene->Update(dt);
+            const float body0 = Heading(R.player->transform->Rotation() * Vec3{0, 0, -1});
+            int bodyFlips = 0;
+            float prevBd = 0.0f;
+            const int frames = std::max(8, (int)std::lround(2.0f / dt));
+            for (int i = 0; i < frames; ++i) {
+                // Constant orbit, plus a one-pixel tremor so a raw delta cannot hide.
+                const float tremor = (i % 2 == 0) ? 1.0f : -1.0f;
+                mouse.x += 120.0f * dt + tremor;
+                Input::FeedMouse(mouse, 0);
+                Input::FeedKeys({});
+                R.scene->Update(dt);
+                const Quat pr = R.player->transform->Rotation();
+                const Mat4 inv = R.player->transform->LocalToWorldMatrix().Inverse();
+                sh.Sample(pr, inv, dt);
+                ss.Sample(pr, inv, dt);
+                sc.Sample(pr, inv, dt);
+                const float b = Heading(pr * Vec3{0, 0, -1});
+                const float bd = Wrap180(b - body0);
+                if (i > 2 && std::fabs(bd - prevBd) > 0.15f && (bd - prevBd) * prevBd < 0.0f && std::fabs(prevBd) > 0.3f)
+                    ++bodyFlips;
+                prevBd = bd;
+            }
+            sh.series.Finish(); ss.series.Finish(); sc.series.Finish();
+            std::printf("HARNESS orbit-%s dt %.4f\n", tags[ri], dt);
+            sh.series.Print(2.0f); ss.series.Print(2.0f); sc.series.Print(2.0f);
+            std::printf("  HARNESS orbit-%s body yaw flips %d  head flips %d  cam flips %d\n",
+                        tags[ri], bodyFlips, sh.series.flips, sc.series.flips);
+            CHECK(bodyFlips < 3);
+            CHECK(sh.series.flips < 6);
+            CHECK(sc.series.flips < 6);
+        }
+
+        // Full turn, body locked to the camera (strafe / aim feel), plus a noisy mouse.
+        for (int mode = 0; mode < 2; ++mode) {
+            righarness::Rig R = righarness::PlayableFromFile("mixamo_t_cm_clips.glb");
+            if (!R.player) { CHECK(false); continue; }
+            auto* tp = R.player->GetComponent<ThirdPersonController>();
+            auto* ch = R.player->GetComponent<Character>();
+            if (tp) {
+                tp->lockCursor = false;
+                tp->faceMode = ThirdPersonController::FaceMode::Camera;
+                tp->cameraCollision = true;
+            }
+            Transform* head = R.Bone(humanoid::Head);
+            const Vec3 bodyF = R.player->transform->Rotation() * Vec3{0, 0, -1};
+            const Vec3 headAxis = head ? FacingAxis(head->Rotation(), bodyF) : Vec3{0, 0, 1};
+            const float dt = 1.0f / 60.0f;
+            Input::FeedMouse({400.0f, 300.0f}, 0);
+            Input::FeedKeys({});
+            R.scene->Update(dt);
+            int headRev = 0, bodyRev = 0, radRev = 0;
+            float prevH = 0, prevB = 0, prevRad = -1.0f, prevHd = 0, prevBd = 0, prevRd = 0;
+            bool have = false, haveD = false;
+            float maxHeadStep = 0.0f, maxLook = 0.0f;
+            Vec2 mouse{400.0f, 300.0f};
+            const int frames = mode == 0 ? 180 : 120;
+            for (int i = 0; i < frames; ++i) {
+                if (mode == 0) {
+                    if (tp) tp->yaw += 120.0f * dt;   // 120 deg/s, three seconds = a full turn
+                } else {
+                    const float n = std::sin(i * 1.7f) * 8.0f + ((i % 2) ? 3.0f : -3.0f);
+                    mouse.x += 40.0f * dt + n;
+                    Input::FeedMouse(mouse, 0);
+                }
+                Input::FeedKeys({});
+                R.scene->Update(dt);
+                const float b = Heading(R.player->transform->Rotation() * Vec3{0, 0, -1});
+                const float h = head ? Heading(head->Rotation() * headAxis) : b;
+                const Vec3 camP = R.scene->mainCamera && R.scene->mainCamera->transform
+                    ? R.scene->mainCamera->transform->Position() : Vec3{};
+                const float rad = (camP - R.player->transform->Position()).Magnitude();
+                if (ch) maxLook = std::fmax(maxLook, std::fabs(ch->HeadYaw()));
+                if (have) {
+                    const float hd = Wrap180(h - prevH), bd = Wrap180(b - prevB);
+                    maxHeadStep = std::fmax(maxHeadStep, std::fabs(hd));
+                    if (haveD && i > 10) {
+                        if (std::fabs(hd) > 0.4f && std::fabs(prevHd) > 0.4f && hd * prevHd < 0.0f) ++headRev;
+                        if (std::fabs(bd) > 0.3f && std::fabs(prevBd) > 0.3f && bd * prevBd < 0.0f) ++bodyRev;
+                        const float rdlt = rad - prevRad;
+                        if (std::fabs(rdlt) > 0.02f && std::fabs(prevRd) > 0.02f && rdlt * prevRd < 0.0f) ++radRev;
+                        prevRd = rdlt;
+                    }
+                    prevHd = hd; prevBd = bd; haveD = true;
+                }
+                prevH = h; prevB = b; prevRad = rad; have = true;
+            }
+            std::printf("  HARNESS face-cam %s: head rev %d body rev %d radius rev %d max head step %.2f max |look| %.1f radius %.2f\n",
+                        mode == 0 ? "steady" : "noisy", headRev, bodyRev, radRev, maxHeadStep, maxLook, prevRad);
+            CHECK(headRev < 4);
+            CHECK(bodyRev < 4);
+            CHECK(radRev < 4);
+        }
+    }
+
+    // Diagonal: keyboard, a held analog-style axis, and the same while the mouse turns.
+    {
+        const float rates[] = {1.0f / 11.0f, 1.0f / 30.0f, 1.0f / 60.0f, 1.0f / 144.0f};
+        const char* tags[] = {"11", "30", "60", "144"};
+        for (int ri = 0; ri < 4; ++ri) {
+            char label[32];
+            std::snprintf(label, sizeof(label), "diag-%s", tags[ri]);
+            Run r = Play(label, rates[ri], {'W', 'D'}, ri == 2 ? 40.0f : 0.0f, 2.0f, true);
+            std::printf("  HARNESS diag-%s spine flips %d head flips %d\n", tags[ri], r.spine.flips, r.head.flips);
+            CHECK(r.spine.flips < 8);
+            CHECK(r.head.flips < 8);
+            CHECK(r.hips.flips < 8);
+        }
+        // Body stays on the camera, so W+D is a real 45° strafe and D is sideways.
+        // The two winning clips must not swap every frame (that pops the legs).
+        const char* hold[] = {"WD", "D"};
+        const std::vector<char> sets[] = {{'W', 'D'}, {'D'}};
+        for (int hi = 0; hi < 2; ++hi) {
+            righarness::Rig R = righarness::PlayableFromFile("mixamo_t_cm_clips.glb");
+            CHECK(R.player != nullptr);
+            if (!R.player) continue;
+            auto* tp = R.player->GetComponent<ThirdPersonController>();
+            if (tp) { tp->lockCursor = false; tp->cursorMode = 0; tp->faceMode = ThirdPersonController::FaceMode::Camera; }
+            Transform* thigh = R.Bone(humanoid::LThigh);
+            const float dt = 1.0f / 60.0f;
+            Input::FeedMouse({400.0f, 300.0f}, 0);
+            Input::FeedKeys({});
+            R.scene->Update(dt);
+            int bursts = 0, prevFlip = 0;
+            float prevH = 0.0f;
+            bool have = false;
+            const Vec3 axis = thigh ? FacingAxis(thigh->Rotation(), R.player->transform->Rotation() * Vec3{0, 0, -1}) : Vec3{0, 1, 0};
+            for (int i = 0; i < 120; ++i) {
+                Input::FeedMouse({400.0f, 300.0f}, 0);
+                Input::FeedKeys(sets[hi]);
+                R.scene->Update(dt);
+                if (!thigh) continue;
+                const float h = Heading(thigh->Rotation() * axis);
+                if (have) {
+                    const float d = Wrap180(h - prevH);
+                    const bool flip = std::fabs(d) > 0.8f && i > 8;
+                    if (flip && prevFlip && d * prevH < 0.0f) ++bursts;
+                    prevFlip = flip ? (d > 0.0f ? 1 : -1) : 0;
+                    (void)prevFlip;
+                }
+                prevH = h; have = true;
+            }
+            // Recount properly: adjacent frames whose thigh yaw reversed.
+            bursts = 0;
+            have = false;
+            float prevD = 0.0f;
+            bool haveD = false;
+            for (int i = 0; i < 90; ++i) {
+                Input::FeedMouse({400.0f, 300.0f}, 0);
+                Input::FeedKeys(sets[hi]);
+                R.scene->Update(dt);
+                if (!thigh) continue;
+                const float h = Heading(thigh->Rotation() * axis);
+                if (have) {
+                    const float d = Wrap180(h - prevH);
+                    if (haveD && std::fabs(d) > 1.0f && std::fabs(prevD) > 1.0f && d * prevD < 0.0f) ++bursts;
+                    prevD = d; haveD = true;
+                }
+                prevH = h; have = true;
+            }
+            std::printf("  HARNESS strafe-%s thigh reversals %d\n", hold[hi], bursts);
+            CHECK(bursts < 8);
+        }
+    }
+
+    // Cursor swept across the player's screen rect, standing and walking.
+    // A ray that hits the body must not yank the head or the spine.
+    {
+        righarness::Rig R = righarness::PlayableFromFile("mixamo_t_cm_clips.glb");
+        CHECK(R.player != nullptr);
+        if (R.player && R.scene->mainCamera && R.scene->mainCamera->transform) {
+            auto* tp = R.player->GetComponent<ThirdPersonController>();
+            if (tp) { tp->lockCursor = false; tp->cursorMode = 0; tp->mouseSensitivity = 0.0f; }
+            auto* aim = R.player->AddComponent<AimOffset>();
+            aim->useCamera = true;
+            aim->weight = 1.0f;
+            UICanvas::Set(1280.0f, 720.0f);
+            Transform* head = R.Bone(humanoid::Head);
+            Transform* spine = R.Bone(humanoid::Torso);
+            const Vec3 bodyF = R.player->transform->Rotation() * Vec3{0, 0, -1};
+            const Vec3 headAxis = head ? FacingAxis(head->Rotation(), bodyF) : Vec3{0, 0, 1};
+            const Vec3 spineAxis = spine ? FacingAxis(spine->Rotation(), bodyF) : Vec3{0, 0, 1};
+            const float dt = 1.0f / 60.0f;
+            Input::FeedMouse({20.0f, 20.0f}, 0);
+            Input::FeedKeys({});
+            for (int i = 0; i < 30; ++i) R.scene->Update(dt);
+            auto sweep = [&](const char* label, const std::vector<char>& keys, bool over) {
+                Sampler sh, ss;
+                sh.Begin(head, headAxis, "head");
+                ss.Begin(spine, spineAxis, "spine");
+                int nearHits = 0;
+                for (int i = 0; i < 90; ++i) {
+                    Vec2 mouse{20.0f, 20.0f};
+                    if (over && R.scene->mainCamera) {
+                        const float u = (float)(i % 30) / 29.0f;
+                        const Vec3 p = R.player->transform->Position() + Vec3{0.0f, 0.4f + 1.2f * u, 0.0f};
+                        Vec3 o, d;
+                        R.scene->mainCamera->ScreenPointToRay(640.0f, 360.0f, 1280.0f, 720.0f, o, d);
+                        // Place the cursor on the ray from the camera through the body.
+                        const Vec3 to = p - R.scene->mainCamera->transform->Position();
+                        const float aspect = 1280.0f / 720.0f;
+                        Mat4 vp = R.scene->mainCamera->ProjectionMatrix(aspect) * R.scene->mainCamera->ViewMatrix();
+                        Vec4 c = vp * Vec4{p.x, p.y, p.z, 1.0f};
+                        if (std::fabs(c.w) > 1e-4f) {
+                            const float ndcX = c.x / c.w, ndcY = c.y / c.w;
+                            mouse.x = (ndcX * 0.5f + 0.5f) * 1280.0f;
+                            mouse.y = (1.0f - (ndcY * 0.5f + 0.5f)) * 720.0f;
+                        }
+                        (void)to;
+                    }
+                    Input::FeedMouse(mouse, 0);
+                    Input::FeedKeys(keys);
+                    R.scene->Update(dt);
+                    if (R.scene->MouseHoverObject() &&
+                        R.scene->MouseHoverObject()->IsSelfOrDescendantOf(R.player))
+                        ++nearHits;
+                    const Quat pr = R.player->transform->Rotation();
+                    const Mat4 inv = R.player->transform->LocalToWorldMatrix().Inverse();
+                    sh.Sample(pr, inv, dt);
+                    ss.Sample(pr, inv, dt);
+                }
+                sh.series.Finish(); ss.series.Finish();
+                float worstH = 0.0f, worstS = 0.0f;
+                for (float d : sh.series.deg) worstH = std::fmax(worstH, d);
+                for (float d : ss.series.deg) worstS = std::fmax(worstS, d);
+                std::printf("  HARNESS cursor %s: head step %.2f spine %.2f flips %d/%d self-hits %d\n",
+                            label, worstH, worstS, sh.series.flips, ss.series.flips, nearHits);
+                CHECK(worstH < 12.0f);
+                CHECK(worstS < 12.0f);
+                CHECK(sh.series.flips < 8);
+                CHECK(ss.series.flips < 8);
+                if (over) CHECK(nearHits == 0);
+            };
+            sweep("far-idle", {}, false);
+            sweep("over-idle", {}, true);
+            sweep("over-walk", {'W'}, true);
+
+            // A look target that flips from far ahead onto the body must ease,
+            // not snap the skull around.
+            LookAtIK* look = R.model ? R.model->GetComponent<LookAtIK>() : nullptr;
+            if (!look) look = R.player->GetComponent<LookAtIK>();
+            if (look) {
+                look->aimAtPoint = true;
+                look->targetObject = nullptr;
+                look->smoothing = 8.0f;
+                const Vec3 feet = R.player->transform->Position();
+                float worst = 0.0f;
+                Quat prev = head ? head->Rotation() : Quat::Identity;
+                bool have = false;
+                for (int i = 0; i < 20; ++i) {
+                    look->target = (i / 5) % 2 == 0 ? feet + Vec3{0, 1.5f, -12.0f}
+                                                    : feet + Vec3{0.2f, 1.0f, -0.3f};
+                    Input::FeedMouse({640.0f, 360.0f}, 0);
+                    Input::FeedKeys({});
+                    R.scene->Update(dt);
+                    if (head && have) worst = std::fmax(worst, Quat::Angle(prev, head->Rotation()));
+                    if (head) { prev = head->Rotation(); have = true; }
+                }
+                std::printf("  HARNESS look self-flip: worst head step %.2f deg\n", worst);
+                CHECK(worst < 35.0f);
+            }
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

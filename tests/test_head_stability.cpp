@@ -159,8 +159,11 @@ int main() {
                         headStep, bodyStep);
             // W is camera-relative, so the new heading is also the move direction.
             // The body eases toward it (about a third of 80° at turnSpeed 24).
-            // It must not finish that turn in one frame. The neck eases the rest.
-            CHECK(headStep > 2.0f && headStep < 30.0f);
+            // It must not finish that turn in one frame. The orbit eases the
+            // camera yaw first (so a one-frame mouse shake does not reverse the
+            // head), and the neck eases the rest. The head must move, and it
+            // must not snap to the full 80°.
+            CHECK(headStep > 0.2f && headStep < 30.0f);
             CHECK(bodyStep > 15.0f && bodyStep < 40.0f);
 
             // A direction change turns the body. One frame must not finish a right-angle turn.

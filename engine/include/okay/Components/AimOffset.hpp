@@ -181,7 +181,10 @@ private:
                     if (Scene* sc = gameObject->scene()) {
                         Physics3D::IgnoreHierarchy own(AimSelf());
                         const RaycastHit3D hit = sc->physics3D().Raycast(*sc, cam->Position(), dir, reach);
-                        if (hit.hit) aim = hit.point;
+                        GameObject* self = AimSelf();
+                        const bool selfHit = hit.hit && hit.gameObject && self &&
+                                             hit.gameObject->IsSelfOrDescendantOf(self);
+                        if (hit.hit && !selfHit) aim = hit.point;
                     }
                     // A third-person orbit rests looking down. Pitch is how far the
                     // view has left that rest, so a level look does not bend the chest.

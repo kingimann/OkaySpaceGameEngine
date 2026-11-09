@@ -119,6 +119,9 @@ public:
     bool  invertY = false;              // invert vertical mouse look
     bool  invertX = false;             // invert horizontal mouse look
     bool  lockCursor = true;            // hide + lock the cursor while playing (off: keep the pointer for UI)
+    /// 0 = free, 1 = locked (hidden), 2 = confined to the game view. `lockCursor`
+    /// stays in step: it is false only for None, so older scenes keep a lock.
+    int   cursorMode = 1;
     float distance  = 5.0f;             // camera distance from the player
     float minDistance = 2.0f, maxDistance = 12.0f;
     float zoomSpeed = 1.0f;             // wheel zoom step
@@ -133,9 +136,10 @@ public:
     float pivotDampingY  = 10.0f;
     float maxPivotLag = 0.6f;           // the pivot never trails the player by more (m); 0 = no limit
     // Orbit smoothing (seconds): eases the camera's yaw / pitch toward the mouse.
-    // 0 = Look Smoothing's value (0 there too = raw). Movement direction always
-    // uses the raw angles.
-    float orbitSmoothing = 0.0f;
+    // The body (when it faces the camera) and the head look use this same eased
+    // angle. Movement direction always uses the raw angles. 0 = raw, which lets
+    // a shaky mouse reverse the body every frame.
+    float orbitSmoothing = 0.05f;
     // Camera collision (spring arm): pull the camera in when a wall/floor is between
     // it and the player so it never clips through geometry. `skin` keeps the near
     // plane off the surface. A sphere of `radius` is swept (triggers and the
@@ -282,8 +286,7 @@ public:
             m_owned = true;
         }
         m_drove = true;
-        // Optionally hide + lock the cursor while playing (re-assert if freed).
-        if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
+        ApplyCursorMode();
         Simulate(ReadLocalInput(), dt);
     }
 
@@ -578,8 +581,15 @@ public:
         if (gameObject)
             if (auto* view = gameObject->GetComponent<PlayerView>())
                 if (view->Driving() && view->FirstAmount() > 0.25f) faceLook = true;
+        // The camera, the head and a body that faces the camera share one eased
+        // angle. The raw yaw still steers movement, above.
+        const float lookSmooth = orbitSmoothing > 0.0f ? orbitSmoothing : lookSmoothing;
+        m_smooth.Step(yaw, pitch, lookSmooth, dt);
+        m_smoothedThisUpdate = true;
+        const float presentedYaw = m_smooth.Yaw();
+        const float presentedPitch = m_smooth.Pitch();
         if (faceLook) {
-            want = Quat::Euler(0, yaw, 0);   // mesh -Z aligns with the camera's forward
+            want = Quat::Euler(0, presentedYaw, 0);   // mesh -Z aligns with the camera's forward
             turn = true;
         } else if (moving) {
             // Aim its -Z down the movement direction (LookRotation aligns +Z).
@@ -678,13 +688,13 @@ public:
                 if (!ch->lookAtCamera && ch->lookAtTarget.empty()) {
                     Vec3 f = transform->localRotation * Vec3{0, 0, -1};
                     float bodyYaw = Mathf::Atan2(f.x, -f.z) * Mathf::Rad2Deg;
-                    float rel = yaw + bodyYaw;
+                    float rel = presentedYaw + bodyYaw;
                     // Fold into the neck's reach: instead of cranking to a hard
                     // sideways clamp when the camera swings to the front (where the
                     // head would need to turn ~180°), ease back toward neutral — so
                     // the head faces the camera when the body already faces it.
                     ch->lookYaw   = Character::NeckYaw(rel);
-                    ch->lookPitch = 18.0f - pitch;
+                    ch->lookPitch = 18.0f - presentedPitch;
                 }
                 ch->bodyLean  = m_lean * leanAngle;   // body leans (camera stays put)
             }
@@ -721,12 +731,18 @@ public:
             baseShoulder = view->shoulderOffset;
             if (view->Blending()) applyShake = false;   // the blend itself doesn't shake
         }
+        if (sc->mainCamera) sc->mainCamera->pointerIgnore = gameObject;
+        if (!m_smoothedThisUpdate) {
+            const float lookSmooth = orbitSmoothing > 0.0f ? orbitSmoothing : lookSmoothing;
+            m_smooth.Step(yaw, pitch, lookSmooth, dt);
+        }
+        m_smoothedThisUpdate = false;
         const OrbitPose orbit = PlaceThirdPersonOrbit(
-            transform, gameObject, sc, yaw, pitch,
+            transform, gameObject, sc, m_smooth.Yaw(), m_smooth.Pitch(),
             baseDist, aimDistance, baseShoulder, aimShoulder,
             cameraHeight, m_stanceLevel, crouchHeightDrop, proneHeightDrop, stanceLerp,
             m_stanceDrop, m_aim, aimLerp, m_aimT, m_shake,
-            m_smooth, orbitSmoothing > 0.0f ? orbitSmoothing : lookSmoothing,
+            m_smooth, 0.0f,
             m_pivot, pivotDampingXZ, pivotDampingY, maxPivotLag,
             cameraCollision, m_arm, cameraCollisionRadius, cameraCollisionSkin, cameraCollisionMask,
             cameraCollisionPullIn, cameraCollisionRecover, applyShake, dt);
@@ -863,6 +879,23 @@ private:
     float m_coyote = 0.0f;          // remaining coyote-time window
     float m_jumpBuf = 0.0f;         // remaining jump-buffer window
     LookSmoother m_smooth;
+    bool m_smoothedThisUpdate = false;
+
+    void ApplyCursorMode() {
+        if (cursorMode <= 0) {
+            lockCursor = false;
+            return;
+        }
+        lockCursor = true;
+        if (cursorMode == 2) {
+            if (Cursor::lockState != Cursor::LockMode::Confined) {
+                Cursor::SetLock(Cursor::LockMode::Confined);
+                Cursor::SetVisible(true);
+            }
+            return;
+        }
+        if (!Cursor::IsLocked()) Cursor::Capture(true);
+    }
     FovKick m_fov;
     Landing m_landing;
     AnimLink m_anim;

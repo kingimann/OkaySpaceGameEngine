@@ -153,6 +153,20 @@ public:
             const float as = a.SqrMagnitude(), bs = b.SqrMagnitude();
             if (as < 1e-6f || bs < 1e-6f) tgtJump = true;
             else tgtJump = Vec3::Dot(a * (1.0f / std::sqrt(as)), b * (1.0f / std::sqrt(bs))) < 0.70710678f;
+            // A cursor ray that hits the body, then the world, jumps from a
+            // point on the capsule to a point many metres away. That is not a
+            // teleport of the thing being looked at. Ease through it. A real
+            // far-to-far teleport (the stretch test) still snaps.
+            if (tgtJump && transform) {
+                const Vec3 nearD = tgt - transform->Position();
+                const Vec3 farD = m_tgtWorld - transform->Position();
+                const bool onBody = nearD.x * nearD.x + nearD.z * nearD.z < 2.25f;
+                const bool wasFar = farD.SqrMagnitude() > 9.0f;
+                const Vec3 nearOld = m_tgtWorld - transform->Position();
+                const bool oldOnBody = nearOld.x * nearOld.x + nearOld.z * nearOld.z < 2.25f;
+                const bool nowFar = (tgt - transform->Position()).SqrMagnitude() > 9.0f;
+                if ((onBody && wasFar) || (oldOnBody && nowFar)) tgtJump = false;
+            }
         }
         const float ease = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
 

@@ -722,7 +722,22 @@ public:
             }
         }
         const float wa = w[a], wb = (a == b) ? 0.0f : w[b];
-        const float blend = (wa + wb) > 1e-4f ? wb / (wa + wb) : 0.0f;
+        float blend = (wa + wb) > 1e-4f ? wb / (wa + wb) : 0.0f;
+        // The two winners trade places when their weights cross. The blend is
+        // "how much of B", so a swap turns 0.49 of the strafe into 0.51 of the
+        // walk and the pose pops. Keep last frame's clip order and flip the weight.
+        if (m_haveDirPair && a != b) {
+            const int ca = mot[a].clip, cb = mot[b].clip;
+            if (ca == m_dirB && cb == m_dirA) {
+                const int tmp = a; a = b; b = tmp;
+                blend = 1.0f - blend;
+            }
+        }
+        if (a != b) {
+            m_dirA = mot[a].clip;
+            m_dirB = mot[b].clip;
+            m_haveDirPair = true;
+        }
         const float rate = std::fmin(kStrideMaxRate, std::fmax(0.5f, spd / std::fmax(wAt, 0.2f)));
         m_appliedSign = spd > 0.2f ? 1 : 0;
         m_slot = a == b || blend < 0.5f ? SlotOfClip(mot[a].clip) : SlotOfClip(mot[b].clip);
@@ -1779,6 +1794,8 @@ private:
     int                      m_cycleSign = 1;       ///< -1: play the forward walk backward (no back clip)
     int                      m_appliedSign = 0;     ///< what LocomotionSign reports
     bool                     m_backTravel = false;  ///< travelling backward (with hysteresis)
+    int                      m_dirA = -1, m_dirB = -1; ///< last directional pair, so a weight cross doesn't swap clips
+    bool                     m_haveDirPair = false;
     bool                     m_yawOn = false;       ///< hip yaw engaged (speed hysteresis)
     float                    m_hipYaw = 0.0f;       ///< eased hip yaw, degrees
     bool                     m_yawWritten = false;  ///< the hips / spine hold last frame's yaw

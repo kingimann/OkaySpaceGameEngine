@@ -2242,7 +2242,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->dodge.impulse << " " << tp->dodge.duration << " " << tp->dodge.cooldown
             << " " << tp->dodge.stamina << " " << (tp->dodge.iFrames ? 1 : 0)
             // Traversal flags. Older loaders do not skip these trailing ints.
-            << " " << (tp->canVault ? 1 : 0) << " " << (tp->canMantle ? 1 : 0) << " " << (tp->canLedgeGrab ? 1 : 0) << "\n";
+            << " " << (tp->canVault ? 1 : 0) << " " << (tp->canMantle ? 1 : 0) << " " << (tp->canLedgeGrab ? 1 : 0)
+            << " " << tp->cursorMode << "\n";
     }
     // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
     // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
@@ -5860,6 +5861,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> std::ws;
                         if (std::isdigit(static_cast<unsigned char>(in.peek())) && (in >> cv >> cm >> cl)) {
                             tp->canVault = cv != 0; tp->canMantle = cm != 0; tp->canLedgeGrab = cl != 0;
+                        }
+                        int cmode = -1;
+                        in >> std::ws;
+                        if (std::isdigit(static_cast<unsigned char>(in.peek())) && (in >> cmode)) {
+                            if (cmode < 0) cmode = 0;
+                            if (cmode > 2) cmode = 2;
+                            tp->cursorMode = cmode;
+                            tp->lockCursor = cmode != 0;
                         }
                     }
                 } else if (field == "playercontroller") {

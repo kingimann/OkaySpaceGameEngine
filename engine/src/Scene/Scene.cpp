@@ -531,6 +531,9 @@ void Scene::DispatchPointer() {
         Vec3 ro, rd;
         mainCamera->ScreenPointToRay(mp.x, mp.y, w, h, ro, rd);
         Physics3D phys;
+        // The pawn's own capsule sits in the middle of the view. A cursor ray
+        // that hits it makes a look target flip between the body and the world.
+        Physics3D::IgnoreHierarchy own(mainCamera->pointerIgnore);
         RaycastHit3D rh = phys.Raycast(*this, ro, rd);
         hit = rh.gameObject;   // needs a Collider3D on the object (primitives get one by default)
     } else {

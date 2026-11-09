@@ -296,11 +296,16 @@ struct PlayPointerFrame {
 };
 
 static PlayPointerFrame DecidePlayPointer(bool playing, bool wantText, bool escapeEdge,
-                                         bool escapeHeld, bool wasReleased, bool grabbed) {
+                                         bool escapeHeld, bool wasReleased, bool grabbed,
+                                         bool gameClicked = false) {
     PlayPointerFrame d;
     if (!playing) return d;
     const bool esc = escapeEdge || escapeHeld;
-    d.released = wasReleased || esc || wantText;
+    // A text field releases the pointer, but a click on the Game view takes it
+    // back in the same frame. Otherwise a focused Script Editor forces the
+    // cursor free forever and there is no way to lock it.
+    d.released = wasReleased || esc || (wantText && !gameClicked);
+    if (gameClicked && !esc) d.released = false;
     // The press that frees the cursor is the editor's. A new tap once the
     // cursor is already free can still open a pause menu. A hold that began
     // during the grab must not become that tap on the next frame.
@@ -382,6 +387,11 @@ static int RunSelfTest() {
         PlayPointerFrame again = DecidePlayPointer(true, false, true, false, true, false);
         check(again.released && again.feedEscapeToGame && again.editorSeesMouse,
               "Esc after release can reach the game");
+        PlayPointerFrame typed = DecidePlayPointer(true, true, false, false, false, false, false);
+        check(typed.released, "a text field keeps the cursor released");
+        PlayPointerFrame clicked = DecidePlayPointer(true, true, false, false, true, false, true);
+        check(!clicked.released && clicked.editorSeesMouse,
+              "a click on the Game view locks the cursor even while a text field wanted input");
         check(PlayStopShortcut(true, true), "Ctrl+P works while the script editor is focused");
         check(!PlayStopShortcut(false, true), "P alone does not stop play");
     }
@@ -2651,6 +2661,7 @@ struct BuildSettings {
     float splashBg[3] = {0.05f, 0.05f, 0.06f};
     // ---- Graphics / quality (applied by the player at startup) ----
     bool  lockCursor = false;              // hide + lock the cursor on launch
+    int   cursorLockMode = 0;              // 0 none, 1 locked, 2 confined (player launch)
     bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
     bool  shadows = true;                  // directional cast shadows (on = modern look)
     float shadowDistance = 80.0f;          // cascaded shadow reach (0 = legacy whole-scene)
@@ -2736,7 +2747,7 @@ static void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "maximized=" << b.startMaximized << "\n" << "userDir=" << b.saveToUserDir << "\n";
     o << "splashTime=" << b.splashTime << "\n";
     o << "splashBg0=" << b.splashBg[0] << "\n" << "splashBg1=" << b.splashBg[1] << "\n" << "splashBg2=" << b.splashBg[2] << "\n";
-    o << "lockCursor=" << b.lockCursor << "\n" << "perPixel=" << b.perPixelLighting << "\n";
+    o << "lockCursor=" << b.lockCursor << "\n" << "cursorLockMode=" << b.cursorLockMode << "\n" << "perPixel=" << b.perPixelLighting << "\n";
     o << "shadows=" << b.shadows << "\n" << "shadowDist=" << b.shadowDistance << "\n";
     o << "shadowSoft=" << b.shadowSoftness << "\n" << "shadowCasc=" << b.shadowCascades << "\n";
     o << "shadowRes=" << b.shadowResolution << "\n" << "bloom=" << b.bloom << "\n";
@@ -2798,6 +2809,7 @@ static void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "splashBg1") b.splashBg[1] = F();
     else if (k == "splashBg2") b.splashBg[2] = F();
     else if (k == "lockCursor") b.lockCursor = B();
+    else if (k == "cursorLockMode") b.cursorLockMode = std::max(0, std::min(2, I()));
     else if (k == "perPixel")  b.perPixelLighting = B();
     else if (k == "shadows")   b.shadows = B();
     else if (k == "shadowDist") b.shadowDistance = F();
@@ -3680,6 +3692,7 @@ struct Options {
     bool includeAllProjectScenes = false, developmentBuild = false;
     bool lockCursor = false, perPixelLighting = false, shadows = true,
          bloom = false, ssao = false, fxaa = true;
+    int cursorLockMode = 0;
     float shadowDistance = 80.0f, shadowSoftness = 2.5f;
     int  shadowCascades = 3, shadowResolution = 2048;
     int  antialias = 1;
@@ -3863,6 +3876,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
         cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
+        cf << "cursor_lock=" << (opt.cursorLockMode == 2 ? "confined" : opt.cursorLockMode == 1 ? "locked" : "none") << "\n";
         cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
         cf << "shadows=" << (opt.shadows ? 1 : 0) << "\n";
         cf << "shadow_distance=" << opt.shadowDistance << "\n";
@@ -16608,8 +16622,15 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(240); ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                 ImGui::Checkbox("Quit on Escape", &g_build.quitOnEscape);
-                ImGui::Checkbox("Lock cursor on launch", &g_build.lockCursor);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor on launch (FPS/TPS games)");
+                {
+                    const char* modes[] = {"None", "Locked", "Confined"};
+                    if (g_build.cursorLockMode < 0 || g_build.cursorLockMode > 2)
+                        g_build.cursorLockMode = g_build.lockCursor ? 1 : 0;
+                    if (ImGui::Combo("Cursor on launch", &g_build.cursorLockMode, modes, 3))
+                        g_build.lockCursor = g_build.cursorLockMode != 0;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Locked hides the cursor. Confined keeps it inside the window.\nEsc releases it; a click captures it again.");
+                }
                 ImGui::Checkbox("Hide cursor", &g_build.hideCursor);
             }
             if (s_buildSec == 5) {
@@ -16775,7 +16796,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.quitOnEscape = g_build.quitOnEscape; o.masterVolume = g_build.masterVolume; o.showFps = g_build.showFps;
             o.includeAllProjectScenes = g_build.includeAllProjectScenes;
             o.developmentBuild = g_build.developmentBuild;
-            o.lockCursor = g_build.lockCursor; o.perPixelLighting = g_build.perPixelLighting;
+            o.lockCursor = g_build.lockCursor; o.cursorLockMode = g_build.cursorLockMode; o.perPixelLighting = g_build.perPixelLighting;
             o.shadows = g_build.shadows; o.bloom = g_build.bloom; o.ssao = g_build.ssao;
             o.shadowDistance = g_build.shadowDistance; o.shadowSoftness = g_build.shadowSoftness;
             o.shadowCascades = g_build.shadowCascades; o.shadowResolution = g_build.shadowResolution;
@@ -33656,7 +33677,19 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Foot IK##tp", &tp->footIK)) ed.dirty = true;
             if (ImGui::DragFloat("Step Offset##tp", &tp->stepOffset, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
-            if (ImGui::Checkbox("Lock + Hide Cursor##tp", &tp->lockCursor)) ed.dirty = true;
+            {
+                const char* modes[] = {"None", "Locked", "Confined"};
+                int mode = tp->cursorMode;
+                if (mode < 0 || mode > 2) mode = tp->lockCursor ? 1 : 0;
+                if (ImGui::Combo("Cursor##tp", &mode, modes, 3)) {
+                    tp->cursorMode = mode;
+                    tp->lockCursor = mode != 0;
+                    if (mode == 0) Cursor::Capture(false);
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Locked hides the cursor (Esc releases, click the Game view to recapture).\nConfined keeps it visible inside the Game view.\nNone leaves it free.");
+            }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing. Off keeps a normal pointer for clicking UI.");
             if (tp->canJump) { ImGui::SetNextItemWidth(90);
                 if (ImGui::DragInt("Max Jumps##tp", &tp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
@@ -43398,7 +43431,7 @@ void DrawGameView(EditorState& ed) {
     ImGui::SameLine();
     if (ImGui::Checkbox("Physics", &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Physics debug view: colliders (green), triggers (blue), contact points\nand normals (red), and rays cast from scripts, in the Scene and Game views.\nMore options in View > Scene Overlays > Physics Debug.");
-    if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked())) {
+    if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked() || Cursor::IsConfined())) {
         ImGui::SameLine();
         if (g_gameCursorReleased) ImGui::TextDisabled("(click the view to capture)");
         else ImGui::TextColored(ImVec4(0.5f,1,0.6f,1), "(Esc to release)");
@@ -43460,6 +43493,15 @@ void DrawGameView(EditorState& ed) {
     }
     okay::UIResolutionScale() = 1.0f;   // never leak the preview scale outside the Game view
     if (device) DrawDeviceScreenOverlay(dl, canvasPos, canvasEnd, *device, g_gameDeviceLandscape, g_gameSafeArea);
+    // After the scene image, so the picture does not cover the hint.
+    if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked() || Cursor::IsConfined())) {
+        const char* hint = g_gameCursorReleased ? "Click to capture the cursor" : "Esc to release the cursor";
+        ImVec2 ts = ImGui::CalcTextSize(hint);
+        ImVec2 hp(canvasPos.x + (canvasSize.x - ts.x) * 0.5f, canvasEnd.y - ts.y - 10.0f);
+        dl->AddRectFilled(ImVec2(hp.x - 6.0f, hp.y - 3.0f), ImVec2(hp.x + ts.x + 6.0f, hp.y + ts.y + 3.0f),
+                          IM_COL32(0, 0, 0, 160), 3.0f);
+        dl->AddText(hp, IM_COL32(230, 245, 230, 255), hint);
+    }
 
     // Screen-space vignette preview (RenderSettings.vignette) — mirrors what the
     // shipped player draws, using four edge gradient bands that fade inward.
@@ -44597,10 +44639,14 @@ int main(int argc, char** argv) {
         g_escapeEdge = false;
         const bool escapeHeld = SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_ESCAPE] != 0;
         const bool wasReleased = g_gameCursorReleased;
+        const bool gameClicked = ed.isPlaying() && g_gameCanvasHovered &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !escapeEdge && !escapeHeld;
+        if (gameClicked && io.WantTextInput) ImGui::ClearActiveID();
         const PlayPointerFrame pointer = DecidePlayPointer(
-            ed.isPlaying(), io.WantTextInput, escapeEdge, escapeHeld, wasReleased, g_playPointerGrabbed);
+            ed.isPlaying(), io.WantTextInput, escapeEdge, escapeHeld, wasReleased, g_playPointerGrabbed,
+            gameClicked);
         g_gameCursorReleased = pointer.released;
-        if (ed.isPlaying() && !io.WantTextInput) {
+        if (ed.isPlaying() && (!io.WantTextInput || gameClicked)) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
             for (char c = 'a'; c <= 'z'; ++c)
@@ -44631,11 +44677,8 @@ int main(int argc, char** argv) {
                 if (auto* ce = up->GetComponent<ChestInventory>()) if (ce->open) gameModal = true;
                 if (auto* mm = up->GetComponent<Minimap>()) if (mm->fullscreen) gameModal = true;
             }
-            // A click on the Game view takes the cursor back after Esc or a text
-            // field freed it. Esc itself is handled above, including while typing.
-            if (!escapeEdge && !escapeHeld && g_gameCursorReleased && g_gameCanvasHovered &&
-                ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-                g_gameCursorReleased = false;
+            // DecidePlayPointer already took a click on the Game view. This is the
+            // frame after a release that the click itself cleared.
             // hand-off (mirrors the player): when a bag/chest opens or closes
             // while the game wants a locked cursor, warp the pointer to the Game-view
             // centre so it appears in the middle on open and the look anchor resets on
@@ -44653,8 +44696,10 @@ int main(int argc, char** argv) {
             s_prevGameModal = gameModal;
             // Capture when the user asked OR the game requested a locked cursor, unless a
             // modal panel is open (then we need a visible cursor to click it).
-            bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal && !g_gameCursorReleased;
+            const bool confined = Cursor::IsConfined() && !gameModal && !g_gameCursorReleased;
+            bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal && !g_gameCursorReleased && !confined;
             static Vec2 s_gameVMouse{0, 0};
+            SDL_ShowCursor(capture ? SDL_DISABLE : SDL_ENABLE);
             if (capture) {
                 // Relative mode only on the transition. Calling it every frame
                 // re-warps, and that warp was added on top of the real delta.
@@ -44717,6 +44762,12 @@ int main(int argc, char** argv) {
                     if (!ImGui::IsMouseDown(kButtons[b])) { s_heldFromGame[b] = false; continue; }
                     if (ImGui::IsMouseClicked(kButtons[b])) s_heldFromGame[b] = overGame;
                     if (s_heldFromGame[b]) mask |= 1u << b;
+                }
+                if (confined) {
+                    if (rx < 0.0f) rx = 0.0f;
+                    if (ry < 0.0f) ry = 0.0f;
+                    if (rx > g_playCanvasSize.x) rx = g_playCanvasSize.x;
+                    if (ry > g_playCanvasSize.y) ry = g_playCanvasSize.y;
                 }
                 s_playLookAnchor = {rx, ry};
                 Input::FeedMouse(Vec2{rx, ry}, mask);

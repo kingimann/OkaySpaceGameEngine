@@ -63,6 +63,16 @@ public:
     /// A Clock channel to follow ("ui", "cinematic", your own) instead of scene time;
     /// empty = scene time (or real time with `unscaled`). See Tweener::SetClock.
     std::string clock;
+    /// `duration` is a speed in units per second, not seconds: the tween lasts as long as the distance
+    /// needs (Tweener::SetSpeedBased). Move, scale, UI move / size, fade and colour read it; the other
+    /// types use `duration` as seconds.
+    bool  speedBased = false;
+    /// How a punch or shake dies away (Tweener::SetDecay): 0 = a straight fade, 4 is lively, 8 snappy.
+    /// Only the punch and shake types read it.
+    float decay = 0.0f;
+    /// A group label for TweenManager::KillByTag / PauseByTag / PlayByTag and the script `tween_kill_tag`
+    /// family (Tweener::SetTag). Empty = untagged.
+    std::string tag;
     int   vibrato = 10;               ///< punch / shake
     float elasticity = 1.0f;          ///< punch
     int   jumps = 1;
@@ -120,6 +130,9 @@ public:
         }
         t->SetDelay(delay).SetLoops(loops, (LoopType)loopType).SetAutoKill(autoKill).SetUpdate(unscaled);
         if (!clock.empty()) t->SetClock(clock);
+        if (speedBased) t->SetSpeedBased();
+        if (decay > 0.0f) t->SetDecay(decay);
+        if (!tag.empty()) t->SetTag(tag);
         if (relative) t->SetRelative();
         if (from) t->From();
         if (!id.empty()) t->SetId(id);

@@ -35,7 +35,11 @@ page covers what an object round trip keeps.
   always used) and reported as a warning (`BadLayer` in `Validate`).
 - **Optional trailing fields** (older files omit them; an older build reads the extra number as an
   unknown field, skips it and warns): `mover x y z [space]`, `spinner x y z [space]` (0 local, 1 world, 2 self; written only when
-  not the default) and `lifetime seconds [elapsed]` (written only when above 0).
+  not the default) and `lifetime seconds [elapsed]` (written only when above 0). `tweenanim ... "<id>" ["<clock>" "<curve>"
+  [<decay> <speedBased> "<tag>"]]`: the clock and the ease as text are written when either is set, and the three after them
+  (decay of a punch or shake, duration is a speed, group label) only when one of them is set, with `"" ""` standing in for
+  an empty clock and curve; a Tween Animation that sets none writes the line it always did. A decay that is not a
+  positive number is written as 0.
 - **Duplicate components:** `AddComponent` twice is allowed at runtime and
   `GetComponent` returns the first. Scripts, visual scripts, action lists, tweens, sync vars,
   validators and state machines are saved per instance. Every other type, including

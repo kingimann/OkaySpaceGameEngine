@@ -646,7 +646,7 @@ Smoothly animate this object over time. Every tween:
 | --- | --- |
 | `tween_delay(id, s)` | wait before starting |
 | `tween_ease(id, "out_back")` | change the ease; also takes a curve as text: `"cubic-bezier(0.4, 0, 0.2, 1)"`, `"steps(4)"`, `"ease-in-out"` (the ease argument of `tween_move` and the others takes the same) |
-| `tween_loops(id, n[, "restart" \| "yoyo" \| "incremental"])` | repeat (`-1` = forever) |
+| `tween_loops(id, n[, "restart" \| "yoyo" \| "incremental"])` | repeat (`-1` = forever; a NaN plays once; a count past two billion is two billion, not "forever") |
 | `tween_speed(id, x)` | play faster or slower |
 | `tween_unscaled(id)` | ignore the time scale (pause menus) |
 | `tween_clock(id, "ui")` | follow a named clock channel (`"game"`, `"ui"`, `"cinematic"`, or your own) instead of scene time; `""` goes back |
@@ -709,11 +709,19 @@ function start() {
 function arrived() { tween_punch_scale(0.3, 0.25); }    // pop on arrival
 ```
 
+`ease_curve(t, "OutBack")` gives the eased value of `t` (0 to 1) for any ease the tween functions
+take by name or as curve text (`"cubic-bezier(0.4, 0, 0.2, 1)"`, `"steps(4)"`, `"ease-in-out"`), for
+animating something by hand: `x = lerp(a, b, ease_curve(t, "out_back"))`. Text it does not know is a straight
+line, and a NaN `t` counts as 0 (the `ease_in` ... `ease_bounce` functions do the same).
+
 **Without code:** add a **Tween Animation** component (Add Component →
 Animation). Pick what to animate (move, scale, rotate, fade, colour, UI position
 or size, punch, shake, jump), plus the end value, duration, delay, ease and loops.
 It plays when the scene starts, or with `tween_play_id("Id")`. **Preview**
-plays it in the editor and puts the object back afterwards.
+plays it in the editor and puts the object back afterwards. It also has the settings of the
+tween functions above that have no field of their own in the first rows: a **clock** channel and a
+curve as text for the ease, **speed based** (the duration is a speed), **decay** (how a punch or shake dies away) and a
+**tag** (so `tween_kill_tag("tag")` and its friends reach it).
 
 From C++, `okay::DOTween::Move / Scale / Rotate / PunchScale / ShakePosition /
 Jump / Path / Fade / Text ...` return a tween you can chain:

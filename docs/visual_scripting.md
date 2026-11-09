@@ -740,6 +740,37 @@ They give the new **Value** and the **Old** one.
 - **Lists:** adding to a list doesn't change the variable that holds it. Setting the variable to another list does.
 - **Runaway handlers:** a handler that changes its own variable every time it runs is stopped after 16 rounds and reported.
 
+## Tweens, springs and eases
+
+Seven node types shape motion with the engine's tween, spring and ease code (the same code behind the script
+`tween_*` calls and `ease_curve`; see [timers_and_tweens.md](timers_and_tweens.md)). The type is the word in a
+`.okayvs` file.
+
+| Node (`type`) | Pins | What it does |
+|---|---|---|
+| **Ease With Curve** (`EaseCurve`) | in **Time** (0..1); out **Value**; setting: the ease | Shapes a time into an eased value. The setting is an ease by name (`OutBack`, `out_quad`) or a curve: `cubic-bezier(0.4, 0, 0.2, 1)`, `steps(4)`, `steps(4, start)`, `ease`, `ease-in-out`. A curve may overshoot 0..1. Time is clamped to 0..1 and NaN counts as 0; text it does not know leaves the time as it is. |
+| **Spring Step** (`SpringStep`) | exec; in **Target**, **Stiffness** (120), **Damping** (14); out **Value**, **Velocity**; setting: where it starts | Moves a value toward the target the way a spring would, once each time it runs, by the frame time: put it under *On Update*. It carries its velocity, so a new target bends the motion instead of restarting it. Damping `2 * sqrt(stiffness)` never overshoots, less rings, more is sluggish. The same answer for a long frame as for many short ones. The setting is a number to start from; blank starts at the first target, so it does not swing in. A target that is not a number leaves it where it is. |
+| **Tween Move** (`TweenMove`) | exec; in **X**, **Y**, **Z**, **Seconds**, **Ease**, **Target**; setting: tag | Moves this object's (or the Target's) local position to the point in that many seconds (default 1). An axis nothing feeds stays where it is. **Ease** is text as above (blank: Out Quad). The tween starts on the next frame. |
+| **Tween Move By Speed** (`TweenMoveSpeed`) | the same, with **Speed** in place of Seconds | The move lasts as long as the distance needs: 6 units at speed 3 take 2 seconds (default speed 5). A speed of zero or less moves at once. |
+| **Kill Tweens With Tag** (`TweenKillTag`) | exec; in **Complete** (jump to the end first); out **Count**; setting: tag | Ends every tween of the scene with that tag (the tag is set by *Tween Move*'s setting, `tween_tag(id, "tag")` in a script, a Tween Animation's **Tag** or `Tweener::SetTag`) and says how many. |
+| **Pause Tweens With Tag** (`TweenPauseTag`) | exec; out **Count**; setting: tag | Freezes them where they are. |
+| **Play Tweens With Tag** (`TweenPlayTag`) | exec; out **Count**; setting: tag | Resumes them. |
+
+A graph that eases a number by hand:
+
+```
+node 1 OnUpdate
+node 2 SpringStep 0          # starts at 0
+default 2 0 10               # chases 10
+default 2 1 100              # stiffness
+default 2 2 20               # damping: 2 * sqrt(100), no overshoot
+node 3 SetVar x
+entry OnUpdate 1
+exec 1 0 2
+exec 2 0 3
+data 3 0 2 0                 # x = the spring's Value
+```
+
 ## Nodes the sections above skip
 
 These are in the node search. The [palette index](#palette-index) at the end lists every hand-written node, in the same groups as the sidebar.

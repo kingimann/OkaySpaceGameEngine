@@ -2858,8 +2858,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (ta->autoPlay ? 1 : 0) << " " << (ta->autoKill ? 1 : 0) << " " << (ta->unscaled ? 1 : 0)
             << " " << ta->vibrato << " " << ta->elasticity << " " << ta->jumps << " " << (ta->enabled ? 1 : 0)
             << " " << Quote(ta->id);
-        // Optional tail (older files stop after the id): clock channel, ease as text.
-        if (!ta->clock.empty() || !ta->easeCurve.empty()) out << " " << Quote(ta->clock) << " " << Quote(ta->easeCurve);
+        // Optional tail (older files stop after the id): clock channel, ease as text; then, only when one of
+        // them is set, decay, speed based and tag. A reader that stops after the ease text sees the numbers as
+        // an unknown field and steps over the rest of the line.
+        const float decay = std::isfinite(ta->decay) && ta->decay > 0.0f ? ta->decay : 0.0f;
+        const bool newTail = decay > 0.0f || ta->speedBased || !ta->tag.empty();
+        if (!ta->clock.empty() || !ta->easeCurve.empty() || newTail) out << " " << Quote(ta->clock) << " " << Quote(ta->easeCurve);
+        if (newTail) out << " " << decay << " " << (ta->speedBased ? 1 : 0) << " " << Quote(ta->tag);
         out << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
@@ -7300,11 +7305,19 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ta->relative = rel != 0; ta->from = frm != 0; ta->autoPlay = ap != 0; ta->autoKill = ak != 0;
                     ta->unscaled = us != 0; ta->enabled = en != 0;
                     ta->id = ReadQuoted(in);
-                    in >> std::ws;   // optional tail: clock channel, ease as text
+                    in >> std::ws;   // optional tail: clock channel, ease as text, then decay, speed based, tag
                     if (in.peek() == '"') {
                         ta->clock = ReadQuoted(in);
                         in >> std::ws;
                         if (in.peek() == '"') ta->easeCurve = ReadQuoted(in);
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) {   // a number: the writer's second part (a quoted field would be a newer build's)
+                            int sb = 0;
+                            in >> ta->decay >> sb;
+                            ta->speedBased = sb != 0;
+                            in >> std::ws;
+                            if (in.peek() == '"') ta->tag = ReadQuoted(in);
+                        }
                     }
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();

@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "FpHandsWindow.hpp"
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
@@ -2040,6 +2041,7 @@ double g_lastAutosave = 0.0;     // seconds since last autosave
 float  g_autosaveInterval = 120.0f;  // seconds between autosaves
 double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI)
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
+Uint64 g_lastSavedAt = 0;        // SDL_GetTicks64() of the last successful scene save (0 = none this session)
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
 std::vector<std::string> g_recent; // recently opened/saved scene paths
 std::string g_clipboard;         // serialized GameObject for copy/paste
@@ -2053,8 +2055,9 @@ void LoadRecent() {
         if (!line.empty()) g_recent.push_back(line);
 }
 void SaveRecent() {
-    std::ofstream f("okay_recent.txt");
-    for (const auto& p : g_recent) f << p << "\n";
+    std::string text;
+    for (const auto& p : g_recent) text += p + "\n";
+    okayproj::WriteTextAtomic("okay_recent.txt", text);
 }
 void AddRecent(const std::string& path) {
     if (path.empty()) return;
@@ -2122,7 +2125,7 @@ void LoadSettings() {
     // bug that forced them off in v2.623 is fixed. g_multiWindow stays true.
 }
 void SaveSettings() {
-    std::ofstream f("okay_settings.txt");
+    std::ostringstream f;
     f << "settingsver 3\n"
       << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
@@ -2155,6 +2158,7 @@ void SaveSettings() {
       << "uisubdivx " << g_uiSubdivX << "\n"
       << "uisubdivy " << g_uiSubdivY << "\n"
       << "sidetabs " << g_sideTabs << "\n";
+    okayproj::WriteTextAtomic("okay_settings.txt", f.str());   // whole or not at all: a crash never leaves a cut-off file
 }
 
 // ---- Reusable custom-action library (persisted globally) -----------------
@@ -2183,10 +2187,10 @@ void WriteCAList(std::ostream& f, const char* tag, const std::vector<CustomActio
 }
 }
 void SaveCustomActions() {
-    std::ofstream f("okay_custom_actions.txt");
-    if (!f) return;
+    std::ostringstream f;
     WriteCAList(f, "instr", g_customInstr);
     WriteCAList(f, "cond",  g_customCond);
+    okayproj::WriteTextAtomic("okay_custom_actions.txt", f.str());
 }
 void LoadCustomActions() {
     g_customInstr.clear(); g_customCond.clear();
@@ -2443,6 +2447,16 @@ static void SaveSceneCmd(EditorState& ed);       // File > Save Scene (Ctrl+S)
 static void SaveSceneAsCmd(EditorState& ed);     // File > Save Scene As (Ctrl+Shift+S)
 static bool SaveProject(EditorState& ed, bool interactive);   // File > Save Project (Ctrl+Alt+S): everything
 static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts or the open graph
+static std::string DefaultScenePath(EditorState& ed);                 // where a never-saved scene goes
+static bool SaveSceneTo(EditorState& ed, std::string p);              // save under a path (reports why when it can't)
+// Run `action` now, or once the person has answered "Save changes to <scene> before <doing>?" (Save / Don't Save /
+// Cancel) when the open scene has unsaved changes. Every way of replacing the open scene goes through this.
+void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function<void()> action, std::function<void()> onCancel = {});
+// A modal with the problem in plain words and the reason (also logged to the Console).
+void ShowErrorPopup(const std::string& title, const std::string& text);
+static bool g_openNewProjectDialog = false;                            // File > New Project... (the dialog is further down)
+static std::string DefaultProjectsLocation();                          // where the last project went, else <editor>/Projects
+static void OpenProjectFolderDialog(EditorState& ed, const std::string& startDir);   // pick a project folder and open it
 void SaveAllBeforeExit(EditorState& ed) {
     if (SaveProject(ed, false)) ConsoleLog("Saved everything before updating.", 0);
 }
@@ -2549,320 +2563,103 @@ constexpr float kVsErrListH = 96.0f;       // their list's height in the Build w
 int   g_vsBuildRetry = 0;                  // 1 = build, 2 = build & run, after "Build anyway"
 int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 = Android
 
-// One entry of "Scenes In Build": a project scene, ticked to ship. The first
-// ticked scene is where the game starts; the rest load by index / name.
-struct BuildScene { std::string path; bool on = true; };
-
-// Build Settings: window + player options written into the build's
-// game.okayconfig, plus which scenes to include.
-struct BuildSettings {
-    char  company[128] = "OkaySpace";
-    char  version[32]  = "1.0.0";
-    int   width = 1280, height = 720;
-    bool  fullscreen = false;
-    bool  borderless = false;
-    bool  resizable = true;
-    bool  vsync = true;
-    bool  smoothDt = true;                 // even frame steps for movement and cameras (the game's smooth_dt)
-    bool  hideCursor = false;
-    int   fpsCap = 0;                      // 0 = uncapped (vsync paces)
-    bool  quitOnEscape = true;
-    float masterVolume = 1.0f;
-    bool  showFps = false;
-    bool  includeAllProjectScenes = false; // else just the current scene
-    bool  developmentBuild = false;
-    bool  cleanOutput = true;              // wipe stale build files first
-    bool  dataFolder = true;               // clean Data/ layout (exe at root)
-    bool  encryptData = false;             // obfuscate scenes + config
-    int   antiCheat = 0;                   // 0 off, 1 report, 2 enforce (docs/anticheat.md)
-    // ---- Player presentation ----
-    char  icon[260] = "";                  // window/taskbar icon PNG
-    char  bundleId[160] = "com.okayspace.game";  // application identifier
-    bool  runInBackground = true;          // keep updating when the window loses focus
-    bool  muteOnFocusLoss = false;         // silence audio when unfocused
-    bool  startMaximized = false;          // open maximized
-    int   minWidth = 0, minHeight = 0;     // minimum window size (0 = none)
-    bool  saveToUserDir = true;            // saves to per-user app folder (persistentDataPath)
-    char  splash[260] = "";                // startup logo PNG
-    float splashTime = 2.0f;
-    float splashBg[3] = {0.05f, 0.05f, 0.06f};
-    // ---- Graphics / quality (applied by the player at startup) ----
-    bool  lockCursor = false;              // hide + lock the cursor on launch
-    bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
-    bool  shadows = true;                  // directional cast shadows (on = modern look)
-    float shadowDistance = 80.0f;          // cascaded shadow reach (0 = legacy whole-scene)
-    float shadowSoftness = 2.5f;           // PCF penumbra width (texels)
-    int   shadowCascades = 3;              // number of cascades
-    int   shadowResolution = 2048;         // texels per cascade
-    bool  bloom = false;                   // glow on bright/emissive areas
-    bool  ssao = false;                    // ambient occlusion
-    bool  fxaa = true;                     // cheap edge anti-aliasing
-    int   antialias = 1;                   // 1 = off, 2 = 2x supersample
-    bool  gpuRenderer = true;              // use the GPU (D3D11/OpenGL) 3D renderer; falls back to software
-    bool  preferD3D12 = false;             // opt-in: prefer the Direct3D 12 backend (Windows)
-    // ---- Post-build actions (handled by the editor, not the builder) ----
-    bool  openFolderAfter = true;          // reveal the output folder when done
-    bool  zipAfter = false;                // also produce <Name>.zip of the build
-    // ---- Added later ----
-    bool  fullscreenToggle = true;         // Alt+Enter / F11 switches fullscreen in the game
-    std::vector<BuildScene> scenes;        // Scenes In Build (empty = just the open scene)
-    // ---- Dedicated server (platform "Server") -> the server folder's server.cfg ----
-    int   srvTarget = 0;                   // 0 = Linux, 1 = Windows
-    char  srvName[96] = "";                // "" = "<Product> Server"
-    int   srvPort = 45000;
-    int   srvMaxPlayers = 16;
-    int   srvTick = 30;
-    char  srvPassword[64] = "";
-    bool  srvAuth = false;                 // only signed-in OkaySpace accounts
-    bool  srvAdvertise = false;            // list in the server browsers
-    char  srvPublicAddr[128] = "";         // the address players connect to
-    char  srvRegion[32] = "";
-    float srvMaxSpeed = 0.0f;              // anti-cheat: units/second (0 = off)
-    int   srvRateLimit = 0;                // messages per second per player (0 = off)
-    int   srvKickAfter = 0;                // rejected moves per minute before a kick (0 = never)
-};
+// BuildScene, BuildSettings, BuildProfile and ProjectSettings live in ProjectState.hpp (with their file text).
 BuildSettings g_build;
 
 // ---- Build profiles -------------
-// Persist the full Build Settings under named profiles in the project's
-// .okay/build_profiles.cfg, so "Dev" / "Release" / "Demo" setups can be kept
-// and switched. Also remembers settings across editor restarts.
-struct BuildProfile {
-    std::string   name;
-    BuildSettings settings;
-    std::string   productName;
-    std::string   outputDir;
-    int           platform = 0;
-};
+// The full Build Settings are kept under named profiles in the project's .okay/build_profiles.cfg, so
+// "Dev" / "Release" / "Demo" setups can be kept and switched. The dialog as it was left (with or without
+// a profile) is .okay/build_live.cfg, so it survives a restart either way.
 std::vector<BuildProfile> g_buildProfiles;
 int  g_buildProfileSel = -1;       // index into g_buildProfiles, or -1 (unsaved)
 bool g_buildProfilesLoaded = false;
 
-// The .okay config path for the current project (empty if no project open).
-static std::string BuildProfilePath(EditorState& ed) {
-    if (ed.projectDir().empty()) return {};
+// What the last failed save of a project file said went wrong (shown by Save Project).
+static std::string g_lastSaveError;
+
+static bool SaveBuildProfilesTo(const std::string& dir) {
+    if (dir.empty()) return true;
     std::error_code ec;
-    std::filesystem::path d = std::filesystem::path(ed.projectDir()) / ".okay";
-    std::filesystem::create_directories(d, ec);
-    return (d / "build_profiles.cfg").string();
+    std::filesystem::create_directories(std::filesystem::path(dir) / ".okay", ec);
+    return okayproj::WriteTextAtomic(BuildProfilesFile(dir), WriteBuildProfiles(g_buildProfiles), &g_lastSaveError);
 }
+static bool SaveBuildProfiles(EditorState& ed) { return SaveBuildProfilesTo(ed.projectDir()); }
 
-// Serialize one profile as an "@profile <name>" block of key=value lines.
-static void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
-    const BuildSettings& b = p.settings;
-    o << "@profile " << p.name << "\n";
-    o << "product="  << p.productName << "\n";
-    o << "dir="      << p.outputDir << "\n";
-    o << "platform=" << p.platform << "\n";
-    o << "company="  << b.company << "\n";
-    o << "version="  << b.version << "\n";
-    o << "bundleId=" << b.bundleId << "\n";
-    o << "icon="     << b.icon << "\n";
-    o << "splash="   << b.splash << "\n";
-    o << "width="    << b.width << "\n" << "height=" << b.height << "\n";
-    o << "minWidth=" << b.minWidth << "\n" << "minHeight=" << b.minHeight << "\n";
-    o << "fullscreen=" << b.fullscreen << "\n" << "borderless=" << b.borderless << "\n";
-    o << "resizable=" << b.resizable << "\n" << "vsync=" << b.vsync << "\n" << "smoothDt=" << b.smoothDt << "\n";
-    o << "hideCursor=" << b.hideCursor << "\n" << "fpsCap=" << b.fpsCap << "\n";
-    o << "quitOnEscape=" << b.quitOnEscape << "\n" << "masterVolume=" << b.masterVolume << "\n";
-    o << "showFps=" << b.showFps << "\n" << "includeAll=" << b.includeAllProjectScenes << "\n";
-    o << "dev=" << b.developmentBuild << "\n" << "clean=" << b.cleanOutput << "\n";
-    o << "dataFolder=" << b.dataFolder << "\n" << "encrypt=" << b.encryptData << "\n";
-    o << "antiCheat=" << b.antiCheat << "\n";
-    o << "runBg=" << b.runInBackground << "\n" << "muteUnfocus=" << b.muteOnFocusLoss << "\n";
-    o << "maximized=" << b.startMaximized << "\n" << "userDir=" << b.saveToUserDir << "\n";
-    o << "splashTime=" << b.splashTime << "\n";
-    o << "splashBg0=" << b.splashBg[0] << "\n" << "splashBg1=" << b.splashBg[1] << "\n" << "splashBg2=" << b.splashBg[2] << "\n";
-    o << "lockCursor=" << b.lockCursor << "\n" << "perPixel=" << b.perPixelLighting << "\n";
-    o << "shadows=" << b.shadows << "\n" << "shadowDist=" << b.shadowDistance << "\n";
-    o << "shadowSoft=" << b.shadowSoftness << "\n" << "shadowCasc=" << b.shadowCascades << "\n";
-    o << "shadowRes=" << b.shadowResolution << "\n" << "bloom=" << b.bloom << "\n";
-    o << "ssao=" << b.ssao << "\n" << "fxaa=" << b.fxaa << "\n" << "antialias=" << b.antialias << "\n";
-    o << "gpu=" << b.gpuRenderer << "\n" << "d3d12=" << b.preferD3D12 << "\n";
-    o << "openFolder=" << b.openFolderAfter << "\n" << "zip=" << b.zipAfter << "\n";
-    o << "fsToggle=" << b.fullscreenToggle << "\n";
-    o << "srvTarget=" << b.srvTarget << "\n" << "srvName=" << b.srvName << "\n" << "srvPort=" << b.srvPort << "\n";
-    o << "srvMax=" << b.srvMaxPlayers << "\n" << "srvTick=" << b.srvTick << "\n" << "srvPassword=" << b.srvPassword << "\n";
-    o << "srvAuth=" << b.srvAuth << "\n" << "srvAdvertise=" << b.srvAdvertise << "\n" << "srvAddr=" << b.srvPublicAddr << "\n";
-    o << "srvRegion=" << b.srvRegion << "\n" << "srvMaxSpeed=" << b.srvMaxSpeed << "\n" << "srvRate=" << b.srvRateLimit << "\n";
-    o << "srvKick=" << b.srvKickAfter << "\n";
-    for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << sc.path << "\n";
+// The Build Settings dialog as it is now, saved beside the profiles, so it survives a restart with or without a profile.
+static std::string CurrentBuildLiveText() {
+    BuildProfile live;
+    live.settings = g_build; live.productName = g_buildNameBuf; live.outputDir = g_buildDirBuf; live.platform = g_buildPlatform;
+    const std::string sel = g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size() ? g_buildProfiles[(std::size_t)g_buildProfileSel].name : std::string();
+    return WriteBuildLive(live, sel);
 }
-
-// Apply one key=value line to a profile being read.
-static void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std::string& v) {
-    BuildSettings& b = p.settings;
-    auto I = [&]{ return std::atoi(v.c_str()); };
-    auto F = [&]{ return (float)std::atof(v.c_str()); };
-    auto B = [&]{ return std::atoi(v.c_str()) != 0; };
-    auto S = [&](char* dst, size_t n){ std::snprintf(dst, n, "%s", v.c_str()); };
-    if      (k == "product")   p.productName = v;
-    else if (k == "dir")       p.outputDir = v;
-    else if (k == "platform")  p.platform = I();
-    else if (k == "company")   S(b.company, sizeof(b.company));
-    else if (k == "version")   S(b.version, sizeof(b.version));
-    else if (k == "bundleId")  S(b.bundleId, sizeof(b.bundleId));
-    else if (k == "icon")      S(b.icon, sizeof(b.icon));
-    else if (k == "splash")    S(b.splash, sizeof(b.splash));
-    else if (k == "width")     b.width = I();
-    else if (k == "height")    b.height = I();
-    else if (k == "minWidth")  b.minWidth = I();
-    else if (k == "minHeight") b.minHeight = I();
-    else if (k == "fullscreen") b.fullscreen = B();
-    else if (k == "borderless") b.borderless = B();
-    else if (k == "resizable") b.resizable = B();
-    else if (k == "vsync")     b.vsync = B();
-    else if (k == "smoothDt")  b.smoothDt = B();
-    else if (k == "hideCursor") b.hideCursor = B();
-    else if (k == "fpsCap")    b.fpsCap = I();
-    else if (k == "quitOnEscape") b.quitOnEscape = B();
-    else if (k == "masterVolume") b.masterVolume = F();
-    else if (k == "showFps")   b.showFps = B();
-    else if (k == "includeAll") b.includeAllProjectScenes = B();
-    else if (k == "fsToggle")  b.fullscreenToggle = B();
-    else if (k == "scene" && v.size() > 2 && v[1] == '|') b.scenes.push_back(BuildScene{v.substr(2), v[0] == '1'});
-    else if (k == "dev")       b.developmentBuild = B();
-    else if (k == "clean")     b.cleanOutput = B();
-    else if (k == "dataFolder") b.dataFolder = B();
-    else if (k == "encrypt")   b.encryptData = B();
-    else if (k == "antiCheat") b.antiCheat = std::max(0, std::min(2, I()));
-    else if (k == "runBg")     b.runInBackground = B();
-    else if (k == "muteUnfocus") b.muteOnFocusLoss = B();
-    else if (k == "maximized") b.startMaximized = B();
-    else if (k == "userDir")   b.saveToUserDir = B();
-    else if (k == "splashTime") b.splashTime = F();
-    else if (k == "splashBg0") b.splashBg[0] = F();
-    else if (k == "splashBg1") b.splashBg[1] = F();
-    else if (k == "splashBg2") b.splashBg[2] = F();
-    else if (k == "lockCursor") b.lockCursor = B();
-    else if (k == "perPixel")  b.perPixelLighting = B();
-    else if (k == "shadows")   b.shadows = B();
-    else if (k == "shadowDist") b.shadowDistance = F();
-    else if (k == "shadowSoft") b.shadowSoftness = F();
-    else if (k == "shadowCasc") b.shadowCascades = I();
-    else if (k == "shadowRes") b.shadowResolution = I();
-    else if (k == "bloom")     b.bloom = B();
-    else if (k == "ssao")      b.ssao = B();
-    else if (k == "fxaa")      b.fxaa = B();
-    else if (k == "antialias") b.antialias = I();
-    else if (k == "gpu")       b.gpuRenderer = B();
-    else if (k == "d3d12")     b.preferD3D12 = B();
-    else if (k == "openFolder") b.openFolderAfter = B();
-    else if (k == "zip")       b.zipAfter = B();
-    else if (k == "srvTarget") b.srvTarget = I();
-    else if (k == "srvName")   S(b.srvName, sizeof(b.srvName));
-    else if (k == "srvPort")   b.srvPort = I();
-    else if (k == "srvMax")    b.srvMaxPlayers = I();
-    else if (k == "srvTick")   b.srvTick = I();
-    else if (k == "srvPassword") S(b.srvPassword, sizeof(b.srvPassword));
-    else if (k == "srvAuth")   b.srvAuth = B();
-    else if (k == "srvAdvertise") b.srvAdvertise = B();
-    else if (k == "srvAddr")   S(b.srvPublicAddr, sizeof(b.srvPublicAddr));
-    else if (k == "srvRegion") S(b.srvRegion, sizeof(b.srvRegion));
-    else if (k == "srvMaxSpeed") b.srvMaxSpeed = F();
-    else if (k == "srvRate")   b.srvRateLimit = I();
-    else if (k == "srvKick")   b.srvKickAfter = I();
+static bool SaveBuildLiveTo(const std::string& dir) {
+    if (dir.empty()) return true;
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(dir) / ".okay", ec);
+    return okayproj::WriteTextAtomic(BuildLiveFile(dir), CurrentBuildLiveText(), &g_lastSaveError);
 }
+static bool SaveBuildLive(EditorState& ed) { return SaveBuildLiveTo(ed.projectDir()); }
 
-static void SaveBuildProfiles(EditorState& ed) {
-    std::string path = BuildProfilePath(ed);
-    if (path.empty()) return;
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) return;
-    f << "# OkaySpace build profiles\n";
-    for (const auto& p : g_buildProfiles) WriteBuildProfileBlock(f, p);
-}
-
-static void LoadBuildProfiles(EditorState& ed) {
+// Read the project's profiles and the dialog state it was left in. A project with no files gets the
+// defaults, so one project's build settings never carry over into another.
+static void LoadBuildProfilesFrom(const std::string& dir) {
     g_buildProfiles.clear(); g_buildProfileSel = -1;
-    std::string path = BuildProfilePath(ed);
-    if (path.empty()) return;
-    std::ifstream f(path);
-    if (!f) return;
-    std::string line;
-    BuildProfile cur; bool have = false;
-    while (std::getline(f, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-        if (line.empty() || line[0] == '#') continue;
-        if (line.rfind("@profile ", 0) == 0) {
-            if (have) g_buildProfiles.push_back(cur);
-            cur = BuildProfile{}; cur.name = line.substr(9); have = true;
-            continue;
-        }
-        auto eq = line.find('=');
-        if (!have || eq == std::string::npos) continue;
-        ApplyBuildProfileKV(cur, line.substr(0, eq), line.substr(eq + 1));
+    g_build = BuildSettings{};
+    std::snprintf(g_buildNameBuf, sizeof(g_buildNameBuf), "%s", "MyGame");
+    std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", "build/MyGame");
+    g_buildPlatform = 0;
+    g_buildProfilesLoaded = true;
+    if (dir.empty()) return;
+    std::string text;
+    if (okayproj::ReadText(BuildProfilesFile(dir), text)) g_buildProfiles = ParseBuildProfiles(text);
+    BuildProfile live; std::string sel;
+    if (okayproj::ReadText(BuildLiveFile(dir), text) && ParseBuildLive(text, live, sel)) {
+        g_build = live.settings;
+        std::snprintf(g_buildNameBuf, sizeof(g_buildNameBuf), "%s", live.productName.c_str());
+        std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", live.outputDir.c_str());
+        g_buildPlatform = live.platform;
+        for (std::size_t i = 0; i < g_buildProfiles.size(); ++i) if (g_buildProfiles[i].name == sel) g_buildProfileSel = (int)i;
     }
-    if (have) g_buildProfiles.push_back(cur);
 }
+static void LoadBuildProfiles(EditorState& ed) { LoadBuildProfilesFrom(ed.projectDir()); }
 
-// Project-wide settings (persisted to project.okayproj): defaults a build/scene
-// inherits, edited via Edit > Project Settings.
-struct ProjectSettings {
-    char  company[128]  = "OkaySpace";
-    char  version[32]   = "1.0.0";
-    int   defaultWidth  = 1280, defaultHeight = 720;
-    float gravity2D[2]  = {0.0f, -9.81f};
-    float gravity3D[3]  = {0.0f, -9.81f, 0.0f};
-    float ambient       = 0.30f;
-    bool  skybox        = true;
-    // ---- Editor loading screen (per-project splash customization) ----
-    char  splashLogo[260] = "";            // optional PNG shown instead of the cube
-    float splashBgTop[3]  = {0.094f, 0.094f, 0.106f};
-    float splashBgBot[3]  = {0.051f, 0.051f, 0.059f};
-    bool  splashAccentOverride = false;
-    float splashAccent[3] = {0.235f, 0.475f, 0.800f};
-    bool  splashShowBar   = true;
-};
+// Project-wide settings (persisted to <project>/project.okayproj): defaults a build/scene
+// inherits, edited via Edit > Project Settings. The struct is in ProjectState.hpp.
 ProjectSettings g_project;
 bool g_showProjectSettings = false;
 SDL_Texture* g_editorSplashLogo = nullptr;   // loaded from g_project.splashLogo at startup
 
-void SaveProjectSettings() {
-    std::ofstream f("project.okayproj");
-    if (!f) return;
-    f << "company=" << g_project.company << "\n";
-    f << "version=" << g_project.version << "\n";
-    f << "width=" << g_project.defaultWidth << "\n";
-    f << "height=" << g_project.defaultHeight << "\n";
-    f << "gravity2d=" << g_project.gravity2D[0] << " " << g_project.gravity2D[1] << "\n";
-    f << "gravity3d=" << g_project.gravity3D[0] << " " << g_project.gravity3D[1] << " " << g_project.gravity3D[2] << "\n";
-    f << "ambient=" << g_project.ambient << "\n";
-    f << "skybox=" << (g_project.skybox ? 1 : 0) << "\n";
-    f << "splash_logo=" << g_project.splashLogo << "\n";
-    f << "splash_bar=" << (g_project.splashShowBar ? 1 : 0) << "\n";
-    f << "splash_accent_on=" << (g_project.splashAccentOverride ? 1 : 0) << "\n";
-    f << "splash_bg_top=" << g_project.splashBgTop[0] << " " << g_project.splashBgTop[1] << " " << g_project.splashBgTop[2] << "\n";
-    f << "splash_bg_bot=" << g_project.splashBgBot[0] << " " << g_project.splashBgBot[1] << " " << g_project.splashBgBot[2] << "\n";
-    f << "splash_accent=" << g_project.splashAccent[0] << " " << g_project.splashAccent[1] << " " << g_project.splashAccent[2] << "\n";
-    f << okay::ProjectLists::Write();   // the tag list (tag= lines, strict_tags) and the layer names (layer_name_N=)
+// The project whose settings g_project holds (the folder project.okayproj is in; "" = none open, the
+// working folder's file as before projects had their own).
+std::string g_settingsProjectDir;
+bool SaveProjectSettingsTo(const std::string& dir) {
+    return okayproj::WriteTextAtomic(ProjectSettingsFile(dir), WriteProjectSettings(g_project), &g_lastSaveError);
 }
+void SaveProjectSettings() { SaveProjectSettingsTo(g_settingsProjectDir); }
 
-void LoadProjectSettings() {
-    std::ifstream f("project.okayproj");
-    if (!f) return;
-    okay::ProjectLists::Reset();   // the tag list and layer names come from this file (or stay the defaults)
-    std::string line;
-    while (std::getline(f, line)) {
-        std::size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-        if (okay::ProjectLists::ApplyLine(k, v)) continue;   // tag=, strict_tags=, layer_name_N=
-        if      (k == "company") std::strncpy(g_project.company, v.c_str(), sizeof(g_project.company) - 1);
-        else if (k == "version") std::strncpy(g_project.version, v.c_str(), sizeof(g_project.version) - 1);
-        else if (k == "width")   g_project.defaultWidth = std::atoi(v.c_str());
-        else if (k == "height")  g_project.defaultHeight = std::atoi(v.c_str());
-        else if (k == "gravity2d") std::sscanf(v.c_str(), "%f %f", &g_project.gravity2D[0], &g_project.gravity2D[1]);
-        else if (k == "gravity3d") std::sscanf(v.c_str(), "%f %f %f", &g_project.gravity3D[0], &g_project.gravity3D[1], &g_project.gravity3D[2]);
-        else if (k == "ambient") g_project.ambient = (float)std::atof(v.c_str());
-        else if (k == "skybox")  g_project.skybox = std::atoi(v.c_str()) != 0;
-        else if (k == "splash_logo") std::strncpy(g_project.splashLogo, v.c_str(), sizeof(g_project.splashLogo) - 1);
-        else if (k == "splash_bar") g_project.splashShowBar = std::atoi(v.c_str()) != 0;
-        else if (k == "splash_accent_on") g_project.splashAccentOverride = std::atoi(v.c_str()) != 0;
-        else if (k == "splash_bg_top") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashBgTop[0], &g_project.splashBgTop[1], &g_project.splashBgTop[2]);
-        else if (k == "splash_bg_bot") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashBgBot[0], &g_project.splashBgBot[1], &g_project.splashBgBot[2]);
-        else if (k == "splash_accent") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashAccent[0], &g_project.splashAccent[1], &g_project.splashAccent[2]);
+// Read <dir>/project.okayproj: defaults first, so nothing of the previous project is left over. A project
+// from before settings were kept per project has no file of its own; it takes the working folder's old
+// project.okayproj once (what it effectively had), and writes its own copy so the two part ways.
+void LoadProjectSettingsFrom(const std::string& dir) {
+    g_project = ProjectSettings{};
+    okay::ProjectLists::Reset();
+    g_settingsProjectDir = dir;
+    std::string text;
+    if (okayproj::ReadText(ProjectSettingsFile(dir), text)) { ParseProjectSettings(g_project, text); return; }
+    if (!dir.empty() && okayproj::ReadText(okayproj::SettingsFileName(), text)) {
+        ParseProjectSettings(g_project, text);
+        std::error_code ec;
+        if (std::filesystem::is_directory(dir, ec)) SaveProjectSettingsTo(dir);
     }
+}
+void LoadProjectSettings() { LoadProjectSettingsFrom(g_settingsProjectDir); }
+
+// What each project file said when it was last read or written, so a change is noticed and written once.
+static std::string g_savedProjectText, g_savedBuildLiveText, g_savedBuildProfilesText;
+static void NoteProjectFilesSaved() {
+    g_savedProjectText = WriteProjectSettings(g_project);
+    g_savedBuildLiveText = CurrentBuildLiveText();
+    g_savedBuildProfilesText = WriteBuildProfiles(g_buildProfiles);
 }
 // A layer's name is a project setting (okay::Layers, saved in project.okayproj with the tag list). Right-click a
 // layer in a list to rename it: Enter applies, an empty box (or Reset) goes back to the default name, which
@@ -3694,6 +3491,9 @@ inline std::string HumanBytes(std::uintmax_t b) {
 // is non-null it's filled with a per-file size breakdown.
 std::string Build(EditorState& ed, const std::string& outDir,
                   const std::string& gameName, const Options& opt = {}, BuildReport* report = nullptr) {
+    // A build ships the scene you edited. While Play runs, the scene in memory is the running game (moved,
+    // spawned, scripted), so stop Play first: Stop restores the edited scene.
+    if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }
     std::error_code ec;
     fs::path dir = fs::weakly_canonical(fs::path(outDir), ec);
     if (dir.empty()) dir = fs::path(outDir);
@@ -3994,6 +3794,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
 // WebGL via Emscripten), 2 = Android (SDL2 + NDK).
 std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
                               const std::string& gameName, const Options& opt, int target) {
+    if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // export the edited scene, not the running copy
     std::error_code ec;
     fs::path dir = fs::path(outDir);
     if (dir.empty()) return "Pick an output folder.";
@@ -4729,9 +4530,9 @@ static void LoadUserLayouts() {
     g_userLayouts = okay::edtabs::ParseLayouts(ss.str());
 }
 static void SaveUserLayouts() {
-    std::ofstream f("okay_layouts.txt", std::ios::binary);
-    if (!f) { ConsoleLog("Couldn't write okay_layouts.txt", 2); return; }
-    f << okay::edtabs::SerializeLayouts(g_userLayouts);
+    std::string why;
+    if (!okayproj::WriteTextAtomic("okay_layouts.txt", okay::edtabs::SerializeLayouts(g_userLayouts), &why))
+        ConsoleLog("Couldn't write okay_layouts.txt: " + why, 2);
 }
 static void SaveCurrentLayoutAs(const std::string& name) {
     okay::edtabs::SavedLayout l;
@@ -5666,11 +5467,12 @@ void DrawMenuAndToolbar(EditorState& ed) {
     }
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
-        ImGui::MenuItem("New Project (in the Launcher)", nullptr, false, false);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Projects are created from the Launcher Create tab:\npick a template, name it, choose a folder.");
-        if (ImGui::MenuItem("New 2D Scene")) { ed.NewScene2D(); ConsoleLog("New 2D project"); }
-        if (ImGui::MenuItem("New 3D Scene")) { ed.NewScene3D(); ConsoleLog("New 3D project"); }
+        if (ImGui::MenuItem("New Project...")) g_openNewProjectDialog = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make a new project folder from a template and open it.\n(The launcher's Create page makes the same thing.)");
+        if (ImGui::MenuItem("Open Project Folder...")) OpenProjectFolderDialog(ed, DefaultProjectsLocation());
+        ImGui::Separator();
+        if (ImGui::MenuItem("New 2D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene2D(); ConsoleLog("New 2D scene"); });
+        if (ImGui::MenuItem("New 3D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene3D(); ConsoleLog("New 3D scene"); });
         ImGui::Separator();
         if (ImGui::MenuItem("Import Model...")) PickAndImportModel();   // OS file explorer, then settings
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", DAE, STL, ..." : "");
@@ -5684,10 +5486,12 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 }
                 std::error_code fec;
                 bool exists = std::filesystem::exists(p, fec);   // moved/deleted files gray out
-                if (ImGui::MenuItem(p.c_str(), nullptr, false, exists)) {
-                    std::string err;
-                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
-                    else ConsoleLog("Open failed: " + err);
+                if (ImGui::MenuItem((exists ? p : p + "   (missing)").c_str(), nullptr, false, exists)) {
+                    RunAfterSavePrompt(ed, "opening another scene", [&ed, p] {
+                        std::string err;
+                        if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                        else ShowErrorPopup("Couldn't open the scene", "\"" + p + "\": " + err + "\n\nThe scene you had open is still open.");
+                    });
                 }
                 if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     ImGui::SetTooltip("File not found (moved or deleted)");
@@ -6525,6 +6329,17 @@ void DrawStatusBar(EditorState& ed) {
         ImGui::PopStyleColor(3);
         return c;
     };
+    {   // What is open: project / scene file, then the selection.
+        namespace fs = std::filesystem;
+        std::string label = ed.projectDir().empty() ? std::string() : fs::path(ed.projectDir()).filename().string() + "  /  ";
+        label += ed.path().empty() ? std::string("unsaved scene") : fs::path(ed.path()).filename().string();
+        ImGui::TextUnformatted(label.c_str());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", ed.path().empty() ? "This scene hasn't been saved yet (Ctrl+S)" : ed.path().c_str());
+        ImGui::SameLine(0, 10);
+        ImGui::TextDisabled("|");
+        ImGui::SameLine(0, 10);
+    }
     // Left: the selection (click to frame it, like the Scene's Frame button).
     if (GameObject* sel = ed.selected()) {
         {   // accent dot, drawn (not a glyph) so it can't render as tofu
@@ -6564,6 +6379,29 @@ void DrawStatusBar(EditorState& ed) {
         ImGui::SameLine(0, 4);
         ImGui::TextColored(amber, "unsaved");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene has unsaved changes (Ctrl+S to save)");
+    } else if (!ed.isPlaying() && g_lastSaveError.empty() && g_lastSavedAt && SDL_GetTicks64() - g_lastSavedAt < 5000) {
+        // A short confirmation after a save (it fades after five seconds; the Console keeps the record).
+        ImGui::SameLine(0, 12);
+        const ImVec4 ok(0.45f, 0.82f, 0.56f, 1.0f);
+        float r = ImGui::GetFontSize() * 0.22f;
+        ImVec2 dp = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(dp.x + r, dp.y + ImGui::GetTextLineHeight() * 0.60f), r, ImGui::GetColorU32(ok));
+        ImGui::Dummy(ImVec2(r * 2.0f + 2.0f, ImGui::GetTextLineHeight()));
+        ImGui::SameLine(0, 4);
+        ImGui::TextColored(ok, "Saved");
+    }
+    {   // A failure belongs to the scene that was open when it happened: a different scene is a fresh start.
+        static std::string s_errSeen, s_errScene;
+        if (g_lastSaveError != s_errSeen) { s_errSeen = g_lastSaveError; s_errScene = ed.path(); }
+        if (!g_lastSaveError.empty() && s_errScene != ed.path()) { g_lastSaveError.clear(); s_errSeen.clear(); }
+    }
+    if (!g_lastSaveError.empty()) {   // the last save failed: stays until one works
+        ImGui::SameLine(0, 12);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.50f, 0.46f, 1.0f));
+        if (flatBtn("Save failed")) ShowErrorPopup("The last save did not work", g_lastSaveError + "\n\nYour changes are still open in the editor. Fix the problem and save again (Ctrl+S).");
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nClick for details", g_lastSaveError.c_str());
     }
     // Right cluster: warnings/errors · object count · tool (click to cycle) · mode ·
     // FPS · version, right-aligned. Console badges only appear when there's something.
@@ -7106,11 +6944,12 @@ static int   g_projView   = 0;      // 0 grid (tiles), 1 list (rows)
 static float g_projCell   = 112.0f; // grid tile size (readable thumbnails; the view menu can shrink them)
 static float g_projTreeW  = 200.0f; // folder-tree pane width (drag the splitter)
 static void SaveProjectViewPrefs() {
-    std::ofstream f("okay_projectview.txt");
+    std::ostringstream f;
     f << "filter " << g_projFilter << "\nsort " << g_projSort
       << "\nview " << g_projView << "\ncell " << (int)g_projCell
       << "\ntreew " << (int)g_projTreeW << "\n";
     for (const auto& p : g_favFolders) f << "fav " << p << "\n";
+    okayproj::WriteTextAtomic("okay_projectview.txt", f.str());
 }
 static void LoadProjectViewPrefs() {
     std::ifstream f("okay_projectview.txt");
@@ -9361,9 +9200,11 @@ void DrawProject(EditorState& ed) {
     auto openAsset = [&](const std::string& full, const std::string& ext, bool isDir) {
         if (isDir) std::strncpy(dirBuf, full.c_str(), sizeof(dirBuf) - 1);
         else if (ext == ".okayscene") {
-            std::string err;
-            if (ed.Load(full, &err)) ConsoleLog("Opened " + full);
-            else ConsoleLog("Open failed: " + err);
+            RunAfterSavePrompt(ed, "opening another scene", [&ed, full] {
+                std::string err;
+                if (ed.Load(full, &err)) { ConsoleLog("Opened " + full); AddRecent(full); }
+                else ShowErrorPopup("Couldn't open the scene", "\"" + full + "\": " + err + "\n\nThe scene you had open is still open.");
+            });
         } else if (ext == ".okayprefab") {
             ed.PushUndo();
             std::string err;
@@ -15982,9 +15823,12 @@ void DrawFileDialogs(EditorState& ed) {
                 std::snprintf(g_pathBuf, sizeof(g_pathBuf), "%s", p);
         }
         if (ImGui::Button("Open", ImVec2(120, 0)) || openGo) {
-            std::string err;
-            if (ed.Load(g_pathBuf, &err)) { ConsoleLog("Opened " + std::string(g_pathBuf)); AddRecent(g_pathBuf); }
-            else ConsoleLog("Open failed: " + err);
+            const std::string openPath = g_pathBuf;
+            RunAfterSavePrompt(ed, "opening another scene", [&ed, openPath] {
+                std::string err;
+                if (ed.Load(openPath, &err)) { ConsoleLog("Opened " + openPath); AddRecent(openPath); }
+                else ShowErrorPopup("Couldn't open the scene", "\"" + openPath + "\": " + err + "\n\nThe scene you had open is still open.");
+            });
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -16779,131 +16623,17 @@ void DrawFileDialogs(EditorState& ed) {
     }
 }
 
-// Project creation moved to the LAUNCHER (Create tab). It sends
-// --new-project "<folder>" [--template "<Title>"] and the editor builds the
-// project here, headlessly, on its first frames — no in-editor dialog.
-// A bare --template (no folder) just loads that template into the open scene.
-// The editor always works inside a project. Opened without one (not from the
-// launcher's Create page, or the project was moved), a chooser that can't be
-// dismissed asks for one: a recent project, a project folder, or a new project.
-// (OKAY_ALLOW_NO_PROJECT=1 skips it for tools and tests.)
-void DrawProjectGate(EditorState& ed) {
-    static const bool allow = std::getenv("OKAY_ALLOW_NO_PROJECT") != nullptr;
-    if (allow || !ed.projectDir().empty() || !g_openScenePath.empty() || !g_newProjectRoot.empty() ||
-        !g_newProjectTemplate.empty() || ed.isPlaying())
-        return;
-    namespace fs = std::filesystem;
-    static char name[96] = "MyGame";
-    static char loc[512] = "";
-    static int tpl = 0;
-    static const char* kTpls[] = {"3D Scene", "2D Scene", "Empty", "First Person", "Third Person",
-                                  "Third Person Shooter", "Platformer", "2.5D Platformer", "Top-Down",
-                                  "Top-Down Shooter", "Point & Click",
-                                  "Vehicle (3D)", "Vehicle (2D)", "Sandbox", "Multiplayer", "Coin Collector",
-                                  "Snake", "Brick Breaker", "Main Menu", "Inventory", "Humanoid"};
-    if (!loc[0]) {   // default: the Projects folder beside the editor (the launcher's default too)
-        std::string base;
-        if (char* b = SDL_GetBasePath()) { base = b; SDL_free(b); }
-        std::snprintf(loc, sizeof(loc), "%s", (fs::path(base.empty() ? "." : base) / "Projects").string().c_str());
-    }
-    auto openScene = [&](const std::string& scene) { g_openScenePath = scene; ImGui::CloseCurrentPopup(); };
-    ImGui::OpenPopup("Open a project");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(600, 0), ImGuiCond_Always);
-    if (!ImGui::BeginPopupModal("Open a project", nullptr,
-                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize))
-        return;
-    ImGui::TextWrapped("OkaySpace works in projects: a folder with your scenes, scripts and assets. "
-                       "Open one, or make a new one, to start.");
-    ImGui::Dummy(ImVec2(0, 6));
-    ImGui::TextDisabled("RECENT PROJECTS");
-    int shown = 0;
-    for (const std::string& r : g_recent) {
-        std::error_code ec;
-        if (!fs::exists(fs::path(r), ec) || shown >= 6) continue;
-        fs::path root = fs::path(r).parent_path();
-        if (root.filename() == "Assets") root = root.parent_path();
-        ImGui::PushID(shown++);
-        std::string label = root.filename().string();
-        if (ImGui::Selectable(("##rp" + label).c_str(), false, 0, ImVec2(0, 34))) openScene(r);
-        const ImVec2 mn = ImGui::GetItemRectMin();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddText(ImVec2(mn.x + 6, mn.y + 2), ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
-        std::string where = root.string();   // long paths keep their end (the part that differs)
-        const float maxW = ImGui::GetItemRectSize().x - 12;
-        while (where.size() > 4 && ImGui::CalcTextSize(where.c_str()).x > maxW) where = "\xE2\x80\xA6" + where.substr(4);
-        dl->AddText(ImVec2(mn.x + 6, mn.y + 18), ImGui::GetColorU32(ImGuiCol_TextDisabled), where.c_str());
-        ImGui::PopID();
-    }
-    if (!shown) ImGui::TextDisabled("  None yet.");
-    if (ImGui::Button("Open a project folder\xE2\x80\xA6", ImVec2(220, 30))) {
-        if (const char* picked = tinyfd_selectFolderDialog("Open a project folder", loc)) {
-            fs::path root(picked);
-            if (root.filename() == "Assets") root = root.parent_path();
-            std::string scene;
-            std::error_code ec;
-            for (const fs::path& dir : {root / "Assets", root})
-                if (scene.empty() && fs::is_directory(dir, ec))
-                    for (auto& f : fs::directory_iterator(dir, ec))
-                        if (f.path().extension() == ".okayscene") { scene = f.path().string(); break; }
-            if (!scene.empty()) openScene(scene);
-            else ConsoleLog("No .okayscene in " + root.string() + ": pick a project folder (it has an Assets folder).", 1);
-        }
-    }
-    ImGui::Dummy(ImVec2(0, 8));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 4));
-    ImGui::TextDisabled("NEW PROJECT");
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("Name"); ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(190);
-    ImGui::InputText("##gatename", name, sizeof(name));
-    ImGui::SameLine(0, 16);
-    ImGui::TextDisabled("Template"); ImGui::SameLine();
-    ImGui::SetNextItemWidth(-1);
-    ImGui::Combo("##gatetpl", &tpl, kTpls, IM_ARRAYSIZE(kTpls));
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("Location"); ImGui::SameLine(80);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
-    ImGui::InputText("##gateloc", loc, sizeof(loc));
-    ImGui::SameLine();
-    if (ImGui::Button("Browse\xE2\x80\xA6##gate", ImVec2(-1, 0)))
-        if (const char* picked = tinyfd_selectFolderDialog("Where new projects go", loc)) std::snprintf(loc, sizeof(loc), "%s", picked);
-    ImGui::Dummy(ImVec2(0, 6));
-    if (ImGui::Button("Create & open", ImVec2(160, 32)) && name[0]) {
-        g_newProjectRoot = (fs::path(loc) / name).string();
-        g_newProjectTemplate = kTpls[tpl];
-        ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
-    ImGui::EndPopup();
-}
+// ---- Projects ----------------------------------------------------------------------------------------------------
+// A project is made two ways and both follow the same rules (shared/ProjectCreate.hpp): the launcher's Create page
+// sends --new-project "<folder>" [--template "<Title>"], and File > New Project... (or the chooser shown when no
+// project is open) fills in the form below. The name is checked as it is typed, the full path is shown, and a failure
+// leaves nothing behind and keeps the open scene (EditorState::CreateProject). A bare --template just loads that
+// template into the open scene.
 
-void DrawNewProjectPopup(EditorState& ed) {
-    // --open "<scene>": reopen an existing project from the launcher's list.
-    if (!g_openScenePath.empty()) {
-        namespace fs = std::filesystem;
-        std::string p = g_openScenePath;
-        g_openScenePath.clear();
-        std::string err;
-        if (ed.Load(p, &err)) {
-            AddRecent(p);
-            // Root the Project panel at the project folder (the scene's dir, or
-            // its parent when the scene lives in <root>/Assets).
-            fs::path dir = fs::path(p).parent_path();
-            if (dir.filename() == "Assets") dir = dir.parent_path();
-            std::error_code ec;
-            if (!dir.empty() && fs::is_directory(dir, ec)) ed.setProjectDir(dir.string());
-            ConsoleLog("Opened " + p);
-        } else ConsoleLog("Open failed: " + err);
-        return;
-    }
-    if (g_newProjectRoot.empty() && g_newProjectTemplate.empty()) return;
-    namespace fs = std::filesystem;
-
-    // Template title -> EditorState scene factory (same set the launcher lists).
-    struct Tpl { const char* title; void (EditorState::*fn)(); };
+// Template title -> the EditorState scene factory (the same titles the launcher lists).
+using TplFn = void (EditorState::*)();
+static TplFn TemplateFn(const std::string& title) {
+    struct Tpl { const char* title; TplFn fn; };
     static const Tpl tpls[] = {
         {"2D Scene",             &EditorState::NewScene2D},
         {"3D Scene",             &EditorState::NewScene3D},
@@ -16927,11 +16657,395 @@ void DrawNewProjectPopup(EditorState& ed) {
         {"Inventory",            &EditorState::NewInventory},
         {"Multiplayer",          &EditorState::NewMultiplayer},
     };
-    void (EditorState::*fn)() = &EditorState::NewScene3D;   // default template
-    for (const Tpl& t : tpls)
-        if (g_newProjectTemplate == t.title) { fn = t.fn; break; }
-    g_newProjectTemplate.clear();
+    for (const Tpl& t : tpls) if (title == t.title) return t.fn;
+    return &EditorState::NewScene3D;   // default template
+}
 
+// ---- Errors the person has to read: one modal, plain words, the reason on the second line ----
+static std::string g_errTitle, g_errText;
+static bool g_errOpen = false;
+void ShowErrorPopup(const std::string& title, const std::string& text) {
+    g_errTitle = title; g_errText = text; g_errOpen = true;
+    ConsoleLog(title + ": " + text, 2);
+}
+static void DrawErrorPopup() {
+    if (g_errOpen && !ImGui::IsPopupOpen("Something went wrong")) { ImGui::OpenPopup("Something went wrong"); }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("Something went wrong", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.55f, 0.50f, 1.0f));
+        ImGui::TextWrapped("%s", g_errTitle.c_str());
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, 2));
+        ImGui::TextWrapped("%s", g_errText.c_str());
+        ImGui::Dummy(ImVec2(0, 6));
+        if (ImGui::Button("OK", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { g_errOpen = false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+}
+
+// ---- Unsaved changes: Save / Don't Save / Cancel before anything replaces the open scene ----
+static std::string g_savePromptWhat, g_savePromptError;
+static std::function<void()> g_savePromptAction, g_savePromptCancel;
+static bool g_savePromptOpen = false;
+static std::string OpenSceneLabel(EditorState& ed) {
+    return ed.path().empty() ? std::string("this new scene") : std::filesystem::path(ed.path()).filename().string();
+}
+// Run `action` now when nothing is unsaved; otherwise ask first. `doing` completes "before ...": "opening another scene".
+void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function<void()> action, std::function<void()> onCancel) {
+    if (!action) return;
+    if (g_savePromptOpen) { if (onCancel) onCancel(); return; }   // one question at a time
+    if (!ed.HasUnsavedChanges()) { action(); return; }
+    g_savePromptWhat = doing; g_savePromptAction = std::move(action); g_savePromptCancel = std::move(onCancel);
+    g_savePromptError.clear(); g_savePromptOpen = true;
+}
+static void DrawSavePrompt(EditorState& ed) {
+    if (g_savePromptOpen && !ImGui::IsPopupOpen("Save changes?")) ImGui::OpenPopup("Save changes?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Save changes?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    ImGui::TextWrapped("Save changes to \"%s\" before %s?", OpenSceneLabel(ed).c_str(), g_savePromptWhat.c_str());
+    ImGui::Dummy(ImVec2(0, 2));
+    ImGui::TextDisabled("If you don't save, the changes you made to this scene are lost.");
+    if (!g_savePromptError.empty()) {
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.55f, 0.50f, 1.0f));
+        ImGui::TextWrapped("Couldn't save: %s", g_savePromptError.c_str());
+        ImGui::PopStyleColor();
+    }
+    ImGui::Dummy(ImVec2(0, 8));
+    auto finish = [&](bool run) {
+        auto act = std::move(g_savePromptAction);
+        auto cancel = std::move(g_savePromptCancel);
+        g_savePromptAction = nullptr; g_savePromptCancel = nullptr; g_savePromptOpen = false;
+        ImGui::CloseCurrentPopup();
+        if (run && act) act();
+        else if (!run && cancel) cancel();
+    };
+    ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+    const bool save = ImGui::Button("Save", ImVec2(120, 0));
+    ImGui::PopStyleColor(4);
+    if (save) {
+        if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // save the edited scene, not the running copy
+        const std::string p = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
+        if (SaveSceneTo(ed, p)) finish(true);
+        else g_savePromptError = g_lastSaveError;                                       // stay open: choose again
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Don't Save", ImVec2(120, 0))) finish(true);
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) finish(false);
+    ImGui::EndPopup();
+}
+
+// ---- Recent projects and locations ----
+static std::filesystem::path ProjectRootOfScene(const std::string& scene) {
+    std::filesystem::path root = std::filesystem::path(scene).parent_path();
+    if (root.filename() == "Assets") root = root.parent_path();
+    return root;
+}
+// The folders recent projects live in (newest first, each once, only ones that still exist).
+static std::vector<std::string> RecentLocations() {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const std::string& r : g_recent) {
+        const std::filesystem::path loc = ProjectRootOfScene(r).parent_path();
+        if (loc.empty() || !std::filesystem::is_directory(loc, ec)) continue;
+        const std::string s = loc.string();
+        if (std::find(out.begin(), out.end(), s) == out.end()) out.push_back(s);
+        if (out.size() >= 5) break;
+    }
+    return out;
+}
+static std::string DefaultProjectsLocation() {
+    const std::vector<std::string> recent = RecentLocations();
+    if (!recent.empty()) return recent.front();
+    std::string base;
+    if (char* b = SDL_GetBasePath()) { base = b; SDL_free(b); }
+    return (std::filesystem::path(base.empty() ? "." : base) / "Projects").string();
+}
+// Pick a project folder and open it (its first scene). The chooser and File > Open Project Folder share this.
+static void OpenProjectFolderDialog(EditorState& ed, const std::string& startDir) {
+    namespace fs = std::filesystem;
+    const char* picked = tinyfd_selectFolderDialog("Open a project folder", startDir.c_str());
+    if (!picked || !*picked) return;
+    fs::path root(picked);
+    if (root.filename() == "Assets") root = root.parent_path();
+    std::string scene;
+    std::error_code ec;
+    for (const fs::path& dir : {root / "Assets", root})
+        if (scene.empty() && fs::is_directory(dir, ec))
+            for (auto& f : fs::directory_iterator(dir, ec))
+                if (f.path().extension() == ".okayscene") { scene = f.path().string(); break; }
+    if (scene.empty()) {
+        ShowErrorPopup("That isn't an OkaySpace project", "There is no .okayscene file in \"" + root.string() + "\". Pick the project's folder (the one that holds Assets).");
+        return;
+    }
+    RunAfterSavePrompt(ed, "opening another project", [scene] { g_openScenePath = scene; });
+}
+
+// ---- The New Project form (used by File > New Project... and by the chooser) ----
+struct NewProjectForm {
+    char name[96] = "MyGame";
+    char loc[512] = "";
+    int tpl = 0;
+    std::string lastKey;
+    okayproj::Plan plan;
+    Uint32 planAt = 0;
+};
+static NewProjectForm g_npForm;
+
+static const okayproj::Plan& NewProjectPlan(NewProjectForm& f, bool force = false) {
+    const std::string key = std::string(f.name) + "\n" + f.loc;
+    const Uint32 now = SDL_GetTicks();
+    if (force || key != f.lastKey || now - f.planAt > 1500) {   // looks at the disk, so not every frame
+        f.plan = okayproj::PlanProject(f.loc, f.name);
+        f.lastKey = key; f.planAt = now;
+    }
+    return f.plan;
+}
+// A long path keeps its end (the part that differs).
+static std::string FitPathEnd(const std::string& where, float maxW) {
+    if (ImGui::CalcTextSize(where.c_str()).x <= maxW) return where;
+    const std::string dots = "\xE2\x80\xA6";
+    std::size_t cut = 0;
+    while (cut < where.size()) {
+        for (int n = 0; n < 3 && cut < where.size(); ++n) {   // drop three whole characters at a time
+            ++cut;
+            while (cut < where.size() && ((unsigned char)where[cut] & 0xC0) == 0x80) ++cut;
+        }
+        if (ImGui::CalcTextSize((dots + where.substr(cut)).c_str()).x <= maxW) break;
+    }
+    return dots + where.substr(cut);
+}
+// Draw the form. True on the frame "Create project" is pressed with a usable plan (f.plan, and the template in f.tpl).
+static bool DrawNewProjectForm(NewProjectForm& f) {
+    const float labelW = 84.0f;
+    const ImVec4 red(0.96f, 0.55f, 0.50f, 1.0f), amber(0.95f, 0.80f, 0.35f, 1.0f), green(0.45f, 0.82f, 0.56f, 1.0f);
+    if (!f.loc[0]) std::snprintf(f.loc, sizeof(f.loc), "%s", DefaultProjectsLocation().c_str());
+    const okayproj::Plan& plan0 = NewProjectPlan(f);
+    const bool nameBad = !plan0.nameProblem.empty();
+    const bool locBad = !plan0.locationProblem.empty();
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Name"); ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(-1);
+    if (nameBad) { ImGui::PushStyleColor(ImGuiCol_Border, red); ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f); }
+    ImGui::InputText("##npname", f.name, sizeof(f.name));
+    if (nameBad) { ImGui::PopStyleVar(); ImGui::PopStyleColor(); }
+    const okayproj::Plan& plan = NewProjectPlan(f);   // after the edit, so the messages match what is in the box
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + labelW);
+    if (!plan.nameProblem.empty()) ImGui::TextColored(red, "%s", plan.nameProblem.c_str());
+    else ImGui::TextColored(green, "A good name");
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Location"); ImGui::SameLine(labelW);
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 96);
+    if (locBad) { ImGui::PushStyleColor(ImGuiCol_Border, red); ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f); }
+    ImGui::InputText("##nploc", f.loc, sizeof(f.loc));
+    if (locBad) { ImGui::PopStyleVar(); ImGui::PopStyleColor(); }
+    ImGui::SameLine();
+    if (ImGui::Button("Browse\xE2\x80\xA6##np", ImVec2(-1, 0)))
+        if (const char* picked = tinyfd_selectFolderDialog("Where new projects go", f.loc)) if (*picked) std::snprintf(f.loc, sizeof(f.loc), "%s", picked);
+    const std::vector<std::string> recent = RecentLocations();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + labelW);
+    if (!plan.locationProblem.empty()) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+        ImGui::TextColored(red, "%s", plan.locationProblem.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    if (!recent.empty()) {
+        if (!plan.locationProblem.empty()) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + labelW);
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::BeginCombo("##nprecent", "Recent locations")) {
+            for (const std::string& r : recent)
+                if (ImGui::Selectable(FitPathEnd(r, 360).c_str())) std::snprintf(f.loc, sizeof(f.loc), "%s", r.c_str());
+            ImGui::EndCombo();
+        }
+    }
+
+    ImGui::Dummy(ImVec2(0, 2));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Creates"); ImGui::SameLine(labelW);
+    if (plan.nameProblem.empty()) {
+        ImGui::TextUnformatted(FitPathEnd(plan.root.string(), ImGui::GetContentRegionAvail().x).c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", plan.root.string().c_str());
+        if (plan.renamed) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + labelW);
+            ImGui::TextColored(amber, "\"%s\" already has a project in it, so this one is called %s.", plan.name.c_str(), plan.folder.c_str());
+        }
+    } else ImGui::TextDisabled("-");
+    if (plan.nameProblem.empty() && plan.locationProblem.empty() && !plan.pathProblem.empty()) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + labelW);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+        ImGui::TextColored(red, "%s", plan.pathProblem.c_str());
+        ImGui::PopTextWrapPos();
+    }
+
+    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::TextDisabled("TEMPLATE");
+    // The list takes what is left of the window (the dialog never taller than the editor window, or it would
+    // spill into an OS window of its own), at most 178 px and at least 72; the Create row below needs ~64.
+    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f));
+    ImGui::BeginChild("##nptpl", ImVec2(0, listH), ImGuiChildFlags_Borders);
+    {
+        const auto& all = okayproj::Templates();
+        const auto& groups = okayproj::TemplateGroups();
+        for (int g = 1; g < (int)groups.size(); ++g) {
+            ImGui::Dummy(ImVec2(0, 2));
+            ImGui::TextDisabled("%s", groups[(std::size_t)g].c_str());
+            for (int i = 0; i < (int)all.size(); ++i) {
+                if (all[(std::size_t)i].group != g) continue;
+                ImGui::PushID(i);
+                if (ImGui::Selectable("##tpl", f.tpl == i, 0, ImVec2(0, 22))) f.tpl = i;
+                const ImVec2 mn = ImGui::GetItemRectMin();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddText(ImVec2(mn.x + 8, mn.y + 3), ImGui::GetColorU32(ImGuiCol_Text), all[(std::size_t)i].title);
+                dl->AddText(ImVec2(mn.x + 196, mn.y + 3), ImGui::GetColorU32(ImGuiCol_TextDisabled), all[(std::size_t)i].blurb);
+                ImGui::PopID();
+            }
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::Dummy(ImVec2(0, 6));
+    const bool can = plan.ok();
+    ImGui::BeginDisabled(!can);
+    ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+    const bool pressed = ImGui::Button("Create project", ImVec2(170, 32));
+    ImGui::PopStyleColor(4);
+    ImGui::EndDisabled();
+    if (!can && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", plan.Problem().c_str());
+    return pressed && can;
+}
+
+// File > New Project...
+static void DrawNewProjectDialog(EditorState& ed) {
+    if (g_openNewProjectDialog) {
+        g_openNewProjectDialog = false;
+        g_npForm.loc[0] = '\0';   // start from the folder the last project went to
+        NewProjectPlan(g_npForm, true);
+        ImGui::OpenPopup("New Project");
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(680, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(680, 0), ImVec2(680, ImGui::GetMainViewport()->Size.y - 24.0f));
+    if (!ImGui::BeginPopupModal("New Project", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) return;
+    ImGui::TextWrapped("A project is a folder with your scenes, scripts and assets. It opens here when it is made.");
+    ImGui::Dummy(ImVec2(0, 4));
+    const bool create = DrawNewProjectForm(g_npForm);
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(100, 32)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
+    if (create) {
+        const std::string root = g_npForm.plan.root.string();
+        const std::string tpl = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        ImGui::CloseCurrentPopup();
+        RunAfterSavePrompt(ed, "creating the new project", [root, tpl] { g_newProjectRoot = root; g_newProjectTemplate = tpl; });
+    }
+    ImGui::EndPopup();
+}
+
+// The editor always works inside a project. Opened without one (not from the launcher's Create page, or the
+// project was moved), a chooser that can't be dismissed asks for one: a recent project, a project folder, or a
+// new project. (OKAY_ALLOW_NO_PROJECT=1 skips it for tools and tests.)
+void DrawProjectGate(EditorState& ed) {
+    static const bool allow = std::getenv("OKAY_ALLOW_NO_PROJECT") != nullptr;
+    if (allow || !ed.projectDir().empty() || !g_openScenePath.empty() || !g_newProjectRoot.empty() ||
+        !g_newProjectTemplate.empty() || ed.isPlaying())
+        return;
+    namespace fs = std::filesystem;
+    ImGui::OpenPopup("Open a project");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(680, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(680, 0), ImVec2(680, ImGui::GetMainViewport()->Size.y - 24.0f));
+    if (!ImGui::BeginPopupModal("Open a project", nullptr,
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize))
+        return;
+    ImGui::TextWrapped("OkaySpace works in projects: a folder with your scenes, scripts and assets. "
+                       "Open one, or make a new one, to start.");
+    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::TextDisabled("RECENT PROJECTS");
+    int shown = 0;
+    std::string removeScene;
+    const int recentRows = (int)std::min<std::size_t>(g_recent.size(), 6);
+    const bool recentChild = recentRows > 0;
+    if (recentChild) ImGui::BeginChild("##recentprojects", ImVec2(0, (float)std::min(recentRows, 3) * 38.0f + 2.0f));
+    for (const std::string& r : g_recent) {
+        if (shown >= 6) break;
+        std::error_code ec;
+        const bool exists = fs::exists(fs::path(r), ec);
+        const fs::path root = ProjectRootOfScene(r);
+        ImGui::PushID(shown++);
+        const std::string label = root.filename().string();
+        const float rowW = ImGui::GetContentRegionAvail().x;
+        ImGui::BeginDisabled(!exists);
+        const bool open = ImGui::Selectable(("##rp" + label).c_str(), false, 0, ImVec2(exists ? 0 : rowW - 90, 34));
+        ImGui::EndDisabled();
+        if (open) g_openScenePath = r;
+        const ImVec2 mn = ImGui::GetItemRectMin();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 textCol = ImGui::GetColorU32(exists ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+        dl->AddText(ImVec2(mn.x + 6, mn.y + 2), textCol, label.c_str());
+        if (!exists) {   // moved or deleted: say so, and let it be removed from the list
+            const float lw = ImGui::CalcTextSize(label.c_str()).x;
+            dl->AddText(ImVec2(mn.x + 6 + lw + 10, mn.y + 2), ImGui::GetColorU32(ImVec4(0.96f, 0.55f, 0.50f, 1.0f)), "missing");
+        }
+        dl->AddText(ImVec2(mn.x + 6, mn.y + 18), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                    FitPathEnd(root.string(), rowW - 20 - (exists ? 0 : 90)).c_str());
+        if (!exists) {
+            ImGui::SameLine();
+            if (ImGui::Button("Remove", ImVec2(80, 34))) removeScene = r;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forget this project (its files, if any, are not touched)");
+        }
+        ImGui::PopID();
+    }
+    if (recentChild) ImGui::EndChild();
+    if (!removeScene.empty()) { g_recent.erase(std::remove(g_recent.begin(), g_recent.end(), removeScene), g_recent.end()); SaveRecent(); }
+    if (!shown) ImGui::TextDisabled("  None yet.");
+    ImGui::Dummy(ImVec2(0, 4));
+    if (ImGui::Button("Open a project folder\xE2\x80\xA6", ImVec2(220, 30))) OpenProjectFolderDialog(ed, DefaultProjectsLocation());
+    ImGui::Dummy(ImVec2(0, 8));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextDisabled("NEW PROJECT");
+    if (DrawNewProjectForm(g_npForm)) {
+        g_newProjectRoot = g_npForm.plan.root.string();
+        g_newProjectTemplate = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
+    if (!g_openScenePath.empty() || !g_newProjectRoot.empty()) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+// What the launcher (or the chooser / File menu) asked for, applied on the first frames.
+void DrawNewProjectPopup(EditorState& ed) {
+    namespace fs = std::filesystem;
+    // --open "<scene>": open an existing project (the launcher's list, a recent one, a folder).
+    if (!g_openScenePath.empty()) {
+        const std::string p = g_openScenePath;
+        g_openScenePath.clear();
+        std::string err;
+        if (ed.Load(p, &err)) {
+            AddRecent(p);
+            // Root the Project panel at the project folder (the scene's dir, or its parent when the scene lives in <root>/Assets).
+            const fs::path dir = ProjectRootOfScene(p);
+            std::error_code ec;
+            if (!dir.empty() && fs::is_directory(dir, ec)) ed.setProjectDir(dir.string());
+            ConsoleLog("Opened " + p);
+        } else ShowErrorPopup("Couldn't open the project", "\"" + p + "\" could not be opened: " + err + "\n\nThe scene you had open is still open.");
+        return;
+    }
+    if (g_newProjectRoot.empty() && g_newProjectTemplate.empty()) return;
+
+    const TplFn fn = TemplateFn(g_newProjectTemplate);
+    g_newProjectTemplate.clear();
     if (g_newProjectRoot.empty()) {           // template only: load it in place
         (ed.*fn)();
         return;
@@ -16941,34 +17055,32 @@ void DrawNewProjectPopup(EditorState& ed) {
     g_newProjectRoot.clear();
     std::string name = root.filename().string();
     if (name.empty()) { root = root.parent_path(); name = root.filename().string(); }
-    if (name.empty()) name = "MyGame";
-    fs::path base = root.parent_path().empty() ? fs::path(".") : root.parent_path();
-    std::error_code ec;
-    // Every project gets its OWN folder: if <root> already holds a used project
-    // (or clutter), create a fresh sibling (Name-2, Name-3, ...) instead of
-    // silently adopting an existing Assets tree.
-    auto looksUsed = [&](const fs::path& r) {
-        if (!fs::exists(r, ec)) return false;
-        if (!fs::is_directory(r, ec)) return true;               // a file is in the way
-        fs::path assets = r / "Assets";
-        if (!fs::exists(assets, ec)) return !fs::is_empty(r, ec); // non-project clutter
-        return !fs::is_empty(assets, ec);                         // a project with files
-    };
-    std::string finalName = name;
-    for (int n = 2; looksUsed(root) && n < 1000; ++n) {
-        finalName = name + "-" + std::to_string(n);
-        root = base / finalName;
+    // The same checks as the form: a name or place that can't be used is said so, and nothing is made.
+    const okayproj::Plan plan = okayproj::PlanProject(root.parent_path().empty() ? "." : root.parent_path().string(), name);
+    if (!plan.ok()) {
+        ShowErrorPopup("Couldn't create the project", plan.Problem() + "\n\nNothing was made.");
+        return;
     }
-    fs::create_directories(root / "Assets", ec);
-    if (ec) { ConsoleLog("Could not create project folder: " + ec.message()); return; }
-    if (finalName != name)
-        ConsoleLog("'" + name + "' already has a project in it — created '" + finalName + "' instead.");
-    (ed.*fn)();                               // build the template scene
-    ed.setProjectDir(root.string());
-    g_project = ProjectSettings{};            // per-project settings must not leak
-    std::string sp = (root / "Assets" / (finalName + ".okayscene")).string();
-    if (ed.Save(sp)) ConsoleLog("Created project at " + root.string());
-    else ConsoleLog("Project folder made, but saving the scene failed.");
+    if (plan.renamed) ConsoleLog("'" + plan.name + "' already has a project in it: created '" + plan.folder + "' instead.");
+    // The project's own files: default settings and build settings under its name. (Written before the scene
+    // opens, so the project is complete from its first moment.)
+    const std::string folder = plan.folder;
+    auto writeFiles = [&folder](const std::string& rt, std::string& err) {
+        if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), WriteProjectSettings(ProjectSettings{}, ""), &err)) return false;
+        BuildProfile live;
+        live.productName = folder;
+        live.outputDir = "build/" + folder;
+        return okayproj::WriteTextAtomic(BuildLiveFile(rt), WriteBuildLive(live, ""), &err);
+    };
+    const EditorState::NewProjectResult r = ed.CreateProject(plan.root.string(), plan.folder, fn, writeFiles);
+    if (!r.ok) {
+        okayproj::RemoveEmptyShell(plan.root);   // a folder the launcher made for it, with nothing in it
+        ShowErrorPopup("Couldn't create the project", r.error + "\n\nNothing was changed: the scene you had open is still open.");
+        return;
+    }
+    AddRecent(r.scene);
+    g_lastSavedAt = SDL_GetTicks64();
+    ConsoleLog("Created project \"" + plan.folder + "\" at " + r.root);
 }
 
 // Offer to restore a newer "<scene>.autosave" recovery copy after a crash or
@@ -17065,7 +17177,7 @@ void DrawProjectSettings(EditorState& ed) {
     if (!g_showProjectSettings) return;
     ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Project Settings", &g_showProjectSettings)) {
-        ImGui::TextDisabled("Defaults a new build/scene inherits. Saved to project.okayproj.");
+        ImGui::TextDisabled("Defaults a new build/scene inherits. Saved with the project (project.okayproj) as you change it.");
         if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::InputText("Company##ps", g_project.company, sizeof(g_project.company));
             ImGui::SetNextItemWidth(160);
@@ -18167,9 +18279,11 @@ void DrawHierarchy(EditorState& ed) {
                     ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + path);
                 } else ConsoleLog("Prefab load failed: " + err);
             } else if (ext == ".okayscene") {
-                std::string err;
-                if (ed.Load(path, &err)) ConsoleLog("Opened " + path);
-                else ConsoleLog("Open failed: " + err);
+                RunAfterSavePrompt(ed, "opening another scene", [&ed, path] {
+                    std::string err;
+                    if (ed.Load(path, &err)) { ConsoleLog("Opened " + path); AddRecent(path); }
+                    else ShowErrorPopup("Couldn't open the scene", "\"" + path + "\": " + err + "\n\nThe scene you had open is still open.");
+                });
             }
         }
         ImGui::EndDragDropTarget();
@@ -42163,9 +42277,11 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
                 if (!placed) ConsoleLog("Prefab load failed: " + err);
             } else if (ext == ".okayscene") {
-                std::string err;
-                if (ed.Load(path, &err)) ConsoleLog("Opened " + path);
-                else ConsoleLog("Open failed: " + err);
+                RunAfterSavePrompt(ed, "opening another scene", [&ed, path] {
+                    std::string err;
+                    if (ed.Load(path, &err)) { ConsoleLog("Opened " + path); AddRecent(path); }
+                    else ShowErrorPopup("Couldn't open the scene", "\"" + path + "\": " + err + "\n\nThe scene you had open is still open.");
+                });
             } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
                 ed.PushUndo();
                 std::filesystem::path fp(path);
@@ -43403,7 +43519,14 @@ static bool SaveSceneTo(EditorState& ed, std::string p) {
     if (fs::path(p).extension() != ".okayscene") p += ".okayscene";
     std::error_code ec;
     if (fs::path(p).has_parent_path()) fs::create_directories(fs::path(p).parent_path(), ec);
-    if (!ed.Save(p)) { ConsoleLog("Couldn't save the scene to " + p, 2); return false; }
+    std::string why;
+    if (!ed.Save(p, &why)) {
+        g_lastSaveError = why.empty() ? "unknown error" : why;
+        ConsoleLog("Couldn't save the scene to " + p + ": " + g_lastSaveError, 2);
+        return false;
+    }
+    g_lastSaveError.clear();
+    g_lastSavedAt = SDL_GetTicks64();
     ConsoleLog("Saved scene: " + p);
     AddRecent(p); ed.Achievement("FIRST_SAVE");
     fs::remove(p + ".autosave", ec);
@@ -43415,15 +43538,16 @@ static void SaveSceneAsCmd(EditorState& ed) {
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::path(def).parent_path(), ec);   // so the dialog opens there
     const char* filt[1] = {"*.okayscene"};
-    if (const char* p = tinyfd_saveFileDialog("Save Scene As", def.c_str(), 1, filt, "OkaySpace scene")) SaveSceneTo(ed, p);
+    if (const char* p = tinyfd_saveFileDialog("Save Scene As", def.c_str(), 1, filt, "OkaySpace scene"))
+        if (!SaveSceneTo(ed, p)) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor.");
 }
 static void SaveSceneCmd(EditorState& ed) {
     if (ed.isPlaying()) { ConsoleLog("Stop Play first: saving now would save the running game, not your scene.", 1); return; }
     if (ed.path().empty()) { SaveSceneAsCmd(ed); return; }   // first save: choose where
-    SaveSceneTo(ed, ed.path());
+    if (!SaveSceneTo(ed, ed.path())) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor. Fix the problem (or use Save Scene As) and try again.");
 }
 static bool AnyUnsavedWork(EditorState& ed) {
-    if (ed.dirty) return true;
+    if (ed.HasUnsavedChanges()) return true;   // the flag, or the scene text differing from what was saved
     for (okay::ScriptComponent* t : g_scriptTabs)
         if (t && !t->Path().empty() && ScriptTabDirty(t)) return true;
     const auto& vg = okay::editor::vsed::State().g;
@@ -43436,6 +43560,7 @@ static bool AnyUnsavedWork(EditorState& ed) {
 // (quit / the launcher's save-before-update) stops Play first. False if anything failed.
 static bool SaveProject(EditorState& ed, bool interactive) {
     bool ok = true;
+    g_lastSaveError.clear();   // this save starts clean: the red "Save failed" in the status bar means THIS one failed
     std::vector<std::string> saved;
     bool sceneSkipped = false;
     if (ed.isPlaying()) {
@@ -43450,17 +43575,18 @@ static bool SaveProject(EditorState& ed, bool interactive) {
     for (okay::ScriptComponent* t : g_scriptTabs) {
         if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
         const char* live = PeekCodeBuffer(t);
-        std::ofstream f(t->Path(), std::ios::binary);
-        if (f && live) { f << live; g_scriptSaved[t] = live; ++scripts; }
-        else { ok = false; ConsoleLog("Couldn't save " + t->Path(), 2); }
+        std::string why;
+        if (live && okayproj::WriteTextAtomic(t->Path(), live, &why)) { g_scriptSaved[t] = live; ++scripts; }
+        else { ok = false; if (!why.empty()) g_lastSaveError = why; ConsoleLog("Couldn't save " + t->Path() + (why.empty() ? std::string() : ": " + why), 2); }
     }
     if (scripts) saved.push_back(std::to_string(scripts) + (scripts == 1 ? " script" : " scripts"));
     auto& vg = okay::editor::vsed::State().g;
     if (vg.dirty && !vg.path.empty()) {
         if (vg.save(vg.path)) saved.push_back("visual script"); else { ok = false; ConsoleLog("Couldn't save " + vg.path, 2); }
     }
-    SaveProjectSettings();
-    SaveBuildProfiles(ed);
+    if (!SaveProjectSettingsTo(g_settingsProjectDir)) { ok = false; ConsoleLog("Couldn't save the project settings: " + g_lastSaveError, 2); }
+    if (!SaveBuildProfiles(ed) || !SaveBuildLive(ed))  { ok = false; ConsoleLog("Couldn't save the build settings: " + g_lastSaveError, 2); }
+    NoteProjectFilesSaved();
     SaveCustomActions();
     SaveProjectViewPrefs();
     SavePluginPrefs();
@@ -43472,10 +43598,39 @@ static bool SaveProject(EditorState& ed, bool interactive) {
         for (std::size_t i = 0; i < saved.size(); ++i) msg += (i ? ", " : "") + saved[i];
         if (sceneSkipped) msg += ". (The scene wasn't saved while playing: stop Play, then save.)";
         ConsoleLog(msg, ok ? (sceneSkipped ? 1 : 0) : 2);
+        if (!ok) ShowErrorPopup("Not everything was saved", (g_lastSaveError.empty() ? std::string("The Console lists the files that could not be written.") : g_lastSaveError) +
+                                                            "\n\nNothing was lost: your changes are still open in the editor.");
     }
     return ok;
 }
 static bool SaveEverything(EditorState& ed) { return SaveProject(ed, false); }
+
+// Project settings and Build Settings are saved as they change, not only on Save Project: the Project
+// Settings window and the Build Settings dialog have no Save step to forget, and leaving the project (or
+// quitting) never loses an edit. Checked about once a second, written only when the text changed, and
+// never while a field is being typed in. `force` skips the wait (leaving, quitting).
+static void SyncProjectFiles(EditorState& ed, bool force = false) {
+    static Uint32 last = 0;
+    const Uint32 now = SDL_GetTicks();
+    if (!force && (now - last < 1000 || ImGui::IsAnyItemActive())) return;
+    last = now;
+    if (ed.projectDir().empty()) return;   // no project: nothing of ours to keep up to date
+    if (g_savedProjectText.empty()) { NoteProjectFilesSaved(); return; }
+    const std::string proj = WriteProjectSettings(g_project);
+    if (proj != g_savedProjectText) {
+        if (SaveProjectSettingsTo(g_settingsProjectDir)) g_savedProjectText = proj;
+        else if (force) ConsoleLog("Couldn't save the project settings: " + g_lastSaveError, 2);
+    }
+    const std::string prof = WriteBuildProfiles(g_buildProfiles), live = CurrentBuildLiveText();
+    if (prof != g_savedBuildProfilesText) {
+        if (SaveBuildProfiles(ed)) g_savedBuildProfilesText = prof;
+        else if (force) ConsoleLog("Couldn't save the build profiles: " + g_lastSaveError, 2);
+    }
+    if (live != g_savedBuildLiveText) {
+        if (SaveBuildLive(ed)) g_savedBuildLiveText = live;
+        else if (force) ConsoleLog("Couldn't save the build settings: " + g_lastSaveError, 2);
+    }
+}
 
 } // namespace oked
 using namespace oked;
@@ -43987,10 +44142,20 @@ int main(int argc, char** argv) {
     SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
-    // Load the project's settings early (project.okayproj in the working dir) so
-    // the loading screen can show the project's custom splash — logo, colours,
-    // accent. It's a pure file read, safe before ImGui/fonts.
-    LoadProjectSettings();
+    // Load the project's settings early (<project>/project.okayproj) so the loading screen can show
+    // the project's custom splash: logo, colours, accent. The project is the one being opened (--open
+    // gives its scene); a new project or none starts from the defaults. It's a pure file read, safe
+    // before ImGui/fonts.
+    {
+        std::string startDir;
+        if (!g_openScenePath.empty()) {
+            std::filesystem::path d = std::filesystem::path(g_openScenePath).parent_path();
+            if (d.filename() == "Assets") d = d.parent_path();
+            startDir = d.string();
+        }
+        LoadProjectSettingsFrom(startDir);
+        NoteProjectFilesSaved();
+    }
     // Decode the custom splash logo (if set) into an SDL texture for the splash.
     if (g_project.splashLogo[0]) {
         okay::Image img;
@@ -44202,6 +44367,18 @@ int main(int argc, char** argv) {
     // Start empty; the New Project chooser pops up on launch (2D / 3D / Empty).
     EditorState ed;
     g_previewEd = &ed;
+    // The project's own files follow the project: leaving one saves its settings and build settings,
+    // entering one reads that project's (or the defaults), so nothing leaks from one project into the next.
+    EditorState::onProjectChanged = [&ed](const std::string& oldDir, const std::string& newDir) {
+        std::error_code ec;
+        if (!oldDir.empty() && g_settingsProjectDir == oldDir && std::filesystem::is_directory(oldDir, ec)) {
+            SaveProjectSettingsTo(oldDir); SaveBuildProfilesTo(oldDir); SaveBuildLiveTo(oldDir);
+        }
+        LoadProjectSettingsFrom(newDir);
+        LoadBuildProfilesFrom(newDir);
+        NoteProjectFilesSaved();
+        (void)ed;
+    };
     {   // a request left over from an earlier session must not close this one
         std::error_code ec;
         std::filesystem::remove(LauncherIpcPath("okay_ipc_request.txt"), ec);
@@ -44697,16 +44874,21 @@ int main(int argc, char** argv) {
 
         // Autosave a crash-recovery sidecar ("<scene>.autosave") while editing —
         // never mid-Play, and without touching the real file or the dirty flag.
-        if (g_autosave && !ed.isPlaying() && ed.dirty && !ed.path().empty()) {
+        if (g_autosave && !ed.isPlaying() && !ed.path().empty()) {
             double t = SDL_GetTicks64() / 1000.0;
             if (t - g_lastAutosave > (double)g_autosaveInterval) {
                 g_lastAutosave = t;
-                if (SceneSerializer::SaveToFile(ed.scene(), ed.path() + ".autosave")) {
-                    g_autosaveStamp = t;
-                    ConsoleLog("Autosaved recovery copy: " + ed.path() + ".autosave");
+                // SyncDirty also finds an edit that forgot to raise the dirty flag (one serialization per interval).
+                if (ed.SyncDirty()) {
+                    std::string why;
+                    if (SceneSerializer::SaveToFile(ed.scene(), ed.path() + ".autosave", &why)) {
+                        g_autosaveStamp = t;
+                        ConsoleLog("Autosaved recovery copy: " + ed.path() + ".autosave");
+                    } else ConsoleLog("Autosave failed: " + why, 1);
                 }
             }
         }
+        SyncProjectFiles(ed);   // project + build settings follow their edits to disk
 
         // Pump audio while playing (stereo float, queued). Top the queue up to a
         // fixed ~70 ms rather than rendering dt worth, which drifts against the
@@ -44734,8 +44916,10 @@ int main(int argc, char** argv) {
         }
 
         // Keep the window title in sync with the scene + dirty state.
-        std::string title = "OkaySpace Editor  -  " + ed.scene().Name() +
-                            (ed.dirty ? " *" : "") + "   [v" OKAY_ENGINE_VERSION "]";
+        std::string title = "OkaySpace Editor  -  ";
+        if (!ed.projectDir().empty()) title += std::filesystem::path(ed.projectDir()).filename().string() + "  /  ";
+        title += ed.path().empty() ? ed.scene().Name() : std::filesystem::path(ed.path()).stem().string();
+        title += std::string(ed.dirty && !ed.isPlaying() ? " *" : "") + "   [v" OKAY_ENGINE_VERSION "]";
         if (title != lastTitle) { SDL_SetWindowTitle(window, title.c_str()); lastTitle = title; }
 
         // While the game is actually running, turn OFF ImGui keyboard navigation:
@@ -44821,53 +45005,23 @@ int main(int argc, char** argv) {
         HandleShortcuts(ed);
         DrawDockSpace(ed);
 
-        // Single-instance hand-off: a second launch (launcher "Open Editor" /
-        // "Open project" / "Create") routes its request here instead of opening
-        // a rival window. Apply it to THIS window, guarding unsaved work.
+        // Single-instance hand-off: a second launch (launcher "Open Editor" / "Open project" / "Create")
+        // routes its request here instead of opening a rival window. It is applied to THIS window, after the
+        // same Save / Don't Save / Cancel question every other way of replacing the open scene asks.
         {
-            static bool s_handoffConfirm = false;
-            static std::string s_hoRoot, s_hoTpl, s_hoOpen;
             bool raise = false;
             if (PollHandoff(raise)) {
-                if (ed.dirty) {   // stash the request and ask before replacing the scene
-                    s_hoRoot = g_newProjectRoot; s_hoTpl = g_newProjectTemplate; s_hoOpen = g_openScenePath;
-                    g_newProjectRoot.clear(); g_newProjectTemplate.clear(); g_openScenePath.clear();
-                    s_handoffConfirm = true;
-                }
-                // Not dirty: leave the g_* request set — DrawNewProjectPopup applies it below.
+                const std::string hoRoot = g_newProjectRoot, hoTpl = g_newProjectTemplate, hoOpen = g_openScenePath;
+                g_newProjectRoot.clear(); g_newProjectTemplate.clear(); g_openScenePath.clear();
+                RunAfterSavePrompt(ed, !hoOpen.empty() ? "opening another project" : "creating a new project",
+                                   [hoRoot, hoTpl, hoOpen] { g_newProjectRoot = hoRoot; g_newProjectTemplate = hoTpl; g_openScenePath = hoOpen; },
+                                   // Cancel: the empty folder the launcher made for a new project must not be left behind.
+                                   [hoRoot] { if (!hoRoot.empty()) okayproj::RemoveEmptyShell(hoRoot); });
             }
             if (raise && window) { SDL_RestoreWindow(window); SDL_RaiseWindow(window); SDL_ShowWindow(window); }
-            if (s_handoffConfirm) {
-                ImGui::OpenPopup("Switch project?");
-                if (ImGui::BeginPopupModal("Switch project?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    ImGui::TextWrapped("You have unsaved changes in the current scene.");
-                    ImGui::TextDisabled("%s", !s_hoOpen.empty() ? s_hoOpen.c_str()
-                                              : (!s_hoRoot.empty() ? s_hoRoot.c_str() : "another project"));
-                    ImGui::Separator();
-                    auto applyHandoff = [&]() {
-                        g_newProjectRoot = s_hoRoot; g_newProjectTemplate = s_hoTpl; g_openScenePath = s_hoOpen;
-                        s_hoRoot.clear(); s_hoTpl.clear(); s_hoOpen.clear();
-                        s_handoffConfirm = false; ImGui::CloseCurrentPopup();
-                    };
-                    if (ImGui::Button("Save & Switch", ImVec2(130, 0))) {
-                        std::string p = ed.path();
-                        if (!p.empty() && ed.Save(p)) { AddRecent(p); ed.dirty = false; }
-                        else ConsoleLog("Scene was never saved — switching without saving.", 1);
-                        ed.dirty = false; applyHandoff();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Switch Anyway", ImVec2(130, 0))) { ed.dirty = false; applyHandoff(); }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(90, 0))) {
-                        s_hoRoot.clear(); s_hoTpl.clear(); s_hoOpen.clear();
-                        s_handoffConfirm = false; ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndPopup();
-                }
-            }
         }
 
-        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); }
+        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawErrorPopup(); }
         {   // dev screenshot hook: OKAY_UI_FOCUS="Inspector,Project" brings those dock tabs forward
             static int s_focusFrames = 0;
             if (s_focusFrames < 90) ++s_focusFrames;
@@ -45339,6 +45493,7 @@ int main(int argc, char** argv) {
         if (updater::pendingQuit) running = false; // auto-update relaunched
     }
     FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first
+    SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();

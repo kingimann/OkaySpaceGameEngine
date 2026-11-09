@@ -5,6 +5,7 @@
 #include "test_framework.hpp"
 #include "EditorState.hpp"
 #include "okay/Core/Clock.hpp"
+#include "okay/Core/FrameOverlay.hpp"
 
 using namespace okay;
 using okay::editor::EditorState;
@@ -324,6 +325,208 @@ int main() {
         const int n5 = (int)s4.Objects().size();
         CHECK(ed4.DuplicateSelected() != nullptr);
         CHECK((int)s4.Objects().size() == n5 + 3);                     // PA and its two children, once
+    }
+
+    // ---- Slow motion: the toolbar's Slower / Faster / 1x buttons ---------------------------------------------
+    {
+        Fresh();
+        EditorState ed;
+        Probe* p = AddProbe(ed);
+        CHECK(ed.debugTimeScale() == 1.0f);
+        CHECK(ed.StepDebugTimeScale(-1) == 1.0f && ed.debugTimeScale() == 1.0f);   // greyed out in edit mode: nothing happens
+        ed.Play();
+        CHECK(ed.StepDebugTimeScale(-1) == 0.5f);
+        CHECK(ed.StepDebugTimeScale(-1) == 0.25f);
+        ed.PlayFrame(0.016, false);
+        CHECK_NEAR(p->lastDt, 0.016 * 0.25, 1e-7);                                  // the whole game runs at a quarter
+        CHECK(ed.StepDebugTimeScale(+1) == 0.5f && ed.StepDebugTimeScale(+1) == 1.0f && ed.StepDebugTimeScale(+1) == 2.0f);
+        ed.PlayFrame(0.016, false);
+        CHECK_NEAR(p->lastDt, 0.032, 1e-7);
+        for (int i = 0; i < 20; ++i) ed.StepDebugTimeScale(+1);
+        CHECK(ed.debugTimeScale() == 32.0f);                                        // the last preset is the end
+        for (int i = 0; i < 20; ++i) ed.StepDebugTimeScale(-1);
+        CHECK(ed.debugTimeScale() == 0.05f);
+        ed.ResetDebugTimeScale();
+        CHECK(ed.debugTimeScale() == 1.0f);
+        ed.PlayFrame(0.016, false);
+        CHECK_NEAR(p->lastDt, 0.016, 1e-7);
+        // Time.timeScale (the game's own) is a separate thing and is left alone.
+        ed.StepDebugTimeScale(-1);
+        CHECK(Time::BaseTimeScale() == 1.0f);
+        // Stop and Play both put the scale back: a new Play never starts in slow motion.
+        ed.Stop();
+        CHECK(ed.debugTimeScale() == 1.0f);
+        ed.Play();
+        ed.StepDebugTimeScale(+1);
+        CHECK(ed.debugTimeScale() == 2.0f);
+        ed.Stop();
+        ed.Play();
+        CHECK(ed.debugTimeScale() == 1.0f);
+        ed.Stop();
+    }
+
+    // ---- Run N frames, then pause ---------------------------------------------------------------------------
+    {
+        Fresh();
+        EditorState ed;
+        Probe* p = AddProbe(ed);
+        int done = 0;
+        bool toolbarPaused = false;                    // main.cpp's g_paused
+        ed.onRunFramesDone = [&] { ++done; toolbarPaused = true; };
+        CHECK(!ed.RunFrames(5));                       // not playing
+        ed.Play();
+        CHECK(!ed.RunFrames(0) && !ed.RunFrames(-3));
+        ed.PlayFrame(0.016, false);
+        CHECK(p->updates == 1 && ed.PendingFrames() == 0);
+        CHECK(ed.RunFrames(3, 1.0f / 30.0f));
+        CHECK(ed.PendingFrames() == 3);                // the Pause button shows "3"
+        ed.PlayFrame(0.5, false);                      // the real time is ignored: each run frame is exactly 1/30 s
+        CHECK(p->updates == 2 && ed.PendingFrames() == 2);
+        CHECK_NEAR(p->lastDt, 1.0 / 30.0, 1e-7);
+        ed.PlayFrame(0.001, false);
+        CHECK(done == 0 && !ed.paused());
+        ed.PlayFrame(0.001, false);                    // the third and last frame of the run
+        CHECK(p->updates == 4);                        // frames 2, 3 and 4: three of them
+        CHECK(done == 1 && toolbarPaused);             // the toolbar flag follows
+        CHECK(ed.paused() && Game::IsPausedBy(EditorState::kPauseReason));   // the editor's own pause, not "manual"
+        CHECK(ed.PendingFrames() == 0);
+        ed.PlayFrame(0.016, false);
+        CHECK(p->updates == 4);                        // frozen
+        // The Resume button (SetPaused(false)) releases it: the reason is the editor's.
+        ed.SetPaused(false);
+        CHECK(!ed.paused() && !Game::Paused());
+        ed.PlayFrame(0.016, false);
+        CHECK(p->updates == 5);
+        CHECK(done == 1);
+
+        // Already paused: the same call steps the frames and stays paused (the editor lifts its pause around them).
+        ed.SetPaused(true);
+        CHECK(ed.RunFrames(2, 1.0f / 60.0f));
+        CHECK(ed.PendingFrames() == 2);
+        ed.PlayFrame(0.016, false);
+        ed.PlayFrame(0.016, false);
+        ed.PlayFrame(0.016, false);
+        CHECK(p->updates == 7 && !p->pausedSeen);
+        CHECK(ed.paused() && ed.PendingFrames() == 0);
+        // Stop drops a run that is still going.
+        ed.SetPaused(false);
+        CHECK(ed.RunFrames(100));
+        CHECK(ed.PendingFrames() == 100);
+        ed.PlayFrame(0.016, false);
+        ed.Stop();
+        CHECK(ed.PendingFrames() == 0 && !ed.paused());
+        ed.Play();
+        ed.PlayFrame(0.016, false);
+        CHECK(ed.PendingFrames() == 0);
+        ed.Stop();
+    }
+
+    // ---- Hierarchy "Delete Children": empties a container, keeps the object, one undo step -------------------------
+    {
+        Fresh();
+        EditorState ed;
+        GameObject* box = ed.CreateEmpty("Box");
+        GameObject* a = ed.CreateEmpty("a");
+        GameObject* b = ed.CreateEmpty("b");
+        GameObject* deep = ed.CreateEmpty("deep");
+        a->transform->SetParent(box->transform, false);
+        b->transform->SetParent(box->transform, false);
+        deep->transform->SetParent(a->transform, false);
+        GameObject* other = ed.CreateEmpty("other");
+        const int before = (int)ed.scene().Objects().size();
+        ed.Select(other);
+        const int undoBefore = ed.UndoDepth();
+        CHECK(ed.DeleteChildrenOfSelected() == 0 && ed.UndoDepth() == undoBefore);   // a leaf: nothing to do, no undo step
+        ed.Select(box);
+        ed.ToggleSelect(a);                           // a child is selected as well: it must not dangle afterwards
+        CHECK(ed.MultiSelection().size() == 2);
+        CHECK(ed.DeleteChildrenOfSelected() == 3);    // a and b below Box (2), then deep below a (1): a was already queued, deep is not counted twice
+        CHECK(ed.scene().Objects().size() == (std::size_t)before - 3);
+        CHECK(ed.scene().Find("Box") == box && box->transform->ChildCount() == 0);
+        CHECK(ed.scene().Find("a") == nullptr && ed.scene().Find("b") == nullptr && ed.scene().Find("deep") == nullptr);
+        CHECK(ed.selected() == box && ed.MultiSelection().size() == 1);   // the object stays selected, its child left the selection
+        CHECK(ed.dirty && ed.UndoDepth() == undoBefore + 1);
+        CHECK(ed.Undo());                             // one step brings the whole subtree back
+        CHECK(ed.scene().Find("Box") != nullptr && ed.scene().Find("a") != nullptr && ed.scene().Find("deep") != nullptr);
+        GameObject* box2 = ed.scene().Find("Box");
+        CHECK(box2 && box2->transform->ChildCount() == 2);
+    }
+
+    // ---- The Game view's Stats overlay text: the loop's lines (while playing), then the scene's counts --------
+    {
+        Fresh();
+        EditorState ed;
+        ed.scene().CreateGameObject("a"); ed.scene().CreateGameObject("b");
+        auto edit = ed.StatsLines();
+        CHECK(!edit.empty() && edit[0].rfind("Objects: 2", 0) == 0);              // edit mode: no frame lines, only counts
+        for (const std::string& l : edit) CHECK(l.find(" fps") == std::string::npos);
+        ed.Play();
+        for (int i = 0; i < 10; ++i) ed.PlayFrame(0.016, false);
+        const auto play = ed.StatsLines();
+        CHECK(play.size() > edit.size());
+        CHECK(play[0].find(" fps") != std::string::npos);                         // FrameOverlay's first line
+        bool hasObjects = false, hasTime = false;
+        for (const std::string& l : play) { hasObjects |= l.rfind("Objects: ", 0) == 0; hasTime |= l.rfind("time x", 0) == 0; }
+        CHECK(hasObjects && hasTime);
+        CHECK(FrameOverlay::Lines(ed.playLoop()) == std::vector<std::string>(play.begin(), play.begin() + (long)FrameOverlay::Lines(ed.playLoop()).size()));
+        // The graph: a fixed number of points, newest last, 0 padded in front.
+        const auto g = ed.RecentFps(90);
+        CHECK(g.size() == 90 && g.front() == 0.0f && g.back() > 50.0f && g.back() < 70.0f);   // 16 ms frames = 62.5 fps
+        ed.PlayFrame(0.033, false);
+        CHECK_NEAR(ed.RecentFps(90).back(), 1.0 / 0.033, 0.05);
+        // The slow-motion factor and a pause show in the text (the loop's time line).
+        ed.StepDebugTimeScale(-1);
+        ed.SetPaused(true);
+        ed.PlayFrame(0.016, false);
+        bool slow = false, paused = false;
+        for (const std::string& l : ed.StatsLines()) { slow |= l.find("debug x0.5") != std::string::npos; paused |= l.rfind("paused by", 0) == 0; }
+        CHECK(slow && paused);
+        ed.Stop();
+    }
+
+    // ---- The one-line FPS label beside the PLAYING pill: the real frame rate, a stall reads as a stall ---------
+    {
+        Fresh();
+        EditorState ed;
+        CHECK(ed.FpsLabel() == "FPS --");                 // no frame yet
+        ed.Play();
+        CHECK(ed.FpsLabel() == "FPS --");
+        for (int i = 0; i < 10; ++i) ed.PlayFrame(0.016, false);
+        const int steady = std::atoi(ed.FpsLabel().c_str() + 4);   // after "FPS "
+        CHECK(ed.FpsLabel().rfind("FPS ", 0) == 0 && steady >= 62 && steady <= 63);
+        ed.PlayFrame(5.0, false);                          // a 5 s stall: the game steps 0.1 s, the label says what happened
+        CHECK(std::atoi(ed.FpsLabel().c_str() + 4) < 5);
+        ed.Stop();
+    }
+
+    // ---- The Timers overlay text: the scene's scheduler and tweens, shortened to fit ---------------------------
+    {
+        Fresh();
+        EditorState ed;
+        auto lines = ed.TimerLines();
+        CHECK((lines == std::vector<std::string>{"Scheduler: 0 tasks", "Tweens: 0"}));
+        int fired = 0;
+        ed.scene().scheduler().Invoke(5.0f, [&] { ++fired; });
+        ed.scene().scheduler().InvokeRepeating(0.5f, [&] { ++fired; });
+        lines = ed.TimerLines();
+        CHECK(lines.size() >= 3 && lines[0].rfind("Scheduler: 2 tasks", 0) == 0);
+        CHECK(lines[1].find("next due in 0.5s") != std::string::npos);
+        for (const std::string& l : lines) CHECK(l.size() <= 78);
+        const auto cut = ed.TimerLines(20);
+        for (const std::string& l : cut) CHECK(l.size() <= 20);
+        CHECK(cut[0].size() == 20 && cut[0].compare(17, 3, "...") == 0);
+        // The process-wide scheduler is listed too, once it holds a timer (and not before).
+        for (const std::string& l : lines) CHECK(l.rfind("Global", 0) != 0);
+        const auto h = Scheduler::Global().Invoke(100.0f, [] {});
+        lines = ed.TimerLines();
+        bool global = false;
+        for (const std::string& l : lines) global |= l.rfind("Global Scheduler: 1 task", 0) == 0;
+        CHECK(global);
+        Scheduler::Global().Cancel(h);
+        CHECK(ed.TimerLines().size() == 4);                                        // back to the scene's lines only
+        for (const std::string& l : ed.TimerLines()) CHECK(l.rfind("Global", 0) != 0);
+        ed.scene().scheduler().Clear();
+        CHECK((ed.TimerLines() == std::vector<std::string>{"Scheduler: 0 tasks", "Tweens: 0"}));
     }
 
     // ---- An old project file's tag lines load unchanged into the project's tag list ----------------------------

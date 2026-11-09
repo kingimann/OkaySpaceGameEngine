@@ -857,6 +857,7 @@ struct Runtime {
     /// Advance scheduled timers by dt and invoke any that come due. Once-timers
     /// are removed after firing; repeating ones re-arm by their interval.
     void TickTimers(float dt) {
+        if (!(dt > 0.0f) || !std::isfinite(dt)) dt = 0.0f;   // a NaN or negative frame time would stop every timer for good
         std::vector<std::string> due;
         const float kEps = 1e-4f;                // absorb fp dust at the boundary
         for (auto& t : timers) {
@@ -3728,12 +3729,15 @@ struct OkayScriptVM::Impl {
         // "fn") repeats; cancel_timers() clears them. fn is a function in this
         // script. Great for spawn waves, respawns, cooldowns, blinking text.
         b["after"] = [this](std::vector<Value>& a) {
-            if (a.size() >= 2) rt.timers.push_back({a[0].AsFloat(), 0.0f, a[1].AsString(), false});
+            if (a.size() >= 2) {
+                float wait = a[0].AsFloat(); if (!(wait > 0.0f)) wait = 0.0f;   // negative and NaN fire on the next tick
+                rt.timers.push_back({wait, 0.0f, a[1].AsString(), false});
+            }
             return Value{};
         };
         b["every"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) {
-                float iv = a[0].AsFloat(); if (iv <= 0.0f) iv = 0.0001f;
+                float iv = a[0].AsFloat(); if (!(iv > 0.0001f)) iv = 0.0001f;   // zero, negative and NaN: the shortest interval
                 rt.timers.push_back({iv, iv, a[1].AsString(), false});
             }
             return Value{};
@@ -9251,6 +9255,12 @@ struct OkayScriptVM::Impl {
         b["tween_unscaled"] = setting([](Tweener& t, std::vector<Value>& a) { t.SetUpdate(a.size() > 1 ? a[1].AsBool() : true); });
         // tween_clock(id, "ui"): follow a named clock channel ("game", "ui", "cinematic", your own); "" = scene time.
         b["tween_clock"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetClock(a.size() > 1 ? a[1].AsString() : std::string{}); });
+        // tween_tag(id, "menu"): a group label for tween_kill_tag / tween_pause_tag / tween_play_tag.
+        b["tween_tag"]      = setting([](Tweener& t, std::vector<Value>& a) { t.SetTag(a.size() > 1 ? a[1].AsString() : std::string{}); });
+        // tween_speed_based(id): the duration you gave is a speed (units a second); the tween lasts distance / speed.
+        b["tween_speed_based"] = setting([](Tweener& t, std::vector<Value>& a) { t.SetSpeedBased(a.size() > 1 ? a[1].AsBool() : true); });
+        // tween_decay(id, rate): how a punch or shake dies away (0 = straight fade, 6 = snappy).
+        b["tween_decay"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetDecay(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
         b["tween_set_id"]   = setting([](Tweener& t, std::vector<Value>& a) { t.SetId(a.size() > 1 ? a[1].AsString() : std::string{}); });
         b["tween_from"]     = setting([](Tweener& t, std::vector<Value>&) { t.From(); });
         b["tween_relative"] = setting([](Tweener& t, std::vector<Value>&) { t.SetRelative(); });
@@ -9299,6 +9309,24 @@ struct OkayScriptVM::Impl {
                 return Value{(float)n};
             };
         };
+        // Everything with a tag set by tween_tag, scene-wide: tween_kill_tag("menu"[, complete]), pause, play, complete.
+        auto byTag = [tweens](int op) {
+            return [tweens, op](std::vector<Value>& a) -> Value {
+                TweenManager* m = tweens(); if (!m || a.empty()) return Value{0.0f};
+                const std::string tag = a[0].AsString();
+                const int n = op == 0 ? m->KillByTag(tag, a.size() > 1 && a[1].AsBool())
+                            : op == 1 ? m->PauseByTag(tag) : op == 2 ? m->PlayByTag(tag) : m->CompleteByTag(tag);
+                return Value{(float)n};
+            };
+        };
+        b["tween_kill_tag"]     = byTag(0);
+        b["tween_pause_tag"]    = byTag(1);
+        b["tween_play_tag"]     = byTag(2);
+        b["tween_complete_tag"] = byTag(3);
+        b["tween_rewind_id"] = [tweens](std::vector<Value>& a) -> Value {
+            TweenManager* m = tweens(); if (!m || a.empty()) return Value{0.0f};
+            return Value{(float)m->Rewind(a[0].AsString())};
+        };
         b["tween_kill_id"]    = byId(0);
         b["tween_pause_id"]   = byId(1);
         b["tween_play_id"]    = byId(2);
@@ -9320,6 +9348,8 @@ struct OkayScriptVM::Impl {
         };
         b["seq_append"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Append(t); });
         b["seq_join"]   = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Join(t); });
+        b["seq_prepend"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Prepend(t); });
+        b["seq_join_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) { if (auto f = fnFromArg(a, 1)) s.JoinCallback(f); });
         b["seq_insert"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 2)) s.Insert(a[1].AsFloat(), t); });
         b["seq_interval"] = seqOp([](TweenSequence& s, std::vector<Value>& a) { s.AppendInterval(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
         b["seq_prepend_interval"] = seqOp([](TweenSequence& s, std::vector<Value>& a) { s.PrependInterval(a.size() > 1 ? a[1].AsFloat() : 0.0f); });

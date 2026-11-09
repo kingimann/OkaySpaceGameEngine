@@ -1621,3 +1621,24 @@ add_test(NAME prefab_apply_revert COMMAND test_prefab_apply_revert)
 add_executable(test_property_registry test_property_registry.cpp)
 target_link_libraries(test_property_registry PRIVATE okay::engine)
 add_test(NAME property_registry COMMAND test_property_registry)
+# ---- Core runtime foundations (docs/core_runtime.md) ----
+# Job system: pool, task graph, ParallelFor / ParallelReduce, cancellation, shutdown, main-thread queue.
+# Takes an optional repeat count: `test_jobs 20` runs the threaded suites 20 times to shake out races.
+add_executable(test_jobs test_jobs.cpp)
+target_link_libraries(test_jobs PRIVATE okay::engine)
+add_test(NAME jobs COMMAND test_jobs 3)
+
+# FrameArena, PoolAllocator, SlotMap / Handle, StringId.
+add_executable(test_arena_handles test_arena_handles.cpp)
+target_link_libraries(test_arena_handles PRIVATE okay::engine)
+add_test(NAME arena_handles COMMAND test_arena_handles)
+
+# Console variables: parsing, ranges, flags, callbacks, command line, console lines, Prefs round trip.
+add_executable(test_cvars test_cvars.cpp)
+target_link_libraries(test_cvars PRIVATE okay::engine)
+add_test(NAME cvars COMMAND test_cvars)
+
+# Frame delta clamp, frame timer and frame limiter.
+add_executable(test_frame_pacing test_frame_pacing.cpp)
+target_link_libraries(test_frame_pacing PRIVATE okay::engine)
+add_test(NAME frame_pacing COMMAND test_frame_pacing)

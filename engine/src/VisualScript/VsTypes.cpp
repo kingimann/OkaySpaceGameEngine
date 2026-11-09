@@ -25,7 +25,7 @@ const Row kRows[] = {
         {"OnUpdate", false, "", ""},
         {"Branch", true, "B", ""},
         {"Sequence", true, "", ""},
-        {"Once", true, "", ""},
+        {"Once", true, "B", ""},
         {"Timer", true, "", ""},
         {"GetVar", false, "", "A"},
         {"SetVar", true, "A", ""},
@@ -178,7 +178,7 @@ const Row kRows[] = {
         {"Repeat", true, "", ""},
         {"FlipFlop", true, "", ""},
         {"Gate", true, "B", ""},
-        {"DoN", true, "", "N"},
+        {"DoN", true, "B", "N"},
         {"SwitchInt", true, "N", ""},
         {"Toggle", true, "", ""},
         {"RandomInt", false, "NN", "N"},
@@ -332,6 +332,20 @@ const Row kRows[] = {
         // Loops, lists, scene / global variables, Variable Changed events.
         {"While", true, "B", ""},
         {"ForEach", true, "L", "AN"},
+        {"ForEachMap", true, "M", "TA"},
+        {"NewMap", false, "", "M"},
+        {"MapSet", true, "MTA", ""},
+        {"MapRemove", true, "MT", ""},
+        {"MapGet", false, "MT", "AB"},
+        {"MapHas", false, "MT", "B"},
+        {"MapKeys", false, "M", "L"},
+        {"MapValues", false, "M", "L"},
+        {"SwitchString", true, "A", ""},
+        {"SwitchCases", true, "N", ""},
+        {"LatchGate", true, "BBB", "B"},
+        {"IsValid", false, "A", "B"},
+        {"CallScript", true, "A", "A"},
+        {"RunGraph", true, "", ""},
         {"Break", true, "", ""},
         {"Continue", true, "", ""},
         {"NewList", false, "", "L"},
@@ -488,6 +502,7 @@ const char* PinTypeName(PinType t) {
         case PinType::Vec3:   return "Vector3";
         case PinType::Object: return "Object";
         case PinType::List:   return "List";
+        case PinType::Map:    return "Map";
     }
     return "?";
 }
@@ -499,6 +514,8 @@ std::string ConversionHint(PinType from, PinType to) {
     if (from == PinType::Text && to == PinType::Bool) return "compare it with Equals, or check Text Length";
     if (from == PinType::Object && (to == PinType::Vec3)) return "use Object Position (or Get Position with this object as Target)";
     if (from == PinType::Object && to == PinType::Number) return "use Distance To, or Get X / Y / Z with this object as Target";
+    if (from == PinType::Map && to == PinType::List) return "use Map Keys or Map Values";
+    if (from == PinType::List && to == PinType::Map) return "build a map with New Map and Map Set";
     if (from == PinType::List && to == PinType::Number) return "use the Count output";
     if (from == PinType::List && to == PinType::Object) return "use the Nearest output";
     if (to == PinType::Object) return "wire an object (Self, Other Object, Find Object, Spawn...) or type a name";
@@ -526,6 +543,7 @@ bool TypeFromName(std::string t, PinType& out) {
     if (t == "vector3" || t == "vec3" || t == "v") { out = PinType::Vec3; return true; }
     if (t == "object" || t == "gameobject" || t == "o") { out = PinType::Object; return true; }
     if (t == "list" || t == "l") { out = PinType::List; return true; }
+    if (t == "map" || t == "dictionary" || t == "m") { out = PinType::Map; return true; }
     return false;
 }
 bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std::string* err, const char* what) {
@@ -539,7 +557,7 @@ bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std:
         const std::string type = colon == std::string::npos ? "" : Trim(item.substr(colon + 1));
         if (!ValidName(p.name)) { if (err) *err = std::string(what) + " name '" + p.name + "' isn't a valid name"; return false; }
         if (!TypeFromName(type, p.type)) {
-            if (err) *err = "unknown type '" + type + "' (use Number, Bool, Text, Vector3, Object, List or Any)";
+            if (err) *err = "unknown type '" + type + "' (use Number, Bool, Text, Vector3, Object, List, Map or Any)";
             return false;
         }
         for (const auto& q : out) if (q.name == p.name) { if (err) *err = std::string(what) + " '" + p.name + "' is listed twice"; return false; }
@@ -748,9 +766,9 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             else if (!owner.empty() && FunctionNameOf(kv.second.arg) != owner)
                 issues.push_back({0, kv.first, "this Return is in function '" + owner + "' but returns from '" + FunctionNameOf(kv.second.arg) + "'"});
         }
-        if ((t == "Delay" || t == "Wait") && !owner.empty())
-            issues.push_back({0, kv.first, "Delay / Wait can't pause inside a function (it runs to the end at once) - "
-                                           "start the delay after the Call Function instead"});
+        if ((t == "Delay" || t == "Wait" || t == "RunGraph") && !owner.empty())
+            issues.push_back({0, kv.first, "Delay / Wait / Run Graph can't pause inside a function (it runs to the end at once) - "
+                                           "start the pause after the Call Function instead"});
         if (t == "SetLocal" && owner.empty() && fromEvents.count(kv.first))
             issues.push_back({0, kv.first, "Set Local only works inside a function - use Set Var for graph variables"});
     }
@@ -759,7 +777,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             auto it = nodes.find(id);
             if (it == nodes.end()) return false;
             const std::string& t = it->second.type;
-            return t == "ForLoop" || t == "Repeat" || t == "While" || t == "ForEach";
+            return t == "ForLoop" || t == "Repeat" || t == "While" || t == "ForEach" || t == "ForEachMap";
         };
         std::vector<int> bodies;
         std::set<int> hasBody;
@@ -769,9 +787,9 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         for (const auto& kv : nodes) {
             const std::string& t = kv.second.type;
             if ((t == "Break" || t == "Continue") && reached.count(kv.first) && !inLoop.count(kv.first))
-                issues.push_back({0, kv.first, t + " isn't inside the Body of a loop (For Loop, Repeat, While, For Each), "
+                issues.push_back({0, kv.first, t + " isn't inside the Body of a loop (For Loop, Repeat, While, For Each, For Each Map), "
                                                    "so it does nothing"});
-            if ((t == "While" || t == "ForEach") && reached.count(kv.first) && !hasBody.count(kv.first))
+            if ((t == "While" || t == "ForEach" || t == "ForEachMap") && reached.count(kv.first) && !hasBody.count(kv.first))
                 issues.push_back({1, kv.first, "nothing is wired to Body, so the loop does nothing" +
                                                std::string(t == "While" ? " (or never ends, while Cond is true)" : "")});
         }

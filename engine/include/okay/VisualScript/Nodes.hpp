@@ -81,7 +81,9 @@ struct BinaryOpNode : VsNode {
             case Op::Add: return a + b;
             case Op::Sub: return a - b;
             case Op::Mul: return a * b;
-            case Op::Div: return b != 0.0f ? a / b : 0.0f;
+            case Op::Div:
+                if (b == 0.0f) { g.Error(this, ctx, "divided by zero; the result is 0"); return 0.0f; }
+                return a / b;
         }
         return 0.0f;
     }
@@ -133,7 +135,9 @@ struct MathFnNode : VsNode {
         float a = In(0, g, ctx).AsFloat();
         float b = In(1, g, ctx).AsFloat();
         switch (op) {
-            case Op::Mod: return b != 0.0f ? std::fmod(a, b) : 0.0f;
+            case Op::Mod:
+                if (b == 0.0f) { g.Error(this, ctx, "modulo by zero; the result is 0"); return 0.0f; }
+                return std::fmod(a, b);
             case Op::Min: return a < b ? a : b;
             case Op::Max: return a > b ? a : b;
             case Op::Pow: return std::pow(a, b);
@@ -445,7 +449,10 @@ struct SequenceNode : VsNode {
 struct OnceNode : VsNode {
     bool fired = false;
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext&) override {
+    bool SaveFlow(VsFlowRecord& r) const override { if (!fired) return false; r.b0 = true; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { fired = r.b0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (In(0, g, ctx, VsValue{false}).AsBool()) { fired = false; return -1; }   // Reset
         if (fired) return -1;
         fired = true;
         return 0;
@@ -460,10 +467,19 @@ struct TimerNode : VsNode {
     float acc = 0.0f;
     explicit TimerNode(float s) : interval(s > 0.0f ? s : 0.0f) {}
     int ExecOutCount() const override { return 1; }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (acc == 0.0f) return false;
+        r.f0 = acc;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { acc = r.f0; }
     int Exec(NodeGraph&, VsContext& ctx) override {
+        if (interval <= 0.0f) return 0;
         acc += ctx.deltaTime;
-        if (acc >= interval) { acc = 0.0f; return 0; }
-        return -1;
+        if (acc < interval) return -1;
+        acc -= interval;                         // keep the leftover, so the next tick is on time
+        if (acc > interval * 4.0f) acc = interval * 4.0f;   // a long hitch catches up a few frames, not forever
+        return 0;
     }
 };
 
@@ -471,6 +487,8 @@ struct TimerNode : VsNode {
 struct FlipFlopNode : VsNode {
     bool state = false;
     int ExecOutCount() const override { return 2; }
+    bool SaveFlow(VsFlowRecord& r) const override { if (!state) return false; r.b0 = true; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { state = r.b0; }
     int Exec(NodeGraph&, VsContext&) override {
         state = !state;
         return state ? 0 : 1;
@@ -482,15 +500,34 @@ struct FlipFlopNode : VsNode {
 // spawning N things or repeating an effect.
 struct RepeatNode : VsNode {
     int count;
+    int left = 0;
+    VsLoopLatch latch;
     explicit RepeatNode(int c) : count(c < 0 ? 0 : c) {}
     int ExecOutCount() const override { return 1; }
+    void OnSuspendRejected() override { latch.Finish(); }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!latch.busy) return false;
+        latch.Save(r);
+        r.i0 = left;
+        r.i1 = count;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph& g) override {
+        latch.Load(r, g);
+        left = r.i0;
+        count = r.i1;
+    }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        int nx = Next(0);
+        if (!latch.Begin(g)) return -1;
+        if (!g.Resuming()) left = count;
+        const int nx = Next(0);
         g.EnterLoop();
-        for (int i = 0; i < count && nx >= 0 && !g.Aborted(); ++i) {
-            g.Run(nx, ctx);
-            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak) break;
+        while (left > 0 && nx >= 0 && !g.Aborted()) {
+            if (latch.Step(g, ctx, nx) == NodeGraph::kSuspend) { g.LeaveLoop(); return NodeGraph::kSuspend; }
+            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted()) break;
+            --left;
         }
+        latch.Finish();
         g.LeaveLoop();
         return -1;
     }
@@ -562,6 +599,16 @@ struct WaitNode : VsNode {
     bool  waiting = false, done = false;
     explicit WaitNode(float s) : seconds(s) {}
     int ExecOutCount() const override { return 1; }
+    void OnSuspendRejected() override { waiting = false; }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!waiting && !done) return false;
+        r.b0 = waiting; r.b1 = done; r.f0 = acc; r.f1 = seconds;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override {
+        waiting = r.b0; done = r.b1; acc = r.f0;
+        if (r.f1 > 0.0f) seconds = r.f1;
+    }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (done) return 0;
         if (!g.Resuming()) {

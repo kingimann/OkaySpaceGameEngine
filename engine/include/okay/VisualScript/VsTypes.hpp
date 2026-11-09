@@ -18,6 +18,7 @@ enum class PinType : char {
     Vec3 = 'V',
     Object = 'O',  ///< an object reference, or a name typed into the pin
     List = 'L',
+    Map = 'M',     ///< a string-keyed map of values
 };
 
 /// A node type's pins: whether it has an exec input, then one PinType letter per
@@ -47,7 +48,7 @@ std::string ConversionHint(PinType from, PinType to);
 /// A visual-script function's signature, written in its Function node's text
 /// field: `Damage(amount: Number, who: Object) -> left: Number, dead: Bool`
 /// (no parameters: `Reset()`; returns are optional; a type may be left out
-/// and is then Any). Types: Number, Bool, Text, Vector3, Object, List, Any.
+/// and is then Any). Types: Number, Bool, Text, Vector3, Object, List, Map, Any.
 struct FunctionSig {
     std::string name;
     struct Pin { std::string name; PinType type = PinType::Any; };

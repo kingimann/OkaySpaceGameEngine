@@ -29,13 +29,22 @@ bool VisualScriptComponent::LoadFromText(const std::string& text, std::string* e
     // or a node that reloads its own graph) would free it under its feet: swap it
     // in once it has finished.
     if (m_graph && m_graph->Running()) { m_pendingGraph = std::move(graph); return true; }
-    m_graph = std::move(graph);
-    m_pendingGraph.reset();
+    AdoptGraph(std::move(graph));
     return true;
 }
 
+void VisualScriptComponent::AdoptGraph(std::unique_ptr<vs::NodeGraph> graph) {
+    // Keep Once / timers / a loop paused on a Delay, matched by the node's file id.
+    std::vector<vs::VsFlowRecord> flows;
+    std::vector<int> parked;
+    if (m_graph) m_graph->CaptureFlow(flows, parked);
+    m_graph = std::move(graph);
+    if (m_graph) m_graph->RestoreFlow(flows, parked);
+    m_pendingGraph.reset();
+}
+
 void VisualScriptComponent::ApplyPendingGraph() {
-    if (m_pendingGraph && !(m_graph && m_graph->Running())) m_graph = std::move(m_pendingGraph);
+    if (m_pendingGraph && !(m_graph && m_graph->Running())) AdoptGraph(std::move(m_pendingGraph));
 }
 
 bool VisualScriptComponent::LoadFromFile(const std::string& path, std::string* error) {

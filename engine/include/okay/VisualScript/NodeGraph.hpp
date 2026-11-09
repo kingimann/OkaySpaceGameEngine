@@ -40,6 +40,18 @@ struct VsContext {
 
 class NodeGraph;
 
+/// One node-local bit of state worth keeping when the graph text is reloaded
+/// during Play (Once, a timer, a loop paused on a Delay). Keyed by file id.
+struct VsFlowRecord {
+    int fileId = -1;
+    std::string type;
+    float f0 = 0, f1 = 0;
+    int i0 = 0, i1 = 0, i2 = -1, i3 = 0;
+    bool b0 = false, b1 = false, b2 = false;
+    std::vector<VsValue> values;
+    std::vector<std::string> texts;
+};
+
 /// Which data input of a node type is its optional "Target" object input (the
 /// object it acts on instead of the graph's own), or -1 when it has none. The
 /// editor appends a "Target" pin to these node types from this same table.
@@ -71,6 +83,13 @@ public:
     virtual VsValue Eval(int /*outPin*/, NodeGraph& /*g*/, VsContext& /*ctx*/) { return {}; }
     /// Run side effects; return which exec out pin to follow next (or -1 to stop).
     virtual int Exec(NodeGraph& /*g*/, VsContext& /*ctx*/) { return 0; }
+    /// A pause inside a function was refused. Drop any "I'm waiting" flag so the
+    /// next call starts clean (a Delay that already set its flag, a loop that
+    /// parked itself).
+    virtual void OnSuspendRejected() {}
+    /// True (and fills `r`) when this node has state a reload should keep.
+    virtual bool SaveFlow(VsFlowRecord& /*r*/) const { return false; }
+    virtual void LoadFlow(const VsFlowRecord& /*r*/, NodeGraph& /*g*/) {}
 
     /// Wiring, indexed by pin. Filled in by NodeGraph::Connect*.
     struct DataLink { int node = -1; int pin = 0; };
@@ -147,9 +166,20 @@ public:
 
     /// Evaluate a data node's output pin.
     VsValue Pull(int nodeId, int outPin, VsContext& ctx);
+    /// How a Run finished. `Suspended` is only returned when `propagateSuspend`
+    /// was set: the chain parked at `TakeSuspendNode()` and the caller (a loop)
+    /// owns continuing it. Otherwise a pause is parked on the graph and Run
+    /// returns Done so a Sequence can keep firing its other outputs.
+    enum class RunStatus { Done, Suspended };
     /// Execute an exec chain starting at `entryNode`. With `resume`, the first node
     /// is a suspended one being picked up again (it sees Resuming() == true).
-    void Run(int entryNode, VsContext& ctx, bool resume = false);
+    RunStatus Run(int entryNode, VsContext& ctx, bool resume = false, bool propagateSuspend = false);
+    /// The node a propagated pause stopped on (-1 if the last Run didn't pause).
+    int TakeSuspendNode() { const int n = m_suspendAt; m_suspendAt = -1; return n; }
+    /// True when a chain is parked (Delay, Wait, a loop whose body paused).
+    bool HasSuspended() const { return !m_suspended.empty(); }
+    /// Drop parked chains and tell each of them the pause was refused.
+    void CancelSuspended();
 
     /// An Exec() result meaning "not done yet - park this chain and call me again
     /// next frame" (Delay, Action blocks with a Wait inside). Resume() picks every
@@ -286,6 +316,11 @@ public:
     int LastErrorNode() const { return m_lastErrorNode; }
     int ErrorCount() const { return m_errorCount; }
 
+    /// Snapshot / restore node state and which chains are parked. Matched by
+    /// file id and node type, so an edit that keeps those keeps the running state.
+    void CaptureFlow(std::vector<VsFlowRecord>& flows, std::vector<int>& suspendedFileIds) const;
+    void RestoreFlow(const std::vector<VsFlowRecord>& flows, const std::vector<int>& suspendedFileIds);
+
     /// Look a node up by its file / editor id (-1 when absent).
     int NodeByFileId(int fileId) const {
         for (const auto& n : m_nodes) if (n && n->fileId == fileId) return n->id;
@@ -328,6 +363,62 @@ private:
     bool ResolveTarget(VsNode* n, VsContext& ctx, GameObject*& out);
     std::vector<int> m_suspended;   // parked chains (node ids), resumed next frame
     bool m_resuming = false;
+    int m_suspendAt = -1;   // node a propagated pause stopped on
+};
+
+/// Where a runtime error happened. `SetRuntimeErrorHook` receives one of these
+/// for every distinct error (the same message at the same node is not repeated).
+/// The log line is still written. A Diagnostics panel can subscribe here.
+struct VsRuntimeError {
+    std::string graphKey;
+    std::string event;
+    int fileId = -1;
+    std::string nodeType;
+    std::string objectName;
+    std::string message;
+};
+using VsRuntimeErrorHook = void (*)(const VsRuntimeError&);
+void SetRuntimeErrorHook(VsRuntimeErrorHook hook);
+
+/// Bookkeeping a loop keeps so a Delay inside its body pauses the loop and the
+/// next frame continues that same iteration.
+struct VsLoopLatch {
+    bool busy = false;
+    bool inBody = false;
+    int resumeAt = -1;
+    int resumeFileId = -1;
+    /// False when a new exec arrived while this loop is already parked.
+    bool Begin(NodeGraph& g) {
+        if (!g.Resuming()) {
+            if (busy) return false;
+            inBody = false;
+        }
+        return true;
+    }
+    /// Run the body (or the paused node inside it). Returns kSuspend, or 0 when
+    /// the body finished.
+    int Step(NodeGraph& g, VsContext& ctx, int body) {
+        const int target = inBody ? resumeAt : body;
+        if (target < 0) { inBody = false; return 0; }
+        const NodeGraph::RunStatus st = g.Run(target, ctx, inBody, true);
+        if (st == NodeGraph::RunStatus::Suspended) {
+            resumeAt = g.TakeSuspendNode();
+            if (VsNode* n = g.Node(resumeAt)) resumeFileId = n->fileId;
+            inBody = true;
+            busy = true;
+            return NodeGraph::kSuspend;
+        }
+        inBody = false;
+        return 0;
+    }
+    void Finish() { busy = false; inBody = false; resumeAt = -1; }
+    void Save(VsFlowRecord& r) const {
+        r.b0 = busy; r.b1 = inBody; r.i2 = resumeFileId;
+    }
+    void Load(const VsFlowRecord& r, NodeGraph& g) {
+        busy = r.b0; inBody = r.b1; resumeFileId = r.i2;
+        resumeAt = r.i2 >= 0 ? g.NodeByFileId(r.i2) : -1;
+    }
 };
 
 } // namespace okay::vs

@@ -21,7 +21,7 @@ namespace okay {
 class VisualScriptComponent : public Behaviour {
 public:
     /// Use an already-built graph.
-    void SetGraph(std::unique_ptr<vs::NodeGraph> graph) { m_graph = std::move(graph); }
+    void SetGraph(std::unique_ptr<vs::NodeGraph> graph) { AdoptGraph(std::move(graph)); }
     /// Build the graph from the OkayVS text format. Returns false on parse error.
     bool LoadFromText(const std::string& text, std::string* error = nullptr);
     /// Load a graph from a .okayvs file.
@@ -176,6 +176,8 @@ private:
     std::unique_ptr<vs::NodeGraph> m_graph;
     std::unique_ptr<vs::NodeGraph> m_pendingGraph;   // a reload that arrived while m_graph was running
     void ApplyPendingGraph();
+    /// Swap in `graph`, copying node state (and parked chains) off the old one by file id.
+    void AdoptGraph(std::unique_ptr<vs::NodeGraph> graph);
     vs::VsContext m_ctx;
     std::string m_source;
     std::string m_path;

@@ -57,7 +57,19 @@ struct CallFunctionNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         auto* fs = dynamic_cast<FunctionStartNode*>(g.Node(g.FunctionNode(fn)));
         std::vector<VsValue> args;
-        if (fs) for (std::size_t i = 0; i < fs->sig.params.size(); ++i) args.push_back(In((int)i, g, ctx));
+        if (fs) for (std::size_t i = 0; i < fs->sig.params.size(); ++i) {
+            args.push_back(In((int)i, g, ctx));
+            const PinType want = fs->sig.params[i].type;
+            const bool ok = want == PinType::Any || want == PinType::Text
+                || (want == PinType::Number && (args.back().IsNumber() || args.back().IsBool() || args.back().IsString()))
+                || (want == PinType::Bool && !args.back().IsArray() && !args.back().IsMap() && !args.back().IsVec3())
+                || (want == PinType::Vec3 && (args.back().IsVec3() || args.back().IsNumber()))
+                || (want == PinType::Object && (args.back().IsObject() || args.back().IsString()))
+                || (want == PinType::List && args.back().IsArray())
+                || (want == PinType::Map && args.back().IsMap());
+            if (!ok) g.Error(this, ctx, "argument '" + fs->sig.params[i].name + "' of function '" + fn +
+                                        "' needs a " + PinTypeName(want) + "; the value was passed anyway");
+        }
         std::vector<VsValue> rets;
         if (!g.CallFunction(fn, std::move(args), rets, this, ctx)) return g.Aborted() ? -1 : 0;
         if (fs) rets.resize(fs->sig.returns.size());   // no Return reached: the values read empty

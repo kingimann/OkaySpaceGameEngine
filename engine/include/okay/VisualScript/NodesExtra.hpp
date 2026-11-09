@@ -309,6 +309,8 @@ struct CooldownNode : VsNode {   // passes at most once every `seconds`
     float seconds; float last = -1e9f;
     explicit CooldownNode(float s) : seconds(s) {}
     int ExecOutCount() const override { return 1; }
+    bool SaveFlow(VsFlowRecord& r) const override { if (last < -1e8f) return false; r.f0 = last; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { last = r.f0; }
     int Exec(NodeGraph&, VsContext&) override {
         float now = Time::ElapsedTime();
         if (now - last < seconds) return -1;
@@ -636,20 +638,40 @@ struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = we
 // Last < First), then "Done". The Index output reads the current index.
 struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
     int index = 0;
+    int first = 0, last = 0, step = 1;
+    VsLoopLatch latch;
     int ExecOutCount() const override { return 2; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)index; }
+    void OnSuspendRejected() override { latch.Finish(); }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!latch.busy) return false;
+        latch.Save(r);
+        r.i0 = index; r.i1 = first; r.i3 = last;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph& g) override {
+        latch.Load(r, g);
+        index = r.i0; first = r.i1; last = r.i3;
+        step = last >= first ? 1 : -1;
+    }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int first = (int)std::lround(In(0, g, ctx, VsValue{0.0f}).AsFloat());
-        const int last  = (int)std::lround(In(1, g, ctx, VsValue{9.0f}).AsFloat());
-        const int step = last >= first ? 1 : -1;
+        if (!latch.Begin(g)) return -1;
         const int body = Next(0);
+        if (!g.Resuming()) {
+            first = (int)std::lround(In(0, g, ctx, VsValue{0.0f}).AsFloat());
+            last  = (int)std::lround(In(1, g, ctx, VsValue{9.0f}).AsFloat());
+            step = last >= first ? 1 : -1;
+            index = first;
+        }
         // No iteration cap of its own: every body run spends the event's step
         // budget, so a huge loop is stopped (and reported) by the graph.
         g.EnterLoop();
-        for (index = first; body >= 0; index += step) {
-            g.Run(body, ctx);
+        while (body >= 0 && !g.Aborted()) {
+            if (latch.Step(g, ctx, body) == NodeGraph::kSuspend) { g.LeaveLoop(); return NodeGraph::kSuspend; }
             if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted() || index == last) break;
+            index += step;
         }
+        latch.Finish();
         g.LeaveLoop();
         return 1;
     }
@@ -665,7 +687,14 @@ struct DoNNode : VsNode {
     explicit DoNNode(int c) : n(c < 0 ? 0 : c) {}
     int ExecOutCount() const override { return 1; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)count; }
-    int Exec(NodeGraph&, VsContext&) override { if (count >= n) return -1; ++count; return 0; }
+    bool SaveFlow(VsFlowRecord& r) const override { if (count <= 0) return false; r.i0 = count; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { count = r.i0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (In(0, g, ctx, VsValue{false}).AsBool()) { count = 0; return -1; }   // Reset
+        if (count >= n) return -1;
+        ++count;
+        return 0;
+    }
 };
 // Pick an exec output by a whole number: 0, 1, 2, or Default for anything else.
 struct SwitchIntNode : VsNode {   // in0 = value

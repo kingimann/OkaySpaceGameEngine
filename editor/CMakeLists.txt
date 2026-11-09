@@ -65,6 +65,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
     LocalizationWindow.cpp                                             # the Localization window (string table)
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
+    VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
     ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)  # native file dialogs
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})
 target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared

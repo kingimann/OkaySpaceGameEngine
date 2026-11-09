@@ -1,0 +1,10 @@
+# Called by Run Graph. Writes from_sub on the caller's object.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 Const 7
+pos 2 40 200
+node 3 SetVar from_sub
+pos 3 320 40
+exec 1 0 3
+data 3 0 2 0

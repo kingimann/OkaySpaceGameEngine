@@ -11,6 +11,7 @@
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
 #include "okay/VisualScript/NodesStory.hpp"
+#include "okay/VisualScript/NodesLogic.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 
@@ -140,6 +141,12 @@ std::string VsObjectName(std::uint64_t id) {
 }
 bool VsObjectAlive(std::uint64_t id) { return id && GameObject::FromInstanceId(id) != nullptr; }
 
+namespace {
+VsRuntimeErrorHook g_errorHook = nullptr;
+}
+
+void SetRuntimeErrorHook(VsRuntimeErrorHook hook) { g_errorHook = hook; }
+
 void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& what) {
     const int nodeId = n ? n->fileId : -1;
     ++m_errorCount;
@@ -147,12 +154,56 @@ void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& 
     m_lastError = what;
     m_lastErrorNode = nodeId;
     std::string where;
-    if (n && !n->type.empty()) where = " at node '" + n->type + "' (#" + std::to_string(n->fileId) + ")";
+    if (!debugKey.empty()) where += " (" + debugKey + ")";
+    if (n && !n->type.empty()) where += " at node '" + n->type + "' (#" + std::to_string(n->fileId) + ")";
     const std::string obj = ctx.gameObject ? ctx.gameObject->name : std::string("?");
     Log::Error("Visual Script on '", obj, "'", where, ": ", what);
+    if (g_errorHook) {
+        VsRuntimeError e;
+        e.graphKey = debugKey;
+        e.event = m_event;
+        e.fileId = nodeId;
+        e.nodeType = n ? n->type : std::string();
+        e.objectName = obj;
+        e.message = what;
+        g_errorHook(e);
+    }
 }
 
-void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
+void NodeGraph::CancelSuspended() {
+    for (int id : m_suspended)
+        if (VsNode* n = Node(id)) n->OnSuspendRejected();
+    m_suspended.clear();
+}
+
+void NodeGraph::CaptureFlow(std::vector<VsFlowRecord>& flows, std::vector<int>& suspendedFileIds) const {
+    flows.clear();
+    suspendedFileIds.clear();
+    for (const auto& n : m_nodes) {
+        if (!n || n->fileId < 0) continue;
+        VsFlowRecord r;
+        r.fileId = n->fileId;
+        r.type = n->type;
+        if (n->SaveFlow(r)) flows.push_back(std::move(r));
+    }
+    for (int id : m_suspended)
+        if (VsNode* n = Node(id))
+            if (n->fileId >= 0) suspendedFileIds.push_back(n->fileId);
+}
+
+void NodeGraph::RestoreFlow(const std::vector<VsFlowRecord>& flows, const std::vector<int>& suspendedFileIds) {
+    for (const VsFlowRecord& r : flows) {
+        VsNode* n = Node(NodeByFileId(r.fileId));
+        if (!n || n->type != r.type) continue;
+        n->LoadFlow(r, *this);
+    }
+    for (int fid : suspendedFileIds) {
+        const int id = NodeByFileId(fid);
+        if (id >= 0 && !IsSuspended(id)) m_suspended.push_back(id);
+    }
+}
+
+NodeGraph::RunStatus NodeGraph::Run(int entryNode, VsContext& ctx, bool resume, bool propagateSuspend) {
     // One budget per event: a top-level Run starts it, loop bodies and sequence
     // outputs (nested Runs) share it, so nested loops can't freeze the game.
     if (m_runDepth == 0) { m_steps = 0; m_reads = 0; m_abort = false; m_loops.clear(); m_loopSignal = kLoopNone; }
@@ -162,11 +213,13 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         ReportError(Node(entryNode), ctx, "loops and sequences are nested more than " + std::to_string(kMaxRunDepth) +
                                           " deep (a loop's Body wired back into the loop itself?); the event stopped");
         m_abort = true;
-        return;
+        return RunStatus::Done;
     }
     ++m_runDepth;
+    m_suspendAt = -1;
     int cur = entryNode;
     bool first = true;
+    RunStatus status = RunStatus::Done;
     while (cur >= 0 && !Aborted()) {
         VsNode* n = Node(cur);
         if (!n) break;
@@ -211,10 +264,17 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         first = false;
         if (outPin == kSuspend && !m_frames.empty()) {
             // A function has to finish before its caller carries on: there's no
-            // caller to come back to next frame.
-            ReportError(n, ctx, "Delay / Wait can't pause inside a function (a function runs to the end at once); "
-                                "the function stopped here");
+            // caller to come back to next frame. Clear the node's "I'm waiting"
+            // flag so a later call isn't stuck.
+            n->OnSuspendRejected();
+            ReportError(n, ctx, "Delay / Wait can't pause inside a function (a loop that reaches one counts too; "
+                                "a function runs to the end at once); the function stopped here");
             m_frames.back().returned = true;
+            break;
+        }
+        if (outPin == kSuspend && propagateSuspend) {
+            m_suspendAt = cur;
+            status = RunStatus::Suspended;
             break;
         }
         if (outPin == kSuspend) {   // park here; Resume() continues from this node
@@ -225,6 +285,7 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         cur = (outPin < (int)n->execOut.size()) ? n->execOut[outPin] : -1;
     }
     --m_runDepth;
+    return status;
 }
 
 int TargetPinFor(const std::string& type) {
@@ -608,9 +669,17 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     // Loops, lists, scene / global variables (NodesLoops.hpp).
     if (type == "While")          return std::make_unique<WhileNode>();
     if (type == "ForEach")        return std::make_unique<ForEachNode>();
+    if (type == "ForEachMap")     return std::make_unique<ForEachMapNode>();
     if (type == "Break")          return std::make_unique<LoopJumpNode>(true);
     if (type == "Continue")       return std::make_unique<LoopJumpNode>(false);
     if (type == "NewList")        return std::make_unique<NewListNode>();
+    if (type == "NewMap")         return std::make_unique<NewMapNode>();
+    if (type == "MapSet")         return std::make_unique<MapSetNode>();
+    if (type == "MapRemove")      return std::make_unique<MapRemoveNode>();
+    if (type == "MapGet")         return std::make_unique<MapGetNode>();
+    if (type == "MapHas")         return std::make_unique<MapHasNode>();
+    if (type == "MapKeys")        return std::make_unique<MapKeysNode>();
+    if (type == "MapValues")      return std::make_unique<MapValuesNode>();
     if (type == "ListAdd")        return std::make_unique<ListAddNode>();
     if (type == "ListRemoveAt")   return std::make_unique<ListRemoveAtNode>();
     if (type == "ListGet")        return std::make_unique<ListGetNode>();
@@ -701,6 +770,16 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "Gate")       return std::make_unique<GateNode>();
     if (type == "DoN")        return std::make_unique<DoNNode>(args.empty() ? 1 : ArgInt(args[0], 1));
     if (type == "SwitchInt")  return std::make_unique<SwitchIntNode>();
+    if (type == "SwitchString" || type == "SwitchCases" || type == "LatchGate" || type == "CallScript" || type == "RunGraph") {
+        std::string text;
+        for (const auto& a : args) { if (!text.empty()) text += ' '; text += a; }
+        if (type == "SwitchString") return std::make_unique<SwitchStringNode>(text);
+        if (type == "SwitchCases")  return std::make_unique<SwitchCasesNode>(text);
+        if (type == "LatchGate")    return std::make_unique<LatchGateNode>(text);
+        if (type == "CallScript")   return std::make_unique<CallScriptNode>(text.empty() ? std::string("main") : text);
+        return std::make_unique<RunGraphNode>(text);
+    }
+    if (type == "IsValid")      return std::make_unique<IsValidNode>();
     if (type == "RandomInt")  return std::make_unique<RandomIntNode>();
     using M3 = MathFn3Node::Op;
     if (type == "Ceil")       return std::make_unique<MathFn3Node>(M3::Ceil);

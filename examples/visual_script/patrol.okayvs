@@ -1,0 +1,109 @@
+# Enemy patrol: patrol -> wait -> return -> patrol. Switch (name) is the state machine.
+node 1 OnStart
+pos 1 40 30
+entry OnStart 1
+node 2 Const "patrol"
+pos 2 40 170
+node 3 SetVar state
+pos 3 280 30
+exec 1 0 3
+data 3 0 2 0
+
+node 10 OnUpdate
+pos 10 40 340
+entry OnUpdate 10
+node 11 GetVar state
+pos 11 280 500
+node 12 SwitchString patrol,wait,return
+pos 12 520 340
+exec 10 0 12
+data 12 0 11 0
+
+node 20 AddVar steps
+pos 20 860 300
+default 20 0 1
+exec 12 0 20
+node 21 GetVar steps
+pos 21 860 460
+node 22 Const 3
+pos 22 1080 460
+node 23 Compare >=
+pos 23 1080 300
+data 23 0 21 0
+data 23 1 22 0
+node 24 Branch
+pos 24 1300 300
+exec 20 0 24
+data 24 0 23 0
+node 25 Const "wait"
+pos 25 1300 460
+node 26 SetVar state
+pos 26 1520 300
+exec 24 0 26
+data 26 0 25 0
+node 27 Const 0
+pos 27 1520 460
+node 28 SetVar steps
+pos 28 1740 300
+exec 26 0 28
+data 28 0 27 0
+
+node 30 AddVar waits
+pos 30 860 640
+default 30 0 1
+exec 12 1 30
+node 31 GetVar waits
+pos 31 860 800
+node 32 Const 2
+pos 32 1080 800
+node 33 Compare >=
+pos 33 1080 640
+data 33 0 31 0
+data 33 1 32 0
+node 34 Branch
+pos 34 1300 640
+exec 30 0 34
+data 34 0 33 0
+node 35 Const "return"
+pos 35 1300 800
+node 36 SetVar state
+pos 36 1520 640
+exec 34 0 36
+data 36 0 35 0
+node 37 Const 0
+pos 37 1520 800
+node 38 SetVar waits
+pos 38 1740 640
+exec 36 0 38
+data 38 0 37 0
+
+node 40 AddVar steps
+pos 40 860 980
+default 40 0 1
+exec 12 2 40
+node 41 GetVar steps
+pos 41 860 1140
+node 42 Const 3
+pos 42 1080 1140
+node 43 Compare >=
+pos 43 1080 980
+data 43 0 41 0
+data 43 1 42 0
+node 44 Branch
+pos 44 1300 980
+exec 40 0 44
+data 44 0 43 0
+node 45 Const "patrol"
+pos 45 1300 1140
+node 46 SetVar state
+pos 46 1520 980
+exec 44 0 46
+data 46 0 45 0
+node 47 Const 0
+pos 47 1520 1140
+node 48 SetVar steps
+pos 48 1740 980
+exec 46 0 48
+data 48 0 47 0
+
+comment 20 10 1900 1280 1 "Patrol: patrol, wait, return"

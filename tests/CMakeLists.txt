@@ -1154,6 +1154,11 @@ add_executable(test_vs_wave4 test_vs_wave4.cpp)
 target_link_libraries(test_vs_wave4 PRIVATE okay::engine)
 add_test(NAME vs_wave4 COMMAND test_vs_wave4)
 
+add_executable(test_vs_runtime test_vs_runtime.cpp)
+target_link_libraries(test_vs_runtime PRIVATE okay::engine)
+target_compile_definitions(test_vs_runtime PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_runtime COMMAND test_vs_runtime)
+
 add_executable(test_ui_animation test_ui_animation.cpp)
 target_link_libraries(test_ui_animation PRIVATE okay::engine)
 add_test(NAME ui_animation COMMAND test_ui_animation)

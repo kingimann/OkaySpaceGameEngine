@@ -43884,6 +43884,8 @@ static int RunBuildGameCli(int argc, char** argv) {
     return ok ? 0 : 1;
 }
 
+int RunVsGraphShot(int argc, char** argv);
+
 int main(int argc, char** argv) {
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
@@ -43893,6 +43895,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
         if (std::string(argv[i]) == "--build-game") return RunBuildGameCli(argc, argv);
+        if (std::string(argv[i]) == "--vs-shot") return RunVsGraphShot(argc, argv);
     }
     // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end.
     if (const char* c = std::getenv("OKAY_TEST_CRASH"); c && *c) {

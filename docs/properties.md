@@ -208,7 +208,7 @@ the built-ins and is safe to call from several threads: the work runs once.
 
 ## What is registered
 
-334 properties on 26 types (the number after the slash counts the runtime-only,
+336 properties on 26 types (the number after the slash counts the runtime-only,
 read-only and derived ones, which the scene file does not keep):
 
 | Type | Properties | Notes |
@@ -226,7 +226,7 @@ read-only and derived ones, which the scene file does not keep):
 | BoxCollider3D, SphereCollider3D, CapsuleCollider3D, CylinderCollider3D, MeshCollider3D | 8, 8, 10, 10, 8 | |
 | AudioSource | 13 | |
 | ParticleSystem | 52 | everything except the gradient and curves |
-| Mover, Spinner, Lifetime, CameraFollow | 2, 2, 2, 4 | |
+| Mover, Spinner, Lifetime, CameraFollow | 3, 3, 2, 4 | every component also has `enabled`; Mover and Spinner have a `space` (Local, World or Self) |
 | Canvas | 13 | |
 | UIPanel | 21 | |
 
@@ -270,9 +270,11 @@ left to the animation work. They can register themselves with the builder.
 What the cross-check showed about the file format (kept here so nobody has to
 rediscover it):
 
-- **Precision:** the scene writer prints floats with six significant digits, so a
-  float such as `1234567.0` or `0.123456789` comes back rounded. The test allows a
-  relative error of 1e-5; text from `ToString()` itself is exact.
+- **Precision:** the scene writer prints a float with the fewest digits that read
+  back as the same value, so a float such as `1234567.0` or `0.123456789` survives a
+  save unchanged (older builds printed six digits and rounded; old files still load).
+  The cross-check test still allows a relative error of 1e-5; text from `ToString()`
+  itself is exact.
 - **Conditional records:** some properties are written only together with
   another. Alone they are lost on save: `toonBands`, `gradientTop`,
   `gradientBottom` need a non-Standard `shader`; `rimPower`, `rimColor` need

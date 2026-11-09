@@ -20,6 +20,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [visual_scripting.md](visual_scripting.md): the visual scripting text format (OkayVS) and Action Lists.
 - [engine_api.md](engine_api.md): the engine API reference.
 - [core_logging_profiling.md](core_logging_profiling.md): logging (categories, file sink, OKAY_LOG) and the frame profiler (trace and CSV export).
+- [debug_tools.md](debug_tools.md): profiling and debugging data layers (frame timeline, GPU and render stats, memory tracking, frame debugger, error console, stats overlay).
 - [automated_testing.md](automated_testing.md): play-mode tests (`PlayTest`, `okay-playtest`), scene validation and golden-file / golden-image regression helpers.
 - [editor-plugins.md](editor-plugins.md): extend the editor with plugins.
 
@@ -49,6 +50,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [rendering.md](rendering.md): post-processing, sky, fog and weather.
 - [lighting.md](lighting.md): lighting and shadows.
 - [modeling.md](modeling.md): the built-in mesh editor.
+- [optimization_tools.md](optimization_tools.md): LOD generation, occlusion culling, batching, streaming and the scene optimization report.
 - [audio.md](audio.md): the mixer, music and sound effects.
 
 ## Game UI
@@ -56,6 +58,8 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [ui_html.md](ui_html.md): menus and HUDs in an HTML and CSS subset.
 - [ui_world_space.md](ui_world_space.md): in-world (3D) UI.
 - [localization.md](localization.md): string tables, translators and fonts.
+- [localization_tools.md](localization_tools.md): translation grid, CSV and JSON, the table checker, key scanner, language previews and font coverage.
+- [accessibility.md](accessibility.md): subtitles and captions, colour vision, controller navigation, remapping and accessibility settings.
 
 ## Multiplayer, accounts and servers
 - [launcher-multiplayer.md](launcher-multiplayer.md): multiplayer from the launcher.

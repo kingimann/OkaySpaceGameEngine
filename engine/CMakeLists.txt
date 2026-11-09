@@ -144,9 +144,27 @@ add_library(okay_engine
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
     src/Graphics/EmbeddedFont.cpp
+    src/Debug/FrameHistory.cpp
+    src/Debug/GpuTimer.cpp
+    src/Debug/RenderStats.cpp
+    src/Debug/MemoryTracker.cpp
+    src/Debug/DrawCallRecorder.cpp
+    src/Debug/ConsoleModel.cpp
+    src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp
+    # Localization tools (docs/localization_tools.md)
+    src/Core/LocCheck.cpp
+    src/Core/LocTable.cpp
+    src/Core/LocScan.cpp
+    src/Core/LocPreview.cpp
+    # Accessibility (docs/accessibility.md)
+    src/Graphics/ColorVision.cpp
+    src/Core/Subtitles.cpp
+    src/Core/AccessibilitySettings.cpp
+    src/UI/FocusGraph.cpp
+    src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
@@ -154,6 +172,14 @@ add_library(okay_engine
     src/Modeling/PolyOps.cpp
     src/Modeling/Modifiers.cpp
     src/Modeling/UVUnwrap.cpp
+    src/Optimize/MeshSimplify.cpp
+    src/Optimize/LodGroup.cpp
+    src/Optimize/OcclusionBuffer.cpp
+    src/Optimize/PortalCells.cpp
+    src/Optimize/BatchPlanner.cpp
+    src/Optimize/StreamingGrid.cpp
+    src/Optimize/MipBudget.cpp
+    src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp
     src/Testing/ObjectPath.cpp

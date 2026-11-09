@@ -251,6 +251,17 @@ BuildDiagGate DiagnoseSceneForBuild(const Scene& scene, const std::string& asset
     return gate;
 }
 
+bool ObjectHasDiag(const GameObject* go) {
+    return go && !EditorDiagnostics().ForObject(go->Guid()).empty();
+}
+
+bool ComponentHasDiag(const GameObject* go, const char* label) {
+    if (!go || !label) return false;
+    for (const Diagnostic& d : EditorDiagnostics().ForObject(go->Guid()))
+        if (ComponentMatches(d, label)) return true;
+    return false;
+}
+
 void DrawObjectDiagMarker(const GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
     if (!go) return;
     const std::vector<Diagnostic> rows = EditorDiagnostics().ForObject(go->Guid());
@@ -296,7 +307,9 @@ void DrawProblems(okay::editor::EditorState& ed) {
         std::snprintf(title, sizeof(title), "Problems###Problems");
 
     if (g_demo) ++g_demoFrame;
-    if (g_demo && g_demoFrame < 34)
+    if (g_demo && g_demoFrame < 6)
+        ImGui::SetWindowFocus("Console###Console");
+    else if (g_demo && g_demoFrame < 34)
         ImGui::SetNextWindowFocus();
     const bool open = ImGui::Begin(title, &g_showProblems);
     if (open) {
@@ -428,6 +441,7 @@ void DrawProblems(okay::editor::EditorState& ed) {
 
     if (g_demo) {
         const std::string dir = "/opt/cursor/artifacts";
+        if (g_demoFrame == 5) RequestShot(dir + "/diag-console.png", 1);
         if (g_demoFrame == 8) RequestShot(dir + "/diag-problems.png", 1);
         if (g_demoFrame == 18 && g_haveRow && g_rowClick.y > 40.0f && g_rowClick.y < 760.0f)
             QueueClick(g_rowClick);
@@ -476,7 +490,7 @@ void DiagnosticsDemoPrepare(okay::editor::EditorState& ed) {
     GameObject* walker = ed.CreateEmpty("Walker");
     walker->AddComponent<NavMeshAgent>();
 
-    GameObject* missing = ed.CreateEmpty("MissingScript");
+    GameObject* missing = ed.CreateEmpty("MissingScriptComponentFile");
     missing->AddComponent<ScriptComponent>()->SetPath("Assets/MissingScript.okay");
 
     GameObject* graph = ed.CreateEmpty("BadGraph");
@@ -486,6 +500,10 @@ void DiagnosticsDemoPrepare(okay::editor::EditorState& ed) {
         "data 1 0 2 0\nexec 0 0 1\nentry OnStart 0\n");
     ed.Select(nullptr);
     ed.dirty = true;
+    ConsoleLog("[script] Player.okay:4 the player script failed");
+    ConsoleLog("[assets] ghost.png is not in the project");
+    ConsoleLog("[net] peer timed out");
+    ConsolePreferCategory("script");
 }
 
 } // namespace oked

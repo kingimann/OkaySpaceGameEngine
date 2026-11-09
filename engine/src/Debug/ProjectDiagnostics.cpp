@@ -1,5 +1,6 @@
 #include "okay/Debug/ProjectDiagnostics.hpp"
 
+#include "okay/Core/AssetDatabase.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Camera.hpp"
@@ -79,7 +80,7 @@ std::string HintFor(const std::string& code) {
         return "Add a Camera and leave Main turned on. The Fix button adds a Main Camera.";
     if (code == "scene.no_active_camera")
         return "Enable a camera, and make sure its object is active.";
-    if (code == "asset.missing" || code == "scene.missing_asset")
+    if (code == "asset.missing" || code == "scene.missing_asset" || code == "asset.db.missing")
         return "Point the field at a file that exists, or clear it. Fix re-imports when one matching file is in the project, otherwise it clears the broken path.";
     if (code == "asset.prefab_missing")
         return "Put the prefab file back, or clear Prefab Source on the instance.";
@@ -570,6 +571,31 @@ bool AddMissingRequirements(GameObject& go) {
     return any;
 }
 
+void AppendAssetIndex(const ProjectDiagOptions& options, std::vector<Diagnostic>& items) {
+    if (!options.checkAssetIndex || options.assetRoot.empty()) return;
+    AssetDatabase db;
+    ScanOptions scan;
+    scan.createMetas = true;          // a file with no meta is not indexed, so FindMissing would see nothing
+    scan.detectMoves = false;
+    scan.buildDependencies = true;
+    scan.logWarnings = false;
+    scan.deleteOrphanMetas = false;
+    scan.verifyHashes = false;
+    scan.ignoreDirs = {"build", "build-tests", "build-editor", ".git"};
+    db.Scan(options.assetRoot, scan);
+    for (const MissingRef& miss : db.FindMissing()) {
+        if (AlreadyMissingAsset(items, "", miss.reference)) continue;
+        Diagnostic d;
+        d.severity = DiagSeverity::Error;
+        d.code = "asset.db.missing";
+        d.message = miss.referrerPath + " references '" + miss.reference + "', and that file is not in the project.";
+        d.source.assetPath = miss.reference;
+        d.source.scriptPath = miss.referrerPath;
+        d.hint = HintFor(d.code);
+        items.push_back(std::move(d));
+    }
+}
+
 } // namespace
 
 ProjectDiagResult CollectProjectDiagnostics(const Scene& scene, const ProjectDiagOptions& options) {
@@ -587,6 +613,7 @@ ProjectDiagResult CollectProjectDiagnostics(const Scene& scene, const ProjectDia
     if (options.checkRequirements) CheckRequirements(scene, result.items);
     if (options.checkGameplay) CheckGameplay(scene, result.items);
     if (options.checkGraphs) CheckGraphs(scene, options, result.items);
+    AppendAssetIndex(options, result.items);
     return result;
 }
 

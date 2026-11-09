@@ -23,6 +23,9 @@ struct ProjectDiagOptions {
     bool checkRequirements = true;  // RequireComponent that is not satisfied
     bool checkGameplay = true;      // main camera, player body, animator, navmesh
     bool checkGraphs = true;        // visual-script graph errors and node requirements
+    /// Scan `assetRoot` with AssetDatabase and report FindMissing. Off when the root is empty.
+    /// A first scan writes a `.okaymeta` beside an asset that does not have one, which is how the index tracks it.
+    bool checkAssetIndex = true;
 };
 
 struct ProjectDiagResult {

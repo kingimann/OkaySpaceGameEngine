@@ -26,6 +26,8 @@ DiagTotals ProjectDiagTotals();
 // Hierarchy / Inspector markers. `label` is the component header text.
 void DrawObjectDiagMarker(const okay::GameObject* go, ImVec2 rowMin, ImVec2 rowMax);
 void DrawComponentDiagMarker(const okay::GameObject* go, const char* label, ImVec2 headerMin, ImVec2 headerMax);
+bool ObjectHasDiag(const okay::GameObject* go);
+bool ComponentHasDiag(const okay::GameObject* go, const char* label);
 void DrawSceneDiagMarker(ImVec2 rowMin, ImVec2 rowMax);
 
 // Console: a click on a row with a source selects that object. The editor

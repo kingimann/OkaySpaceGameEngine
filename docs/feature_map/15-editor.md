@@ -225,7 +225,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 ### 15.11 Console and diagnostics panels
 - **What:** The panels that show what the editor and game are doing: the Console log, Crash Log, Stats, Profiler, History, the Net panel and the live variable watch.
 - **Parts:**
-  - 15.11.1 Console - `editor/ConsolePanel.*` - severity filters with counts, search, collapse of repeated lines, details, Error Pause, tab badge
+  - 15.11.1 Console - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; severity filters with counts, a category dropdown, search, collapse of repeated lines, details, Error Pause, Open Script, tab badge
   - 15.11.2 Crash Log and crash diagnostics - `editor/main.cpp` (`DrawCrashLog` ~6642, crash handler ~549-788) - reads crash reports from earlier runs
   - 15.11.3 Stats - `editor/main.cpp` (`DrawStats` ~10247-10358) - object, mesh and triangle counts, FPS
   - 15.11.4 Profiler - `editor/main.cpp` (`DrawProfiler` ~42668-42844) - frame, CPU and GPU timeline you can pause and scrub, per-section self and total times, CSV copy; times only while open
@@ -233,14 +233,14 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.11.6 Variables watch - `editor/main.cpp` (`DrawVarWatch` ~2252) - live visual-script variables
   - 15.11.7 Status bar - `editor/main.cpp` (`DrawStatusBar` ~6412) - selection, object count, tool, mode, FPS, and a Problems count that opens the Problems panel
   - 15.11.8 Problems panel - `editor/ProblemsPanel.*`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - one live list of what is wrong, grouped by object, asset or script, with error / warning / info filters; a click selects the object, opens the script or frames the graph node; Fix adds a missing component, clears a broken reference, re-imports a file that is on disk, or adds a Main Camera
-  - 15.11.9 Inline markers - `editor/main.cpp` (Hierarchy rows, Inspector component headers), `editor/VisualScriptEditor.hpp` - a warning or error badge with a tooltip on the object and on the component; graph nodes keep an error or warning badge and a bad wire's pins are drawn red
+  - 15.11.9 Inline markers - `editor/main.cpp` (Hierarchy rows, Inspector component headers), `editor/VisualScriptEditor.hpp` - a warning or error badge with a tooltip on the object and on the component; a long name is cut with an ellipsis before the badge; graph nodes keep an error or warning badge and a bad wire's pins are drawn red
 - **Code:** `editor/ConsolePanel.*`, `editor/ProblemsPanel.*`, `editor/NetSimPanel.*`, `editor/main.cpp`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics`
 - **API:** `ConsoleLog(text, level)`; `EditorDiagnostics`, `CollectProjectDiagnostics`, `ApplyDiagnosticFix`, `AddNodeRequirement`; View > Panels > Console, Problems, Crash Log, Stats, Profiler, Net, Variables (watch)
 - **Editor:** each panel; Problems is docked with the Console
 - **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/core_logging_profiling.md`
 - **Tests:** `profiler`, `profiler_export`, `log` (engine side), `crash_reports`, `diagnostics`, `debug_console`
 - **Status:** Works - the Console, Problems and the inline badges read one diagnostic list; the list updates in edit mode when the scene changes
-- **Open:** planned area 23 still wants a CPU and GPU timeline window, memory tracking and a frame debugger; the editor Console stores its own rows (capped at 500) and copies each line's source from the `ConsoleModel` parser plus `ConsoleSourceScope`, it does not draw `ConsoleModel::Rows()` itself
+- **Open:** planned area 23 still wants a CPU and GPU timeline window, memory tracking and a frame debugger
 - **Related:** 23, 1.10, 19.2, 33.2, 14.2, 13.5
 - **Words:** Console, log, errors, warnings, Error Pause, Crash Log, Stats, Profiler, FPS, Net panel, watch, status bar, Problems, diagnostics, Fix, badge
 - **Seen as:** the Console is flooded by one repeated line; errors are not shown; the profiler shows nothing; stats differ from the build; a problem does not select its object

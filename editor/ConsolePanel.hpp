@@ -1,28 +1,22 @@
 #pragma once
 // The editor log (ConsoleLog, written to by every tool) and the Console panel.
+// The panel draws ConsoleModel::Rows(): filters, collapse, Error Pause and
+// Open Script live on that model, not on a second buffer.
 #include "okay/Debug/ConsoleModel.hpp"
 #include <string>
-#include <vector>
 
 namespace oked {
 
-// A console entry: severity, text, a short timestamp, and a repeat
-// count (incremented when the same line is logged twice in a row).
-struct ConsoleEntry {
-    int level = 0;            // 0 = info, 1 = warning, 2 = error
-    std::string text;
-    std::string time;
-    int count = 1;
-    okay::ConsoleSource source;   // object, script or graph this line came from
-};
-extern std::vector<ConsoleEntry> g_console;
-extern int g_consoleCounts[3];   // running totals per level (for the toggles)
+extern int g_consoleCounts[3];   // info, warning, error currently stored in the model
 
-// Log a line to the Console (0 = info, 1 = warning, 2 = error). A repeat of the
-// last line bumps its count instead of adding a row.
+// Log a line to the Console (0 = info, 1 = warning, 2 = error). A leading
+// `[tag] ` (no colon) is the category. The source is parsed from the text and
+// from an active ConsoleSourceScope.
 void ConsoleLog(const std::string& msg, int level = 0);
 void ConsoleClear();
-// The Console window: severity filters with counts, search, collapse, details.
+// The Console window: severity filters with counts, category, search, collapse, details.
 void DrawConsole();
+// Demo / tests: the category dropdown starts on this name ("All" clears it).
+void ConsolePreferCategory(const std::string& category);
 
 } // namespace oked

@@ -17427,6 +17427,19 @@ static std::vector<GameObject*> HierTargets(EditorState& ed, GameObject* node) {
     return {node};
 }
 
+// Shorten `text` so it fits in `maxW` pixels, ending with an ellipsis. UTF-8 safe.
+static std::string EllipsizeToWidth(const std::string& text, float maxW) {
+    if (maxW < 12.0f) return text;
+    if (ImGui::CalcTextSize(text.c_str()).x <= maxW) return text;
+    const char* ell = "\xE2\x80\xA6";
+    std::string s = text;
+    while (!s.empty() && ImGui::CalcTextSize((s + ell).c_str()).x > maxW) {
+        s.pop_back();
+        while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80) s.pop_back();
+    }
+    return s.empty() ? std::string(ell) : s + ell;
+}
+
 void DrawHierarchy(EditorState& ed) {
     // Skip the per-frame root-list build + sort + per-row component scans when the
     // Hierarchy panel is collapsed or a hidden background tab.
@@ -17528,8 +17541,12 @@ void DrawHierarchy(EditorState& ed) {
             ++hits;
             bool sel = (go == ed.selected());
             ImGui::PushID(go);
-            if (ImGui::Selectable(("     " + go->name).c_str(), sel))
+            const float searchRoom = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("     ").x -
+                                     (ObjectHasDiag(go) ? 28.0f : 6.0f);
+            const std::string searchName = EllipsizeToWidth(go->name, searchRoom);
+            if (ImGui::Selectable(("     " + searchName).c_str(), sel))
                 ed.Select(go);
+            if (searchName != go->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", go->name.c_str());
             {   // drawn type icon in the leading space
                 ImVec2 smn = ImGui::GetItemRectMin();
                 HierKindIcon(go, ImVec2(smn.x + 2.0f, smn.y), ImGui::GetFontSize(),
@@ -17543,7 +17560,7 @@ void DrawHierarchy(EditorState& ed) {
                     if (t->gameObject) ppath = t->gameObject->name + (ppath.empty() ? "" : " / ") + ppath;
                 if (!ppath.empty()) {
                     ImVec2 smn = ImGui::GetItemRectMin();
-                    float nx = smn.x + ImGui::CalcTextSize(("     " + go->name).c_str()).x + 12.0f;
+                    float nx = smn.x + ImGui::CalcTextSize(("     " + searchName).c_str()).x + 12.0f;
                     ImGui::GetWindowDrawList()->AddText(ImVec2(nx, smn.y + 1.0f),
                         ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.75f),
                         ("in " + ppath).c_str());
@@ -17655,9 +17672,19 @@ void DrawHierarchy(EditorState& ed) {
                         IM_COL32(255, 255, 255, 5));
             }
             // Show a child count on parents, plus an (off) marker.
+            // The name stops before the eye, the lock and the error badge.
             char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
-            bool open = ImGui::TreeNodeEx(node, flags, "     %s%s%s",
-                                          node->name.c_str(), cnt, node->active ? "" : "  (off)");
+            const std::string tail = std::string(cnt) + (node->active ? "" : "  (off)");
+            const bool diag = ObjectHasDiag(node);
+            const float nameRoom = ImGui::GetContentRegionAvail().x
+                - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f)
+                - ImGui::CalcTextSize("     ").x
+                - ImGui::CalcTextSize(tail.c_str()).x
+                - kHierEyeW * 2.0f - 8.0f
+                - (diag ? 22.0f : 0.0f);
+            const std::string shown = EllipsizeToWidth(node->name, nameRoom);
+            bool open = ImGui::TreeNodeEx(node, flags, "     %s%s", shown.c_str(), tail.c_str());
+            if (shown != node->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", node->name.c_str());
             if (dim) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
             {   // drawn type icon in the leading space (after the tree arrow zone)
@@ -25650,9 +25677,13 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     std::string title = std::string((std::size_t)std::ceil(lead / spaceW), ' ');
     {   // fit the name between the glyph and the "..." button
         std::string nm = label;
-        const float room = barW - arrowW - lead - fh - 10.0f;
+        const float badgeW = ComponentHasDiag(comp->gameObject, label) ? 22.0f : 0.0f;
+        const float room = barW - arrowW - lead - fh - 10.0f - badgeW;
         if (room > 20.0f && ImGui::CalcTextSize(nm.c_str()).x > room) {
-            while (nm.size() > 1 && ImGui::CalcTextSize((nm + "\xE2\x80\xA6").c_str()).x > room) nm.pop_back();
+            while (nm.size() > 1 && ImGui::CalcTextSize((nm + "\xE2\x80\xA6").c_str()).x > room) {
+                nm.pop_back();
+                while (!nm.empty() && (static_cast<unsigned char>(nm.back()) & 0xC0) == 0x80) nm.pop_back();
+            }
             nm += "\xE2\x80\xA6";
         }
         title += nm;

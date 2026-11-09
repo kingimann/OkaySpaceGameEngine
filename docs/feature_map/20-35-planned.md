@@ -421,7 +421,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 23.4 Error console
 - **What:** The panel that shows log messages, warnings and errors, with filters and links back to what caused them.
 - **Parts:**
-  - 23.4.1 Console panel - `editor/ConsolePanel.*` - error, warning, info toggles with counts, search, collapse of repeats, details pane, clear on play, pause on error, Copy and Save to `console_log.txt`; tab badge shows error and warning counts
+  - 23.4.1 Console panel - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; error, warning, info toggles with counts, category dropdown, search, collapse of repeats, details pane, clear on play, pause on error, Open Script, Copy and Save to `console_log.txt`; tab badge shows error and warning counts
   - 23.4.2 Open script at the error line - `editor/ConsolePanel.*` - the details pane offers Open Script (line) for script errors
   - 23.4.3 Log core - `Core/Log` - levels, categories, `OKAY_LOG` string, rotating file sink, sink hook used by the Console
   - 23.4.4 Console model (#574) - `Debug/ConsoleModel` - ring buffer with collapse, filters, source links to objects and assets, pause-on-error request; `Add` takes an explicit `ConsoleSource` (guid, component, node) and a `ConsoleSourceScope` stamps runtime lines
@@ -432,14 +432,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** Console tab; Problems tab; status-bar Problems count
 - **Docs:** `docs/core_logging_profiling.md`; `docs/debug_tools.md`
 - **Tests:** `log`; `debug_console`; `diagnostics`
-- **Status:** Works - clicking a Console row selects its source object; runtime script and graph errors carry that object; Problems is the single list of what is wrong. The editor Console still keeps its own 500-row buffer and fills each row's source from `ConsoleModel`'s parser and `ConsoleSourceScope`, rather than drawing `ConsoleModel::Rows()`.
-- **Exists today:** Parts 23.4.1-23.4.6. `ConsoleModel` is used for parsing and for the explicit source on each log line. Validators in `CollectProjectDiagnostics` merge `Scene::Validate` and `SceneValidator` and add RequireComponent, player collider and rigidbody, an Animator with no states, a Nav Mesh Agent with no bake, script compile errors and visual-script graph errors (including `AddNodeRequirement`).
+- **Status:** Works - the Console draws `ConsoleModel::Rows()` (category dropdown, collapse, severity filters, Error Pause, Open Script); clicking a row selects its source object; runtime script and graph errors carry that object; Problems is the single list of what is wrong.
+- **Exists today:** Parts 23.4.1-23.4.6. A leading `[tag]` on a log line (no colon or slash) is the category. Validators in `CollectProjectDiagnostics` merge `Scene::Validate` and `SceneValidator` and add RequireComponent, player collider and rigidbody, an Animator with no states, a Nav Mesh Agent with no bake, script compile errors, visual-script graph errors (including `AddNodeRequirement`) and `AssetDatabase::FindMissing`.
 - **Work packages:**
-  1. M - Console reads from `ConsoleModel` (category filter, source links). Depends on: #574 (on main). Done for the source link; the panel still draws its own buffer.
+  1. M - Console reads from `ConsoleModel` (category filter, source links). Depends on: #574 (on main). Done.
   2. M - Click an entry with an object source selects it in the Hierarchy; a script line stays available from the details pane. Depends on: package 1. Done.
   3. S - Script and scene-load errors use the linkable message form. Depends on: package 1. Diagnostics log `[Object:]` / `[Asset:]`, and Play wraps script and graph calls in `ConsoleSourceScope`.
-  4. S - Category dropdown (net, physics, script) using `Log::Category`. Depends on: package 1.
-- **Open:** the editor Console has its own entry type (`ConsoleEntry`) separate from the log sink; capped at 500 entries. A category dropdown is not in the panel yet.
+  4. S - Category dropdown (net, physics, script) using `Log::Category`. Depends on: package 1. Done: the dropdown lists categories seen on stored rows.
+- **Open:** categories are taken from a leading `[tag]` on the message; subsystems that never write one do not appear in the dropdown.
 - **Related:** 1.10, 15.9, 13.5, 33.2
 - **Words:** console, error console, log, warnings, errors, ConsoleLog, ConsoleModel, collapse, pause on error, console_log.txt
 - **Seen as:** thousands of repeated lines; cannot find the object that logged an error; log lost when the editor closes
@@ -1356,15 +1356,15 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** Problems panel (15.11.8) updates in edit mode; Build blocks on errors and lists warnings; Console output at Play still prints graph errors
 - **Docs:** `docs/visual_scripting.md`; `docs/automated_testing.md`, `docs/scene_hierarchy_search.md`
 - **Tests:** `vs_types`; `scene_validator`, `scene_hierarchy_search`, `diagnostics`
-- **Status:** Works - `CollectProjectDiagnostics` feeds both `SceneValidator` and `Scene::Validate` into one list, and the Problems panel and the Build gate read it. `AssetDatabase::FindMissing` is still a separate report.
-- **Exists today:** Play-time validation of visual script graphs, the asset database's missing-reference report, the two scene validators as library calls, and the editor list that merges those two plus the gameplay checks (player body, animator, navmesh, node requirements).
+- **Status:** Works - `CollectProjectDiagnostics` feeds `SceneValidator`, `Scene::Validate` and `AssetDatabase::FindMissing` into one list, and the Problems panel and the Build gate read it.
+- **Exists today:** Play-time validation of visual script graphs, the two scene validators, and the editor list that merges those plus the gameplay checks (player body, animator, navmesh, node requirements) and missing asset-index references (`asset.db.missing`). The first scan of an asset root writes a `.okaymeta` beside a file that does not have one, which is how the index sees it.
 - **Work packages:**
   1. S - Decide one validator: keep `Testing/SceneValidator` (rich checks) and have `Scene::Validate` (load-level checks) feed it. Depends on: #572, #575 (both on main). Done in `CollectProjectDiagnostics` (duplicate missing-asset rows are dropped).
   2. M - Editor Validate button and window: list issues, click selects the object, severity filter. Depends on: package 1. Done (Problems, live rather than a button).
   3. S - Run validation on Play and on Build (blocking errors, warnings listed). Depends on: package 2. Build gate done; the list itself refreshes in edit mode, and Play still prints graph errors.
   4. S - CI step that validates every scene in the sample projects. Depends on: package 1.
   5. M - Project-specific rules (naming, required tags) registered by the game. Depends on: package 1.
-- **Open:** `AssetDatabase::FindMissing` is still a third missing-file report and is not merged into Problems; no CI step walks the sample scenes.
+- **Open:** no CI step walks the sample scenes.
 - **Related:** 1.3, 1.5, 20.2, 23.4, 33.1
 - **Words:** scene validation, validator, missing references, missing assets, missing component, validate scene, health check, pre-build check
 - **Seen as:** pink or empty objects because a file is missing; game starts with a broken script; no warning before building

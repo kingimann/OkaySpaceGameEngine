@@ -16,6 +16,8 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace okay;
@@ -284,6 +286,33 @@ int main() {
         for (const vs::VsIssue& issue : issues)
             if (issue.node == 1 && issue.pin == 0 && issue.pinDir == 0) pin = true;
         CHECK(pin);
+    }
+
+    // ---- AssetDatabase::FindMissing feeds the same list -----------------------------------------
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_diag_missing_assets";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        {
+            std::ofstream out(dir / "Level.okayscene");
+            out << "sprite \"missing/ghost.png\"\n";
+        }
+        Scene scene("indexed");
+        ProjectDiagOptions opt;
+        opt.assetRoot = dir.string();
+        opt.checkSemantic = false;
+        opt.checkSceneFile = false;
+        opt.checkRequirements = false;
+        opt.checkGameplay = false;
+        opt.checkGraphs = false;
+        ProjectDiagResult result = CollectProjectDiagnostics(scene, opt);
+        const Diagnostic* miss = FindCode(result.items, "asset.db.missing");
+        CHECK(miss != nullptr);
+        CHECK(miss && miss->source.assetPath.find("ghost.png") != std::string::npos);
+        CHECK(miss && miss->message.find("Level.okayscene") != std::string::npos);
+        fs::remove_all(dir, ec);
     }
 
     Log::sink = oldSink;

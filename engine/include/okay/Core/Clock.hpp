@@ -56,9 +56,28 @@ public:
     float  SourceDelta() const { return m_sourceDelta; }
     std::uint64_t Ticks() const { return m_ticks; }
 
-    /// 1 = normal. Negative and NaN become 0, and it is capped at Time::kMaxTimeScale.
+    /// 1 = normal. Negative and NaN become 0, and it is capped at Time::kMaxTimeScale. A ramp in
+    /// progress is cancelled (the scale is where you put it).
     float  Scale() const { return m_scale; }
-    void   SetScale(float s) { m_scale = s > 0.0f ? (s < Time::kMaxTimeScale ? s : Time::kMaxTimeScale) : 0.0f; }
+    void   SetScale(float s) { m_scale = CleanScale(s); m_ramp = false; }
+
+    /// Move the scale to `target` over `seconds` of this clock's source time, in a straight line
+    /// (a stunned enemy slowing to a crawl, a menu clock easing back to speed). Exact however the
+    /// frames fall: the step a frame takes is the integral of the scale over it. A clock that is
+    /// paused (its own pause, or held by the game pause) stands still and so does its ramp.
+    /// SetScale or another ramp takes over from wherever the scale is; `seconds` <= 0 or NaN sets
+    /// it at once.
+    void   RampScale(float target, float seconds) {
+        target = CleanScale(target);
+        if (!(seconds > 0.0f) || !std::isfinite(seconds)) { m_scale = target; m_ramp = false; return; }
+        m_ramp = true; m_rampFrom = m_scale; m_rampTo = target; m_rampDur = (double)seconds; m_rampT = 0.0;
+    }
+    bool   Ramping() const { return m_ramp; }
+    /// Where the running ramp ends (the current scale when there is none).
+    float  RampTarget() const { return m_ramp ? m_rampTo : m_scale; }
+    /// Source seconds the running ramp still has to go (0 when there is none).
+    float  RampSecondsLeft() const { return m_ramp ? (float)(m_rampDur - m_rampT) : 0.0f; }
+    void   CancelRamp() { m_ramp = false; }
     /// The clock's own pause (the game pause is separate: see HoldsWhileGamePaused).
     bool   Paused() const { return m_paused; }
     void   SetPaused(bool p) { m_paused = p; }
@@ -71,13 +90,22 @@ public:
         if (!(src > 0.0f) || !std::isfinite(src)) src = 0.0f;
         m_sourceDelta = src;
         const bool held = m_paused || (m_holds && gamePaused);
-        m_delta = held ? 0.0f : src * m_scale;
+        m_delta = held ? 0.0f : (m_ramp ? StepRamp(src) : src * m_scale);
         m_elapsed += (double)m_delta;
         ++m_ticks;
     }
 
-    /// Back to the start: no time elapsed, scale 1, not paused. The source stays.
-    void Reset() { m_delta = m_sourceDelta = 0.0f; m_elapsed = 0.0; m_ticks = 0; m_scale = 1.0f; m_paused = false; }
+    /// Back to the start: no time elapsed, scale 1, not paused, no ramp. The source stays.
+    void Reset() { m_delta = m_sourceDelta = 0.0f; m_elapsed = 0.0; m_ticks = 0; m_scale = 1.0f; m_paused = false; m_ramp = false; }
+
+    /// Put the elapsed time and tick count back to what a save game stored (a world clock that
+    /// drives a day and night cycle). Negative and non-finite times count as 0. The last frame's
+    /// Delta() reads 0 until the next Tick. See Core/TimeSnapshot.hpp.
+    void Restore(double elapsed, std::uint64_t ticks) {
+        m_elapsed = (elapsed > 0.0 && std::isfinite(elapsed)) ? elapsed : 0.0;
+        m_ticks = ticks;
+        m_delta = m_sourceDelta = 0.0f;
+    }
 
     /// The channel called `name` in the process-wide set (ClockSet::Global()); an
     /// unknown name creates a new channel on real time with its own scale and pause.
@@ -85,10 +113,31 @@ public:
     static bool   Exists(const std::string& name);
 
 private:
+    static float CleanScale(float s) { return s > 0.0f ? (s < Time::kMaxTimeScale ? s : Time::kMaxTimeScale) : 0.0f; }
+    // Integrate the ramping scale over `src` seconds of source time and advance the ramp.
+    float StepRamp(float src) {
+        const double dt = (double)src;
+        const double seg = dt < m_rampDur - m_rampT ? dt : m_rampDur - m_rampT;   // the part of the frame still inside the ramp
+        const double k0 = m_rampT / m_rampDur, k1 = (m_rampT + seg) / m_rampDur;
+        const double s0 = (double)m_rampFrom + ((double)m_rampTo - (double)m_rampFrom) * k0;
+        const double s1 = (double)m_rampFrom + ((double)m_rampTo - (double)m_rampFrom) * k1;
+        double acc = seg * 0.5 * (s0 + s1);
+        m_rampT += seg;
+        m_scale = CleanScale((float)s1);
+        if (m_rampT >= m_rampDur - 1e-9) {            // arrived: the rest of the frame runs at the target
+            m_scale = m_rampTo;
+            m_ramp = false;
+            acc += (dt - seg) * (double)m_rampTo;
+        }
+        return (float)acc;
+    }
     std::string m_name;
     Source m_source;
     bool   m_holds = false;
     bool   m_paused = false;
+    bool   m_ramp = false;
+    float  m_rampFrom = 1.0f, m_rampTo = 1.0f;
+    double m_rampDur = 0.0, m_rampT = 0.0;
     float  m_scale = 1.0f;
     float  m_delta = 0.0f, m_sourceDelta = 0.0f;
     double m_elapsed = 0.0;

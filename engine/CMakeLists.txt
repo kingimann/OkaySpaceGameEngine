@@ -480,4 +480,6 @@ target_sources(okay_engine PRIVATE
 target_sources(okay_engine PRIVATE
     src/Core/FrameRecord.cpp
     src/Core/FrameStats.cpp
+    src/Core/TimeSnapshot.cpp
+    src/Core/LoopConsole.cpp
 )

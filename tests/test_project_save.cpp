@@ -64,6 +64,8 @@ int main() {
         const std::string path = ed.path();
         const std::size_t n = Count(ed);
 
+        int loaded = 0;
+        EditorState::onSceneLoaded = [&loaded] { ++loaded; };
         Write(t.Sub("broken.okayscene"), "this is not a scene file at all\n\x01\x02");
         CHECK(!ed.Load(t.Sub("broken.okayscene"), &err));
         CHECK(!err.empty());
@@ -71,12 +73,16 @@ int main() {
         CHECK(ed.path() == path && Count(ed) == n && HasObject(ed, "Unsaved edit"));   // the scene is still there
         CHECK(ed.dirty && ed.UndoDepth() == depth);                                    // and still counts as unsaved, with its history
         CHECK(ed.HasUnsavedChanges());
+        CHECK(loaded == 0);                                                            // nothing opened, so nobody is told a scene opened
         {   // a scene cut off half way is refused too, whole
             const std::string text = Read(good);
             Write(t.Sub("cut.okayscene"), text.substr(0, text.size() / 2));
             const bool cutOk = ed.Load(t.Sub("cut.okayscene"), &err);
             if (!cutOk) CHECK(Count(ed) == n && ed.path() == path);   // refused: nothing changed
         }
+        const int before = loaded;
+        CHECK(ed.Load(good, &err) && loaded == before + 1);                            // a good open tells the editor once
+        EditorState::onSceneLoaded = nullptr;
     }
 
     // ---- Undo never puts one scene into another scene's file ----------------------------------------------

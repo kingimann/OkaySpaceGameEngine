@@ -17177,7 +17177,7 @@ void DrawProjectSettings(EditorState& ed) {
     if (!g_showProjectSettings) return;
     ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Project Settings", &g_showProjectSettings)) {
-        ImGui::TextDisabled("Defaults a new build/scene inherits. Saved with the project (project.okayproj) as you change it.");
+        ImGui::TextDisabled("Defaults a new build/scene inherits. Saved with the project as you change it.");
         if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::InputText("Company##ps", g_project.company, sizeof(g_project.company));
             ImGui::SetNextItemWidth(160);
@@ -44379,6 +44379,7 @@ int main(int argc, char** argv) {
         NoteProjectFilesSaved();
         (void)ed;
     };
+    EditorState::onSceneLoaded = [] { g_lastSaveError.clear(); };   // a scene opened from disk starts without a failed-save note
     {   // a request left over from an earlier session must not close this one
         std::error_code ec;
         std::filesystem::remove(LauncherIpcPath("okay_ipc_request.txt"), ec);

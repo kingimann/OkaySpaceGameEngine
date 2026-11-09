@@ -147,6 +147,8 @@ public:
     /// Called when the project folder changes (open, create, close): the old folder, then the new one.
     /// The editor uses it to save the old project's settings and load the new one's.
     static inline std::function<void(const std::string& oldDir, const std::string& newDir)> onProjectChanged;
+    /// Called after a scene file was opened successfully (the editor clears its "last save failed" note).
+    static inline std::function<void()> onSceneLoaded;
 
     // ---- Project (a folder on disk holding the scenes + assets) ---------
     const std::string& projectDir() const { return m_projectDir; }

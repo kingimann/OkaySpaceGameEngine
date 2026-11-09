@@ -774,6 +774,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
         if (auto* ma = up->GetComponent<ModelAnimator>())
             PoseCapture::ImportFolder(*ma, PoseCapture::AssetBaseDir());
     MarkClean();
+    if (onSceneLoaded) onSceneLoaded();
     return true;
 }
 

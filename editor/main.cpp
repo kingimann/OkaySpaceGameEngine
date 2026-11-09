@@ -27741,6 +27741,7 @@ void DrawInspector(EditorState& ed) {
         // the project tag list and applied to this object immediately.
         static char newTag[72] = "";
         static std::string newTagErr;
+        if (ImGui::IsWindowAppearing()) newTagErr.clear();
         ImGui::SetNextItemWidth(120);
         bool entered = ImGui::InputTextWithHint("##newtag", "new tag...", newTag, sizeof(newTag),
                                                 ImGuiInputTextFlags_EnterReturnsTrue);

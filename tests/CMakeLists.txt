@@ -1612,6 +1612,9 @@ endif()
 add_executable(test_vs_media test_vs_media.cpp)
 target_link_libraries(test_vs_media PRIVATE okay::engine)
 add_test(NAME vs_media COMMAND test_vs_media)
+add_executable(test_vs_tween test_vs_tween.cpp)
+target_link_libraries(test_vs_tween PRIVATE okay::engine)
+add_test(NAME vs_tween COMMAND test_vs_tween)
 
 # Script navmesh queries: nav_path_exists / nav_path_length / nav_point_walkable / nav_nearest_point
 add_executable(test_script_nav test_script_nav.cpp)

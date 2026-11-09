@@ -1143,6 +1143,10 @@ target_link_libraries(test_head_stability PRIVATE okay::engine)
 target_compile_definitions(test_head_stability PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME head_stability COMMAND test_head_stability)
 
+add_executable(test_gap_stuck test_gap_stuck.cpp)
+target_link_libraries(test_gap_stuck PRIVATE okay::engine)
+add_test(NAME gap_stuck COMMAND test_gap_stuck)
+
 add_executable(test_anim_jitter test_anim_jitter.cpp)
 target_link_libraries(test_anim_jitter PRIVATE okay::engine)
 target_compile_definitions(test_anim_jitter PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

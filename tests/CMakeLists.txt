@@ -1844,6 +1844,15 @@ add_executable(test_loop_audit3 test_loop_audit3.cpp)
 target_link_libraries(test_loop_audit3 PRIVATE okay::engine)
 add_test(NAME loop_audit3 COMMAND test_loop_audit3)
 
+# 1.1 fourth pass: TogglePause, session clocks, RunFrames, debug scale presets, edge cases of Time / GameLoop / TickPacer / Utf8
+add_executable(test_loop_audit4 test_loop_audit4.cpp)
+target_link_libraries(test_loop_audit4 PRIVATE okay::engine)
+add_test(NAME loop_audit4 COMMAND test_loop_audit4)
+
+add_executable(test_frame_overlay test_frame_overlay.cpp)
+target_link_libraries(test_frame_overlay PRIVATE okay::engine)
+add_test(NAME frame_overlay COMMAND test_frame_overlay)
+
 add_executable(test_countdown test_countdown.cpp)
 target_link_libraries(test_countdown PRIVATE okay::engine)
 add_test(NAME countdown COMMAND test_countdown)

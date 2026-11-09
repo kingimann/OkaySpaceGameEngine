@@ -108,6 +108,28 @@ bool GameLoop::RequestStep(int frames, float stepDelta) {
     return true;
 }
 
+bool GameLoop::RunFrames(int frames, float frameSeconds, const std::string& pauseReason) {
+    if (frames < 1) return false;
+    if (Game::Paused()) return RequestStep(frames, frameSeconds);   // already paused: the run is a step request
+    m_runLeft = frames > kMaxStepRequest ? kMaxStepRequest : frames;
+    m_runDelta = (frameSeconds > 0.0f && std::isfinite(frameSeconds)) ? std::min(frameSeconds, kMaxStepDelta) : 0.0f;
+    m_runReason = pauseReason.empty() ? std::string("manual") : pauseReason;
+    return true;
+}
+
+float GameLoop::NextDebugTimeScale(float current, int direction) {
+    if (!(current >= 0.0f) || !std::isfinite(current)) current = 1.0f;
+    if (direction == 0) return current;
+    if (direction > 0) {
+        for (int i = 0; i < kDebugScalePresetCount; ++i)
+            if (kDebugScalePresets[i] > current * 1.0001f) return kDebugScalePresets[i];
+        return kDebugScalePresets[kDebugScalePresetCount - 1];
+    }
+    for (int i = kDebugScalePresetCount - 1; i >= 0; --i)
+        if (kDebugScalePresets[i] < current * 0.9999f) return kDebugScalePresets[i];
+    return kDebugScalePresets[0];
+}
+
 float GameLoop::StepDelta() const {
     if (m_stepDeltaReq > 0.0f) return m_stepDeltaReq;
     if (m_opt.stepDelta > 0.0f && std::isfinite(m_opt.stepDelta)) return std::min(m_opt.stepDelta, kMaxStepDelta);
@@ -127,6 +149,7 @@ void GameLoop::Reset() {
     m_wasPaused = false;
     m_stop = false;
     m_stepsLeft = 0; m_stepDeltaReq = 0.0f; m_wasStep = false; m_inStepFrame = false;
+    m_runLeft = 0; m_runDelta = 0.0f;
     m_replaying = false;
     m_marker = m_frameMarker = 0;
     m_stats.Clear();
@@ -178,8 +201,11 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
             m_stepsLeft = 0; m_stepDeltaReq = 0.0f;           // resumed: pending debug steps are moot
         }
     }
+    // A frame of RunFrames' run: the game is running and nothing replaces this frame's time.
+    const bool runFrame = m_runLeft > 0 && !replaying && !stepFrame && !Game::Paused();
     if (!replaying && !stepFrame) {
-        if (CaptureActive()) { real = 1.0 / (double)m_opt.captureFps; exact = true; }
+        if (runFrame && m_runDelta > 0.0f) { real = (double)m_runDelta; exact = true; }
+        else if (CaptureActive()) { real = 1.0 / (double)m_opt.captureFps; exact = true; }
         else if (m_frames == 0 && m_opt.firstFrameDelta >= 0.0f) real = (double)m_opt.firstFrameDelta;
     }
     // The frame time is kept as a float: a measurement beyond that range (a broken timer) is
@@ -232,7 +258,10 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
     m_clamped = (float)clamped;
     m_stepped = (m_opt.smoothDelta && !exact) ? Time::SmoothDelta(m_clamped, m_opt.refreshHz) : m_clamped;
     // 4. The debug scale: slow motion or fast forward for the whole game (not for a debug step).
-    if (!stepFrame && m_debugScale != 1.0f) m_stepped = (float)((double)m_stepped * (double)m_debugScale);
+    if (!stepFrame && m_debugScale != 1.0f) {
+        const double scaled = (double)m_stepped * (double)m_debugScale;   // held in float range (a huge frame at 32x)
+        m_stepped = scaled < (double)std::numeric_limits<float>::max() ? (float)scaled : std::numeric_limits<float>::max();
+    }
     if (OnHitch && hitch) OnHitch(m_real, m_stepped);
 
     // 5. Pause transitions (Game already froze Time when the flag flipped).
@@ -282,6 +311,14 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
 
     m_inStepFrame = false;
     if (stepFrame && !replaying && m_stepsLeft == 0 && OnStepsFinished) OnStepsFinished();
+
+    // The last frame of a RunFrames run: pause the game (once per reason), then tell the host. The count
+    // may have been cleared by a callback (Reset, CancelRunFrames): then there is nothing to finish.
+    if (runFrame && m_runLeft > 0 && --m_runLeft == 0) {
+        m_runDelta = 0.0f;
+        if (!Game::IsPausedBy(m_runReason)) Game::PushPause(m_runReason);
+        if (OnRunFramesDone) OnRunFramesDone();
+    }
 
     return !QuitRequested();
 }

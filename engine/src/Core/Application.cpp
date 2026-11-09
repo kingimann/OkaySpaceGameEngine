@@ -7,6 +7,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Render/ConsoleRenderer.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <thread>
@@ -44,8 +45,7 @@ void Application::Run(Scene& scene) {
     };
     InputSession session;
 
-    const float targetFrameTime =
-        m_config.targetFps > 0.0f ? 1.0f / m_config.targetFps : 0.0f;
+    const float targetFrameTime = TargetFrameSeconds(m_config.targetFps);   // at most one second (see there)
 
     // The shared driver: clamp a stall, step Time (evened out when smoothDt), run the
     // fixed steps and OnUpdate. Config defaults reproduce the loop this used to be. The Config
@@ -66,7 +66,7 @@ void Application::Run(Scene& scene) {
         ~DropHook() { loop.OnUpdate = nullptr; }
     } dropHook{m_loop};
 
-    FrameLimiter limiter(m_config.pacing == Config::Pacing::Limiter ? (double)m_config.targetFps : 0.0);
+    FrameLimiter limiter(m_config.pacing == Config::Pacing::Limiter && targetFrameTime > 0.0f ? std::max(1.0, (double)m_config.targetFps) : 0.0);
 
     int frame = 0;
     try {

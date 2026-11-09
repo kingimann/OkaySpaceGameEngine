@@ -33,6 +33,22 @@ EditorState::EditorState() : m_scene("Untitled") {
     m_steam = CreateSteamService();
     SteamConfig sc; sc.appId = 480; // Spacewar test app id
     if (m_steam) m_steam->Initialize(sc);
+    // The Play loop: the player's frame clamp (0.1 s), and the scene tick as its update.
+    GameLoop::Options lo;
+    lo.maxDelta = 0.1f;
+    m_loop.SetOptions(lo);
+    m_loop.OnUpdate = [this](float dt) {
+        const bool editorPaused = paused();
+        if (editorPaused && !m_loop.WasStepFrame()) return;   // the Pause button freezes the scene entirely
+        // The Step button advances one frame of a running game: hide the editor's own pause from the
+        // scene for that frame (controllers skip a paused game), and put it back after.
+        struct Unpause {
+            bool on;
+            explicit Unpause(bool o) : on(o) { if (on) Game::ClearPause(kPauseReason); }
+            ~Unpause() { if (on) Game::PushPause(kPauseReason); }
+        } unpause(editorPaused);
+        if (playTick) playTick(dt); else Tick(dt);
+    };
 }
 
 bool EditorState::StartHost(std::uint16_t port) {
@@ -261,8 +277,11 @@ GameObject* EditorState::DuplicateSelected() {
     std::vector<GameObject*> clones;
     for (GameObject* g : targets) {
         if (!g || AncestorInSet(g, targets)) continue;   // a parent clone already brings its children
-        GameObject* clone = m_scene.Instantiate(*g);
-        if (clone) { clone->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f}; clones.push_back(clone); }
+        // Duplicate keeps the original's parent and local pose (a child stays a child), puts the copy
+        // right after it among its siblings and gives it a free name ("Cube (1)"). Nudged in WORLD
+        // space, so a child of a scaled parent still lands a visible half unit away.
+        GameObject* clone = m_scene.Duplicate(*g);
+        if (clone) { clone->transform->SetPosition(clone->transform->Position() + Vec3{0.5f, 0.5f, 0.0f}); clones.push_back(clone); }
     }
     if (clones.empty()) return nullptr;
     m_multi = clones;
@@ -733,7 +752,10 @@ void EditorState::Play() {
     ActionList::ResetVars();   // clear visual-script variables each Play session
     vs::ForgetSceneVariables(&m_scene);   // scene / global graph variables start empty too
     vs::ClearGlobalVariables();
-    Game::Reset();             // clear stale pause/quit state from a prior session
+    // A new session: no stale pause, quit, hit stop or ramp, the time scale back to 1 (Game::Reset kept a
+    // scale a script had left, so the next Play started frozen once the editor stepped Time), the clocks
+    // at zero and SmoothDelta's history forgotten.
+    m_loop.BeginSession();
     // Audio files named on AudioSources play in Play mode without pressing Load.
     {
         std::vector<std::string> missing;
@@ -764,7 +786,7 @@ void EditorState::Stop() {
     if (!m_playing) return;
     m_playing = false;
     m_scene.UseFixedStepPhysics(false);
-    Game::Reset();   // unpause + clear quit so the next Play starts clean
+    m_loop.BeginSession();   // unpause, clear quit and any script's time scale, so the next Play starts clean
     ActionList::DebugPaused() = false; ActionList::StepBudget() = 0;   // never leave Actions frozen after Stop
     // Deserialize rebuilds the scene, destroying every live component — including
     // any NetworkManager m_net points at. Drop the pointer first so TickServices
@@ -786,6 +808,24 @@ void EditorState::Tick(float dt) {
         m_scene.Update(dt); NavigateUI(m_scene);
         Matchmaker::Shared().Pump(m_scene.FindObjectOfType<NetworkManager>());   // net_queue_join(): connect a found match
     }
+}
+
+bool EditorState::PlayFrame(double realSeconds, bool smooth, float refreshHz) {
+    if (!m_playing) return false;   // editing never steps Time
+    GameLoop::Options o = m_loop.options();
+    if (o.smoothDelta != smooth || o.refreshHz != refreshHz) { o.smoothDelta = smooth; o.refreshHz = refreshHz; m_loop.SetOptions(o); }
+    return m_loop.BeginFrame(realSeconds);
+}
+
+void EditorState::SetPaused(bool pause) {
+    if (!m_playing || pause == paused()) return;
+    if (pause) Game::PushPause(kPauseReason); else Game::ClearPause(kPauseReason);
+}
+
+bool EditorState::StepFrame(float seconds) {
+    if (!m_playing) return false;
+    SetPaused(true);
+    return m_loop.RequestStep(1, seconds);
 }
 
 } // namespace okay::editor

@@ -688,6 +688,12 @@ target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
 
+# The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
+add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_hooks PRIVATE okay::engine)
+add_test(NAME editor_hooks COMMAND test_editor_hooks)
+
 add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
 add_test(NAME ui_overlays COMMAND test_ui_overlays)

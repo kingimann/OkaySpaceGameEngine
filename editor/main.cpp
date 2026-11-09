@@ -6372,7 +6372,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         dl->AddTriangleFilled(ImVec2(c.x - s * 1.1f, c.y - s), ImVec2(c.x - s * 1.1f, c.y + s), ImVec2(c.x + s * 0.5f, c.y), col);
         dl->AddRectFilled(ImVec2(c.x + s * 0.75f, c.y - s), ImVec2(c.x + s * 0.75f + tb * 0.075f, c.y + s), col, 1.0f);
     }
-    if (stepHit) { g_paused = true; TickGame(ed, 1.0f / 60.0f); }
+    if (stepHit) { g_paused = true; ed.StepFrame(); }   // one frame of 1/60 s, run by the next Play frame
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -44473,9 +44473,10 @@ int main(int argc, char** argv) {
         {   // Frozen at a visual-script breakpoint: Continue / Step resume that same tick.
             auto& dv = okay::editor::vsed::DebugView();
             if (g_gameFiber.Suspended()) { if (dv.resume) { dv.resume = false; g_gameFiber.Resume(); } }
-            else if (!g_paused) {
+            else {   // (was `else if (!g_paused)`: the editor's Pause is a Game pause the Play loop honours, see EditorState::SetPaused)
                 // One hitch (a compile, an asset load, a window drag) mustn't become
-                // one huge physics step: clamp like the built game, then even it out.
+                // one huge physics step: the Play loop (ed.PlayFrame, a GameLoop) clamps
+                // to 0.1 s like the built game, then evens it out.
                 static float s_refreshHz = 0.0f;
                 static int s_refreshAge = 0;
                 if (s_refreshAge-- <= 0) {
@@ -44483,9 +44484,13 @@ int main(int argc, char** argv) {
                     s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
                     s_refreshAge = 120;
                 }
-                float playDt = dt > 0.1f ? 0.1f : dt;
-                if (g_smoothFrameTime) playDt = okay::Time::SmoothDelta(playDt, g_vsync ? s_refreshHz : 0.0f);
-                TickGame(ed, okay::Game::Paused() ? 0.0f : playDt);
+                if (ed.isPlaying()) {
+                    if (!ed.playTick) ed.playTick = [&ed](float gdt) { TickGame(ed, gdt); };   // the Play loop's update (debugger fiber aware)
+                    ed.SetPaused(g_paused);   // the Pause button = Game::PushPause("editor")
+                    // Steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the
+                    // scene by the scaled delta: 0 while the game or the editor is paused, as before.
+                    ed.PlayFrame((double)dt, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f);
+                } else TickGame(ed, dt > 0.1f ? 0.1f : dt);   // editing never steps Time
             }
         }
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).

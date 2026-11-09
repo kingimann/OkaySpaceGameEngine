@@ -545,7 +545,10 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
         net->SetJoinCheck([a](const std::string& token, std::string& uid) { return a->Check(token, uid); });
     }
 
-    Game::Reset();
+    // A new session: Reset() plus time scale 1. The server steps Time itself by a fixed tick, and its options
+    // carry no time scale, so a scale left from an earlier run in this process (a test, an embedding host)
+    // would only be stale state that slows the world. A scene script's Start() below may still set its own.
+    Game::BeginSession();
     scene.Start();
     // The command line's .okayac wins over a scene's AntiCheatConfig (which
     // applied its own at Start).

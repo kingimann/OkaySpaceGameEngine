@@ -157,6 +157,21 @@ int main() {
         CHECK(std::isfinite(Time::ElapsedTimeD()));
     }
 
+    // ---- BUG: SmoothDelta near the top of the float range returned infinity (the sum, or twice the frame, overflowed) --------------------------------
+    {
+        Fresh();
+        CHECK(std::isfinite(Time::SmoothDelta(kFltMax)) && std::isfinite(Time::SmoothDelta(kFltMax)));
+        Time::ResetSmoothing();
+        GameLoop::Options o = Plain();
+        o.maxDelta = 0.0f;
+        o.smoothDelta = true;
+        GameLoop loop(o);
+        for (int i = 0; i < 6; ++i) loop.BeginFrame(1.0e300);
+        CHECK(std::isfinite(loop.FrameDeltaStepped()) && loop.FrameDeltaStepped() > 1.0e38f && std::isfinite(Time::ElapsedTimeD()));
+        loop.BeginFrame(0.016);                                           // and the average comes back down
+        CHECK(std::isfinite(loop.FrameDeltaStepped()));
+    }
+
     // ---- BUG: two denormal frame times turned SmoothedFPS into NaN for the rest of the run (1 / dt = infinity, then inf - inf) -------------
     {
         Fresh();

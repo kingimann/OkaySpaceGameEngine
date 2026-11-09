@@ -186,3 +186,20 @@ Test: `scene_graph_wave4` (the rest of this pass is in `scene_hierarchy_search.m
 * `Scene::DestroyChildren(go)`, `GameObject::GetComponentsInParent<T>()`, `Scene::Stats()` and the other additions are listed in
   `scene_hierarchy_search.md`.
 
+## What changed: tags and layers, fifth pass (1.3)
+
+Tests: `scene_graph_wave5` (suite "tag and layer names in other languages"), `object_pool_wave5`.
+
+* **Length counts characters.** `Tags::IsValidName` allowed 64 bytes and `Layers::IsValidName` 32, so a Japanese tag of 22
+  characters or a Cyrillic layer name of 11 was refused although the messages said "characters". Both limits are now counted in
+  characters (UTF-8; `Tags::CharCount`), and a name is still at most four bytes per character, so a run of stray continuation bytes
+  cannot make a name without end. A name that is not valid UTF-8 is accepted as before (existing project files keep loading).
+* **Layer names compare without regard to case in other scripts too.** `Layers::NameToLayer`, `Layers::SetName` (a second layer
+  cannot take a name that differs only in case) and `Layers::MaskFromList` fold case with `Layers::Fold` / `Layers::FoldCode`:
+  ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic. "ÉNEMY" finds the layer called "énemy". Other scripts (and "E" against
+  "É") are compared as they are. Names are not normalized: an accented letter written as one code point and as two do not match.
+* Checked and found right: 10000 objects each carrying a different tag in another language (lookups, `CountWithTag`,
+  `UnlistedTags`, `ReplaceTag`), a project file with such layer names written and read back by `ProjectLists`, tags that differ only
+  in case (two tags), names that are not valid UTF-8.
+* `Scene::FindGameObjectsOnLayer(layer)` / `CountOnLayer(layer)` are the "find objects by layer" calls (no second name was added).
+

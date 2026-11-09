@@ -6,6 +6,7 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/NearestLookup.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -900,7 +901,7 @@ void Physics3D::Step(Scene& scene, float dt) {
         Transform* ta = j->transform;
         Rigidbody3D* rbB = nullptr; Transform* tb = nullptr;
         if (!j->connectedBody.empty())
-            if (GameObject* g = scene.Find(j->connectedBody)) { tb = g->transform; rbB = g->GetComponent<Rigidbody3D>(); }
+            if (GameObject* g = FindNearest(scene, j->connectedBody, j->gameObject)) { tb = g->transform; rbB = g->GetComponent<Rigidbody3D>(); }
         Vec3 pa = ta->Position();
         Vec3 pb = tb ? tb->Position() : j->anchor;
         if (!j->initialized) {

@@ -161,6 +161,9 @@ use it.
   next frame), the other tasks of the update still run, and the first exception is
   rethrown when the update is done. The scheduler is consistent by then. The tween manager
   does the same for tweens.
+- A callback that calls `Update` on the scheduler that is running it: the nested update advances
+  every other task, but the task whose callback is on the stack is skipped (it is neither stepped nor
+  run again, so it keeps its period and its repeats). The same goes for its `alive` predicate.
 
 ## Tweens
 
@@ -190,6 +193,12 @@ on a tween already at its end does nothing. On an endless tween, `Complete()` re
 the exact end of the current loop (a yoyo loop that runs back lands on its start
 value) and fires `OnComplete` once.
 
+A callback may call `Update` on the manager that is running it (a loading screen that pumps frames, a test that
+steps the world). The nested update advances every other tween, but the tween whose callback is on the stack,
+and the sequence that holds it, are left to the outer update: no callback runs inside itself (a zero step
+used to recurse until the stack was gone), and `OnComplete` still fires once (the nested update used to finish and
+kill the tween before the outer render got to it). The scheduler does the same for its tasks.
+
 ### Loops, ends and big steps
 
 Yoyo and restart loops land exactly on the end values (the final frame applies the
@@ -214,6 +223,16 @@ pause apply, and the tween keeps no time while it is paused. The clock wins over
 `SetUpdate`. Only the outermost tween of a sequence reads a clock; the tweens inside
 take their time from the sequence. `TweenManager::SetClockSet(&set)` points a manager at
 a `ClockSet` of its own, which is how tests drive it with fake frame times.
+
+**A pause menu.** `PauseAll(true)` pauses every tween except the ones that do not follow the game's time, and
+`PlayAll()` resumes them (a tween that was playing backwards goes on backwards). A tween keeps playing through
+`PauseAll(true)` when it ignores the time scale (`SetUpdate(true)`), or when it follows a clock channel that runs
+on real time, is not held by the game pause and is not paused itself: `"ui"` and a channel of your own. A
+tween on `"game"` (the game's own time), on `"cinematic"` (stands still with the game), on a channel that is
+paused, and one on scene time is paused. A tween with a channel follows the channel only, so `SetUpdate(true)`
+does not exempt it (a tween on `"game"` that also ignores the time scale is paused). `PauseAll()` with no
+argument pauses everything. A tween paused this way stays paused when its channel runs again; `PlayAll()` is
+what resumes it.
 
 ### Eases
 
@@ -314,6 +333,13 @@ A sequence is a tween: `SetLoops`, `SetDelay`, `SetSpeed`, `SetEase`, `Pause`, `
 tags all work on it, and a sequence can hold sequences. In a Yoyo loop the children run backwards on the
 way back and the sequence ends exactly on its start; callbacks added with `AppendCallback` /
 `InsertCallback` / `JoinCallback` fire on the way forward only.
+
+Ending a sequence (`Kill`, a manager `Clear`, a scene load, its object dying, a callback that throws) ends the
+tweens it holds too, silently (no `OnKill` for the children; the sequence's own `OnKill` fires on `Kill`). A
+handle you kept to one of them reports `IsActive() == false` and cannot restart or write into the scene any more
+(it used to stay "active" for ever, and `Restart()` on it wrote into objects a load had freed). Nested sequences
+with loops of every kind render the same at time T whether played there frame by frame or reached with
+`Goto(T)` (`timers_fifth` block 5 checks 600 random shapes).
 
 ### Speed based tweens
 
@@ -428,6 +454,13 @@ DebugOverlay::AddLine([&] { return TimerDebug::Summary(&scene.scheduler(), &scen
 `TimerDebug::Options` limits the groups and oldest entries listed. Ties are broken by name and handle, so the
 text is the same every run.
 
+Cost: a capture walks every task and tween once (`Tasks()` / `Infos()`). `Summary` and any capture with
+`showGroups` false and `topGroups` 0 do not build the tag, owner and id tables, and the `oldest` list is picked
+with a partial sort that copies only `topOldest` entries, so a one-line summary is cheap enough to evaluate every
+frame. With 10 000 tasks and 5 000 tweens (a release build) `Summary` went from 7.8 ms to 2.5 ms and `BuildLines`
+from 8.5 ms to 3.4 ms; what is left is copying the task and tween lists, so keep the full `BuildLines` for a panel you
+open and refresh it a few times a second, and call `Summary` as often as you like.
+
 ### Lifetimes
 
 - Tweens made with the `DOTween::` shortcuts are killed (silently, no `OnKill`)
@@ -436,7 +469,12 @@ text is the same every run.
   so removing that component mid-tween just stops the effect instead of writing into
   freed memory.
 - `Scene::Clear`, a scene load and destroying a `TweenManager` silently end every
-  tween in it. A tween you still hold reports `IsActive() == false` afterwards.
+  tween in it (and the tweens inside a sequence). A tween you still hold reports `IsActive() == false`
+  afterwards and every call on it does nothing.
+- `Scene::Clear()` called from a timer or tween callback (the scene is walking its lists) is queued and
+  happens at the end of the frame, so a timer or tween the callback creates after the call goes with the old
+  scene: its handle is valid for the rest of the frame and gone after it. To start fresh work in the new world,
+  `RequestLoad` and schedule from the loaded scene (or from `Scheduler::Global()`, which a clear does not touch).
 - A tween made with `TweenManager::To` or `Virtual` writes through your own
   functions and has no target object. If those functions touch a `GameObject`,
   set `SetTarget(go)` so the tween dies with it.
@@ -452,6 +490,16 @@ parses). Both are saved in the scene file as an optional tail after the id (noth
 written while they are empty, so scenes without them are byte for byte as before, and an
 older engine reads a newer scene and ignores the tail). Every float of the component
 round trips exactly. Removing the component (or its object) now ends its tween.
+
+Three more fields drive the tools the code tweens already had: `speedBased` (the duration is a speed in units
+per second: move, scale, UI move and size, fade and colour; the others read it as seconds), `decay` (how a punch or
+shake dies away: 0 is the straight fade, 4 lively, 8 snappy; punch and shake types only) and `tag` (a group label
+for `TweenManager::KillByTag`, `PauseByTag`, `PlayByTag` and the script `tween_kill_tag` family). They are saved
+after the clock and the curve as ` "<clock>" "<curve>" <decay> <speedBased> "<tag>"`, and only when one of the three is
+set (a scene that sets none is byte for byte what it was before, and a file with only the clock and the curve loads
+with the defaults). An engine that stops after the curve reads the numbers as an unknown field, warns and steps over
+the rest of the line, so a newer scene still loads there. The record is not in the property registry
+(`BuiltinProperties.cpp`): the Inspector draws it by hand.
 
 The Inspector shows both (editor hooks): under **Ease** there is a **Curve** text field and a
 **Clock** combo.
@@ -587,3 +635,59 @@ Not done: `TweenAnimation` has no fields for `decay`, speed based or a tag (they
 scene record and an Inspector row; the code tweens have them); a `Scheduler` still must be used from one thread;
 a callback that calls `Update` on the scheduler that is running it consumes the running task's period without
 running it (nothing in the engine does this); visual-script nodes for the new tweens.
+
+### Fifth pass (nested updates, pause menus, sequence handles, TweenAnimation tools, nodes)
+
+Bugs fixed (each with a regression test; `timers_fifth` unless noted, and the blocks fail on the code before the change):
+
+- `Scheduler`: a callback that called `Update` on the scheduler running it used up the running task's period (and one
+  repeat of a counted timer) without running it, and stepped a tween task a second time without calling its callbacks.
+  The nested update now skips the task whose callback is on the stack (a `running` flag on the task). Block 1.
+- `TweenManager::PauseAll(true)` spared only `SetUpdate(true)` tweens, so a tween on a real-time clock channel ("ui", or a
+  channel of your own) froze with the pause menu it was meant to animate, while a tween on `"game"` with
+  `SetUpdate(true)` kept running with the game paused. The rule is now "does not follow the game's time" (see "A pause
+  menu" under "Time scale"). Block 2.
+- `TweenManager::Update` called from a tween's own callback re-entered that tween: its `OnUpdate` ran again inside itself
+  (for ever with a zero step: the stack overflowed) and an `OnStepComplete` that updated the manager finished and killed
+  the tween before its `OnComplete` fired. The tween (or the sequence) whose callback is on the stack is skipped by the
+  nested update. Block 10.
+- Ending a `TweenSequence` (`Kill`, a manager `Clear`, a scene load, its object dying, a throwing callback) left the tweens
+  inside it "active" for ever, and a handle you held to one of them could `Restart()` and write into a scene that a load
+  had freed. They end with the sequence now, silently. Block 4.
+- Scripts: `tween_loops(id, nan)` looped for ever on some machines and `tween_loops(id, 1000000000000)` became a negative
+  count (also "for ever") because a float far out of range was cast to int, which is undefined; the same cast fed the
+  vibrato of `tween_punch_*` / `tween_shake*` and the jumps of `tween_jump`. A NaN is the default (once, or the usual
+  vibrato) and a huge count stops at two billion. The `ease_in` ... `ease_bounce` functions returned NaN for a NaN `t`;
+  they return the ease of 0 like `Easing::Evaluate`. Block 6.
+- Shake tweens: the step number was an int fed with `vibrato * duration`, which a vibrato near `INT_MAX` on a long shake
+  pushed far past int range; it is capped at 1e8 steps.
+- `TimerDebug::Summary` (made for a one-line overlay that is evaluated every frame) and a `BuildLines` that hides the groups
+  still built the tag, owner and id tables and sorted a copy of every task and tween to pick the three oldest. With 10 000
+  tasks and 5 000 tweens that was 7.8 ms a call (measured before the change; 2.5 ms after). Tables are only built when
+  asked for and the oldest come from a partial sort that copies only the ones it shows. Block 7.
+- `Easing::Decay`'s header comment said "a big first swing"; a larger rate makes the motion quiet sooner.
+
+Added:
+
+- `TweenAnimation`: `speedBased`, `decay` and `tag`, saved as an optional tail of the `tweenanim` record (see "TweenAnimation
+  component"). Block 3 (round trip of every combination with the clock and curve tail, older files, a newer build's extra
+  fields, odd values, and the fields reaching the tween).
+- Script `ease_curve(t, "OutBack" | "cubic-bezier(...)" | "steps(4)")`.
+- Visual-script nodes `EaseCurve`, `SpringStep`, `TweenMove`, `TweenMoveSpeed`, `TweenKillTag`, `TweenPauseTag`,
+  `TweenPlayTag` (see docs/visual_scripting.md; `vs_tween`).
+
+Checked and fine (pinned by `timers_fifth`): nested sequences with loops of every kind (200 random shapes, three times
+each: the state at time T from playing and from `Goto(T)` agree, and every one completes exactly once), twenty thousand
+objects with two timers and a tween each destroyed in one frame (each task asks its `alive` predicate once per update; the
+tweens end with the objects at once, the timers go on the next update without running; no per-object scans), a
+`Scene::Clear` asked for in a callback (queued to the end of the frame, so what the callback creates after the call goes
+with the old scene and its handles report inactive; documented under "Lifetimes"), a process-wide timer bound to an object of
+a cleared scene (dropped without running), and a scene load requested from a callback with a timer scheduled after it.
+Springs with a NaN, zero or infinite quaternion, angle or target stay finite (`StepQuat`, `StepAngle`); a spring
+fed values near the float limit (about 3e38) can overflow its velocity to infinity.
+
+Not done: Inspector rows for the three new `TweenAnimation` fields and palette entries, help text and code generation for the
+seven new nodes are editor changes (the page lists them as node types; the editor's node list does not show them yet);
+there is no script builtin for a spring (it needs state; the node keeps it); `TweenAnimation` is not in the property
+registry; `TweenManager::OfTarget` / `IsTweening` / `WithId` / `WithTag` scan every tween (fine for hundreds, slow if a
+script calls `is_tweening()` on thousands of objects every frame); a `Scheduler` still must be used from one thread.

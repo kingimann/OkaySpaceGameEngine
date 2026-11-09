@@ -1,5 +1,6 @@
 #include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Scene/Component.hpp"
+#include <atomic>
 #include <cctype>
 #include <mutex>
 #include <typeinfo>
@@ -8,6 +9,7 @@
 namespace okay {
 
 namespace {
+std::atomic<std::uint64_t> g_serializerGeneration{0};   // moves whenever an entry is registered or replaced
 struct Table {
     std::mutex mutex;
     std::vector<std::shared_ptr<const ComponentSerializerRegistry::Entry>> entries;
@@ -18,6 +20,7 @@ Table& GetTable() { static Table t; return t; }
 void AddEntry(Table& t, ComponentSerializerRegistry::Entry e) {
     std::lock_guard<std::mutex> lock(t.mutex);
     auto sp = std::make_shared<const ComponentSerializerRegistry::Entry>(std::move(e));
+    g_serializerGeneration.fetch_add(1, std::memory_order_relaxed);
     for (auto& cur : t.entries) if (cur->name == sp->name) { cur = sp; return; }
     t.entries.push_back(sp);
 }
@@ -46,6 +49,11 @@ void ComponentSerializerRegistry::WriteAll(const GameObject& go, std::ostream& o
     { std::lock_guard<std::mutex> lock(t.mutex); copy = t.entries; }
     for (auto& e : copy) e->write(go, out);
 }
+
+namespace detail {
+/// Moves whenever a component serializer is registered: the records an object writes (so the order they load in) change with it.
+std::uint64_t ComponentSerializerGeneration() { return g_serializerGeneration.load(std::memory_order_relaxed); }
+} // namespace detail
 
 std::string ComponentSerializerRegistry::TypeKey(const Component& c) {
     const std::string raw = typeid(c).name();

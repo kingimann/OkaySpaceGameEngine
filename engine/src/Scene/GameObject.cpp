@@ -21,6 +21,7 @@ std::uint64_t g_nextInstanceId = 1;
 
 std::mutex g_rulesMutex;
 std::atomic<bool> g_anyRules{false};
+std::atomic<std::uint64_t> g_rulesGeneration{0};   // moves whenever a rule is added or the rules are cleared
 std::unordered_map<std::type_index, std::vector<ComponentRules::Requirement>> g_requirements;
 std::unordered_set<std::type_index> g_unique;
 thread_local std::vector<std::type_index> t_applying;   // owners whose requirements are being added
@@ -42,11 +43,13 @@ void ComponentRules::AddRequirement(std::type_index owner, Requirement req) {
     for (const auto& r : v) if (r.type == req.type) return;   // already declared
     v.push_back(req);
     g_anyRules = true;
+    g_rulesGeneration.fetch_add(1, std::memory_order_relaxed);
 }
 void ComponentRules::SetUnique(std::type_index owner) {
     std::lock_guard<std::mutex> lock(g_rulesMutex);
     g_unique.insert(owner);
     g_anyRules = true;
+    g_rulesGeneration.fetch_add(1, std::memory_order_relaxed);
 }
 bool ComponentRules::Any() { return g_anyRules.load(std::memory_order_relaxed); }
 bool ComponentRules::IsUnique(std::type_index owner) {
@@ -61,7 +64,14 @@ std::vector<ComponentRules::Requirement> ComponentRules::RequirementsOf(std::typ
 void ComponentRules::Clear() {
     std::lock_guard<std::mutex> lock(g_rulesMutex);
     g_requirements.clear(); g_unique.clear(); g_anyRules = false;
+    g_rulesGeneration.fetch_add(1, std::memory_order_relaxed);
 }
+
+namespace detail {
+/// Moves whenever the RequireComponent / DisallowMultipleComponent rules change: the order a loader gives an
+/// object's components depends on them (SceneSerializer keeps what it worked out per rule state).
+std::uint64_t ComponentRulesGeneration() { return g_rulesGeneration.load(std::memory_order_relaxed); }
+} // namespace detail
 
 void GameObject::ApplyRequirements(std::type_index owner) {
     for (const auto& t : t_applying) if (t == owner) return;   // A needs B needs A: stop the loop
@@ -117,6 +127,18 @@ GameObject* GameObject::FromInstanceId(std::uint64_t id) {
     std::lock_guard<std::mutex> lock(g_registryMutex);
     auto it = g_registry.find(id);
     return (it == g_registry.end() || it->second->m_destroyed) ? nullptr : it->second;
+}
+
+bool GameObject::HasLiveComponentInHierarchy() const {
+    std::vector<const GameObject*> stack{this};   // explicit stack: a deep hierarchy cannot overflow
+    while (!stack.empty()) {
+        const GameObject* g = stack.back(); stack.pop_back();
+        if (g->HasLiveComponent()) return true;
+        if (g->transform)
+            for (const Transform* c : g->transform->Children())
+                if (c && c->gameObject) stack.push_back(c->gameObject);
+    }
+    return false;
 }
 
 bool GameObject::IsSelfOrDescendantOf(const GameObject* other) const {

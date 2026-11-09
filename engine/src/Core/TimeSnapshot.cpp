@@ -33,6 +33,11 @@ float CleanScale(float v) { return v > 0.0f ? (v < Time::kMaxTimeScale ? v : Tim
 TimeSnapshot TimeSnapshot::Capture(const ClockSet& set, bool sharedRandom) {
     TimeSnapshot snap;
     snap.timeScale = Time::BaseTimeScale();
+    if (Time::IsRamping() && Time::RampSecondsLeft() > 0.0f) {
+        snap.timeRamping = true;
+        snap.timeRampTarget = Time::RampTarget();
+        snap.timeRampSecondsLeft = Time::RampSecondsLeft();
+    }
     for (const std::string& name : set.Names()) {
         const Clock* c = set.Find(name);
         if (!c) continue;
@@ -61,7 +66,10 @@ bool TimeSnapshot::ApplyRandom(const std::string& name, Random& rng) const {
 }
 
 void TimeSnapshot::Apply(ClockSet& set, const ApplyOptions& options) const {
-    if (options.timeScale && hasTimeScale) Time::SetTimeScale(timeScale);
+    if (options.timeScale && hasTimeScale) {
+        Time::SetTimeScale(timeScale);   // also ends a ramp that was running here
+        if (timeRamping && timeRampSecondsLeft > 0.0f) Time::RampTimeScale(timeRampTarget, timeRampSecondsLeft);
+    }
     if (options.clocks) {
         for (const ClockSnapshot& s : clocks) {
             if (s.name.empty()) continue;
@@ -81,6 +89,10 @@ void TimeSnapshot::Apply(ClockSet& set, const ApplyOptions& options) const {
 void TimeSnapshot::Write(SaveWriter w) const {
     w.Int("v", kVersion);
     w.Float("timeScale", timeScale);
+    if (timeRamping) {
+        w.Float("timeRampTarget", timeRampTarget);
+        w.Float("timeRampLeft", timeRampSecondsLeft);
+    }
     w.Int("clocks.n", (int)clocks.size());
     for (std::size_t i = 0; i < clocks.size(); ++i) {
         const ClockSnapshot& c = clocks[i];
@@ -112,6 +124,12 @@ bool TimeSnapshot::Read(const SaveReader& r, TimeSnapshot& out) {
     TimeSnapshot snap;
     snap.hasTimeScale = r.Has("timeScale");
     snap.timeScale = CleanScale(r.Float("timeScale", 1.0f));
+    if (r.Has("timeRampTarget")) {
+        snap.timeRampTarget = CleanScale(r.Float("timeRampTarget", 1.0f));
+        snap.timeRampSecondsLeft = r.Float("timeRampLeft", 0.0f);
+        snap.timeRamping = snap.timeRampSecondsLeft > 0.0f && std::isfinite(snap.timeRampSecondsLeft);
+        if (!snap.timeRamping) snap.timeRampSecondsLeft = 0.0f;
+    }
     int n = r.Int("clocks.n", 0);
     if (n < 0) n = 0;
     if (n > kMaxClocks) n = kMaxClocks;
@@ -151,6 +169,7 @@ bool TimeSnapshot::Read(const SaveReader& r, TimeSnapshot& out) {
 }
 
 bool TimeSnapshot::operator==(const TimeSnapshot& o) const {
+    if (timeRamping != o.timeRamping || (timeRamping && (timeRampTarget != o.timeRampTarget || timeRampSecondsLeft != o.timeRampSecondsLeft))) return false;
     if (timeScale != o.timeScale || clocks.size() != o.clocks.size() || randoms.size() != o.randoms.size()) return false;
     for (std::size_t i = 0; i < clocks.size(); ++i) {
         const ClockSnapshot& a = clocks[i];

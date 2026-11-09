@@ -31,13 +31,17 @@
 //     okayframes 1
 //     frames 124
 //     micros 2066667
+//     random 0123456789abcdef fedcba9876543210          <- optional: Random::Shared()'s state at frame 0
 //     16667*120 16666 250000/h 16667/p@7*3 ...          <- runs of identical frames
 //     checksum 9f3a0c1d2b4e5f60                         <- FNV-1a of every byte above it
 // A token is `micros[/flags][@marker][*count]`; flags are letters p (paused), h (hitch),
 // s (stepped), c (capture). A capture session of a million frames at one rate is one
-// token. Loading is strict: the version, the totals and the checksum must agree, every
+// token. The optional `random` line (two 16 digit hex words, between `micros` and the frames) is the shared
+// random stream's state when the first frame was recorded; a recording without one (every file written before
+// it existed) loads and replays as it always did. Loading is strict: the version, the totals and the checksum must agree, every
 // number is range checked, the size and the frame count are capped, and garbage is an
 // error message, never a crash. Plain C++17, no threads.
+#include "okay/Core/Random.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -106,6 +110,14 @@ public:
     bool AddRun(const FrameSample& sample, std::uint64_t count);
     void Clear();
 
+    /// The shared random stream's state when the recording began (FrameRecorder stores it with the first
+    /// frame; GameLoop puts it back when the replay starts, Options::replayRandom). A recording has none
+    /// until one is set, and Clear() drops it.
+    bool HasRandom() const { return m_hasRandom; }
+    const Random::State& RandomState() const { return m_random; }
+    void SetRandom(const Random::State& state) { m_random = state; m_hasRandom = true; }
+    void ClearRandom() { m_hasRandom = false; m_random = Random::State(); }
+
     std::uint64_t Frames() const { return m_frames; }
     bool Empty() const { return m_frames == 0; }
     std::uint64_t TotalMicros() const { return m_micros; }
@@ -143,6 +155,8 @@ private:
     };
     std::vector<Run> m_runs;
     std::uint64_t m_frames = 0, m_micros = 0;
+    Random::State m_random;
+    bool m_hasRandom = false;
 };
 
 /// Records what GameLoop::BeginFrame ran. Recording is on from the start; Stop() pauses it.
@@ -154,6 +168,10 @@ public:
     void Start() { m_recording = true; }
     void Stop() { m_recording = false; }
     bool IsRecording() const { return m_recording; }
+    /// Store Random::Shared()'s state with the first frame (the default), so a replay can start the shared
+    /// stream from the same place. false records frames only, as before.
+    void SetRecordRandom(bool on) { m_recordRandom = on; }
+    bool RecordRandom() const { return m_recordRandom; }
 
     /// Add a frame (GameLoop calls this). The time is rounded to whole microseconds.
     /// False when not recording or when the recorder is full (Truncated() then says so).
@@ -173,6 +191,7 @@ private:
     std::uint64_t m_max;
     bool m_recording = true;
     bool m_truncated = false;
+    bool m_recordRandom = true;
 };
 
 /// Hands a recording's frames back one at a time (GameLoop::AttachPlayer).

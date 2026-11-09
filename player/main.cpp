@@ -1955,8 +1955,6 @@ int main(int argc, char** argv) {
         Uint64 now = SDL_GetPerformanceCounter();
         const float measuredDt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
-        // The FPS readouts below show the measured time, cut to the 0.1 s the game steps by at most.
-        const float dt = measuredDt > 0.1f ? 0.1f : measuredDt;
         // The game steps by an evened-out frame time (vsync: whole refresh
         // periods; the loop does it). The refresh rate is re-read now and then
         // (the window can move to another display).
@@ -2509,10 +2507,11 @@ int main(int argc, char** argv) {
 
         // Optional FPS overlay (top-left) when enabled in build settings.
         if (cfg.showFps) {
-            static float fpsSmooth = 0.0f;
-            float inst = dt > 0.0001f ? 1.0f / dt : 0.0f;
-            fpsSmooth = fpsSmooth <= 0.0f ? inst : fpsSmooth * 0.9f + inst * 0.1f;
-            char buf[32]; std::snprintf(buf, sizeof(buf), "FPS %d", (int)(fpsSmooth + 0.5f));
+            // The loop's own REAL frame times over the last 30 frames (okay/Core/FrameOverlay.hpp), the numbers
+            // the F3 panel shows. This used to read `dt`, the frame time cut to 0.1 s, so it never showed
+            // under 10 FPS and a stall barely moved it.
+            const std::string fpsText = okay::FrameOverlay::FpsLabel(loop);
+            const char* buf = fpsText.c_str();
             float px = 2.0f;
             float tw = UITextW(buf, px);
             SDL_Rect bg{4, 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};

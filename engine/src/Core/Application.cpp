@@ -34,6 +34,10 @@ void Application::Run(Scene& scene) {
     m_lastError.clear();
     m_exitCode = 0;
     Game::Reset();   // a quit/pause left over from an earlier run must not leak in
+    // This run is a session: a script's Time.sessionTime and Time.sessionFrameCount start from 0 in it (a
+    // second Run in one process, a test, used to read on from the first). No process clock moves, and the
+    // time scale is left alone (a host may have set one before Run).
+    Time::MarkSessionStart();
 
     // The terminal goes raw for the run and is handed back however we leave, an
     // exception from a script included (it used to stay raw, and the shell misbehaved).

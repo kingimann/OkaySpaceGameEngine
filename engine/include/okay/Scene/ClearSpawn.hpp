@@ -188,8 +188,9 @@ inline void EaseOutOfSolids(GameObject* go, float dt, SeparationMemory& mem, con
     const bool slotZ = narrow(cpz, cmz) && (cpx > 0.5f || cmx > 0.5f);
     const int crowded = SolidOverlaps(scene, go, center, half, rot, feet, 0.35f);
     const Vec3 wishFlat{wish.x, 0.0f, wish.z};
-    // A slot starts the slide. Once started, keep going until there is air
-    // around the body, so we don't stop still touching the nearer prop.
+    // Clear, and not finishing a slide that already found a way out: stop.
+    // The slide only continues along a direction that reduced the overlap.
+    // It does not start a new shove through one wall.
     if (here == 0 && crowded == 0) { mem.have = false; mem.dir = Vec3::Zero; return; }
     if (here == 0 && (slotX || slotZ || (mem.have && crowded > 0))) {
         Vec3 out = mem.have ? mem.dir
@@ -235,12 +236,18 @@ inline void EaseOutOfSolids(GameObject* go, float dt, SeparationMemory& mem, con
         const bool better = !found || n < bestN || (n == bestN && d > bestDot + 1e-4f);
         if (n < here && better) { bestN = n; bestDot = d; best = dirs[i]; found = true; }
     }
-    // Buried in one solid, with no horizontal escape that drops the count:
-    // step along the wish, or straight up off the floor a little, still eased.
+    // No horizontal step drops the overlap. A wish that stays inside the solid
+    // is a normal contact (walking into one wall). Shoving along it drives the
+    // body through. Only take a step that actually reduces the overlap: along
+    // the wish when that helps, otherwise straight up out of a floor.
     if (!found) {
-        best = flat.SqrMagnitude() > 1e-6f ? flat.Normalized() : Vec3{0.0f, 1.0f, 0.0f};
-        const int n = SolidOverlaps(scene, go, center + best * probe, half, rot, feet);
-        if (n > here) return;
+        const Vec3 up{0.0f, 1.0f, 0.0f};
+        const Vec3 wishDir = flat.SqrMagnitude() > 1e-6f ? flat.Normalized() : up;
+        const int nWish = SolidOverlaps(scene, go, center + wishDir * probe, half, rot, feet);
+        const int nUp = SolidOverlaps(scene, go, center + up * probe, half, rot, feet + probe);
+        if (nWish < here) best = wishDir;
+        else if (nUp < here) best = up;
+        else return;
         found = true;
     }
     float step = 1.6f * dt;

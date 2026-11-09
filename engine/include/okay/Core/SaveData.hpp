@@ -16,7 +16,6 @@
 #include <functional>
 #include <limits>
 #include <locale>
-#include <mutex>
 
 namespace okay {
 
@@ -154,6 +153,20 @@ void KeepBackup(const std::string& path, const std::function<bool(const std::str
 /// KeepBackup for a file this process wrote itself a moment ago (the write-through `Save`
 /// facade): the file is trusted, so it is copied to `path.bak` without being read and checked.
 void KeepBackupTrusted(const std::string& path);
+
+/// The one lock behind the `Save` facade (recursive: a thread may take it again). It is a
+/// private OS mutex defined in engine/src/Core/SaveFile.cpp, so no threading header has to
+/// be included here (the MinGW "win32" thread model cannot parse <mutex> from a public header).
+void LockFacade();
+void UnlockFacade();
+/// Holds the facade lock for the scope.
+class FacadeGuard {
+public:
+    FacadeGuard() { LockFacade(); }
+    ~FacadeGuard() { UnlockFacade(); }
+    FacadeGuard(const FacadeGuard&) = delete;
+    FacadeGuard& operator=(const FacadeGuard&) = delete;
+};
 
 /// True for names a Windows file system treats as devices (CON, PRN, AUX, NUL, COM1-9,
 /// LPT1-9, any case): a save named like that would not be a file there.
@@ -329,7 +342,7 @@ public:
     /// they may be used from several threads; a `SaveFile&` kept from here is not guarded.
     static SaveFile& File(const std::string& path) {
         std::string key = Resolve(path);
-        std::lock_guard<std::recursive_mutex> lock(Mutex());
+        savefmt::FacadeGuard lock;
         auto& m = Files();
         auto it = m.find(key);
         if (it == m.end()) {
@@ -345,7 +358,7 @@ public:
     /// no result: read `LastError()` after them.
     static bool Flush(const std::string& path) {
         const std::string resolved = Resolve(path);
-        std::lock_guard<std::recursive_mutex> lock(Mutex());
+        savefmt::FacadeGuard lock;
         SaveFile& sf = File(path);
         std::error_code ec;
         const std::filesystem::path parent = std::filesystem::path(resolved).parent_path();
@@ -359,7 +372,7 @@ public:
     /// Why the last Flush (or the load of a file's first use) failed or fell back to a
     /// backup; "" when it went fine.
     static std::string LastError() {
-        std::lock_guard<std::recursive_mutex> lock(Mutex());
+        savefmt::FacadeGuard lock;
         return LastErrorRef();
     }
 
@@ -387,7 +400,7 @@ public:
     /// file; `LastError()` says when a backup was used.
     static bool Reload(const std::string& file = DefaultFile()) {
         const std::string key = Resolve(file);
-        std::lock_guard<std::recursive_mutex> lock(Mutex());
+        savefmt::FacadeGuard lock;
         SaveFile& sf = File(file);
         const bool ok = sf.Load(key);
         LastErrorRef() = sf.LastError();
@@ -396,16 +409,15 @@ public:
     /// Forget the file's keys and remove it from the disk with its backup and leftovers.
     static bool DeleteFile(const std::string& file = DefaultFile()) {
         const std::string key = Resolve(file);
-        std::lock_guard<std::recursive_mutex> lock(Mutex());
+        savefmt::FacadeGuard lock;
         Files().erase(key);
         for (const char* suffix : {".bak", ".tmp", ".corrupt"}) std::remove((key + suffix).c_str());
         return std::remove(key.c_str()) == 0;
     }
 
 private:
-    static std::recursive_mutex& Mutex() { static std::recursive_mutex m; return m; }
     template <class F> static auto Locked(F&& f) -> decltype(f()) {
-        std::lock_guard<std::recursive_mutex> lock(Mutex());
+        savefmt::FacadeGuard lock;
         return f();
     }
     static std::string& LastErrorRef() { static std::string e; return e; }

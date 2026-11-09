@@ -4,13 +4,12 @@
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Log.hpp"
 
-#include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <functional>
-#include <mutex>
 #include <system_error>
 
 #if defined(_WIN32)
@@ -19,6 +18,10 @@
 #  include <fcntl.h>
 #  include <unistd.h>
 #endif
+
+// The private threading shim (never <mutex> here: see CoreThreads.hpp). Last of the includes,
+// because on Windows it pulls in <windows.h>.
+#include "CoreThreads.hpp"
 
 namespace okay {
 namespace savefmt {
@@ -29,9 +32,10 @@ namespace {
 
 // Writers to the same path share the `.tmp` name, so they take turns. The locks are
 // striped by path: unrelated files don't wait for each other's disk flush.
-std::mutex& StripeFor(const std::string& path) {
-    static std::array<std::mutex, 16> stripes;
-    return stripes[std::hash<std::string>{}(path) % stripes.size()];
+constexpr std::size_t kStripes = 16;
+corethreads::Mutex& StripeFor(const std::string& path) {
+    static corethreads::Mutex stripes[kStripes];
+    return stripes[std::hash<std::string>{}(path) % kStripes];
 }
 
 std::string Reason(int err) {
@@ -75,6 +79,29 @@ void SyncDirectory(const fs::path& dir) {
 
 } // namespace
 
+// The facade lock: one mutex that the owning thread may take again (the Save helpers call each
+// other: Set -> File -> Flush). `owner` names the thread that holds it; only that thread sets
+// or clears it, and a thread reads its own tag back to know it already holds the lock.
+namespace {
+corethreads::Mutex& FacadeMutex() { static corethreads::Mutex m; return m; }
+std::atomic<std::uintptr_t> g_facadeOwner{0};
+int g_facadeDepth = 0;   // touched only by the owner
+} // namespace
+
+void LockFacade() {
+    const std::uintptr_t me = corethreads::CurrentThreadTag();
+    if (g_facadeOwner.load(std::memory_order_relaxed) == me) { ++g_facadeDepth; return; }
+    FacadeMutex().Lock();
+    g_facadeOwner.store(me, std::memory_order_relaxed);
+    g_facadeDepth = 1;
+}
+
+void UnlockFacade() {
+    if (--g_facadeDepth > 0) return;
+    g_facadeOwner.store(0, std::memory_order_relaxed);
+    FacadeMutex().Unlock();
+}
+
 bool AtomicWriteChecked(const std::string& path, const std::string& content, std::string* error, const WriteOptions& opt) {
     auto fail = [&](const std::string& msg) { if (error) *error = msg; return false; };
     if (error) error->clear();
@@ -82,7 +109,7 @@ bool AtomicWriteChecked(const std::string& path, const std::string& content, std
     const fs::path target = opt.utf8Path ? fs::u8path(path) : fs::path(path);
     fs::path tmp = target;
     tmp += ".tmp";
-    std::lock_guard<std::mutex> lock(StripeFor(path));
+    corethreads::LockGuard lock(StripeFor(path));
     std::error_code ec;
     const fs::path parent = target.parent_path();
     if (opt.createDirs && !parent.empty()) {

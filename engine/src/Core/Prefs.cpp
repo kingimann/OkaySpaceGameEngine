@@ -5,8 +5,11 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <mutex>
 #include <vector>
+
+// The private threading shim (never <mutex> here: see CoreThreads.hpp). Last of the includes,
+// because on Windows it pulls in <windows.h>.
+#include "CoreThreads.hpp"
 
 namespace okay {
 
@@ -14,8 +17,8 @@ namespace {
 
 // One lock for the keys, the listeners and the last error. Listeners are called outside it
 // (they may read or set prefs themselves).
-std::mutex& Lock() {
-    static std::mutex m;
+corethreads::Mutex& Lock() {
+    static corethreads::Mutex m;
     return m;
 }
 std::vector<std::pair<int, Prefs::Listener>>& Listeners() {
@@ -29,7 +32,7 @@ bool g_usedBackup = false;
 void Notify(const std::string& key) {
     std::vector<std::pair<int, Prefs::Listener>> copy;   // a listener may remove itself
     {
-        std::lock_guard<std::mutex> g(Lock());
+        corethreads::LockGuard g(Lock());
         copy = Listeners();
     }
     for (const auto& l : copy) if (l.second) l.second(key);
@@ -64,7 +67,7 @@ namespace {
 // Store `value` under `key`, telling listeners when that changed something.
 void Put(std::unordered_map<std::string, std::string>& store, const std::string& key, std::string value) {
     {
-        std::lock_guard<std::mutex> g(Lock());
+        corethreads::LockGuard g(Lock());
         auto it = store.find(key);
         if (it != store.end() && it->second == value) return;
         store[key] = std::move(value);
@@ -73,7 +76,7 @@ void Put(std::unordered_map<std::string, std::string>& store, const std::string&
 }
 // The value of `key`, or false when there is none.
 bool Read(const std::unordered_map<std::string, std::string>& store, const std::string& key, std::string& out) {
-    std::lock_guard<std::mutex> g(Lock());
+    corethreads::LockGuard g(Lock());
     auto it = store.find(key);
     if (it == store.end()) return false;
     out = it->second;
@@ -82,13 +85,13 @@ bool Read(const std::unordered_map<std::string, std::string>& store, const std::
 } // namespace
 
 int Prefs::AddListener(Listener fn) {
-    std::lock_guard<std::mutex> g(Lock());
+    corethreads::LockGuard g(Lock());
     const int id = g_nextListener++;
     Listeners().push_back({id, std::move(fn)});
     return id;
 }
 void Prefs::RemoveListener(int id) {
-    std::lock_guard<std::mutex> g(Lock());
+    corethreads::LockGuard g(Lock());
     auto& ls = Listeners();
     ls.erase(std::remove_if(ls.begin(), ls.end(), [id](const auto& l) { return l.first == id; }), ls.end());
 }
@@ -158,13 +161,13 @@ Color Prefs::GetColor(const std::string& key, const Color& def) {
 }
 
 bool Prefs::Has(const std::string& key) {
-    std::lock_guard<std::mutex> g(Lock());
+    corethreads::LockGuard g(Lock());
     return Store().count(key) != 0;
 }
 void Prefs::Delete(const std::string& key) {
     bool removed = false;
     {
-        std::lock_guard<std::mutex> g(Lock());
+        corethreads::LockGuard g(Lock());
         removed = Store().erase(key) != 0;
     }
     if (removed) Notify(key);
@@ -172,7 +175,7 @@ void Prefs::Delete(const std::string& key) {
 void Prefs::Clear() {
     std::vector<std::string> keys;
     {
-        std::lock_guard<std::mutex> g(Lock());
+        corethreads::LockGuard g(Lock());
         keys.reserve(Store().size());
         for (const auto& kv : Store()) keys.push_back(kv.first);
         Store().clear();
@@ -279,7 +282,7 @@ bool Prefs::Save(const std::string& path) {
     // Load tell a cut-off file from a complete one; older readers skip it (no tab).
     std::vector<std::pair<std::string, std::string>> rows;
     {
-        std::lock_guard<std::mutex> g(Lock());
+        corethreads::LockGuard g(Lock());
         rows.assign(Store().begin(), Store().end());
     }
     std::sort(rows.begin(), rows.end());
@@ -297,7 +300,7 @@ bool Prefs::Save(const std::string& path) {
     opt.sync = true;
     std::string err;
     const bool ok = savefmt::AtomicWriteChecked(path, out, &err, opt);
-    std::lock_guard<std::mutex> g(Lock());
+    corethreads::LockGuard g(Lock());
     ErrorText() = ok ? std::string() : err;
     return ok;
 }
@@ -323,14 +326,14 @@ bool Prefs::Load(const std::string& path) {
         }
     }
     if (st == ReadState::Damaged) {   // keep what we have
-        std::lock_guard<std::mutex> g(Lock());
+        corethreads::LockGuard g(Lock());
         ErrorText() = error;
         g_usedBackup = false;
         return false;
     }
     bool changed = true;
     {
-        std::lock_guard<std::mutex> g(Lock());
+        corethreads::LockGuard g(Lock());
         ErrorText() = error;
         g_usedBackup = usedBackup;
         if (st == ReadState::Missing) {   // no file = an empty store
@@ -349,11 +352,11 @@ bool Prefs::Load(const std::string& path) {
 }
 
 std::string Prefs::LastError() {
-    std::lock_guard<std::mutex> g(Lock());
+    corethreads::LockGuard g(Lock());
     return ErrorText();
 }
 bool Prefs::LastLoadUsedBackup() {
-    std::lock_guard<std::mutex> g(Lock());
+    corethreads::LockGuard g(Lock());
     return g_usedBackup;
 }
 

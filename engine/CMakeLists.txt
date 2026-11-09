@@ -410,3 +410,12 @@ endif()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
+
+# Scene text tools for version control (docs/scene_diff_merge.md): canonical form, diff,
+# three-way merge and format migration. Text level only: none of these builds a Scene.
+target_sources(okay_engine PRIVATE
+    src/Scene/SceneText.cpp
+    src/Scene/SceneTextDetail.cpp
+    src/Scene/SceneDiff.cpp
+    src/Scene/SceneMerge.cpp
+    src/Scene/SceneMigration.cpp)

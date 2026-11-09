@@ -208,7 +208,7 @@ You can also say "area 5 but not Grok's parts" or "everything open in 1".
 | 1.2 | Timers and tweens: Scheduler, Tween, easing | `Core/Scheduler`, `Tween`, `Components/TweenAnimation` | - | Global scheduler PR in review |
 | 1.3 | Scene graph: Scene, GameObject, Transform, components, layers and tags | `Scene/Scene`, `GameObject`, `Transform`, `Component`, `Layers` | `making_a_game.md` | Layer collision matrix, named tags, component registry |
 | 1.4 | Scene lifecycle: Start/Awake order, destroy, scene manager, load | `Scene/SceneManager`, `Scene` | `making_a_game.md` | Async load, unload, DontDestroyOnLoad, pooling (branches in review) |
-| 1.5 | Scene serializer (`okayscene 3`): load, merge, instantiate | `Scene/SceneSerializer` | - | Safe loading in review; stable object IDs; component serializer registry |
+| 1.5 | Scene serializer (`okayscene 3`): load, merge, instantiate; text tools for version control: canonical form, diff, three-way merge, format migration | `Scene/SceneSerializer`, `Scene/SceneText`, `SceneDiff`, `SceneMerge`, `SceneMigration` | `scene_diff_merge.md` | Safe loading in review; stable object IDs; component serializer registry; editor UI and a git merge driver on top of the text tools; text steps for the two loader-applied upgrades (1 -> 2, 2 -> 3) |
 | 1.6 | Prefabs and templates: prefab files, starter players and worlds | `Scene/SceneTemplates`, `UITemplates`, `UIStyles` | `making_a_game.md` | Prefab overrides |
 | 1.7 | Saves and prefs: save games, prefs, data assets, data packs | `Core/SaveData`, `Prefs`, `DataAsset`, `DataPack` | `save_games.md`, `localization_prefs_time.md` | Typed Prefs and durable saves done |
 | 1.8 | Localization: string tables, plurals, font fallback | `Core/Game` (runtime), `Components/*` consumers | `localization.md`, `localization_prefs_time.md` | Number/date formatting and plural rules done; more locales |
@@ -464,10 +464,10 @@ Areas 20-35 are planned features you asked for. Each says what exists today
 | 22 | Undo/redo & recovery (Critical) | Undo is a full-scene text snapshot, 100 steps; autosave (15.9) | Command-based undo (cheap, per-property), undo across Play, crash recovery (restore after a crash), rolling backups and a restore UI | 15.9 |
 | 23 | Profiling & debugging (Critical) | Profiler with categories and trace export in review (PR #559); log file sink; editor console (15.9) | CPU and GPU timeline window, memory tracking by system, frame debugger (draw call list, state, step through), error console filters and links to the source object | 1.10, 2.1, 15.6 |
 | 24 | Plugin & extension system (Critical) | Editor plugin system and Plugins menu (15.8, `editor-plugins.md`) | C++ plugin ABI with versioning and a plugin SDK package, editor extension points (windows, inspectors, menus), custom nodes for visual scripting, plugin manager UI | 15.8, 14.4 |
-| 25 | Project management (High) | Templates (1.6), Create page (17.1), Build Settings (15.7) | Full project settings window, project migration across engine versions, dependency management (packages and versions) | 1.6, 17.1, 15.7 |
+| 25 | Project management (High) | Templates (1.6), Create page (17.1), Build Settings (15.7); scene file format migration (`SceneMigration`, see 1.5 and 28) | Full project settings window, project migration across engine versions, dependency management (packages and versions) | 1.6, 17.1, 15.7 |
 | 26 | Shader & material editor (High) | Materials and procedural textures (2.2) | Visual shader graph, material editor window with live preview, custom shader files across the renderers, PBR material model | 2.1, 2.2 |
 | 27 | Optimization tools (High) | Frustum culling, GPU skinning (2.8) | LOD generation and LOD groups, occlusion culling, static and dynamic batching, asset and scene streaming | 2.8, 2.6, 1.4 |
-| 28 | Version control integration (High) | None | Git panel in the editor (status, commit, branch), text diffs of scenes and prefabs (needs diff-friendly scene text, see 1.5), project history, merge conflict helper for scenes | 1.5, 15 |
+| 28 | Version control integration (High) | Engine-side scene text tools (`scene_diff_merge.md`): canonical form, structured diff (text and JSON), three-way merge with conflict policies and report, format migration (branch claude/scene-diff-merge) | Git panel in the editor (status, commit, branch), diff and conflict windows on top of `SceneDiff` / `SceneMerge`, a git merge driver executable, project history | 1.5, 15 |
 | 29 | Terrain & world building tools (High) | Terrain, voxel terrain, water, splines (2.6, 2.7) | Terrain sculpting brushes, vegetation and detail painting, procedural generation (noise, erosion, scatter) | 2.6 |
 | 30 | Character creator (Medium) | Blocky Character (4.9), Rig Model and Make Playable (3.7), blend shapes (3.6) | Character customization UI, rig generation, clothing and attachment system, morph target sliders | 4.9, 3.7, 5.4 |
 | 31 | Localization tools (Medium) | String tables, plurals and font fallback runtime (1.8); number and date formatting in flight | Translation table editor window, missing-key report, import and export (CSV), language preview in the Game view | 1.8 |
@@ -487,4 +487,6 @@ Areas 20-35 are planned features you asked for. Each says what exists today
   load, pooling and RequireComponent (1.4); stable IDs, prefab overrides and
   serializer registry (1.5, 1.6); plural rules, number formatting, typed Prefs and
   fixed timestep (1.8, 1.7, 1.1).
+- Scene text tools for version control (branch claude/scene-diff-merge): canonical form, diff,
+  three-way merge and format migration as engine libraries, no editor UI yet (1.5, 28).
 - Animation and IK PRs (#535-#539, #548-#551, #554) belong to Grok's sessions.

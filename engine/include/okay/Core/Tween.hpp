@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Core/ClockCursor.hpp"
 #include "okay/Math/Easing.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -6,6 +7,7 @@
 #include "okay/Render/Color.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -16,7 +18,9 @@
 
 namespace okay {
 
+class ClockSet;
 class GameObject;
+class PropertyValue;
 class Scene;
 class TweenManager;
 
@@ -39,14 +43,29 @@ public:
     virtual ~Tweener() = default;
 
     // ---- Settings (chainable) ----
-    Tweener& SetEase(Ease e)            { ease = e; return *this; }
-    Tweener& SetDelay(float seconds)    { delay = seconds > 0 ? seconds : 0; return *this; }
+    Tweener& SetEase(Ease e)            { ease = e; easeCurve = nullptr; return *this; }
+    /// Your own easing: `fn` maps time 0..1 to progress (0 at 0, 1 at 1 for a clean start and
+    /// end). Replaces SetEase until SetEase is called again.
+    Tweener& SetEaseCurve(std::function<float(float)> fn) { easeCurve = std::move(fn); return *this; }
+    /// A CSS-style cubic bezier (control points x1,y1 and x2,y2) or a staircase of `steps` jumps.
+    Tweener& SetEaseBezier(float x1, float y1, float x2, float y2);
+    Tweener& SetEaseSteps(int steps, bool jumpStart = false);
+    /// An ease named as text: "OutQuad", "cubic-bezier(0.4,0,0.2,1)", "steps(4)", "ease-in-out"
+    /// (see Easing.hpp, EaseCurve::Parse). Text it does not know leaves the ease unchanged.
+    Tweener& SetEaseSpec(const std::string& text);
+    Tweener& SetDelay(float seconds)    { delay = seconds > 0 ? (seconds < kMaxSeconds ? seconds : kMaxSeconds) : 0; return *this; }
     /// `count` < 0 loops forever; 1 (the default) plays once.
     Tweener& SetLoops(int count, LoopType type = LoopType::Restart) { loops = count == 0 ? 1 : count; loopType = type; return *this; }
     Tweener& SetId(std::string value)   { id = std::move(value); return *this; }
     Tweener& SetTarget(GameObject* go)  { target = go; return *this; }
     /// Ignore Time.timeScale (menus and pause screens keep animating).
     Tweener& SetUpdate(bool unscaled)   { unscaledTime = unscaled; return *this; }
+    /// Follow a named Clock channel ("game", "ui", "cinematic", or your own) instead of the
+    /// scene's time: the tween advances by what that channel advanced, so the channel's own
+    /// scale and pause apply (a pause menu freezes "game" while a "ui" tween keeps running).
+    /// Wins over SetUpdate; "" goes back to scene time. Needs the ClockSet ticked each frame
+    /// (GameLoop does). Only the outermost tween of a sequence reads it.
+    Tweener& SetClock(std::string channel) { clock = std::move(channel); return *this; }
     /// Play faster (> 1) or slower (< 1) than normal.
     Tweener& SetSpeed(float scale)      { timeScale = scale; return *this; }
     /// Keep the tween after it completes, so it can be restarted (default: removed).
@@ -84,7 +103,12 @@ public:
     bool  IsPlaying() const      { return !m_killed && !paused && !m_complete; }
     bool  IsComplete() const     { return m_complete; }
     bool  IsBackwards() const    { return backwards; }
-    float Duration() const       { return std::max(duration, 1e-4f); }
+    /// The loop length used (at least 0.1 ms and at most 1e7 s; NaN counts as the minimum).
+    float Duration() const       { return duration > 1e-4f ? (duration < kMaxSeconds ? duration : kMaxSeconds) : 1e-4f; }
+    /// The ease at time `u` (0..1): the custom curve when one is set, else the Ease preset.
+    float Eased(float u) const   { return easeCurve ? easeCurve(u) : Easing::Evaluate(ease, u); }
+    /// Longest duration or delay taken as it is; beyond it the value is clamped (keeps every sum finite).
+    static constexpr float kMaxSeconds = 1.0e7f;
     /// Delay + every loop (infinity for endless loops).
     float FullDuration() const;
     /// Seconds played (after the delay, across loops).
@@ -96,7 +120,9 @@ public:
     // Settings, readable directly too.
     float duration = 1.0f;
     float delay = 0.0f;
-    Ease  ease = Ease::QuadOut;          // DOTween's default
+    Ease  ease = Ease::QuadOut;          // the default
+    std::function<float(float)> easeCurve;   ///< set: used instead of `ease`
+    std::string clock;                   ///< a Clock channel name, or "" for scene time
     int   loops = 1;
     LoopType loopType = LoopType::Restart;
     std::string id;
@@ -134,6 +160,7 @@ private:
     Handle m_handle = 0;
     unsigned m_epoch = 0;       // bumped by every RenderAt: lets a render notice a callback re-rendered it
     int    m_forceLoopEnd = -1; // Complete() on an endless tween: render exactly the end of this loop
+    ClockCursor m_clockCursor;  // what this tween has already taken from its channel
     float  m_time = 0.0f;       // seconds on the timeline, delay included
     int    m_loop = 0;          // completed loops
     bool   m_started = false, m_complete = false, m_killed = false, m_nested = false;
@@ -222,8 +249,12 @@ public:
     /// Call `fn` after `seconds` (a tween with nothing to animate).
     std::shared_ptr<Tweener> DelayedCall(float seconds, std::function<void()> fn);
 
-    /// Advance every tween. `unscaledDt` drives tweens set to ignore the time scale.
+    /// Advance every tween. `unscaledDt` drives tweens set to ignore the time scale; a
+    /// tween with a clock channel takes its time from that channel instead.
     void Update(float dt, float unscaledDt);
+    /// The clocks channel tweens read (default: ClockSet::Global()). A test passes its own set
+    /// and ticks it by hand. The set must outlive the tweens that use it.
+    void SetClockSet(ClockSet* clocks) { m_clocks = clocks; }
 
     std::shared_ptr<Tweener> Find(Handle h) const;
     /// Tweens with this id / on this object (not nested ones inside sequences).
@@ -245,6 +276,9 @@ public:
     std::size_t Count() const;
     std::size_t PlayingCount() const;
     bool IsTweening(const GameObject* go) const;
+    /// A short multi-line text of what is running, one line per tween, for a debug overlay:
+    /// `Tweens: 2 (1 playing)` then `#3 value "fade" 0.25/1s loop 1/1 [paused] [ui]`.
+    std::string Dump() const;
 
     /// Objects are going away: kill (silently) every tween that uses one of them.
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying);
@@ -257,6 +291,11 @@ private:
     void Detach(Tweener* t);
     std::vector<std::shared_ptr<Tweener>> m_tweens;
     Handle m_next = 1;
+    ClockSet* m_clocks = nullptr;
+    // While Update runs: the index it is at, so a tween that leaves the list under it (moved
+    // into a sequence by a callback) cannot make the next one skip its turn.
+    std::ptrdiff_t m_cursor = 0;
+    bool m_updating = false;
 };
 
 /// DOTween-style shortcuts for objects. Each returns the tween so you can chain
@@ -295,6 +334,17 @@ namespace DOTween {
     std::shared_ptr<Tweener> Text(GameObject* go, const std::string& text, float duration);
     /// Count a TextRenderer's number from `from` to `to`, with an optional prefix.
     std::shared_ptr<Tweener> Counter(GameObject* go, float from, float to, float duration, const std::string& prefix = "");
+
+    /// Tween any registered property by path ("Light.intensity", "Transform.position",
+    /// "SpriteRenderer.color", "Transform.position.y"; see PropertyRegistry) from its value
+    /// when the tween starts to `to`. Float, Int (rounded), Vec2, Vec3, Vec4, Color and Quat
+    /// (slerp) properties can be tweened; `to` must have the property's type (an Int value
+    /// is accepted for a Float property). The path is resolved again every frame, so a
+    /// removed component just stops the effect. If it cannot be tweened (unknown path,
+    /// wrong type, a type that does not blend) the result is an inactive tween and `error`
+    /// (when given) says why. The tween is killed with `go`.
+    std::shared_ptr<Tweener> Property(GameObject* go, const std::string& path, const PropertyValue& to,
+                                      float duration, std::string* error = nullptr);
 
     /// The colour DOTween::ColorTo / Fade animate on `go` (nullptr if it has none).
     Color* ColorOf(GameObject* go);

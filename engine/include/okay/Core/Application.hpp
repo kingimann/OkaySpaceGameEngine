@@ -1,5 +1,7 @@
 #pragma once
+#include "okay/Core/GameLoop.hpp"
 #include "okay/Render/Renderer.hpp"
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -20,7 +22,21 @@ public:
         int   maxFrames    = 0;      // 0 = run until quit; >0 = stop after N frames
         bool  smoothDt     = true;   // step by an evened-out frame time (Time::SmoothDelta)
         bool  clearScreen  = true;   // console backend clears the terminal each frame
-        bool  quitOnQ      = true;   // pressing 'q' ends the loop (turn off when 'q' is a game key)
+        char  quitKey      = 'q';    // pressing it ends the loop; 0 = no quit key
+        float maxDelta     = 0.25f;  // a frame longer than this (a breakpoint, a stall) steps one target frame instead; <= 0 = no clamp
+        float fixedStep    = 0.0f;   // seconds per fixed step for loop().OnFixedUpdate; 0 = Time::FixedDeltaTime()
+        int   maxFixedSteps = 5;     // fixed steps one frame may run (the rest is dropped)
+        bool  catchExceptions = false; // true: an exception from the scene is logged, the loop ends and
+                                       // ExitCode() is 1 (Run returns); false: it is rethrown after cleanup
+        /// How targetFps is held. Sleep (the default, as it always was): sleep for what is left of each
+        /// frame, so every frame that wakes up late runs long and the rate lands a little under the
+        /// target (about 3% at 30 fps when a sleep overshoots by a millisecond). Limiter: Core/FramePacing's
+        /// FrameLimiter, which schedules each frame from when the last one was due, sleeps most of the wait
+        /// and yields through the rest, so an overshoot is paid back by the next frame and the average rate
+        /// is the target. It costs a short busy wait (about 1.5 ms) at the end of each frame. Ignored when
+        /// targetFps <= 0.
+        enum class Pacing { Sleep, Limiter };
+        Pacing pacing = Pacing::Sleep;
     };
 
     explicit Application(Config config);
@@ -30,16 +46,33 @@ public:
     void SetRenderer(std::unique_ptr<IRenderer> renderer);
 
     /// Run the main loop against the given scene until it quits.
+    ///
+    /// The terminal (raw input) is given back however Run ends, including when a script
+    /// or component throws. With Config::catchExceptions false (the default) the exception
+    /// then continues up to the caller; with it true Run logs it, records LastError() and
+    /// ExitCode() == 1 and returns normally.
     void Run(Scene& scene);
 
     /// Whether the loop should end after this frame: the game asked to quit
-    /// (Game::RequestQuit), or 'q' was pressed while `quitOnQ` is on.
-    static bool ShouldQuit(const Config& config, bool qPressed, bool quitRequested) {
-        return quitRequested || (config.quitOnQ && qPressed);
+    /// (Game::RequestQuit), or the quit key (`quitKey`, default 'q'; 0 = none) was pressed.
+    static bool ShouldQuit(const Config& config, bool keyPressed, bool quitRequested) {
+        return quitRequested || (config.quitKey != 0 && keyPressed);
     }
 
-    /// Request a graceful shutdown of the loop.
+    /// Request a graceful shutdown of the loop (safe from another thread). It ends the Run that is
+    /// going now, after the current frame; one called before Run starts has no effect (Run begins by
+    /// marking itself running), so a thread that stops the app waits until a frame has run.
     void Quit() { m_running = false; }
+
+    /// The per-frame driver Run uses: set OnFixedUpdate / OnPause / OnResume on it before
+    /// Run, and read its hitch counters afterwards. OnUpdate is taken by Run (it updates
+    /// the scene); use a Component for per-frame work, as before.
+    GameLoop& loop() { return m_loop; }
+    /// What ended the last Run on an error: the exception's message ("" when it ended normally).
+    const std::string& LastError() const { return m_lastError; }
+    /// The process exit code: what Game::RequestQuit(reason, code) asked for, or 1 when
+    /// Run ended on an exception (with catchExceptions).
+    int ExitCode() const { return m_exitCode; }
 
     IRenderer& renderer() { return *m_renderer; }
     const Config& config() const { return m_config; }
@@ -47,7 +80,10 @@ public:
 private:
     Config m_config;
     std::unique_ptr<IRenderer> m_renderer;
-    bool m_running = false;
+    std::atomic<bool> m_running{false};
+    GameLoop m_loop;
+    std::string m_lastError;
+    int m_exitCode = 0;
 };
 
 } // namespace okay

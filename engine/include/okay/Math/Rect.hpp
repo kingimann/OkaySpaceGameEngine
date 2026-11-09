@@ -29,8 +29,13 @@ struct Rect {
         return p.x >= XMin() && p.x <= XMax() && p.y >= YMin() && p.y <= YMax();
     }
     bool Overlaps(const Rect& o) const {
-        return XMin() <= o.XMax() && XMax() >= o.XMin() &&
-               YMin() <= o.YMax() && YMax() >= o.YMin();
+        // Strict: rects that only share an edge or a corner do not overlap. Negative
+        // sizes are treated as the same rectangle with a positive size.
+        const float aMinX = x < XMax() ? x : XMax(), aMaxX = x < XMax() ? XMax() : x;
+        const float aMinY = y < YMax() ? y : YMax(), aMaxY = y < YMax() ? YMax() : y;
+        const float bMinX = o.x < o.XMax() ? o.x : o.XMax(), bMaxX = o.x < o.XMax() ? o.XMax() : o.x;
+        const float bMinY = o.y < o.YMax() ? o.y : o.YMax(), bMaxY = o.y < o.YMax() ? o.YMax() : o.y;
+        return aMinX < bMaxX && aMaxX > bMinX && aMinY < bMaxY && aMaxY > bMinY;
     }
 };
 

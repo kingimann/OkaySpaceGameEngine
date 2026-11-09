@@ -1,5 +1,197 @@
 OkaySpace Game Engine — Changelog
 
+v2.853.0
+  Editor
+  - Play mode in the editor now runs on the shared game loop, like the built
+    player: time scale, hit stop, time-scale ramps and the named clocks work
+    inside Play, Time.deltaTime and elapsed time advance, and every Play starts
+    a clean session. Editing never advances game time (#590).
+  - Tags and layers: the editor uses the project tag and layer lists. Add a
+    custom tag with a clear error when the name is not allowed, rename or remove
+    it (objects keep their tags in one undo step), and rename a layer by
+    right-clicking it in the object Layer menu or the camera Culling Mask list
+    (#590).
+  - Duplicate keeps a copy under the same parent, places it right after the
+    original and numbers the name ("Cube (1)") (#590).
+  - The Tween Animation inspector has a Curve field (cubic-bezier, steps or a
+    preset name, with a preview) and a Clock menu, so a tween can run on the UI
+    clock while the game is paused (#590).
+  - The script editor knows tween_clock and tween_prop (#590).
+  Loop and time
+  - A dedicated server starts every run with a clean time session, so a time
+    scale left over from an earlier run in the same process no longer slows the
+    world (#590).
+  Docs
+  - The feature map now covers the new loop, timer, tween and scene graph parts,
+    their tests and what is still open (#589).
+
+v2.852.0
+  Loop and time
+  - The built player now runs on the shared game loop, so its hitch handling,
+    refresh-rate changes, focus pause and fresh sessions all come from one place
+    (#585).
+  - Countdown and Cooldown timers that you poll each frame: pause aware, frame
+    rate independent, and savable. Clocks can ramp their time scale smoothly
+    (#585).
+  - One save block for the clocks, the base time scale and named random
+    generators, so a loaded game continues with the same dice (#585).
+  - Frame statistics can be exported as CSV, and console commands (time.stats,
+    time.scale, time.pause, time.step) show and change the loop live (#585).
+  - A lock for the shared random generator, random directions inside a cone,
+    points in a triangle, and a much larger UTF-8 toolkit: validate, sanitize,
+    walk backwards, cut safely, and convert to and from UTF-16 and UTF-32 (#585).
+  Timers and tweens
+  - A timer or tween can belong to an object and goes away silently when that
+    object is destroyed, so a delayed call can no longer touch a dead object
+    after a scene change (#587).
+  - Timers and tweens can follow a named clock, so a pause menu freezes gameplay
+    timers while menu animation keeps running (#587).
+  - Springs and critically damped smoothing for numbers, vectors, angles and
+    rotations; one big step gives the same answer as many small ones (#587).
+  - Ease curves as data: cubic-bezier(...), steps(n) and preset names, for
+    tweens and for the Tween Animation component. Tween any property by name,
+    for example tween_prop("Light.intensity", 3, 0.5) (#587).
+  - A debug listing of every pending timer and tween (#587).
+  Scene graph
+  - Hierarchies 100000 levels deep can be built, saved, loaded, copied and
+    destroyed; they used to crash at around 60000 (#586).
+  - Transform: find a child by path, move an object among its siblings, move and
+    rotate in world, local or self space, rotate around a point (#586).
+  - Spawning: Instantiate with position, rotation and parent, Duplicate, unique
+    names such as "Cube (1)", DestroyImmediate, world bounds of a hierarchy, and
+    queries by name or layer (#586).
+  - Tag and layer lists saved in the project file, named layers, and collision
+    matrix presets (everything, nothing, same layer only) (#586).
+  - Mover, Spinner and Lifetime can work in local, world or self space, and
+    Lifetime saves how long it has lived (#586).
+  Fixes
+  - The game loop can no longer lengthen a frame when it clamps a hitch, a
+    frame time beyond the number range no longer overflows, a tiny fixed step
+    can no longer keep the loop busy for billions of callbacks, and options set
+    on the loop before Run are no longer dropped (#585).
+  - Timers and tweens: NaN or infinite times, a huge step on a fast repeating
+    timer, a callback that throws, a 10-hour timer firing late, and tweens from
+    action lists writing into destroyed objects are all fixed (#587).
+  - Scene graph: removing a component from its own disable or destroy handler,
+    changing a tag in place, reordering root objects, an object parented to one
+    that is being destroyed, children of a transient object, and scene files that
+    contain a NaN are all fixed. A spinner that turns on several axes now gives
+    the same result at any frame rate (#586).
+
+v2.851.0
+  Editor
+  - A roomier editor layout: larger type, more space and bigger click targets
+    across the shell, hierarchy, inspector, project browser, scene toolbar,
+    console, Visual Script editor and Script Editor. Shortcuts, file formats and
+    scripting behavior are unchanged (#577).
+  - Visual Script editor: a variables outline, snap and align for nodes, and an
+    inline line on a node that nothing runs (#577).
+  - Script Editor: a find and replace bar with a match count and highlighted
+    matches (#577).
+  Loop and time
+  - Frame stepping and a debug time scale, and a capture mode with a fixed frame
+    time for recording video and screenshots (#581).
+  - A frame recorder and player that saves a run's frame times and plays them
+    back, plus rolling frame-time statistics (#581).
+  - The dedicated server paces its ticks with a shared tick pacer (#581).
+  Fixes
+  - Thirteen more loop and time bugs found by an audit of the first pass, each
+    with a test (#581).
+  - The scene diff, merge and canonical-form tools now know the 3D gravity record
+    that scenes carry, so they no longer fail on current scene files (#582).
+  Docs
+  - The feature map is now generated from one detail page per area, with every
+    source file mapped, numbered parts, an A-Z index and a by-symptom table (#576).
+
+v2.850.0
+  Loop and time
+  - A shared per-frame game loop (GameLoop): it clamps one huge frame after a
+    breakpoint or alt-tab, counts hitches, runs fixed steps with a catch-up cap
+    and a render interpolation value, and fires pause and resume events. The
+    console Application already runs on it (#579).
+  - Separate clocks for game, UI and cinematics, so a pause menu can freeze
+    gameplay while menu animation keeps running. Hit stop and smooth time-scale
+    ramps that combine with the time scale instead of overwriting it (#579).
+  - Pausing works through reasons: two systems that pause no longer un-pause each
+    other. Quit can carry a reason and an exit code, and a guard can veto it (for
+    example unsaved changes). The game can pause when its window loses focus (#579).
+  - More Random helpers: points and directions on circles and spheres, shuffle
+    bags, weighted tables, dice such as "2d6+3" that never throws, and string
+    seeds with the same result on every platform (#579).
+  Scenes and prefabs
+  - Nested prefabs and prefab variants, unpack, and per-field apply and revert
+    that rewrites the prefab file safely. Cycles, deep nesting and damaged inner
+    files are reported instead of breaking the scene (#578).
+  - A property registry: read, write, watch, snapshot and compare any component
+    field by name, for undo, live editing and prefab overrides (#578).
+  - Scene text tools for version control: a canonical form, a readable diff, a
+    three-way merge with a conflict report, and format migration (#578).
+  - An inactive parent now disables its children everywhere. Scenes can be
+    searched by path, validated for broken links, duplicate ids and missing
+    files, and report why a load failed. Components get FixedUpdate and
+    OnDestroy when a scene is cleared (#575).
+  Tools and performance
+  - A job system with ParallelFor, task dependencies and a main-thread queue,
+    plus frame arenas, pool allocators, generational handles and string ids (#578).
+  - Profiling and debugging data: frame history, render statistics, memory
+    tracking, a draw-call recorder and a stats overlay (#574).
+  - Optimization tools: mesh simplification and LOD chains, LOD selection,
+    occlusion culling, batching plans, streaming and an optimization report (#574).
+  - Localization tools: translation tables with CSV and JSON import and export,
+    missing and unused key reports, pseudo-localization, font coverage (#574).
+  - Accessibility: subtitles and captions, colour-blindness simulation and a safe
+    palette, directional UI focus, and a remapping model (#574).
+  Fixes
+  - Time no longer turns to NaN when a frame step is NaN, negative or infinite,
+    an infinite time scale is capped, the FPS readout is right after the first
+    frame, and the game stopwatch no longer freezes in long sessions (#579).
+  - Random.Range no longer overflows on very wide float ranges, and UTF-8
+    helpers handle surrogates and reads past the end of a string (#579).
+  - A script error in the console game loop no longer leaves the terminal in raw
+    mode, and the quit key is ignored while a text field is active (#579).
+  - Floats in scene files are written with the digits needed to read back the
+    same value, so a position like 12345.678 is no longer rounded on every save,
+    undo step or prefab copy (#575).
+
+v2.849.0
+  Scenes and objects
+  - Scenes load all-or-nothing: a damaged or truncated scene file no longer
+    leaves a half-built level, sizes are bounded, and files written by a newer
+    version still open (#553).
+  - Scenes can load in the background without freezing the game, and objects
+    can be pooled and reused instead of created and destroyed (#570).
+  - Components can require other components, objects and prefabs carry stable
+    IDs, prefab instances remember their overrides, and a layer collision
+    matrix, a tag index and a camera stack are available (#570).
+  - Scene lifecycle is predictable: Start runs once the object is really
+    active, SetParent keeps the world position, Destroy can be delayed and is
+    safe in the middle of an update, OnEnable and OnDisable fire, and objects
+    can survive a scene change with DontDestroyOnLoad (#558).
+  Saves and data
+  - Saves are durable: files are written atomically so a crash mid-save keeps
+    the old file, text is escaped properly, save slots are versioned and
+    checksummed, and the loaders tolerate damaged files (#552).
+  - Asset manager with handles, background loading and hot reload, and an
+    asset database with stable IDs, dependency tracking, import settings and
+    thumbnails (#568).
+  - Localization and Prefs improvements, plus math and geometry helpers, a
+    command line and console, ECS commands and deltas, and more keys and
+    gamepads in the input system (#571).
+  Scripts and tools
+  - Log has categories, a rotating log file and is safe to call from several
+    threads; the profiler exports Chrome trace and CSV files (#559).
+  - Timers and tweens run on one global scheduler, can be cancelled by tag or
+    owner, and several tween bugs are fixed (#560).
+  - Undo and crash recovery, an automated test framework and a save framework
+    for tools and games (#572).
+  Fixes
+  - Random.Range no longer returns its maximum, the event bus is safe when a
+    handler adds or removes handlers, time uses double precision so long
+    sessions don't drift, a pause scale is available, and UTF-8 handling no
+    longer breaks on bad input (#557).
+  - Core audit: fixed bugs in math, the ECS, network snapshots, the camera,
+    layers and input (#565).
+
 v2.848.0
   Characters
   - The speed fit from 2.847.0 now covers every player controller (third-person

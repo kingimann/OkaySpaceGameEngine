@@ -1,9 +1,11 @@
 #pragma once
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -62,8 +64,15 @@ public:
 
     /// Float in [min, max).
     /// Rounding in `min + v * (max - min)` can land on max; that is clamped back below it.
+    /// A span too wide for a float (Range(-FLT_MAX, FLT_MAX)) is worked out in double
+    /// (it used to overflow to infinity and always return max). A NaN or infinite
+    /// limit returns `min` (0 when that is not finite either) instead of poisoning the caller.
     float Range(float min, float max) {
-        const float r = min + Value() * (max - min);
+        if (!std::isfinite(min) || !std::isfinite(max)) return std::isfinite(min) ? min : 0.0f;
+        const float span = max - min;
+        const float r = std::isfinite(span)
+            ? min + Value() * span
+            : (float)((double)min + (double)Value() * ((double)max - (double)min));
         return (r >= max && max > min) ? std::nextafter(max, min) : r;
     }
     /// Integer in [min, max) (max exclusive). Unbiased, and safe for the full int range.
@@ -117,6 +126,25 @@ public:
     }
 
     bool Bool() { return (NextUInt64() & 1ull) != 0; }
+    /// True `percent` percent of the time: 0 never, 100 (or more) always, NaN never.
+    bool Chance(float percent) { return Value() * 100.0f < percent; }
+
+    /// A new generator for a separate stream (loot, spawns, effects), seeded from this
+    /// one's next output, so the child's numbers do not repeat the parent's. It advances
+    /// this generator by one draw: fork in a fixed order (or reseed from a name with
+    /// SeedFromString) to keep runs reproducible. Streams are independent in practice;
+    /// xorshift128+ cannot promise they never overlap.
+    Random Fork() { return Random(NextUInt64() ^ 0xD1B54A32D192ED03ull); }
+
+    /// A seed from text, the same on every platform and build (FNV-1a over the bytes,
+    /// then mixed): `Random rng(Random::HashSeed("world-42"))` gives one world per name.
+    static std::uint64_t HashSeed(const std::string& text) {
+        std::uint64_t h = 0xCBF29CE484222325ull;
+        for (unsigned char c : text) { h ^= c; h *= 0x100000001B3ull; }
+        return SplitMix(h);
+    }
+    void SeedFromString(const std::string& text) { Seed(HashSeed(text)); }
+    static Random FromString(const std::string& text) { return Random(HashSeed(text)); }
 
     Vec2 InsideUnitCircle() {
         // Rejection sampling for a uniform disk.
@@ -132,8 +160,40 @@ public:
         return {r * Mathf::Cos(t), r * Mathf::Sin(t), z};
     }
 
-    /// Process-wide shared generator.
+    /// Process-wide shared generator. It has no lock: use it from one thread (the main
+    /// loop). Another thread should use ThreadLocal() or a generator of its own, or take
+    /// the lock for the length of its draws with LockShared().
     static Random& Shared() { static Random g(0xC0FFEEull); return g; }
+
+    /// Exclusive use of Shared() for as long as the handle lives, so a worker thread can draw
+    /// from the same stream the main thread seeded (a replay, a seeded test) without a data race:
+    ///
+    ///     { auto rng = Random::LockShared(); a = rng->Range(0, 6); b = rng->Value(); }
+    ///
+    /// It is a short spin lock (no <mutex>, which a header here must not need): keep the scope to
+    /// a few draws, never take it twice on one thread (it would wait for itself), and know that
+    /// code that calls Shared() directly does not take it. The stream stays one stream: the numbers
+    /// threads draw are the sequential ones in some interleaving, so the sum of N draws is the
+    /// same whichever thread got which.
+    class SharedLock {
+    public:
+        SharedLock() { while (Flag().test_and_set(std::memory_order_acquire)) { /* spin */ } }
+        ~SharedLock() { Flag().clear(std::memory_order_release); }
+        SharedLock(const SharedLock&) = delete;
+        SharedLock& operator=(const SharedLock&) = delete;
+        Random* operator->() const { return &Shared(); }
+        Random& operator*() const { return Shared(); }
+    private:
+        static std::atomic_flag& Flag() { static std::atomic_flag f = ATOMIC_FLAG_INIT; return f; }
+    };
+    static SharedLock LockShared() { return SharedLock(); }
+    /// A generator private to the calling thread (so no two threads share state),
+    /// seeded when the thread first asks, in the order threads ask.
+    static Random& ThreadLocal() {
+        static std::atomic<std::uint64_t> next{0};
+        thread_local Random g(HashSeed("okay.thread." + std::to_string(next.fetch_add(1))));
+        return g;
+    }
 
 private:
     static std::uint64_t SplitMix(std::uint64_t& x) {

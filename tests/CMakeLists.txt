@@ -112,6 +112,12 @@ add_test(NAME core_features COMMAND test_core_features)
 add_executable(test_scheduler_reentry test_scheduler_reentry.cpp)
 target_link_libraries(test_scheduler_reentry PRIVATE okay::engine)
 add_test(NAME scheduler_reentry COMMAND test_scheduler_reentry)
+add_executable(test_scheduler_hardening test_scheduler_hardening.cpp)
+target_link_libraries(test_scheduler_hardening PRIVATE okay::engine)
+add_test(NAME scheduler_hardening COMMAND test_scheduler_hardening)
+add_executable(test_scheduler_owner_clock test_scheduler_owner_clock.cpp)
+target_link_libraries(test_scheduler_owner_clock PRIVATE okay::engine)
+add_test(NAME scheduler_owner_clock COMMAND test_scheduler_owner_clock)
 
 add_executable(test_gameplay test_gameplay.cpp)
 target_link_libraries(test_gameplay PRIVATE okay::engine)
@@ -175,6 +181,9 @@ add_test(NAME pathfinding COMMAND test_pathfinding)
 add_executable(test_easing test_easing.cpp)
 target_link_libraries(test_easing PRIVATE okay::engine)
 add_test(NAME easing COMMAND test_easing)
+add_executable(test_spring test_spring.cpp)
+target_link_libraries(test_spring PRIVATE okay::engine)
+add_test(NAME spring COMMAND test_spring)
 
 add_executable(test_templates test_templates.cpp)
 target_link_libraries(test_templates PRIVATE okay::engine)
@@ -286,6 +295,36 @@ add_test(NAME profiler_export COMMAND test_profiler_export)
 add_executable(test_log test_log.cpp)
 target_link_libraries(test_log PRIVATE okay::engine)
 add_test(NAME log COMMAND test_log)
+
+# Profiling & debugging data layers (okay/Debug): frame history, GPU/render stats, memory, frame debugger, console, overlay
+add_executable(test_debug_frame_history test_debug_frame_history.cpp)
+target_link_libraries(test_debug_frame_history PRIVATE okay::engine)
+add_test(NAME debug_frame_history COMMAND test_debug_frame_history)
+
+add_executable(test_debug_gpu_stats test_debug_gpu_stats.cpp)
+target_link_libraries(test_debug_gpu_stats PRIVATE okay::engine)
+add_test(NAME debug_gpu_stats COMMAND test_debug_gpu_stats)
+
+add_executable(test_debug_memory test_debug_memory.cpp)
+target_link_libraries(test_debug_memory PRIVATE okay::engine)
+add_test(NAME debug_memory COMMAND test_debug_memory)
+
+# The one test that turns the opt-in operator new/delete hooks on (OKAY_ENABLE_MEMORY_HOOKS, defined in the file itself)
+add_executable(test_debug_memory_hooks test_debug_memory_hooks.cpp)
+target_link_libraries(test_debug_memory_hooks PRIVATE okay::engine)
+add_test(NAME debug_memory_hooks COMMAND test_debug_memory_hooks)
+
+add_executable(test_debug_draw_calls test_debug_draw_calls.cpp)
+target_link_libraries(test_debug_draw_calls PRIVATE okay::engine)
+add_test(NAME debug_draw_calls COMMAND test_debug_draw_calls)
+
+add_executable(test_debug_console test_debug_console.cpp)
+target_link_libraries(test_debug_console PRIVATE okay::engine)
+add_test(NAME debug_console COMMAND test_debug_console)
+
+add_executable(test_debug_overlay test_debug_overlay.cpp)
+target_link_libraries(test_debug_overlay PRIVATE okay::engine)
+add_test(NAME debug_overlay COMMAND test_debug_overlay)
 
 add_executable(test_datapack test_datapack.cpp)
 target_link_libraries(test_datapack PRIVATE okay::engine)
@@ -563,6 +602,20 @@ add_executable(test_savedata test_savedata.cpp)
 target_link_libraries(test_savedata PRIVATE okay::engine)
 add_test(NAME savedata COMMAND test_savedata)
 
+# Undo/redo and recovery: command based undo stack (groups, merge, caps, dirty tracking),
+# autosave + crash recovery, rolling file backups
+add_executable(test_undo test_undo.cpp)
+target_link_libraries(test_undo PRIVATE okay::engine)
+add_test(NAME undo COMMAND test_undo)
+
+add_executable(test_recovery test_recovery.cpp)
+target_link_libraries(test_recovery PRIVATE okay::engine)
+add_test(NAME recovery COMMAND test_recovery)
+
+add_executable(test_backup test_backup.cpp)
+target_link_libraries(test_backup PRIVATE okay::engine)
+add_test(NAME backup COMMAND test_backup)
+
 add_executable(test_animator test_animator.cpp)
 target_link_libraries(test_animator PRIVATE okay::engine)
 add_test(NAME animator COMMAND test_animator)
@@ -634,6 +687,12 @@ add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/Edit
 target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
+
+# The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
+add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_hooks PRIVATE okay::engine)
+add_test(NAME editor_hooks COMMAND test_editor_hooks)
 
 add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
@@ -908,6 +967,21 @@ add_test(NAME sequence COMMAND test_sequence)
 add_executable(test_localization test_localization.cpp)
 target_link_libraries(test_localization PRIVATE okay::engine)
 add_test(NAME localization COMMAND test_localization)
+
+# Localization tools: translation grid, CSV / JSON, checker, key scanner, previews, font coverage
+add_executable(test_loc_tools test_loc_tools.cpp)
+target_link_libraries(test_loc_tools PRIVATE okay::engine)
+add_test(NAME loc_tools COMMAND test_loc_tools)
+
+# Accessibility: colour vision, safe palette, subtitles and captions, settings
+add_executable(test_accessibility test_accessibility.cpp)
+target_link_libraries(test_accessibility PRIVATE okay::engine)
+add_test(NAME accessibility COMMAND test_accessibility)
+
+# Focus graph (gamepad / keyboard UI navigation), the scene adapter, and the controls-screen model
+add_executable(test_focus_remap test_focus_remap.cpp)
+target_link_libraries(test_focus_remap PRIVATE okay::engine)
+add_test(NAME focus_remap COMMAND test_focus_remap)
 
 add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
@@ -1266,6 +1340,12 @@ endif()
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)
 add_test(NAME tween COMMAND test_tween)
+add_executable(test_tween_edges test_tween_edges.cpp)
+target_link_libraries(test_tween_edges PRIVATE okay::engine)
+add_test(NAME tween_edges COMMAND test_tween_edges)
+add_executable(test_tween_features test_tween_features.cpp)
+target_link_libraries(test_tween_features PRIVATE okay::engine)
+add_test(NAME tween_features COMMAND test_tween_features)
 
 add_executable(test_editor_tabs test_editor_tabs.cpp)
 target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -1395,6 +1475,12 @@ add_executable(test_input_actions test_input_actions.cpp)
 target_link_libraries(test_input_actions PRIVATE okay::engine)
 add_test(NAME input_actions COMMAND test_input_actions)
 
+# Input: F-keys / nav keys / left-right modifiers, input contexts that swallow keys, gamepad dead zones,
+# response curves, trigger thresholds and several controllers
+add_executable(test_input_keys_gamepad test_input_keys_gamepad.cpp)
+target_link_libraries(test_input_keys_gamepad PRIVATE okay::engine)
+add_test(NAME input_keys_gamepad COMMAND test_input_keys_gamepad)
+
 # Save games: slots, whole-scene state, script variables, deferred load, autosave
 add_executable(test_save_game test_save_game.cpp)
 target_link_libraries(test_save_game PRIVATE okay::engine)
@@ -1468,16 +1554,42 @@ add_executable(test_durable_saves test_durable_saves.cpp)
 target_link_libraries(test_durable_saves PRIVATE okay::engine)
 add_test(NAME durable_saves COMMAND test_durable_saves)
 
+# Save game framework: typed blocks, slot files + headers, migration chain, forward
+# compatibility, sync backends, menu model (no scene needed).
+add_executable(test_save_framework test_save_framework.cpp)
+target_link_libraries(test_save_framework PRIVATE okay::engine)
+add_test(NAME save_framework COMMAND test_save_framework)
+
+# Save framework on a Scene: Saveable capture/apply, dynamic spawn, destroyed objects,
+# checkpoints, quick save, autosave ring, continue.
+add_executable(test_save_scene test_save_scene.cpp)
+target_link_libraries(test_save_scene PRIVATE okay::engine)
+add_test(NAME save_scene COMMAND test_save_scene)
+
 # Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)
 add_test(NAME script_batch1 COMMAND test_script_batch1)
+
+add_executable(test_assetmanager test_assetmanager.cpp)
+target_link_libraries(test_assetmanager PRIVATE okay::engine)
+add_test(NAME assetmanager COMMAND test_assetmanager)
+
+# Asset database: GUID metas, move detection, dependency graph, import settings, thumbnails, search
+add_executable(test_asset_database test_asset_database.cpp)
+target_link_libraries(test_asset_database PRIVATE okay::engine)
+add_test(NAME asset_database COMMAND test_asset_database)
 
 # Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
 # viewports, Layers names, DataAsset load, input binding persistence.
 add_executable(test_core_audit test_core_audit.cpp)
 target_link_libraries(test_core_audit PRIVATE okay::engine)
 add_test(NAME core_audit COMMAND test_core_audit)
+
+# Core math extras: Quat::Normalized NaN, Color::Parse (hex and "r,g,b")
+add_executable(test_core_math_extra test_core_math_extra.cpp)
+target_link_libraries(test_core_math_extra PRIVATE okay::engine)
+add_test(NAME core_math_extra COMMAND test_core_math_extra)
 
 # Core audit: terminal input session (pty based, so POSIX only).
 if(UNIX)
@@ -1495,3 +1607,266 @@ add_test(NAME vs_media COMMAND test_vs_media)
 add_executable(test_script_nav test_script_nav.cpp)
 target_link_libraries(test_script_nav PRIVATE okay::engine)
 add_test(NAME script_nav COMMAND test_script_nav)
+
+# Math: Mat3, Mat4::Decompose, geometry (Ray/Plane/Sphere/AABB/OBB/Frustum/Capsule), Vec2i/Vec3i, noise, curves, colour spaces, Rng streams
+add_executable(test_math_geometry test_math_geometry.cpp)
+target_link_libraries(test_math_geometry PRIVATE okay::engine)
+add_test(NAME math_geometry COMMAND test_math_geometry)
+
+# Core fixes: Application quit handling, strict Rect::Overlaps, SmoothStep edges, ToEuler near the poles
+add_executable(test_core_fixes test_core_fixes.cpp)
+target_link_libraries(test_core_fixes PRIVATE okay::engine)
+add_test(NAME core_fixes COMMAND test_core_fixes)
+
+# Core tools: CommandLine, Paths, BuildInfo, Stopwatch, StateMachine
+add_executable(test_core_cli test_core_cli.cpp)
+target_link_libraries(test_core_cli PRIVATE okay::engine)
+target_compile_definitions(test_core_cli PRIVATE OKAY_ENGINE_VERSION_FOR_TEST="${PROJECT_VERSION}")
+add_test(NAME core_cli COMMAND test_core_cli)
+
+# Core console: EventBus extras, Cvars, Console, debug overlay lines
+add_executable(test_core_console test_core_console.cpp)
+target_link_libraries(test_core_console PRIVATE okay::engine)
+add_test(NAME core_console COMMAND test_core_console)
+# Localization formatting + plural rules, typed Prefs, FixedTimestep (docs/localization_prefs_time.md)
+add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
+target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
+add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
+
+add_executable(test_ecs_commands test_ecs_commands.cpp)
+target_link_libraries(test_ecs_commands PRIVATE okay::engine)
+add_test(NAME ecs_commands COMMAND test_ecs_commands)
+
+# Multi-frame scene loads (progress, additive load + unload by handle), ObjectPool, RequireComponent rules
+add_executable(test_scene_load_pool test_scene_load_pool.cpp)
+target_link_libraries(test_scene_load_pool PRIVATE okay::engine)
+add_test(NAME scene_load_pool COMMAND test_scene_load_pool)
+
+# Persistent object ids, sibling order / enabled flags, duplicate components, component serializer registry, prefab overrides
+add_executable(test_scene_ids_prefabs test_scene_ids_prefabs.cpp)
+target_link_libraries(test_scene_ids_prefabs PRIVATE okay::engine)
+add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
+
+add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
+target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
+add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
+
+add_executable(test_scene_hierarchy_search test_scene_hierarchy_search.cpp)
+target_link_libraries(test_scene_hierarchy_search PRIVATE okay::engine)
+add_test(NAME scene_hierarchy_search COMMAND test_scene_hierarchy_search)
+
+# Scene graph (1.3): a 100000-deep chain, Transform audit and helpers, scene / GameObject audit,
+# project tag list and layer names, spawning (Instantiate / Duplicate / unique names), Mover / Spinner / Lifetime
+add_executable(test_deep_hierarchy test_deep_hierarchy.cpp)
+target_link_libraries(test_deep_hierarchy PRIVATE okay::engine)
+add_test(NAME deep_hierarchy COMMAND test_deep_hierarchy)
+
+add_executable(test_transform_graph test_transform_graph.cpp)
+target_link_libraries(test_transform_graph PRIVATE okay::engine)
+add_test(NAME transform_graph COMMAND test_transform_graph)
+
+add_executable(test_scene_graph_audit test_scene_graph_audit.cpp)
+target_link_libraries(test_scene_graph_audit PRIVATE okay::engine)
+add_test(NAME scene_graph_audit COMMAND test_scene_graph_audit)
+
+add_executable(test_layers_tags_project test_layers_tags_project.cpp)
+target_link_libraries(test_layers_tags_project PRIVATE okay::engine)
+add_test(NAME layers_tags_project COMMAND test_layers_tags_project)
+
+add_executable(test_scene_spawn test_scene_spawn.cpp)
+target_link_libraries(test_scene_spawn PRIVATE okay::engine)
+add_test(NAME scene_spawn COMMAND test_scene_spawn)
+
+add_executable(test_mover_spinner_lifetime test_mover_spinner_lifetime.cpp)
+target_link_libraries(test_mover_spinner_lifetime PRIVATE okay::engine)
+add_test(NAME mover_spinner_lifetime COMMAND test_mover_spinner_lifetime)
+# Optimization tools (27): mesh simplification, LOD chains, LOD group selection
+add_executable(test_optimize_simplify test_optimize_simplify.cpp)
+target_link_libraries(test_optimize_simplify PRIVATE okay::engine)
+add_test(NAME optimize_simplify COMMAND test_optimize_simplify)
+
+# Optimization tools (27): CPU occlusion buffer and portal / cell visibility
+add_executable(test_optimize_occlusion test_optimize_occlusion.cpp)
+target_link_libraries(test_optimize_occlusion PRIVATE okay::engine)
+add_test(NAME optimize_occlusion COMMAND test_optimize_occlusion)
+
+# Optimization tools (27): draw call batching planner and static mesh merge
+add_executable(test_optimize_batching test_optimize_batching.cpp)
+target_link_libraries(test_optimize_batching PRIVATE okay::engine)
+add_test(NAME optimize_batching COMMAND test_optimize_batching)
+
+# Optimization tools (27): streaming cell grid and texture mip budget
+add_executable(test_optimize_streaming test_optimize_streaming.cpp)
+target_link_libraries(test_optimize_streaming PRIVATE okay::engine)
+add_test(NAME optimize_streaming COMMAND test_optimize_streaming)
+
+# Optimization tools (27): scene optimization report (JSON / text)
+add_executable(test_optimize_report test_optimize_report.cpp)
+target_link_libraries(test_optimize_report PRIVATE okay::engine)
+add_test(NAME optimize_report COMMAND test_optimize_report)
+
+# ---- Automated testing (feature map area 33) --------------------------------
+# 33.1 play-mode tests: the registry / runner, then PlayTest (headless frame stepping,
+# input injection, log capture) on procedurally built scenes.
+add_executable(test_testing_registry test_testing_registry.cpp)
+target_link_libraries(test_testing_registry PRIVATE okay::engine)
+target_compile_definitions(test_testing_registry PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME testing_registry COMMAND test_testing_registry)
+
+add_executable(test_playtest test_playtest.cpp)
+target_link_libraries(test_playtest PRIVATE okay::engine)
+target_compile_definitions(test_playtest PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME playtest COMMAND test_playtest)
+
+# 33.2 scene validation: missing assets, cameras, duplicate names, scripts, references, transforms
+add_executable(test_scene_validator test_scene_validator.cpp)
+target_link_libraries(test_scene_validator PRIVATE okay::engine)
+target_compile_definitions(test_scene_validator PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME scene_validator COMMAND test_scene_validator)
+
+# 33.3 regression helpers: golden text/binary files, the scene digest, golden images
+# (the software renderer drawn into memory and compared with tests/golden/regression/cube.png;
+#  refresh it on purpose with OKAY_UPDATE_GOLDEN=1 test_regression).
+add_executable(test_regression test_regression.cpp)
+target_link_libraries(test_regression PRIVATE okay::engine)
+target_compile_definitions(test_regression PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+                                                  OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME regression COMMAND test_regression)
+
+# 33.1 the command-line runner: okay-playtest runs every OKAY_PLAYTEST linked into it. This one
+# carries the framework's own play-tests (tests/playtest/selftest_playtests.cpp); a game makes its
+# own by linking its tests with okay::engine and calling okay::testing::RunMain from main().
+add_executable(okay-playtest playtest/playtest_main.cpp playtest/selftest_playtests.cpp)
+target_link_libraries(okay-playtest PRIVATE okay::engine)
+target_compile_definitions(okay-playtest PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+set_target_properties(okay-playtest PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+add_test(NAME playtest_runner COMMAND okay-playtest --junit ${CMAKE_CURRENT_BINARY_DIR}/okay-playtest-junit.xml
+                                                      --text ${CMAKE_CURRENT_BINARY_DIR}/okay-playtest.txt)
+add_test(NAME playtest_runner_list COMMAND okay-playtest --list)
+set_tests_properties(playtest_runner_list PROPERTIES PASS_REGULAR_EXPRESSION "selftest\\.script_moves_object")
+
+# 1.1 Loop and time (docs/loop_and_time.md): GameLoop, Time effects + clocks, Game pause reasons /
+# quit guard, Random extras, Application on the shared loop. Deterministic: fake frame times,
+# fixed seeds, no sleeping except the Application config checks (a few tens of milliseconds).
+add_executable(test_game_loop test_game_loop.cpp)
+target_link_libraries(test_game_loop PRIVATE okay::engine)
+add_test(NAME game_loop COMMAND test_game_loop)
+
+add_executable(test_clock test_clock.cpp)
+target_link_libraries(test_clock PRIVATE okay::engine)
+add_test(NAME clock COMMAND test_clock)
+
+add_executable(test_time_extras test_time_extras.cpp)
+target_link_libraries(test_time_extras PRIVATE okay::engine)
+add_test(NAME time_extras COMMAND test_time_extras)
+
+add_executable(test_game_state test_game_state.cpp)
+target_link_libraries(test_game_state PRIVATE okay::engine)
+add_test(NAME game_state COMMAND test_game_state)
+
+add_executable(test_random_extras test_random_extras.cpp)
+target_link_libraries(test_random_extras PRIVATE okay::engine)
+add_test(NAME random_extras COMMAND test_random_extras)
+
+add_executable(test_application_loop test_application_loop.cpp)
+target_link_libraries(test_application_loop PRIVATE okay::engine)
+add_test(NAME application_loop COMMAND test_application_loop)
+# ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, per-field apply / revert
+add_executable(test_prefab_nested test_prefab_nested.cpp)
+target_link_libraries(test_prefab_nested PRIVATE okay::engine)
+add_test(NAME prefab_nested COMMAND test_prefab_nested)
+add_executable(test_prefab_variants test_prefab_variants.cpp)
+target_link_libraries(test_prefab_variants PRIVATE okay::engine)
+add_test(NAME prefab_variants COMMAND test_prefab_variants)
+
+add_executable(test_prefab_apply_revert test_prefab_apply_revert.cpp)
+target_link_libraries(test_prefab_apply_revert PRIVATE okay::engine)
+add_test(NAME prefab_apply_revert COMMAND test_prefab_apply_revert)
+# Property reflection: values and text round trips, registry paths, change hook,
+# snapshot / diff / copy, and a cross-check of every registered property against the scene serializer
+add_executable(test_property_registry test_property_registry.cpp)
+target_link_libraries(test_property_registry PRIVATE okay::engine)
+add_test(NAME property_registry COMMAND test_property_registry)
+# ---- Core runtime foundations (docs/core_runtime.md) ----
+# Job system: pool, task graph, ParallelFor / ParallelReduce, cancellation, shutdown, main-thread queue.
+# Takes an optional repeat count: `test_jobs 20` runs the threaded suites 20 times to shake out races.
+add_executable(test_jobs test_jobs.cpp)
+target_link_libraries(test_jobs PRIVATE okay::engine)
+add_test(NAME jobs COMMAND test_jobs 3)
+
+# FrameArena, PoolAllocator, SlotMap / Handle, StringId.
+add_executable(test_arena_handles test_arena_handles.cpp)
+target_link_libraries(test_arena_handles PRIVATE okay::engine)
+add_test(NAME arena_handles COMMAND test_arena_handles)
+
+
+# Frame delta clamp, frame timer and frame limiter.
+add_executable(test_frame_pacing test_frame_pacing.cpp)
+target_link_libraries(test_frame_pacing PRIVATE okay::engine)
+add_test(NAME frame_pacing COMMAND test_frame_pacing)
+
+# ---- Scene text tools for version control (docs/scene_diff_merge.md) ----------------
+# Canonical form, structured diff, three-way merge and format migration. They share
+# scene_text_testkit.hpp (seeded random scene generator, messy-layout perturbation, edit
+# helpers). Property tests read OKAY_TEST_SEEDS to run over more random seeds.
+add_executable(test_scene_canonical test_scene_canonical.cpp)
+target_link_libraries(test_scene_canonical PRIVATE okay::engine)
+add_test(NAME scene_canonical COMMAND test_scene_canonical)
+
+add_executable(test_scene_diff test_scene_diff.cpp)
+target_link_libraries(test_scene_diff PRIVATE okay::engine)
+add_test(NAME scene_diff COMMAND test_scene_diff)
+
+add_executable(test_scene_merge test_scene_merge.cpp)
+target_link_libraries(test_scene_merge PRIVATE okay::engine)
+add_test(NAME scene_merge COMMAND test_scene_merge)
+
+add_executable(test_scene_migration test_scene_migration.cpp)
+target_link_libraries(test_scene_migration PRIVATE okay::engine)
+target_compile_definitions(test_scene_migration PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME scene_migration COMMAND test_scene_migration)
+
+# 1.1 Loop and time, second pass: audit regressions, frame stepping, frame recorder / player, capture
+# mode, frame statistics, the server tick pacer and the player-style loop harness. All deterministic:
+# made-up frame times, no sleeping (the record tests write a few small files in the build directory).
+add_executable(test_loop_audit2 test_loop_audit2.cpp)
+target_link_libraries(test_loop_audit2 PRIVATE okay::engine)
+add_test(NAME loop_audit2 COMMAND test_loop_audit2)
+
+add_executable(test_frame_step test_frame_step.cpp)
+target_link_libraries(test_frame_step PRIVATE okay::engine)
+add_test(NAME frame_step COMMAND test_frame_step)
+
+add_executable(test_capture_mode test_capture_mode.cpp)
+target_link_libraries(test_capture_mode PRIVATE okay::engine)
+add_test(NAME capture_mode COMMAND test_capture_mode)
+
+add_executable(test_frame_record test_frame_record.cpp)
+target_link_libraries(test_frame_record PRIVATE okay::engine)
+add_test(NAME frame_record COMMAND test_frame_record)
+
+add_executable(test_frame_stats test_frame_stats.cpp)
+target_link_libraries(test_frame_stats PRIVATE okay::engine)
+add_test(NAME frame_stats COMMAND test_frame_stats)
+
+add_executable(test_tick_pacer test_tick_pacer.cpp)
+target_link_libraries(test_tick_pacer PRIVATE okay::engine)
+add_test(NAME tick_pacer COMMAND test_tick_pacer)
+
+add_executable(test_loop_player_style test_loop_player_style.cpp)
+target_link_libraries(test_loop_player_style PRIVATE okay::engine)
+add_test(NAME loop_player_style COMMAND test_loop_player_style)
+
+# 1.1 third pass (docs/loop_and_time.md): GameLoop / Game / Application edge cases, timers and clock
+# ramps, the loop's save snapshot, frame-stat export and console commands.
+add_executable(test_loop_audit3 test_loop_audit3.cpp)
+target_link_libraries(test_loop_audit3 PRIVATE okay::engine)
+add_test(NAME loop_audit3 COMMAND test_loop_audit3)
+
+add_executable(test_countdown test_countdown.cpp)
+target_link_libraries(test_countdown PRIVATE okay::engine)
+add_test(NAME countdown COMMAND test_countdown)
+
+add_executable(test_time_snapshot test_time_snapshot.cpp)
+target_link_libraries(test_time_snapshot PRIVATE okay::engine)
+add_test(NAME time_snapshot COMMAND test_time_snapshot)

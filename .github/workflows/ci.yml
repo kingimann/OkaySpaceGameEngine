@@ -185,11 +185,12 @@ jobs:
 
       - name: Fetch SDL2 and libsodium (MinGW)
         run: |
-          curl -sSL --retry 3 --retry-delay 5 --max-time 300 -o sdl2-mingw.tar.gz \
-            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
+          bash scripts/fetch-tarball.sh sdl2-mingw.tar.gz \
+            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" \
+            "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
           mkdir -p sdl2-mingw && tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
           echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
-          curl -sSL --retry 3 --retry-delay 5 --max-time 300 -o libsodium-mingw.tar.gz \
+          bash scripts/fetch-tarball.sh libsodium-mingw.tar.gz \
             "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-mingw.tar.gz"
           mkdir -p libsodium-mingw && tar xzf libsodium-mingw.tar.gz -C libsodium-mingw
           echo "OKAY_SODIUM_MINGW_PREFIX=$PWD/libsodium-mingw/libsodium-win64" >> "$GITHUB_ENV"

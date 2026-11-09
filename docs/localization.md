@@ -249,3 +249,10 @@ inside the project is copied by Build Game).
   built-in UI font that has ASCII and Latin-1; a text with other characters is
   drawn with the fallback font instead.
 - Right-to-left scripts (Arabic, Hebrew) draw left to right, unshaped.
+
+## More
+
+[localization_tools.md](localization_tools.md) covers the tools around the tables:
+the translation grid model, CSV and JSON import and export, the table checker
+(placeholders, plurals, whitespace, length), the unused and undefined key scanner,
+language previews with pseudo-localization, and the font coverage report.

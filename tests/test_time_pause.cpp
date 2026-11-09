@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <cmath>
+#include <limits>
 
 using namespace okay;
 
@@ -81,14 +83,71 @@ int main() {
         Time::SetTimeScale(1.0f);
     }
 
+    // --- a bad frame time never poisons the clocks (audit: Step(NaN) made ElapsedTime NaN for good) ---
+    {
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        Time::ResetForTesting();
+        Time::Step(0.016f);
+        const double e0 = Time::ElapsedTimeD(), u0 = Time::UnscaledTime();
+        const std::uint64_t f0 = Time::FrameCount();
+        Time::Step(nan);
+        CHECK(std::isfinite(Time::ElapsedTimeD()) && std::isfinite(Time::UnscaledTime()));
+        CHECK(Time::ElapsedTimeD() == e0 && Time::UnscaledTime() == u0);
+        CHECK(Time::DeltaTime() == 0.0f && Time::UnscaledDeltaTime() == 0.0f);
+        Time::Step(-0.5f);                                    // a negative frame used to run time backwards
+        CHECK(Time::ElapsedTimeD() == e0 && Time::UnscaledTime() == u0);
+        Time::Step(inf);
+        CHECK(Time::ElapsedTimeD() == e0 && Time::UnscaledTime() == u0);
+        CHECK(Time::FrameCount() == f0 + 3);                  // still counted as frames
+        Time::Step(0.016f);
+        CHECK(Time::ElapsedTimeD() > e0);                     // and time still moves afterwards
+    }
+
+    // --- an infinite scale is capped (0 * inf was NaN) ---
+    {
+        Time::ResetForTesting();
+        Time::SetTimeScale(std::numeric_limits<float>::infinity());
+        CHECK(Time::TimeScale() <= 100.0f && Time::TimeScale() > 0.0f);
+        Time::Step(0.0f);
+        CHECK(Time::DeltaTime() == 0.0f);                     // not NaN
+        Time::Step(0.01f);
+        CHECK(std::isfinite(Time::DeltaTime()) && std::isfinite(Time::ElapsedTimeD()));
+        Time::SetTimeScale(1e30f);
+        CHECK(Time::TimeScale() <= 100.0f);
+        Time::SetTimeScale(std::numeric_limits<float>::quiet_NaN());
+        CHECK(Time::TimeScale() == 0.0f);
+        Time::SetTimeScale(1.0f);
+    }
+
+    // --- SmoothDelta ignores an infinite or NaN time ---
+    {
+        Time::ResetForTesting();
+        CHECK(Time::SmoothDelta(std::numeric_limits<float>::infinity()) == 0.0f);
+        CHECK(Time::SmoothDelta(std::numeric_limits<float>::quiet_NaN()) == 0.0f);
+        CHECK_NEAR(Time::SmoothDelta(0.016f), 0.016f, 1e-6);  // the history was not poisoned
+    }
+
+    // --- SmoothedFPS: the first frames are not garbage (a 10 microsecond first frame read as 100000 FPS for ~100 frames) ---
+    {
+        Time::ResetForTesting();
+        Time::Step(1e-5f);
+        CHECK(Time::SmoothedFPS() < 1000.0f);
+        for (int i = 0; i < 60; ++i) Time::Step(0.016f);
+        CHECK_NEAR(Time::SmoothedFPS(), 62.5f, 62.5f * 0.05f);
+        Time::ResetForTesting();
+        for (int i = 0; i < 30; ++i) Time::Step(1.0f / 30.0f);
+        CHECK_NEAR(Time::SmoothedFPS(), 30.0f, 0.5f);         // steady state is unchanged
+    }
+
     // --- Application quit logic (Run needs a terminal; the decision is factored out) ---
     {
         Application::Config cfg;
-        CHECK(cfg.quitOnQ);                                      // default keeps the old behaviour
+        CHECK(cfg.quitKey == 'q');                                      // default keeps the old behaviour
         CHECK(Application::ShouldQuit(cfg, true, false));
         CHECK(!Application::ShouldQuit(cfg, false, false));
         CHECK(Application::ShouldQuit(cfg, false, true));        // Game::RequestQuit ends the loop
-        cfg.quitOnQ = false;
+        cfg.quitKey = 0;
         CHECK(!Application::ShouldQuit(cfg, true, false));
         CHECK(Application::ShouldQuit(cfg, true, true));
     }

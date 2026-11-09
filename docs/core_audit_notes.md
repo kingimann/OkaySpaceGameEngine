@@ -35,9 +35,7 @@ ray / unproject math, `DataPack` encode / decode.
 
 ## Not fixed (seen, not demonstrated or out of scope)
 
-- `ecs::World::each`: destroying an entity that was already visited (an earlier slot) still makes the pool move the last entry into that slot, which is then skipped. Needs deferred removal (a command buffer).
-- `ecs::World` also invalidates references when a callback adds to the pool it iterates.
-- `NetWorld::apply` is O(entities^2) (linear search per entity); fine for hundreds, slow for tens of thousands.
+- (Fixed, see `docs/ecs.md`: `each` under mutation, command buffer, O(n) `NetWorld::apply`, delta snapshots.)
 - `Application::Run` has no RAII around the terminal session: an exception from a script leaves the terminal in raw mode. It also ignores `Game::QuitRequested()`.
 - `Camera::Awake` makes any `main` camera the scene's main camera regardless of `depth`; the doc says the highest depth wins, which `Scene::ResolveMainCamera` does later (Scene.cpp was out of scope here).
 - `DataAsset::Cached` keeps a failed load forever (a file created later is never picked up), and `Save` writes multi-line values that `Load` reads back as extra fields.
@@ -55,4 +53,31 @@ ray / unproject math, `DataPack` encode / decode.
 6. **Resource / asset manager with handles**: a single `Assets::Load<T>(path)` with reference counting, async load, hot reload, and a normalized virtual path (`assets://`) instead of `DataAsset::BaseDir` plus ad-hoc string joins. The engine has no central asset registry; paths are resolved in each loader.
 7. **Camera**: a camera stack with per-camera render targets and priorities, and a multi-camera `ResolveMainCamera` that honours `depth` live.
 8. **Math**: a public `Mat4::Decompose` (TRS), `Quat::ToAngleAxis`, `Vec3::OrthoNormalize`, general `Plane` / `Ray` types with `Bounds::IntersectRay` in the Math headers (a frustum lives in `Render/Culling.hpp`), and double-precision variants for large worlds. (Checked by header search only.)
-9. **Layers**: a layer collision matrix as a project setting (today a mask is built per query) and named tags with an editor list (tags are free strings).
+9. **Layers**: a layer collision matrix as a project setting (today a mask is built per query) and named tags with an editor list (tags are free strings). (Engine side done in the scene graph wave: matrix presets, layer names and the tag list persisted by `ProjectLists`; see `layers_tags_cameras.md`. The editor is not wired yet.)
+
+## Scene graph audit (feature map 1.3)
+
+The scene, hierarchy and transform code were read again for crashes, wrong answers and save / load
+gaps. Every fix has a test (`deep_hierarchy`, `transform_graph`, `scene_graph_audit`, `scene_spawn`,
+`mover_spinner_lifetime`, `layers_tags_project`). The table with what was fixed and what was added is
+at the end of `scene_hierarchy_search.md` ("What changed: scene graph audit").
+
+Looked at and found fine: the world-matrix cache (it follows reparenting at any depth, and
+`WorldVersion` moves with the pose only), `SetParent` keeping position and rotation exactly under
+rotated, non-uniformly scaled parents, instance ids (never reused, unique across clones and loads),
+guid repair on load, delayed destroy, add / remove of components while `Update` iterates (slots are
+nulled, never erased), mass `Destroy` of 60000 children (0.7 s).
+
+Not fixed (seen):
+
+- `Scene::Clear()`, `SceneSerializer::LoadFromFile` and `Deserialize` called from inside a component's
+  `Update` free the object the code is running on. `RequestLoad` is the safe call; the scene does not
+  guard the direct ones.
+- Destroying one parent with hundreds of thousands of children is quadratic in `FlushDestroyed` (each
+  shell leaves its parent's child list one by one). 60000 children take 0.7 s; it only matters for
+  hierarchies far bigger than a level.
+- Component order is not saved (see `scene_serializer.md` for why it was left out).
+- `Instantiate` copies only what the serializer writes: a plain C++ `Behaviour` subclass without a
+  serializer entry is not cloned, and a type with several instances other than the per-instance ones
+  saves only the first.
+- `FindByGuid` scans the objects; fine for a handful of lookups, not for one per object.

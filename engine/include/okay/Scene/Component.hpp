@@ -39,6 +39,12 @@ public:
     virtual void Update(float /*deltaTime*/) {}
     /// Called every frame after all Update calls have run.
     virtual void LateUpdate(float /*deltaTime*/) {}
+    /// Called from the scene's physics step: once per fixed step before the physics
+    /// world advances (so `fixedDeltaTime` is Scene::fixedTimeStep and a slow frame runs
+    /// it several times), or once per frame with the frame time when the scene has no
+    /// fixed step. Runs only for a started, enabled component on an object that is
+    /// active in the hierarchy, and only while the scene's physics is enabled.
+    virtual void FixedUpdate(float /*fixedDeltaTime*/) {}
     /// Called every frame during the render pass.
     virtual void OnRender(IRenderer& /*renderer*/) {}
     /// Called when the component or its GameObject is destroyed, after Start
@@ -113,6 +119,7 @@ private:
     friend class GameObject;
     bool m_started = false;
     bool m_live = false;   // OnEnable delivered and not yet undone by OnDisable
+    bool m_removing = false;   // GameObject::RemoveComponent is running its callbacks
     /// OnDisable (if one is owed) ahead of OnDestroy.
     void DeliverDisableBeforeDestroy();
 };

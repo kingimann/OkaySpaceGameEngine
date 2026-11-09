@@ -5,7 +5,13 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Get started
 - [making_a_game.md](making_a_game.md): make your first game, from an empty editor to a shipped one.
+- [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
+- [prefab_system.md](prefab_system.md): nested prefabs, variants, unpack, per-record and per-field apply and revert, and the prefab validator.
+- [scene_serializer.md](scene_serializer.md): what a scene round trip keeps, and the component serializer registry.
+- [properties.md](properties.md): the property registry: read, write, watch, snapshot and diff any component field by name (the base for per-property undo, live editing and prefab overrides).
+- [scene_diff_merge.md](scene_diff_merge.md): canonical scene text, structured diffs, three-way merge and format migration for version control.
 - [editor.md](editor.md): the editor, its panels and Build Game.
+- [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.
 - [packaging.md](packaging.md): how a build is laid out for distribution.
 - [releasing.md](releasing.md): releasing an update to players.
@@ -17,6 +23,9 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [visual_scripting.md](visual_scripting.md): the visual scripting text format (OkayVS) and Action Lists.
 - [engine_api.md](engine_api.md): the engine API reference.
 - [core_logging_profiling.md](core_logging_profiling.md): logging (categories, file sink, OKAY_LOG) and the frame profiler (trace and CSV export).
+- [debug_tools.md](debug_tools.md): profiling and debugging data layers (frame timeline, GPU and render stats, memory tracking, frame debugger, error console, stats overlay).
+- [automated_testing.md](automated_testing.md): play-mode tests (`PlayTest`, `okay-playtest`), scene validation and golden-file / golden-image regression helpers.
+- [core_runtime.md](core_runtime.md): the job system, memory arenas and pools, generational handles, string ids, console variables and frame pacing.
 - [editor-plugins.md](editor-plugins.md): extend the editor with plugins.
 
 ## Characters and animation
@@ -35,8 +44,10 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [dialogue_quests.md](dialogue_quests.md): dialogue graphs, story variables and quests.
 - [cutscenes.md](cutscenes.md): sequences and the Timeline window.
 - [timers_and_tweens.md](timers_and_tweens.md): timers that survive scene loads, cancel by tag, and tween behaviour.
+- [loop_and_time.md](loop_and_time.md): the shared frame driver (`GameLoop`), frame stepping, debug slow motion, fixed-rate capture, recording and replaying frame times, frame statistics, hit stop and time-scale ramps, clock channels, pause reasons and quit guard, exit codes, the server tick pacer, dice and shuffle bags.
 - [build_mode.md](build_mode.md): let players build in your game, logic links, saving creations.
 - [save_games.md](save_games.md): save and load the whole game.
+- [save_framework.md](save_framework.md): saveable objects, checkpoints, quick save and autosave slots, slot headers, migrations, sync hooks, load menus.
 - [day_night_cycle.md](day_night_cycle.md): the day and night cycle.
 - [splines.md](splines.md): splines, followers, lines and trails.
 
@@ -44,6 +55,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [rendering.md](rendering.md): post-processing, sky, fog and weather.
 - [lighting.md](lighting.md): lighting and shadows.
 - [modeling.md](modeling.md): the built-in mesh editor.
+- [optimization_tools.md](optimization_tools.md): LOD generation, occlusion culling, batching, streaming and the scene optimization report.
 - [audio.md](audio.md): the mixer, music and sound effects.
 
 ## Game UI
@@ -51,6 +63,8 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [ui_html.md](ui_html.md): menus and HUDs in an HTML and CSS subset.
 - [ui_world_space.md](ui_world_space.md): in-world (3D) UI.
 - [localization.md](localization.md): string tables, translators and fonts.
+- [localization_tools.md](localization_tools.md): translation grid, CSV and JSON, the table checker, key scanner, language previews and font coverage.
+- [accessibility.md](accessibility.md): subtitles and captions, colour vision, controller navigation, remapping and accessibility settings.
 
 ## Multiplayer, accounts and servers
 - [launcher-multiplayer.md](launcher-multiplayer.md): multiplayer from the launcher.

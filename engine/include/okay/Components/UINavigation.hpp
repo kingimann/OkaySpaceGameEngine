@@ -11,10 +11,45 @@
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/UI/FocusGraph.hpp"
 #include <algorithm>
 #include <vector>
 
 namespace okay {
+
+/// True when NavigateUI would let focus rest on this object: an enabled, focusable, interactable
+/// Button, Toggle, Slider, Dropdown, Tabs (with tabs) or Keybind field. (Visibility and modals
+/// are checked separately.)
+inline bool IsNavFocusable(GameObject* go) {
+    if (auto* b = go->GetComponent<UIButton>())        return b->enabled && b->focusable && b->interactable;
+    if (auto* t = go->GetComponent<UIToggle>())        return t->enabled && t->focusable;
+    if (auto* s = go->GetComponent<UISlider>())        return s->enabled && s->focusable;
+    if (auto* d = go->GetComponent<UIDropdown>())      return d->enabled && d->focusable;
+    if (auto* tb = go->GetComponent<UITabs>())         return tb->enabled && tb->focusable && tb->interactable && tb->Count() > 0;
+    if (auto* kb = go->GetComponent<UIKeybindField>()) return kb->enabled && kb->focusable && kb->interactable;
+    return false;
+}
+
+/// Fill `graph` (cleared first) with the scene's focusable widgets that are on screen now (visible,
+/// not behind an open modal): one node per widget at its screen rectangle, ids 1, 2, 3... in
+/// scene order. Returns the objects, indexed by node id - 1. Use the graph's tab order, wrapping,
+/// explicit links and focus traps with the same geometry NavigateUI sees.
+inline std::vector<GameObject*> BuildFocusGraph(Scene& scene, FocusGraph& graph) {
+    graph.Clear();
+    std::vector<GameObject*> objects;
+    const float sw = UIWorld().screenW > 0.0f ? UIWorld().screenW : 1280.0f;
+    const float sh = UIWorld().screenH > 0.0f ? UIWorld().screenH : 720.0f;
+    for (const auto& go : scene.Objects()) {
+        if (!go->active || UIHidden(go.get()) || UIModal::Blocks(go.get()) || !IsNavFocusable(go.get())) continue;
+        Vec2 o{0.0f, 0.0f}, sz{0.0f, 0.0f};
+        if (!((UIWorld().rectOf && UIWorld().rectOf(go.get(), o, sz)) || GetUIScreenRect(go.get(), sw, sh, o, sz))) continue;
+        FocusNode n;
+        n.x = o.x; n.y = o.y; n.w = sz.x; n.h = sz.y;
+        graph.Add(n);
+        objects.push_back(go.get());
+    }
+    return objects;
+}
 
 /// Keyboard / gamepad menu navigation over a scene's interactive UI widgets.
 /// Call once per frame (the player does). Up/Down/Left/Right (WASD or arrows,
@@ -116,23 +151,22 @@ inline GameObject* NavigateUI(Scene& scene) {
     bool activate = Input::GetKeyDown(' ') || Input::GetKeyDown('\r') ||
                     Input::GetKeyDown('\n') || Input::GetGamepadButtonDown(0);
 
+    auto asNode = [](const Item& it) {
+        FocusNode f;
+        f.x = it.origin.x; f.y = it.origin.y; f.w = it.size.x; f.h = it.size.y;
+        return f;
+    };
     // The nearest widget whose centre lies in direction (dx, dy) from the focused
-    // one. Distance ahead plus twice the sideways gap between the two rects (0 when
+    // one (FocusScore: distance ahead plus twice the sideways gap between the two rects (0 when
     // they overlap across the direction), so the widget straight below a left-aligned
-    // column entry wins over a closer one off to the side. -1 if there is none that way.
+    // column entry wins over a closer one off to the side). -1 if there is none that way.
     auto nearest = [&](int from, float dx, float dy) {
-        const Item& a = items[from];
+        const FocusNode a = asNode(items[from]);
         int best = -1; float bestScore = 0.0f;
         for (int i = 0; i < n; ++i) {
             if (i == from) continue;
-            const Item& b = items[i];
-            const Vec2 d = b.centre - a.centre;
-            const float along = d.x * dx + d.y * dy;
-            if (along < 1.0f) continue;
-            const float gap = dx != 0.0f
-                ? Mathf::Max(0.0f, Mathf::Max(b.origin.y - (a.origin.y + a.size.y), a.origin.y - (b.origin.y + b.size.y)))
-                : Mathf::Max(0.0f, Mathf::Max(b.origin.x - (a.origin.x + a.size.x), a.origin.x - (b.origin.x + b.size.x)));
-            const float score = along + 2.0f * gap;
+            const float score = FocusScore(a, asNode(items[i]), dx, dy);
+            if (score < 0.0f) continue;
             if (best < 0 || score < bestScore) { best = i; bestScore = score; }
         }
         return best;

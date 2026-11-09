@@ -16,7 +16,11 @@ class Camera : public Component {
 public:
     enum class Projection { Orthographic, Perspective };
     /// How the background is filled each frame.
-    enum class ClearFlags { Skybox, SolidColor };
+    /// DepthOnly and DontClear are for a camera stacked over a lower-depth one: it
+    /// keeps what was drawn (DepthOnly clears only the depth, so its objects draw
+    /// over it; DontClear keeps colour and depth). The first camera in the stack
+    /// always clears the colour, whatever its flag.
+    enum class ClearFlags { Skybox, SolidColor, DepthOnly, DontClear };
 
     Projection projection = Projection::Perspective;   // default (2D scenes set Orthographic)
 
@@ -54,8 +58,15 @@ public:
     ClearFlags clearFlags = ClearFlags::Skybox;
     /// Color the framebuffer is cleared to each frame.
     Color backgroundColor = Color::FromBytes(49, 77, 121);   // blue-grey (was black: 2D scenes started dark)
-    /// Render/priority order: the highest-depth camera wins "main".
+    /// Render/priority order: cameras render lowest depth first (Scene::CameraStack),
+    /// and the highest-depth main camera is the scene's main camera.
     float depth = 0.0f;
+    /// What this camera clears before drawing, given whether it is first in the stack.
+    void ClearPlan(bool first, bool& clearColor, bool& clearDepth) const {
+        if (first) { clearColor = true; clearDepth = true; return; }
+        clearColor = clearFlags == ClearFlags::Skybox || clearFlags == ClearFlags::SolidColor;
+        clearDepth = clearColor || clearFlags == ClearFlags::DepthOnly;
+    }
     /// Whether this camera should become the scene's main camera on Awake.
     bool main = true;
 

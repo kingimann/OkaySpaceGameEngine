@@ -70,6 +70,24 @@ Full reference: [`scripting.md`](scripting.md).
 - The output folder is a self-contained game: double-click `<YourGame>.exe`.
   Move with WASD or the arrow keys; press **Esc** to quit.
 
+## Time and the loop
+
+A frame never steps by more than a clamp (a breakpoint or an alt-tab does not become one giant step), pausing is by reason so a pause menu and a cutscene do not un-pause each other, and the same loop gives you slow motion, hit stop, frame stepping, fixed-rate capture for screenshots and video, and a recording of a session's frame times you can replay in a test:
+
+```cpp
+GameLoop loop;
+loop.OnUpdate = [&](float dt) { scene.Update(dt); };
+while (loop.BeginFrame(MeasureFrameSeconds())) Draw(loop.Alpha());
+
+Time::HitStop(0.08f);                    // a freeze frame on impact
+Game::PushPause("menu");                 // ... Game::PopPause("menu")
+Game::RequestQuit("level cleared", 0);   // an exit code for the shell
+loop.RequestStep();                      // while paused: one frame at a time
+loop.SetCapture(60.0f, 600);             // exactly 600 frames at 60 fps, whatever the machine does
+```
+
+See [`loop_and_time.md`](loop_and_time.md) for every call, the clocks (`Clock::Get("ui")` keeps animating while the game is paused), recording and replaying frame times, frame statistics, and how to move the player onto `GameLoop`.
+
 ## Where to go next
 
 - [`editor.md`](editor.md) — every panel and the Build pipeline.
@@ -160,3 +178,28 @@ share these movement niceties:
   Body, speeds, heights). Top Down starts with prone off; Click To Move and
   NPC have no keys by default. A script, a cutscene or an AI sets the stance
   with `SetStance(0 stand / 1 crouch / 2 prone)` on any of the controllers.
+
+## Mover, Spinner, Lifetime and spawning
+
+The no-code motion components take a **Space**:
+
+- **Mover** (default Local): *Local* moves in the parent's frame (the world frame for an object with
+  no parent), *World* moves in world units per second whatever the parent does, *Self* flies along the
+  object's own axes (a bullet that moves where it points).
+- **Spinner** (default Self): the vector is the axis of spin and its length the degrees per second.
+  *Self* spins around the object's own axes, *Local* around the parent's, *World* around the scene's.
+  A spin about several axes comes out the same at 30 and 240 FPS.
+- **Lifetime** destroys the object (and its children) after **Seconds**. Zero or less ends it on the
+  first frame, a very large number is as good as forever. Disabling the component pauses the timer,
+  and a saved game keeps the seconds already lived.
+
+From C++ (a script component, a spawner):
+
+```cpp
+GameObject* b = scene.Instantiate(*bulletTemplate, muzzle->Position(), muzzle->Rotation());
+GameObject* c = scene.Duplicate(*crate);                  // "Crate (1)", same parent, next to the original
+scene.Destroy(b, 2.0f);                                   // in two seconds; DestroyImmediate(b) for tools and tests
+```
+
+See `scene_hierarchy_search.md` for the full list (Transform helpers, queries, bounds) and
+`layers_tags_cameras.md` for tags, layer names and the collision matrix.

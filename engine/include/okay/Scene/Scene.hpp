@@ -1,20 +1,27 @@
 #pragma once
 #include <cstdint>
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Tween.hpp"
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Render/Color.hpp"
+#include "okay/Math/Bounds.hpp"
+#include "okay/Scene/SceneValidation.hpp"
 #include <algorithm>
 #include <memory>
 #include <functional>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace okay {
 
 class Component;
+class SceneLoadJob;
 class Camera;
 class IRenderer;
 
@@ -34,12 +41,39 @@ public:
     /// Create an empty GameObject (with a Transform) owned by this scene.
     GameObject* CreateGameObject(const std::string& name = "GameObject");
 
-    /// Remove every GameObject immediately (used when loading a scene).
+    /// The live object with this persistent id (GameObject::Guid), or nullptr.
+    GameObject* FindByGuid(const std::string& guid) const;
+
+    /// Remove every GameObject immediately (used when loading a scene). Components that
+    /// are live get OnDisable / OnDestroy first, and the 3D physics world and its gravity
+    /// go back to their defaults, like everything else the old scene held. The destructor
+    /// does the same OnDestroy pass.
     void Clear();
 
-    /// Clone a prefab (a GameObject and its descendants) into this scene.
+    /// Clone a prefab (a GameObject and its descendants) into this scene. The clone is a root
+    /// object with the original's LOCAL pose, whatever the original's parent was (Duplicate
+    /// keeps the parent). Components, tags, layers and the hierarchy below it are copied;
+    /// the clone gets its own instance id and guid.
     GameObject* Instantiate(const GameObject& prefab);
     GameObject* Instantiate(const GameObject& prefab, const Vec3& position);
+    /// A root clone at a world position and rotation (scale as the original's).
+    GameObject* Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation);
+    /// A clone under `parent` (nullptr = a root). `worldPositionStays` false keeps the original's
+    /// local pose relative to the new parent; true keeps the pose it would have as a root. A
+    /// parent that is refused (destroyed, or in another scene) leaves the clone a root.
+    GameObject* Instantiate(const GameObject& prefab, Transform* parent, bool worldPositionStays = false);
+    /// A clone at a WORLD position and rotation under `parent` (nullptr = a root), like a bullet
+    /// leaving a muzzle that is itself moving.
+    GameObject* Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation, Transform* parent);
+    /// A copy of `original` and everything below it, under the same parent with the same local
+    /// pose, placed right after it among its siblings, named with UniqueName so "Crate" becomes
+    /// "Crate (1)". nullptr when the original is destroyed.
+    GameObject* Duplicate(const GameObject& original);
+    /// `base` if no sibling already has that name, else "base (1)", "base (2)" ... (the first
+    /// free number; a trailing " (n)" on `base` counts from its stem, so "Crate (1)" gives
+    /// "Crate (2)"). Siblings are the children of `parent`, or the root objects when it is
+    /// null. An empty base reads as "GameObject".
+    std::string UniqueName(const std::string& base, const Transform* parent = nullptr) const;
 
     /// Mark a GameObject for destruction; removed at the end of the frame. Until
     /// then it keeps its place in the hierarchy (and so its world pose), and its
@@ -47,8 +81,14 @@ public:
     void Destroy(GameObject* go);
     /// Destroy `go` after `seconds` of this scene's time (the Update deltas).
     /// Destroying it earlier cancels this; asking again keeps the sooner time.
-    /// Zero or less destroys it like Destroy(go).
+    /// Zero, less or NaN destroys it like Destroy(go).
     void Destroy(GameObject* go, float seconds);
+    /// Destroy `go` and everything below it right now (OnDestroy runs, the objects are freed),
+    /// together with anything else already queued by Destroy. From inside an Update, a physics
+    /// callback or an OnDestroy the scene is walking its component lists, so there it does what
+    /// Destroy does and the objects go at the end of the frame. Meant for tools, edit mode and
+    /// tests; game code should use Destroy.
+    void DestroyImmediate(GameObject* go);
     /// Keep `go` and its children when this scene is replaced by RequestLoad (not
     /// by RequestMerge), with the same objects and instance ids. A kept object that
     /// still has a parent outside the kept set moves to the root, keeping its pose.
@@ -71,6 +111,9 @@ public:
         m_hasPendingText = false; m_pendingText.clear(); m_pendingTextAfter = {};
     }
     bool HasPendingLoad() const { return m_hasPendingLoad; }
+    /// Why the last RequestLoad / RequestLoadText applied by Update failed (it was also
+    /// printed to stderr); empty after a load that worked. The scene is untouched by a failed load.
+    const std::string& LastLoadError() const { return m_lastLoadError; }
     /// Like RequestLoad, from serialized scene text (a save game) instead of a
     /// file; `after` runs once the loaded objects have started.
     void RequestLoadText(std::string text, std::function<void(Scene&)> after = {}) {
@@ -87,9 +130,90 @@ public:
         m_pendingMerges.push_back({path, offset});
     }
 
+    // ---- Incremental scene loads ----------------------------------------
+    /// How BeginAsyncLoad brings a scene in.
+    struct AsyncLoadOptions {
+        /// true: merge into what is here (see RequestMerge); false: replace this scene's
+        /// contents, DontDestroyOnLoad objects excepted (as RequestLoad does).
+        bool  additive = false;
+        Vec3  offset{0, 0, 0};          // additive: moves the new top-level objects
+        int   objectsPerFrame = 64;    // GameObjects created per Update
+        std::function<void(float)> onProgress;   // 0..1, after each step
+        std::function<void(bool)>  onDone;       // once: true = loaded, false = failed / cancelled
+    };
+    /// Start loading a .okayscene over several frames: the file is read now and
+    /// `objectsPerFrame` objects are made at the end of each Update, so a loading
+    /// screen keeps running. Nothing in the new content Awakes or Starts until all of it
+    /// is in. Returns a handle (> 0), or 0 if the file could not be read (onDone(false)
+    /// has then run). RequestLoad / RequestMerge are unchanged and still load in one go.
+    int   BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts);
+    int   BeginAsyncLoad(const std::string& path) { return BeginAsyncLoad(path, AsyncLoadOptions()); }
+    bool  IsLoading(int handle) const;
+    /// Finished without error (and not unloaded yet).
+    bool  IsLoaded(int handle) const;
+    bool  AnyLoading() const;
+    /// 0..1 while loading, 1 once loaded, 0 for an unknown / failed handle.
+    float LoadProgress(int handle) const;
+    /// Remove what that load brought in (destroyed at the end of the frame), or stop it
+    /// half way and remove what it made. False for an unknown handle. For a replacing
+    /// (non-additive) load this does not bring the old scene back.
+    bool  UnloadAdditive(int handle);
+
     // ---- Queries -------------------------------------------------------
     GameObject* Find(const std::string& name) const;
+    /// The first object (in scene order) carrying `tag`; an empty tag matches nothing.
+    /// Served from a tag index (rebuilt only when objects or tags changed).
     GameObject* FindWithTag(const std::string& tag) const;
+    /// Every object carrying `tag`, in scene order.
+    std::vector<GameObject*> FindGameObjectsWithTag(const std::string& tag) const;
+    /// How many objects carry `tag` (0 for the empty tag).
+    int CountWithTag(const std::string& tag) const;
+    /// Every object called exactly `name`, in scene order.
+    std::vector<GameObject*> FindGameObjectsWithName(const std::string& name) const;
+    /// Every object on `layer` (0-31; anything else matches nothing), in scene order, and how many.
+    std::vector<GameObject*> FindGameObjectsOnLayer(int layer) const;
+    int CountOnLayer(int layer) const;
+    /// The tags objects carry that are not in the project tag list (Tags::All), sorted, each once.
+    std::vector<std::string> UnlistedTags() const;
+    /// Give every object tagged `from` the tag `to` ("" removes the tag). Returns how many changed;
+    /// 0 and nothing changed when `from` is empty or `to` is not accepted (Tags::Accepts).
+    int ReplaceTag(const std::string& from, const std::string& to);
+    /// The world-space box around the renderers (mesh and sprite) of `root` and, with
+    /// `includeChildren`, everything below it. Inactive objects (with their subtrees) and disabled
+    /// renderers are left out. Empty (Bounds::IsEmpty) when nothing draws. Reads every mesh
+    /// vertex: cache the result rather than calling it every frame on a big model.
+    static Bounds WorldBounds(const GameObject& root, bool includeChildren = true);
+
+    // ---- Layer collision matrix (shared by 2D and 3D physics) ----------
+    /// Whether colliders on layers a and b interact (all do by default). Applies to
+    /// both physics worlds, is saved with the scene, and resets on Clear().
+    void SetLayerCollision(int a, int b, bool enabled);
+    bool LayersCollide(int a, int b) const { return m_physics.LayersCollide(a, b); }
+    /// Bit b set = layer b collides with `layer`: a ready layer mask for a physics query.
+    std::uint32_t LayerCollisionMask(int layer) const { return m_physics.CollisionMask(layer); }
+    /// Every layer collides with every other again.
+    void ResetLayerCollisions();
+    bool HasCustomLayerCollisions() const;
+    /// Ready-made matrices. Everything = the default; Nothing = no pair collides (not even a layer
+    /// with itself); SameLayerOnly = a layer collides with itself and with no other.
+    enum class LayerCollisionPreset { Everything, Nothing, SameLayerOnly };
+    void ApplyLayerCollisionPreset(LayerCollisionPreset preset);
+    /// Set every pair (a, b) with layer a in `maskA` and layer b in `maskB` (bit n = layer n).
+    void SetLayerCollisionGroups(std::uint32_t maskA, std::uint32_t maskB, bool enabled);
+    /// SetLayerCollision with layer names (Layers::NameToLayer). False, nothing changed, when a name is unknown.
+    bool SetLayerCollisionByName(const std::string& a, const std::string& b, bool enabled);
+    /// The pairs that do not collide, each once with first <= second (a layer that ignores itself is (n, n)).
+    std::vector<std::pair<int, int>> DisabledLayerPairs() const;
+    /// Look an object up by hierarchy path: "Parent/Child/Leaf" starts at a root object
+    /// called "Parent" and follows child names (the first match at each level). A leading
+    /// '/' is allowed. Find() also accepts a path when no object is literally named so.
+    GameObject* FindByPath(const std::string& path) const;
+    /// The objects with no parent, in scene order (the top level of the hierarchy).
+    std::vector<GameObject*> Roots() const;
+    /// Check this scene for broken things (see SceneSerializer::Validate): component
+    /// records and fields it cannot read, missing asset files, broken parent links and
+    /// duplicate guids. Works on the scene's saved form, so runtime-only objects are not covered.
+    SceneValidationReport Validate(const std::string& assetRoot = "") const;
     const std::vector<std::unique_ptr<GameObject>>& Objects() const { return m_objects; }
     /// Bumped whenever objects are created or destroyed (or the scene is cleared):
     /// components that cache GameObject/Transform pointers re-resolve when it changes.
@@ -313,6 +437,10 @@ public:
     /// Re-pick mainCamera from the live cameras (see PickRenderCamera). Runs at the
     /// end of every Update; call it after switching cameras outside of Update.
     void ResolveMainCamera();
+    /// The cameras that can render now (enabled, active in the hierarchy), lowest
+    /// depth first; equal depths keep scene order. Render them in this order: the
+    /// first clears the frame, later ones follow Camera::ClearPlan.
+    std::vector<Camera*> CameraStack() const;
     /// Issue the render pass to the given backend.
     void Render(IRenderer& renderer);
     /// The object the cursor was over at the last OnMouse* dispatch (nullptr if none).
@@ -341,7 +469,16 @@ public:
     };
 
 private:
+    const std::unordered_map<std::string, std::vector<GameObject*>>& TagIndex() const;
+    const std::vector<GameObject*>* TagList(const std::string& tag) const;   // checked against what the objects carry now
+    struct BusyScope;                  // marks the stretches where component lists are being walked
+    int m_busy = 0;
+    mutable std::unordered_map<std::string, std::vector<GameObject*>> m_tagIndex;
+    mutable std::uint64_t m_tagIndexStructure = 0, m_tagIndexTags = 0;
+    mutable std::size_t   m_tagIndexCount = 0;
     void StepPhysics(float deltaTime);
+    void RunFixedUpdate(float step);   // Component::FixedUpdate for every component that can run
+    void DestroyAllLive();             // OnDisable + OnDestroy for live components (Clear, ~Scene)
     float m_physicsAcc = 0.0f;     // frame time not yet simulated
     float m_physicsAlpha = 0.0f;
     int   m_physicsSteps = 0;
@@ -355,6 +492,28 @@ private:
     void DispatchActivation();   // OnEnable / OnDisable for components switched on/off
     void StartComponent(Component* c);   // OnEnable (if owed), then Start
     void TickDelayedDestroys(float deltaTime);
+    void StepAsyncLoads();
+    void DestroyLoadedObjects(const std::vector<std::uint64_t>& ids);
+    /// DontDestroyOnLoad objects taken out of the scene while it is replaced.
+    struct KeptState {
+        std::unordered_set<const GameObject*> keep;
+        std::vector<std::unique_ptr<GameObject>> objects;
+        std::vector<Component*> active, pending;
+        std::vector<GameObject*> marked;
+    };
+    void DetachKept(KeptState& k);
+    void ReattachKept(KeptState& k);
+    struct LoadRecord {
+        int handle = 0;
+        std::unique_ptr<SceneLoadJob> job;
+        AsyncLoadOptions opts;
+        std::vector<Component*> held;   // made by the job, not yet adopted
+        bool finished = false, ok = false;
+    };
+    LoadRecord* FindLoad(int handle);
+    const LoadRecord* FindLoad(int handle) const;
+    std::vector<LoadRecord> m_loads;
+    int m_nextLoadHandle = 1;
 
     GameObject* m_mouseHover = nullptr;   // object the cursor was over last frame
     GameObject* m_mousePress = nullptr;   // object a press began on (for click)
@@ -377,6 +536,9 @@ private:
     std::vector<Component*>  m_pending;   // awaiting Awake/Start
     std::vector<Component*>  m_active;    // receive Update each frame
     std::vector<GameObject*> m_destroyQueue;
+    std::unordered_set<const GameObject*> m_destroyQueued;   // members of m_destroyQueue, for O(1) "already queued"
+    std::vector<Component*>* m_flushBatch = nullptr;         // the batch FlushPending is walking (removals null its entries)
+    std::string m_lastLoadError;
     std::string m_pendingLoad;
     bool        m_hasPendingLoad = false;
     std::function<void(bool)> m_pendingLoadDone;

@@ -40,22 +40,24 @@ int main() {
     scene.CreateGameObject("Placeholder");
     CHECK(SceneManager::LoadScene(scene, 0));
     CHECK(scene.HasPendingLoad());
-    CHECK(SceneManager::ActiveIndex() == 0);
     scene.Update(0.0f);                 // applies the deferred load
+    CHECK(SceneManager::ActiveIndex() == 0);   // moves once the load worked
     CHECK(scene.Find("MenuRoot") != nullptr);
 
     // Load the next scene by wrapping the build list.
     CHECK(SceneManager::LoadNextScene(scene));
-    CHECK(SceneManager::ActiveIndex() == 1);
     scene.Update(0.0f);
+    CHECK(SceneManager::ActiveIndex() == 1);
     CHECK(scene.Find("Hero") != nullptr);
 
     // Wrap back to index 0.
     CHECK(SceneManager::LoadNextScene(scene));
+    scene.Update(0.0f);
     CHECK(SceneManager::ActiveIndex() == 0);
 
     // By-name load resolves through the registry.
     CHECK(SceneManager::LoadSceneByName(scene, "Level1"));
+    scene.Update(0.0f);
     CHECK(SceneManager::ActiveIndex() == 1);
 
     // Out-of-range index fails cleanly.

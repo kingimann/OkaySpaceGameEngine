@@ -1,11 +1,29 @@
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
+    src/Core/BuildInfo.cpp
+    src/Core/CommandLine.cpp
+    src/Core/Paths.cpp
+    src/Core/Cvar.cpp
+    src/Core/Console.cpp
+    src/Core/DebugOverlay.cpp
     src/Core/SaveGame.cpp
+    src/Core/SaveFramework.cpp
+    src/Core/SaveFrameworkScene.cpp
+    src/Core/SaveFrameworkSync.cpp
     src/Core/Scheduler.cpp
     src/Core/Tween.cpp
     src/Core/Prefs.cpp
     src/Core/DataAsset.cpp
+    src/Core/Undo.cpp
+    src/Core/Recovery.cpp
+    src/Core/Backup.cpp
+    src/Core/AssetManager.cpp
+    src/Core/ImportSettings.cpp
+    src/Core/AssetDatabase.cpp
+    src/Core/AssetDatabaseDeps.cpp
+    src/Core/AssetDatabaseSearch.cpp
+    src/Core/ThumbnailCache.cpp
     src/Core/Localization.cpp
     src/Input/Input.cpp
     src/Input/InputActions.cpp
@@ -20,7 +38,9 @@ add_library(okay_engine
     src/Scene/Transform.cpp
     src/Scene/Scene.cpp
     src/Scene/SceneManager.cpp
+    src/Scene/ObjectPool.cpp
     src/Scene/SceneSerializer.cpp
+    src/Scene/ComponentSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
     src/Components/LookAtIK.cpp
@@ -126,9 +146,27 @@ add_library(okay_engine
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
     src/Graphics/EmbeddedFont.cpp
+    src/Debug/FrameHistory.cpp
+    src/Debug/GpuTimer.cpp
+    src/Debug/RenderStats.cpp
+    src/Debug/MemoryTracker.cpp
+    src/Debug/DrawCallRecorder.cpp
+    src/Debug/ConsoleModel.cpp
+    src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp
+    # Localization tools (docs/localization_tools.md)
+    src/Core/LocCheck.cpp
+    src/Core/LocTable.cpp
+    src/Core/LocScan.cpp
+    src/Core/LocPreview.cpp
+    # Accessibility (docs/accessibility.md)
+    src/Graphics/ColorVision.cpp
+    src/Core/Subtitles.cpp
+    src/Core/AccessibilitySettings.cpp
+    src/UI/FocusGraph.cpp
+    src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
@@ -136,6 +174,20 @@ add_library(okay_engine
     src/Modeling/PolyOps.cpp
     src/Modeling/Modifiers.cpp
     src/Modeling/UVUnwrap.cpp
+    src/Optimize/MeshSimplify.cpp
+    src/Optimize/LodGroup.cpp
+    src/Optimize/OcclusionBuffer.cpp
+    src/Optimize/PortalCells.cpp
+    src/Optimize/BatchPlanner.cpp
+    src/Optimize/StreamingGrid.cpp
+    src/Optimize/MipBudget.cpp
+    src/Optimize/SceneOptimizationReport.cpp
+    src/Testing/TestRegistry.cpp
+    src/Testing/PlayTest.cpp
+    src/Testing/ObjectPath.cpp
+    src/Testing/SceneValidator.cpp
+    src/Testing/Regression.cpp
+    src/Testing/GoldenImage.cpp
     third_party/ufbx/ufbx.c
 )
 
@@ -171,6 +223,8 @@ set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Gra
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+# Only BuildInfo.cpp sees the version string, so a version bump recompiles one file.
+set_source_files_properties(src/Core/BuildInfo.cpp PROPERTIES COMPILE_DEFINITIONS "${OKAY_VERSION_DEFINE}")
 # The network layer signs its key exchange with #269's ed25519 (shared/AntiCheatCrypto.hpp)
 # and runs its clock heartbeat (shared/AntiCheatChecks.hpp); the dedicated server
 # files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp);
@@ -384,3 +438,52 @@ endif()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
+
+# 1.1 Loop and time (docs/loop_and_time.md): Time effects + clocks, Game pause reasons /
+# quit guard, the shared GameLoop driver, dice parser. Clock.hpp and RandomExtras'
+# templates are header-only.
+target_sources(okay_engine PRIVATE
+    src/Core/Time.cpp
+    src/Core/Game.cpp
+    src/Core/GameLoop.cpp
+    src/Core/RandomExtras.cpp
+)
+# ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, unpack,
+# per-record / per-field apply and revert, prefab queries and the asset validator.
+target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
+# Project tag list and layer names in the project settings file (docs/layers_tags_cameras.md).
+target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
+# ---- Property reflection (docs/properties.md) ----
+# PropertyValue / PropertyDesc, the registry with path access and change hook,
+# snapshot / diff / copy, and the built-in component registrations.
+target_sources(okay_engine PRIVATE
+    src/Scene/Properties.cpp
+    src/Scene/PropertyRegistry.cpp
+    src/Scene/BuiltinProperties.cpp
+)
+
+# ---- Core runtime foundations: job system, memory arenas, handles and ids, frame pacing ----
+# (docs/core_runtime.md). Appended as a block; Jobs.cpp and StringId.cpp keep their
+# threading behind engine/src/Core/CoreThreads.hpp (native Win32 primitives on Windows).
+target_sources(okay_engine PRIVATE
+    src/Core/Jobs.cpp
+    src/Core/StringId.cpp
+    src/Core/FramePacing.cpp
+)
+# Scene text tools for version control (docs/scene_diff_merge.md): canonical form, diff,
+# three-way merge and format migration. Text level only: none of these builds a Scene.
+target_sources(okay_engine PRIVATE
+    src/Scene/SceneText.cpp
+    src/Scene/SceneTextDetail.cpp
+    src/Scene/SceneDiff.cpp
+    src/Scene/SceneMerge.cpp
+    src/Scene/SceneMigration.cpp)
+
+# 1.1 Loop and time, second pass (docs/loop_and_time.md): frame recorder / player and the rolling
+# frame-time statistics GameLoop feeds. TickPacer.hpp is header-only.
+target_sources(okay_engine PRIVATE
+    src/Core/FrameRecord.cpp
+    src/Core/FrameStats.cpp
+    src/Core/TimeSnapshot.cpp
+    src/Core/LoopConsole.cpp
+)

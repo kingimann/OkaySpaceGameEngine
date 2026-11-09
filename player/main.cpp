@@ -10,8 +10,10 @@
 
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Input/SdlKeys.hpp"      // F1-F12, nav keys, left / right modifiers
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "okay/Scene/EnsureCamera.hpp"
+#include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
 #include <termios.h>
@@ -1130,6 +1132,21 @@ int main(int argc, char** argv) {
                         "  --logout             sign out\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
             return 0;
         }
+    // Which arguments take a value, so a positional scene path is found wherever it is
+    // (`player --windowed scene.okayscene`, `player --log out.txt scene.okayscene`)
+    // without mistaking a flag's value for it. Unknown flags are tolerated.
+    okay::CommandLine pcl;
+    for (const char* v : {"join", "connect", "password", "room", "match-players", "match-min", "region",
+                          "login", "log", "config", "scene", "port", "name", "max-players", "tick",
+                          "status", "run-for", "public-addr", "max-speed", "rate-limit", "kick-after",
+                          "anticheat", "host-key"})
+        pcl.Value(v, "VALUE");
+    pcl.OptionalValue("find-match", "MODE");
+    for (const char* f : {"server", "auth", "no-encryption", "report-kicks", "fixed-tick", "authoritative",
+                          "advertise", "logout", "help"})
+        pcl.Flag(f);
+    pcl.AllowUnknown();
+    pcl.Parse(argc, argv);   // a flag missing its value is reported by the code that reads it
     // `--login NAME` / `--logout`: sign this machine in to OkaySpace without the
     // launcher (a headless server needs it to list itself with --advertise).
     // The password comes from OKAY_LOGIN_PASSWORD or is typed (not echoed).
@@ -1164,6 +1181,8 @@ int main(int argc, char** argv) {
         std::printf("Signed in as %s. Servers on this machine can now use --advertise.\n", okay::Account::Username().c_str());
         return 0;
     }
+    // The scene to open: `--scene FILE`, else the first positional argument (any position).
+    const std::string launchScene = pcl.Has("scene") ? pcl.Get("scene") : pcl.Positional(0);
     okay::DedicatedServerOptions serverOpts;
     std::string serverArgErr;
     const bool dedicatedServer = okay::ParseDedicatedServerArgs(argc, argv, serverOpts, &serverArgErr);
@@ -1171,13 +1190,15 @@ int main(int argc, char** argv) {
     // --log FILE: send stdout + stderr (the engine log, [server] lines, script
     // prints) to a file. The Windows player has no console, so without this a
     // server's output is lost. Unbuffered so a crash still leaves the last lines.
-    if (dedicatedServer && !serverOpts.logPath.empty()) {
+    // Also works for a normal (windowed) player: the Windows player has no console.
+    const std::string logPath = dedicatedServer ? serverOpts.logPath : pcl.Get("log");
+    if (!logPath.empty()) {
         // Start it empty, then open both streams for appending, so each line lands
         // at the end whichever stream wrote it.
-        if (std::FILE* f = std::fopen(serverOpts.logPath.c_str(), "w")) std::fclose(f);
-        if (!std::freopen(serverOpts.logPath.c_str(), "a", stdout) ||
-            !std::freopen(serverOpts.logPath.c_str(), "a", stderr)) {
-            std::fprintf(stderr, "Couldn't open the log file %s\n", serverOpts.logPath.c_str());
+        if (std::FILE* f = std::fopen(logPath.c_str(), "w")) std::fclose(f);
+        if (!std::freopen(logPath.c_str(), "a", stdout) ||
+            !std::freopen(logPath.c_str(), "a", stderr)) {
+            std::fprintf(stderr, "Couldn't open the log file %s\n", logPath.c_str());
             return 1;
         }
         std::setvbuf(stdout, nullptr, _IONBF, 0);
@@ -1341,7 +1362,7 @@ int main(int argc, char** argv) {
         scenePath = serverOpts.scenePath;
         if (!std::ifstream(scenePath).good()) scenePath = baseDir + serverOpts.scenePath;
     }
-    else if (!dedicatedServer && argc > 1 && argv[1][0] != '-') scenePath = argv[1];
+    else if (!dedicatedServer && !launchScene.empty()) scenePath = launchScene;
     else if (!cfg.startup.empty()) scenePath = baseDir + cfg.startup;
     else scenePath = baseDir + "game.okayscene";
 
@@ -1408,7 +1429,7 @@ int main(int argc, char** argv) {
     };
     if (!dedicatedServer) {
         const char* acEnv = std::getenv("OKAY_ANTICHEAT");
-        const std::string acScene = argc > 1 && argv[1][0] != '-' ? std::string(argv[1]) : std::string();
+        const std::string acScene = launchScene;
         const okayac::TrustedKeySet acTrusted = okayac::TrustedKeys();
         acStart = okayac::DecideStart(std::filesystem::u8path(acRoot), okayac::ParseMode(cfg.antiCheat),
                                       okayac::ParseMode(acEnv ? acEnv : ""), acTrusted, acScene);
@@ -1626,13 +1647,28 @@ int main(int argc, char** argv) {
         if (ok && !m.vertices.empty()) mr->mesh = m;
     }
 
-    okay::Game::Reset();   // clear any stale pause/quit state from a prior scene
+    // One frame driver for the run (okay/Core/GameLoop.hpp). It does what this loop used to do by hand,
+    // in the same order: clamp the frame time to 0.1 s (a window drag or an alt-tab is not a giant
+    // step), even it out when smoothDt (and snap to the display's refresh periods with vsync),
+    // Time::Step, the scene's Update, and the quit check. docs/loop_and_time.md ("Adopting GameLoop in
+    // the player and the editor") and test_loop_player_style pin that the Time values are identical.
+    // On top of that it ticks the Clock channels ("ui", "game", "cinematic"), keeps frame statistics
+    // (loop.Stats()) and runs OnFixedUpdate steps for anything that registers one.
+    bool loopTick = true;   // false while the window is unfocused and Run In Background is off: no scene update
+    float loopRefreshHz = 0.0f;
+    okay::GameLoop::Options loopOpt;
+    loopOpt.maxDelta = 0.1f;
+    loopOpt.smoothDelta = cfg.smoothDt;
+    okay::GameLoop loop(loopOpt);
+    loop.OnUpdate = [&](float dt) { if (loopTick) scene.Update(dt); };
+    // A new session: no stale pause or quit from a prior scene, and the time scale back to 1 (Game::Reset
+    // kept a scale a script had left, so a scene loaded after one that froze the game started frozen).
+    loop.BeginSession();
     scene.Start();
 
-    // Open the first connected game controller, if any.
-    SDL_GameController* pad = nullptr;
-    for (int i = 0; i < SDL_NumJoysticks(); ++i)
-        if (SDL_IsGameController(i)) { pad = SDL_GameControllerOpen(i); break; }
+    // Open every connected game controller (up to Input::kMaxGamepads, one per player).
+    okay::SdlGamepadSet pads;
+    pads.OpenAll();
 
     bool running = true;
 #ifdef OKAY_HAVE_OKAYUI
@@ -1761,12 +1797,8 @@ int main(int argc, char** argv) {
             }
             // A click in the window gives a released cursor back to the game.
             if (e.type == SDL_MOUSEBUTTONDOWN && cursorReleased) cursorReleased = false;
-            if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
-                pad = SDL_GameControllerOpen(e.cdevice.which);
-            if (e.type == SDL_CONTROLLERDEVICEREMOVED && pad &&
-                e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pad))) {
-                SDL_GameControllerClose(pad); pad = nullptr;
-            }
+            if (e.type == SDL_CONTROLLERDEVICEADDED) pads.Add(e.cdevice.which);
+            if (e.type == SDL_CONTROLLERDEVICEREMOVED) pads.Remove(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
             if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
             if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION || e.type == SDL_FINGERUP) {
@@ -1831,7 +1863,8 @@ int main(int argc, char** argv) {
         if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
         if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
-        FeedSdlGamepad(pad, down);   // first connected controller (sticks, triggers, buttons, rumble)
+        okay::AppendSdlExtendedKeys(ks, down);
+        pads.Feed(down);   // every controller (sticks, triggers, buttons, rumble); the first also types WASD / Space
         Input::FeedKeys(down);
 
         // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
@@ -1926,12 +1959,13 @@ int main(int argc, char** argv) {
         }
 
         Uint64 now = SDL_GetPerformanceCounter();
-        float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
+        const float measuredDt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
-        if (dt > 0.1f) dt = 0.1f;
+        // The FPS readouts below show the measured time, cut to the 0.1 s the game steps by at most.
+        const float dt = measuredDt > 0.1f ? 0.1f : measuredDt;
         // The game steps by an evened-out frame time (vsync: whole refresh
-        // periods); the FPS readouts below keep the measured `dt`. The refresh
-        // rate is re-read now and then (the window can move to another display).
+        // periods; the loop does it). The refresh rate is re-read now and then
+        // (the window can move to another display).
         static float s_refreshHz = 0.0f;
         static int s_refreshAge = 0;
         if (s_refreshAge-- <= 0) {
@@ -1939,7 +1973,15 @@ int main(int argc, char** argv) {
             s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
             s_refreshAge = 120;
         }
-        const float stepDt = cfg.smoothDt ? Time::SmoothDelta(dt, cfg.vsync ? s_refreshHz : 0.0f) : dt;
+        {   // the loop snaps to refresh periods only with vsync on (Settings can switch it while playing)
+            const float hz = cfg.vsync ? s_refreshHz : 0.0f;
+            if (hz != loopRefreshHz) {
+                loopRefreshHz = hz;
+                okay::GameLoop::Options o = loop.options();
+                o.refreshHz = hz;
+                loop.SetOptions(o);
+            }
+        }
 
         // Publish the render-target size so anchored UI widgets and their
         // hit-tests (run inside scene.Update) agree on where things sit.
@@ -2016,9 +2058,6 @@ int main(int argc, char** argv) {
             s_bmPrev = f2;
         }
 
-        // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
-        // advance the scene by the scaled delta (timeScale 0 = paused).
-        Time::Step(tick ? stepDt : 0.0f);
         // Characters skin in the vertex shader when Direct3D 11 or OpenGL draws the
         // frame: bone matrices per frame instead of every vertex on the CPU plus a
         // full mesh re-upload. (D3D12 and the software fallback skin on the CPU.)
@@ -2037,8 +2076,11 @@ int main(int argc, char** argv) {
             okay::SkinnedMesh::GpuSkinning() = gpuSkin;
             okay::SkinnedMesh::GpuMaxJoints() = maxJoints;
         }
-        if (tick) scene.Update(Time::DeltaTime());
-        if (okay::Game::QuitRequested()) running = false;   // a PauseMenu / script asked to quit
+        // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then advance the scene by the
+        // scaled delta (timeScale 0 = paused): the loop's OnUpdate does that unless the window is
+        // unfocused and the game does not run in the background (that frame is a 0 s step, as before).
+        loopTick = tick;
+        if (!loop.BeginFrame(tick ? (double)measuredDt : 0.0)) running = false;   // false: a PauseMenu / script asked to quit
         if (acGuard.Tick()) {   // only ever true in enforce mode
             running = false;
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(),

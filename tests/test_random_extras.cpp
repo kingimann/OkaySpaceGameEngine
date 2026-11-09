@@ -116,6 +116,119 @@ int main() {
         CHECK(distinct.size() == 8);
     }
 
+    // ---- Random::LockShared: threads can share the seeded stream without a data race -------------------------------------------
+    {
+        constexpr int kThreads = 6, kDraws = 4000;
+        // The reference: what kThreads * kDraws draws add up to when one thread makes them all.
+        Random::Shared().Seed(777);
+        std::uint64_t expected = 0;
+        for (int i = 0; i < kThreads * kDraws; ++i) expected += Random::Shared().NextUInt64() >> 8;
+        const Random::State after = Random::Shared().GetState();
+
+        Random::Shared().Seed(777);
+        std::vector<std::uint64_t> sums((std::size_t)kThreads, 0);
+        std::vector<std::thread> ts;
+        for (int t = 0; t < kThreads; ++t)
+            ts.emplace_back([&, t] {
+                for (int k = 0; k < kDraws; ++k) {
+                    auto rng = Random::LockShared();
+                    sums[(std::size_t)t] += rng->NextUInt64() >> 8;
+                }
+            });
+        for (auto& th : ts) th.join();
+        std::uint64_t total = 0;
+        for (std::uint64_t s : sums) total += s;
+        CHECK(total == expected);                                         // every draw of the one stream was handed out exactly once
+        const Random::State now = Random::Shared().GetState();
+        CHECK(now.s0 == after.s0 && now.s1 == after.s1);                  // and the stream ends where the sequential one does
+        {   // it can be taken again after a scope ends, on the same thread, and gives the same generator
+            auto a = Random::LockShared();
+            CHECK(&*a == &Random::Shared());
+        }
+        { auto b = Random::LockShared(); CHECK(b->Range(5, 6) == 5); }
+        Random::Shared().Seed(0xC0FFEEull);
+    }
+
+    // ---- third pass: cones (weapon spread), triangles, signs ---------------------------------------------------------------------
+    {
+        Random r(31337);
+        const int N = 30000;
+        const float half = 0.5f;                                      // about 28.6 degrees
+        const float cosMax = std::cos(half);
+        const Vec3 axes[] = {Vec3{0, 0, 1}, Vec3{0, 0, -1}, Vec3{1, 0, 0}, Vec3{0, 3, 0}, Vec3{1, 1, 1}, Vec3{0.001f, 0.0f, 0.9999f}};
+        for (const Vec3& axis : axes) {
+            const Vec3 a = axis.Normalized();
+            bool inside = true, unit = true, reachedEdge = false;
+            double meanCos = 0.0;
+            for (int i = 0; i < N; ++i) {
+                const Vec3 d = rnd::DirectionInCone(r, axis, half);
+                const float c = Vec3::Dot(d, a);
+                if (std::fabs(d.Magnitude() - 1.0f) > 1e-4f) unit = false;
+                if (c < cosMax - 1e-4f) inside = false;
+                if (c < cosMax + 0.002f) reachedEdge = true;
+                meanCos += c;
+            }
+            CHECK(inside && unit && reachedEdge);
+            CHECK(Near(meanCos / N, (1.0 + cosMax) / 2.0, 0.003));   // uniform in cos(theta): even by solid angle
+        }
+        // no spread is the axis itself; a full sphere has no preferred direction; bad numbers do not poison it
+        for (int i = 0; i < 100; ++i) { const Vec3 d = rnd::DirectionInCone(r, Vec3{0, 2, 0}, 0.0f); CHECK(Near(d.y, 1.0, 1e-5) && std::fabs(d.x) < 1e-4f); }
+        double zsum = 0; for (int i = 0; i < N; ++i) zsum += rnd::DirectionInCone(r, Vec3{0, 0, 1}, 3.14159265f).z;
+        CHECK(Near(zsum / N, 0.0, 0.02));
+        const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+        bool finite = true, plusZ = true;
+        for (int i = 0; i < 200; ++i) {
+            const Vec3 z0 = rnd::DirectionInCone(r, Vec3{0, 0, 0}, 0.2f);        // no axis: +Z
+            const Vec3 z1 = rnd::DirectionInCone(r, Vec3{nan, 0, 1}, 0.2f);
+            const Vec3 z2 = rnd::DirectionInCone(r, Vec3{inf, inf, inf}, 0.2f);
+            const Vec3 z3 = rnd::DirectionInCone(r, Vec3{0, 0, 1}, nan);         // NaN angle: no spread
+            const Vec3 z4 = rnd::DirectionInCone(r, Vec3{0, 0, 1}, -0.2f);       // negative: its size
+            const Vec3 z5 = rnd::DirectionInCone(r, Vec3{0, 0, 1}, inf);         // infinity: no spread (not a number)
+            for (const Vec3& d : {z0, z1, z2, z3, z4, z5}) if (!std::isfinite(d.x + d.y + d.z)) finite = false;
+            if (z0.z < std::cos(0.2f) - 1e-4f || z1.z < std::cos(0.2f) - 1e-4f || z2.z < std::cos(0.2f) - 1e-4f || z4.z < std::cos(0.2f) - 1e-4f) plusZ = false;
+            if (z3.z < 0.9999f || z5.z < 0.9999f) plusZ = false;
+        }
+        CHECK(finite && plusZ);
+        // the same seed gives the same spray
+        Random s1(5), s2(5);
+        CHECK(rnd::DirectionInCone(s1, Vec3{1, 2, 3}, 0.3f).x == rnd::DirectionInCone(s2, Vec3{1, 2, 3}, 0.3f).x);
+
+        // 2D: angle uniform in [-half, half] about the axis
+        bool in2 = true; double meanAngle = 0, minA = 9, maxA = -9;
+        for (int i = 0; i < N; ++i) {
+            const Vec2 d = rnd::DirectionInCone2D(r, Vec2{0, 5}, half);          // axis +Y
+            const double ang = std::atan2((double)d.x, (double)d.y);            // angle from +Y
+            if (std::fabs(d.Magnitude() - 1.0f) > 1e-4f || std::fabs(ang) > half + 1e-4) in2 = false;
+            meanAngle += ang; minA = std::min(minA, ang); maxA = std::max(maxA, ang);
+        }
+        CHECK(in2 && Near(meanAngle / N, 0.0, 0.01) && minA < -half + 0.01 && maxA > half - 0.01);
+        const Vec2 z = rnd::DirectionInCone2D(r, Vec2{0, 0}, 0.0f);
+        CHECK(Near(z.x, 1.0, 1e-6) && Near(z.y, 0.0, 1e-6));                      // no axis: +X
+        const Vec2 nz = rnd::DirectionInCone2D(r, Vec2{nan, 1}, nan);
+        CHECK(Near(nz.x, 1.0, 1e-6) && Near(nz.y, 0.0, 1e-6));
+
+        // triangles: always inside, centroid in the middle, even by area (the part nearest corner A is the 2 x 1.5 box: half of the 6)
+        const Vec2 A{0, 0}, B{4, 0}, C{0, 3};
+        bool inTri = true; double mx = 0, my = 0; int nearA = 0;
+        for (int i = 0; i < N; ++i) {
+            const Vec2 p = rnd::PointInTriangle(r, A, B, C);
+            if (p.x < -1e-5f || p.y < -1e-5f || p.x / 4.0f + p.y / 3.0f > 1.0f + 1e-5f) inTri = false;
+            mx += p.x; my += p.y;
+            if ((p - A).Magnitude() < (p - B).Magnitude() && (p - A).Magnitude() < (p - C).Magnitude()) ++nearA;
+        }
+        CHECK(inTri && Near(mx / N, 4.0 / 3.0, 0.03) && Near(my / N, 1.0, 0.03));
+        CHECK(Near(nearA / (double)N, 0.5, 0.012));
+        const Vec3 p3 = rnd::PointInTriangle(r, Vec3{1, 1, 1}, Vec3{1, 1, 1}, Vec3{1, 1, 1});   // degenerate: the point
+        CHECK(Near(p3.x, 1.0, 1e-5) && Near(p3.y, 1.0, 1e-5) && Near(p3.z, 1.0, 1e-5));
+        bool onSeg = true;
+        for (int i = 0; i < 200; ++i) { const Vec3 p = rnd::PointInTriangle(r, Vec3{0, 0, 0}, Vec3{2, 0, 0}, Vec3{1, 0, 0}); if (p.x < -1e-5f || p.x > 2.00001f || p.y != 0.0f || p.z != 0.0f) onSeg = false; }
+        CHECK(onSeg);
+
+        int plus = 0;
+        for (int i = 0; i < N; ++i) { const int sg = rnd::Sign(r); CHECK(sg == 1 || sg == -1); if (sg == 1) ++plus; }
+        CHECK(Near(plus / (double)N, 0.5, 0.012));
+    }
+
     // ---- points and directions -------------------------------------------------------------------------------------------------
     {
         Random r(2024);

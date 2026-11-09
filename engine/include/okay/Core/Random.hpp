@@ -161,8 +161,32 @@ public:
     }
 
     /// Process-wide shared generator. It has no lock: use it from one thread (the main
-    /// loop). Another thread should use ThreadLocal() or a generator of its own.
+    /// loop). Another thread should use ThreadLocal() or a generator of its own, or take
+    /// the lock for the length of its draws with LockShared().
     static Random& Shared() { static Random g(0xC0FFEEull); return g; }
+
+    /// Exclusive use of Shared() for as long as the handle lives, so a worker thread can draw
+    /// from the same stream the main thread seeded (a replay, a seeded test) without a data race:
+    ///
+    ///     { auto rng = Random::LockShared(); a = rng->Range(0, 6); b = rng->Value(); }
+    ///
+    /// It is a short spin lock (no <mutex>, which a header here must not need): keep the scope to
+    /// a few draws, never take it twice on one thread (it would wait for itself), and know that
+    /// code that calls Shared() directly does not take it. The stream stays one stream: the numbers
+    /// threads draw are the sequential ones in some interleaving, so the sum of N draws is the
+    /// same whichever thread got which.
+    class SharedLock {
+    public:
+        SharedLock() { while (Flag().test_and_set(std::memory_order_acquire)) { /* spin */ } }
+        ~SharedLock() { Flag().clear(std::memory_order_release); }
+        SharedLock(const SharedLock&) = delete;
+        SharedLock& operator=(const SharedLock&) = delete;
+        Random* operator->() const { return &Shared(); }
+        Random& operator*() const { return Shared(); }
+    private:
+        static std::atomic_flag& Flag() { static std::atomic_flag f = ATOMIC_FLAG_INIT; return f; }
+    };
+    static SharedLock LockShared() { return SharedLock(); }
     /// A generator private to the calling thread (so no two threads share state),
     /// seeded when the thread first asks, in the order threads ask.
     static Random& ThreadLocal() {

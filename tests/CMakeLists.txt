@@ -1633,9 +1633,29 @@ add_executable(test_arena_handles test_arena_handles.cpp)
 target_link_libraries(test_arena_handles PRIVATE okay::engine)
 add_test(NAME arena_handles COMMAND test_arena_handles)
 
-# Console variables: parsing, ranges, flags, callbacks, command line, console lines, Prefs round trip.
 
 # Frame delta clamp, frame timer and frame limiter.
 add_executable(test_frame_pacing test_frame_pacing.cpp)
 target_link_libraries(test_frame_pacing PRIVATE okay::engine)
 add_test(NAME frame_pacing COMMAND test_frame_pacing)
+
+# ---- Scene text tools for version control (docs/scene_diff_merge.md) ----------------
+# Canonical form, structured diff, three-way merge and format migration. They share
+# scene_text_testkit.hpp (seeded random scene generator, messy-layout perturbation, edit
+# helpers). Property tests read OKAY_TEST_SEEDS to run over more random seeds.
+add_executable(test_scene_canonical test_scene_canonical.cpp)
+target_link_libraries(test_scene_canonical PRIVATE okay::engine)
+add_test(NAME scene_canonical COMMAND test_scene_canonical)
+
+add_executable(test_scene_diff test_scene_diff.cpp)
+target_link_libraries(test_scene_diff PRIVATE okay::engine)
+add_test(NAME scene_diff COMMAND test_scene_diff)
+
+add_executable(test_scene_merge test_scene_merge.cpp)
+target_link_libraries(test_scene_merge PRIVATE okay::engine)
+add_test(NAME scene_merge COMMAND test_scene_merge)
+
+add_executable(test_scene_migration test_scene_migration.cpp)
+target_link_libraries(test_scene_migration PRIVATE okay::engine)
+target_compile_definitions(test_scene_migration PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME scene_migration COMMAND test_scene_migration)

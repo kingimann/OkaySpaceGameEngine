@@ -423,7 +423,7 @@ target_sources(okay_engine PRIVATE
     src/Scene/BuiltinProperties.cpp
 )
 
-# ---- Core runtime foundations: job system, memory arenas, handles and ids, console variables ----
+# ---- Core runtime foundations: job system, memory arenas, handles and ids, frame pacing ----
 # (docs/core_runtime.md). Appended as a block; Jobs.cpp and StringId.cpp keep their
 # threading behind engine/src/Core/CoreThreads.hpp (native Win32 primitives on Windows).
 target_sources(okay_engine PRIVATE
@@ -431,3 +431,11 @@ target_sources(okay_engine PRIVATE
     src/Core/StringId.cpp
     src/Core/FramePacing.cpp
 )
+# Scene text tools for version control (docs/scene_diff_merge.md): canonical form, diff,
+# three-way merge and format migration. Text level only: none of these builds a Scene.
+target_sources(okay_engine PRIVATE
+    src/Scene/SceneText.cpp
+    src/Scene/SceneTextDetail.cpp
+    src/Scene/SceneDiff.cpp
+    src/Scene/SceneMerge.cpp
+    src/Scene/SceneMigration.cpp)

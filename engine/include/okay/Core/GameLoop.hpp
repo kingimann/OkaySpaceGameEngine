@@ -43,6 +43,7 @@
 #include "okay/Core/Time.hpp"
 #include <cstdint>
 #include <functional>
+#include <string>
 
 namespace okay {
 
@@ -123,6 +124,9 @@ public:
     std::function<void(float, int)> OnStep;
     /// The frame that ran the last requested debug step has finished (after OnLateUpdate).
     std::function<void()> OnStepsFinished;
+    /// RunFrames' last frame has run and the loop has paused the game (see RunFrames). Fires at the end
+    /// of that frame, after OnLateUpdate; Game::Paused() already reads true.
+    std::function<void()> OnRunFramesDone;
 
     /// Run one frame for `realDeltaSeconds` of real time. Returns false when the loop
     /// should stop: Game::QuitRequested() (a PauseMenu, a script, a guarded RequestQuit
@@ -184,6 +188,30 @@ public:
     /// What the next step advances, in seconds.
     float StepDelta() const;
 
+    // ---- run N frames, then pause ------------------------------------------------------------
+    // The "play ten frames and stop" button of a debugger, and the missing half of RequestStep (which
+    // only works on a game that is already paused):
+    //
+    //     loop.RunFrames(10, 1.0f / 60.0f);          // ten frames of exactly 1/60 s, then paused
+    //     loop.OnRunFramesDone = [&] { ShowPausedBanner(); };
+    //
+    /// Run exactly `frames` more frames of a RUNNING game, then pause it (the reason `pauseReason`, by
+    /// default "manual", so Game::SetPaused(false) resumes it; a host with its own pause flag passes its
+    /// own reason and sets the flag from OnRunFramesDone). `frameSeconds` > 0 makes each of those frames
+    /// exactly that long, whatever the machine measured (an exact frame, like a capture or step frame: not
+    /// clamped, smoothed or counted as a hitch, and recorded as a synthetic one), so the run is
+    /// reproducible; <= 0 uses the host's own time. A frame counts when the game was running at its
+    /// start: frames spent paused by somebody else (a menu opened meanwhile) do not use the count up.
+    /// A second call replaces the first. On a game that is ALREADY paused this is RequestStep(frames,
+    /// frameSeconds): the steps run and the game stays paused (OnStepsFinished tells you when). False,
+    /// and nothing changes, for frames < 1. The count is capped at kMaxStepRequest, a frame length at
+    /// kMaxStepDelta. Cleared by Reset() and BeginSession().
+    bool RunFrames(int frames, float frameSeconds = 0.0f, const std::string& pauseReason = "manual");
+    void CancelRunFrames() { m_runLeft = 0; m_runDelta = 0.0f; }
+    bool IsRunningFrames() const { return m_runLeft > 0; }
+    /// Frames of the run still to go (0 when none).
+    int  RunFramesRemaining() const { return m_runLeft; }
+
     // ---- debug time scale -----------------------------------------------------------------
     /// Slow motion (< 1) or fast forward (> 1) for debugging, applied to the frame time before
     /// Time sees it: the whole game runs as if the machine were that much slower or faster. It
@@ -194,6 +222,13 @@ public:
     /// kMaxDebugTimeScale. 0 stops the clock without pausing the game.
     bool  SetDebugTimeScale(float scale);
     float DebugTimeScale() const { return m_debugScale; }
+    /// The steps of a "slower" / "faster" button pair: 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 16, 32.
+    static constexpr int   kDebugScalePresetCount = 10;
+    static constexpr float kDebugScalePresets[kDebugScalePresetCount] = {0.05f, 0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f};
+    /// The preset strictly above (`direction` > 0) or below (< 0) `current`, staying at the ends; 0 gives
+    /// `current` back. A scale that is not a finite number >= 0 counts as 1. Feed it DebugTimeScale() and
+    /// pass the result to SetDebugTimeScale.
+    static float NextDebugTimeScale(float current, int direction);
 
     // ---- capture mode -----------------------------------------------------------------------
     /// Run at a fixed frame rate whatever the real time is: each BeginFrame takes exactly
@@ -265,6 +300,9 @@ private:
     float  m_debugScale = 1.0f;
     int    m_stepsLeft = 0;
     float  m_stepDeltaReq = 0.0f;
+    int    m_runLeft = 0;
+    float  m_runDelta = 0.0f;
+    std::string m_runReason;
     int    m_marker = 0, m_frameMarker = 0;
     std::uint64_t m_budgetBase = 0;
     bool   m_inFrame = false, m_inStepFrame = false, m_wasStep = false, m_replaying = false;

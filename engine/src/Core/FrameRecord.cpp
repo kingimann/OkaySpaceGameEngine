@@ -208,7 +208,7 @@ bool ParseToken(const std::string& s, FrameSample& sample, std::uint64_t& count,
         if (i < s.size() && s[i] == '-') { neg = true; ++i; }
         if (!ReadUInt(s, i, 10, v)) { why = "a marker is not a number"; return false; }
         const long long m = neg ? -(long long)v : (long long)v;
-        if (m < -2147483647LL || m > 2147483647LL) { why = "a marker is out of range"; return false; }
+        if (m < -2147483648LL || m > 2147483647LL) { why = "a marker is out of range"; return false; }
         sample.marker = (std::int32_t)m;
     }
     if (i < s.size() && s[i] == '*') {

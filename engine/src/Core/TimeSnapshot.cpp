@@ -61,7 +61,7 @@ bool TimeSnapshot::ApplyRandom(const std::string& name, Random& rng) const {
 }
 
 void TimeSnapshot::Apply(ClockSet& set, const ApplyOptions& options) const {
-    if (options.timeScale) Time::SetTimeScale(timeScale);
+    if (options.timeScale && hasTimeScale) Time::SetTimeScale(timeScale);
     if (options.clocks) {
         for (const ClockSnapshot& s : clocks) {
             if (s.name.empty()) continue;
@@ -110,6 +110,7 @@ void TimeSnapshot::Write(SaveWriter w) const {
 bool TimeSnapshot::Read(const SaveReader& r, TimeSnapshot& out) {
     if (r.Int("v", 0) < 1) return false;
     TimeSnapshot snap;
+    snap.hasTimeScale = r.Has("timeScale");
     snap.timeScale = CleanScale(r.Float("timeScale", 1.0f));
     int n = r.Int("clocks.n", 0);
     if (n < 0) n = 0;

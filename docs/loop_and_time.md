@@ -1,6 +1,6 @@
 # Loop and time
 
-How a frame runs and how the engine keeps time. Headers: `okay/Core/Time.hpp`, `Game.hpp`, `GameLoop.hpp`, `Clock.hpp`, `FrameRecord.hpp`, `FrameStats.hpp`, `TickPacer.hpp`, `Random.hpp`, `RandomExtras.hpp`, `Application.hpp`, and from the third pass `Countdown.hpp`, `TimeSnapshot.hpp`, `LoopConsole.hpp` (with `Utf8.hpp` and `FramePacing.hpp`, which this page also covers). Tests: `test_game_loop`, `test_clock`, `test_time_extras`, `test_game_state`, `test_random_extras`, `test_application_loop`, from the second pass `test_loop_audit2`, `test_frame_step`, `test_capture_mode`, `test_frame_record`, `test_frame_stats`, `test_tick_pacer`, `test_loop_player_style`, from the third pass `test_loop_audit3`, `test_countdown`, `test_time_snapshot`, plus the older `test_time_pause`, `test_random`, `test_utf8`, `test_frame_pacing`, `test_timescale`. The third pass is summarised in "Third pass" at the end.
+How a frame runs and how the engine keeps time. Headers: `okay/Core/Time.hpp`, `Game.hpp`, `GameLoop.hpp`, `Clock.hpp`, `FrameRecord.hpp`, `FrameStats.hpp`, `TickPacer.hpp`, `Random.hpp`, `RandomExtras.hpp`, `Application.hpp`, from the third pass `Countdown.hpp`, `TimeSnapshot.hpp`, `LoopConsole.hpp`, and from the fourth `FrameOverlay.hpp` (with `Utf8.hpp` and `FramePacing.hpp`, which this page also covers). Tests: `test_game_loop`, `test_clock`, `test_time_extras`, `test_game_state`, `test_random_extras`, `test_application_loop`, from the second pass `test_loop_audit2`, `test_frame_step`, `test_capture_mode`, `test_frame_record`, `test_frame_stats`, `test_tick_pacer`, `test_loop_player_style`, from the third pass `test_loop_audit3`, `test_countdown`, `test_time_snapshot`, from the fourth `test_loop_audit4`, `test_frame_overlay`, `test_random_wave4`, plus the older `test_time_pause`, `test_random`, `test_utf8`, `test_frame_pacing`, `test_timescale`. The third pass is summarised in "Third pass" and the fourth in "Fourth pass" at the end.
 
 ## Which one do I use?
 
@@ -25,6 +25,13 @@ How a frame runs and how the engine keeps time. Headers: `okay/Core/Time.hpp`, `
 | Put the clocks and the random streams back when a save game loads | `TimeSnapshot` |
 | Export frame times to a spreadsheet, or ask the console for them | `FrameStats::ToCsv` / `SaveCsv`, `LoopConsole` (`time.stats`, `time.stats_csv`, `time.scale`...) |
 | Draw from the seeded stream on a worker thread | `Random::LockShared()` (or `Random::ThreadLocal()` for a stream of its own) |
+| A pause button that always works, even under a cutscene's pause | `Game::TogglePause()` |
+| "Seconds / frames since this Play began" (the process clocks never rewind) | `Time::SessionTime()`, `Time::SessionFrameCount()` |
+| Run N frames, then pause (a debugger button; reproducible with an exact frame length) | `GameLoop::RunFrames(n, seconds)` |
+| Slower / faster buttons for the debug time scale | `GameLoop::NextDebugTimeScale(current, +1 / -1)` |
+| The same performance text in the player and the editor | `FrameOverlay::Lines(loop)` |
+| Pick 3 different spawn points out of 40; scatter trees with no two too close | `rnd::SampleIndices`, `rnd::PoissonDisk2D` |
+| Save a half-used shuffle bag or reward pool with the game | `ShuffleBag::Save/Load`, `WeightedTable::Save/Load` |
 
 ## GameLoop: one frame driver
 
@@ -197,7 +204,7 @@ The FPS readouts keep showing the measured time cut to 0.1 s (`dt`, as before). 
 - **A measured infinity** is a 0 s frame in `GameLoop` (any non-finite measurement is) and was 0.1 s in the old player (`inf > 0.1f` clamped). No timer produces one.
 - **Pause on focus loss** (`Game::SetPauseOnFocusLoss(true)` plus `Game::NotifyFocus`, instead of the `loopTick` flag) gives the same game time, but real time keeps running in the unfocused frames, so `UnscaledDeltaTime`, the "ui" clock and UI animation continue. The player does not use it.
 - **A new session starts at time scale 1.** `Game::Reset()` kept a script's time scale into the next session; `loop.BeginSession()` does not. At the player's one call (process start) the two are the same unless something set a scale earlier.
-- **New and invisible to the game:** the `Clock` channels now tick in the player (nothing ticked them there before, so `Clock::Get("ui").Delta()` read 0 in a built game), `loop.Stats()` holds frame statistics, `OnFixedUpdate` is available, and hitch logging is off (`logHitches` stays false so the player's log does not change). The F3 and FPS overlays still read the player's own `dt`. What was run: the player built from this source and started headless (SDL's dummy video and audio drivers, no display here): a scene whose Action List quits on a one second interval exited with code 0 after about 1.2 s (so `Time` is stepped, the scene updates by the scaled step and the quit is seen), and SIGINT ended a running game cleanly. The real window, a GPU renderer and the `SDL_Delay` pacing were not run; the per-frame numbers are the ones the test pins.
+- **New and invisible to the game:** the `Clock` channels now tick in the player (nothing ticked them there before, so `Clock::Get("ui").Delta()` read 0 in a built game), `loop.Stats()` holds frame statistics, `OnFixedUpdate` is available, and hitch logging is off (`logHitches` stays false so the player's log does not change). The F3 overlay read the player's own `dt` then; the fourth pass moved it to `FrameOverlay` (see "Fourth pass"), the `show_fps` readout still shows the clamped `dt`. What was run: the player built from this source and started headless (SDL's dummy video and audio drivers, no display here): a scene whose Action List quits on a one second interval exited with code 0 after about 1.2 s (so `Time` is stepped, the scene updates by the scaled step and the quit is seen), and SIGINT ended a running game cleanly. The real window, a GPU renderer and the `SDL_Delay` pacing were not run; the per-frame numbers are the ones the test pins.
 
 **The editor has adopted it too** (editor hooks). Before, the editor's Play loop clamped to 0.1 s, smoothed, and called `ed.Tick(Game::Paused() ? 0 : playDt)`, which runs `scene.Update(dt)`, but nothing called `Time::Step`: during Play `Time::DeltaTime()` stayed 0 (the Action List "move towards" steps multiply by it), `Time::ElapsedTime()` and `FrameCount()` stood still, and `Time.timeScale`, hit stops, ramps and the `Clock` channels did nothing (the built player has all of them). Now:
 
@@ -205,7 +212,7 @@ The FPS readouts keep showing the measured time cut to 0.1 s (`dt`, as before). 
 - The frame block in `main.cpp` calls `ed.PlayFrame((double)dt, g_smoothFrameTime, refreshHz)` in place of the clamp, `SmoothDelta` and `TickGame(ed, Game::Paused() ? 0 : playDt)` lines. A game paused by its own menu gives `Time::DeltaTime() == 0`, so the scene still ticks with 0 and its UI still updates, as before. **Editing never steps `Time`**: outside Play `PlayFrame` does nothing and `main.cpp` runs the same edit-mode tick as before (`TickGame(ed, clampedDt)`, which does not touch the scene).
 - The editor's Pause button is `Game::PushPause("editor")` (`ed.SetPaused(g_paused)`, repeated every frame so `g_paused` stays the one flag the toolbar reads). While it is held the loop still runs (`Time::DeltaTime()` is 0, `Game::Paused()` is true) but the scene is **not updated at all**, as before; the game's own pause menu is the case that still ticks with 0.
 - "Step one frame" is `ed.StepFrame()`: it pauses first, then `GameLoop::RequestStep(1, 1/60)`, so the next Play frame advances exactly one frame of 1/60 s (the old step's length), through the time scale and hit stops. For that one frame the scene sees a running game: the editor's own pause reason is lifted around `OnUpdate`, because the controllers (`FirstPersonController`, `ThirdPersonController` and others) return early while `Game::Paused()` and the old Step moved them. A pause the game itself holds (a pause menu) is left alone. Two clicks are two steps; a step still pending when Pause is released is dropped by the loop. The step runs at the next frame's tick (the toolbar is drawn after it), so the result shows one frame after the click.
-- `EditorState::Play()` and `Stop()` call `m_loop.BeginSession()`: `Game::BeginSession()` (no pause, no quit, no hit stops or ramps, **time scale back to 1**), the clocks back to zero, the fixed clock at 0 and `SmoothDelta`'s history forgotten. A script that set `Time.timeScale = 0` in one Play no longer freezes the next one, and a Play always starts the `Clock` channels at 0. `Time::ElapsedTime()` and `FrameCount()` are the process's own and keep counting across Play sessions (as in a player that loads another scene); `BeginSession` does not rewind them.
+- `EditorState::Play()` and `Stop()` call `m_loop.BeginSession()`: `Game::BeginSession()` (no pause, no quit, no hit stops or ramps, **time scale back to 1**), the clocks back to zero, the fixed clock at 0 and `SmoothDelta`'s history forgotten. A script that set `Time.timeScale = 0` in one Play no longer freezes the next one, and a Play always starts the `Clock` channels at 0. `Time::ElapsedTime()` and `FrameCount()` are the process's own and keep counting across Play sessions (as in a player that loads another scene); `BeginSession` does not rewind them, on purpose: `Time::SessionTime()` and `SessionFrameCount()` (fourth pass) are the ones that start again at 0.
 - The first frame of a Play is the measured one (clamped to 0.1 s), as in the player: the time the Play button spent snapshotting the scene lands in it. Set `ed.playLoop().SetOptions` with `firstFrameDelta` if that ever matters.
 - Optional and still free: `ed.playLoop().Stats()` for the Game view's Stats overlay and a Profiler "frame times" graph, `LoopConsole` for `time.stats` and `time.scale` in the Console panel, and `SetDebugTimeScale` / `SetCapture` behind a toolbar menu. None is wired yet.
 
@@ -428,7 +435,7 @@ Checked in the dedicated server and found fine: a very long frame costs only gam
 
 Checked and found fine in the first pass: the first frame in `Application` (the previous-time stamp is taken after `Start`), `Random` with seed 0 and the all-zero state, `Range` with equal or reversed bounds and `INT_MIN..INT_MAX`, Gaussian at `log(0)` (clamped), weighted picks with zero, negative, NaN and empty lists, Shuffle bias (fair over 60000 shuffles), the maximal-subpart UTF-8 decoding, `Game::Reset` clearing the quit flag, `UnscaledDeltaTime` while paused.
 
-Seen, not changed: `Game::Reset()` keeps the time scale (an existing test pins that; use `BeginSession`), `Random::Shared()` is not thread safe (documented, `ThreadLocal()` added; the third pass added `LockShared()` for threads that must share the seeded stream, see below), `Application` pacing granularity (see above; the third pass added `Pacing::Limiter`), and `ElapsedTime()` is a float by design (`ElapsedTimeD()` is the exact one). `Game::TogglePause()` toggles "is the game paused", so while another system holds a pause it cannot add a manual one (it does nothing); use `PushPause` / `PopPause` for your own pause. `WeightedTable::At` and `Weight` do not check the index (use the one `Draw*` returned). A `Stopwatch` keeps every lap it is asked for.
+Seen, not changed: `Game::Reset()` keeps the time scale (an existing test pins that; use `BeginSession`), `Random::Shared()` is not thread safe (documented, `ThreadLocal()` added; the third pass added `LockShared()` for threads that must share the seeded stream, see below), `Application` pacing granularity (see above; the third pass added `Pacing::Limiter`), and `ElapsedTime()` is a float by design (`ElapsedTimeD()` is the exact one). `Game::TogglePause()` used to toggle "is the game paused" and did nothing while another system held a pause (fixed in the fourth pass: it flips the manual hold). `WeightedTable::At` and `Weight` do not check the index (use the one `Draw*` returned). A `Stopwatch` keeps every lap it is asked for.
 
 ## Not covered here
 
@@ -497,7 +504,7 @@ What it does **not** touch, on purpose: `Time::ElapsedTime()`, `UnscaledTime()` 
 
 ```cpp
 GameLoop loop;
-LoopConsole commands(loop);              // time.stats, time.stats_csv <file>, time.scale [x], time.debug_scale [x], time.pause [on|off], time.step [n]
+LoopConsole commands(loop);              // time.stats, time.stats_csv <file>, time.scale [x], time.debug_scale [x], time.pause [on|off], time.step [n], time.run [n] [fps], time.overlay
 Console::Execute("time.stats");          // "240 frames: 59.8 fps avg (16.72 ms), 1% low 41.2 fps, ..." and the hitch counters
 Console::Execute("time.scale 0.25");
 ```
@@ -551,8 +558,8 @@ Each has a case in `test_loop_audit3` that failed before the fix (checked by put
 - **A `Time` snapshot of `ElapsedTime`** (see above): restoring the process clock backwards breaks more than it fixes.
 - **`Interval` timer**: `FixedTimestep` already is "equal steps however long the frame was" with an alpha, a cap and dropped-time accounting; a second class would be a second copy.
 - **Editor changes**: done in the editor hooks pass ("Adopting `GameLoop`").
-- **A frame-time graph or overlay** in the player (F3 still shows the player's own `dt`): `loop.Stats()` and `ToCsv` are the data for it.
-- **`Game::TogglePause()` while another system holds a pause** still does nothing (documented; use `PushPause` / `PopPause` for your own pause).
+- **A frame-time graph or overlay** in the player: done in the fourth pass (`FrameOverlay`, F3).
+- **`Game::TogglePause()` while another system holds a pause**: fixed in the fourth pass.
 
 ### What changed (third pass)
 
@@ -560,3 +567,150 @@ Each has a case in `test_loop_audit3` that failed before the fix (checked by put
 - `Application`: `Config::pacing` (`Sleep` default, `Limiter`); options set on `loop()` before `Run` stay.
 - `player/main.cpp`: on `GameLoop`, session started with `loop.BeginSession()`, the clocks tick in a built game.
 - New: `Countdown`, `Cooldown`, `Clock::RampScale` and friends, `Clock::Restore`, `Stopwatch::OnClock`, `TimeSnapshot`, `FrameStats::ToCsv` / `SaveCsv`, `LoopConsole`, `Random::LockShared`, `rnd::DirectionInCone`, `DirectionInCone2D`, `PointInTriangle`, `Sign`, and the `utf8` additions above.
+
+## Fourth pass
+
+What the fourth pass did: the pause button always works, a script can ask for "time since this Play began", a debugger can "run N frames then pause", the player's F3 panel and the editor can show the same performance text, `Random` and `RandomExtras` were audited and gained `SampleIndices`, `PoissonDisk2D` and saved state for bags and tables, and thirteen more edge-case bugs are fixed. Tests: `test_loop_audit4`, `test_frame_overlay`, `test_random_wave4`.
+
+### The pause button: `Game::TogglePause()`
+
+It used to flip "is the game paused". While a cutscene or a menu held a pause that was already true, so a press called `SetPaused(false)`, which cannot release somebody else's hold: the button did nothing. It now flips the **manual** hold (the reason `SetPaused` uses) and returns whether that hold is on:
+
+```cpp
+Game::PushPause("cutscene");
+Game::TogglePause();        // true: the player's own hold is added (PauseReasons(): cutscene, manual)
+Game::PopPause("cutscene"); // the cutscene ends and the game stays paused, as the player asked
+Game::TogglePause();        // false: released, the game runs
+```
+
+With nothing else holding a pause it behaves as before. After a press that released the manual hold `Paused()` can still be true: `Game::PauseReasons()` says who else holds it. (`LoopConsole`'s `time.pause` with no argument is the same toggle.)
+
+### What a script sees across Stop and Play
+
+`Time::ElapsedTime()`, `UnscaledTime()` and `FrameCount()` are the **process's** clocks. `BeginSession()` does not rewind them, and that is deliberate: a lot of code keeps a stamp taken from them (an action list's cooldown `now + 5`, `SaveSystem::PlayTime`'s base, the schedulers' "ticked this frame" number, a `Stopwatch::GameTime()`), and a clock that jumped back to 0 would make every such stamp read as the future (a cooldown that never ends until time catches up). So a script that reads `Time.time` in the second Play of an editor session sees a continuous value (120 s, not 0).
+
+What a script that wants "since this Play began" (an intro that shows for the first five seconds of every Play) reads is new:
+
+| Call | Meaning |
+| --- | --- |
+| `Time::SessionTime()` | scaled game seconds since the last `Game::BeginSession()` (double) |
+| `Time::SessionUnscaledTime()` | real seconds since then |
+| `Time::SessionFrameCount()` | frames stepped since then |
+| `Time::MarkSessionStart()` | what `Game::BeginSession()` calls; moves no process clock |
+
+`GameLoop::BeginSession()` (the editor's Play and Stop, the player's scene start) and `Game::BeginSession()` (the dedicated server) mark the start; `Game::Reset()` alone does not; before the first mark they equal the process clocks; `Time::ResetForTesting()` zeroes the mark with the clocks. Script bindings are not in this pass (they live in `Script/EngineApi.cpp` and `Scripting/OkayScriptVM.cpp`, see "Editor and script hooks" below).
+
+### Run N frames, then pause; slow-motion buttons
+
+`RequestStep` only works on a game that is already paused. The missing half is a game that is running:
+
+```cpp
+loop.OnRunFramesDone = [&] { banner.Show("paused after 10 frames"); };
+loop.RunFrames(10, 1.0f / 60.0f);        // ten frames of exactly 1/60 s, then the game is paused
+loop.RunFrames(10);                      // ten frames of whatever the host measures
+loop.RunFrames(10, 0.0f, "editor");      // pause under your own reason (see the editor hook below)
+```
+
+- With a length (`frameSeconds` > 0) each run frame is **exact**, like a capture or step frame: the host's measurement is ignored, nothing is clamped, smoothed or counted as a hitch, and a recorder stores it as a synthetic frame. It takes precedence over capture mode for those frames; without a length capture mode (if on) or the host's time is used.
+- The pause happens **at the end of the Nth frame**: `Game::Paused()` already reads true when `BeginFrame` returns, `OnRunFramesDone` fires, and the next frame is an ordinary paused one (`OnPause` fires at its start). The reason is `"manual"` by default (so `Game::SetPaused(false)` or `TogglePause` resumes) or the one you pass; it is not pushed twice.
+- Only frames that **began with the game running** count: if a menu pauses the game in between, the count waits for the resume.
+- A second `RunFrames` replaces the first; `CancelRunFrames()`, `Reset()` and `BeginSession()` clear it; `IsRunningFrames()`, `RunFramesRemaining()`. `frames` is capped at `kMaxStepRequest`, the length at `kMaxStepDelta`.
+- On a game that is **already paused** `RunFrames` is `RequestStep(frames, frameSeconds)`: the steps run and the pause stays (`OnStepsFinished` tells you), so one button does the right thing in both states.
+
+The slow-motion button already existed (`SetDebugTimeScale`); what a "slower / faster" pair needs is the next step:
+
+```cpp
+loop.SetDebugTimeScale(GameLoop::NextDebugTimeScale(loop.DebugTimeScale(), -1));   // 1 -> 0.5 -> 0.25 -> 0.1 -> 0.05
+loop.SetDebugTimeScale(GameLoop::NextDebugTimeScale(loop.DebugTimeScale(), +1));   // 1 -> 2 -> 4 -> 8 -> 16 -> 32
+```
+
+`GameLoop::kDebugScalePresets` are 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 16, 32; the ends stay; a scale between presets goes to the next one in that direction; NaN counts as 1. `SetDebugTimeScale`, `SetCapture(fps, frames)` and `RequestStep` themselves were checked again and needed no change.
+
+### The performance text: `FrameOverlay`
+
+`Core/FrameOverlay.hpp` turns the loop's `FrameStats` plus `Time` and `Game` into the lines an overlay shows, so the player's F3 panel and the editor's Game view print the same words:
+
+```cpp
+for (const std::string& line : FrameOverlay::Lines(loop)) DrawText(line);       // once per UI refresh (it sorts a copy of the window)
+std::vector<float> plot = FrameOverlay::RecentFps(loop.Stats(), 90);             // a fixed-size series for a graph; RecentMs too
+```
+
+```
+59.8 fps  16.72 ms avg
+min 15.90  max 22.10  p99 20.30 ms
+1% low 48.2 fps  0.1% low 40.1 fps
+hitches 2 (5 total)  worst 130 ms
+dropped 1 frame (0.15 s lost)
+fixed steps dropped 0.04 s
+time x0.50  hit stop 0.08 s  ramp to x1.00  debug x0.25  capture 60 fps  run 7 more  step 3
+paused by: menu, cutscene
+```
+
+The frame numbers are **real** frame times (`GameLoop::Stats()`), so a 5 s stall reads 5000 ms though the game stepped 0.25 s; "dropped" is the clamp's lost real time (`ClampedFrames()`, `LostRealTime()`), "fixed steps dropped" is `DroppedFixedTime()`. Lines with nothing to say are left out (the time line is always there). `FrameOverlay::Format(snapshot, state)` is the pure form (no global read) for tests; `StateOf(loop)` fills the state; numbers use a dot in every locale. `player/main.cpp`'s F3 panel now draws `FrameOverlay::Lines(loop)` and `RecentFps(loop.Stats(), 90)` instead of its own `dt` smoothing and ring buffer.
+
+### Random: audit, and what was added
+
+Every `Random` and `RandomExtras` function was run against NaN, infinity, zero, negative, empty and `FLT_MAX` arguments, against a state save and restore, and the documented thread entry points against threads.
+
+- **Bad numbers.** `Gaussian(mean, stddev)` with a NaN or infinite argument returned NaN or infinity (a NaN or infinite mean now counts as 0, a spread as 0; a result beyond float range is held at its edge; it always uses two draws). The position helpers (`PointInCircle`, `PointOnCircle`, `PointInRing`, `PointInSphere`, `PointOnSphere`, `PointInRect`, `PointInBox`) returned NaN for a NaN radius or corner; a NaN or infinite radius, corner or centre now counts as 0, `PointInRect(-FLT_MAX, FLT_MAX)` is worked out in double (it returned infinity) and `PointInRing` no longer overflows in the square of a huge radius. They use the same number of draws whatever the arguments, so a stream stays in step. Ordinary arguments give the same numbers as before.
+- **Determinism after a state restore.** `Random::GetState` / `SetState` reproduce every draw and helper in one test tour (ranges, Gaussian, shuffle, weighted pick, circle and sphere points, `Fork`, cone, `SampleIndices`, dice). The all-zero state is nudged and never sticks at zero. **A `ShuffleBag` or `WeightedTable` mid-round was not saved by anything**, so a save game that kept the generator but not the bag re-rolled what the player was about to get (see below).
+- **Threads.** `Random::Shared()` is still the plain unlocked generator (main thread); `LockShared()` is the one-stream-under-a-lock form (four threads, 4000 draws: the sum and the end state equal the sequential run); `ThreadLocal()` gives each live thread a stream of its own (distinct objects, different sequences). `Random` instances, `Rng`, `ShuffleBag`, `WeightedTable` and `PoissonDisk2D` keep no global state: one per thread is safe, sharing one is not.
+
+New, picked because games need them and nothing in the engine had them (grep for `Poisson`, `Bridson`, `blue noise`, `Sample` found only a shadow filter and unrelated code):
+
+```cpp
+std::vector<std::size_t> spawn = rnd::SampleIndices(rng, points.size(), 3);   // three DIFFERENT points, in random order; O(k) memory
+std::vector<Vec2> trees = rnd::PoissonDisk2D(rng, 100, 60, 4.0f);            // blue noise: none closer than 4, no big gaps
+std::vector<Vec2> rocks = rnd::PoissonDisk2D(rng, 20, 20, 2.0f, /*attempts*/ 30, /*maxPoints*/ 50, /*origin*/ {100, -50});
+
+ShuffleBag<std::string> bag;  /* Add... */   bag.Save(w.Scope("loot"));  bag.Load(r.Scope("loot"));   // mid-round, with the SaveWriter / SaveReader
+auto st = bag.SaveState();    bag.RestoreState(st);                                                  // or hold the state yourself
+WeightedTable<std::string> deck;               deck.Save(w.Scope("deck")); deck.Load(r.Scope("deck")); // which entries DrawWithout took out
+```
+
+- `SampleIndices(g, n, k)`: every set of k and every order equally likely (tested against all ordered pairs of 2 from 4 and from 5); k above n gives n; a pick of 5 from a billion allocates five entries (Floyd's algorithm, then a shuffle); k is capped at 16 777 216.
+- `PoissonDisk2D(g, width, height, minDistance, attempts = 30, maxPoints = 100000, origin = {})`: Bridson's algorithm; points in `[origin, origin + size)`, no two closer than `minDistance` (checked pairwise in the test), about 58% of the hexagonal packing (the usual figure for this algorithm), and nearly every probe point has a sample within `2 * minDistance`. It is for areas several times wider than the distance in both directions: a strip thinner than about `2 * minDistance` holds only a few points (the search around a point mostly lands outside), so scatter along a line another way. Deterministic for a generator state; works with `Random` and `Rng`. Empty for a size or distance that is not a finite number > 0, for `maxPoints` 0 and for a grid beyond `kMaxPoissonCells` (4 194 304 cells: a tiny distance in a huge area allocates nothing).
+- `ShuffleBag::SaveState / RestoreState` (the entries left this round in draw order, the last drawn, the round count) and `Save / Load` for the save framework; `WeightedTable::DrawnMask / RestoreDrawn / Drawn` and `Save / Load`. The **entries stay yours**: rebuild the bag or table with the same `Add` calls, then load. A state that does not fit the bag (an entry in the round more often than it has copies, an unknown entry, another number of entries or copies, garbage text) is refused, `false`, and the bag is left as it was. A block with no state is `false` too, so an older save leaves the bag fresh. Test: draw mid-round, save, restore into a rebuilt bag with the generator state put back, and the next 25 draws are identical (and differ without the bag state).
+
+### Bugs found and fixed
+
+Each has a case in `test_loop_audit4` or `test_random_wave4`. The failure was seen on the old code (the old file compiled in a scratch program) for every row except `TickPacer`, whose overflow is undefined behaviour: its case checks the saturated result and is there for the sanitizer runs.
+
+| Where | Bug | Repro |
+| --- | --- | --- |
+| `Game::TogglePause` | did nothing while another system held a pause | `PushPause("cutscene"); TogglePause();` manual hold absent |
+| `Time::Step` | a huge frame at a scale above 1 overflowed to infinity and poisoned `ElapsedTime` for good | `SetTimeScale(2); Step(3e38f)` |
+| `Clock::Tick` | step times scale overflowed the same way (a clamp turned off, scale 100) | `SetScale(100); Tick(0, 1e37f, false)` |
+| `GameLoop::BeginFrame` | the debug scale multiplied a huge frame past float range (undefined conversion, infinity) | `SetDebugTimeScale(32)`, `maxDelta = 0`, `BeginFrame(1e38)` |
+| `Time::SmoothDelta` | for a frame time above half the float range, the sum or twice the frame overflowed and the step came back as infinity (a fuzz walk over the loop's controls found it) | `maxDelta = 0`, `smoothDelta = true`, `BeginFrame(1e300)` |
+| `Time::SmoothedFPS` | a denormal frame time made `1 / dt` infinite and the average NaN (`inf - inf`) for the rest of the run | `Step(1e-40f)` twice, then normal frames |
+| `TimeSnapshot::Apply` | a block with no `timeScale` set the scale to 1 instead of leaving it (`hasTimeScale` is false then) | read a block with only `v` |
+| `FrameRecording` | a marker of `INT_MIN` was written and then refused as out of range by the loader | `SetFrameMarker(INT_MIN)`, save, load |
+| `Application::Run` | a tiny `targetFps` asked the pacing sleep for 1e30 seconds (overflow of the sleep's clock type); the longest paced frame is now one second (`Application::TargetFrameSeconds`) | `targetFps = 1e-30f` |
+| `TickPacer::FinishTick` | clock values near the ends of the 64-bit range overflowed (undefined behaviour); the arithmetic saturates | `Start(INT64_MAX); FinishTick(INT64_MIN)` |
+| `FixedTimestep` | a step limit of `INT_MAX` kept one `Advance` busy for billions of steps; capped at `kMaxStepsCap` (100000) | `FixedTimestep f(0.02f, INT_MAX); f.Advance(1e9f)` |
+| `Random::Gaussian` | NaN or infinite mean or spread came back as NaN or infinity | `Gaussian(0, NaN)` |
+| `rnd::Point*` | a NaN radius or corner gave NaN; a span wider than a float gave infinity; a huge ring radius overflowed | `PointInCircle(rng, NaN)`, `PointInRect(-FLT_MAX, FLT_MAX)` |
+
+Checked and found fine: `GameLoop` with the time scale at 0 and fixed steps (no steps, `Alpha()` stands still, nothing drops), 1000 frames of 0 and negative times, clock ramps that end at 0 or start above 1 (the integral of the scale over any frame length, exact), `Time::RampTimeScale` across a 3 s frame, a replay into a game that is not in the recorded state (a recorded step frame replays as an ordinary frame, hitches are clamped and counted again, a finished or empty recording runs nothing, the host's clock takes over when `stopAtPlaybackEnd` is off), a snapshot block written by a newer build (read) and one with no version (refused), UTF-8 against the Unicode standard's own ill-formed examples (overlong, surrogate, above U+10FFFF, truncated), every prefix of a 2, 3 and 4 byte character, every 1 to 3 byte string over a pool of boundary bytes (forward and backward walks agree, `Sanitize` makes a valid string), `TruncateBytes` at every limit.
+
+### Editor and script hooks (not wired: `editor/*` and the script bindings are outside this pass)
+
+These are the exact call sites, all on `ed.playLoop()` (`EditorState::m_loop`), which `Play()` / `Stop()` already `BeginSession()`:
+
+1. **Stats overlay in the Game view.** While `ed.isPlaying()`, once per UI refresh: `for (const std::string& l : okay::FrameOverlay::Lines(ed.playLoop())) ImGui::TextUnformatted(l.c_str());` and `auto fps = okay::FrameOverlay::RecentFps(ed.playLoop().Stats(), 90); ImGui::PlotLines("##fps", fps.data(), (int)fps.size());` (include `okay/Core/FrameOverlay.hpp`). A "Stats" toggle can sit by the PLAYING / PAUSED pill in `editor/main.cpp` (about line 43327).
+2. **Slow motion buttons.** In the toolbar next to Step (`stepHit`, about line 6436): "Slower" is `ed.playLoop().SetDebugTimeScale(GameLoop::NextDebugTimeScale(ed.playLoop().DebugTimeScale(), -1))`, "Faster" the same with `+1`, "1x" is `SetDebugTimeScale(1.0f)`; the label is `ed.playLoop().DebugTimeScale()`. The debug scale survives Play and Stop (by design), so call `SetDebugTimeScale(1.0f)` in `EditorState::Stop()` if it should not.
+3. **Run N frames, then pause.** Once, where `ed.playTick` is set (about line 44630): `ed.playLoop().OnRunFramesDone = [] { g_paused = true; };`. The button calls `ed.playLoop().RunFrames(n, 1.0f / 60.0f, "editor")`: the reason must be `EditorState::kPauseReason` (`"editor"`), the one `ed.SetPaused(g_paused)` holds, so when the run ends the loop's pause and `g_paused` agree and the Resume button releases it. While the game is paused the same call steps `n` frames and stays paused (the editor lifts its own pause around the scene tick for step frames already).
+4. **Scripts: `Time.sessionTime` and `Time.sessionFrameCount`.** Next to `Time.time` / `Time.frameCount` in `Script/EngineApi.cpp` (the `Time` type, about line 891) and `Scripting/OkayScriptVM.cpp` (`Time.time` about line 2078, builtin `time` about line 3719), return `Time::SessionTime()` and `Time::SessionFrameCount()`; regenerate `docs/engine_api.md`. Until then a script that needs "since Play" can store `Time.time` in `Start`.
+5. **Console.** `LoopConsole(ed.playLoop())` (declared after the loop) gives `time.stats`, `time.scale`, `time.debug_scale`, `time.pause`, `time.step`, and from this pass `time.run [n] [fps]` (`RunFrames`: with `fps` every frame is exactly 1/fps s) and `time.overlay` (the `FrameOverlay` text); they do what the buttons do. Without the editor hook 3 the pause that `time.run` ends with is the reason `"manual"`.
+
+### What changed (fourth pass)
+
+- `Game::TogglePause()` flips the manual hold and returns whether it is on.
+- `Time`: `SessionTime`, `SessionUnscaledTime`, `SessionFrameCount`, `MarkSessionStart` (called by `Game::BeginSession`); a scaled step is held in float range; `SmoothedFPS` ignores a denormal frame (`kMaxFps`); `FixedTimestep::kMaxStepsCap`.
+- `GameLoop`: `RunFrames`, `OnRunFramesDone`, `CancelRunFrames`, `IsRunningFrames`, `RunFramesRemaining`, `NextDebugTimeScale`, `kDebugScalePresets`; the debug-scaled step is held in float range.
+- `Clock::Tick` holds its step in float range. `TimeSnapshot::hasTimeScale`. `FrameRecording` accepts `INT_MIN` markers. `Application::TargetFrameSeconds`. `TickPacer` saturates.
+- `LoopConsole`: `time.run [n] [fps]`, `time.overlay`.
+- New `Core/FrameOverlay.hpp/.cpp`: `FrameOverlay::Lines`, `Format`, `StateOf`, `Text`, `RecentFps`, `RecentMs`. `player/main.cpp`: F3 uses it.
+- `Random::Gaussian`, the `rnd::Point*` helpers: bad numbers. New `rnd::SampleIndices`, `rnd::PoissonDisk2D`, `ShuffleBag::SaveState / RestoreState / Save / Load`, `WeightedTable::DrawnMask / RestoreDrawn / Drawn / Save / Load`.
+- Not done: `Time.sessionTime` in the scripts (hook 4), a `PseudoRandom` "bad luck protection" chance (a streak-aware crit chance; small, but nothing asked for it yet), `Rng` was left alone (it belongs to the math wave).

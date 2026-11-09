@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -91,12 +92,19 @@ public:
         return x % n;
     }
 
-    /// Normally distributed float (Box-Muller).
+    /// Normally distributed float (Box-Muller). Always consumes two draws. A NaN or infinite `mean` counts
+    /// as 0 and a NaN or infinite `stddev` as 0 (the result is then the mean), and a result beyond the float
+    /// range is held at its edge, so a bad argument never hands back NaN or infinity.
     float Gaussian(float mean = 0.0f, float stddev = 1.0f) {
         float u1 = Value();
         if (u1 < 1e-7f) u1 = 1e-7f;
         const float u2 = Value();
-        return mean + stddev * std::sqrt(-2.0f * std::log(u1)) * std::cos(6.2831853f * u2);
+        if (!std::isfinite(mean)) mean = 0.0f;
+        if (!std::isfinite(stddev)) stddev = 0.0f;
+        const float r = mean + stddev * std::sqrt(-2.0f * std::log(u1)) * std::cos(6.2831853f * u2);
+        if (std::isfinite(r)) return r;
+        if (std::isnan(r)) return mean;   // inf * 0 at an exact zero of the cosine
+        return r > 0.0f ? std::numeric_limits<float>::max() : -std::numeric_limits<float>::max();   // overflow
     }
 
     /// Fisher-Yates shuffle in place.

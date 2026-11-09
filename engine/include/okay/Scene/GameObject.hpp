@@ -197,6 +197,11 @@ public:
     /// The first component of type T on this object or one of its parents, nearest first.
     template <typename T>
     T* GetComponentInParent(bool includeInactive = false) const;
+    /// Every component of type T on this object and each parent above it: the object itself first, then
+    /// its parent, and so on up; an object's own components in stored order. An inactive object is
+    /// skipped (its parents are still looked at) unless `includeInactive`.
+    template <typename T>
+    std::vector<T*> GetComponentsInParent(bool includeInactive = false) const;
 
     /// Append every component assignable to T to `out` (no per-object allocation;
     /// used by Scene::FindObjectsOfType to avoid a temporary vector per object).
@@ -444,6 +449,17 @@ T* GameObject::GetComponentInParent(bool includeInactive) const {
         g = p ? p->gameObject : nullptr;
     }
     return nullptr;
+}
+
+template <typename T>
+std::vector<T*> GameObject::GetComponentsInParent(bool includeInactive) const {
+    std::vector<T*> result;
+    for (const GameObject* g = this; g;) {
+        if (includeInactive || g->active) g->CollectComponents<T>(result);
+        const Transform* p = g->transform ? g->transform->Parent() : nullptr;
+        g = p ? p->gameObject : nullptr;
+    }
+    return result;
 }
 
 } // namespace okay

@@ -6,6 +6,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Layers.hpp"
+#include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneLocalization.hpp"
@@ -30,6 +31,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <typeindex>
 #include <unordered_map>
 #include <vector>
 
@@ -46,30 +48,37 @@ Scene::~Scene() {   // its scene variables and script statics go with it
     ActionList::ForgetScene(this);
 }
 
+namespace {
+// A destroyed object is only a Transform shell: cloning it would make an empty, switched-off object.
+GameObject* Clone(Scene& scene, const GameObject& prefab) {
+    return prefab.IsDestroyed() ? nullptr : SceneSerializer::Instantiate(scene, prefab);
+}
+} // namespace
+
 GameObject* Scene::Instantiate(const GameObject& prefab) {
-    return SceneSerializer::Instantiate(*this, prefab);
+    return Clone(*this, prefab);
 }
 
 GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position) {
-    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    GameObject* go = Clone(*this, prefab);
     if (go) go->transform->localPosition = position;
     return go;
 }
 
 GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation) {
-    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    GameObject* go = Clone(*this, prefab);
     if (go) { go->transform->localPosition = position; go->transform->localRotation = rotation.Normalized(); }
     return go;
 }
 
 GameObject* Scene::Instantiate(const GameObject& prefab, Transform* parent, bool worldPositionStays) {
-    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    GameObject* go = Clone(*this, prefab);
     if (go && parent) go->transform->SetParent(parent, worldPositionStays);   // refused: it stays a root
     return go;
 }
 
 GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation, Transform* parent) {
-    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    GameObject* go = Clone(*this, prefab);
     if (!go) return nullptr;
     if (parent) go->transform->SetParent(parent, /*worldPositionStays=*/false);   // refused: it stays a root
     go->transform->SetPosition(position);   // world values, whatever it ended up under
@@ -125,6 +134,17 @@ GameObject* Scene::CreateGameObject(const std::string& name) {
 
 GameObject* Scene::FindByGuid(const std::string& guid) const {
     if (guid.empty()) return nullptr;
+    if (m_guidIndexStructure != m_structureVersion || m_guidIndexCount != m_objects.size()) {
+        m_guidIndex.clear();
+        m_guidIndex.reserve(m_objects.size());
+        for (const auto& o : m_objects)
+            if (!o->IsDestroyed()) m_guidIndex.emplace(o->Guid(), o.get());   // the first object with an id keeps it
+        m_guidIndexStructure = m_structureVersion;
+        m_guidIndexCount = m_objects.size();
+    }
+    auto it = m_guidIndex.find(guid);
+    if (it != m_guidIndex.end() && !it->second->IsDestroyed() && it->second->Guid() == guid) return it->second;
+    // Not listed, or listed for an object whose id was changed since (SetGuid does not tell the scene): scan.
     for (const auto& o : m_objects)
         if (!o->IsDestroyed() && o->Guid() == guid) return o.get();
     return nullptr;
@@ -169,6 +189,7 @@ void Scene::Clear() {
     m_destroyQueue.clear();
     m_destroyQueued.clear();
     m_delayedDestroy.clear();
+    m_delayedIndex.clear();
     m_dontDestroy.clear();
     m_scheduler.Clear();
     m_tweens.Clear();
@@ -323,6 +344,7 @@ void Scene::ReattachKept(KeptState& k) {
 }
 
 void Scene::Update(float deltaTime) {
+    if (!std::isfinite(deltaTime)) deltaTime = 0.0f;   // NaN or infinity is no time: it would poison the bodies, the timers and every script
     ActionList::UseScene(this);
     {
     BusyScope busy(*this);   // component lists are walked until the end of LateUpdate
@@ -652,11 +674,20 @@ void Scene::Destroy(GameObject* go) {
     }
 }
 
+int Scene::DestroyChildren(GameObject* go) {
+    if (!go || go->IsDestroyed() || !go->transform) return 0;
+    int asked = 0;
+    for (const Transform* c : go->transform->Children())   // Destroy only queues: the child list is not edited here
+        if (c && c->gameObject) { Destroy(c->gameObject); ++asked; }
+    return asked;
+}
+
 void Scene::Destroy(GameObject* go, float seconds) {
     if (!go) return;
     if (!(seconds > 0.0f)) { Destroy(go); return; }   // zero, negative or NaN: now
-    for (auto& d : m_delayedDestroy)
-        if (d.first == go->InstanceId()) { d.second = std::min(d.second, seconds); return; }
+    auto waiting = m_delayedIndex.find(go->InstanceId());
+    if (waiting != m_delayedIndex.end()) { auto& d = m_delayedDestroy[waiting->second]; d.second = std::min(d.second, seconds); return; }
+    m_delayedIndex[go->InstanceId()] = m_delayedDestroy.size();
     m_delayedDestroy.push_back({go->InstanceId(), seconds});
 }
 
@@ -670,13 +701,14 @@ void Scene::TickDelayedDestroys(float deltaTime) {
     if (m_delayedDestroy.empty()) return;
     auto due = std::move(m_delayedDestroy);
     m_delayedDestroy.clear();
+    m_delayedIndex.clear();
     if (!(deltaTime > 0.0f) || !std::isfinite(deltaTime)) deltaTime = 0.0f;   // a bad frame time takes no time off
     for (auto& d : due) {
         GameObject* go = GameObject::FromInstanceId(d.first);   // null once it is gone
         if (!go || go->scene() != this) continue;
         d.second -= deltaTime;
         if (d.second <= 0.0f) Destroy(go);
-        else m_delayedDestroy.push_back(d);
+        else { m_delayedIndex[d.first] = m_delayedDestroy.size(); m_delayedDestroy.push_back(d); }
     }
 }
 
@@ -909,6 +941,60 @@ std::vector<GameObject*> Scene::Roots() const {
     return out;
 }
 
+SceneGraphStats Scene::Stats() const {
+    SceneGraphStats st;
+    st.objects = static_cast<int>(m_objects.size());
+    st.pendingDestroy = static_cast<int>(m_destroyQueue.size());
+    st.shells = static_cast<int>(m_graveyard.size());
+    for (const Component* c : m_active) if (c) ++st.runningComponents;
+    for (const Component* c : m_pending) if (c) ++st.awaitingStart;
+    std::unordered_map<std::type_index, std::pair<const Component*, int>> kinds;   // per type: one exemplar and a count
+    std::vector<std::pair<const Transform*, int>> stack;   // explicit stack: a chain 100000 deep is no recursion
+    for (const auto& o : m_objects) {
+        const GameObject* g = o.get();
+        for (const auto& c : g->Components()) {
+            auto& k = kinds[std::type_index(typeid(*c))];
+            if (!k.first) k.first = c.get();
+            ++k.second;
+            ++st.components;
+        }
+        if (g->ActiveInHierarchy()) ++st.activeInHierarchy;
+        if (g->transform && !g->transform->Parent()) { ++st.roots; stack.push_back({g->transform, 0}); }
+    }
+    st.inactive = st.objects - st.activeInHierarchy;
+    while (!stack.empty()) {
+        auto [t, depth] = stack.back(); stack.pop_back();
+        st.maxDepth = std::max(st.maxDepth, depth);
+        for (const Transform* c : t->Children()) if (c) stack.push_back({c, depth + 1});
+    }
+    st.byType.reserve(kinds.size());
+    for (const auto& kv : kinds)
+        st.byType.push_back({ComponentSerializerRegistry::TypeKey(*kv.second.first), kv.second.second});
+    std::sort(st.byType.begin(), st.byType.end(), [](const SceneGraphStats::TypeCount& a, const SceneGraphStats::TypeCount& b) {
+        return a.count != b.count ? a.count > b.count : a.type < b.type;
+    });
+    return st;
+}
+
+std::vector<std::string> SceneGraphStats::Lines(int maxTypes) const {
+    std::vector<std::string> out;
+    out.push_back("Objects: " + std::to_string(objects) + " (" + std::to_string(roots) + " roots, " +
+                  std::to_string(inactive) + " inactive, depth " + std::to_string(maxDepth) + ")");
+    out.push_back("Components: " + std::to_string(components) + " (" + std::to_string(runningComponents) + " running, " +
+                  std::to_string(awaitingStart) + " waiting to start)");
+    if (pendingDestroy > 0 || shells > 0)
+        out.push_back("Destroy queue: " + std::to_string(pendingDestroy) + ", shells kept: " + std::to_string(shells));
+    for (int i = 0; i < maxTypes && i < static_cast<int>(byType.size()); ++i)
+        out.push_back("  " + byType[static_cast<std::size_t>(i)].type + ": " + std::to_string(byType[static_cast<std::size_t>(i)].count));
+    return out;
+}
+
+std::string SceneGraphStats::ToString(int maxTypes) const {
+    std::string text;
+    for (const std::string& l : Lines(maxTypes)) { text += l; text += '\n'; }
+    return text;
+}
+
 SceneValidationReport Scene::Validate(const std::string& assetRoot) const {
     return SceneSerializer::Validate(SceneSerializer::Serialize(*this), assetRoot);
 }
@@ -931,8 +1017,16 @@ const std::vector<GameObject*>* Scene::TagList(const std::string& tag) const {
 
 GameObject* Scene::FindWithTag(const std::string& tag) const {
     if (tag.empty()) return nullptr;   // "no tag" is not a tag: every untagged object would match
-    const auto* list = TagList(tag);
-    return !list || list->empty() ? nullptr : list->front();
+    // Only the first entry is checked against what the object carries now (the one answered): with 10000
+    // objects under one tag a lookup stays a hash and a compare. The list-returning calls check every entry.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const auto& idx = TagIndex();
+        auto it = idx.find(tag);
+        if (it == idx.end() || it->second.empty()) return nullptr;
+        if (it->second.front()->tag == tag) return it->second.front();
+        m_tagIndexTags = 0;   // a tag was changed behind the index's back: rebuild once
+    }
+    return nullptr;
 }
 
 std::vector<GameObject*> Scene::FindGameObjectsWithTag(const std::string& tag) const {
@@ -968,10 +1062,10 @@ int Scene::CountOnLayer(int layer) const {
 }
 
 std::vector<std::string> Scene::UnlistedTags() const {
-    std::vector<std::string> out;
+    std::unordered_set<std::string> seen;   // a hash, not a scan of the result: 10000 different tags stay linear
     for (const auto& o : m_objects)
-        if (!o->tag.empty() && !Tags::Contains(o->tag) && std::find(out.begin(), out.end(), std::string(o->tag)) == out.end())
-            out.push_back(o->tag);
+        if (!o->tag.empty() && !seen.count(o->tag) && !Tags::Contains(o->tag)) seen.insert(o->tag);
+    std::vector<std::string> out(seen.begin(), seen.end());
     std::sort(out.begin(), out.end());
     return out;
 }

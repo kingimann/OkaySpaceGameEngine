@@ -25,6 +25,27 @@ class SceneLoadJob;
 class Camera;
 class IRenderer;
 
+/// What a scene holds, counted in one pass (Scene::Stats): enough for a debug overlay or a log line.
+struct SceneGraphStats {
+    int objects = 0;            ///< live objects (what Scene::Objects() lists)
+    int roots = 0;              ///< objects without a parent
+    int maxDepth = 0;           ///< levels below the top (a root is level 0; an empty scene is 0)
+    int activeInHierarchy = 0;  ///< objects that update and render: switched on, and so is every parent
+    int inactive = 0;           ///< objects - activeInHierarchy
+    int components = 0;         ///< every component of every live object, the Transforms included
+    int runningComponents = 0;  ///< components on the update list (woken up, not removed)
+    int awaitingStart = 0;      ///< components added and not yet woken up (they join at the next frame)
+    int pendingDestroy = 0;     ///< objects queued by Destroy that the end of the frame will free
+    int shells = 0;             ///< destroyed objects still kept as frozen Transforms
+    struct TypeCount { std::string type; int count = 0; };
+    std::vector<TypeCount> byType;   ///< components per type name, the biggest count first (ties by name)
+    /// Short lines for an overlay: "Objects: 120 (3 roots, 40 inactive, depth 4)", the component total and
+    /// the `maxTypes` most common component types.
+    std::vector<std::string> Lines(int maxTypes = 5) const;
+    /// The same lines joined with newlines.
+    std::string ToString(int maxTypes = 8) const;
+};
+
 /// Owns a graph of GameObjects and drives their lifecycle and rendering.
 /// One level / screen of the game.
 class Scene {
@@ -41,7 +62,10 @@ public:
     /// Create an empty GameObject (with a Transform) owned by this scene.
     GameObject* CreateGameObject(const std::string& name = "GameObject");
 
-    /// The live object with this persistent id (GameObject::Guid), or nullptr.
+    /// The live object with this persistent id (GameObject::Guid), or nullptr. A hit is a hash lookup
+    /// (the index is rebuilt after objects were created, destroyed or reparented); a guid that is not
+    /// listed is looked for by scanning the objects, so an id set with SetGuid after the last rebuild is
+    /// still found.
     GameObject* FindByGuid(const std::string& guid) const;
 
     /// Remove every GameObject immediately (used when loading a scene). Components that
@@ -92,6 +116,10 @@ public:
     /// then it keeps its place in the hierarchy (and so its world pose), and its
     /// OnDestroy still sees its parent.
     void Destroy(GameObject* go);
+    /// Destroy every child of `go` (and what is below them), keeping `go`: a list container emptying
+    /// its rows, a pool recalling its bullets. Queued like Destroy. Returns how many direct children
+    /// were asked (0 for null or a destroyed object).
+    int DestroyChildren(GameObject* go);
     /// Destroy `go` after `seconds` of this scene's time (the Update deltas).
     /// Destroying it earlier cancels this; asking again keeps the sooner time.
     /// Zero, less or NaN destroys it like Destroy(go).
@@ -223,6 +251,10 @@ public:
     GameObject* FindByPath(const std::string& path) const;
     /// The objects with no parent, in scene order (the top level of the hierarchy).
     std::vector<GameObject*> Roots() const;
+    /// Counts for an overlay or a log: objects, roots, depth, active ones, components per type, the
+    /// destroy queue. One pass over the scene (a few component names are looked up once per type, not
+    /// per component); a deep hierarchy is walked with a stack.
+    SceneGraphStats Stats() const;
     /// Check this scene for broken things (see SceneSerializer::Validate): component
     /// records and fields it cannot read, missing asset files, broken parent links and
     /// duplicate guids. Works on the scene's saved form, so runtime-only objects are not covered.
@@ -560,7 +592,11 @@ private:
     bool        m_hasPendingLoad = false;
     std::function<void(bool)> m_pendingLoadDone;
     std::vector<GameObject*> m_dontDestroy;                       // marked by DontDestroyOnLoad
-    std::vector<std::pair<std::uint64_t, float>> m_delayedDestroy;   // instance id, seconds left
+    std::vector<std::pair<std::uint64_t, float>> m_delayedDestroy;   // instance id, seconds left (in the order they were asked)
+    std::unordered_map<std::uint64_t, std::size_t> m_delayedIndex;   // instance id -> its place in m_delayedDestroy: "already waiting?" is a lookup
+    mutable std::unordered_map<std::string, GameObject*> m_guidIndex;   // FindByGuid: guid -> object, rebuilt when objects came or went
+    mutable std::uint64_t m_guidIndexStructure = 0;
+    mutable std::size_t   m_guidIndexCount = 0;
     std::string m_pendingText;
     std::function<void(Scene&)> m_pendingTextAfter;
     bool        m_hasPendingText = false;

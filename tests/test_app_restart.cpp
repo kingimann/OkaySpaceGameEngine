@@ -15,10 +15,21 @@
 #include <thread>
 #include <vector>
 
-#include <fcntl.h>
-#include <sys/file.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#  include <shellapi.h>
+#else
+#  include <fcntl.h>
+#  include <sys/file.h>
+#  include <sys/wait.h>
+#  include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 using okay::restart::Request;
@@ -129,28 +140,119 @@ static std::string ExpandCmdPercent(std::string s) {
     return out;
 }
 
+static void SetEnv(const char* key, const char* value) {
+#if defined(_WIN32)
+    _putenv_s(key, value ? value : "0");
+#else
+    if (value) ::setenv(key, value, 1);
+    else ::unsetenv(key);
+#endif
+}
+
+#if defined(_WIN32)
+static std::string MutexName(const fs::path& lock) {
+    std::string id = lock.parent_path().filename().string();
+    for (char& c : id)
+        if (c == '\\' || c == '/' || c == ' ') c = '_';
+    return "Local\\OkayRst_" + id;
+}
+#endif
+
+// Exclusive lock held until release (or process exit). On Windows this is both
+// a byte-range file lock and a named mutex, the same kind of lock the launcher
+// and editor use to refuse a second instance.
+struct HeldLock {
+#if defined(_WIN32)
+    HANDLE file = INVALID_HANDLE_VALUE;
+    HANDLE mutex = nullptr;
+#else
+    int fd = -1;
+#endif
+    bool Acquire(const fs::path& lock) {
+#if defined(_WIN32)
+        file = CreateFileW(lock.wstring().c_str(), GENERIC_READ | GENERIC_WRITE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return false;
+        OVERLAPPED ov{};
+        if (!LockFileEx(file, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &ov)) return false;
+        mutex = CreateMutexA(nullptr, FALSE, MutexName(lock).c_str());
+        return mutex != nullptr;
+#else
+        fd = ::open(lock.c_str(), O_RDWR | O_CREAT, 0644);
+        return fd >= 0 && ::flock(fd, LOCK_EX) == 0;
+#endif
+    }
+    void Release() {
+#if defined(_WIN32)
+        if (file != INVALID_HANDLE_VALUE) {
+            OVERLAPPED ov{};
+            UnlockFileEx(file, 0, 1, 0, &ov);
+            CloseHandle(file);
+            file = INVALID_HANDLE_VALUE;
+        }
+        if (mutex) { CloseHandle(mutex); mutex = nullptr; }
+#else
+        if (fd >= 0) { ::flock(fd, LOCK_UN); ::close(fd); fd = -1; }
+#endif
+    }
+};
+
+static void ProbeLock(const fs::path& lock, bool& fileFree, bool& mutexFree) {
+    fileFree = false;
+    mutexFree = false;
+#if defined(_WIN32)
+    HANDLE file = CreateFileW(lock.wstring().c_str(), GENERIC_READ | GENERIC_WRITE,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+        OVERLAPPED ov{};
+        fileFree = LockFileEx(file, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ov) != 0;
+        if (fileFree) UnlockFileEx(file, 0, 1, 0, &ov);
+        CloseHandle(file);
+    }
+    HANDLE mutex = CreateMutexA(nullptr, FALSE, MutexName(lock).c_str());
+    mutexFree = mutex && GetLastError() != ERROR_ALREADY_EXISTS;
+    if (mutex) CloseHandle(mutex);
+#else
+    const int fd = ::open(lock.c_str(), O_RDWR | O_CREAT, 0644);
+    if (fd >= 0) {
+        fileFree = ::flock(fd, LOCK_EX | LOCK_NB) == 0;
+        if (fileFree) ::flock(fd, LOCK_UN);
+        ::close(fd);
+    }
+    mutexFree = fileFree;
+#endif
+}
+
 static int ChildMain(int argc, char** argv) {
     if (argc < 5) return 2;
     const fs::path result = argv[2];
     const fs::path up = argv[3];
     const fs::path lock = argv[4];
     bool got = false;
-    const int fd = ::open(lock.c_str(), O_RDWR | O_CREAT, 0644);
-    if (fd >= 0) {
-        got = ::flock(fd, LOCK_EX | LOCK_NB) == 0;
-        if (got) ::flock(fd, LOCK_UN);
-        ::close(fd);
-    }
+    bool mutexFree = false;
+    ProbeLock(lock, got, mutexFree);
     std::error_code ec;
     const fs::path cwd = fs::current_path(ec);
     std::ofstream o(result, std::ios::binary | std::ios::trunc);
     o << "lock=" << (got ? "free" : "busy") << "\n";
+    o << "mutex=" << (mutexFree ? "free" : "busy") << "\n";
     o << "stays=" << (got ? "1" : "0") << "\n";
     o << "cwd=" << cwd.string() << "\n";
     o << "exe=" << okay::restart::Utf8(okay::restart::CurrentExecutable()) << "\n";
     o << "argc=" << argc << "\n";
     for (int i = 0; i < argc; ++i)
         o << "argv" << i << "=" << (argv[i] ? argv[i] : "") << "\n";
+#if defined(_WIN32)
+    int wargc = 0;
+    if (LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc)) {
+        o << "wargc=" << wargc << "\n";
+        for (int i = 0; i < wargc; ++i)
+            o << "warg" << i << "=" << okay::restart::Utf8(fs::path(wargv[i])) << "\n";
+        LocalFree(wargv);
+    }
+#endif
     o.flush();
     if (got) {
         std::ofstream mark(up, std::ios::binary | std::ios::app);
@@ -169,8 +271,8 @@ static int HolderMain(int argc, char** argv) {
     const fs::path cwd = argv[6];
     const fs::path log = argv[7];
     const fs::path lock = argv[8];
-    const int fd = ::open(lock.c_str(), O_RDWR | O_CREAT, 0644);
-    if (fd < 0 || ::flock(fd, LOCK_EX) != 0) {
+    HeldLock held;
+    if (!held.Acquire(lock)) {
         std::perror("holder lock");
         return 2;
     }
@@ -203,7 +305,40 @@ static int HolderMain(int argc, char** argv) {
     return 0;
 }
 
-static int SpawnAndWait(const std::vector<std::string>& args, int timeoutMs, int& status) {
+// Returns 0 when the process exits, 1 on timeout (process killed), -1 if it
+// could not be started. `exitCode` is the process exit code when the return is 0.
+static int SpawnAndWait(const std::vector<std::string>& args, int timeoutMs, int& exitCode) {
+    exitCode = -1;
+    if (args.empty()) return -1;
+#if defined(_WIN32)
+    std::wstring cmd;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (i) cmd.push_back(L' ');
+        cmd += okay::restart::QuoteWindowsArg(okay::restart::Utf8ToWide(args[i]));
+    }
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(L'\0');
+    const std::wstring exe = okay::restart::Utf8ToWide(args[0]);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(exe.c_str(), buf.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
+        return -1;
+    const DWORD w = WaitForSingleObject(pi.hProcess, (DWORD)timeoutMs);
+    if (w == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 5000);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return 1;
+    }
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    exitCode = (int)code;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return 0;
+#else
     const pid_t pid = ::fork();
     if (pid < 0) return -1;
     if (pid == 0) {
@@ -216,22 +351,90 @@ static int SpawnAndWait(const std::vector<std::string>& args, int timeoutMs, int
     }
     const int steps = timeoutMs / 50;
     for (int i = 0; i < steps; ++i) {
+        int status = 0;
         const pid_t r = ::waitpid(pid, &status, WNOHANG);
-        if (r == pid) return 0;
+        if (r == pid) {
+            exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+            return 0;
+        }
         if (r < 0 && errno != EINTR) return -1;
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     ::kill(pid, SIGKILL);
+    int status = 0;
     ::waitpid(pid, &status, 0);
     return 1;
+#endif
+}
+
+static unsigned long SpawnSleeper(const fs::path& self) {
+#if defined(_WIN32)
+    std::wstring cmd = okay::restart::QuoteWindowsArg(self.wstring()) + L" --restart-sleep";
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(L'\0');
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(self.wstring().c_str(), buf.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
+        return 0;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return pi.dwProcessId;
+#else
+    (void)self;
+    const pid_t pid = ::fork();
+    if (pid < 0) return 0;
+    if (pid == 0) { ::sleep(30); _exit(0); }
+    return static_cast<unsigned long>(pid);
+#endif
+}
+
+static void KillPid(unsigned long pid) {
+    if (pid == 0) return;
+#if defined(_WIN32)
+    HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, (DWORD)pid);
+    if (!h) return;
+    TerminateProcess(h, 1);
+    WaitForSingleObject(h, 5000);
+    CloseHandle(h);
+#else
+    ::kill(static_cast<pid_t>(pid), SIGKILL);
+    int status = 0;
+    ::waitpid(static_cast<pid_t>(pid), &status, 0);
+#endif
+}
+
+static bool HasArg(const std::string& body, const std::string& value) {
+    std::size_t start = 0;
+    while (start < body.size()) {
+        const auto end = body.find('\n', start);
+        const std::string line = body.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        const auto eq = line.find('=');
+        if (eq != std::string::npos) {
+            const std::string key = line.substr(0, eq);
+            if ((key.rfind("argv", 0) == 0 || key.rfind("warg", 0) == 0) && line.substr(eq + 1) == value)
+                return true;
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return false;
 }
 
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (argc > 1 && std::string(argv[1]) == "--restart-child") return ChildMain(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "--restart-holder") return HolderMain(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "--restart-sleep") {
+#if defined(_WIN32)
+        Sleep(30000);
+#else
+        ::sleep(30);
+#endif
+        return 0;
+    }
 
-    ::unsetenv(okay::restart::kFailAfterBackupEnv);
+    SetEnv(okay::restart::kFailAfterBackupEnv, nullptr);
     RUN_SUITE("app restart");
 
     CHECK(okay::restart::kWindowsModulePathCapacity > 260);
@@ -274,12 +477,12 @@ int main(int argc, char** argv) {
         const std::string amp = "C:\\Okay & Co\\okay_update.bat";
         CHECK(!okay::restart::LegacyCmdSlashC(okay::restart::LegacyInnerCmdRemainder(amp), true).preserved);
 
-        ::setenv("OKAY_RESTART_PCT", "EXPANDED", 1);
+        SetEnv("OKAY_RESTART_PCT", "EXPANDED");
         const std::string bat = "move /y \"C:\\Users\\%OKAY_RESTART_PCT%\\app.exe\" \"C:\\Users\\%OKAY_RESTART_PCT%\\app.exe\"";
         const std::string expanded = ExpandCmdPercent(bat);
         CHECK(expanded.find("%OKAY_RESTART_PCT%") == std::string::npos);
         CHECK(expanded.find("EXPANDED") != std::string::npos);
-        ::unsetenv("OKAY_RESTART_PCT");
+        SetEnv("OKAY_RESTART_PCT", nullptr);
     }
 
     // --- Request file keeps args, cwd, and non-ASCII paths. ---
@@ -312,7 +515,7 @@ int main(int argc, char** argv) {
     // --- Direct swap: failure restores, a too-small file is refused. ---
     {
         std::error_code ec;
-        const fs::path dir = fs::temp_directory_path(ec) / ("okay-restart-swap-" + std::to_string(::getpid()));
+        const fs::path dir = fs::temp_directory_path(ec) / ("okay-restart-swap-" + std::to_string(okay::restart::CurrentPid()));
         fs::remove_all(dir, ec);
         fs::create_directories(dir, ec);
         const fs::path dest = dir / "app";
@@ -329,9 +532,9 @@ int main(int argc, char** argv) {
         CHECK(ReadFile(decoy) == "scene-v1");
 
         WriteFile(staged, "NEW_VERSION\n");
-        ::setenv(okay::restart::kFailAfterBackupEnv, "1", 1);
+        SetEnv(okay::restart::kFailAfterBackupEnv, "1");
         sw = okay::restart::SwapFile(dest, staged, backup, 0, true);
-        ::unsetenv(okay::restart::kFailAfterBackupEnv);
+        SetEnv(okay::restart::kFailAfterBackupEnv, nullptr);
         CHECK(!sw.ok);
         CHECK(sw.error.find("restored") != std::string::npos);
         CHECK(ReadFile(dest) == "OLD_VERSION\n");
@@ -350,7 +553,7 @@ int main(int argc, char** argv) {
     // --- Launch failures and the wait timeout leave the old process and files recoverable. ---
     {
         std::error_code ec;
-        const fs::path dir = fs::temp_directory_path(ec) / ("okay-restart-fail-" + std::to_string(::getpid()));
+        const fs::path dir = fs::temp_directory_path(ec) / ("okay-restart-fail-" + std::to_string(okay::restart::CurrentPid()));
         fs::remove_all(dir, ec);
         fs::create_directories(dir / "decoy", ec);
         const fs::path dest = dir / "app";
@@ -401,14 +604,14 @@ int main(int argc, char** argv) {
         CHECK(ReadFile(log).find("launch failed") != std::string::npos);
         CHECK(!fs::exists(result, ec));
 
-        const pid_t sleeper = ::fork();
-        if (sleeper == 0) { ::sleep(30); _exit(0); }
-        CHECK(sleeper > 0);
-        if (sleeper > 0) {
+        const fs::path self = okay::restart::CurrentExecutable();
+        const unsigned long sleeper = SpawnSleeper(self);
+        CHECK(sleeper != 0);
+        if (sleeper != 0) {
             fs::remove(log, ec);
             Request wait = {};
-            wait.executable = okay::restart::CurrentExecutable();
-            wait.waitForPid = static_cast<unsigned long>(sleeper);
+            wait.executable = self;
+            wait.waitForPid = sleeper;
             wait.timeoutMs = 350;
             wait.logFile = log;
             wait.arguments = {"--restart-child", result.string(), (dir / "up.txt").string(), (dir / "lock").string()};
@@ -416,11 +619,9 @@ int main(int argc, char** argv) {
             const std::string waitLog = ReadFile(log);
             CHECK(waitLog.find("timed out") != std::string::npos);
             CHECK(waitLog.find("no files were changed") != std::string::npos);
-            CHECK(okay::restart::PidAlive(static_cast<unsigned long>(sleeper)));
+            CHECK(okay::restart::PidAlive(sleeper));
             CHECK(!fs::exists(result, ec));
-            ::kill(sleeper, SIGKILL);
-            int st = 0;
-            ::waitpid(sleeper, &st, 0);
+            KillPid(sleeper);
         }
         fs::remove_all(dir, ec);
     }
@@ -428,42 +629,48 @@ int main(int argc, char** argv) {
     // --- Old order: start the new process while this one holds the lock. It exits. ---
     {
         std::error_code ec;
-        const fs::path dir = fs::temp_directory_path(ec) / ("okay-restart-race-" + std::to_string(::getpid()));
+        const fs::path dir = fs::temp_directory_path(ec) / ("okay-restart-race-" + std::to_string(okay::restart::CurrentPid()));
         fs::remove_all(dir, ec);
         fs::create_directories(dir, ec);
         const fs::path lock = dir / "single.lock";
         const fs::path result = dir / "result.txt";
         const fs::path up = dir / "up.txt";
-        const int fd = ::open(lock.c_str(), O_RDWR | O_CREAT, 0644);
-        CHECK(fd >= 0);
-        CHECK(::flock(fd, LOCK_EX) == 0);
+        HeldLock held;
+        CHECK(held.Acquire(lock));
         const fs::path self = okay::restart::CurrentExecutable();
-        int status = 0;
+        int code = -1;
         const int wr = SpawnAndWait(
-            {self.string(), "--restart-child", result.string(), up.string(), lock.string(), "hello world", "\u0418\u043c\u0430\u043d"},
-            5000, status);
+            {okay::restart::Utf8(self), "--restart-child", okay::restart::Utf8(result), okay::restart::Utf8(up),
+             okay::restart::Utf8(lock), "hello world"},
+            5000, code);
         CHECK(wr == 0);
-        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        CHECK(code == 0);
         const std::string body = ReadFile(result);
         CHECK(Field(body, "lock") == "busy");
+        CHECK(Field(body, "mutex") == "busy");
         CHECK(Field(body, "stays") == "0");
         CHECK(!fs::exists(up, ec));
-        ::flock(fd, LOCK_UN);
-        ::close(fd);
+        held.Release();
         fs::remove_all(dir, ec);
     }
 
     // --- Helper waits, replaces, and the new process stays up exactly once. ---
     {
         std::error_code ec;
-        const fs::path root = fs::temp_directory_path(ec) / ("okay-restart-e2e-" + std::to_string(::getpid()));
+        const fs::path root = fs::temp_directory_path(ec) / ("okay-restart-e2e-" + std::to_string(okay::restart::CurrentPid()));
         fs::remove_all(root, ec);
-        const fs::path install = root / "Okay Space" / "\u0418\u043c\u0430\u043d";
+        // Spaces and parentheses: the old cmd.exe helper dropped this kind of path.
+        const fs::path install = root / "Program Files (x86)" / "Okay";
         const fs::path work = root / "work dir";
         fs::create_directories(install / "Projects" / "My Game" / "Assets", ec);
         fs::create_directories(work, ec);
+#if defined(_WIN32)
+        const fs::path target = install / "OkayApp.exe";
+        const fs::path source = install / "OkayApp.exe.new";
+#else
         const fs::path target = install / "OkayApp";
         const fs::path source = install / "OkayApp.new";
+#endif
         const fs::path decoy = install / "Projects" / "My Game" / "Assets" / "scene.okayscene";
         const fs::path settings = install / "launcher.cfg";
         const fs::path result = root / "result.txt";
@@ -480,17 +687,19 @@ int main(int argc, char** argv) {
                         fs::perms::group_read | fs::perms::others_read,
                         ec);
         const auto sourceBytes = fs::file_size(source, ec);
-        int status = 0;
+        const std::string openArg = "C:\\Program Files (x86)\\Okay\\My Game.okayscene";
+        int code = -1;
         const int wr = SpawnAndWait({
-            self.string(), "--restart-holder",
-            target.string(), source.string(), result.string(), up.string(),
-            work.string(), log.string(), lock.string(),
-            "hello world", "\u0418\u043c\u0430\u043d"
-        }, 15000, status);
-        if (wr != 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            okay::restart::Utf8(self), "--restart-holder",
+            okay::restart::Utf8(target), okay::restart::Utf8(source), okay::restart::Utf8(result),
+            okay::restart::Utf8(up), okay::restart::Utf8(work), okay::restart::Utf8(log),
+            okay::restart::Utf8(lock),
+            "--launcher", "42", "--open", openArg, "hello world"
+        }, 15000, code);
+        if (wr != 0 || code != 0)
             std::cerr << ReadFile(log) << "\n";
         CHECK(wr == 0);
-        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        CHECK(code == 0);
         bool saw = false;
         for (int i = 0; i < 50 && !saw; ++i) {
             saw = fs::exists(result, ec);
@@ -500,22 +709,31 @@ int main(int argc, char** argv) {
         CHECK(saw);
         const std::string body = ReadFile(result);
         CHECK(Field(body, "lock") == "free");
+        CHECK(Field(body, "mutex") == "free");
         CHECK(Field(body, "stays") == "1");
         CHECK(Canon(Field(body, "cwd")) == Canon(work));
         CHECK(Canon(Field(body, "exe")) == Canon(target));
-        CHECK(Field(body, "argc") == "7");
-        CHECK(Field(body, "argv5") == "hello world");
-        CHECK(Field(body, "argv6") == "\u0418\u043c\u0430\u043d");
+        CHECK(Field(body, "exe").find("Program Files (x86)") != std::string::npos);
+        CHECK(HasArg(body, "--launcher"));
+        CHECK(HasArg(body, "42"));
+        CHECK(HasArg(body, openArg));
+        CHECK(HasArg(body, "hello world"));
         CHECK(CountChar(ReadFile(up), '\n') == 1);
         CHECK(fs::file_size(target, ec) == sourceBytes);
         CHECK(!fs::exists(source, ec));
         const std::string installed = ReadFile(target);
+#if defined(_WIN32)
+        CHECK(installed.size() >= 2 && installed[0] == 'M' && installed[1] == 'Z');
+#else
         CHECK(installed.size() >= 4 && installed[0] == '\x7f' && installed[1] == 'E');
-        CHECK(ReadFile(target.string() + ".old") == "OLD_VERSION\n");
-        CHECK(ReadFile(decoy) == "scene-v1");
-        CHECK(ReadFile(settings) == "volume=1\n");
         const auto perms = fs::status(target, ec).permissions();
         CHECK((perms & fs::perms::owner_exec) != fs::perms::none);
+#endif
+        fs::path backup = target;
+        backup += ".old";
+        CHECK(ReadFile(backup) == "OLD_VERSION\n");
+        CHECK(ReadFile(decoy) == "scene-v1");
+        CHECK(ReadFile(settings) == "volume=1\n");
         const std::string trace = ReadFile(log);
         const auto w = trace.find("waiting for process");
         const auto e = trace.find("has exited");
@@ -530,8 +748,13 @@ int main(int argc, char** argv) {
         fs::remove_all(root, ec);
     }
 
+#if defined(_WIN32)
+    CHECK(okay::restart::RunAndWait({"cmd", "/c", "exit", "0"}) == 0);
+    CHECK(okay::restart::RunAndWait({"C:\\no\\such\\okay-restart-bin.exe"}) == -1);
+#else
     CHECK(okay::restart::RunAndWait({"/bin/true"}) == 0);
     CHECK(okay::restart::RunAndWait({"/no/such/okay-restart-bin"}) == -1);
+#endif
 
     std::cout << okaytest::g_checks << " checks, " << okaytest::g_failures << " failures\n";
     return okaytest::g_failures == 0 ? 0 : 1;

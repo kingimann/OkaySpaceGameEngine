@@ -1265,6 +1265,9 @@ target_compile_features(test_app_restart PRIVATE cxx_std_17)
 target_include_directories(test_app_restart PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(Threads REQUIRED)
 target_link_libraries(test_app_restart PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(test_app_restart PRIVATE shell32)
+endif()
 add_test(NAME app_restart COMMAND test_app_restart)
 
 # The launcher's official game (shared/OfficialGame.hpp): header-only, so no engine link.

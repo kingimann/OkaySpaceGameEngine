@@ -45306,12 +45306,12 @@ int main(int argc, char** argv) {
                         lod->levels[0].distance = 6.0f;
                         if (lod->levels.size() >= 3) lod->levels[1].distance = 14.0f;
                     }
-                    GameObject* far = ed.scene().CreateGameObject("LOD Far");
-                    far->transform->localPosition = {1.4f, 1.0f, -8};
-                    auto* mr2 = far->AddComponent<MeshRenderer>();
+                    GameObject* lodFar = ed.scene().CreateGameObject("LOD Far");
+                    lodFar->transform->localPosition = {1.4f, 1.0f, -8};
+                    auto* mr2 = lodFar->AddComponent<MeshRenderer>();
                     mr2->mesh = mr->mesh;
                     mr2->color = Color::White;
-                    auto* lod2 = far->AddComponent<LODGroup>();
+                    auto* lod2 = lodFar->AddComponent<LODGroup>();
                     lod2->levels = lod->levels;
                     lod2->lodMeshes = lod->lodMeshes;
                     lod2->debugTint = true;
@@ -45319,7 +45319,7 @@ int main(int argc, char** argv) {
                     lod2->useScreenSize = false;
                     g_gameStatsOverlay = true;
                     g_showStats = true;
-                    ed.Select(far);
+                    ed.Select(lodFar);
                     ImGui::SetWindowFocus("Stats");
                 }
                 if (const char* shot = std::getenv("OKAY_UI_SHOT")) {

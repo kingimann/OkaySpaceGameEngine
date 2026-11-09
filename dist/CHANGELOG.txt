@@ -1,6 +1,12 @@
 OkaySpace Game Engine — Changelog
 
 v2.854.0
+  Updater
+  - After an update, the editor and the launcher start again. The new process
+    waits until the old one has exited, so it is not turned away by the
+    single-instance lock, and it keeps the original arguments and folder,
+    including paths with spaces and parentheses. A failed install puts the
+    previous program back and writes okay_update.log (#584).
   Loop and time
   - Game.TogglePause now works while a cutscene or menu holds a pause: it
     flips the player's own pause hold, so the game stays paused when the
@@ -60,6 +66,9 @@ v2.854.0
   Docs
   - The docs index lists every page, and the properties page has the right
     counts (#593).
+  CI
+  - The Windows build retries the SDL2 and libsodium downloads and checks
+    that the archives actually arrived (#592).
 
 
 v2.853.0

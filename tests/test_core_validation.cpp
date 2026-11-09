@@ -1,6 +1,6 @@
 // Core wave 6, 1.17 Scene validation: the two validators (SceneSerializer::Validate / Scene::Validate, which work on
 // the scene text, and Testing/SceneValidator, which looks at the loaded scene) now agree and cover each other.
-//   - A damaged data pack is a load error in both, never a clean scene.
+//   - A damaged data pack is a load error that says so ("tampered or unreadable") in both.
 //   - Both decide "does this file exist" with SceneValidator::AssetExists: a built-in "proc:" texture is not a missing
 //     file, and the working directory is searched as well as the asset root.
 //   - The text validator also checks fonts and every component, and names the object that points at the file.
@@ -21,7 +21,8 @@ using namespace okay::testing;
 namespace fs = std::filesystem;
 
 static void PutFile(const std::string& path, const std::string& bytes) {
-    fs::create_directories(fs::path(path).parent_path());
+    const fs::path parent = fs::path(path).parent_path();
+    if (!parent.empty()) fs::create_directories(parent);
     std::ofstream o(path, std::ios::binary | std::ios::trunc);
     o << bytes;
 }
@@ -107,7 +108,7 @@ int main() {
         PutFile("stub.okayscene", packed.substr(0, 9));                          // cut inside the header
         for (const char* name : {"flipped.okayscene", "cut.okayscene", "stub.okayscene"}) {
             SceneValidationReport r = SceneSerializer::ValidateFile(name);
-            CHECK(!r.Ok());                                                      // it used to unpack to "" and validate as clean
+            CHECK(!r.Ok());                                                      // it used to unpack to "" and say "missing 'okayscene' header"
             CHECK(r.Count(SceneIssue::Kind::LoadError) == 1);
             CHECK(r.ToString().find("tampered or unreadable") != std::string::npos);
             ValidationReport sem = SceneValidator::ValidateFile(name);
@@ -156,7 +157,8 @@ int main() {
 
     // --- a parent cycle is a load error in both ---
     {
-        std::string cyc = "gameobject 1 \"A\"\n  active 1\n  parent 2\nend\ngameobject 2 \"B\"\n  active 1\n  parent 1\nend\n";
+        const std::string header = text.substr(0, text.find('\n') + 1);   // the "okayscene N" line
+        std::string cyc = header + "gameobject 1 \"A\"\n  active 1\n  parent 2\nend\ngameobject 2 \"B\"\n  active 1\n  parent 1\nend\n";
         SceneValidationReport r = SceneSerializer::Validate(cyc);
         CHECK(r.Count(SceneIssue::Kind::LoadError) == 1 && r.ToString().find("cycle") != std::string::npos);
         ValidationReport sem = SceneValidator::ValidateText(cyc);

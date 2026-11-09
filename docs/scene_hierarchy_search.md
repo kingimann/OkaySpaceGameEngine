@@ -128,7 +128,7 @@ validator where there is no scene. What they share:
   database) and is still checked first.
 - `ValidateSceneLinks(text)` is the one text pass behind both for duplicate guids and broken parent links.
 - A damaged data pack is a `LoadError` in `SceneSerializer::ValidateFile` ("tampered or unreadable"), as it is in
-  `SceneValidator::ValidateFile` (`scene.load`); it used to unpack to an empty text and validate as clean.
+  `SceneValidator::ValidateFile` (`scene.load`); it used to unpack to an empty text and report the misleading "missing 'okayscene' header".
 - A parent cycle is a load error in both (the loader refuses the file).
 
 ## What changed: scene graph audit (1.3)
@@ -294,7 +294,7 @@ for (const std::string& line : scene.Stats().Lines(3)) overlay.Add(line);   // "
 
 ## What changed: validators (core wave 6)
 
-See "Which validator?" above. Fixed: `proc:` textures reported as missing files; a damaged data pack validating as clean;
+See "Which validator?" above. Fixed: `proc:` textures reported as missing files; a damaged data pack reported as "missing 'okayscene' header";
 missing fonts and voxel terrain textures not reported by `Scene::Validate`; the two validators disagreeing on where a
 file may be. Added: `ValidatorOptions::checkLinks` with `scene.duplicate_guid` and `scene.broken_parent`, and
 `ValidateSceneLinks`. Tests: `core_validation`. Not done: the third list, `AssetDatabase::FindMissing` (33.2), is a

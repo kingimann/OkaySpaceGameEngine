@@ -9159,7 +9159,7 @@ SceneValidationReport SceneSerializer::ValidateFile(const std::string& path, con
     std::stringstream ss; ss << f.rdbuf();
     bool packOk = true; std::string packError;
     const std::string text = DataPack::Unpack(ss.str(), &packOk, &packError);
-    if (!packOk) {   // a damaged pack is not an empty scene: say so (it used to unpack to "" and validate as clean)
+    if (!packOk) {   // a damaged pack is not an empty scene: say so (it used to unpack to "" and report a missing header)
         SceneValidationReport r;
         r.issues.push_back(SceneIssue{SceneIssue::Kind::LoadError, "", "tampered or unreadable " + path + " (" + packError + ")"});
         return r;

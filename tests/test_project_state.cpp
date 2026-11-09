@@ -225,7 +225,7 @@ int main() {
         a.minWidth = 640; a.minHeight = 360; a.saveToUserDir = false;
         Put(a.splash, "Assets/Textures/splash.png");
         a.splashTime = 3.75f; a.splashBg[0] = 0.1f; a.splashBg[1] = 0.2f; a.splashBg[2] = 0.3f;
-        a.lockCursor = true; a.perPixelLighting = true; a.shadows = false;
+        a.lockCursor = true; a.cursorLockMode = 2; a.perPixelLighting = true; a.shadows = false;
         a.shadowDistance = 150.5f; a.shadowSoftness = 4.25f; a.shadowCascades = 4; a.shadowResolution = 4096;
         a.bloom = true; a.ssao = true; a.fxaa = false; a.antialias = 2; a.gpuRenderer = false; a.preferD3D12 = true;
         a.openFolderAfter = false; a.zipAfter = true; a.fullscreenToggle = false;
@@ -249,7 +249,7 @@ int main() {
             COVER(a, b, d, antiCheat); COVER(a, b, d, icon); COVER(a, b, d, bundleId); COVER(a, b, d, runInBackground);
             COVER(a, b, d, muteOnFocusLoss); COVER(a, b, d, startMaximized); COVER(a, b, d, minWidth); COVER(a, b, d, minHeight);
             COVER(a, b, d, saveToUserDir); COVER(a, b, d, splash); COVER(a, b, d, splashTime); COVER(a, b, d, splashBg);
-            COVER(a, b, d, lockCursor); COVER(a, b, d, perPixelLighting); COVER(a, b, d, shadows); COVER(a, b, d, shadowDistance);
+            COVER(a, b, d, lockCursor); COVER(a, b, d, cursorLockMode); COVER(a, b, d, perPixelLighting); COVER(a, b, d, shadows); COVER(a, b, d, shadowDistance);
             COVER(a, b, d, shadowSoftness); COVER(a, b, d, shadowCascades); COVER(a, b, d, shadowResolution);
             COVER(a, b, d, bloom); COVER(a, b, d, ssao); COVER(a, b, d, fxaa); COVER(a, b, d, antialias);
             COVER(a, b, d, gpuRenderer); COVER(a, b, d, preferD3D12); COVER(a, b, d, openFolderAfter); COVER(a, b, d, zipAfter);
@@ -258,12 +258,12 @@ int main() {
             COVER(a, b, d, srvTick); COVER(a, b, d, srvPassword); COVER(a, b, d, srvAuth); COVER(a, b, d, srvAdvertise);
             COVER(a, b, d, srvPublicAddr); COVER(a, b, d, srvRegion); COVER(a, b, d, srvMaxSpeed); COVER(a, b, d, srvRateLimit);
             COVER(a, b, d, srvKickAfter);
-            g_values += 61 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
+            g_values += 62 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
             const std::set<std::string> declared = DeclaredFields(header, "BuildSettings");
             CHECK(g_covered == declared);
             for (const auto& f : declared) if (!g_covered.count(f)) std::cerr << "    BuildSettings." << f << " has no line in this test\n";
             for (const auto& f : g_covered) if (!declared.count(f)) std::cerr << "    " << f << " is not a BuildSettings member\n";
-            CHECK(declared.size() == 61);
+            CHECK(declared.size() == 62);
             CHECK(WriteBuildProfiles(back) == text);                      // stable
         }
         {   // the profile's own members

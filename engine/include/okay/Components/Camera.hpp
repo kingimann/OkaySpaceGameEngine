@@ -4,6 +4,7 @@
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
+#include <string>
 
 namespace okay {
 
@@ -69,6 +70,10 @@ public:
     }
     /// Whether this camera should become the scene's main camera on Awake.
     bool main = true;
+    /// Optional name of this camera's picture. When set, the stack (and a
+    /// one-camera frame) keeps the colour buffer so UI or a script can read it
+    /// back with CameraTarget. Empty = composite only, nothing is retained.
+    std::string renderTarget;
 
     // ---- Framing & effects --------------------------------------------------
     // Applied inside ViewMatrix / ProjectionMatrix (and RenderPosition /
@@ -130,19 +135,38 @@ public:
     /// resolving physical-camera optics and the horizontal-axis option. Useful for UI.
     float VerticalFovDegrees(float aspect) const;
 
+    /// Where this camera draws, in pixels (origin top-left). A full-frame camera
+    /// (the default rect) is the whole screen, so existing projections are unchanged.
+    void ScreenRect(float screenW, float screenH, float& x, float& y, float& w, float& h) const {
+        const float rw = rectW < 0.01f ? 0.01f : (rectW > 1.0f ? 1.0f : rectW);
+        const float rh = rectH < 0.01f ? 0.01f : (rectH > 1.0f ? 1.0f : rectH);
+        const float rx = rectX < 0.0f ? 0.0f : (rectX > 1.0f - rw ? 1.0f - rw : rectX);
+        const float ry = rectY < 0.0f ? 0.0f : (rectY > 1.0f - rh ? 1.0f - rh : rectY);
+        w = rw * screenW; if (w < 1.0f) w = 1.0f;
+        h = rh * screenH; if (h < 1.0f) h = 1.0f;
+        x = rx * screenW;
+        y = (1.0f - ry - rh) * screenH;
+    }
+
     /// Project a world point to screen pixels (origin top-left, +Y down). Returns
     /// false when the point is behind the camera; on success *out is the pixel
     /// position and *outDepth (if given) is the clip-space w (view depth) for
     /// distance-based scaling. Uses the same view*projection the renderer draws
-    /// meshes with, so projected UI lines up with the 3D scene. Inline so UI code
-    /// (player + editor) can project world-space widgets without extra plumbing.
+    /// meshes with, so projected UI lines up with the 3D scene. The camera's
+    /// viewport rect is applied: a full-screen rect (0,0,1,1) matches the old
+    /// full-frame projection exactly. Inline so UI code (player + editor) can
+    /// project world-space widgets without extra plumbing.
     bool WorldToScreen(const Vec3& world, float screenW, float screenH,
                        Vec2& out, float* outDepth = nullptr) const {
-        float aspect = screenH > 0.0f ? screenW / screenH : 1.0f;
+        float rx, ry, rw, rh;
+        ScreenRect(screenW, screenH, rx, ry, rw, rh);
+        float aspect = rh > 0.0f ? rw / rh : 1.0f;
         Vec4 clip = (ProjectionMatrix(aspect) * ViewMatrix()) * Vec4{world.x, world.y, world.z, 1.0f};
         if (clip.w <= 1e-5f) return false;                 // behind / on the camera plane
         float ndcX = clip.x / clip.w, ndcY = clip.y / clip.w;
-        out = Vec2{(ndcX * 0.5f + 0.5f) * screenW, (1.0f - (ndcY * 0.5f + 0.5f)) * screenH};
+        const float lx = ndcX * 0.5f + 0.5f;
+        const float ly = 1.0f - (ndcY * 0.5f + 0.5f);
+        out = Vec2{rx + lx * rw, ry + ly * rh};
         if (outDepth) *outDepth = clip.w;
         return true;
     }

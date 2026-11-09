@@ -474,3 +474,10 @@ target_sources(okay_engine PRIVATE
     src/Scene/SceneDiff.cpp
     src/Scene/SceneMerge.cpp
     src/Scene/SceneMigration.cpp)
+
+# 1.1 Loop and time, second pass (docs/loop_and_time.md): frame recorder / player and the rolling
+# frame-time statistics GameLoop feeds. TickPacer.hpp is header-only.
+target_sources(okay_engine PRIVATE
+    src/Core/FrameRecord.cpp
+    src/Core/FrameStats.cpp
+)

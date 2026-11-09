@@ -8843,10 +8843,12 @@ std::string FirstToken(const std::string& line) {
 }
 
 // Records that describe the object's link to its prefab or its place in a
-// document, not its content: never overridden.
+// document, not its content: never overridden. `comporder` is derived from the components the object has and the
+// order they were added in, which a plain AddComponent now records (an instance that gained a component also
+// reads as having a different order); the component record is what differs, so this one is not listed twice.
 bool IsBookkeepingRecord(const std::string& tok) {
     return tok == "prefab" || tok == "override" || tok == "guid" || tok == "sibling" || tok == "parent" ||
-           tok == "srcscene" || tok == "locked" || tok.empty();
+           tok == "srcscene" || tok == "locked" || tok == "comporder" || tok.empty();
 }
 
 // A record's identity inside one object: its name plus which occurrence of it (so two

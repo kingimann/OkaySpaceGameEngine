@@ -14,6 +14,7 @@
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
+#include "VsCanvasTools.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cctype>
@@ -35,18 +36,19 @@ namespace okay::editor::vsed {
 enum VsCat { CAT_EVENT, CAT_FLOW, CAT_VAR, CAT_MATH, CAT_LOGIC, CAT_INPUT, CAT_XFORM, CAT_ACTION, CAT_DATA, CAT_NET, CAT_API, CAT_COUNT };
 
 inline ImU32 CatColor(int cat) {
+    // Calm, distinct header colours: readable at a glance, not neon.
     switch (cat) {
-        case CAT_EVENT:  return IM_COL32(120, 84, 84, 255);
-        case CAT_FLOW:   return IM_COL32(96, 96, 112, 255);
-        case CAT_VAR:    return IM_COL32(74, 102, 92, 255);
-        case CAT_MATH:   return IM_COL32(70, 92, 110, 255);
-        case CAT_LOGIC:  return IM_COL32(96, 86, 112, 255);
-        case CAT_INPUT:  return IM_COL32(104, 96, 72, 255);
-        case CAT_XFORM:  return IM_COL32(78, 104, 104, 255);
-        case CAT_ACTION: return IM_COL32(108, 88, 72, 255);
-        case CAT_NET:    return IM_COL32(72, 92, 120, 255);
-        case CAT_API:    return IM_COL32(92, 104, 76, 255);
-        default:         return IM_COL32(88, 88, 96, 255);
+        case CAT_EVENT:  return IM_COL32(158, 96, 102, 255);
+        case CAT_FLOW:   return IM_COL32(86, 112, 158, 255);
+        case CAT_VAR:    return IM_COL32(72, 138, 116, 255);
+        case CAT_MATH:   return IM_COL32(64, 132, 150, 255);
+        case CAT_LOGIC:  return IM_COL32(124, 104, 158, 255);
+        case CAT_INPUT:  return IM_COL32(168, 132, 78, 255);
+        case CAT_XFORM:  return IM_COL32(70, 146, 146, 255);
+        case CAT_ACTION: return IM_COL32(176, 114, 78, 255);
+        case CAT_NET:    return IM_COL32(84, 114, 170, 255);
+        case CAT_API:    return IM_COL32(122, 142, 88, 255);
+        default:         return IM_COL32(108, 114, 128, 255);
     }
 }
 
@@ -1833,7 +1835,11 @@ struct VsEditState {
     std::map<int, float> flash;
     bool   showMinimap = true;
     bool   liveValues = true;
-    bool   showOutline = true;   // the events list on the left (click to jump)
+    bool   showOutline = true;   // events, variables and parameters on the left
+    bool   showDetails = false;  // the selected node's description, on the right
+    bool   snapGrid = true;      // snap a moved node to the canvas grid on release
+    bool   wasNodeDrag = false;
+    bool   showHint = true;      // the one-line canvas hint
     int    focusNode = -1;       // centre the view on this node next frame
     bool   addAtCenter = false;  // "+ Add" in the toolbar: palette, node placed mid-view
     bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
@@ -2051,7 +2057,7 @@ inline bool VsCompatible(const VsDef& d, bool exec, bool fromOutput,
 // ---- The editor window -----------------------------------------------------
 // Returns nothing; manages its own state. `ed` is used for "Attach to selected".
 inline void Draw(EditorState& ed, bool* open) {
-    ImGui::SetNextWindowSize(ImVec2(980, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(1180, 760), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Visual Script", open)) { ImGui::End(); return; }
     // A floating window remembered tiny (or squashed to its toolbar) has no room
     // for the canvas: give it a usable size.
@@ -2115,12 +2121,17 @@ inline void Draw(EditorState& ed, bool* open) {
         Log("Attached visual script to " + o->name);
     };
     bool addComment = false;
-    if (ImGui::Button("File")) ImGui::OpenPopup("##vsfile");
+    bool openTpl = false;
+    int alignReq = 0;   // 1 left, 2 right, 3 top, 4 bottom
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 7.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
+    if (ImGui::Button("Graph")) ImGui::OpenPopup("##vsfile");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("New, open, save, undo, align, and the panels");
     if (ImGui::BeginPopup("##vsfile")) {
         if (ImGui::MenuItem("New graph")) { SeedStarterGraph(g); ResetEditState(st); st.frameAll = true; }
         if (ImGui::MenuItem("New empty graph")) { g.clear(); ResetEditState(st); }
         if (ImGui::BeginMenu("Open")) {
-            // Every graph in the project's Assets.
             namespace fs = std::filesystem;
             fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
             std::error_code ec; int shown = 0;
@@ -2138,34 +2149,60 @@ inline void Draw(EditorState& ed, bool* open) {
         GameObject* selObj = ed.selected();
         std::string attachLbl = selObj ? "Attach to " + selObj->name : std::string("Attach to selected object");
         if (ImGui::MenuItem(attachLbl.c_str(), nullptr, false, selObj != nullptr)) doAttach(selObj);
-        ImGui::EndPopup();
-    }
-    if (winFocused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) doSave();
-    ImGui::SameLine();
-    if (ImGui::Button("Edit")) ImGui::OpenPopup("##vsedit");
-    if (ImGui::BeginPopup("##vsedit")) {
+        ImGui::Separator();
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !st.undo.empty())) doUndo();
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !st.redo.empty())) doRedo();
-        ImGui::Separator();
         if (ImGui::MenuItem("Select all", "Ctrl+A")) { st.sel.clear(); for (const auto& n : g.nodes) st.sel.insert(n.id); }
         if (ImGui::MenuItem("Comment around selection", "C", false, !st.sel.empty())) addComment = true;
+        ImGui::MenuItem("Snap to grid", nullptr, &st.snapGrid);
+        if (ImGui::BeginMenu("Align selection", st.sel.size() >= 2)) {
+            if (ImGui::MenuItem("Left")) alignReq = 1;
+            if (ImGui::MenuItem("Right")) alignReq = 2;
+            if (ImGui::MenuItem("Top")) alignReq = 3;
+            if (ImGui::MenuItem("Bottom")) alignReq = 4;
+            ImGui::EndMenu();
+        }
+        if (TemplatePicker && ImGui::MenuItem("Templates...")) openTpl = true;
+        ImGui::Separator();
+        ImGui::MenuItem("Outline", nullptr, &st.showOutline);
+        ImGui::MenuItem("Node details", nullptr, &st.showDetails);
+        ImGui::MenuItem("Minimap", nullptr, &st.showMinimap);
+        ImGui::MenuItem("Live values while playing", nullptr, &st.liveValues);
+        ImGui::MenuItem("Show as OkayScript", nullptr, &st.showScript);
+        ImGui::MenuItem("Canvas hint", nullptr, &st.showHint);
+        ImGui::Separator();
+        ImGui::TextDisabled("Right-click or Space adds a node");
+        ImGui::TextDisabled("Scroll zooms. Home fits everything. F fits the selection.");
         ImGui::EndPopup();
     }
-    ImGui::SameLine();
-    if (ImGui::Button("+ Add")) st.addAtCenter = true;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a node or an action step (or right-click / Space on the graph)");
-    ImGui::SameLine();
+    if (openTpl) ImGui::OpenPopup("##vstemplates");
     if (TemplatePicker) {
-        if (ImGui::Button("Templates")) ImGui::OpenPopup("##vstemplates");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready-made behaviours (jump, follow, spawn timer...) added as nodes you can tweak");
         okay::ActionList tmp;
         if (TemplatePicker("##vstemplates", tmp)) {
             st.templateText = okay::vs::ActionListToGraph(tmp);
             st.pasteTemplate = true;
         }
-        ImGui::SameLine();
     }
-    ImGui::TextDisabled("%s%s", g.path.empty() ? "(unsaved)" : std::filesystem::path(g.path).filename().string().c_str(), g.dirty ? " *" : "");
+    if (winFocused && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) doSave();
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.40f, 0.34f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.50f, 0.42f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.34f, 0.28f, 1.0f));
+    if (ImGui::Button("Add node")) st.addAtCenter = true;
+    ImGui::PopStyleColor(3);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a node in the middle of the view.\nRight-click the canvas, or press Space, to add one where you click.");
+    ImGui::SameLine();
+    if (ImGui::Button("Save")) doSave();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save this graph (Ctrl+S)");
+    ImGui::SameLine();
+    {
+        const std::string nm = g.path.empty() ? std::string("Untitled graph")
+                                              : std::filesystem::path(g.path).filename().string();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(nm.c_str());
+        if (g.dirty) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.93f, 0.78f, 0.45f, 1.0f), "Unsaved"); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g.path.empty() ? "Not saved yet. Save puts it in Assets." : g.path.c_str());
+    }
     // The graph checker: re-run whenever the graph changes (wires that can't
     // work, nodes nothing runs, unset variables, bad key names, missing prefabs).
     {
@@ -2175,48 +2212,60 @@ inline void Draw(EditorState& ed, bool* open) {
             st.checkedText = std::move(now);
         }
     }
-    // Right side: problems, Fit, zoom readout (click = 100%), View.
+    // Right side of the one toolbar: problems, fit, zoom, the two panels.
     {
         int nErr = 0, nWarn = 0;
         for (const auto& is : st.issues) (is.severity == 0 ? nErr : nWarn)++;
-        const float rightW = 360.0f;
+        const float rightW = 520.0f;
         const float avail = ImGui::GetWindowContentRegionMax().x;
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 12.0f, avail - rightW));
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, avail - rightW));
         {
             char lbl[64];
-            if (nErr + nWarn == 0) std::snprintf(lbl, sizeof lbl, "\xE2\x9C\x93 No problems##vsissues");
-            else std::snprintf(lbl, sizeof lbl, "\xE2\x9A\xA0 %d problem%s##vsissues", nErr + nWarn, nErr + nWarn == 1 ? "" : "s");
-            const ImVec4 tc = nErr ? ImVec4(1.0f, 0.45f, 0.40f, 1) : nWarn ? ImVec4(0.95f, 0.75f, 0.35f, 1) : ImVec4(0.55f, 0.85f, 0.6f, 1);
+            if (nErr + nWarn == 0) std::snprintf(lbl, sizeof lbl, "No problems##vsissues");
+            else std::snprintf(lbl, sizeof lbl, "%d problem%s##vsissues", nErr + nWarn, nErr + nWarn == 1 ? "" : "s");
+            const ImVec4 tc = nErr ? ImVec4(1.0f, 0.55f, 0.48f, 1) : nWarn ? ImVec4(0.95f, 0.78f, 0.42f, 1) : ImVec4(0.62f, 0.82f, 0.68f, 1);
             ImGui::PushStyleColor(ImGuiCol_Text, tc);
             if (ImGui::Button(lbl) && nErr + nWarn > 0) st.showIssues = !st.showIssues;
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(nErr + nWarn == 0 ? "The graph checker found nothing wrong." :
-                                  "%d error(s), %d warning(s). Click to list them; click one to jump to its node.", nErr, nWarn);
+                                  "%d error(s), %d warning(s). Click to list them. Click a row to jump to its node.", nErr, nWarn);
             ImGui::SameLine();
         }
         if (ImGui::Button("Fit")) st.frameAll = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every node (Home). F frames the selection.");
         ImGui::SameLine();
+        if (ImGui::Button("-##vszoomout")) st.zoom = std::clamp(st.zoom / 1.12f, 0.28f, 2.2f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out");
+        ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::Text("%d%%", (int)std::lround(st.zoom * 100.0f));
         if (ImGui::IsItemClicked()) st.zoom = 1.0f;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse wheel zooms. Click for 100%%.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scroll to zoom. Click for 100%%.");
         ImGui::SameLine();
-        if (ImGui::Button("View")) ImGui::OpenPopup("##vsview");
-        if (ImGui::BeginPopup("##vsview")) {
-            ImGui::MenuItem("Events list", nullptr, &st.showOutline);
-            ImGui::MenuItem("Minimap", nullptr, &st.showMinimap);
-            ImGui::MenuItem("Live values while playing", nullptr, &st.liveValues);
-            ImGui::MenuItem("Show as OkayScript", nullptr, &st.showScript);
-            ImGui::Separator();
-            ImGui::TextDisabled("Shortcuts");
-            ImGui::TextDisabled("  Right-click / Space: add      Drag a wire into space: add + connect");
-            ImGui::TextDisabled("  Drag empty space: box select   Right- or middle-drag: pan   Wheel: zoom");
-            ImGui::TextDisabled("  Home: show all   F: frame selection   Ctrl+C/V/D: copy/paste/duplicate");
-            ImGui::TextDisabled("  Del: delete   Ctrl+Z/Y: undo/redo   C: comment   Alt+click a pin: unwire");
-            ImGui::EndPopup();
+        if (ImGui::Button("+##vszoomin")) st.zoom = std::clamp(st.zoom * 1.12f, 0.28f, 2.2f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
+        ImGui::SameLine();
+        if (ImGui::Button(st.showOutline ? "Outline" : "Outline##off")) st.showOutline = !st.showOutline;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Events, variables and parameters");
+        ImGui::SameLine();
+        if (ImGui::Button(st.showDetails ? "Details" : "Details##off")) st.showDetails = !st.showDetails;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("What the selected node does");
+    }
+    ImGui::PopStyleVar(3);
+    if (alignReq && st.sel.size() >= 2) {
+        std::vector<float> xs, ys, ws, hs;
+        std::vector<int> ids;
+        for (auto& n : g.nodes) if (st.sel.count(n.id)) {
+            ids.push_back(n.id); xs.push_back(n.x); ys.push_back(n.y);
+            ws.push_back(210.0f); hs.push_back(130.0f);
         }
+        const VsAlign how = alignReq == 1 ? VsAlign::Left : alignReq == 2 ? VsAlign::Right
+                          : alignReq == 3 ? VsAlign::Top : VsAlign::Bottom;
+        VsAlignNodes(xs, ys, ws, hs, how);
+        for (std::size_t i = 0; i < ids.size(); ++i)
+            if (VsEditNode* n = g.find(ids[i])) { n->x = xs[i]; n->y = ys[i]; }
+        g.dirty = true;
     }
     // ---- Debugger: breakpoints, and the bar while the game is frozen at one --------
     VsDebugView& dv = DebugView();
@@ -2244,7 +2293,8 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::IsKeyPressed(ImGuiKey_F11, false)) debugGo(io.KeyShift ? S::Out : S::Into);
         if (dv.focusPending && dv.key == g.path) { st.focusNode = dv.node; st.sel = {dv.node}; dv.focusPending = false; }
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.30f, 0.24f, 0.08f, 1.0f));
-        ImGui::BeginChild("vsdbgbar", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + 10.0f), true, ImGuiWindowFlags_NoScrollbar);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 6.0f));
+        ImGui::BeginChild("vsdbgbar", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + 18.0f), true, ImGuiWindowFlags_NoScrollbar);
         const VsDef* sd = FindDef(dv.nodeType);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.30f, 1.0f), "Paused");
@@ -2275,6 +2325,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::SmallButton("Stop Play")) { ed.Stop(); Log("Stop"); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop the game (the paused frame finishes first, without stopping again).");
         ImGui::EndChild();
+        ImGui::PopStyleVar();
         ImGui::PopStyleColor();
     }
     // Lightweight validation + live status.
@@ -2316,8 +2367,10 @@ inline void Draw(EditorState& ed, bool* open) {
 
     // ---- Events list: every event chain in the graph; click one to jump to it ----
     if (st.showOutline) {
-        ImGui::BeginChild("vsoutline", ImVec2(176, 0), true);
-        ImGui::TextDisabled("EVENTS");
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
+        ImGui::BeginChild("vsoutline", ImVec2(268, 0), true);
+        ImGui::TextUnformatted("Events");
         ImGui::Separator();
         int shown = 0;
         for (const auto& n : g.nodes) {
@@ -2330,23 +2383,23 @@ inline void Draw(EditorState& ed, bool* open) {
             for (int cur = VsExecTarget(g, n.id, 0); cur >= 0 && steps < 99; cur = VsExecTarget(g, cur, 0)) ++steps;
             ImGui::PushID(n.id);
             const bool on = st.sel.count(n.id) > 0;
-            if (ImGui::Selectable(lbl.c_str(), on)) { st.sel = {n.id}; st.selected = n.id; st.focusNode = n.id; }
+            if (ImGui::Selectable(lbl.c_str(), on, 0, ImVec2(0, 30))) { st.sel = {n.id}; st.selected = n.id; st.focusNode = n.id; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%d step(s) after it. Click to jump there.", steps);
             ImGui::PopID();
             ++shown;
         }
-        if (!shown) ImGui::TextWrapped("No events yet. Add one with + Add > Events (On Start, On Key...).");
+        if (!shown) ImGui::TextWrapped("No events yet. Use Add node and pick an event such as On Start.");
         // The graph's functions (Function nodes), each with how often it's called.
         bool fnHeader = false;
         for (const auto& n : g.nodes) {
             if (n.type != "FunctionStart") continue;
-            if (!fnHeader) { ImGui::Spacing(); ImGui::TextDisabled("FUNCTIONS"); ImGui::Separator(); fnHeader = true; }
+            if (!fnHeader) { ImGui::Spacing(); ImGui::TextUnformatted("Functions"); ImGui::Separator(); fnHeader = true; }
             const std::string nm = okay::vs::FunctionNameOf(n.arg);
             int calls = 0;
             for (const auto& m : g.nodes) if (m.type == "CallFunction" && okay::vs::FunctionNameOf(m.arg) == nm) ++calls;
             ImGui::PushID(n.id);
             std::string lbl = "\xC6\x92 " + (nm.empty() ? std::string("(unnamed)") : nm);
-            if (ImGui::Selectable(lbl.c_str(), st.sel.count(n.id) > 0)) { st.sel = {n.id}; st.selected = n.id; st.focusNode = n.id; }
+            if (ImGui::Selectable(lbl.c_str(), st.sel.count(n.id) > 0, 0, ImVec2(0, 30))) { st.sel = {n.id}; st.selected = n.id; st.focusNode = n.id; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nCalled from %d place(s). Click to jump there.", n.arg.c_str(), calls);
             ImGui::PopID();
         }
@@ -2357,7 +2410,7 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& bp : dbg.Breakpoints()) {
                 if (bp.first != g.path) continue;
                 const VsEditNode* bn = g.find(bp.second);
-                if (!bpHeader) { ImGui::Spacing(); ImGui::TextDisabled("BREAKPOINTS"); ImGui::Separator(); bpHeader = true; }
+                if (!bpHeader) { ImGui::Spacing(); ImGui::TextUnformatted("Breakpoints"); ImGui::Separator(); bpHeader = true; }
                 const VsDef* bd = bn ? FindDef(bn->type) : nullptr;
                 std::string lbl = "\xE2\x97\x8F " + std::string(bd ? bd->title : bn ? bn->type.c_str() : "(deleted node)") +
                                   " #" + std::to_string(bp.second);
@@ -2374,15 +2427,58 @@ inline void Draw(EditorState& ed, bool* open) {
                 for (int id : ids) dbg.SetBreakpoint(g.path, id, false);
             }
         }
+        // Variables and function parameters named in this graph. Click a row to
+        // jump to the node that declares or first uses it.
+        {
+            std::vector<VsVarNode> refs;
+            refs.reserve(g.nodes.size());
+            for (const auto& n : g.nodes) refs.push_back({n.type, n.arg, n.id});
+            const std::vector<VsVarRef> vars = VsCollectVariables(refs);
+            const std::vector<VsParamRef> params = VsCollectParameters(refs);
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Variables");
+            ImGui::Separator();
+            if (vars.empty()) ImGui::TextWrapped("Names you type on Get Var, Set Var, scene and global variable nodes show up here.");
+            VsVarScope last = VsVarScope::Object;
+            bool anyScope = false;
+            for (const auto& v : vars) {
+                if (!anyScope || v.scope != last) {
+                    ImGui::TextDisabled("%s", VsVarScopeName(v.scope));
+                    last = v.scope; anyScope = true;
+                }
+                ImGui::PushID(v.nodeId + 500000 + (int)v.scope);
+                if (ImGui::Selectable(v.name.c_str(), st.sel.count(v.nodeId) > 0, 0, ImVec2(0, 28))) {
+                    st.sel = {v.nodeId}; st.selected = v.nodeId; st.focusNode = v.nodeId;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to jump to this variable's node.");
+                ImGui::PopID();
+            }
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Parameters");
+            ImGui::Separator();
+            if (params.empty()) ImGui::TextWrapped("A Function node's signature lists its parameters here.");
+            for (const auto& p : params) {
+                std::string row = p.function;
+                if (!p.name.empty()) row += "  " + p.name + (p.type.empty() ? "" : " : " + p.type);
+                else row += "  (no parameters)";
+                ImGui::PushID(p.nodeId + 800000);
+                if (ImGui::Selectable(row.c_str(), st.sel.count(p.nodeId) > 0, 0, ImVec2(0, 28))) {
+                    st.sel = {p.nodeId}; st.selected = p.nodeId; st.focusNode = p.nodeId;
+                }
+                ImGui::PopID();
+            }
+        }
         ImGui::EndChild();
+        ImGui::PopStyleVar(2);
         ImGui::SameLine();
     }
 
     // Canvas (leaves room on the right for the OkayScript preview when open).
-    const float scriptPanelW = 380.0f;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.105f, 0.105f, 0.112f, 1.0f));
-    const float watchW = 300.0f;   // the debugger's watch panel replaces the preview while paused
-    const float rightW = dv.stopped ? watchW : st.showScript ? scriptPanelW : 0.0f;
+    const float scriptPanelW = 420.0f;
+    const float detailsW = 340.0f;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.102f, 0.110f, 0.135f, 1.0f));
+    const float watchW = 340.0f;   // the debugger's watch panel replaces the preview while paused
+    const float rightW = dv.stopped ? watchW : st.showScript ? scriptPanelW : st.showDetails ? detailsW : 0.0f;
     ImGui::BeginChild("vscanvas", ImVec2(rightW > 0.0f ? -rightW : 0.0f, 0), true,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -2418,7 +2514,7 @@ inline void Draw(EditorState& ed, bool* open) {
     if (canvasWindowHovered && io.MouseWheel != 0.0f && !ImGui::IsAnyItemActive() &&
         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
         float wx = (mouse.x - canvasMin.x - st.pan.x) / z, wy = (mouse.y - canvasMin.y - st.pan.y) / z;
-        z = std::clamp(z * (io.MouseWheel > 0 ? 1.12f : 1.0f / 1.12f), 0.4f, 2.0f);
+        z = std::clamp(z * (io.MouseWheel > 0 ? 1.12f : 1.0f / 1.12f), 0.28f, 2.2f);
         st.pan = ImVec2(mouse.x - canvasMin.x - wx * z, mouse.y - canvasMin.y - wy * z);
     }
     if (winFocused && !typing && ImGui::IsKeyPressed(ImGuiKey_Home, false)) st.frameAll = true;
@@ -2441,10 +2537,10 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& n : g.nodes) {   // rough node extents in world units
                 if (onlySel && !st.sel.count(n.id)) continue;
                 x0 = std::min(x0, n.x * kLayout); y0 = std::min(y0, n.y * kLayout);
-                x1 = std::max(x1, n.x * kLayout + 260.0f); y1 = std::max(y1, n.y * kLayout + 170.0f);
+                x1 = std::max(x1, n.x * kLayout + 340.0f); y1 = std::max(y1, n.y * kLayout + 240.0f);
             }
             float cw = canvasMax.x - canvasMin.x - 60.0f, chh = canvasMax.y - canvasMin.y - 60.0f;
-            z = std::clamp(std::min(cw / std::max(1.0f, x1 - x0), chh / std::max(1.0f, y1 - y0)), 0.4f, 1.25f);
+            z = std::clamp(std::min(cw / std::max(1.0f, x1 - x0), chh / std::max(1.0f, y1 - y0)), 0.28f, 1.0f);
             st.pan = ImVec2((canvasMax.x - canvasMin.x) * 0.5f - (x0 + x1) * 0.5f * z,
                             (canvasMax.y - canvasMin.y) * 0.5f - (y0 + y1) * 0.5f * z);
         }
@@ -2455,8 +2551,8 @@ inline void Draw(EditorState& ed, bool* open) {
     const float fs = ImGui::GetFontSize();
 
     // Grid: minor lines + a major line every 4 cells.
-    const float grid = 28.0f * z;
-    const ImU32 gridMinor = IM_COL32(255, 255, 255, 9), gridMajor = IM_COL32(255, 255, 255, 22);
+    const float grid = 32.0f * z;
+    const ImU32 gridMinor = IM_COL32(255, 255, 255, 12), gridMajor = IM_COL32(180, 196, 220, 28);
     {
         int i = (int)std::floor(-st.pan.x / grid);
         for (float x = std::fmod(st.pan.x, grid); x < canvasMax.x - canvasMin.x; x += grid, ++i)
@@ -2483,9 +2579,9 @@ inline void Draw(EditorState& ed, bool* open) {
     };
 
     // Roomy layout (world units, scaled by the zoom).
-    const float NODE_W_BASE = 220.0f * z, HEADER_H = 32.0f * z, ROW_H = 28.0f * z, PIN_R = 6.5f * z;
-    const float BOX_W = 110.0f * z;   // inline value box on an unconnected data input
-    const float PAD = 12.0f * z, ROUND = 8.0f * z;
+    const float NODE_W_BASE = 292.0f * z, HEADER_H = 46.0f * z, ROW_H = 40.0f * z, PIN_R = 9.0f * z;
+    const float BOX_W = 136.0f * z;   // inline value box on an unconnected data input
+    const float PAD = 16.0f * z, ROUND = 12.0f * z;
     auto inputLinked = [&](int node, int pin) {
         for (const auto& l : g.dataLinks) if (l.consumer == node && l.inPin == pin) return true;
         return false;
@@ -2576,9 +2672,9 @@ inline void Draw(EditorState& ed, bool* open) {
             float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
             for (const auto& n : g.nodes) if (st.sel.count(n.id)) {
                 x0 = std::min(x0, n.x); y0 = std::min(y0, n.y);
-                x1 = std::max(x1, n.x + 175.0f); y1 = std::max(y1, n.y + 95.0f);
+                x1 = std::max(x1, n.x + 230.0f); y1 = std::max(y1, n.y + 140.0f);
             }
-            c.x = x0 - 18.0f; c.y = y0 - 34.0f; c.w = (x1 - x0) + 36.0f; c.h = (y1 - y0) + 52.0f;
+            c.x = x0 - 24.0f; c.y = y0 - 42.0f; c.w = (x1 - x0) + 48.0f; c.h = (y1 - y0) + 64.0f;
         } else {
             ImVec2 w = S2W(ImVec2((canvasMin.x + canvasMax.x) * 0.5f, (canvasMin.y + canvasMax.y) * 0.5f));
             c.x = w.x - 110.0f; c.y = w.y - 70.0f; c.w = 220.0f; c.h = 140.0f;
@@ -2612,8 +2708,15 @@ inline void Draw(EditorState& ed, bool* open) {
         int leftRows  = (d->execIn ? 1 : 0) + (int)d->dataIn.size();
         int rightRows = (int)d->execOut.size() + (int)d->dataOut.size();
         int rows = std::max(leftRows, rightRows);
-        float bodyH = rows * ROW_H + (d->param ? ROW_H + 8.0f * z : 0) + PAD;
-        float h = HEADER_H + bodyH;
+        std::string inlineMsg;
+        bool inlineErr = false;
+        for (const auto& is : st.issues) if (is.node == n.id) {
+            if (is.severity == 0) { inlineMsg = is.message; inlineErr = true; break; }
+            if (inlineMsg.empty()) inlineMsg = is.message;
+        }
+        const float msgH = inlineMsg.empty() ? 0.0f : ROW_H * 1.35f;
+        float bodyH = rows * ROW_H + (d->param ? ROW_H + 10.0f * z : 0) + PAD;
+        float h = HEADER_H + bodyH + msgH;
         // Wider when it has data inputs: their value boxes sit between the input
         // labels and the output labels.
         float inLabelW = 0.0f, outLabelW = 0.0f;
@@ -2666,7 +2769,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (errNode)
             dl->AddRect(ImVec2(p0.x - 5 * z, p0.y - 5 * z), ImVec2(p1.x + 5 * z, p1.y + 5 * z),
                         IM_COL32(255, 90, 80, 255), ROUND + 5 * z, 0, 3.0f * z);
-        dl->AddRectFilled(p0, p1, IM_COL32(38, 39, 44, 245), ROUND);
+        dl->AddRectFilled(p0, p1, IM_COL32(30, 33, 42, 248), ROUND);
         ImU32 hc = CatColor(d->cat);
         dl->AddRectFilled(p0, ImVec2(p1.x, p0.y + HEADER_H), hc, ROUND, ImDrawFlags_RoundCornersTop);
         dl->AddLine(ImVec2(p0.x, p0.y + HEADER_H), ImVec2(p1.x, p0.y + HEADER_H), IM_COL32(0, 0, 0, 120), 1.0f);
@@ -2929,7 +3032,7 @@ inline void Draw(EditorState& ed, bool* open) {
         auto pinButton = [&](long long key, int kind, int side, int idx) {
             auto it = pinPos.find(key); if (it == pinPos.end()) return;
             ImVec2 pp = it->second;
-            const float hit = std::max(18.0f, 22.0f * z);
+            const float hit = std::max(26.0f, 32.0f * z);
             ImGui::SetCursorScreenPos(ImVec2(pp.x - hit * 0.5f, pp.y - hit * 0.5f));
             char id[24]; std::snprintf(id, sizeof(id), "p%d%d%d", kind, side, idx);
             ImGui::InvisibleButton(id, ImVec2(hit, hit));
@@ -2950,6 +3053,18 @@ inline void Draw(EditorState& ed, bool* open) {
         for (int i = 0; i < (int)d->execOut.size(); ++i) pinButton(pk(n.id, 0, 1, i), 0, 1, i);
         for (int i = 0; i < (int)d->dataOut.size(); ++i) pinButton(pk(n.id, 1, 1, i), 1, 1, i);
 
+        if (!inlineMsg.empty()) {
+            const float my = p1.y - msgH;
+            const ImU32 band = inlineErr ? IM_COL32(120, 48, 46, 230) : IM_COL32(120, 96, 40, 220);
+            dl->AddRectFilled(ImVec2(p0.x + 2.0f * z, my), ImVec2(p1.x - 2.0f * z, p1.y - 2.0f * z), band, ROUND, ImDrawFlags_RoundCornersBottom);
+            std::string shown = inlineMsg;
+            const float maxW = NODE_W - PAD * 2.0f;
+            while (shown.size() > 4 && ImGui::CalcTextSize(shown.c_str()).x > maxW) shown.pop_back();
+            if (shown.size() < inlineMsg.size()) shown += "...";
+            text(ImVec2(p0.x + PAD, my + (msgH - fs) * 0.5f), IM_COL32(255, 236, 228, 255), shown.c_str());
+            if (ImGui::IsMouseHoveringRect(ImVec2(p0.x, my), p1)) ImGui::SetTooltip("%s", inlineMsg.c_str());
+        }
+
         ImGui::PopID();
     }
     // Move the dragged node and every other selected node with it.
@@ -2960,6 +3075,15 @@ inline void Draw(EditorState& ed, bool* open) {
             g.dirty = true;
         }
     }
+    if (st.wasNodeDrag && !startNodeDrag && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && st.snapGrid) {
+        bool moved = false;
+        for (auto& n : g.nodes) if (st.sel.count(n.id)) {
+            const float x = VsSnap(n.x, 20.0f), y = VsSnap(n.y, 20.0f);
+            if (x != n.x || y != n.y) { n.x = x; n.y = y; moved = true; }
+        }
+        if (moved) g.dirty = true;
+    }
+    st.wasNodeDrag = startNodeDrag;
     if (pendingDup >= 0 || (winFocused && !typing && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && !st.sel.empty())) {
         std::set<int> src = st.sel;
         if (src.empty() && pendingDup >= 0) src.insert(pendingDup);
@@ -3105,7 +3229,7 @@ inline void Draw(EditorState& ed, bool* open) {
 
     // ---- Minimap (bottom-right): the whole graph + the visible area; click to jump --
     if (st.showMinimap && !g.nodes.empty()) {
-        const ImVec2 mmSize(190.0f, 120.0f);
+        const ImVec2 mmSize(220.0f, 148.0f);
         const ImVec2 mmMax(canvasMax.x - 10.0f, canvasMax.y - 10.0f), mmMin(mmMax.x - mmSize.x, mmMax.y - mmSize.y);
         float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
         for (const auto& n : g.nodes) {
@@ -3118,8 +3242,8 @@ inline void Draw(EditorState& ed, bool* open) {
         x1 = std::max(x1, v1.x * kLayout); y1 = std::max(y1, v1.y * kLayout);
         float sc = std::min((mmSize.x - 8.0f) / std::max(1.0f, x1 - x0), (mmSize.y - 8.0f) / std::max(1.0f, y1 - y0));
         auto M = [&](float wx, float wy) { return ImVec2(mmMin.x + 4.0f + (wx - x0) * sc, mmMin.y + 4.0f + (wy - y0) * sc); };
-        dl->AddRectFilled(mmMin, mmMax, IM_COL32(18, 18, 22, 220), 6.0f);
-        dl->AddRect(mmMin, mmMax, IM_COL32(90, 92, 104, 200), 6.0f);
+        dl->AddRectFilled(mmMin, mmMax, IM_COL32(22, 26, 34, 230), 10.0f);
+        dl->AddRect(mmMin, mmMax, IM_COL32(120, 136, 160, 180), 10.0f, 0, 1.5f);
         for (const auto& n : g.nodes) {
             const VsDef* d = FindDef(n.type);
             ImVec2 a = M(n.x * kLayout, n.y * kLayout), b = M(n.x * kLayout + 220.0f, n.y * kLayout + 110.0f);
@@ -3179,8 +3303,11 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
-    ImGui::SetNextWindowSize(ImVec2(640, 470), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(820, 620), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 8.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 12.0f));
         static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API"};
         okay::vs::PinType dragged = okay::vs::PinType::Any;
         if (st.linkPending && !st.linkExec)
@@ -3310,7 +3437,7 @@ inline void Draw(EditorState& ed, bool* open) {
         };
 
         // ---- Sidebar ----
-        ImGui::BeginChild("##vspside", ImVec2(150, -86), ImGuiChildFlags_Borders);
+        ImGui::BeginChild("##vspside", ImVec2(196, -110), ImGuiChildFlags_Borders);
         auto sideItem = [&](int id, const char* label, ImU32 dot, int count) {
             ImGui::PushID(id + 10);
             const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -3371,7 +3498,7 @@ inline void Draw(EditorState& ed, bool* open) {
 
         const Entry* hovered = nullptr;
         const Entry* toAdd = nullptr;
-        ImGui::BeginChild("##vspres", ImVec2(0, -86), ImGuiChildFlags_Borders);
+        ImGui::BeginChild("##vspres", ImVec2(0, -110), ImGuiChildFlags_Borders);
         if (rows.empty()) {
             ImGui::TextDisabled(s_side == -1 ? "No favourites yet: click the star on a node to add one."
                               : s_side == -2 ? "Nodes you add show up here."
@@ -3390,12 +3517,12 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::PushID(i);
             const ImVec2 p = ImGui::GetCursorScreenPos();
             const bool kbSel = i == s_kb;
-            if (ImGui::Selectable("##row", kbSel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, lh + 4))) toAdd = &e;
+            if (ImGui::Selectable("##row", kbSel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, lh + 14))) toAdd = &e;
             if (ImGui::IsItemHovered()) { hovered = &e; }
             if (kbSel && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow))) ImGui::SetScrollHereY(0.5f);
             ImDrawList* rdl = ImGui::GetWindowDrawList();
             const float w = ImGui::GetContentRegionAvail().x;
-            rdl->AddCircleFilled(ImVec2(p.x + 7, p.y + (lh + 4) * 0.5f), 4.0f, e.col);
+            rdl->AddCircleFilled(ImVec2(p.x + 8, p.y + (lh + 14) * 0.5f), 5.0f, e.col);
             // Title, matched letters in the accent colour.
             float x = p.x + 18;
             const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = IM_COL32(110, 180, 255, 255);
@@ -3412,7 +3539,7 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SameLine(w - 18);
             const bool fav = isFav(e.key);
             const ImVec2 sp = ImGui::GetCursorScreenPos();
-            if (ImGui::InvisibleButton("##fav", ImVec2(18, lh + 4))) {
+            if (ImGui::InvisibleButton("##fav", ImVec2(22, lh + 14))) {
                 if (fav) s_fav.erase(std::remove(s_fav.begin(), s_fav.end(), e.key), s_fav.end());
                 else s_fav.push_back(e.key);
                 saveLists();
@@ -3420,7 +3547,7 @@ inline void Draw(EditorState& ed, bool* open) {
             const bool sh = ImGui::IsItemHovered();
             if (sh) ImGui::SetTooltip(fav ? "Remove from favourites" : "Add to favourites");
             {   // a drawn star (the UI font has no star glyph)
-                const ImVec2 c(sp.x + 9, sp.y + (lh + 4) * 0.5f);
+                const ImVec2 c(sp.x + 10, sp.y + (lh + 14) * 0.5f);
                 ImVec2 pts[10];
                 for (int k = 0; k < 10; ++k) {
                     const float a = -1.5707963f + k * 0.6283185f, r = (k % 2) ? 2.6f : 6.0f;
@@ -3449,17 +3576,41 @@ inline void Draw(EditorState& ed, bool* open) {
         }
         ImGui::EndChild();
         if (toAdd) add(*toAdd);
+        ImGui::PopStyleVar(3);
         ImGui::EndPopup();
     } else if (st.linkPending && !openPaletteNow) {
         st.linkPending = false;   // palette dismissed without a pick
     }
 
-    if (g.nodes.empty())
-        dl->AddText(ImVec2(canvasMin.x + 18, canvasMin.y + 16), IM_COL32(150, 152, 160, 255),
-                    "Click + Add (or right-click) to start with an event: On Start, On Update, On Key... or pick a Template.");
-    else if (st.needsEvent)
-        dl->AddText(ImVec2(canvasMin.x + 18, canvasMin.y + 16), IM_COL32(240, 184, 102, 255),
-                    "Nothing runs yet: add an event node (On Start, On Update, On Key...) and wire it in.");
+    if (g.nodes.empty()) {
+        const float cardW = 480.0f, cardH = 220.0f;
+        const ImVec2 c0((canvasMin.x + canvasMax.x - cardW) * 0.5f, (canvasMin.y + canvasMax.y - cardH) * 0.5f);
+        const ImVec2 c1(c0.x + cardW, c0.y + cardH);
+        dl->AddRectFilled(c0, c1, IM_COL32(32, 36, 46, 245), 16.0f);
+        dl->AddRect(c0, c1, IM_COL32(120, 140, 168, 160), 16.0f, 0, 1.5f);
+        const char* title = "This graph is empty";
+        const char* hint = "Right-click the canvas, or press Space, to add a node.";
+        const char* hint2 = "Start with an event such as On Start, then wire what happens next.";
+        const ImVec2 ts = ImGui::CalcTextSize(title);
+        dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 36.0f), IM_COL32(236, 240, 246, 255), title);
+        const ImVec2 hs = ImGui::CalcTextSize(hint);
+        dl->AddText(ImVec2(c0.x + (cardW - hs.x) * 0.5f, c0.y + 72.0f), IM_COL32(170, 180, 196, 255), hint);
+        const ImVec2 h2 = ImGui::CalcTextSize(hint2);
+        dl->AddText(ImVec2(c0.x + (cardW - h2.x) * 0.5f, c0.y + 96.0f), IM_COL32(150, 160, 176, 255), hint2);
+        ImGui::SetCursorScreenPos(ImVec2(c0.x + (cardW - 180.0f) * 0.5f, c0.y + 148.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16.0f, 10.0f));
+        if (ImGui::Button("Add a node", ImVec2(180.0f, 0.0f))) st.addAtCenter = true;
+        ImGui::PopStyleVar();
+    } else if (st.needsEvent) {
+        const char* msg = "Nothing runs yet. Add an event (On Start, On Update, On Key) and wire it to the first step.";
+        const ImVec2 ts = ImGui::CalcTextSize(msg);
+        const ImVec2 bp(canvasMin.x + 18.0f, canvasMin.y + 16.0f);
+        dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + 24.0f, bp.y + ts.y + 16.0f), IM_COL32(64, 48, 24, 230), 8.0f);
+        dl->AddText(ImVec2(bp.x + 12.0f, bp.y + 8.0f), IM_COL32(245, 214, 150, 255), msg);
+    } else if (st.showHint) {
+        const char* msg = "Right-click or press Space to add a node    ·    Scroll to zoom    ·    Drag empty space to select";
+        dl->AddText(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 28.0f), IM_COL32(168, 178, 194, 180), msg);
+    }
     // Why the last wire was refused (fades after a few seconds).
     if (st.refuseTime > 0.0f && !st.refuseMsg.empty()) {
         st.refuseTime -= io.DeltaTime;
@@ -3581,6 +3732,51 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::InputTextMultiline("##vsscriptview", buf.data(), buf.size(),
                                   ImVec2(-FLT_MIN, -FLT_MIN), ImGuiInputTextFlags_ReadOnly);
         ImGui::EndChild();
+    } else if (st.showDetails) {
+        ImGui::SameLine();
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
+        ImGui::BeginChild("vsdetails", ImVec2(0, 0), true);
+        const VsEditNode* sn = st.selected >= 0 ? g.find(st.selected) : nullptr;
+        if (!sn && !st.sel.empty()) sn = g.find(*st.sel.begin());
+        if (!sn) {
+            ImGui::TextUnformatted("Node details");
+            ImGui::Spacing();
+            ImGui::TextWrapped("Select a node to see what it does, its pins, and any problems the checker found.");
+        } else {
+            const VsDef* d = FindDef(sn->type);
+            ImGui::TextUnformatted(d ? VsNodeTitle(*sn, *d).c_str() : sn->type.c_str());
+            ImGui::Spacing();
+            if (d) ImGui::TextDisabled("%s", d->type);
+            if (const char* help = VsNodeHelp(sn->type.c_str())) {
+                ImGui::Spacing();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextWrapped("%s", help);
+                ImGui::PopTextWrapPos();
+            }
+            if (d) {
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::TextUnformatted("Pins");
+                auto join = [](const std::vector<const char*>& v) {
+                    std::string s; for (const char* p : v) if (p && *p) { if (!s.empty()) s += ", "; s += p; } return s;
+                };
+                const std::string in = join(d->dataIn), out = join(d->dataOut);
+                if (!in.empty()) ImGui::TextWrapped("In: %s", in.c_str());
+                if (!out.empty()) ImGui::TextWrapped("Out: %s", out.c_str());
+                if (in.empty() && out.empty()) ImGui::TextDisabled("No data pins.");
+            }
+            bool anyIssue = false;
+            for (const auto& is : st.issues) if (is.node == sn->id) {
+                if (!anyIssue) { ImGui::Spacing(); ImGui::Separator(); ImGui::TextUnformatted("Problems"); anyIssue = true; }
+                ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.55f, 0.48f, 1) : ImVec4(0.95f, 0.78f, 0.42f, 1));
+                ImGui::TextWrapped("%s", is.message.c_str());
+                ImGui::PopStyleColor();
+            }
+            ImGui::Spacing();
+            if (ImGui::Button("Frame this node", ImVec2(-1, 0))) { st.focusNode = sn->id; st.sel = {sn->id}; }
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
     }
 
     // ---- Undo tracking: commit a change once the gesture / edit is finished ----

@@ -70,6 +70,24 @@ Full reference: [`scripting.md`](scripting.md).
 - The output folder is a self-contained game: double-click `<YourGame>.exe`.
   Move with WASD or the arrow keys; press **Esc** to quit.
 
+## Time and the loop
+
+A frame never steps by more than a clamp (a breakpoint or an alt-tab does not become one giant step), pausing is by reason so a pause menu and a cutscene do not un-pause each other, and the same loop gives you slow motion, hit stop, frame stepping, fixed-rate capture for screenshots and video, and a recording of a session's frame times you can replay in a test:
+
+```cpp
+GameLoop loop;
+loop.OnUpdate = [&](float dt) { scene.Update(dt); };
+while (loop.BeginFrame(MeasureFrameSeconds())) Draw(loop.Alpha());
+
+Time::HitStop(0.08f);                    // a freeze frame on impact
+Game::PushPause("menu");                 // ... Game::PopPause("menu")
+Game::RequestQuit("level cleared", 0);   // an exit code for the shell
+loop.RequestStep();                      // while paused: one frame at a time
+loop.SetCapture(60.0f, 600);             // exactly 600 frames at 60 fps, whatever the machine does
+```
+
+See [`loop_and_time.md`](loop_and_time.md) for every call, the clocks (`Clock::Get("ui")` keeps animating while the game is paused), recording and replaying frame times, frame statistics, and how to move the player onto `GameLoop`.
+
 ## Where to go next
 
 - [`editor.md`](editor.md) — every panel and the Build pipeline.

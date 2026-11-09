@@ -4,12 +4,13 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-11-09 01:10 UTC_
+_Last updated: 2026-11-09 03:00 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.851.0 | Roomier editor layout across the shell, Visual Script editor and Script Editor (#577); frame stepping, frame recorder and player, capture mode, frame stats, server tick pacer (#581); scene text tools learn the gravity3 record (#582); feature map v2 (#576) |
 | 2.850.0 | Shared game loop with hitch handling, clocks, hit stop, pause and quit reasons, random helpers (#579); nested prefabs and variants, property registry, scene diff and merge, job system and arenas (#578); scene hierarchy, search and validation, exact float round trip (#575); profiling data, optimization tools, localization tools, accessibility (#574) |
 | 2.849.0 | Scenes load all-or-nothing and in the background, with pooling, GUIDs, prefab overrides, layer matrix and camera stack (#553, #570, #558); durable saves (#552); asset manager and asset database (#568); core wave 4: math, CLI, localization, ECS, input (#571); undo/recovery, test framework, save framework (#572); log, profiler, timers and tweens (#559, #560); core bug audit (#557, #565) |
 | 2.848.0 | Speed fit for every player controller (#561); strafe blend (#537); IK follows state weight (#535); more script builtins, navmesh calls and music, camera, particle and inventory visual-script nodes (#556, #562, #563, #566); build-cost and refund fixes (#564) |

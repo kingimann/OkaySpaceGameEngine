@@ -176,7 +176,7 @@ void DrawConsole() {
             std::string label = "     " + e.time + "  " + e.text;   // leading room for the dot
             if (mergedCount[row] > 1) label += "  (" + std::to_string(mergedCount[row]) + ")";
             label += "##c" + std::to_string(i);
-            if (ImGui::Selectable(label.c_str(), selected == i)) selected = i;
+            if (ImGui::Selectable(label.c_str(), selected == i, 0, ImVec2(0, ImGui::GetTextLineHeight() + 10.0f))) selected = i;
             {
                 float dr = ImGui::GetFontSize() * 0.22f;
                 ImGui::GetWindowDrawList()->AddCircleFilled(

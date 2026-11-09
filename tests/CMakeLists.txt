@@ -1785,3 +1785,34 @@ add_executable(test_scene_migration test_scene_migration.cpp)
 target_link_libraries(test_scene_migration PRIVATE okay::engine)
 target_compile_definitions(test_scene_migration PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME scene_migration COMMAND test_scene_migration)
+
+# 1.1 Loop and time, second pass: audit regressions, frame stepping, frame recorder / player, capture
+# mode, frame statistics, the server tick pacer and the player-style loop harness. All deterministic:
+# made-up frame times, no sleeping (the record tests write a few small files in the build directory).
+add_executable(test_loop_audit2 test_loop_audit2.cpp)
+target_link_libraries(test_loop_audit2 PRIVATE okay::engine)
+add_test(NAME loop_audit2 COMMAND test_loop_audit2)
+
+add_executable(test_frame_step test_frame_step.cpp)
+target_link_libraries(test_frame_step PRIVATE okay::engine)
+add_test(NAME frame_step COMMAND test_frame_step)
+
+add_executable(test_capture_mode test_capture_mode.cpp)
+target_link_libraries(test_capture_mode PRIVATE okay::engine)
+add_test(NAME capture_mode COMMAND test_capture_mode)
+
+add_executable(test_frame_record test_frame_record.cpp)
+target_link_libraries(test_frame_record PRIVATE okay::engine)
+add_test(NAME frame_record COMMAND test_frame_record)
+
+add_executable(test_frame_stats test_frame_stats.cpp)
+target_link_libraries(test_frame_stats PRIVATE okay::engine)
+add_test(NAME frame_stats COMMAND test_frame_stats)
+
+add_executable(test_tick_pacer test_tick_pacer.cpp)
+target_link_libraries(test_tick_pacer PRIVATE okay::engine)
+add_test(NAME tick_pacer COMMAND test_tick_pacer)
+
+add_executable(test_loop_player_style test_loop_player_style.cpp)
+target_link_libraries(test_loop_player_style PRIVATE okay::engine)
+add_test(NAME loop_player_style COMMAND test_loop_player_style)

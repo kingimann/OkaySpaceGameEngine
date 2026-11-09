@@ -41,6 +41,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a button drifts when the window resizes | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |
 | a button in a world panel cannot be clicked | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
 | a camera follow lags or oscillates | [36.3](36-math-geometry.md#363-scalars-interpolation-and-easing) Scalars, interpolation and easing |
+| a camera follow overshoots or lags | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a camera glides forever toward a target | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | a camera ray passes through a wall | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
 | a change breaks rendering and nobody notices | [33.3](20-35-planned.md#333-regression-testing) Regression testing |
@@ -65,6 +66,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a coroutine stops early | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a crash loses work | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | a CSS rule does nothing | [12.5](12-ingame-ui.md#125-html-ui) HTML UI |
+| a custom tag or layer name is lost on restart | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a custom widget does not repeat | [12.5](12-ingame-ui.md#125-html-ui) HTML UI |
 | a dark cave level looks the same as a bright one | [43.4](43-proposals.md#434-2d-lighting) 2D lighting |
 | a data file edit not showing in game | [1.14](01-core-scene.md#114-data-assets-and-data-packs) Data assets and data packs |
@@ -82,6 +84,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a downloaded game tries to write outside its folder | [39.9](39-security-anticheat.md#399-script-and-file-path-safety) Script and file path safety |
 | a downloaded mod could read my files | [47.2](43-proposals.md#472-mod-scripting-sandbox) Mod scripting sandbox |
 | a dropdown list draws under other widgets or lets clicks through | [12.3](12-ingame-ui.md#123-input-widgets-slider-toggle-input-field-dropdown-stepper-keybind) Input widgets: slider, toggle, input field, dropdown, stepper, keybind |
+| a duplicated child lands at the scene root | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a face model has dozens of sliders and I want presets | [30.4](20-35-planned.md#304-morph-targets) Morph targets |
 | a failed load leaves no reason | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
 | a far-away player still pops in | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
@@ -212,6 +215,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a save from a newer version is rejected | [1.7](01-core-scene.md#17-saves-and-prefs) Saves and prefs |
 | a save in the external IDE does not reload | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | a scene file will not open or opens half-empty | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
+| a scene file with a stray NaN would not open | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a scene has no camera and renders black | [4.8](04-characters-cameras.md#48-virtual-cameras-and-dollies) Virtual cameras and dollies |
 | a scene is missing from a build | [15.12](15-editor.md#1512-scene-manager-panel) Scene Manager panel |
 | a scene of thousands of identical props is slow | [27.3](20-35-planned.md#273-batching) Batching |
@@ -239,6 +243,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a sound does not get quieter with distance | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | a sound file will not play or is listed in the Console as unreadable | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
 | a sound plays too fast or too slow | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
+| a spinner turns differently at different frame rates | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a spring never settles | [6.3](06-physics.md#63-joints) Joints |
 | a sprite animation plays the wrong row | [2.12](02-rendering-world.md#212-sprites-and-sprite-animation) Sprites and sprite animation |
 | a sprite falls through the floor | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
@@ -265,6 +270,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a text-mode demo shows only boxes | [38.6](38-render-backends.md#386-console-renderer) Console renderer |
 | a thumbnail shows an old version of a texture | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | a ticket rejected as expired | [39.3](39-security-anticheat.md#393-session-tickets-and-the-ticket-service) Session tickets and the ticket service |
+| a timer fires on a destroyed object | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a toast is the wrong colour | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
 | a TODO comment appears in generated code | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | a token or key in a log | [39.11](39-security-anticheat.md#3911-account-backend-and-updater-hardening) Account, backend and updater hardening |
@@ -276,13 +282,16 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a trigger blocks a ray | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
 | a tween keeps going after its object was deleted | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a typed distance goes the wrong way | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
+| a UI tween freezes with the game pause | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a value edited in Play cannot be kept | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
 | a variable differs between players | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
 | a variable is empty after loading another scene | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
+| a very deep hierarchy crashed or hung | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a voice call won't connect | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
 | a Wait node never resumes | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
 | a wall floats after its base is shot out | [6.6](06-physics.md#66-destructibles-and-projectiles) Destructibles and projectiles |
 | a warning in the build log | [19.7](19-docs-tests-health.md#197-compiler-warnings-and-sanitizers) Compiler warnings and sanitizers |
+| a weapon fires at a different rate at 30 and 144 fps | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | a widget cannot be dragged or resized in the UI view | [12.10](12-ingame-ui.md#1210-ui-editing-in-the-editor) UI editing in the editor |
 | a widget draws in the wrong order | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
 | a window cannot be dragged | [40.1](40-okayui-library.md#401-core-widgets-and-auto-layout) Core widgets and auto-layout |
@@ -501,7 +510,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | feet skate | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | feet slide on slopes | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | Fill Holes leaves a gap | [3.9](03-modeling-import.md#39-generate-and-whole-mesh-operations) Generate and whole-mesh operations |
-| find by tag" returns the wrong object | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
+| find by tag" returns the wrong object after a tag change | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | Find match never finds anyone | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
 | Find References finds nothing | [20.2](20-35-planned.md#202-dependencies-and-references) Dependencies and references |
 | finger scrolling does not work | [12.9](12-ingame-ui.md#129-mobile-scaling) Mobile scaling |
@@ -776,6 +785,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | relay refused | [39.8](39-security-anticheat.md#398-relay-hardening) Relay hardening |
 | relay refused" or the code is hosted by someone else | [16.14](16-networking.md#1614-relay-server-nat-traversal) Relay server (NAT traversal) |
 | reload on save does nothing | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
+| reloading a save re-rolls a chest | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | remote player does not roll or die | [5.12](05-animation-ik.md#512-built-in-action-clips) Built-in action clips |
 | remote players are sprites instead of characters | [16.8](16-networking.md#168-network-player-spawning-and-avatar-motion) Network player spawning and avatar motion |
 | Rename misses a usage | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
@@ -828,6 +838,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | slide or dodge does nothing | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
 | slow builds when one file changes | [19.4](19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) Splitting the largest files (editor, launcher, OkayScript VM, serializer) |
 | slow first open of a folder full of models | [20.5](20-35-planned.md#205-thumbnails) Thumbnails |
+| slow motion and hit stop do nothing in the editor's Play mode | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | slow motion or pause does not stop something | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | slow rebuilds after a one-line editor change | [15.10](15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) Splitting `editor/main.cpp` into panel files (~45k lines) |
 | snags on stairs or sills | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |

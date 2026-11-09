@@ -1,7 +1,7 @@
 # 43-58. Proposed areas
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (up to #587 and #585 merged; a number after a part is the PR that added it). The loop and time passes (#581, #585) already build part of 46 (replay), 50.3 (video capture) and 58 (frame statistics); nothing in this file is In flight any more.
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 ## 43. 2D tools
@@ -260,16 +260,16 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 46.1.2 Injectable input source - `Net/NetworkManager` - `SetInputSource(fn)` lets code supply inputs (the header names "tests, bots and replays")
   - 46.1.3 Fixed step and seeded random - `Scene/Scene`, `Core/Rng` - fixed-step physics option and seedable generators
   - 46.1.4 Headless play-test harness (#572) - `Testing/PlayTest` - fake input per frame with a repeatable clock
-  - 46.1.5 Frame-time recorder and player (in flight, `claude/loop-time-wave2`) - `Core/FrameRecord` - `FrameRecorder` and `FramePlayer` save and replay each frame's duration, pause and hitch flags and one integer marker per frame (`SetFrameMarker`, meant to index your own input log) in the checksummed text file `okayframes 1`; a replay through a `GameLoop` reproduces `Time` bit for bit; it does not record inputs (per docs)
+  - 46.1.5 Frame-time recorder and player (#581) - `Core/FrameRecord` - `FrameRecorder` and `FramePlayer` save and replay each frame's duration, pause and hitch flags and one integer marker per frame (`SetFrameMarker`, meant to index your own input log) in the checksummed text file `okayframes 1`; a replay through a `GameLoop` reproduces `Time` bit for bit; it does not record inputs (per docs)
 - **Code:** `Net/PlayerInput`, `Net/NetworkManager`, `Core/Rng`, `Testing/PlayTest`, `Core/FrameRecord`
-- **API:** `PlayerInput`, `NetworkManager::SetInputSource`, `PlayTest`; in flight: `FrameRecorder`, `FramePlayer`, `GameLoop::AttachRecorder`
+- **API:** `PlayerInput`, `NetworkManager::SetInputSource`, `PlayTest`, `FrameRecorder`, `FramePlayer`, `GameLoop::AttachRecorder`
 - **Editor:** none
 - **Docs:** `docs/dedicated-server.md`; `docs/automated_testing.md`
-- **Tests:** `net_auth_move`, `net_predict`; `playtest`; in flight: `frame_record`
-- **Status:** Planned - the building blocks exist (play-test harness on main; the frame-time half of a recorder and player is In flight on `claude/loop-time-wave2`); no input recorder.
+- **Tests:** `net_auth_move`, `net_predict`; `playtest`, `frame_record`
+- **Status:** Planned - the building blocks exist (play-test harness and, since #581, the frame-time half of a recorder and player on main); no input recorder.
 - **Exists today:** Authoritative-movement code already separates input from simulation for networked controllers; whether a whole scene replays identically across machines was not verified.
 - **Suggested priority:** Low - nice for testing and spectating; first useful as a test tool.
-- **Open:** first step: record `PlayerInput` per fixed tick plus the random seed and scene file, tie each tick to a `FrameRecorder` marker once that pass lands, and replay it through `PlayTest` to check determinism before building a viewer.
+- **Open:** first step: record `PlayerInput` per fixed tick plus the random seed and scene file, tie each tick to a `FrameRecorder` marker (`GameLoop::SetFrameMarker`), and replay it through `PlayTest` to check determinism before building a viewer.
 - **Related:** 33.1, 16.2, 6.4, 1.1
 - **Words:** replay, demo recording, input recording, playback, killcam, deterministic, record and replay, ghost
 - **Seen as:** a bug cannot be reproduced; want to watch my last run
@@ -304,7 +304,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Docs:** -
 - **Tests:** none
 - **Status:** Planned - nothing exists.
-- **Exists today:** No replay file. The in-flight `okayframes 1` frame-time file (46.1.5) and the save framework's versioned slot headers (35.4) show the header, checksum and strict-loader pattern to copy.
+- **Exists today:** No replay file. The `okayframes 1` frame-time file (46.1.5) and the save framework's versioned slot headers (35.4) show the header, checksum and strict-loader pattern to copy.
 - **Suggested priority:** Low.
 - **Open:** first step: define the file (header with version, scene, seed; per-tick records) with the same versioning rules as saves (35.4).
 - **Related:** 46.1, 35.4, 50.3
@@ -584,16 +584,16 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Record gameplay or a cutscene to a video file or image sequence.
 - **Parts:**
   - 50.3.1 Frame capture - `-` - see 50.1; no recorder, encoder or image-sequence writer was found
-  - 50.3.2 Fixed-rate capture clock (in flight, `claude/loop-time-wave2`) - `Core/GameLoop` - `SetCapture(fps, frames)` makes every frame exactly 1/fps seconds whatever the machine does and stops after a frame budget, so two runs give the same `Time` values frame for frame
+  - 50.3.2 Fixed-rate capture clock (#581) - `Core/GameLoop` - `SetCapture(fps, frames)` makes every frame exactly 1/fps seconds whatever the machine does and stops after a frame budget, so two runs give the same `Time` values frame for frame
 - **Code:** `Core/GameLoop`
-- **API:** in flight: `GameLoop::SetCapture`, `ClearCapture`, `SetFrameBudget`
+- **API:** `GameLoop::SetCapture`, `ClearCapture`, `SetFrameBudget`
 - **Editor:** none
-- **Docs:** in flight `docs/loop_and_time.md`
-- **Tests:** in flight `capture_mode`
-- **Status:** Planned - no recorder or encoder exists; only the exact-frame-time half is In flight.
-- **Exists today:** Single-frame PNG saving; the capture clock exists only on the second loop pass branch (no PNG writer is attached to it).
+- **Docs:** `docs/loop_and_time.md`
+- **Tests:** `capture_mode`
+- **Status:** Planned - no recorder or encoder exists; only the exact-frame-time half is on main (#581).
+- **Exists today:** Single-frame PNG saving; the capture clock exists in `GameLoop` (no PNG writer is attached to it).
 - **Suggested priority:** Low - image sequences (PNG per frame) would cover trailers; real encoding needs a library.
-- **Open:** first step: an image-sequence recorder at a fixed time step (so slow frames do not drop video frames), using `GameLoop::SetCapture` (in flight) or the fixed-step time from #572's play-test clock.
+- **Open:** first step: an image-sequence recorder at a fixed time step (so slow frames do not drop video frames), using `GameLoop::SetCapture` (#581) or the fixed-step time from #572's play-test clock.
 - **Related:** 50.1, 10.1, 46.1
 - **Words:** video recording, record gameplay, trailer, image sequence, capture video, cutscene render
 - **Seen as:** need to record a trailer
@@ -1170,8 +1170,8 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 58.2.1 UI render benchmark - `tests/test_ui_render_bench.cpp` - 500 widgets in a 10k-object scene must use under 1 ms CPU, under 20 draw calls and no allocations after warm-up (timing only in optimized builds)
   - 58.2.2 Perf dump hook - `editor/main.cpp` - `OKAY_PERF_DUMP` prints an average frame breakdown every two seconds
   - 58.2.3 Play-test harness (#572) - `Testing/PlayTest` - headless fixed-step runs, a base for scene benchmarks
-  - 58.2.4 Frame statistics (in flight, `claude/loop-time-wave2`) - `Core/FrameStats` - average fps, 1% low, 0.1% low, worst frame and hitch count over a 240-frame window, and a text or JSON summary of a recorded session; can sync into `Debug/FrameHistory`
-- **Code:** `tests/test_ui_render_bench.cpp`, `editor/main.cpp`, `Testing/PlayTest`, `Core/FrameStats`
+  - 58.2.4 Frame statistics (#581, #585) - `Core/FrameStats` - average fps, 1% low, 0.1% low, worst frame and hitch count over a 240-frame window, a text or JSON summary of a recorded session, a CSV export (`ToCsv`, `SaveCsv`) and the console commands `time.stats` and `time.stats_csv` (`Core/LoopConsole`); can sync into `Debug/FrameHistory`
+- **Code:** `tests/test_ui_render_bench.cpp`, `editor/main.cpp`, `Testing/PlayTest`, `Core/FrameStats`, `Core/LoopConsole`
 - **API:** `OKAY_PERF_DUMP` environment variable
 - **Editor:** none
 - **Docs:** `docs/qa_workflow.md`

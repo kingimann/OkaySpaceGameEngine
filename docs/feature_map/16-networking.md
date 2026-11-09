@@ -96,16 +96,16 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 ### 16.5 Dedicated server, export, relay
 - **What:** Running any game as a headless authoritative server (no window, GPU or audio) with the same player executable, configured by flags, `server.cfg` or environment variables, with sign-in checks that never stall the tick. Exporting it is 18.7; the relay is 16.14.
 - **Parts:**
-  - 16.5.1 Headless run loop - `Net/DedicatedServer` - `RunDedicatedServer(scene, opts)` steps the scene at a fixed tick, logs joins and a status line, stops on Ctrl+C or SIGTERM; exit code 2 = could not open the port
+  - 16.5.1 Headless run loop - `Net/DedicatedServer`, `Core/TickPacer` - `RunDedicatedServer(scene, opts)` steps the scene at a fixed tick (one tick of `Time::Step(1 / tickRate)` per tick, never by the real elapsed time; the pacing arithmetic is `TickPacer`, #581), logs joins and a status line, stops on Ctrl+C or SIGTERM; exit code 2 = could not open the port; it still calls `Game::Reset()` at start (line 548), which keeps a script's time scale (see 1.1)
   - 16.5.2 Options, server.cfg and environment - `Net/DedicatedServer` - `ParseDedicatedServerArgs`, `LoadDedicatedServerConfig`; precedence: config file, then `OKAY_SERVER_*` variables, then flags
   - 16.5.3 Non-blocking sign-in check - `Net/DedicatedServer` - `AsyncTokenCheck` verifies Supabase tokens on a worker, caches 5 minutes, refuses when 64 are already queued
   - 16.5.4 Kick reports - `Net/DedicatedServer` - `KickReporter` files `ac_reports` rows for anti-cheat kicks, at most one per account per hour and 20 an hour
   - 16.5.5 Listing and login - `player/main.cpp` - `--advertise` lists the server in the browser; `--login NAME` signs the machine in (password typed or `OKAY_LOGIN_PASSWORD`), `--logout`
-- **Code:** `Net/DedicatedServer`, `player/main.cpp`
+- **Code:** `Net/DedicatedServer`, `Core/TickPacer`, `player/main.cpp`
 - **API:** `DedicatedServerOptions`, `RunDedicatedServer`, `ParseDedicatedServerArgs`, `AsyncTokenCheck`, `KickReporter`, flags `--server --port --scene --max-players --tick --name --password --auth --no-encryption --status --run-for --log --advertise --public-addr --region --max-speed --rate-limit --kick-after --anticheat --host-key --report-kicks --fixed-tick --authoritative --config`
 - **Editor:** File > Build Settings > Platform: Server (see 18.7)
 - **Docs:** `docs/dedicated-server.md`
-- **Tests:** `dedicated_server`, `net_anticheat_ph1`, `net_anticheat_ph3`, `net_anticheat_ph4`, `net_tick`
+- **Tests:** `dedicated_server`, `net_anticheat_ph1`, `net_anticheat_ph3`, `net_anticheat_ph4`, `net_tick`, `tick_pacer`
 - **Status:** Works - argument parsing, async token check and the headless loop players join are in `dedicated_server`; the Linux server is built by the release workflow
 - **Open:** `allocate_match` (a server per match on demand) is not written; hosting beyond one VPS (Fly.io, Edgegap, Hathora) is only a docs idea
 - **Related:** 16.6, 16.14, 18.7, 41.5, 17.2

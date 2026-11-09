@@ -17,11 +17,12 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
   - 14.1.6 Runtime graph - `VisualScript/NodeGraph` - `NodeGraph::Parse`, `Run`, entries, exec and data links, suspended waits, `MakeNode` by type name
   - 14.1.7 Graph component - `Components/VisualScriptComponent` - attaches a graph to an object: OnStart, OnUpdate and event entries, LoadFromText, LoadFromFile, serialized with the scene
   - 14.1.8 Inspector hook - `editor/main.cpp` (Visual Script header ~28850) - graph file path, Open in node editor, Reload; inspector values can be dropped onto a graph
-- **Code:** `editor/VisualScriptEditor.hpp`, `editor/VisualScriptNodeHelp.hpp`, `VisualScript/NodeGraph`, `Components/VisualScriptComponent`
+  - 14.1.9 Outline, snap and align - `editor/VisualScriptEditor.hpp`, `editor/VsCanvasTools.hpp` - (#577) a left outline lists the graph's events, variables (grouped by scope) and parameters; a moved node snaps to a 20 px grid on release (the "Snap to grid" menu item); align Left, Right, Top or Bottom for the selected nodes; a hint line on the canvas when a graph has nodes but no event ("Nothing runs yet"); the helpers (`VsSnap`, `VsAlignNodes`, `VsCollectVariables`, `VsCollectParameters`) are pure data, covered by the editor selftest, and nothing new is written into the `.okayvs` file
+- **Code:** `editor/VisualScriptEditor.hpp`, `editor/VsCanvasTools.hpp`, `editor/VisualScriptNodeHelp.hpp`, `VisualScript/NodeGraph`, `Components/VisualScriptComponent`
 - **API:** `vs::NodeGraph::Add/ConnectExec/ConnectData/Parse`, `VisualScriptComponent::SetGraph/LoadFromText/LoadFromFile`; file directives `node`, `exec`, `data`, `entry`
 - **Editor:** View > Editors & Tools > Visual Script; Inspector header "Visual Script"; Project panel `.okayvs` files
 - **Docs:** `docs/visual_scripting.md` (OkayVS format, Flow Graph editor, working faster, palette index)
-- **Tests:** `visualscript`, `vs_editor_model` (graph model without drawing), `vs_nodes`, `vs_pin_defaults`
+- **Tests:** `visualscript`, `vs_editor_model` (graph model without drawing), `vs_nodes`, `vs_pin_defaults`, `editor` (selftest: snap, align, variable outline, and a saved graph reopening with the same nodes)
 - **Status:** Works - editor model, text format and runtime are covered; `vs_editor_model` checks save then load stays identical
 - **Open:** earlier map: docs update (the doc still has a retired "Flow Graph editor" section next to "One graph editor"); possible bug area: node definitions exist in the editor registry and in the engine pin table (`VsTypes`), so a new node must be added in both
 - **Related:** 14.2, 14.4, 14.7, 15.2, 15.10

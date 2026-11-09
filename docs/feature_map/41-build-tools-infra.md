@@ -3,7 +3,7 @@
 The plumbing around the engine: CMake (root, engine and per-program files, the `cmake/` modules and the MinGW toolchain), the
 scripts and developer tools, the deploy kits for the relay, the Supabase Edge function and SQL schema, the Steam upload kit,
 the two GitHub workflows, versioning and the pinned dependencies. What a release does for a player is area 18; this page is
-where the files live and how they are wired. Nobody is touching it now apart from the 2.850.0 release PR (#580, draft); 2.849.0 is published.
+where the files live and how they are wired. Nobody is touching it now apart from the 2.852.0 release PR (#588, draft); 2.851.0 is live.
 
 ## 41. Build, tools & infrastructure
 
@@ -16,6 +16,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.1.4 Baked defaults - `CMakeLists.txt` - default account server URL and key (`OKAY_DEFAULT_ACCOUNT_URL`, `OKAY_DEFAULT_ACCOUNT_KEY`), `OKAY_DEFAULT_VOICE_RELAY`, `OKAY_STEAM_APP_ID`, `OKAY_AC_TRUSTED_KEYS`, `OKAY_AC_PLAYER_TRUSTED_KEYS`, `OKAY_AC_HW_SALT` as compile definitions
   - 41.1.5 SDL2.dll copy - `CMakeLists.txt` - on Windows builds a target that copies `SDL2.dll` beside the binaries unless static SDL is on
   - 41.1.6 Relay target - `relay/CMakeLists.txt` - `okayspace-relay`, always built except for Emscripten (no raw UDP in browsers)
+  - 41.1.7 Umbrella header and generated API page - `engine/include/Okay.hpp`, `docs/engine_api.md` - `<Okay.hpp>` pulls in most engine headers and must not expose `okay::Clock` (a program with its own `Clock` and `using namespace okay` broke `test_save_scene` once), so `Core/Clock.hpp`, `GameLoop`, `Countdown`, `TimeSnapshot` and `LoopConsole` are included directly and `ClockCursor::Take` takes numbers instead of a `Clock`; `docs/engine_api.md` is generated from the engine binding table by `test_vs_types` (`OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types` rewrites it and the test fails when it is stale)
 - **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `launcher/CMakeLists.txt`, `player/CMakeLists.txt`, `relay/CMakeLists.txt`, `sandbox/CMakeLists.txt`, `examples/CMakeLists.txt`, `tools/CMakeLists.txt`, `tests/CMakeLists.txt`
 - **API:** `cmake -S . -B build`, `-DOKAY_BUILD_EDITOR=ON`, `-DOKAY_BUILD_PLAYER=ON`, `-DOKAY_USE_SODIUM=OFF`, `-DOKAY_WITH_STEAM=ON -DSTEAMWORKS_SDK_PATH=`, `-DOKAY_WITH_PHOTON=ON`, `-DOKAY_WITH_LUA=ON`, `-DOKAY_WITH_CSHARP=ON`, `-DOKAY_SODIUM_PREFIX=`
 - **Editor:** none
@@ -164,9 +165,9 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 ### 41.9 Versioning and release prep
 - **What:** One number, set in one place, flows everywhere. A release is a small pull request.
 - **Parts:**
-  - 41.9.1 Source of truth - `CMakeLists.txt` - `project(OkaySpaceGameEngine VERSION 2.849.0)`; releases increment the middle number (2.848.0, 2.849.0, next 2.850.0)
+  - 41.9.1 Source of truth - `CMakeLists.txt` - `project(OkaySpaceGameEngine VERSION 2.851.0)`; releases increment the middle number (2.850.0, 2.851.0, next 2.852.0)
   - 41.9.2 Where it goes - `CMakeLists.txt` - `OKAY_ENGINE_VERSION` is defined only for the editor and launcher targets (so a bump doesn't recompile everything), the Windows `VERSIONINFO` of every exe, `build-win-dist/VERSION.txt` (written by `scripts/build-windows-dist.sh` from CMakeLists), the installer's `VERSION`
-  - 41.9.3 Release PR - `CMakeLists.txt`, `ROADMAP.md`, `dist/CHANGELOG.txt` - "Release X.Y.Z (#N)" changes exactly these three files (PR #573 for 2.849.0, #580 for 2.850.0)
+  - 41.9.3 Release PR - `CMakeLists.txt`, `ROADMAP.md`, `dist/CHANGELOG.txt` - "Release X.Y.Z (#N)" changes exactly these three files (PR #573 for 2.849.0, #580 for 2.850.0, #583 for 2.851.0, #588 for 2.852.0)
   - 41.9.4 Update comparison - `launcher/main.cpp`, `editor/main.cpp` - updaters update only when the published version is strictly newer
   - 41.9.5 Stale copy - `dist/VERSION.txt` - says 2.412.0 and is not used by the build
 - **Code:** `CMakeLists.txt`, `dist/VERSION.txt`, `dist/CHANGELOG.txt`, `ROADMAP.md`
@@ -174,7 +175,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Editor:** Engine > Check for Updates...
 - **Docs:** `docs/releasing.md`
 - **Tests:** none
-- **Status:** Works - the 2.849.0 diff (PR #573) and the open 2.850.0 PR (#580) touch exactly those three files (per the PR file lists)
+- **Status:** Works - the 2.849.0 diff (PR #573) and the open 2.852.0 PR (#588) touch exactly those three files (per the PR file lists)
 - **Open:** `dist/VERSION.txt` is stale and `release.yml`'s comment still points at it (19.6); the changelog is hand-written
 - **Related:** 18.4, 18.5, 19.6
 - **Words:** version, VERSION.txt, semver, 2.848.0, bump, changelog, release PR, OKAY_ENGINE_VERSION

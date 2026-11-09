@@ -3963,9 +3963,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
     }
     const int version = S.version;
     auto warn = [&](const std::string& what) { S.warnings.push_back(what); };
-    // Skip the rest of the current line: records are one per line, so an unknown
-    // one can be stepped over without knowing what its values mean.
-    auto skipLine = [&]() { ReadRecordLine(in); };   // a quoted value that spans lines is part of the record
+    // An unknown record is read with ReadRecordLine (one per line, a quoted value that spans lines is part of it),
+    // so it can be stepped over, and kept, without knowing what its values mean.
     auto& byIndex = S.byIndex;
     auto& parentLinks = S.parentLinks;
     auto& siblingHints = S.siblingHints;

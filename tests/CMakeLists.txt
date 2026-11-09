@@ -1717,6 +1717,10 @@ add_executable(test_scene_graph_wave5 test_scene_graph_wave5.cpp)
 target_link_libraries(test_scene_graph_wave5 PRIVATE okay::engine)
 add_test(NAME scene_graph_wave5 COMMAND test_scene_graph_wave5)
 set_tests_properties(scene_graph_wave5 PROPERTIES TIMEOUT 240)   # 300000 children, 100000-deep chains
+
+add_executable(test_object_pool_wave5 test_object_pool_wave5.cpp)
+target_link_libraries(test_object_pool_wave5 PRIVATE okay::engine)
+add_test(NAME object_pool_wave5 COMMAND test_object_pool_wave5)
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)

@@ -1,7 +1,7 @@
 # 43-58. Proposed areas
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 ## 43. 2D tools
@@ -156,7 +156,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 44.4.1 Trigger colliders - `Physics/Collider3D`, `Physics/Collider2D` - `isTrigger` colliders send enter and exit events
   - 44.4.2 Survival zone - `Components/SurvivalZone` - a trigger volume that applies cold, radiation, water and other effects while inside
   - 44.4.3 Spawners and logic links - `Components/Spawner`, `Components/LogicLinks` - spawn areas and wired triggers
-  - 44.4.4 Checkpoint trigger (in flight, #572) - `Core/SaveFramework` - saves a checkpoint when the player comes near
+  - 44.4.4 Checkpoint trigger (#572) - `Core/SaveFramework` - saves a checkpoint when the player comes near
 - **Code:** `Physics/Collider3D`, `Physics/Collider2D`, `Components/SurvivalZone`, `Components/Spawner`, `Components/LogicLinks`
 - **API:** `Collider3D::isTrigger`, `OnTriggerEnter3D`, `SurvivalZone`
 - **Editor:** Collider Inspector "Trigger" box
@@ -236,14 +236,14 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Cheap stand-ins for faraway objects (impostors, merged far meshes, terrain horizon) so the view distance can be large.
 - **Parts:**
   - 45.4.1 Fog and sky - `Render/Atmosphere` - fog hides the far plane (area 2.4)
-  - 45.4.2 LOD and merge (in flight, #574) - `Optimize/LodGroup`, `Optimize/BatchPlanner` - building blocks for far meshes
+  - 45.4.2 LOD and merge (#574) - `Optimize/LodGroup`, `Optimize/BatchPlanner` - building blocks for far meshes
 - **Code:** `Render/Atmosphere`, `Optimize/LodGroup`
-- **API:** in flight: `LodGroup`, `MergeStaticMeshes`
+- **API:** `LodGroup`, `MergeStaticMeshes`
 - **Editor:** none
-- **Docs:** in flight `docs/optimization_tools.md`
-- **Tests:** in flight `optimize_simplify`
+- **Docs:** `docs/optimization_tools.md`
+- **Tests:** `optimize_simplify`
 - **Status:** Planned - no impostor or horizon system.
-- **Exists today:** Fog only; LOD data layer in flight.
+- **Exists today:** Fog only; the LOD data layer (#574) exists but nothing in the renderers uses it.
 - **Suggested priority:** Low - after LOD components exist (27.1).
 - **Open:** first step: merged low-detail meshes per cell ("hierarchical LOD") using the simplifier; billboard impostors for trees.
 - **Related:** 27.1, 27.3, 2.4, 29.2
@@ -259,16 +259,17 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 46.1.1 Per-tick input structure - `Net/PlayerInput` - `PlayerInput` and `IPlayerSim`: a controller that reads input in one place and moves only through `Simulate(input, dt)`
   - 46.1.2 Injectable input source - `Net/NetworkManager` - `SetInputSource(fn)` lets code supply inputs (the header names "tests, bots and replays")
   - 46.1.3 Fixed step and seeded random - `Scene/Scene`, `Core/Rng` - fixed-step physics option and seedable generators
-  - 46.1.4 Headless play-test harness (in flight, #572) - `Testing/PlayTest` - fake input per frame with a repeatable clock
-- **Code:** `Net/PlayerInput`, `Net/NetworkManager`, `Core/Rng`, `Testing/PlayTest`
-- **API:** `PlayerInput`, `NetworkManager::SetInputSource`, in flight: `PlayTest`
+  - 46.1.4 Headless play-test harness (#572) - `Testing/PlayTest` - fake input per frame with a repeatable clock
+  - 46.1.5 Frame-time recorder and player (in flight, `claude/loop-time-wave2`) - `Core/FrameRecord` - `FrameRecorder` and `FramePlayer` save and replay each frame's duration, pause and hitch flags and one integer marker per frame (`SetFrameMarker`, meant to index your own input log) in the checksummed text file `okayframes 1`; a replay through a `GameLoop` reproduces `Time` bit for bit; it does not record inputs (per docs)
+- **Code:** `Net/PlayerInput`, `Net/NetworkManager`, `Core/Rng`, `Testing/PlayTest`, `Core/FrameRecord`
+- **API:** `PlayerInput`, `NetworkManager::SetInputSource`, `PlayTest`; in flight: `FrameRecorder`, `FramePlayer`, `GameLoop::AttachRecorder`
 - **Editor:** none
-- **Docs:** `docs/dedicated-server.md`; in flight `docs/automated_testing.md`
-- **Tests:** `net_auth_move`, `net_predict`; in flight `playtest`
-- **Status:** Planned - the building blocks exist; no recorder, no file format, no player.
+- **Docs:** `docs/dedicated-server.md`; `docs/automated_testing.md`
+- **Tests:** `net_auth_move`, `net_predict`; `playtest`; in flight: `frame_record`
+- **Status:** Planned - the building blocks exist (play-test harness on main; the frame-time half of a recorder and player is In flight on `claude/loop-time-wave2`); no input recorder.
 - **Exists today:** Authoritative-movement code already separates input from simulation for networked controllers; whether a whole scene replays identically across machines was not verified.
 - **Suggested priority:** Low - nice for testing and spectating; first useful as a test tool.
-- **Open:** first step: record `PlayerInput` per fixed tick plus the random seed and scene file, and replay it through `PlayTest` to check determinism before building a viewer.
+- **Open:** first step: record `PlayerInput` per fixed tick plus the random seed and scene file, tie each tick to a `FrameRecorder` marker once that pass lands, and replay it through `PlayTest` to check determinism before building a viewer.
 - **Related:** 33.1, 16.2, 6.4, 1.1
 - **Words:** replay, demo recording, input recording, playback, killcam, deterministic, record and replay, ghost
 - **Seen as:** a bug cannot be reproduced; want to watch my last run
@@ -303,7 +304,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Docs:** -
 - **Tests:** none
 - **Status:** Planned - nothing exists.
-- **Exists today:** Nothing.
+- **Exists today:** No replay file. The in-flight `okayframes 1` frame-time file (46.1.5) and the save framework's versioned slot headers (35.4) show the header, checksum and strict-loader pattern to copy.
 - **Suggested priority:** Low.
 - **Open:** first step: define the file (header with version, scene, seed; per-tick records) with the same versioning rules as saves (35.4).
 - **Related:** 46.1, 35.4, 50.3
@@ -460,16 +461,16 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Parts:**
   - 49.1.1 Steam Cloud calls - `Platform/Steam/SteamService` - `CloudWrite`, `CloudRead`, `CloudHasFile`, `CloudDelete`, `CloudFiles` (default implementations do nothing); script `steam_cloud_write`, `steam_cloud_read`
   - 49.1.2 PlayFab user data - `Platform/PlayFab/PlayFab` - `SetUserData`, `GetUserData`, `ListUserData`; script `pf_save`
-  - 49.1.3 Save sync hooks (in flight, #572) - `Core/SaveFrameworkSync` - `ISaveSync` with in-memory and folder backends and conflict reporting
+  - 49.1.3 Save sync hooks (#572) - `Core/SaveFrameworkSync` - `ISaveSync` with in-memory and folder backends and conflict reporting
   - 49.1.4 Glue between saves and a service - `-` - not built
 - **Code:** `Platform/Steam/SteamService`, `Platform/PlayFab/PlayFab`, `Core/SaveFrameworkSync`, `Scripting/OkayScriptVM`
-- **API:** `Steam::Get().CloudWrite`, `PlayFab::Get().SetUserData`, in flight: `ISaveSync`
+- **API:** `Steam::Get().CloudWrite`, `PlayFab::Get().SetUserData`, `ISaveSync`
 - **Editor:** none
-- **Docs:** `docs/scripting_reference.md` (Steam), `docs/steam_release.md`; in flight `docs/save_framework.md`
-- **Tests:** `steam`, `steam_script`; in flight `save_framework`
+- **Docs:** `docs/scripting_reference.md` (Steam), `docs/steam_release.md`; `docs/save_framework.md`
+- **Tests:** `steam`, `steam_script`; `save_framework`
 - **Status:** Partial - the service calls exist and are scriptable; nothing syncs a save slot to them.
 - **Exists today:** Raw per-service calls. A game must write its own copy logic.
-- **Suggested priority:** Medium - players expect cloud saves on Steam; the hooks are already designed in #572.
+- **Suggested priority:** Medium - players expect cloud saves on Steam; the hooks exist as library code in #572 (`ISaveSync`, in-memory and folder backends) but no Steam or PlayFab backend is behind them.
 - **Open:** first step: `ISaveSync` backends for Steam Cloud and PlayFab user data, with "newest wins" and a conflict prompt; size limits per service.
 - **Related:** 35.1, 17.10, 16.1
 - **Words:** cloud saves, Steam Cloud, PlayFab user data, sync saves, remote storage, conflict
@@ -542,10 +543,10 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Parts:**
   - 50.1.1 Image saving - `Graphics/Image` - `Image::SavePNG`
   - 50.1.2 Scene view capture - `editor/main.cpp` - the Scene view options have a debug button "Save Scene view -> PNG" that writes `scene_capture.png` from the software renderer's raw pixels
-  - 50.1.3 Software scene render (in flight, #572) - `Testing/Regression` - `RenderSceneToImage` renders meshes to an `Image`
+  - 50.1.3 Software scene render (#572) - `Testing/Regression` - `RenderSceneToImage` renders meshes to an `Image`
   - 50.1.4 In-game screenshot key - `player/main.cpp` - no screenshot key found in the player
 - **Code:** `Graphics/Image`, `editor/main.cpp`, `Testing/Regression`
-- **API:** `Image::SavePNG`, in flight: `RenderSceneToImage`
+- **API:** `Image::SavePNG`, `RenderSceneToImage`
 - **Editor:** Scene view options > Save Scene view -> PNG (debug)
 - **Docs:** -
 - **Tests:** `image`
@@ -583,15 +584,16 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Record gameplay or a cutscene to a video file or image sequence.
 - **Parts:**
   - 50.3.1 Frame capture - `-` - see 50.1; no recorder, encoder or image-sequence writer was found
-- **Code:** -
-- **API:** none
+  - 50.3.2 Fixed-rate capture clock (in flight, `claude/loop-time-wave2`) - `Core/GameLoop` - `SetCapture(fps, frames)` makes every frame exactly 1/fps seconds whatever the machine does and stops after a frame budget, so two runs give the same `Time` values frame for frame
+- **Code:** `Core/GameLoop`
+- **API:** in flight: `GameLoop::SetCapture`, `ClearCapture`, `SetFrameBudget`
 - **Editor:** none
-- **Docs:** -
-- **Tests:** none
-- **Status:** Planned - no recorder or encoder exists.
-- **Exists today:** Nothing beyond single-frame PNG saving.
+- **Docs:** in flight `docs/loop_and_time.md`
+- **Tests:** in flight `capture_mode`
+- **Status:** Planned - no recorder or encoder exists; only the exact-frame-time half is In flight.
+- **Exists today:** Single-frame PNG saving; the capture clock exists only on the second loop pass branch (no PNG writer is attached to it).
 - **Suggested priority:** Low - image sequences (PNG per frame) would cover trailers; real encoding needs a library.
-- **Open:** first step: an image-sequence recorder at a fixed time step (so slow frames do not drop video frames), using the fixed-step time from #572's play-test clock.
+- **Open:** first step: an image-sequence recorder at a fixed time step (so slow frames do not drop video frames), using `GameLoop::SetCapture` (in flight) or the fixed-step time from #572's play-test clock.
 - **Related:** 50.1, 10.1, 46.1
 - **Words:** video recording, record gameplay, trailer, image sequence, capture video, cutscene render
 - **Seen as:** need to record a trailer
@@ -1145,14 +1147,14 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ### 58.1 Performance budgets
 - **What:** Written limits (frame time, draw calls, memory, triangles) per scene or system, checked automatically.
 - **Parts:**
-  - 58.1.1 Optimization report thresholds (in flight, #574) - `Optimize/SceneOptimizationReport` - `OptSettings` with a draw call budget, texture memory budget and similar limits
+  - 58.1.1 Optimization report thresholds (#574) - `Optimize/SceneOptimizationReport` - `OptSettings` with a draw call budget, texture memory budget and similar limits
   - 58.1.2 Profiler data - `Core/Profiler` - per-section times that a budget could check
   - 58.1.3 Budget file and checker - `-` - not built
 - **Code:** `Optimize/SceneOptimizationReport`, `Core/Profiler`
-- **API:** in flight: `AnalyzeScene`, `OptSettings`
+- **API:** `AnalyzeScene`, `OptSettings`
 - **Editor:** none
-- **Docs:** in flight `docs/optimization_tools.md`
-- **Tests:** in flight `optimize_report`
+- **Docs:** `docs/optimization_tools.md`
+- **Tests:** `optimize_report`
 - **Status:** Planned - building blocks only.
 - **Exists today:** Data layers for measuring; no budget definitions.
 - **Suggested priority:** Medium - gives the owner an early warning before a scene gets slow.
@@ -1167,8 +1169,9 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Parts:**
   - 58.2.1 UI render benchmark - `tests/test_ui_render_bench.cpp` - 500 widgets in a 10k-object scene must use under 1 ms CPU, under 20 draw calls and no allocations after warm-up (timing only in optimized builds)
   - 58.2.2 Perf dump hook - `editor/main.cpp` - `OKAY_PERF_DUMP` prints an average frame breakdown every two seconds
-  - 58.2.3 Play-test harness (in flight, #572) - `Testing/PlayTest` - headless fixed-step runs, a base for scene benchmarks
-- **Code:** `tests/test_ui_render_bench.cpp`, `editor/main.cpp`, `Testing/PlayTest`
+  - 58.2.3 Play-test harness (#572) - `Testing/PlayTest` - headless fixed-step runs, a base for scene benchmarks
+  - 58.2.4 Frame statistics (in flight, `claude/loop-time-wave2`) - `Core/FrameStats` - average fps, 1% low, 0.1% low, worst frame and hitch count over a 240-frame window, and a text or JSON summary of a recorded session; can sync into `Debug/FrameHistory`
+- **Code:** `tests/test_ui_render_bench.cpp`, `editor/main.cpp`, `Testing/PlayTest`, `Core/FrameStats`
 - **API:** `OKAY_PERF_DUMP` environment variable
 - **Editor:** none
 - **Docs:** `docs/qa_workflow.md`

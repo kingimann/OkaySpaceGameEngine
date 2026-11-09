@@ -1,15 +1,6 @@
 ## Currently moving (as of 2026-11-09)
-- Release 2.848.0 is the latest published; 2.849.0 (core and scene waves, durable saves, asset manager,
-  core wave 4, undo and recovery, test and save frameworks) is being cut.
-- Merged since 2.848.0: durable saves, all-or-nothing scene loading, core utility fixes, scene lifecycle,
-  log and profiler, timers and tweens, the Core audit, scene wave 3, the asset manager and asset
-  database, and core wave 4 (math and geometry, CLI and console, localization and Prefs, ECS commands and
-  deltas, input keys and gamepads).
-- Open PRs: engine tools foundation (undo and recovery, automated testing, save framework), release
-  2.849.0, tools wave 2 (profiling and debugging data layers, optimization tools, localization tools,
-  accessibility) and scene hierarchy, search and validation.
-- Branches finished, waiting to be combined into one PR: nested prefabs and variants
-  (`claude/prefab-wave2`), the property reflection registry (`claude/property-reflection`). Still being
-  written: a job system with arenas, handles and console variables (`claude/core-runtime`) and scene
-  diff, merge and migration (`claude/scene-diff-merge`).
-- Animation and IK PRs (#554 and the earlier ones) belong to Grok's sessions.
+- Release 2.849.0 is published (2026-11-09): scene wave 3, durable saves, scene loading, the asset manager and asset database, core wave 4 (math and geometry, CLI and console, localization and Prefs, ECS commands and deltas, input keys and gamepads) and the engine tools foundation (undo and recovery, automated testing, save framework).
+- Release 2.850.0 is being cut (draft release PR #580). It holds tools wave 2 (#574: profiling and debugging data layers, optimization tools, localization tools, accessibility), scene hierarchy, search and validation (#575), core wave 5 (#578: nested prefabs and variants, property registry, job system, arenas and handles, scene diff, merge and migration) and loop and time 1.1 (#579: `GameLoop`, clocks, hit stop, pause and quit reasons, random extras, `Application` on `GameLoop`, 11 bug fixes). This map treats #579 as merged; its files are not in the checked-out tree until it lands.
+- Branch waiting for a PR: `claude/loop-time-wave2`, the second loop and time pass (frame stepping, debug time scale, capture mode, frame recorder and player, frame statistics, tick pacer for the dedicated server, 13 more bug fixes). Marked "In flight" in 1.1.
+- Open draft PRs that are not mine to touch: this feature map (#576), the animation and IK integration (#554, Grok's sessions; the earlier animation and IK PRs are Grok's too), and the Visual Script and Script Editor redesign (#577, branch `cursor/editor-ui-redesign-00d9`, edits `editor/main.cpp`).
+- What is left after the merges: almost every new engine-side layer (undo stack, recovery, debug and optimization data layers, play-tests, save framework, prefab tools, property registry, scene diff and merge, job system) has tests but no caller in the editor, the renderers or the player. The Status line of each sub-area says which; areas 20 to 35 list the work packages.

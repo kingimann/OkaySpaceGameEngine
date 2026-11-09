@@ -1,9 +1,9 @@
 # 36. Math & geometry
 
 The numbers underneath everything: vectors, quaternions, matrices, scalar helpers, easing, bounds and rectangles, the IK solvers' maths, and the geometry helpers (frustum, rays, closest points) that are scattered through rendering, physics and modeling.
-Covers `engine/include/okay/Math` (15 headers, all header-only, about 1.7k lines) plus geometry code in `Render/Culling`, `Render/Lightmap`, `Components/Camera` and `Render/Mesh`.
-Small and stable on main; PR #571 (core wave 4, branch claude/core-wave4-combined) adds Mat3, rays, planes, shapes, intersection tests, integer vectors, noise, curves and colour spaces.
-This area was split out of area 1 so maths can be targeted on its own; it is big enough to stand alone because of PR #571 and the IK solvers.
+Covers `engine/include/okay/Math` (23 headers, all header-only, about 3.0k lines) plus geometry code in `Render/Culling`, `Render/Lightmap`, `Components/Camera` and `Render/Mesh`.
+Core wave 4 (#571, in 2.849.0) added Mat3, rays, planes, shapes, intersection tests, integer vectors, noise, curves, colour spaces and the `Core/Rng` streams; nothing in this area is open now.
+This area was split out of area 1 so maths can be targeted on its own; it is big enough to stand alone because of #571 and the IK solvers. Docs: `docs/math_geometry.md`, test `math_geometry`.
 
 ## 36. Math & geometry
 
@@ -14,14 +14,15 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
   - 36.1.2 Vec3 - `Math/Vec3` - 3D vector: Cross, Project, ProjectOnPlane, Reflect, Angle, SignedAngle, Slerp, ClampMagnitude, MoveTowards, SmoothDamp; constants Zero, One, Up, Right, Forward (+Z), Back
   - 36.1.3 Vec4 - `Math/Vec4` - homogeneous coordinates and colours; `xyz()`, Dot, index access
   - 36.1.4 Colour - `Render/Color` - RGBA floats in 0..1, `FromBytes`, `Lerp`, `Luminance`, constants Black, White, Red and more
-  - 36.1.5 Integer vectors - in flight (PR #571): `Vec2i`, `Vec3i` in `Math/VecInt` with exact compare, hashing, FloorDiv/FloorMod for chunk and tile maths
-- **Code:** `Math/Vec2`, `Math/Vec3`, `Math/Vec4`, `Render/Color`
+  - 36.1.5 Integer vectors - `Math/VecInt` - (#571) `Vec2i`, `Vec3i` with exact compare, hashing, FloorDiv/FloorMod for chunk and tile maths
+  - 36.1.6 Colour parsing - `Render/Color` - (#571) `Color::Parse("#RGB" / "#RRGGBB" / "#RRGGBBAA" / "r,g,b[,a]")`; see 36.7.3 for HSV and HSL
+- **Code:** `Math/Vec2`, `Math/Vec3`, `Math/Vec4`, `Render/Color`, `Math/VecInt`
 - **API:** `Vec2`, `Vec3`, `Vec4`, `Vec3::Cross`, `Vec3::Slerp`, `Vec3::SmoothDamp`, `Vec3::ClampMagnitude`, `Color::FromBytes`, `Color::Lerp`
 - **Editor:** vector and colour fields in the Inspector (15.2)
-- **Docs:** `docs/core_audit_notes.md` (math fixes); in flight: the math_geometry page on PR #571, not on main
-- **Tests:** `math`, `math_extra`, `phys_math`, `2d_expand`, `core_audit`
-- **Status:** Works - read the headers; opposite-vector `Vec3::Slerp` and `SmoothDamp` with zero dt fixed in #565, with tests
-- **Open:** integer vectors and colour parsing (`Color::Parse`, colour spaces) are in PR #571; Color lives in `Render/` although it is pure maths
+- **Docs:** `docs/core_audit_notes.md` (math fixes), `docs/math_geometry.md`
+- **Tests:** `math`, `math_extra`, `phys_math`, `2d_expand`, `core_audit`, `math_geometry`, `core_math_extra`
+- **Status:** Works - read the headers; opposite-vector `Vec3::Slerp` and `SmoothDamp` with zero dt fixed in #565, integer vectors and `Color::Parse` added in #571, all with tests
+- **Open:** Color lives in `Render/` although it is pure maths; `Quat::Normalized` of a NaN quaternion now gives identity (`core_math_extra`)
 - **Related:** 36.2, 36.3, 2.1, 12
 - **Words:** Vec2, Vec3, Vec4, Vector3, vector, dot product, cross product, slerp, SmoothDamp, Color, RGBA, lerp
 - **Seen as:** a character spins the wrong way; a camera glides forever toward a target; NaN positions after a pause; a colour comes out too dark
@@ -33,14 +34,14 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
   - 36.2.1 Quaternion - `Math/Quat` - `Euler`, `AngleAxis`, `FromToRotation`, `LookRotation`, `Slerp`, `Lerp`, `RotateTowards`, `Angle`, `ToEuler`, `FromRotationMatrix`, `Inverse`, `Conjugate`
   - 36.2.2 4x4 matrix - `Math/Mat4` - column-major, `TRS`, `Translate`, `Rotate`, `Scale`, `LookAt`, `Perspective`, `Ortho`, `Inverse`, `Determinant`, `Transpose`, `MultiplyPoint`, `MultiplyVector`, `PlanarShadow` (flat ground shadow)
   - 36.2.3 Conventions - Euler angles apply Z, X, Y (test comment); `Vec3::Forward` is +Z yet cameras and player models face -Z (test comments), so mirror-flipped views are the usual mistake
-  - 36.2.4 Mat3 and Decompose - in flight (PR #571): `Math/Mat3`, `Mat4::Decompose` (translate, rotate, scale), `Quat::ToAngleAxis`
-- **Code:** `Math/Quat`, `Math/Mat4`
+  - 36.2.4 Mat3 and Decompose - `Math/Mat3`, `Math/Mat4` - (#571) `Mat3` (3x3 and 2D homogeneous transform), `Mat4::Decompose` (translate, rotate, scale), `Quat::ToAngleAxis`
+- **Code:** `Math/Quat`, `Math/Mat4`, `Math/Mat3`
 - **API:** `Quat::Euler`, `Quat::LookRotation`, `Quat::Slerp`, `Mat4::TRS`, `Mat4::LookAt`, `Mat4::Perspective`, `Mat4::Inverse`
 - **Editor:** Transform rotation fields and gizmos (15.2, 15.3)
 - **Docs:** `docs/core_audit_notes.md`
-- **Tests:** `math`, `3d`, `math_extra`, `phys_math`, `prefs_misc`, `core_audit`
-- **Status:** Works - read the headers; `LookRotation` zero forward, tiny-matrix `Inverse` and Euler gimbal cases fixed with tests (#565)
-- **Open:** PR #571 narrows the `Quat::ToEuler` gimbal-lock zone to about 0.08 degrees so roll survives at 89 degrees; no double-precision variants for large worlds (core_audit_notes); `Mat4::Decompose` is missing on main
+- **Tests:** `math`, `3d`, `math_extra`, `phys_math`, `prefs_misc`, `core_audit`, `math_geometry`, `core_fixes`
+- **Status:** Works - read the headers; `LookRotation` zero forward, tiny-matrix `Inverse` and Euler gimbal cases fixed with tests (#565); `Mat3`, `Decompose` and `ToAngleAxis` exist (read `Mat4.hpp`, `Quat.hpp`)
+- **Open:** `Quat::ToEuler` treats only about 0.08 degrees around straight up or down as gimbal lock, so roll survives at 89 degrees (`core_fixes`); no double-precision variants for large worlds (core_audit_notes)
 - **Related:** 36.1, 1.3, 2.10, 5.5
 - **Words:** Quat, quaternion, Euler, gimbal lock, LookRotation, Mat4, matrix, TRS, view matrix, projection matrix, Perspective, Ortho, inverse, column-major
 - **Seen as:** objects rotate around the wrong axis; a model faces backwards; the camera view is mirrored; rotation flips near straight up or down
@@ -52,14 +53,14 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
   - 36.3.1 Scalar helpers - `Math/Mathf` - Clamp, Lerp, InverseLerp, SmoothStep, Repeat, PingPong, MoveTowards, DeltaAngle, LerpAngle, SmoothDamp, SmoothDampAngle, Approximately
   - 36.3.2 Easing functions - `Math/Easing` - `Ease` enum and `Easing::*` (Quad, Cubic, Sine, Expo, Back, Elastic, Bounce in/out/in-out), used by tweens, animation clips and UI animation
   - 36.3.3 Umbrella header - `Math/Math` - includes every Math header except the IK ones
-  - 36.3.4 Curves - in flight (PR #571): `Math/Curves` shared curve helpers
-- **Code:** `Math/Mathf`, `Math/Easing`, `Math/Math`
+  - 36.3.4 Curves - `Math/Curves` - (#571) `Curves::QuadBezier`, `CubicBezier`, `Hermite` and their tangents over float, Vec2 and Vec3
+- **Code:** `Math/Mathf`, `Math/Easing`, `Math/Math`, `Math/Curves`
 - **API:** `Mathf::Lerp`, `Mathf::SmoothDamp`, `Mathf::Clamp01`, `Ease`, `Easing::QuadOut`, `Easing::BounceOut`
 - **Editor:** ease picker and curve preview in the Animator, Timeline and Tween Animation inspectors (editor/main.cpp)
 - **Docs:** `docs/timers_and_tweens.md`
 - **Tests:** `easing`, `math`, `math_extra`, `core_features`, `core_audit`
 - **Status:** Works - every easing endpoint was checked in the core audit (#565); new easings are appended to the enum so saved numbers keep their meaning
-- **Open:** `Mathf::Infinity` is the largest finite float on main (a real infinity arrives with PR #571); `Mathf::SmoothStep` argument order changes in PR #571
+- **Open:** `Mathf::Infinity` is now a real IEEE infinity (#571; `Mathf::MaxFloat` is the old value; script-side `Mathf.Infinity` stays `1e30`); `Mathf::SmoothStep` accepts its edges in either order (#571)
 - **Related:** 1.2, 5.2, 12.4, 36.1
 - **Words:** Mathf, Lerp, Clamp, SmoothStep, SmoothDamp, Repeat, PingPong, easing, Ease, ease in, ease out, bounce, elastic, back
 - **Seen as:** an animation overshoots or snaps; a camera follow lags or oscillates; an angle jumps at 360
@@ -70,14 +71,14 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Parts:**
   - 36.4.1 Bounds - `Math/Bounds` - centre and extents box: `Contains`, `Intersects`, `Encapsulate`, `SetMinMax`
   - 36.4.2 Rect - `Math/Rect` - 2D rectangle by min corner and size: `Contains`, `Overlaps`, `Centered`, `MinMax`
-  - 36.4.3 Rays, planes, shapes, intersections - in flight (PR #571): `Math/Ray`, `Math/Geometry` (`Plane`, `Sphere`, `Capsule`, `OBB`, `ViewFrustum`, `Geom::Raycast`, `Geom::Overlap`), `Bounds::Raycast`
-- **Code:** `Math/Bounds`, `Math/Rect`
+  - 36.4.3 Rays, planes, shapes, intersections - `Math/Ray`, `Math/Geometry` - (#571) `Ray`, `Plane`, `Sphere`, `Capsule`, `OBB`, `ViewFrustum`, `Geom::Raycast`, `Geom::Overlap`, `Bounds::Raycast`, `ClosestPoint`, `SqrDistance`; `Bounds` has an empty state
+- **Code:** `Math/Bounds`, `Math/Rect`, `Math/Ray`, `Math/Geometry`
 - **API:** `Bounds`, `Bounds::Encapsulate`, `Rect`, `Rect::Overlaps`
 - **Editor:** none (used by selection boxes and marquee selection in the editor windows)
-- **Docs:** in flight: the math_geometry page on PR #571, not on main
-- **Tests:** `core_features`, `core_audit`
-- **Status:** Basic - read both headers (44 and 37 lines): only the minimum operations exist on main
-- **Open:** possible bug: `Bounds::Encapsulate` on a default `Bounds` grows from the origin, not from the first point (fixed by the empty-box state in PR #571); `Rect::Overlaps` counts shared edges as overlap (PR #571 makes it strict); no ray, plane, sphere, capsule or oriented-box types on main
+- **Docs:** `docs/math_geometry.md`
+- **Tests:** `core_features`, `core_audit`, `math_geometry`, `core_fixes`
+- **Status:** Works - Bounds, Rect and the new shape types exist (read `Bounds.hpp` and the shape structs in `Geometry.hpp`; the intersection functions were not read in depth; test `math_geometry` per docs)
+- **Open:** a default `Bounds` is now empty (it used to be a point at the origin: code that wants that must write `Bounds(Vec3{}, Vec3{})`, per docs); `Rect::Overlaps` is strict since #571 (touching edges do not overlap, `core_fixes`); `ViewFrustum` is a second frustum type next to the renderer's `Frustum` (see 36.6)
 - **Related:** 36.6, 6.5, 2.8
 - **Words:** Bounds, AABB, Rect, rectangle, box, extents, Encapsulate, intersect, Contains, Overlaps, ray, plane, OBB
 - **Seen as:** a box grows from the world origin; two touching UI rectangles count as overlapping; a marquee picks nodes it only touches
@@ -118,27 +119,27 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Editor:** Scene view picking and gizmos (15.3)
 - **Docs:** -
 - **Tests:** `frustum_culling`, `camera_cine`, `worldtoscreen`, `mesh3d`
-- **Status:** Partial - each helper works where it lives, but there are separate private copies and no shared ray, plane or shape types on main
-- **Open:** duplicated ray-box and ray-sphere code in `Physics2D`/`Physics3D`, `EditTransform::Ray`, `Lightmap::RayTriangle` and `Frustum`; PR #571's `ViewFrustum` is a second frustum type that is not wired to `Render/Culling`; ray against triangle is explicitly not in PR #571
+- **Status:** Partial - each helper works where it lives; shared ray, plane and shape types now exist (36.4.3) but the private copies were not moved onto them
+- **Open:** duplicated ray-box and ray-sphere code in `Physics2D`/`Physics3D`, `EditTransform::Ray`, `Lightmap::RayTriangle` and `Frustum`; #571's `Ray`, `Plane`, `Sphere`, `Capsule`, `OBB` and `ViewFrustum` (36.4.3) are not used by `Render/Culling`, physics or picking yet (the docs say `Frustum` in `Render/Culling.hpp` "stays as it is"), so the private copies remain; ray against triangle is not in the shared types
 - **Related:** 36.4, 2.8, 2.10, 6.5, 3.1
 - **Words:** frustum, ray, raycast, intersection, closest point, ray triangle, picking, bounding sphere, point inside mesh, ScreenPointToRay
 - **Seen as:** a click selects the wrong object; shadows leak through a thin wall; a ray misses a rotated box
 - **Ask me like:** "One shared Ray and Plane type for physics, picking and culling"
 
 ### 36.7 Noise, curves, colour spaces and random streams
-- **What:** Shared procedural helpers that exist today as several private copies, and the shared versions being added.
+- **What:** Shared procedural helpers (noise, curves, colour spaces, seeded random streams) that merged in #571, and the several private copies they should replace.
 - **Parts:**
   - 36.7.1 Existing private noise - `Render/ProcTexture` (`Hash01`, `ValueNoise`, `Fbm`, `Worley`), `Components/Terrain` (`ValueNoise`, `Generate`), `Render/Mesh` (`ValueNoise`, `PropRand`), `Components/ParticleSystem` (`Noise3`), `Components/VirtualCamera` (`Noise`)
-  - 36.7.2 Shared noise and curves - in flight (PR #571): `Math/Noise` (`NoiseField`), `Math/Curves`
-  - 36.7.3 Colour spaces - in flight (PR #571): `Math/ColorSpace` (`Hsv`, `Hsl`), `Color::Parse`
-  - 36.7.4 Random streams - in flight (PR #571): `Core/Rng` (PCG32 with streams); `Core/Random` on main is the xorshift generator (1.1)
-- **Code:** `Render/ProcTexture`
-- **API:** `GenerateProcTexture`, `proctex_detail::Fbm`; in flight: `NoiseField`, `Rng`, `Hsv`
+  - 36.7.2 Shared noise and curves - `Math/Noise`, `Math/Curves` - (#571) `NoiseField(seed)` with Perlin, Simplex, Value and Worley in 2D and 3D, `Fbm2`, `Ridged2`, `Turbulence3`; a pure function of seed and position, so identical across platforms and threads
+  - 36.7.3 Colour spaces - `Math/ColorSpace` - (#571) `ColorSpace` conversions with `Hsv` and `Hsl`
+  - 36.7.4 Random streams - `Core/Rng` - (#571) PCG32 with `Fork("name")` streams, unbiased `Range`, `Chance`, `Gaussian`, `Shuffle`, `Choose`, `WeightedIndex`, text save and restore; `Core/Random` is the older xorshift generator (1.1; its extras in `Core/RandomExtras` also work with `Rng`)
+- **Code:** `Render/ProcTexture`, `Math/Noise`, `Math/Curves`, `Math/ColorSpace`, `Core/Rng`
+- **API:** `GenerateProcTexture`, `proctex_detail::Fbm`, `NoiseField`, `Rng::Fork`, `Hsv`, `Curves::CubicBezier`
 - **Editor:** none
-- **Docs:** in flight: the math_geometry page on PR #571, not on main
-- **Tests:** `mesh_variant_hash`
-- **Status:** In flight - PR #571 adds the shared versions; on main only the private copies exist
-- **Open:** PR #571 brings its own test `math_geometry`; after it merges, move terrain, textures, particles and meshes onto the shared noise so a seed means the same thing everywhere; `Mesh::PropRand` overflowed for variants 6 and up (fixed, test `mesh_variant_hash`)
+- **Docs:** `docs/math_geometry.md`
+- **Tests:** `mesh_variant_hash`, `math_geometry`
+- **Status:** Partial - the shared noise, curves, colour spaces and `Rng` are on main (#571, test `math_geometry`) but terrain, textures, particles and meshes still use their private copies (grep finds no `NoiseField` use outside `Math/`)
+- **Open:** move terrain, textures, particles and meshes onto the shared noise so a seed means the same thing everywhere; `Mesh::PropRand` overflowed for variants 6 and up (fixed, test `mesh_variant_hash`)
 - **Related:** 1.1, 2.2, 2.6, 2.7, 29
 - **Words:** noise, Perlin, value noise, Fbm, Worley, simplex, curves, colour space, HSV, HSL, Rng, PCG, random stream, seed
 - **Seen as:** the same seed gives different terrain in two tools; procedural textures tile with seams

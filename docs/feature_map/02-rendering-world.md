@@ -2,7 +2,7 @@
 
 What you see in a scene beyond the backends themselves: materials and meshes, lights and shadows, sky, fog, weather, post-processing, terrain and water, particles, lines and splines, sprites, text and fonts, cameras and culling.
 Covers `engine/include/okay/Render` (everything except the backend classes, which are area 38), `Graphics`, `Environment`, and about 20 headers in `Components/` (Camera, Light, MeshRenderer, Terrain, ParticleSystem, Spline and friends).
-Mostly on main and tested. Open work: PR #574 adds optimization tools (LOD, occlusion, batching, streaming) and GPU/render stats; PR #575 touches the renderers for hierarchy-aware active; the old shader and material editor plan is area 26.
+Mostly on main and tested. Nothing is open: #574 added the optimization tools (LOD, occlusion, batching, streaming) and GPU and render stats as engine-side library code that no renderer calls yet (areas 23 and 27), and #575 made all four renderers skip children of an inactive parent; the old shader and material editor plan is area 26.
 
 ## 2. Rendering & world
 
@@ -125,7 +125,7 @@ Mostly on main and tested. Open work: PR #574 adds optimization tools (LOD, occl
 - **Docs:** - (no page; the Terrain Sandbox and Voxel Sandbox templates are in 1.6)
 - **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
 - **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
-- **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; no documentation page for terrain, water or streaming; streaming is by prefab cell files baked by hand, not by the optimization tools of PR #574 (area 27)
+- **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; no documentation page for terrain, water or streaming; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
 - **Related:** 2.2, 2.4, 6.2, 27, 29, 1.6
 - **Words:** Terrain, heightmap, sculpt, brush, erosion, VoxelTerrain, marching cubes, cave, dig, TerrainDigger, VoxelDigger, Water, ocean, lake, buoyancy, WorldStreamer, world partition, streaming, Tilemap, tile
 - **Seen as:** the ground has holes or cracks; digging is slow or leaves floating bits; the water has no waves or sinks objects; far chunks pop in or never unload; the player falls through the tilemap
@@ -158,14 +158,14 @@ Mostly on main and tested. Open work: PR #574 adds optimization tools (LOD, occl
   - 2.8.1 Frustum culling - `Render/Culling` - `Frustum`, a world bounding sphere per object (cached local bounds for static meshes, bone positions for skinned ones), `CulledByFrustum`
   - 2.8.2 Culling switch and counters - `Render/Culling` - `FrustumCullingEnabled()` to debug a missing object, `LastCullCounters()` drawn/culled counts for the Stats panel
   - 2.8.3 GPU skinning - `Render/GLRenderer`, `Render/D3D11Renderer` - bone rows in the vertex shader (`SupportsGpuSkinning`, `GpuSkinJoints`); otherwise the CPU builds the pose (SkinnedMesh is 5.5)
-  - 2.8.4 LOD, occlusion, batching - in flight (PR #574): `Optimize/LodGroup`, `OcclusionBuffer`, `BatchPlanner`, `StreamingGrid`, `MeshSimplify`; nothing on main
-- **Code:** `Render/Culling`
+  - 2.8.4 LOD, occlusion, batching - `Optimize/LodGroup`, `OcclusionBuffer`, `BatchPlanner`, `StreamingGrid`, `MeshSimplify` - (#574) data-layer code on main with tests (area 27); no renderer calls it, there is no LOD component
+- **Code:** `Render/Culling`, `Optimize/LodGroup`, `Optimize/OcclusionBuffer`, `Optimize/BatchPlanner`, `Optimize/MeshSimplify`
 - **API:** `Frustum`, `CulledByFrustum`, `FrustumCullingEnabled`, `LastCullCounters`, `GLRenderer::SupportsGpuSkinning`
 - **Editor:** Stats panel (draw counts); Scene view debug toggles
-- **Docs:** -
-- **Tests:** `frustum_culling`
+- **Docs:** `docs/optimization_tools.md`
+- **Tests:** `frustum_culling`, `optimize_simplify`, `optimize_occlusion`, `optimize_batching`
 - **Status:** Works - frustum culling read in `Culling.hpp` and tested; GPU skinning is in OpenGL and Direct3D 11 only (Direct3D 12 has no skinning code)
-- **Open:** LOD groups, occlusion culling, static and dynamic batching and streaming are area 27 and PR #574; software and Direct3D 12 skinning stays on the CPU
+- **Open:** LOD groups, occlusion culling, static and dynamic batching and streaming are area 27: the algorithms exist (#574) but nothing in the renderers uses them; software and Direct3D 12 skinning stays on the CPU
 - **Related:** 27, 5.5, 38.2, 38.3, 2.10
 - **Words:** culling, frustum culling, frustum, bounding sphere, GPU skinning, LOD, occlusion, culled objects, draw calls
 - **Seen as:** low FPS in big scenes; objects vanish at screen edges; a skinned character is slow

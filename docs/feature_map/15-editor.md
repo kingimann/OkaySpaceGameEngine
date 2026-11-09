@@ -2,7 +2,7 @@
 
 The OkayEngine editor (Dear ImGui on SDL): docked panels, Scene and Game views, Inspector, Project panel, many tool windows, Play mode and Build Game. About 65k lines in `editor/`, of which `editor/main.cpp` is still about 45k; the split-out panel files hold the rest.
 `editor/vendor` (the vendored text editor widget) is out of scope. Only the headless logic (`EditorState`, tabs, game fiber, script text, graph model) has unit tests; the drawing code is checked by the CI `--selftest` run and by hand.
-Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. Animation windows belong to Grok's animation sessions; leave them alone.
+Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. Animation windows belong to Grok's animation sessions; leave them alone. Open draft PR #577 (branch `cursor/editor-ui-redesign-00d9`, not from this team's sessions) redesigns the Visual Script and Script Editor layouts: it edits `editor/main.cpp` and `editor/VisualScriptEditor.hpp` and adds `editor/VsCanvasTools.hpp` (not on main; described only, not verified).
 
 ## 15. Editor
 
@@ -20,7 +20,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** `docs/editor.md` (Editor quality-of-life, Hierarchy right-click)
 - **Tests:** `editor` (selftest)
 - **Status:** Works - used by every session; the GUI is not unit-tested
-- **Open:** polish (carried from the earlier map); in flight: PR #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active state, FindByPath, Validate) and does not touch the editor files; a pinned-object feature named in the old A-Z index is not found by name in the Hierarchy code
+- **Open:** polish (carried from the earlier map); #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active state, FindByPath, Validate) and the Hierarchy panel does not call `Validate` or `FindByPath` yet; a pinned-object feature named in the old A-Z index is not found by name in the Hierarchy code
 - **Related:** 15.2, 1.3, 1.6, 21
 - **Words:** Hierarchy, hierarchy panel, pin (Hierarchy), scene tree, parenting, drag to parent, group, prefab save, order, sort, search, filter
 - **Seen as:** an object is missing from the tree; dragging does not re-parent; the context menu lacks an entry; the search shows nothing; selection jumps
@@ -132,7 +132,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** `docs/navigation.md`, `docs/behavior_trees.md`, `docs/dialogue_quests.md`, `docs/localization.md`, `docs/modeling.md`, `docs/editor.md`
 - **Tests:** `editor` (selftest only); engine side: `navmesh`, `behavior_tree`, `dialogue`, `quests`, `localization`, `meshedit`
 - **Status:** Works - each window has its own file or function; none has a unit test
-- **Open:** in flight: PR #574 adds localization tools on the engine side (translation tables, missing-key reports, language previews); per its docs the Localization window is not wired to them yet; Modeling and UV Editor still live in `main.cpp`
+- **Open:** #574 added localization tools on the engine side (translation tables, missing-key reports, language previews, 31.1); per its docs the Localization window is not wired to them yet; Modeling and UV Editor still live in `main.cpp`
 - **Related:** 9.1, 9.4, 10.2, 10.3, 1.8, 3.1, 31
 - **Words:** Navigation window, bake navmesh, Behavior Tree window, Dialogue window, Quests tab, Localization window, string table, Modeling window, UV Editor
 - **Seen as:** the navmesh does not bake or shows wrong polygons; a tree node cannot be wired; the dialogue Test panel does not match Play; a language preview shows keys; CJK text shows boxes
@@ -195,7 +195,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** `docs/editor.md` (Panel tabs & layouts, Editor quality-of-life)
 - **Tests:** `editor_tabs`, `ui_frame` (drives the editor undo stack), `editor` (selftest)
 - **Status:** Works - snapshot undo and tabs are tested headlessly; autosave has no test
-- **Open:** in flight: PR #572 adds an engine-side command undo stack, recovery and backups (`docs/undo_recovery.md`: "engine side only", editor still the full snapshot, "Adopting it in the editor" is the plan); undo across Play, rolling backups and a restore UI are planned (area 22)
+- **Open:** #572 added an engine-side command undo stack, recovery and backups (`docs/undo_recovery.md`: "engine side only", the editor still uses the full snapshot, "Adopting it in the editor" is the plan); undo across Play, rolling backups and a restore UI are planned (area 22)
 - **Related:** 22, 15.3, 15.11, 15.12
 - **Words:** undo, redo, history, autosave, crash recovery, console (editor), editor, layout, tabs, Ctrl+Tab, save layout, side tabs, panel switcher, snapshot undo
 - **Seen as:** undo skips or restores too much; the layout resets; the editor crashes or shows a black screen; a crash loses work; the recovery prompt does not appear; Ctrl+Tab picks the wrong panel
@@ -214,8 +214,8 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Editor:** none
 - **Docs:** -
 - **Tests:** `editor` (selftest), `editor_tabs`, `game_fiber`
-- **Status:** In flight - the split is under way; `main.cpp` is still about 45k lines and holds the largest panels
-- **Open:** no PR for the next split found; `DrawFlowGraph` (~1,060 lines) is retired and uncalled and could be deleted instead of moved (14.6); `editor/main.cpp` also holds the headless selftest and a self-updater (~1439-2114); the Scripting side asks for splitting the OkayScript VM too (19.4)
+- **Status:** Partial - several windows already live in their own files (listed above) but `main.cpp` is still about 45k lines and holds the largest panels; no PR or branch for the next split found
+- **Open:** no PR for the next split found (draft PR #577 edits about 280 lines of `main.cpp` for the Visual Script and Script Editor layouts, so expect merge conflicts for anyone moving those panels); `DrawFlowGraph` (~1,060 lines) is retired and uncalled and could be deleted instead of moved (14.6); `editor/main.cpp` also holds the headless selftest and a self-updater (~1439-2114); the Scripting side asks for splitting the OkayScript VM too (19.4)
 - **Related:** 19.4, 15.2, 15.3, 13.5
 - **Words:** main.cpp, split, refactor, panel files, MainShared, EditorCommon, giant file
 - **Seen as:** merge conflicts in `main.cpp`; slow rebuilds after a one-line editor change; two agents editing the same function
@@ -237,7 +237,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/core_logging_profiling.md`
 - **Tests:** `profiler`, `profiler_export`, `log` (engine side), `crash_reports`
 - **Status:** Works - panels exist and read the engine log and profiler
-- **Open:** planned area 23: CPU and GPU timeline window with memory tracking, frame debugger, error console filters linking to the source object; in flight: PR #574 adds profiling and debugging data layers (engine side), no editor window yet per its docs
+- **Open:** planned area 23: CPU and GPU timeline window with memory tracking, frame debugger, error console filters linking to the source object; #574 added profiling and debugging data layers (`Debug/*`, engine side), still no editor window for them per its docs
 - **Related:** 23, 1.10, 19.2
 - **Words:** Console, log, errors, warnings, Error Pause, Crash Log, Stats, Profiler, FPS, Net panel, watch, status bar
 - **Seen as:** the Console is flooded by one repeated line; errors are not shown; the profiler shows nothing; stats differ from the build

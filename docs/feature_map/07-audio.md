@@ -2,8 +2,8 @@
 
 Software stereo mixer, WAV/OGG/MP3 clips, audio sources with 3D falloff, a music player and saved volume settings. Code is
 `engine/include/okay/Audio/*` (3 headers), `engine/src/Audio/*` (about 500 lines) and two components; the host programs
-(`player/main.cpp`, `editor/main.cpp`) open the sound device. Doc: `docs/audio.md`. Nothing is in flight; PR #574 adds a captions
-model (see 10.1).
+(`player/main.cpp`, `editor/main.cpp`) open the sound device. Doc: `docs/audio.md`. Nothing is in flight; #574 added a captions
+model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 
 ## 7. Audio
 
@@ -76,7 +76,7 @@ model (see 10.1).
 - **Docs:** `docs/audio.md`
 - **Tests:** `master_volume`, `audio_mixer`
 - **Status:** Works - LoadSettings and SaveSettings call sites and the focus-mute line in player/main.cpp read; the save and load round trip is exercised in `audio_mixer`
-- **Open:** the volume sliders belong to the pause and settings screens (area 12.8); no subtitle or caption link yet (in flight, 10.1)
+- **Open:** the volume sliders belong to the pause and settings screens (area 12.8); no subtitle or caption link yet (`CaptionManager` from #574 has a "sound caption" call but no Audio Source option feeds it, 10.1, 32.2)
 - **Related:** 12.8, 1.7, 32.2, 7.1
 - **Words:** volume slider, master volume, music volume, effects volume, mute, saved settings, prefs, audio.* keys, mute when unfocused, settings screen
 - **Seen as:** the volume the player chose is forgotten next launch; the volume slider changes nothing; the game is loud again after restart

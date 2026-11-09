@@ -2,7 +2,7 @@
 
 The things that actually put a 3D frame on screen: the OpenGL, Direct3D 11, Direct3D 12 and software renderers, the console renderer, the web path, the shader programs, GPU resources and the frame and present path in the editor and player.
 Covers the backend files of `engine/include/okay/Render` and `engine/src/Render` (`GLRenderer`, `D3D11Renderer`, `D3D12Renderer`, `SoftwareRenderer`, `ConsoleRenderer`, `ShadowSetup`, `Renderer`), about 8k lines, plus the host code that calls them in `editor/main.cpp` and `player/main.cpp`.
-Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11"). What the frame looks like (lights, sky, post effects, materials) stays in area 2. Open work: PR #574 adds GPU timing, render stats and a frame debugger; PR #575 touches all four renderers for hierarchy-aware active.
+Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11"). What the frame looks like (lights, sky, post effects, materials) stays in area 2. Nothing is open: #574 added GPU timing, render stats and a frame debugger as library code (not called by any renderer yet) and #575 made all four renderers skip children of an inactive parent.
 
 ## 38. Render backends & GPU
 
@@ -174,7 +174,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.9.3 Mesh buffer cache - `Render/GLRenderer`, `Render/D3D11Renderer` - static meshes expanded and uploaded once, checked by a pointer fingerprint, a sampled hash and a periodic full hash; skinned meshes keyed by `SkinnedMesh::version`
   - 38.9.4 Texture cache - `Render/GLRenderer`, `Render/D3D11Renderer` - name to GPU texture, uploaded on first use from the shared CPU cache
   - 38.9.5 Bone palette - `Render/GLRenderer`, `Render/D3D11Renderer` - joint rows for GPU skinning (256 joints in Direct3D 11)
-  - 38.9.6 Memory tracking - in flight (PR #574): `Debug/MemoryTracker`; the asset manager does not track GPU textures (1.11)
+  - 38.9.6 Memory tracking - (#574) `Debug/MemoryTracker`, nothing reports GPU memory into it; the asset manager does not track GPU textures (1.11)
 - **Code:** `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer`
 - **API:** `GLRenderer::Destroy`, `D3D11Renderer::Destroy`, `D3D11Renderer::ReleaseCom`
 - **Editor:** editor view slots 0-3 (`ResetViewTextures` after device loss, editor/main.cpp)
@@ -212,13 +212,13 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **What:** Knowing what the GPU spent: real GPU timers, draw-call lists and render stats.
 - **Parts:**
   - 38.11.1 Today - `Core/Profiler`, `Render/Culling` - a synchronous render-time proxy (`Prof().Gpu`) and the drawn/culled object counts
-  - 38.11.2 Data layers - in flight (PR #574): `Debug/GpuTimer`, `Debug/RenderStats`, `Debug/DrawCallRecorder`, `Debug/FrameHistory`, `Debug/MemoryTracker`, `Debug/DebugStatsOverlay`
-- **Code:** `Core/Profiler`, `Render/Culling`
-- **API:** `Prof().Gpu`, `LastCullCounters`; in flight: `GpuTimer`, `DrawCallRecorder`
+  - 38.11.2 Data layers - (#574) `Debug/GpuTimer`, `Debug/RenderStats`, `Debug/DrawCallRecorder`, `Debug/FrameHistory`, `Debug/MemoryTracker`, `Debug/DebugStatsOverlay`: GPU scopes with a CPU-fence fallback, per-frame render counters, a one-frame draw list, memory categories and an overlay text builder
+- **Code:** `Core/Profiler`, `Render/Culling`, `Debug/GpuTimer`, `Debug/RenderStats`, `Debug/DrawCallRecorder`
+- **API:** `Prof().Gpu`, `LastCullCounters`, `GpuTimer`, `GpuScope`, `DrawCallRecorder`
 - **Editor:** Stats and Profiler windows (editor/main.cpp)
-- **Docs:** in flight: the debug_tools page on PR #574, not on main
-- **Tests:** `profiler`
-- **Status:** In flight - PR #574 (branch claude/tools-wave2) adds the data layers; on main only the proxy exists
+- **Docs:** `docs/debug_tools.md`
+- **Tests:** `profiler`, `debug_gpu_stats`, `debug_draw_calls`
+- **Status:** Partial - the data layers are on main (#574, tests above) but no backend calls them ("No renderer calls the hooks yet", per docs; grep finds no `GpuScope` outside `Debug/`); the live "GPU" number is still the synchronous render-time proxy
 - **Open:** wiring real GPU timers into each backend; a frame debugger window (area 23)
 - **Related:** 1.10, 23, 38.9
 - **Words:** GPU timer, draw calls, frame debugger, render stats, GPU profiler, overdraw

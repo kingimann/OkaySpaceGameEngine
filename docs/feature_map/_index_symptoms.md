@@ -51,6 +51,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a chat line is cut off | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
 | a chest opens for the wrong player | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |
 | a child jumps when re-parented | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
+| a child still collides under a switched-off parent | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
 | a choice never shows | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
 | a click selects the wrong object | [36.6](36-math-geometry.md#366-geometry-helpers-elsewhere) Geometry helpers elsewhere |
 | a client can't connect or says "encryption required | [16.1](16-networking.md#161-transport-sealed-channels-packets) Transport, sealed channels, packets |
@@ -82,6 +83,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a downloaded mod could read my files | [47.2](43-proposals.md#472-mod-scripting-sandbox) Mod scripting sandbox |
 | a dropdown list draws under other widgets or lets clicks through | [12.3](12-ingame-ui.md#123-input-widgets-slider-toggle-input-field-dropdown-stepper-keybind) Input widgets: slider, toggle, input field, dropdown, stepper, keybind |
 | a face model has dozens of sliders and I want presets | [30.4](20-35-planned.md#304-morph-targets) Morph targets |
+| a failed load leaves no reason | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
 | a far-away player still pops in | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
 | a feature exists in OkayUI but not in the scene UI (or the reverse) | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a feature missing on the web build (networking relay, encryption) | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
@@ -133,11 +135,13 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a look changes in one system and not the other | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a loop cut previews but does not apply | [3.2](03-modeling-import.md#32-edge-and-loop-tools) Edge and loop tools |
 | a loop never ends or runs once | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
+| a loop over thousands of items is slow on one thread | [1.18](01-core-scene.md#118-core-runtime-utilities) Core runtime utilities |
 | a Lua or C# script does nothing | [13.3](13-scripting.md#133-c-and-lua-vms) C# and Lua VMs |
 | a marquee picks nodes it only touches | [36.4](36-math-geometry.md#364-bounds-rectangles-and-shapes) Bounds, rectangles and shapes |
 | a material change does not show | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | a material does not apply to the selection | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |
 | a member autocompletes but fails to run | [13.6](13-scripting.md#136-engine-api-and-generated-docs) Engine API and generated docs |
+| a menu freezes during pause | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | a menu is cut off on a phone | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |
 | a menu written as text looks different from the HTML | [12.5](12-ingame-ui.md#125-html-ui) HTML UI |
 | a message arrives twice or not at all | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
@@ -167,6 +171,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a pasted C# script is accepted but has no effect | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a pasted join link does nothing | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
 | a path zig-zags | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
+| a pause menu and a cutscene un-pause each other | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | a pickup cannot be picked up | [11.2](11-gameplay-systems.md#112-items-and-loot) Items and loot |
 | a pickup trigger fires for the wrong object | [6.7](06-physics.md#67-collision-layers-and-trigger-filters) Collision layers and trigger filters |
 | a piece will not place (red ghost) | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
@@ -239,6 +244,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a sprite falls through the floor | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a sprite sheet with different sized frames cannot be used | [43.2](43-proposals.md#432-sprite-atlas-and-slicing) Sprite atlas and slicing |
 | a stack exceeds its limit | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |
+| a stale handle crashes | [1.18](01-core-scene.md#118-core-runtime-utilities) Core runtime utilities |
 | a starter texture looks different after regeneration (shouldn't, fixed seeds) | [41.4](41-build-tools-infra.md#414-developer-tools) Developer tools |
 | a state machine and locomotion fight | [5.11](05-animation-ik.md#511-animation-script-control) Animation script control |
 | a state or transition cannot be created | [15.5](15-editor.md#155-animator-animation-tab-timeline) Animator, Animation tab, Timeline |
@@ -270,6 +276,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a trigger blocks a ray | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
 | a tween keeps going after its object was deleted | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a typed distance goes the wrong way | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
+| a value edited in Play cannot be kept | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
 | a variable differs between players | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
 | a variable is empty after loading another scene | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
 | a voice call won't connect | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
@@ -782,6 +789,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | rotation flips near straight up or down | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
 | rubber-banding or snapping back when I move online | [16.2](16-networking.md#162-server-authority-prediction-lag-compensation) Server authority, prediction, lag compensation |
 | save corrupted after a crash (handled by .bak) | [35.1](20-35-planned.md#351-save-slots) Save slots |
+| save folder differs per platform | [1.18](01-core-scene.md#118-core-runtime-utilities) Core runtime utilities |
 | saved by a newer version" message | [35.4](20-35-planned.md#354-versioned-save-data) Versioned save data |
 | saved crouched player stands up inside a ceiling | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
 | saved graph loads differently | [14.1](14-visual-scripting.md#141-graph-editor) Graph editor |
@@ -957,6 +965,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the game closes in Enforce mode with "debugger detected | [39.5](39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) Runtime checks and the clock heartbeat |
 | the game freezes and the editor hangs | [14.5](14-visual-scripting.md#145-debugger-breakpoints-step-call-stack-watch) Debugger (breakpoints, step, call stack, watch) |
 | the game is loud again after restart | [7.4](07-audio.md#74-saved-volume-settings) Saved volume settings |
+| the game jumps ahead after a window drag | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | the game keeps running after Quit | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | the game looks blurry on a scaled display | [37.1](37-platform-windowing.md#371-window-fullscreen-and-display-settings) Window, fullscreen and display settings |
 | the game looks different on another machine | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
@@ -1133,6 +1142,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | ui_button` does nothing in a build | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
 | ui_button` draws nothing | [13.4](13-scripting.md#134-script-components-and-script-ui) Script components and script UI |
 | undefined reference" after adding a .cpp (not in the list) | [41.1](41-build-tools-infra.md#411-cmake-project-layout-and-options) CMake project layout and options |
+| undo cannot say what changed | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
 | undo is slow in a big scene | [22.1](20-35-planned.md#221-undo-history) Undo history |
 | undo of a UI move misbehaves | [12.10](12-ingame-ui.md#1210-ui-editing-in-the-editor) UI editing in the editor |
 | undo skips or restores too much | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |

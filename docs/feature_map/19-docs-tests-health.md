@@ -1,15 +1,14 @@
 # 19. Docs, tests & code health
 
-The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 343 test files and 349 `add_test` lines in one
+The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 379 test files and 387 `add_test` lines in one
 `tests/CMakeLists.txt`), the developer and QA working loop, and the housekeeping that keeps the repository healthy (file sizes,
 stray files, warnings, sanitizers). 19.1 holds the index of every docs file; 19.2 explains how the tests are organised and how to
-run one. PR #572 (engine tools foundation: automated-testing runner) adds tests and edits `tests/CMakeLists.txt`; core wave 4
-(#571) just merged eight tests and four docs pages. Nothing else is moving here.
+run one. Since 2.848.0 the suite grew by about 40 tests and 12 docs pages: #571 (core wave 4), #572 (undo, recovery, play-tests, save framework), #574, #575 and #578 are merged, and #579 (loop and time, 6 tests and `docs/loop_and_time.md`) and its second pass (7 more tests) are next. Nothing else is moving here.
 
 ## 19. Docs, tests & code health
 
 ### 19.1 README and docs
-- **What:** The user-facing documentation: `README.md` at the repo root, `ROADMAP.md`, and 58 Markdown pages, 16 SQL files and 21 screenshots under `docs/`. `docs/README.md` is the index players and developers start from (this feature map, `docs/FEATURE_MAP.md` and `docs/feature_map/`, and `docs/archive/` are not listed below).
+- **What:** The user-facing documentation: `README.md` at the repo root, `ROADMAP.md`, and 70 Markdown pages (71 once #579 adds `loop_and_time.md`), 16 SQL files and 21 screenshots under `docs/`. `docs/README.md` is the index players and developers start from (this feature map, `docs/FEATURE_MAP.md` and `docs/feature_map/`, and `docs/archive/` are not listed below).
 - **Parts:**
   - 19.1.1 Root README - `README.md` - what OkaySpace is, how to download and build, the repo layout (checked against the code in 2.847.0, #544 and #546)
   - 19.1.2 Docs index - `docs/README.md` - links grouped by goal (get started, scripting, characters, gameplay, look and sound, game UI, multiplayer, engine work)
@@ -21,8 +20,8 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 - **Editor:** none
 - **Docs:** `docs/README.md`
 - **Tests:** `vs_types` (the engine API page must be current)
-- **Status:** Works - docs exist for most areas; the index is missing nine pages (below)
-- **Open:** `docs/README.md` links none of nine newer pages (the five asset, core-audit, layers and scene pages plus `core_tools.md`, `ecs.md`, `localization_prefs_time.md`, `math_geometry.md`); "README matches reality plus a component audit doc" (old map) is open; `ROADMAP.md` is stale on anti-cheat hardening (19.5); `asset_database.md` and `asset_manager.md` say nothing uses them yet (recheck)
+- **Status:** Works - docs exist for most areas; the index is missing ten pages (below)
+- **Open:** `docs/README.md` links none of ten newer pages (`asset_database.md`, `asset_manager.md`, `core_audit_notes.md`, `layers_tags_cameras.md`, `scene_management.md`, `scene_hierarchy_search.md`, `core_tools.md`, `ecs.md`, `localization_prefs_time.md`, `math_geometry.md`); "README matches reality plus a component audit doc" (old map) is open; `ROADMAP.md` is stale on anti-cheat hardening (19.5); `asset_database.md` and `asset_manager.md` say nothing uses them yet (recheck)
 - **Related:** 19.5, 41.9
 - **Words:** docs, documentation, README, docs index, engine_api, markdown, screenshots, guides, how to
 - **Seen as:** a doc says a feature isn't built but it is; a doc page isn't linked from the index; the API page diverges from the engine
@@ -33,19 +32,23 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 | File | What it covers | Area |
 |---|---|---|
 | `docs/README.md` | the index of the docs, grouped by goal | 19.1 |
+| `docs/accessibility.md` | accessibility settings, captions, colour vision, focus graph, remap model (engine side) | 32 |
 | `docs/accounts.md` | player accounts: local, custom server, Supabase; cloud saves, leaderboards, script use | 17.2 |
 | `docs/animation.md` | custom keyframe clips, imported animation, the Animator, built-in animations | 5 |
 | `docs/anticheat.md` | server rules, encryption, session tickets, client integrity, bans, keys, limits | 39 |
 | `docs/asset_database.md` | AssetDatabase data layer: GUIDs, dependencies, import settings, thumbnails, search | 20 |
 | `docs/asset_manager.md` | AssetManager: typed handles, refcounts, async load, hot reload | 20 |
 | `docs/audio.md` | AudioSource, mixer groups, music, volume settings, scripting | 7 |
+| `docs/automated_testing.md` | play-test runner, scene validator, golden files, scene digest and golden images | 33 |
 | `docs/behavior_trees.md` | NPC behavior trees, blackboard, runner | 9.4 |
 | `docs/build_mode.md` | player build mode and logic links, saving creations | 11.5 |
 | `docs/core_audit_notes.md` | bug-hunt notes for area 1 (ECS, math, camera, layers, DataAsset, input) | 1 |
 | `docs/core_tools.md` | core helpers: quit handling, CommandLine, Paths, EventBus extras, Cvars and Console, Stopwatch, StateMachine | 1 |
 | `docs/core_logging_profiling.md` | Log categories and file sink, frame profiler, trace and CSV export | 1.10 |
+| `docs/core_runtime.md` | job system, arenas and pools, slot map handles, string ids, frame pacing | 1.18 |
 | `docs/cutscenes.md` | sequences (`.okayseq`) and the Timeline window | 10.1 |
 | `docs/day_night_cycle.md` | the DayNightCycle component | 2.3 |
+| `docs/debug_tools.md` | profiling and debugging data layers: frame history, GPU timer, memory tracker, draw call recorder, console model | 23 |
 | `docs/dedicated-server.md` | running and exporting dedicated servers, server.cfg, flags | 16.5 |
 | `docs/dialogue_quests.md` | dialogue graphs, story state, quests | 10.2 |
 | `docs/ecs.md` | ECS iteration under mutation, command buffer, delta snapshots in NetWorld | 1.9 |
@@ -60,20 +63,28 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 | `docs/lighting.md` | lights, shadows, lightmaps | 2.3 |
 | `docs/localization.md` | string tables, translators, fonts | 1.8 |
 | `docs/localization_prefs_time.md` | plural rules, number formats, typed Prefs, fixed timestep | 1.8 |
+| `docs/localization_tools.md` | translation table model, checker, key scanner, previews | 31 |
+| `docs/loop_and_time.md` | GameLoop, clocks, hit stop, pause and quit reasons, random extras (#579; second pass: frame stepping, recording, capture) | 1.1 |
 | `docs/math_geometry.md` | math additions: Mat3, bounds and shape tests, noise, curves, colour spaces, Rng | 1 |
 | `docs/making_a_game.md` | first game from an empty editor to a shipped one | 15 |
 | `docs/modeling.md` | the Modeling window (mesh editor) | 3 |
 | `docs/navigation.md` | navigation meshes and agents | 9.1 |
 | `docs/npcs_and_crafting.md` | NPC Controller and crafting components | 9.5 |
+| `docs/optimization_tools.md` | mesh simplifier, LOD selection, occlusion buffer, portal cells, batch planner, streaming grid, optimization report | 27 |
 | `docs/packaging.md` | distribution layout of the Windows build | 18.1 |
 | `docs/photon.md` | the opt-in Photon Realtime transport | 16.10 |
+| `docs/prefab_system.md` | nested prefabs, variants, per-field apply and revert, unpack (`PrefabTools`) | 21 |
 | `docs/prefabs.md` | prefab instances, overrides, persistent object ids | 1.6 |
+| `docs/properties.md` | the property registry: values, paths, change hook, snapshots, builder | 1.19 |
 | `docs/qa_workflow.md` | developer and QA sessions working together | 19.3 |
 | `docs/ragdolls.md` | ragdoll death and hit reactions | 5.8 |
 | `docs/relay.md` | the relay, NAT traversal, what it enforces | 16.14 |
 | `docs/releasing.md` | publishing updates (Supabase, GitHub) and the official game | 18.4 |
 | `docs/rendering.md` | post-processing, sky, fog, weather | 2.4 |
+| `docs/save_framework.md` | saveable objects, checkpoints, slot headers, migrations, sync hooks | 35 |
 | `docs/save_games.md` | save slots, durable saves, what a save keeps | 1.7 |
+| `docs/scene_diff_merge.md` | scene canonical form, diff, three-way merge and migration libraries | 1.5, 28 |
+| `docs/scene_hierarchy_search.md` | hierarchy-aware active, FindByPath, validation, FixedUpdate, load errors | 1.17 |
 | `docs/scene_management.md` | loading scenes, spawning, pooling, RequireComponent | 1.4 |
 | `docs/scene_serializer.md` | what a scene round trip keeps, the component serializer registry | 1.5 |
 | `docs/scripting.md` | the OkayScript language guide | 13.1 |
@@ -86,6 +97,7 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 | `docs/timers_and_tweens.md` | Scheduler and TweenManager | 1.2 |
 | `docs/ui_html.md` | menus and HUDs in an HTML and CSS subset | 12.5 |
 | `docs/ui_world_space.md` | in-world (3D) UI canvases and labels | 12.6 |
+| `docs/undo_recovery.md` | command undo stack, autosave and crash recovery, backups (engine side) | 22 |
 | `docs/vehicle_controller.md` | the arcade vehicle controller | 4.5 |
 | `docs/visual_scripting.md` | the OkayVS text format and Action Lists | 14 |
 | `docs/voice-server.md` | running the voice server (the relay) | 16.7 |
@@ -109,7 +121,7 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 | `docs/images/anticheat/*.png` | 21 screenshots for `docs/anticheat.md` (admin pages, launcher settings, player ban and appeal) | 39 |
 
 ### 19.2 Test suite
-- **What:** About 353 tests (349 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that prints `FAIL` lines and returns non-zero. Plus a few shell, SQL and CMake checks. This sub-area is how it is organised; each test belongs to the area it tests.
+- **What:** About 391 tests (387 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that prints `FAIL` lines and returns non-zero. Plus a few shell, SQL and CMake checks. This sub-area is how it is organised; each test belongs to the area it tests.
 - **Parts:**
   - 19.2.1 Layout of `tests/CMakeLists.txt` - `tests/CMakeLists.txt` - 1,541 lines, roughly in the order tests were added (no grouping by area): each test is `add_executable(test_x test_x.cpp)`, a link to `okay::engine` and `add_test(NAME x COMMAND test_x)` under a `#` comment. ctest names drop `test_` except `remove_component` (`test_remove`), `physics_layers` (`test_layers`), `physics_queries` (`test_queries`)
   - 19.2.2 Test harness - `tests/test_framework.hpp` - `CHECK`, `CHECK_NEAR`, `RUN_SUITE(name)`, `TEST_MAIN_RESULT()`; no framework dependency
@@ -125,13 +137,13 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 - **Docs:** `docs/qa_workflow.md`
 - **Tests:** `anticheat_keys_ok`, `anticheat_keys_two_ok`, `anticheat_sql`, `publish_official_cleanup`, `publish_supabase_checks`, `ui_renderer_golden`, `rig_sweep`, `qa_pr250`
 - **Status:** Works - the suite runs in CI on every PR (ctest on Ubuntu plus the sanitizer subset)
-- **Open:** possible gaps: nothing is grouped or labelled (`ctest -L` has no labels), no TSan job for `net_races`, tests that need SDL2 or a pty silently disappear when the dependency is missing, six tests run on Windows; the "about 330 tests" figure in the old map is now about 353; PR #572 adds a play-mode, scene-validation and regression test runner (area 33)
+- **Open:** possible gaps: nothing is grouped or labelled (`ctest -L` has no labels), no TSan job for `net_races`, tests that need SDL2 or a pty silently disappear when the dependency is missing, six tests run on Windows; the "about 330 tests" figure in the old map is now about 391; #572 added a play-mode, scene-validation and regression test runner (`okay-playtest`, area 33) that runs as ctests `playtest_runner` and `playtest_runner_list`
 - **Related:** 18.3, 19.7, 33, 19.3
 - **Words:** tests, ctest, add_test, test_framework, CHECK, ASan, sanitizer, golden image, test suite, run one test, RUN_SUITE, TIMEOUT, WILL_FAIL
 - **Seen as:** CI red on one test; a test passes locally but fails in CI (missing SDL2 or libsodium); a test is skipped; a test needs files that only exist in the repo
 - **Ask me like:** "run only the lag compensation test", "which tests does the sanitizer job run?"
 
-**Test groups (approximate, by test name; the 349 `add_test` lines)**
+**Test groups (approximate, by test name; the 387 `add_test` lines; the groups were counted at 349 and not recounted, so they add up to less)**
 
 | Group | About | Examples |
 |---|---|---|
@@ -145,6 +157,7 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 | Physics | 19 | `physics*`, `hinge*`, `angular*`, `destructible` |
 | Visual scripting | 12 | `vs_*`, `visualscript`, `actionlist` |
 | Audio | 6 | `audio*`, `wav`, `master_volume` |
+| Engine tools data layers (undo, recovery, backup, `debug_*`, `optimize_*`, `playtest*`, `regression`, `save_framework`, `prefab_*`, `property_registry`, `scene_diff`/`scene_merge`, `loc_tools`, `accessibility`, `jobs`) | 46 | `undo`, `recovery`, `debug_overlay`, `optimize_batching`, `playtest`, `prefab_nested`, `property_registry`, `scene_merge` |
 | Launcher helpers, publish scripts and a few leftovers | 16 | `chat_json`, `friends_json`, `official_game`, `crash_reports`, `project_delete`, `publish_*`, `qa_pr250`, `scriptapi`, `subtree` |
 
 ### 19.3 QA workflow, rig sweep test
@@ -161,7 +174,7 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 - **Editor:** none
 - **Docs:** `docs/qa_workflow.md`
 - **Tests:** `rig_sweep`, `qa_pr250`
-- **Status:** Works - the doc is current for the process; the sweep test is one of the 353
+- **Status:** Works - the doc is current for the process; the sweep test is one of the 391
 - **Open:** the workflow needs two cloud sessions and a scheduled message each way (cloud sessions cannot message each other)
 - **Related:** 19.2, 5.4, 33
 - **Words:** QA, quality assurance, workflow, verdict, PASS, bug comment, rig sweep, Xvfb, regression, developer session
@@ -169,7 +182,7 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 - **Ask me like:** "write the QA verdict for PR 575", "add a rig to the sweep"
 
 ### 19.4 Splitting the largest files (editor, launcher, OkayScript VM, serializer)
-- **What:** Keeping source files small enough to work in. The biggest files today (lines, as of 2.848.0) are `editor/main.cpp` 45,136, `launcher/main.cpp` 24,802, `engine/src/Scripting/OkayScriptVM.cpp` 10,514, `engine/src/Scene/SceneSerializer.cpp` 8,644, `engine/include/okay/Render/Mesh.hpp` 4,079, `editor/VisualScriptEditor.hpp` 3,604, `engine/src/Net/NetworkManager.cpp` 3,522.
+- **What:** Keeping source files small enough to work in. The biggest files today (lines, as of merged main on 2026-11-09, after #578) are `editor/main.cpp` 45,136, `launcher/main.cpp` 24,802, `engine/src/Scripting/OkayScriptVM.cpp` 10,514, `engine/src/Scene/SceneSerializer.cpp` 8,829, `engine/include/okay/Render/Mesh.hpp` 4,079, `editor/VisualScriptEditor.hpp` 3,604, `engine/src/Net/NetworkManager.cpp` 3,522.
 - **Parts:**
   - 19.4.1 Editor - `editor/main.cpp` - already partly split (windows live in `editor/*.cpp`); see 15.10
   - 19.4.2 Launcher - `launcher/main.cpp` - one file for the shell and every page (17.1)
@@ -191,7 +204,7 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 ### 19.5 Roadmap and PR template
 - **What:** The two files that steer day-to-day work: `ROADMAP.md` (releases table, current work, plans) and the pull-request template.
 - **Parts:**
-  - 19.5.1 Roadmap - `ROADMAP.md` - releases table (latest 2.848.0), "Now" table of sessions, plan checklists, "Waiting on Iman", "Later"
+  - 19.5.1 Roadmap - `ROADMAP.md` - releases table (latest 2.849.0), "Now" table of sessions, plan checklists, "Waiting on Iman", "Later"
   - 19.5.2 PR template - `.github/PULL_REQUEST_TEMPLATE.md` - summary, changes, two verification ticks
 - **Code:** `ROADMAP.md`, `.github/PULL_REQUEST_TEMPLATE.md`
 - **API:** -
@@ -199,7 +212,7 @@ run one. PR #572 (engine tools foundation: automated-testing runner) adds tests 
 - **Docs:** `ROADMAP.md`
 - **Tests:** -
 - **Status:** Partial - kept current by the coordinating session, but parts are stale
-- **Open:** the anti-cheat hardening list still shows items 5, 6, 8, 9, 10, 12, 13, 14 as open, although `git log` has #350, #360, #363, #365, #368, #376, #384, #392 and #394 on main; the "Now" table is dated 2026-10-26; the release row for 2.849.0 is only in PR #573
+- **Open:** the anti-cheat hardening list still shows items 5, 6, 8, 9, 10, 12, 13, 14 as open, although `git log` has #350, #360, #363, #365, #368, #376, #384, #392 and #394 on main; the "Now" table is dated 2026-10-26; the 2.849.0 row is in (merged with #573); 2.850.0 (draft PR #580) will need its own row
 - **Related:** 18.4, 19.1
 - **Words:** roadmap, ROADMAP.md, plan, release notes, pull request template, what is next
 - **Seen as:** the roadmap disagrees with what is merged

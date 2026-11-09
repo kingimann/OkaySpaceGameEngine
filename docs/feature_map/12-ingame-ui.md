@@ -252,13 +252,14 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.12.3 Touch input - `Components/UITouchScroll` - finger drag, fling, tap fires on lift
   - 12.12.4 Input guards - `Components/UIModal`, `Components/SettingsScreen` - modals and open screens block game input (Input::UICaptured, GameInputBlocked)
   - 12.12.5 Hit testing contract - `Components/UIWorldContext`, `Components/UIElement` - one widget rect used for draw, click and drag in screen and world space
-- **Code:** `Components/EventSystem`, `Components/UINavigation`, `Components/UITouchScroll`, `Components/UIModal`, `Components/SettingsScreen`, `Components/UIWorldContext`
+  - 12.12.6 Focus graph - `UI/FocusGraph` - (#574) directional focus with tab order, explicit links, wrap and focus traps; `BuildFocusGraph(scene, graph)` fills it from the visible, focusable widgets; not used by `NavigateUI` (32.1)
+- **Code:** `Components/EventSystem`, `Components/UINavigation`, `Components/UITouchScroll`, `Components/UIModal`, `Components/SettingsScreen`, `Components/UIWorldContext`, `UI/FocusGraph`
 - **API:** `NavigateUI`, `UIRaycast`, `SceneEventSystem`, `EventSystem::IsPointerOverUI`, `Input::UICaptured`
 - **Editor:** Event System inspector header; the UI view uses the same rects for click-to-select
 - **Docs:** -
-- **Tests:** `ui_nav_touch`, `ui_overlays`, `ui_input_guard`, `uicapture_look`, `ui_system`
-- **Status:** Works - navigation, touch and focus rules are implemented and tested; in flight: a focus graph with tab order and traps (`UI/FocusGraph`, `UINavigation::BuildFocusGraph`) on branch claude/tools-wave2 (PR #574, accessibility work), not on main
-- **Open:** in flight (#574): FocusGraph and accessibility settings; remapping all UI actions and screen-reader hints belong to area 32; no gesture recognisers (double-click, long press, swipe)
+- **Tests:** `ui_nav_touch`, `ui_overlays`, `ui_input_guard`, `uicapture_look`, `ui_system`, `focus_remap`
+- **Status:** Works - navigation, touch and focus rules are implemented and tested; a focus graph with tab order, links and traps (`UI/FocusGraph`, `BuildFocusGraph` in `UINavigation.hpp`) merged in #574 but `NavigateUI` does not use it
+- **Open:** FocusGraph and the accessibility settings (#574, 32.1, 32.3) are not used by `NavigateUI` or the widgets yet; remapping all UI actions and screen-reader hints belong to area 32; no gesture recognisers (double-click, long press, swipe)
 - **Related:** 8.3, 8.4, 32.1, 12.4
 - **Words:** event system, hover, pressed, selected, gamepad navigation, focus, D-pad, keyboard menu navigation, touch, tap, pointer over UI, input capture, UICaptured
 - **Seen as:** gamepad cannot move through a menu; focus ring stays on a hidden widget; clicks on the HUD also fire in the world; the camera keeps turning while a menu is open; the wrong widget gets the click

@@ -2,8 +2,8 @@
 
 Polled keyboard, mouse, gamepad and touch state, named input actions with rebinding, cursor lock, rumble and gameplay input
 blocking. Code is `engine/include/okay/Input/*` (5 headers) and `engine/src/Input/*` (about 700 lines); `player/main.cpp` and
-`editor/main.cpp` feed SDL events in. Doc: `docs/input.md`. In flight: PR #571 (F-keys, left/right modifiers, input contexts,
-dead zones, up to four controllers) and PR #574 (remap model for a Controls screen).
+`editor/main.cpp` feed SDL events in. Doc: `docs/input.md`. Merged: #571 (F-keys, left/right modifiers, input contexts,
+dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Controls screen; in 2.850.0). Nothing is open here; the editor's Play mode still feeds only the old key set and one controller.
 
 ## 8. Input
 
@@ -14,14 +14,14 @@ dead zones, up to four controllers) and PR #574 (remap model for a Controls scre
   - 8.1.2 Mouse - `Input/Input` - position, `MouseDelta` (first sample is not a jump), buttons 0-2, wheel via `FeedMouseWheel`
   - 8.1.3 Typed text - `Input/Input` - `TypedText` and `FeedText` carry real typed characters (shift, caps, symbols) from the OS text event
   - 8.1.4 Terminal fallback - `Input/Input` - raw non-blocking console keys when there is no window; no input in a headless run
-  - 8.1.5 Extended keys (in flight, PR #571) - `Input/Input` - F1-F12, navigation block, left and right modifiers, `Input::KeyF(n)`; a new `Input/SdlKeys` feeds them from SDL scancodes
+  - 8.1.5 Extended keys (#571) - `Input/Input`, `Input/SdlKeys` - F1-F12, Insert/Delete/Home/End/PageUp/PageDown, left and right Shift, Ctrl and Alt, `Input::KeyF(n)`; `SdlKeys` feeds them from SDL scancodes (the player includes it, `editor/main.cpp` does not)
 - **Code:** `Input/Input`, `engine/src/Input/Input.cpp`, `player/main.cpp` (SDL event feed), `editor/main.cpp` (Play-mode feed)
 - **API:** `Input::GetKey`, `Input::GetKeyDown`, `Input::GetKeyUp`, `Input::AxisWASD`, `Input::MousePosition`, `Input::MouseDelta`, `Input::GetMouseButton`, `Input::MouseWheel`, `Input::TypedText`, `Input::FeedKeys`, `Input::FeedMouse`, script `Input.GetKey`, `key("space")`
 - **Editor:** none (Play mode in the Game view feeds keys and mouse)
 - **Docs:** `docs/input.md`
-- **Tests:** `transform_input`, `core_audit_input`, `input_actions`
-- **Status:** Works for letters, digits, space, enter, escape, backspace, tab, shift, ctrl and arrows (Input.hpp read; the player and editor feed it). Extended keys In flight (PR #571)
-- **Open:** on main there are no function keys, no left/right modifier keys, no Alt (an unknown key name falls back to its first letter, so "F1" becomes `f`); in flight in PR #571: F1-F12, Insert/Delete/Home/End/PageUp/PageDown, left/right Shift/Ctrl/Alt (the editor Play mode does not feed them yet, per that PR's doc)
+- **Tests:** `transform_input`, `core_audit_input`, `input_actions`, `input_keys_gamepad`
+- **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `SdlKeys`)
+- **Open:** the editor's Play mode does not include `SdlKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
 - **Related:** 8.3, 8.5, 12.3, 13.4
 - **Words:** Input, GetKey, GetKeyDown, keyboard, mouse, mouse look, wheel, scroll, typed text, text input, key code, KeyFromName, press any key, WASD, arrow keys, function keys, F1, modifiers, Alt
 - **Seen as:** a key does nothing in the game; F-keys or Alt cannot be bound; mouse-look jumps on the first frame; typed text misses capitals or symbols; holding two keys drops one
@@ -32,14 +32,14 @@ dead zones, up to four controllers) and PR #574 (remap model for a Controls scre
 - **Parts:**
   - 8.2.1 Pad state - `Input/Input` - `GamepadAxis`, `GamepadRightAxis`, `GamepadTrigger`, `GetGamepadButton`(Down/Up), `GamepadConnected`, button names and `FirstGamepadButtonDown`
   - 8.2.2 SDL bridge - `Input/SdlGamepad` - header-only `FeedSdlGamepad` opens nothing itself; the host picks the first controller and calls it each frame
-  - 8.2.3 Multiple controllers, dead zones and curves (in flight, PR #571) - `Input/Input`, `Input/SdlGamepad` - up to four players, `GamepadSettings(player)` shape, dead zone, outer zone, curve, trigger threshold, `SdlGamepadSet`
+  - 8.2.3 Multiple controllers, dead zones and curves (#571) - `Input/Input`, `Input/SdlGamepad` - up to four players (`kMaxGamepads`), `GamepadSettings(player)` shape, dead zone, outer zone, curve, trigger threshold, `SdlGamepadSet` (the player uses it; the editor still calls the single-pad `FeedSdlGamepad`)
 - **Code:** `Input/Input`, `Input/SdlGamepad`, `engine/src/Input/Input.cpp`, `player/main.cpp`, `editor/main.cpp`
 - **API:** `Input::GamepadAxis`, `Input::GetGamepadButton`, `Input::PadA`, `Input::GamepadTrigger`, `Input::GamepadConnected`, `FeedSdlGamepad`, script `Input.gamepadConnected`
 - **Editor:** none (controller works in Play mode)
 - **Docs:** `docs/input.md`
-- **Tests:** `transform_input`, `input_actions`
-- **Status:** Works for one controller (Input.hpp and SdlGamepad.hpp read; the player picks the first controller and hot-plugs). Multi-controller and dead-zone options In flight (PR #571)
-- **Open:** on main the dead zone is fixed at 0.18 and only the first controller is used (a second pad plugged in while one is open is ignored); both are addressed by PR #571 (test `input_keys_gamepad` in that PR); no controller hint icons per brand
+- **Tests:** `transform_input`, `input_actions`, `input_keys_gamepad`
+- **Status:** Works - up to four controllers with per-player settings (Input.hpp read; `player/main.cpp` uses `SdlGamepadSet`; test `input_keys_gamepad`); the editor Play view still feeds one pad
+- **Open:** the editor reads only one controller through `FeedSdlGamepad`; no couch co-op example or settings screen for the dead zone and curve; no controller hint icons per brand
 - **Related:** 8.3, 8.6, 12.4, 32.1
 - **Words:** gamepad, controller, joystick, stick, dead zone, trigger, d-pad, Xbox, PlayStation, SDL_GameController, FeedGamepad, rumble, hot-plug, split screen
 - **Seen as:** the character drifts with the stick untouched; the pad does nothing in the editor Play view; a second controller is ignored; triggers act as buttons too early or late
@@ -52,15 +52,15 @@ dead zones, up to four controllers) and PR #574 (remap model for a Controls scre
   - 8.3.2 Action table - `Input/InputActions` - `Define`, `Get`, `Down`, `Up`, `Value`, `Vector`, sampled once a frame by `Tick`; built-ins Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory, Pause
   - 8.3.3 Rebinding and saving - `Input/InputActions` - `Rebind`, `Current`, `Reset`, `Load`, `Save` under `input.<action>` Prefs keys; only changed bindings are saved
   - 8.3.4 Keybind field - `Components/UIKeybindField` - a UI widget that shows an action's binding and listens for a new key or pad button
-  - 8.3.5 Input contexts (in flight, PR #571) - `Input/InputActions` - `DefineIn`, `PushContext`, `PopContext` with Consume, Block and Passthrough modes so a menu takes keys from gameplay
-  - 8.3.6 Remap model for a Controls screen (in flight, PR #574) - `Input/RemapModel` (new file on branch `claude/loc-tools-accessibility`) - rows, conflict detection and reserved actions on top of `InputActions`
-- **Code:** `Input/InputActions`, `engine/src/Input/InputActions.cpp`, `Components/UIKeybindField`
+  - 8.3.5 Input contexts (#571) - `Input/InputActions` - `DefineIn`, `PushContext`, `PopContext` with Consume, Block and Passthrough modes so a menu takes keys from gameplay
+  - 8.3.6 Remap model for a Controls screen (#574) - `Input/RemapModel` - rows with keyboard and gamepad columns, conflict detection (including four-key directions and the D-pad), `RemapBind` with cancel, swap, unbind or allow, reserved actions, on top of `InputActions`
+- **Code:** `Input/InputActions`, `engine/src/Input/InputActions.cpp`, `Components/UIKeybindField`, `Input/RemapModel`
 - **API:** `InputActions::Define`, `InputActions::Down`, `InputActions::Vector`, `InputActions::Rebind`, `InputBinding::Parse`, script `Input.GetButtonDown("Jump")`, `Input.GetActionVector("Move")`, `Input.RebindAction`, `action_down`, `rebind`; "UI Keybind Field" component
 - **Editor:** Add Component > UI > UI Keybind Field (Input Action, Gamepad and Direction Key fields)
 - **Docs:** `docs/input.md`
-- **Tests:** `input_actions`, `ui_input_guard`
-- **Status:** Works - InputActions.hpp and the defaults and rebind code in InputActions.cpp read; covered by `input_actions`. Contexts and remap model In flight (PRs #571, #574)
-- **Open:** no input contexts on main (a pause menu cannot swallow Jump's key); no Controls screen template yet (the remap model in PR #574 is the data side); action names are case-insensitive strings, with no editor to author actions; no combos or chords
+- **Tests:** `input_actions`, `ui_input_guard`, `input_keys_gamepad`, `focus_remap`
+- **Status:** Works - InputActions.hpp and the defaults and rebind code in InputActions.cpp read; covered by `input_actions`; contexts (#571, `input_keys_gamepad`) and the remap model (#574, `focus_remap`) are on main
+- **Open:** no game or UI uses input contexts yet (a pause menu has to call `PushContext` itself; `Input::SetUICaptured` is the older separate mechanism, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; no combos or chords
 - **Related:** 8.2, 8.5, 12.3, 12.8, 32.4
 - **Words:** input action, InputActions, rebinding, keybind, key binding, controls menu, remap, Jump, Fire, Interact, input map, input contexts, action map, binding text
 - **Seen as:** a rebound key still triggers the old action; pressing the pause key also jumps; a rebinding is forgotten after restart; the same key works for two actions
@@ -96,7 +96,7 @@ dead zones, up to four controllers) and PR #574 (remap model for a Controls scre
 - **Docs:** -
 - **Tests:** `ui_input_guard`, `uicapture_look`
 - **Status:** Works - GameInput.cpp read (it queries the scene's inventory, chest, crafting, modal, dialogue and sequence components directly); covered by `ui_input_guard` and `uicapture_look`
-- **Open:** no doc; the mask is a fixed list of known components, so a game's own menu must call `Input::SetUICaptured`; on main this is separate from input contexts (8.3.5)
+- **Open:** no doc; the mask is a fixed list of known components, so a game's own menu must call `Input::SetUICaptured`; this is separate from input contexts (8.3.5)
 - **Related:** 8.3, 11.1, 10.2, 10.1, 12.8
 - **Words:** UICaptured, game input blocked, ignore clicks, world click, swallow input, input guard, modal, pause blocks input, pointer over UI
 - **Seen as:** clicking a menu button also swings the weapon or digs; the player keeps walking while a bag or dialogue is open; E picks up and opens the bag at once
@@ -113,7 +113,7 @@ dead zones, up to four controllers) and PR #574 (remap model for a Controls scre
 - **Docs:** `docs/input.md`
 - **Tests:** -
 - **Status:** Basic - request and playback code read; no test file covers rumble
-- **Open:** no rumble on touch devices; no per-controller rumble on main (PR #571 adds a player argument); no haptic pattern assets or intensity setting in the settings screen
+- **Open:** no rumble on touch devices; `Input::Rumble` takes a player index since #571 (the editor feeds only one pad); no haptic pattern assets or intensity setting in the settings screen
 - **Related:** 8.2, 11.7, 32.1
 - **Words:** rumble, vibration, haptics, force feedback, controller shake, Rumble, low motor, high motor
 - **Seen as:** the controller does not shake on a hit or explosion; vibration cannot be turned off by the player

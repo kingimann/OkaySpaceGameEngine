@@ -3,7 +3,7 @@
 The plumbing around the engine: CMake (root, engine and per-program files, the `cmake/` modules and the MinGW toolchain), the
 scripts and developer tools, the deploy kits for the relay, the Supabase Edge function and SQL schema, the Steam upload kit,
 the two GitHub workflows, versioning and the pinned dependencies. What a release does for a player is area 18; this page is
-where the files live and how they are wired. Nobody is touching it now apart from release PR #573 (2.849.0).
+where the files live and how they are wired. Nobody is touching it now apart from the 2.850.0 release PR (#580, draft); 2.849.0 is published.
 
 ## 41. Build, tools & infrastructure
 
@@ -164,9 +164,9 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 ### 41.9 Versioning and release prep
 - **What:** One number, set in one place, flows everywhere. A release is a small pull request.
 - **Parts:**
-  - 41.9.1 Source of truth - `CMakeLists.txt` - `project(OkaySpaceGameEngine VERSION 2.848.0)`; releases increment the middle number (2.847.0, 2.848.0, next 2.849.0)
+  - 41.9.1 Source of truth - `CMakeLists.txt` - `project(OkaySpaceGameEngine VERSION 2.849.0)`; releases increment the middle number (2.848.0, 2.849.0, next 2.850.0)
   - 41.9.2 Where it goes - `CMakeLists.txt` - `OKAY_ENGINE_VERSION` is defined only for the editor and launcher targets (so a bump doesn't recompile everything), the Windows `VERSIONINFO` of every exe, `build-win-dist/VERSION.txt` (written by `scripts/build-windows-dist.sh` from CMakeLists), the installer's `VERSION`
-  - 41.9.3 Release PR - `CMakeLists.txt`, `ROADMAP.md`, `dist/CHANGELOG.txt` - "Release X.Y.Z (#N)" changes exactly these three files (PR #573 for 2.849.0)
+  - 41.9.3 Release PR - `CMakeLists.txt`, `ROADMAP.md`, `dist/CHANGELOG.txt` - "Release X.Y.Z (#N)" changes exactly these three files (PR #573 for 2.849.0, #580 for 2.850.0)
   - 41.9.4 Update comparison - `launcher/main.cpp`, `editor/main.cpp` - updaters update only when the published version is strictly newer
   - 41.9.5 Stale copy - `dist/VERSION.txt` - says 2.412.0 and is not used by the build
 - **Code:** `CMakeLists.txt`, `dist/VERSION.txt`, `dist/CHANGELOG.txt`, `ROADMAP.md`
@@ -174,7 +174,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Editor:** Engine > Check for Updates...
 - **Docs:** `docs/releasing.md`
 - **Tests:** none
-- **Status:** Works - the 2.849.0 diff (PR #573) touches exactly those three files
+- **Status:** Works - the 2.849.0 diff (PR #573) and the open 2.850.0 PR (#580) touch exactly those three files (per the PR file lists)
 - **Open:** `dist/VERSION.txt` is stale and `release.yml`'s comment still points at it (19.6); the changelog is hand-written
 - **Related:** 18.4, 18.5, 19.6
 - **Words:** version, VERSION.txt, semver, 2.848.0, bump, changelog, release PR, OKAY_ENGINE_VERSION

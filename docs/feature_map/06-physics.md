@@ -3,7 +3,7 @@
 Rigid bodies, colliders, joints, scene queries and the debug view in 2D and 3D, plus destructibles and projectiles. Code is
 `engine/include/okay/Physics/*` (11 headers, about 2.7k lines in `engine/src/Physics`) and two joint headers in `Components/`.
 No dedicated physics doc exists (only the layer matrix in `docs/layers_tags_cameras.md`). Ragdolls are 5.8, controllers are area 4.
-PR #575 (scene hierarchy) edits both step functions so bodies under an inactive parent are skipped.
+Since #575 (scene hierarchy) both step functions skip bodies under an inactive parent (`ActiveInHierarchy`, 1.17).
 
 ## 6. Physics
 

@@ -2,8 +2,8 @@
 
 Timeline cutscenes, branching dialogue graphs, quests, global story variables and the built-in boxes that show them. Code is
 five components in `Components/` with their `.cpp` files in `engine/src/Components/` (about 2.8k lines) and two editor windows
-(Timeline, Dialogue and Quests). Docs: `docs/cutscenes.md`, `docs/dialogue_quests.md`. In flight: PR #574 adds a caption manager
-(`Core/Subtitles`, area 32.2). Camera rigs and dolly paths are area 4.8.
+(Timeline, Dialogue and Quests). Docs: `docs/cutscenes.md`, `docs/dialogue_quests.md`. Merged in #574: a caption manager
+(`Core/Subtitles`, area 32.2) that the cutscene and dialogue code do not use yet. Camera rigs and dolly paths are area 4.8.
 
 ## 10. Story & cinematics
 
@@ -21,7 +21,7 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 - **Docs:** `docs/cutscenes.md`
 - **Tests:** `sequence`
 - **Status:** Works - Sequence.hpp, SequencePlayer.hpp, the Timeline window header and the function layout of Sequence.cpp and SequencePlayer.cpp read; shots, keys, events, fades and skip behaviour covered by the 433-line `sequence` test
-- **Open:** per docs, playback state is not saved and in multiplayer every client plays its own copy (start from an RPC); per docs the only tracks are camera, transform, animation, audio and events (no letterbox, shake or nested-sequence track); subtitles are drawn by the sequence itself, not by the caption manager in flight in PR #574
+- **Open:** per docs, playback state is not saved and in multiplayer every client plays its own copy (start from an RPC); per docs the only tracks are camera, transform, animation, audio and events (no letterbox, shake or nested-sequence track); subtitles are drawn by the sequence itself, not by the caption manager that #574 added (`Core/Subtitles`)
 - **Related:** 4.8, 7.3, 5.1, 10.4, 32.2, 8.5
 - **Words:** cutscene, sequence, timeline, Sequence Player, .okayseq, cinematic, camera shot, track, keyframe, fade to black, subtitle, intro, skip cutscene, Timeline window
 - **Seen as:** the camera does not return after a cutscene; the player can still walk during it; the cutscene plays twice or from the middle after loading; an object stays where the cutscene left it; a subtitle never appears; skip does not fire the last events

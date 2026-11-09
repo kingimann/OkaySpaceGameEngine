@@ -5,7 +5,7 @@ Point at anything and I know where it lives. Say **"work on 5.6.2"** (one number
 see ("feet slide on slopes", "the Hierarchy window"). Every number leads to the files, classes, tests,
 docs and editor windows involved, what already works, what is missing, and what is in flight.
 
-This map holds 58 areas, 374 sub-areas and 1621 numbered parts, and every source file in the repo is meant to appear in it
+This map holds 58 areas, 374 sub-areas and 1660 numbered parts, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
 **How it is organised**
@@ -101,40 +101,40 @@ You can also say "area 5 but not Grok's parts" or "everything open in 1".
 
 ## 1. Core & scene
 
-The engine's spine: the main loop and clock, timers and tweens, the scene graph (Scene, GameObject, Transform, Component), scene loading and saving, prefabs, save games and prefs, localization, events and ECS, logging and profiling, plus the asset manager and asset database that merged recently.
-Covers `engine/include/okay/Core` (21 headers, 15 sources in `engine/src/Core`), `Scene` (15 headers, 9 sources; `SceneSerializer.cpp` alone is about 8.6k lines), `ECS` (5 headers, header-only) and three editor files.
-Most of it is on main and tested. PRs #571 (core wave 4), #572 (engine tools), #574 (tools wave 2) and #575 (scene hierarchy, search and validation) are open and add files to this area; four more branches are being written (see 1.17-1.19).
+The engine's spine: the main loop and clock, timers and tweens, the scene graph (Scene, GameObject, Transform, Component), scene loading and saving, prefabs, save games and prefs, localization, events and ECS, logging and profiling, the asset manager and asset database, and the runtime utilities, property registry and scene text tools that merged in waves 4 and 5.
+Covers `engine/include/okay/Core` (46 headers, 37 sources in `engine/src/Core`), `Scene` (25 headers, 19 sources; `SceneSerializer.cpp` alone is about 8.8k lines), `ECS` (5 headers, header-only) and three editor files. The data layers for undo, debugging, optimization and testing live in `Debug`, `Optimize` and `Testing` (areas 22, 23, 27, 33).
+Everything up to #578 is on main: 2.849.0 is published (it holds #571 and #572) and 2.850.0 is being cut with #574, #575, #578 and #579. #579 (loop and time 1.1) merges next; a second 1.1 pass waits on branch `claude/loop-time-wave2` (no PR yet). Nothing else is open in this area.
 
 Details for every sub-area and numbered part: [docs/feature_map/01-core-scene.md](feature_map/01-core-scene.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [1.1](feature_map/01-core-scene.md#11-loop-and-time) | Loop and time | Works | The game loop and the global clock: how a frame starts, how long it lasted, how fast time runs, whether the game is paused or asked to quit, plus the... | possible bug: `Application::Run` has no RAII or try/catch around `Input::BeginSession/EndSession`, so a script exception can... |
+| [1.1](feature_map/01-core-scene.md#11-loop-and-time) | Loop and time | Works | The game loop and the global clock: how a frame starts, how long it lasted, how fast time runs, whether the game is paused or asked to quit, plus the... | `player/main.cpp` and the editor Play loop still clamp, smooth and step time by hand, so `GameLoop` is not adopted there (docs... |
 | [1.2](feature_map/01-core-scene.md#12-timers-and-tweens) | Timers and tweens | Works | Do something after a delay, every N seconds, or animate a value over time with easing, from C++, scripts or the Inspector. | callbacks on the Global scheduler must not capture scene object pointers (they dangle after a load; documented rule, not... |
 | [1.3](feature_map/01-core-scene.md#13-scene-graph) | Scene graph | Works | The object model: a Scene owns GameObjects, each with a Transform and components; layers and tags classify them and a layer matrix decides which... | the editor keeps its own tag list and does not call `Tags::*` or the layer matrix (grep finds neither in editor or player)... |
-| [1.4](feature_map/01-core-scene.md#14-scene-lifecycle) | Scene lifecycle | Works | What happens when objects are created, switched on and off, destroyed and when scenes are loaded, replaced, added next to each other or streamed in... | wire async load into the Loading Screen component (12.8); PR #575 changes unload to run OnDisable/OnDestroy for every awakened... |
+| [1.4](feature_map/01-core-scene.md#14-scene-lifecycle) | Scene lifecycle | Works | What happens when objects are created, switched on and off, destroyed and when scenes are loaded, replaced, added next to each other or streamed in... | wire async load into the Loading Screen component (12.8); since #575 unload runs OnDisable/OnDestroy for every awakened... |
 | [1.5](feature_map/01-core-scene.md#15-scene-serializer) | Scene serializer | Works | Reads and writes the human-readable `okayscene` text format (version 3), clones objects, merges scenes and records what a round trip keeps. | file splitting (19.4); duplicate components of one type save only the first, except scripts, visual scripts, action lists... |
-| [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | Reusable objects saved as `.okayprefab` files and the starter worlds, players and UI screens the editor creates from templates. | prefab overrides in the editor (apply, revert, per-field, prefab mode); nested prefabs and variants are in flight on... |
-| [1.7](feature_map/01-core-scene.md#17-saves-and-prefs) | Saves and prefs | Works | Player progress and settings on disk: whole-game save slots, an Easy-Save-style typed key/value store, and a simple preferences bag. | typed Prefs (Bool, Vec3, Color) with change listeners are in PR #571; the save framework (saveable objects, checkpoints, slot... |
-| [1.8](feature_map/01-core-scene.md#18-localization) | Localization | Works | Player-facing text in several languages: a string table, language choice, fallbacks, `{0}`/`{name}` and plural formatting, and scene text that... | number, currency and date formatting, CLDR plural rules for more languages and region-to-base fallback are in PR #571... |
+| [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | Reusable objects saved as `.okayprefab` files and the starter worlds, players and UI screens the editor creates from templates. | prefab overrides in the editor (apply, revert, per-field, prefab mode, variant creation, nested roots in the Hierarchy); the old... |
+| [1.7](feature_map/01-core-scene.md#17-saves-and-prefs) | Saves and prefs | Works | Player progress and settings on disk: whole-game save slots, an Easy-Save-style typed key/value store, and a simple preferences bag. | the save framework (#572, area 35) has no scene-file record, component or editor window yet, so no game uses it, and it keeps its... |
+| [1.8](feature_map/01-core-scene.md#18-localization) | Localization | Works | Player-facing text in several languages: a string table, language choice, fallbacks, `{0}`/`{name}` and plural formatting, and scene text that... | right-to-left scripts draw left to right unshaped (docs); dialogue box and journal atlas covers ASCII and Latin-1 only (docs) |
 | [1.9](feature_map/01-core-scene.md#19-events-and-ecs) | Events and ECS | Works | A typed publish/subscribe event bus and a small data-oriented ECS that lives beside the GameObject scene, with a bridge that draws ECS entities as... | possible bug: `SceneBridge` keeps raw `GameObject*` and dereferences them on the next sync if something else destroyed the object... |
-| [1.10](feature_map/01-core-scene.md#110-logging-and-profiling) | Logging and profiling | Works | Messages for developers (levels, categories, file output) and a frame profiler with a scrubbable history and trace export. | the "GPU" time is the synchronous render plus read-back time, not a GPU timer; PR #574 adds frame history, render stats, memory... |
+| [1.10](feature_map/01-core-scene.md#110-logging-and-profiling) | Logging and profiling | Works | Messages for developers (levels, categories, file output) and a frame profiler with a scrubbable history and trace export. | the "GPU" time is the synchronous render plus read-back time, not a GPU timer; #574 added frame history, GPU timer, render stats... |
 | [1.11](feature_map/01-core-scene.md#111-asset-manager) | Asset manager | Partial | A central registry for files loaded from disk: typed handles with reference counts, one cache key per file, background loading and hot reload. | move existing loaders (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) onto it; track GPU resources; an... |
 | [1.12](feature_map/01-core-scene.md#112-asset-database) | Asset database | Partial | The data layer an asset browser sits on: stable GUIDs in `.okaymeta` files, move tracking, a dependency graph, typed import settings, thumbnails and... | asset browser window and thumbnail grid (an old branch claude/asset-browser exists but shares no history with main); importers... |
 | [1.13](feature_map/01-core-scene.md#113-object-pooling) | Object pooling | Partial | Reuse spawned objects (bullets, sparks, pickups) instead of creating and destroying them each time. | a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job |
 | [1.14](feature_map/01-core-scene.md#114-data-assets-and-data-packs) | Data assets and data packs | Works | Small data files for game content (`.okaydata` fields) and light obfuscation of shipped data so players cannot casually read or edit it. | `DataAsset::Cached` keeps a failed load (a file created later is not picked up) and `Save` writes multi-line values that `Load`... |
 | [1.15](feature_map/01-core-scene.md#115-display-settings) | Display settings | Basic | Fullscreen, vsync and the Low/Medium/High quality preset the Settings screen drives. | a test; the preset does not change shadow resolution or distance; resolution and window mode options; the editor calls... |
-| [1.16](feature_map/01-core-scene.md#116-localization-tools) | Localization tools | Partial | The editor side of localization: the string-table grid, CSV import and export, language preview, pseudo-localization and finding where a key is used. | missing-key report, source scanner, language preview in the Game view for fonts, accessibility text scaling (area 32); tests for... |
-| [1.17](feature_map/01-core-scene.md#117-scene-hierarchy-search-and-validation) | Scene hierarchy, search and validation | In flight | Hierarchy-aware active state, finding objects by path or component in children, load errors, and a validator that reports missing assets, unknown... | whole item; possible duplicate: PR #572 `Testing/SceneValidator` (semantic checks, area 33) and PR #575 `Scene/SceneValidation`... |
-| [1.18](feature_map/01-core-scene.md#118-core-runtime-utilities) | Core runtime utilities | In flight | Command-line parsing, a console with variables, paths, build info, stopwatch, state machine and (later) a job system, arenas and handles. | all of it; `player/main.cpp` and `editor/main.cpp` are edited by PR #571 for the new CLI |
-| [1.19](feature_map/01-core-scene.md#119-property-reflection) | Property reflection | In flight | A property registry so tools, undo and live editing can read and write component fields by name. | whole item; likely to feed undo (22) and live editing (34) |
+| [1.16](feature_map/01-core-scene.md#116-localization-tools) | Localization tools | Partial | The editor side of localization: the string-table grid, CSV import and export, language preview, pseudo-localization and finding where a key is used. | wire the window to `LocTable`, the checker and the scanner (31.1), a language preview that mirrors right-to-left text (31.3)... |
+| [1.17](feature_map/01-core-scene.md#117-scene-hierarchy-search-and-validation) | Scene hierarchy, search and validation | Works | Hierarchy-aware active state, finding objects by path or by component in children, a native fixed-step hook, load errors, and a validator that... | possible duplicate: `Testing/SceneValidator` (semantic checks, area 33) and `Scene/SceneValidation` (format checks) both report... |
+| [1.18](feature_map/01-core-scene.md#118-core-runtime-utilities) | Core runtime utilities | Works | Small building blocks the rest of the engine and a game's own code lean on, with no scene or renderer needed: command-line parsing, console variables... | the runtime branch's own second console-variable registry was deliberately dropped: `Core/Cvar` is the only one (read-only, cheat... |
+| [1.19](feature_map/01-core-scene.md#119-property-reflection) | Property reflection | Partial | A property registry so tools, undo and live editing can read, write and watch a component's fields by name (`Light.intensity`) without knowing its... | not registered yet: controllers, scripts, the other UI widgets, navigation, networking; animation and IK components are left to... |
 | [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | A cache that returns a small picture for any asset, so an asset browser can show a grid; edited files never show a stale picture. | generators for meshes, materials, prefabs, models and scenes (the docs show a mesh example); move the Project panel's `GetThumb`... |
 
 ## 2. Rendering & world
 
 What you see in a scene beyond the backends themselves: materials and meshes, lights and shadows, sky, fog, weather, post-processing, terrain and water, particles, lines and splines, sprites, text and fonts, cameras and culling.
 Covers `engine/include/okay/Render` (everything except the backend classes, which are area 38), `Graphics`, `Environment`, and about 20 headers in `Components/` (Camera, Light, MeshRenderer, Terrain, ParticleSystem, Spline and friends).
-Mostly on main and tested. Open work: PR #574 adds optimization tools (LOD, occlusion, batching, streaming) and GPU/render stats; PR #575 touches the renderers for hierarchy-aware active; the old shader and material editor plan is area 26.
+Mostly on main and tested. Nothing is open: #574 added the optimization tools (LOD, occlusion, batching, streaming) and GPU and render stats as engine-side library code that no renderer calls yet (areas 23 and 27), and #575 made all four renderers skip children of an inactive parent; the old shader and material editor plan is area 26.
 
 Details for every sub-area and numbered part: [docs/feature_map/02-rendering-world.md](feature_map/02-rendering-world.md).
 
@@ -147,7 +147,7 @@ Details for every sub-area and numbered part: [docs/feature_map/02-rendering-wor
 | [2.5](feature_map/02-rendering-world.md#25-post-processing) | Post-processing | Works | Screen effects on the finished frame: exposure, tonemap, bloom, colour grading, vignette, anti-aliasing, ambient occlusion and depth of field, with a... | SSAO and depth of field are OpenGL only; Direct3D 11 and 12 and software differ in what they apply; Low/Medium/High flips shared... |
 | [2.6](feature_map/02-rendering-world.md#26-terrain-and-water) | Terrain and water | Works | World-building components: sculptable heightmap terrain, cave-capable voxel terrain, runtime digging, animated water with buoyancy, world streaming... | vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; no documentation page for terrain... |
 | [2.7](feature_map/02-rendering-world.md#27-particles-and-lines) | Particles and lines | Works | Particle emitters with gradients, curves, motion modules and presets, plus ribbon-style Line and Trail renderers for lasers, ropes, sword swipes and... | particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows and, in the... |
-| [2.8](feature_map/02-rendering-world.md#28-culling-and-skinning) | Culling and skinning | Works | Skip what the camera cannot see before any draw work, and let the GPU deform skinned characters when it can. | LOD groups, occlusion culling, static and dynamic batching and streaming are area 27 and PR #574; software and Direct3D 12... |
+| [2.8](feature_map/02-rendering-world.md#28-culling-and-skinning) | Culling and skinning | Works | Skip what the camera cannot see before any draw work, and let the GPU deform skinned characters when it can. | LOD groups, occlusion culling, static and dynamic batching and streaming are area 27: the algorithms exist (#574) but nothing in... |
 | [2.9](feature_map/02-rendering-world.md#29-fonts-and-images) | Fonts and images | Works | The CPU side of text and pictures: the built-in 8x8 font, TrueType fonts baked into glyph atlases, the compiled-in UI font, the RGBA image buffer... | right-to-left scripts draw unshaped and left to right (docs/localization.md); the pixel font is ASCII only; no... |
 | [2.10](feature_map/02-rendering-world.md#210-cameras-and-the-camera-stack) | Cameras and the camera stack | Partial | The Camera component (lens, viewport, culling mask, clear mode, framing effects), how a scene picks its main camera, and the camera stack that... | render the whole stack in the player and editor (loop `CameraStack()` with `ClearPlan`, each camera's rect and culling mask)... |
 | [2.11](feature_map/02-rendering-world.md#211-splines-and-spline-tools) | Splines and spline tools | Works | A curve you draw in the Scene view that followers, meshes, instancers and lines build on, with the editor overlay for editing it. | clicking a Catmull-Rom curve inserts a point that changes the shape slightly (only Bezier splits are exact); spline mesh roads... |
@@ -226,7 +226,7 @@ Details for every sub-area and numbered part: [docs/feature_map/05-animation-ik.
 Rigid bodies, colliders, joints, scene queries and the debug view in 2D and 3D, plus destructibles and projectiles. Code is
 `engine/include/okay/Physics/*` (11 headers, about 2.7k lines in `engine/src/Physics`) and two joint headers in `Components/`.
 No dedicated physics doc exists (only the layer matrix in `docs/layers_tags_cameras.md`). Ragdolls are 5.8, controllers are area 4.
-PR #575 (scene hierarchy) edits both step functions so bodies under an inactive parent are skipped.
+Since #575 (scene hierarchy) both step functions skip bodies under an inactive parent (`ActiveInHierarchy`, 1.17).
 
 Details for every sub-area and numbered part: [docs/feature_map/06-physics.md](feature_map/06-physics.md).
 
@@ -245,8 +245,8 @@ Details for every sub-area and numbered part: [docs/feature_map/06-physics.md](f
 
 Software stereo mixer, WAV/OGG/MP3 clips, audio sources with 3D falloff, a music player and saved volume settings. Code is
 `engine/include/okay/Audio/*` (3 headers), `engine/src/Audio/*` (about 500 lines) and two components; the host programs
-(`player/main.cpp`, `editor/main.cpp`) open the sound device. Doc: `docs/audio.md`. Nothing is in flight; PR #574 adds a captions
-model (see 10.1).
+(`player/main.cpp`, `editor/main.cpp`) open the sound device. Doc: `docs/audio.md`. Nothing is in flight; #574 added a captions
+model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 
 Details for every sub-area and numbered part: [docs/feature_map/07-audio.md](feature_map/07-audio.md).
 
@@ -255,25 +255,25 @@ Details for every sub-area and numbered part: [docs/feature_map/07-audio.md](fea
 | [7.1](feature_map/07-audio.md#71-mixer-and-audio-mixer) | Mixer and Audio Mixer | Works | The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice and distance panning... | only four fixed groups (no user-made buses, effect chain or snapshots); low-pass is the only effect; no reverb, occlusion or... |
 | [7.2](feature_map/07-audio.md#72-formats-and-clips) | Formats and clips | Works | Audio files (WAV, OGG, MP3) are decoded once into mono float clips at the mixer's rate and shared between sources; generators make simple test tones. | clips are always mono (stereo files are downmixed) and fully decoded into memory, so long music is memory heavy and there is no... |
 | [7.3](feature_map/07-audio.md#73-audio-sources-and-music-player) | Audio sources and music player | Works | The AudioSource component plays a clip with volume, pitch, pan, loop, 3D falloff, low-pass, fades and overlapping one-shots; the Music Player plays a... | one listener (the main camera); no streaming sources; the editor Add Component menu labels and script bindings for audio live in... |
-| [7.4](feature_map/07-audio.md#74-saved-volume-settings) | Saved volume settings | Works | The player's master, group volumes and mutes are saved to Prefs (`audio.*` keys) and loaded on the next start; the Pause Menu and Settings screen... | the volume sliders belong to the pause and settings screens (area 12.8); no subtitle or caption link yet (in flight, 10.1) |
+| [7.4](feature_map/07-audio.md#74-saved-volume-settings) | Saved volume settings | Works | The player's master, group volumes and mutes are saved to Prefs (`audio.*` keys) and loaded on the next start; the Pause Menu and Settings screen... | the volume sliders belong to the pause and settings screens (area 12.8); no subtitle or caption link yet (`CaptionManager` from... |
 
 ## 8. Input
 
 Polled keyboard, mouse, gamepad and touch state, named input actions with rebinding, cursor lock, rumble and gameplay input
 blocking. Code is `engine/include/okay/Input/*` (5 headers) and `engine/src/Input/*` (about 700 lines); `player/main.cpp` and
-`editor/main.cpp` feed SDL events in. Doc: `docs/input.md`. In flight: PR #571 (F-keys, left/right modifiers, input contexts,
-dead zones, up to four controllers) and PR #574 (remap model for a Controls screen).
+`editor/main.cpp` feed SDL events in. Doc: `docs/input.md`. Merged: #571 (F-keys, left/right modifiers, input contexts,
+dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Controls screen; in 2.850.0). Nothing is open here; the editor's Play mode still feeds only the old key set and one controller.
 
 Details for every sub-area and numbered part: [docs/feature_map/08-input.md](feature_map/08-input.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [8.1](feature_map/08-input.md#81-keyboard-and-mouse) | Keyboard and mouse | Works for letters, digits, space, enter, escape, backspace, tab, shift, ctrl and arrows (Input.hpp read; the player and editor feed it). Extended keys In flight (PR #571) | Polled key and mouse-button state (held, pressed this frame, released this frame), mouse position, delta and wheel, typed text, and a WASD and arrows... | on main there are no function keys, no left/right modifier keys, no Alt (an unknown key name falls back to its first letter, so... |
-| [8.2](feature_map/08-input.md#82-gamepad-sdl) | Gamepad (SDL) | Works for one controller (Input.hpp and SdlGamepad.hpp read; the player picks the first controller and hot-plugs). Multi-controller and dead-zone options In flight (PR #571) | One SDL game controller is read into Input: both sticks (radial dead zone 0.18), both triggers, 14 buttons plus trigger-as-button, and the left... | on main the dead zone is fixed at 0.18 and only the first controller is used (a second pad plugged in while one is open is... |
-| [8.3](feature_map/08-input.md#83-input-actions-and-rebinding-ui) | Input actions and rebinding UI | Works | Named actions ("Jump", "Move", "Fire") that read keys, mouse and controller together, with text bindings, a direction type for sticks and WASD, and... | no input contexts on main (a pause menu cannot swallow Jump's key); no Controls screen template yet (the remap model in PR #574... |
+| [8.1](feature_map/08-input.md#81-keyboard-and-mouse) | Keyboard and mouse | Works | Polled key and mouse-button state (held, pressed this frame, released this frame), mouse position, delta and wheel, typed text, and a WASD and arrows... | the editor's Play mode does not include `SdlKeys`, so function keys, Alt and left/right modifiers do not reach a game running in... |
+| [8.2](feature_map/08-input.md#82-gamepad-sdl) | Gamepad (SDL) | Works | One SDL game controller is read into Input: both sticks (radial dead zone 0.18), both triggers, 14 buttons plus trigger-as-button, and the left... | the editor reads only one controller through `FeedSdlGamepad`; no couch co-op example or settings screen for the dead zone and... |
+| [8.3](feature_map/08-input.md#83-input-actions-and-rebinding-ui) | Input actions and rebinding UI | Works | Named actions ("Jump", "Move", "Fire") that read keys, mouse and controller together, with text bindings, a direction type for sticks and WASD, and... | no game or UI uses input contexts yet (a pause menu has to call `PushContext` itself; `Input::SetUICaptured` is the older... |
 | [8.4](feature_map/08-input.md#84-cursor-and-touch) | Cursor and touch | Works for the cursor and single or multi touch lists (headers and the player's finger and cursor code read; touch list and drag-scroll covered by `ui_nav_touch`) | Gameplay asks for the mouse cursor to be hidden and locked (shooters) and the host applies it; finger touches are fed from SDL finger events and... | no gesture recognition (pinch, swipe, long press, rotate); `docs/web_mobile.md` still says to read `SDL_FINGER*` yourself... |
-| [8.5](feature_map/08-input.md#85-gameplay-input-blocking) | Gameplay input blocking | Works | One place that answers "should the world ignore this click or key right now?": pause menu, open bag, chest, crafting, a focused text field, modal... | no doc; the mask is a fixed list of known components, so a game's own menu must call `Input::SetUICaptured`; on main this is... |
-| [8.6](feature_map/08-input.md#86-rumble-and-haptics) | Rumble and haptics | Basic | Games request controller rumble with a heavy and a light motor strength and a duration; the host plays the latest request on the connected pad. | no rumble on touch devices; no per-controller rumble on main (PR #571 adds a player argument); no haptic pattern assets or... |
+| [8.5](feature_map/08-input.md#85-gameplay-input-blocking) | Gameplay input blocking | Works | One place that answers "should the world ignore this click or key right now?": pause menu, open bag, chest, crafting, a focused text field, modal... | no doc; the mask is a fixed list of known components, so a game's own menu must call `Input::SetUICaptured`; this is separate... |
+| [8.6](feature_map/08-input.md#86-rumble-and-haptics) | Rumble and haptics | Basic | Games request controller rumble with a heavy and a light motor strength and a duration; the host plays the latest request on the connected pad. | no rumble on touch devices; `Input::Rumble` takes a player index since #571 (the editor feeds only one pad); no haptic pattern... |
 
 ## 9. AI & navigation
 
@@ -296,8 +296,8 @@ Details for every sub-area and numbered part: [docs/feature_map/09-ai-navigation
 
 Timeline cutscenes, branching dialogue graphs, quests, global story variables and the built-in boxes that show them. Code is
 five components in `Components/` with their `.cpp` files in `engine/src/Components/` (about 2.8k lines) and two editor windows
-(Timeline, Dialogue and Quests). Docs: `docs/cutscenes.md`, `docs/dialogue_quests.md`. In flight: PR #574 adds a caption manager
-(`Core/Subtitles`, area 32.2). Camera rigs and dolly paths are area 4.8.
+(Timeline, Dialogue and Quests). Docs: `docs/cutscenes.md`, `docs/dialogue_quests.md`. Merged in #574: a caption manager
+(`Core/Subtitles`, area 32.2) that the cutscene and dialogue code do not use yet. Camera rigs and dolly paths are area 4.8.
 
 Details for every sub-area and numbered part: [docs/feature_map/10-story-cinematics.md](feature_map/10-story-cinematics.md).
 
@@ -355,7 +355,7 @@ Details for every sub-area and numbered part: [docs/feature_map/12-ingame-ui.md]
 | [12.9](feature_map/12-ingame-ui.md#129-mobile-scaling) | Mobile scaling | Works | Making UI fit phones and tablets: screen-shape matching, safe area, touch scrolling and the Game view's device emulator. | no on-screen controls (virtual joystick, D-pad, touch buttons) found; no test for `UITouchScroll` by name |
 | [12.10](feature_map/12-ingame-ui.md#1210-ui-editing-in-the-editor) | UI editing in the editor | Partial | How designers build UI inside the editor: a UI-only Scene view mode and a dockable UI tab, click-drag handles, alignment tools, UI inspectors and a... | UI plan P4: anchor preset picker and pivot handles, UI prefabs with variants, UIDocument-to-hierarchy round trip, a `--selftest`... |
 | [12.11](feature_map/12-ingame-ui.md#1211-ui-renderer-painters-and-batching) | UI renderer, painters and batching | Works | The single sorted UI pass that draws every screen-space widget, the small painter interface it draws through, and a batcher that turns draw calls... | the player (`player/main.cpp`) still draws other overlays itself (inventory, crafting, F1 panel); no GPU blur; `UIPainterSDL` is... |
-| [12.12](feature_map/12-ingame-ui.md#1212-ui-input-focus-and-navigation) | UI input, focus and navigation | Works | How the pointer, keyboard, gamepad and fingers reach widgets: top-most hit testing, hover and selection, 2-D focus movement, modal input blocking and... | in flight (#574): FocusGraph and accessibility settings; remapping all UI actions and screen-reader hints belong to area 32; no... |
+| [12.12](feature_map/12-ingame-ui.md#1212-ui-input-focus-and-navigation) | UI input, focus and navigation | Works | How the pointer, keyboard, gamepad and fingers reach widgets: top-most hit testing, hover and selection, 2-D focus movement, modal input blocking and... | FocusGraph and the accessibility settings (#574, 32.1, 32.3) are not used by `NavigateUI` or the widgets yet; remapping all UI... |
 | [12.13](feature_map/12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) | Data binding, UI animation and script control | Partial | Making UI react without code or from scripts: bars and labels that follow variables, intro/idle/outro animations, and script calls that read and... | UI plan P3 not found: `ui_create`, `ui_destroy`, `ui_find`, generic `ui_get/ui_set(prop)`, events `on_hover_enter`... |
 
 ## 13. Scripting
@@ -399,22 +399,22 @@ Details for every sub-area and numbered part: [docs/feature_map/14-visual-script
 
 The OkayEngine editor (Dear ImGui on SDL): docked panels, Scene and Game views, Inspector, Project panel, many tool windows, Play mode and Build Game. About 65k lines in `editor/`, of which `editor/main.cpp` is still about 45k; the split-out panel files hold the rest.
 `editor/vendor` (the vendored text editor widget) is out of scope. Only the headless logic (`EditorState`, tabs, game fiber, script text, graph model) has unit tests; the drawing code is checked by the CI `--selftest` run and by hand.
-Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. Animation windows belong to Grok's animation sessions; leave them alone.
+Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move whenever the file is edited. Animation windows belong to Grok's animation sessions; leave them alone. Open draft PR #577 (branch `cursor/editor-ui-redesign-00d9`, not from this team's sessions) redesigns the Visual Script and Script Editor layouts: it edits `editor/main.cpp` and `editor/VisualScriptEditor.hpp` and adds `editor/VsCanvasTools.hpp` (not on main; described only, not verified).
 
 Details for every sub-area and numbered part: [docs/feature_map/15-editor.md](feature_map/15-editor.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [15.1](feature_map/15-editor.md#151-hierarchy) | Hierarchy | Works | The tree of every object in the scene with search, drag and drop re-parenting, rename, and a large right-click menu. | polish (carried from the earlier map); in flight: PR #575 (scene hierarchy, search and validation) is engine-side... |
+| [15.1](feature_map/15-editor.md#151-hierarchy) | Hierarchy | Works | The tree of every object in the scene with search, drag and drop re-parenting, rename, and a large right-click menu. | polish (carried from the earlier map); #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active... |
 | [15.2](feature_map/15-editor.md#152-inspector-add-component-menu-character-model-panel) | Inspector, Add Component menu, Character Model panel | Works | The panel that edits the selected object: name, tag, static flag, and one collapsible card per component, an Add Component menu with search, and the... | polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); nothing found... |
 | [15.3](feature_map/15-editor.md#153-scene-and-game-views-gizmos-spline-tools) | Scene and Game views, gizmos, spline tools | Works | The two views of the world: the Scene view (2D and 3D editing, selection, gizmos, overlays) and the Game view (what the player sees, with resolution... | world-space canvases show only in the Game view (12.6); Scene view 3D render does a GPU-to-CPU readback each frame (the code... |
 | [15.4](feature_map/15-editor.md#154-project-panel-and-asset-manager) | Project panel and asset manager | Works | The file browser of the project's Assets folder (folders, thumbnails, smart filters, search, color labels, drag and drop into the scene) and a window... | polish (carried from the earlier map); planned area 20: an asset browser window on top of the new asset manager (PR #568, on... |
 | [15.5](feature_map/15-editor.md#155-animator-animation-tab-timeline) | Animator, Animation tab, Timeline | Works | The animation tools: the Animator state-machine graph, the Animation tab (clips, dope sheet, curves, record), the cutscene Timeline, and the... | possible overlap: the Animation tab (~3.5k lines in `main.cpp`) and `AnimatorWindow` both edit state machines or clips; splitting... |
-| [15.6](feature_map/15-editor.md#156-navigation-behavior-tree-dialogue-localization-modeling-windows) | Navigation, Behavior Tree, Dialogue, Localization, Modeling windows | Works | The editor windows for world-building and content systems: navigation bake, behavior trees, dialogue and quests, the string table, and the 3D... | in flight: PR #574 adds localization tools on the engine side (translation tables, missing-key reports, language previews); per... |
+| [15.6](feature_map/15-editor.md#156-navigation-behavior-tree-dialogue-localization-modeling-windows) | Navigation, Behavior Tree, Dialogue, Localization, Modeling windows | Works | The editor windows for world-building and content systems: navigation bake, behavior trees, dialogue and quests, the string table, and the 3D... | #574 added localization tools on the engine side (translation tables, missing-key reports, language previews, 31.1); per its docs... |
 | [15.7](feature_map/15-editor.md#157-build-settings) | Build Settings | Works | File > Build Settings (Ctrl+B): export the current scenes as a standalone game for Windows, Web, Android or a dedicated server, with named build... | the Android and Web targets export a project that still needs outside tools (Emscripten, NDK) per `docs/editor.md`; about 1.5k... |
 | [15.8](feature_map/15-editor.md#158-plugin-system-and-plugins-menu) | Plugin system and Plugins menu | Works | Editor plugins written in OkayScript: a file in `<project>/EditorPlugins/` or the editor's `plugins/` folder can add a panel, a menu command, and... | `editor_plugins` runs the examples against its own fake editor, so the real `RegisterPluginBuiltins` is not under test (possible... |
-| [15.9](feature_map/15-editor.md#159-layout-undo-autosave) | Layout, undo, autosave | Works | The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model. | in flight: PR #572 adds an engine-side command undo stack, recovery and backups (`docs/undo_recovery.md`: "engine side only"... |
-| [15.10](feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | In flight | The ongoing move of panels out of the huge `main.cpp` into their own files with small headers, so each can be edited and reviewed alone. | no PR for the next split found; `DrawFlowGraph` (~1,060 lines) is retired and uncalled and could be deleted instead of moved... |
+| [15.9](feature_map/15-editor.md#159-layout-undo-autosave) | Layout, undo, autosave | Works | The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model. | #572 added an engine-side command undo stack, recovery and backups (`docs/undo_recovery.md`: "engine side only", the editor still... |
+| [15.10](feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | Partial | The ongoing move of panels out of the huge `main.cpp` into their own files with small headers, so each can be edited and reviewed alone. | no PR for the next split found (draft PR #577 edits about 280 lines of `main.cpp` for the Visual Script and Script Editor... |
 | [15.11](feature_map/15-editor.md#1511-console-and-diagnostics-panels) | Console and diagnostics panels | Works | The panels that show what the editor and game are doing: the Console log, Crash Log, Stats, Profiler, History, the Net panel and the live variable... | planned area 23: CPU and GPU timeline window with memory tracking, frame debugger, error console filters linking to the source... |
 | [15.12](feature_map/15-editor.md#1512-scene-manager-panel) | Scene Manager panel | Works | The project's scene list, file actions and the build order that Build Settings uses. | none found |
 | [15.13](feature_map/15-editor.md#1513-content-editors-and-tool-windows) | Content editors and tool windows | Works | Smaller editors for assets and data: sprites, materials, data assets, items, save files, audio mixer and the UI theme window. | none found; candidates for the split (15.10); planned area 26 adds a real material editor with live preview and shader graphs |
@@ -484,7 +484,7 @@ How OkaySpace is built, shipped to players and kept up to date: the cross-compil
 web and mobile export, game export from the editor, the dedicated-server export, the five CI jobs, the release workflow, the
 Supabase and GitHub update feed, and the Steam upload kit. Files: `scripts/`, `.github/workflows/` (read-only here), `steam/`,
 `cmake/`, and the export code in `editor/main.cpp` (namespace `builder`). The CMake and tool plumbing itself is mapped in 41.
-Open work: release PR #573 (2.849.0) and PR #572 (adds an automated-testing runner and test changes in `tests/CMakeLists.txt`).
+Release 2.849.0 is published (PR #573 merged, tag `v2.849.0`); the 2.850.0 release PR (#580, draft, branch `release-2850`, touches only `CMakeLists.txt`, `ROADMAP.md` and `dist/CHANGELOG.txt`) is being cut. The automated-testing runner of #572 (`okay-playtest`) is merged and runs as ctests.
 
 Details for every sub-area and numbered part: [docs/feature_map/18-build-export-release.md](feature_map/18-build-export-release.md).
 
@@ -501,20 +501,19 @@ Details for every sub-area and numbered part: [docs/feature_map/18-build-export-
 
 ## 19. Docs, tests & code health
 
-The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 343 test files and 349 `add_test` lines in one
+The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 379 test files and 387 `add_test` lines in one
 `tests/CMakeLists.txt`), the developer and QA working loop, and the housekeeping that keeps the repository healthy (file sizes,
 stray files, warnings, sanitizers). 19.1 holds the index of every docs file; 19.2 explains how the tests are organised and how to
-run one. PR #572 (engine tools foundation: automated-testing runner) adds tests and edits `tests/CMakeLists.txt`; core wave 4
-(#571) just merged eight tests and four docs pages. Nothing else is moving here.
+run one. Since 2.848.0 the suite grew by about 40 tests and 12 docs pages: #571 (core wave 4), #572 (undo, recovery, play-tests, save framework), #574, #575 and #578 are merged, and #579 (loop and time, 6 tests and `docs/loop_and_time.md`) and its second pass (7 more tests) are next. Nothing else is moving here.
 
 Details for every sub-area and numbered part: [docs/feature_map/19-docs-tests-health.md](feature_map/19-docs-tests-health.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [19.1](feature_map/19-docs-tests-health.md#191-readme-and-docs) | README and docs | Works | The user-facing documentation: `README.md` at the repo root, `ROADMAP.md`, and 58 Markdown pages, 16 SQL files and 21 screenshots under `docs/`.... | `docs/README.md` links none of nine newer pages (the five asset, core-audit, layers and scene pages plus `core_tools.md`... |
-| [19.2](feature_map/19-docs-tests-health.md#192-test-suite) | Test suite | Works | About 353 tests (349 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that... | possible gaps: nothing is grouped or labelled (`ctest -L` has no labels), no TSan job for `net_races`, tests that need SDL2 or a... |
+| [19.1](feature_map/19-docs-tests-health.md#191-readme-and-docs) | README and docs | Works | The user-facing documentation: `README.md` at the repo root, `ROADMAP.md`, and 70 Markdown pages (71 once #579 adds `loop_and_time.md`), 16 SQL files... | `docs/README.md` links none of ten newer pages (`asset_database.md`, `asset_manager.md`, `core_audit_notes.md`... |
+| [19.2](feature_map/19-docs-tests-health.md#192-test-suite) | Test suite | Works | About 391 tests (387 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that... | possible gaps: nothing is grouped or labelled (`ctest -L` has no labels), no TSan job for `net_races`, tests that need SDL2 or a... |
 | [19.3](feature_map/19-docs-tests-health.md#193-qa-workflow-rig-sweep-test) | QA workflow, rig sweep test | Works | How a developer session and a QA session work on the same repository (PR comments as the channel, a bug and a verdict format), and the rig sweep test... | the workflow needs two cloud sessions and a scheduled message each way (cloud sessions cannot message each other) |
-| [19.4](feature_map/19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) | Splitting the largest files (editor, launcher, OkayScript VM, serializer) | Planned | Keeping source files small enough to work in. The biggest files today (lines, as of 2.848.0) are `editor/main.cpp` 45,136, `launcher/main.cpp`... | splitting `launcher/main.cpp` needs a plan per page (17.1 to 17.16 are the natural seams); `player/main.cpp` is 2,658 lines and... |
+| [19.4](feature_map/19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) | Splitting the largest files (editor, launcher, OkayScript VM, serializer) | Planned | Keeping source files small enough to work in. The biggest files today (lines, as of merged main on 2026-11-09, after #578) are `editor/main.cpp`... | splitting `launcher/main.cpp` needs a plan per page (17.1 to 17.16 are the natural seams); `player/main.cpp` is 2,658 lines and... |
 | [19.5](feature_map/19-docs-tests-health.md#195-roadmap-and-pr-template) | Roadmap and PR template | Partial | The two files that steer day-to-day work: `ROADMAP.md` (releases table, current work, plans) and the pull-request template. | the anti-cheat hardening list still shows items 5, 6, 8, 9, 10, 12, 13, 14 as open, although `git log` has #350, #360, #363... |
 | [19.6](feature_map/19-docs-tests-health.md#196-repository-hygiene) | Repository hygiene | Basic | Files that should not be in the repository, or checks that are missing, found while mapping. | delete the stray files and add them to `.gitignore`, stop committing `dist/` binaries (old map item), drop the `.pyc`, add... |
 | [19.7](feature_map/19-docs-tests-health.md#197-compiler-warnings-and-sanitizers) | Compiler warnings and sanitizers | Works | The switches that catch bugs at build time: strict warnings everywhere, and an opt-in sanitizer build used by the CI job. | no ThreadSanitizer job even though `net_races` is written for it; only a subset of tests run under sanitizers |
@@ -522,8 +521,8 @@ Details for every sub-area and numbered part: [docs/feature_map/19-docs-tests-he
 ## 20. Asset management (Critical)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -539,8 +538,8 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 ## 21. Prefab system (Critical)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -548,15 +547,15 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
 | [21.1](feature_map/20-35-planned.md#211-reusable-objects) | Reusable objects | Works | Save an object and its children as a `.okayprefab` file and place copies of it in any scene or spawn it from a script. | a prefab file stores one object tree, not a set; no "create prefab from selection of several roots"; editor's Apply overwrites... |
-| [21.2](feature_map/20-35-planned.md#212-nested-prefabs) | Nested prefabs | In flight | A prefab that contains other prefab instances, which keep their link to their own prefab so editing the inner one updates the outer one. | in flight on claude/prefab-wave2; objects are matched by depth-first position and name, so reordering many objects can pair the... |
-| [21.3](feature_map/20-35-planned.md#213-variants) | Variants | In flight | A prefab that is based on another prefab and only stores its differences (a red enemy variant of the base enemy). | in flight; scene files never contain variant records (only prefab files do); override unit is a whole record, with field-level... |
-| [21.4](feature_map/20-35-planned.md#214-overrides) | Overrides | Partial | Remember how a placed instance differs from its prefab, and offer to apply, revert or re-apply those differences. | in flight on claude/prefab-wave2; `Diff` is exact for well-known records and falls back to whole records for others; objects... |
+| [21.2](feature_map/20-35-planned.md#212-nested-prefabs) | Nested prefabs | Partial | A prefab that contains other prefab instances, which keep their link to their own prefab so editing the inner one updates the outer one. | the editor does not use it (see Status); objects are matched by depth-first position and name, so reordering many objects can... |
+| [21.3](feature_map/20-35-planned.md#213-variants) | Variants | Partial | A prefab that is based on another prefab and only stores its differences (a red enemy variant of the base enemy). | no UI; scene files never contain variant records (only prefab files do); override unit is a whole record, with field-level apply... |
+| [21.4](feature_map/20-35-planned.md#214-overrides) | Overrides | Partial | Remember how a placed instance differs from its prefab, and offer to apply, revert or re-apply those differences. | `Diff` is exact for well-known records and falls back to whole records for others; objects added or lost on an instance are... |
 
 ## 22. Undo/redo & recovery (Critical)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -571,31 +570,31 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 ## 23. Profiling & debugging (Critical)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [23.1](feature_map/20-35-planned.md#231-cpugpu-profiler) | CPU/GPU profiler | Partial | See where each frame's time goes: which systems are slow, which frames spike, and whether the CPU or the GPU is the limit. | the "GPU" number is CPU wall time around the render call; the ring is only 4 seconds at 60 fps; #574 is open. |
-| [23.2](feature_map/20-35-planned.md#232-memory-tracking) | Memory tracking | In flight | See how much memory each system uses, find leaks and see what the asset cache holds. | no platform memory numbers (process working set); heap hooks off by default. |
-| [23.3](feature_map/20-35-planned.md#233-frame-debugger) | Frame debugger | In flight | Capture one frame and step through its draw calls to see what was drawn, with which material and state, and why something is missing. | each renderer (software, GL, D3D11, D3D12) draws differently, so four hooks are needed. |
+| [23.1](feature_map/20-35-planned.md#231-cpugpu-profiler) | CPU/GPU profiler | Partial | See where each frame's time goes: which systems are slow, which frames spike, and whether the CPU or the GPU is the limit. | the "GPU" number is CPU wall time around the render call; the ring is only 4 seconds at 60 fps; `FrameHistory` keeps 600 frames... |
+| [23.2](feature_map/20-35-planned.md#232-memory-tracking) | Memory tracking | Partial | See how much memory each system uses, find leaks and see what the asset cache holds. | no platform memory numbers (process working set); heap hooks off by default. |
+| [23.3](feature_map/20-35-planned.md#233-frame-debugger) | Frame debugger | Partial | Capture one frame and step through its draw calls to see what was drawn, with which material and state, and why something is missing. | each renderer (software, GL, D3D11, D3D12) draws differently, so four hooks are needed. |
 | [23.4](feature_map/20-35-planned.md#234-error-console) | Error console | Partial | The panel that shows log messages, warnings and errors, with filters and links back to what caused them. | the editor Console has its own entry type (`ConsoleEntry`) separate from the log sink; capped at 500 entries. |
 
 ## 24. Plugin & extension system (Critical)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [24.1](feature_map/20-35-planned.md#241-c-plugins) | C++ plugins | Planned | Let a developer build a native library (DLL or shared object) that adds components, tools or systems to the engine and editor without changing the... | native plugins can crash the editor; ABI and ownership of memory need an explicit rule; use the property registry... |
+| [24.1](feature_map/20-35-planned.md#241-c-plugins) | C++ plugins | Planned | Let a developer build a native library (DLL or shared object) that adds components, tools or systems to the engine and editor without changing the... | native plugins can crash the editor; ABI and ownership of memory need an explicit rule; use the property registry (on main, #578... |
 | [24.2](feature_map/20-35-planned.md#242-editor-extensions) | Editor extensions | Works | Add windows, buttons and menu commands to the editor itself, written in OkayScript, working on the open scene. | objects are found by name, so duplicates are ambiguous; every plugin runs in the editor process with full file access (OkayScript... |
 | [24.3](feature_map/20-35-planned.md#243-custom-nodes) | Custom nodes | Planned | Add new node types to the visual scripting graph from outside the engine (from a script or a plugin) with their own pins and help text. | node text format must keep loading old graphs when a custom node type is missing (placeholder node). |
 | [24.4](feature_map/20-35-planned.md#244-plugin-sdk) | Plugin SDK | Partial | The package a third party downloads to build plugins: headers, libraries, documentation and a starter project, with version rules. | versioning rule for the engine ABI is undecided (see 25.3). |
@@ -603,8 +602,8 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 ## 25. Project management (High)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -613,14 +612,14 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 |---|---|---|---|---|
 | [25.1](feature_map/20-35-planned.md#251-templates) | Templates | Works | Starting points for a new project: a blank scene, a genre starter or a complete small game. | template list is hard-coded in the launcher (and must match the editor's list "exactly" per a comment); no template versioning. |
 | [25.2](feature_map/20-35-planned.md#252-project-settings) | Project settings | Partial | One place for project-wide choices such as game name, window size, physics gravity and rendering defaults. | `project.okayproj` is loaded from the current directory, so opening a project from elsewhere depends on the working directory... |
-| [25.3](feature_map/20-35-planned.md#253-migration) | Migration | In flight | Open a project made with an older engine version and have scenes, prefabs and settings brought up to date safely. | no policy yet on how long old formats stay readable; wait for claude/scene-diff-merge. |
+| [25.3](feature_map/20-35-planned.md#253-migration) | Migration | Partial | Open a project made with an older engine version and have scenes, prefabs and settings brought up to date safely. | no policy yet on how long old formats stay readable; `MigrateThroughEngine` drops records this build does not know and gives... |
 | [25.4](feature_map/20-35-planned.md#254-dependency-management) | Dependency management | Planned | Track which packages (asset packs, plugins, templates) a project uses and which versions, and install or update them. | where packages are hosted (Workshop, GitHub) is undecided. |
 
 ## 26. Shader & material editor (High)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -635,24 +634,24 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 ## 27. Optimization tools (High)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [27.1](feature_map/20-35-planned.md#271-lod-generation) | LOD generation | In flight | Make cheaper copies of a mesh for when it is far away and switch between them automatically, so big scenes stay fast. | simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned... |
-| [27.2](feature_map/20-35-planned.md#272-occlusion-culling) | Occlusion culling | In flight | Do not draw things hidden behind walls or buildings, in addition to skipping what is outside the camera view. | CPU rasteriser only (no GPU queries); conservative, so it may draw more than needed; no components yet. |
-| [27.3](feature_map/20-35-planned.md#273-batching) | Batching | In flight | Draw many objects with few draw calls by combining static meshes and instancing repeats, and report where a scene wastes work. | `isStatic` is only "a hint for tools"; merged meshes need a draw path in each renderer; skinned and transparent objects are never... |
+| [27.1](feature_map/20-35-planned.md#271-lod-generation) | LOD generation | Partial | Make cheaper copies of a mesh for when it is far away and switch between them automatically, so big scenes stay fast. | simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned... |
+| [27.2](feature_map/20-35-planned.md#272-occlusion-culling) | Occlusion culling | Partial | Do not draw things hidden behind walls or buildings, in addition to skipping what is outside the camera view. | CPU rasteriser only (no GPU queries); conservative, so it may draw more than needed; no components yet. |
+| [27.3](feature_map/20-35-planned.md#273-batching) | Batching | Partial | Draw many objects with few draw calls by combining static meshes and instancing repeats, and report where a scene wastes work. | `isStatic` is only "a hint for tools"; merged meshes need a draw path in each renderer; skinned and transparent objects are never... |
 | [27.4](feature_map/20-35-planned.md#274-streaming) | Streaming | Partial | Keep only the parts of a big world near the player in memory, loading and unloading as they move. | a loaded cell is created in one frame (hitch risk); saves do not know about unloaded cells (see 35.3); cells are on the XZ plane... |
 
 ## 28. Version control integration (High)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -660,15 +659,15 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
 | [28.1](feature_map/20-35-planned.md#281-git-integration) | Git integration | Partial | Use git from the tools: clone a project, see what changed, commit, push, pull and switch branches without a terminal. | no automated test; no conflict handling after a pull (see 28.4); shelling out to git means errors come back as text only. |
-| [28.2](feature_map/20-35-planned.md#282-diffs) | Diffs | In flight | See what changed between two versions of a scene or prefab in terms of objects and properties, not lines of text. | wait for claude/scene-diff-merge before touching scene text rules; component order is not saved (`docs/scene_serializer.md`), so... |
+| [28.2](feature_map/20-35-planned.md#282-diffs) | Diffs | Partial | See what changed between two versions of a scene or prefab in terms of objects and properties, not lines of text. | no UI and no tool call these yet; a file without ids pairs objects by name path, so a rename there looks like a removal plus an... |
 | [28.3](feature_map/20-35-planned.md#283-project-history) | Project history | Planned | A timeline of how a project or an asset changed, with the ability to restore an older version. | depends on git being installed; projects without git only get local backups. |
-| [28.4](feature_map/20-35-planned.md#284-merge-conflict-tools) | Merge conflict tools | In flight | Combine two people's edits to the same scene without losing work, and resolve conflicts object by object. | wait for claude/scene-diff-merge; possible duplicate naming with the additive "Merge Scene" command, rename one to avoid... |
+| [28.4](feature_map/20-35-planned.md#284-merge-conflict-tools) | Merge conflict tools | Partial | Combine two people's edits to the same scene without losing work, and resolve conflicts object by object. | the library only merges text of files at one format version; ours and theirs at different versions are not merged; possible... |
 
 ## 29. Terrain & world building tools (High)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -682,8 +681,8 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 ## 30. Character creator (Medium)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -698,8 +697,8 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 ## 31. Localization tools (Medium)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -713,39 +712,39 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 ## 32. Accessibility (High)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [32.1](feature_map/20-35-planned.md#321-controller-navigation) | Controller navigation | Partial | Play and use every menu with a gamepad or keyboard only, with a visible focus that moves the way the screen looks. | wait for #574; the focus visuals depend on each widget's own `IsFocused` drawing. |
+| [32.1](feature_map/20-35-planned.md#321-controller-navigation) | Controller navigation | Partial | Play and use every menu with a gamepad or keyboard only, with a visible focus that moves the way the screen looks. | the focus visuals depend on each widget's own `IsFocused` drawing; the graph is built from screen rectangles each time it is... |
 | [32.2](feature_map/20-35-planned.md#322-subtitles) | Subtitles | Partial | Show spoken lines and important sounds as readable text, with options the player controls (size, background, speaker names). | speaker colours need a colour-vision-safe palette (32.3); no sound-caption marking exists yet on audio sources. |
-| [32.3](feature_map/20-35-planned.md#323-colorblind-options) | Colorblind options | In flight | Let players with colour vision differences read the game: filters, safe palettes and contrast, without changing the art by hand. | wait for #574; the GPU renderers do not read the settings. |
+| [32.3](feature_map/20-35-planned.md#323-colorblind-options) | Colorblind options | Partial | Let players with colour vision differences read the game: filters, safe palettes and contrast, without changing the art by hand. | the GPU renderers do not read the settings; the speaker-colour palette in `CaptionManager` is the only consumer in the engine. |
 | [32.4](feature_map/20-35-planned.md#324-remapping) | Remapping | Partial | Let players rebind every control, with conflict handling, on keyboard and gamepad. | the UI navigation keys are fixed in code; mouse-button and wheel rebinding coverage is not checked. |
 
 ## 33. Automated testing (Critical)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [33.1](feature_map/20-35-planned.md#331-play-mode-tests) | Play-mode tests | In flight | Tests that load a scene, run it for a number of frames without a window and check what happened (a player moved, a door opened). | a script that reads the wall clock or uses threads makes a play-test non-deterministic (stated in `docs/automated_testing.md`)... |
-| [33.2](feature_map/20-35-planned.md#332-scene-validation) | Scene validation | In flight | Find broken scenes before players do: missing files, missing components, bad numbers, scripts that do not compile. | possible duplicate: `Scene::Validate` (#575) and `SceneValidator` (#572) both check missing assets, duplicate ids and so on... |
-| [33.3](feature_map/20-35-planned.md#333-regression-testing) | Regression testing | In flight | Catch changes that break something that worked: compare results with saved "golden" results, including pictures. | compilers round shading slightly differently, so goldens need a tolerance; the software renderer draws mesh renderers only (no... |
+| [33.1](feature_map/20-35-planned.md#331-play-mode-tests) | Play-mode tests | Partial | Tests that load a scene, run it for a number of frames without a window and check what happened (a player moved, a door opened). | a script that reads the wall clock or uses threads makes a play-test non-deterministic (stated in `docs/automated_testing.md`)... |
+| [33.2](feature_map/20-35-planned.md#332-scene-validation) | Scene validation | Partial | Find broken scenes before players do: missing files, missing components, bad numbers, scripts that do not compile. | possible duplicate: `Scene::Validate` (#575) and `SceneValidator` (#572) both check missing assets, duplicate ids and so on... |
+| [33.3](feature_map/20-35-planned.md#333-regression-testing) | Regression testing | Partial | Catch changes that break something that worked: compare results with saved "golden" results, including pictures. | compilers round shading slightly differently, so goldens need a tolerance; the software renderer draws mesh renderers only (no... |
 
 ## 34. Live editing (High)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -759,8 +758,8 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 ## 35. Save game framework (High)
 
 These 16 areas are the features the owner asked for and ranked (priority is in each area heading). Each sub-area says what the code already does, so nothing is built twice, what is missing, and the work in small shippable pieces. Most engine-side data layers already exist; the editor windows that use them mostly do not.
-Facts were checked against origin/main (after #571, core wave 4, merged), the open pull requests #572 (undo, testing, saves), #574 (profiling, optimization, localization tools, accessibility) and #575 (scene hierarchy and validation). A fact marked "in flight" is not on main yet.
-The branches claude/prefab-wave2 (nested prefabs, variants, per-field apply and revert) and claude/property-reflection (property registry) were pushed while this page was written and are read here; neither has a PR yet. claude/core-runtime and claude/scene-diff-merge were still not visible on origin, so those come from the coordinator's description only.
+Facts were checked against origin/main as of 2026-11-09: #571 (core wave 4), #572 (undo and recovery, testing, save framework), #574 (profiling and debugging data layers, optimization, localization tools, accessibility), #575 (scene hierarchy and validation) and #578 (core wave 5: nested prefabs, property registry, jobs, scene text tools) are all merged. 2.849.0 is published (it holds #571 and #572); 2.850.0 is being cut with #574, #575, #578 and #579. A number in brackets after a part is the merged PR that added it.
+The pattern across these areas: the engine-side data layers now exist and are tested; almost none of them is called by the editor, the renderers or the player yet. Each Status line says which. "In flight" now only means a branch or PR that is not on main (the second loop and time pass, PR #576 itself, Grok's animation work).
 About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a week or more), then what each one depends on.
 
 Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md](feature_map/20-35-planned.md).
@@ -775,21 +774,21 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 ## 36. Math & geometry
 
 The numbers underneath everything: vectors, quaternions, matrices, scalar helpers, easing, bounds and rectangles, the IK solvers' maths, and the geometry helpers (frustum, rays, closest points) that are scattered through rendering, physics and modeling.
-Covers `engine/include/okay/Math` (15 headers, all header-only, about 1.7k lines) plus geometry code in `Render/Culling`, `Render/Lightmap`, `Components/Camera` and `Render/Mesh`.
-Small and stable on main; PR #571 (core wave 4, branch claude/core-wave4-combined) adds Mat3, rays, planes, shapes, intersection tests, integer vectors, noise, curves and colour spaces.
-This area was split out of area 1 so maths can be targeted on its own; it is big enough to stand alone because of PR #571 and the IK solvers.
+Covers `engine/include/okay/Math` (23 headers, all header-only, about 3.0k lines) plus geometry code in `Render/Culling`, `Render/Lightmap`, `Components/Camera` and `Render/Mesh`.
+Core wave 4 (#571, in 2.849.0) added Mat3, rays, planes, shapes, intersection tests, integer vectors, noise, curves, colour spaces and the `Core/Rng` streams; nothing in this area is open now.
+This area was split out of area 1 so maths can be targeted on its own; it is big enough to stand alone because of #571 and the IK solvers. Docs: `docs/math_geometry.md`, test `math_geometry`.
 
 Details for every sub-area and numbered part: [docs/feature_map/36-math-geometry.md](feature_map/36-math-geometry.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [36.1](feature_map/36-math-geometry.md#361-vectors-and-colours) | Vectors and colours | Works | The 2D, 3D and 4D float vectors every system uses, and the RGBA colour type. | integer vectors and colour parsing (`Color::Parse`, colour spaces) are in PR #571; Color lives in `Render/` although it is pure... |
-| [36.2](feature_map/36-math-geometry.md#362-quaternions-and-matrices) | Quaternions and matrices | Works | Rotation as quaternions and 4x4 column-major matrices for transforms, view and projection. | PR #571 narrows the `Quat::ToEuler` gimbal-lock zone to about 0.08 degrees so roll survives at 89 degrees; no double-precision... |
-| [36.3](feature_map/36-math-geometry.md#363-scalars-interpolation-and-easing) | Scalars, interpolation and easing | Works | Scalar helpers and the curves used for animation and game feel. | `Mathf::Infinity` is the largest finite float on main (a real infinity arrives with PR #571); `Mathf::SmoothStep` argument order... |
-| [36.4](feature_map/36-math-geometry.md#364-bounds-rectangles-and-shapes) | Bounds, rectangles and shapes | Basic | Axis-aligned boxes and 2D rectangles, and the shape and intersection types that grow around them. | possible bug: `Bounds::Encapsulate` on a default `Bounds` grows from the origin, not from the first point (fixed by the empty-box... |
+| [36.1](feature_map/36-math-geometry.md#361-vectors-and-colours) | Vectors and colours | Works | The 2D, 3D and 4D float vectors every system uses, and the RGBA colour type. | Color lives in `Render/` although it is pure maths; `Quat::Normalized` of a NaN quaternion now gives identity (`core_math_extra`) |
+| [36.2](feature_map/36-math-geometry.md#362-quaternions-and-matrices) | Quaternions and matrices | Works | Rotation as quaternions and 4x4 column-major matrices for transforms, view and projection. | `Quat::ToEuler` treats only about 0.08 degrees around straight up or down as gimbal lock, so roll survives at 89 degrees... |
+| [36.3](feature_map/36-math-geometry.md#363-scalars-interpolation-and-easing) | Scalars, interpolation and easing | Works | Scalar helpers and the curves used for animation and game feel. | `Mathf::Infinity` is now a real IEEE infinity (#571; `Mathf::MaxFloat` is the old value; script-side `Mathf.Infinity` stays... |
+| [36.4](feature_map/36-math-geometry.md#364-bounds-rectangles-and-shapes) | Bounds, rectangles and shapes | Works | Axis-aligned boxes and 2D rectangles, and the shape and intersection types that grow around them. | a default `Bounds` is now empty (it used to be a point at the origin: code that wants that must write `Bounds(Vec3{}, Vec3{})`... |
 | [36.5](feature_map/36-math-geometry.md#365-ik-math) | IK math | Works | The solvers and helpers behind foot, limb, chain and look-at IK, kept free of scene dependencies so the animation components share them. | IK rewrite plan (5.7); in-flight IK PRs may change these headers |
 | [36.6](feature_map/36-math-geometry.md#366-geometry-helpers-elsewhere) | Geometry helpers elsewhere | Partial | Geometry code that lives outside `Math/` because a system needed it first: the view frustum, ray and triangle tests, camera rays, closest-point and... | duplicated ray-box and ray-sphere code in `Physics2D`/`Physics3D`, `EditTransform::Ray`, `Lightmap::RayTriangle` and `Frustum`... |
-| [36.7](feature_map/36-math-geometry.md#367-noise-curves-colour-spaces-and-random-streams) | Noise, curves, colour spaces and random streams | In flight | Shared procedural helpers that exist today as several private copies, and the shared versions being added. | PR #571 brings its own test `math_geometry`; after it merges, move terrain, textures, particles and meshes onto the shared noise... |
+| [36.7](feature_map/36-math-geometry.md#367-noise-curves-colour-spaces-and-random-streams) | Noise, curves, colour spaces and random streams | Partial | Shared procedural helpers (noise, curves, colour spaces, seeded random streams) that merged in #571, and the several private copies they should... | move terrain, textures, particles and meshes onto the shared noise so a seed means the same thing everywhere; `Mesh::PropRand`... |
 
 ## 37. Platform & windowing
 
@@ -817,7 +816,7 @@ Details for every sub-area and numbered part: [docs/feature_map/37-platform-wind
 
 The things that actually put a 3D frame on screen: the OpenGL, Direct3D 11, Direct3D 12 and software renderers, the console renderer, the web path, the shader programs, GPU resources and the frame and present path in the editor and player.
 Covers the backend files of `engine/include/okay/Render` and `engine/src/Render` (`GLRenderer`, `D3D11Renderer`, `D3D12Renderer`, `SoftwareRenderer`, `ConsoleRenderer`, `ShadowSetup`, `Renderer`), about 8k lines, plus the host code that calls them in `editor/main.cpp` and `player/main.cpp`.
-Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11"). What the frame looks like (lights, sky, post effects, materials) stays in area 2. Open work: PR #574 adds GPU timing, render stats and a frame debugger; PR #575 touches all four renderers for hierarchy-aware active.
+Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11"). What the frame looks like (lights, sky, post effects, materials) stays in area 2. Nothing is open: #574 added GPU timing, render stats and a frame debugger as library code (not called by any renderer yet) and #575 made all four renderers skip children of an inactive parent.
 
 Details for every sub-area and numbered part: [docs/feature_map/38-render-backends.md](feature_map/38-render-backends.md).
 
@@ -833,7 +832,7 @@ Details for every sub-area and numbered part: [docs/feature_map/38-render-backen
 | [38.8](feature_map/38-render-backends.md#388-shader-pipeline) | Shader pipeline | Works | The shader programs the backends run, how they stay in step with the CPU maths, and the places a custom shader would plug in. | every lighting or fog change must be repeated in GLSL, HLSL (twice) and the software renderer; custom shaders, a shader graph and... |
 | [38.9](feature_map/38-render-backends.md#389-gpu-resources) | GPU resources | Works | What the backends keep on the GPU between frames: render targets, vertex buffers, textures, shadow maps and bone palettes. | no GPU memory budget, no texture streaming or compression (import setting `compress` is stored but unused, 1.12); a changed mesh... |
 | [38.10](feature_map/38-render-backends.md#3810-frame-and-present-path) | Frame and present path | Works | The journey from a rendered 3D image to the screen in the editor and the player, including the fallbacks and what is drawn on top. | every GPU frame goes through the CPU in the player and in the editor outside the Windows direct path; "GPU" time in the profiler... |
-| [38.11](feature_map/38-render-backends.md#3811-gpu-timing-and-frame-debugging) | GPU timing and frame debugging | In flight | Knowing what the GPU spent: real GPU timers, draw-call lists and render stats. | wiring real GPU timers into each backend; a frame debugger window (area 23) |
+| [38.11](feature_map/38-render-backends.md#3811-gpu-timing-and-frame-debugging) | GPU timing and frame debugging | Partial | Knowing what the GPU spent: real GPU timers, draw-call lists and render stats. | wiring real GPU timers into each backend; a frame debugger window (area 23) |
 
 ## 39. Security & anti-cheat
 
@@ -881,7 +880,7 @@ Details for every sub-area and numbered part: [docs/feature_map/40-okayui-librar
 The plumbing around the engine: CMake (root, engine and per-program files, the `cmake/` modules and the MinGW toolchain), the
 scripts and developer tools, the deploy kits for the relay, the Supabase Edge function and SQL schema, the Steam upload kit,
 the two GitHub workflows, versioning and the pinned dependencies. What a release does for a player is area 18; this page is
-where the files live and how they are wired. Nobody is touching it now apart from release PR #573 (2.849.0).
+where the files live and how they are wired. Nobody is touching it now apart from the 2.850.0 release PR (#580, draft); 2.849.0 is published.
 
 Details for every sub-area and numbered part: [docs/feature_map/41-build-tools-infra.md](feature_map/41-build-tools-infra.md).
 
@@ -920,7 +919,7 @@ Details for every sub-area and numbered part: [docs/feature_map/42-examples-samp
 ## 43. 2D tools
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -935,7 +934,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 44. Level design and blockout tools
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -950,7 +949,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 45. Open-world streaming and world partition
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -965,21 +964,21 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 46. Replay system
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [46.1](feature_map/43-proposals.md#461-input-recording-and-playback) | Input recording and playback | Planned | Record a play session as the inputs players gave, and play it back to watch it again, test it or share it. | first step: record `PlayerInput` per fixed tick plus the random seed and scene file, and replay it through `PlayTest` to check... |
+| [46.1](feature_map/43-proposals.md#461-input-recording-and-playback) | Input recording and playback | Planned | Record a play session as the inputs players gave, and play it back to watch it again, test it or share it. | first step: record `PlayerInput` per fixed tick plus the random seed and scene file, tie each tick to a `FrameRecorder` marker... |
 | [46.2](feature_map/43-proposals.md#462-state-replay-and-killcam) | State replay and killcam | Planned | Replay from recorded object states (snapshots) instead of inputs, to show the last seconds of a match from any camera. | first step: write snapshots to a ring buffer and a free camera that reads them back. |
 | [46.3](feature_map/43-proposals.md#463-replay-files-and-viewer) | Replay files and viewer | Planned | A saved replay file and a player with pause, speed and camera controls. | first step: define the file (header with version, scene, seed; per-tick records) with the same versioning rules as saves (35.4). |
 
 ## 47. Mod support
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -993,7 +992,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 48. Crash reporting and telemetry
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1008,7 +1007,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 49. Cloud services
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1023,7 +1022,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 50. Capture and media
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1032,13 +1031,13 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 |---|---|---|---|---|
 | [50.1](feature_map/43-proposals.md#501-screenshots) | Screenshots | Basic | Save a picture of the game or editor view with one key, at a chosen size. | first step: a Screenshot key in the player writing a timestamped PNG to the user pictures or data folder, from the actual... |
 | [50.2](feature_map/43-proposals.md#502-photo-mode) | Photo mode | Planned | Pause the game and move a free camera with filters to take nice pictures. | first step: a `PhotoMode` component: key toggles pause, hides the UI, switches to a free camera with sliders for field of view... |
-| [50.3](feature_map/43-proposals.md#503-video-recording) | Video recording | Planned | Record gameplay or a cutscene to a video file or image sequence. | first step: an image-sequence recorder at a fixed time step (so slow frames do not drop video frames), using the fixed-step time... |
+| [50.3](feature_map/43-proposals.md#503-video-recording) | Video recording | Planned | Record gameplay or a cutscene to a video file or image sequence. | first step: an image-sequence recorder at a fixed time step (so slow frames do not drop video frames), using... |
 | [50.4](feature_map/43-proposals.md#504-video-playback) | Video playback | Planned | Play video files in the game (intro logos, cutscenes, menu backgrounds). | first step: choose a codec and a small decoder library (for example a simple open format) and a `VideoPlayer` component drawing... |
 
 ## 51. Onboarding, tutorials and samples
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1053,7 +1052,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 52. Simulation extras (cloth, soft bodies, fluids, destruction, crowds)
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1069,7 +1068,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 53. Day-night and weather hooks
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1083,7 +1082,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 54. Debug draw, gizmos, dev console and cheats
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1098,7 +1097,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 55. Script debugging and profiling
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1112,7 +1111,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 56. Platform targets and store packaging
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1127,7 +1126,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 57. Documentation website
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1141,7 +1140,7 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ## 58. Performance budgets and CI perf tests
 
 These are new areas the owner did not ask for yet: things a complete engine and editor usually has that areas 1-42 do not cover. Each was checked against the code first, so each says what already exists (often more than the old list assumed) and what is missing. Nothing here is built unless it says so.
-The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main after PR #571, plus the open PRs #572, #574 and #575 where they matter (marked "in flight").
+The owner decides which to adopt, reorder or drop; the suggested priority is only a starting point. Verified against origin/main as of 2026-11-09 (#571, #572, #574, #575 and #578 merged; a number after a part is the PR that added it). "In flight" now only marks the second loop and time pass (branch `claude/loop-time-wave2`, no PR yet), which already builds part of 46 (replay), 50.3 (video capture) and 58 (frame statistics).
 Things that turned out to exist already (world streaming, crash reports, Steam and PlayFab cloud calls, a launcher template gallery, a Git menu, a Terrain scatter button) are Partial or Basic here, not Planned. Numbers 43 to 58 are proposals; sub-area IDs follow the same rules as the rest of the map.
 
 Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md](feature_map/43-proposals.md).
@@ -1156,17 +1155,8 @@ Details for every sub-area and numbered part: [docs/feature_map/43-proposals.md]
 ---
 
 ## Currently moving (as of 2026-11-09)
-- Release 2.848.0 is the latest published; 2.849.0 (core and scene waves, durable saves, asset manager,
-  core wave 4, undo and recovery, test and save frameworks) is being cut.
-- Merged since 2.848.0: durable saves, all-or-nothing scene loading, core utility fixes, scene lifecycle,
-  log and profiler, timers and tweens, the Core audit, scene wave 3, the asset manager and asset
-  database, and core wave 4 (math and geometry, CLI and console, localization and Prefs, ECS commands and
-  deltas, input keys and gamepads).
-- Open PRs: engine tools foundation (undo and recovery, automated testing, save framework), release
-  2.849.0, tools wave 2 (profiling and debugging data layers, optimization tools, localization tools,
-  accessibility) and scene hierarchy, search and validation.
-- Branches finished, waiting to be combined into one PR: nested prefabs and variants
-  (`claude/prefab-wave2`), the property reflection registry (`claude/property-reflection`). Still being
-  written: a job system with arenas, handles and console variables (`claude/core-runtime`) and scene
-  diff, merge and migration (`claude/scene-diff-merge`).
-- Animation and IK PRs (#554 and the earlier ones) belong to Grok's sessions.
+- Release 2.849.0 is published (2026-11-09): scene wave 3, durable saves, scene loading, the asset manager and asset database, core wave 4 (math and geometry, CLI and console, localization and Prefs, ECS commands and deltas, input keys and gamepads) and the engine tools foundation (undo and recovery, automated testing, save framework).
+- Release 2.850.0 is being cut (draft release PR #580). It holds tools wave 2 (#574: profiling and debugging data layers, optimization tools, localization tools, accessibility), scene hierarchy, search and validation (#575), core wave 5 (#578: nested prefabs and variants, property registry, job system, arenas and handles, scene diff, merge and migration) and loop and time 1.1 (#579: `GameLoop`, clocks, hit stop, pause and quit reasons, random extras, `Application` on `GameLoop`, 11 bug fixes). This map treats #579 as merged; its files are not in the checked-out tree until it lands.
+- Branch waiting for a PR: `claude/loop-time-wave2`, the second loop and time pass (frame stepping, debug time scale, capture mode, frame recorder and player, frame statistics, tick pacer for the dedicated server, 13 more bug fixes). Marked "In flight" in 1.1.
+- Open draft PRs that are not mine to touch: this feature map (#576), the animation and IK integration (#554, Grok's sessions; the earlier animation and IK PRs are Grok's too), and the Visual Script and Script Editor redesign (#577, branch `cursor/editor-ui-redesign-00d9`, edits `editor/main.cpp`).
+- What is left after the merges: almost every new engine-side layer (undo stack, recovery, debug and optimization data layers, play-tests, save framework, prefab tools, property registry, scene diff and merge, job system) has tests but no caller in the editor, the renderers or the player. The Status line of each sub-area says which; areas 20 to 35 list the work packages.

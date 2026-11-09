@@ -4,7 +4,7 @@ How OkaySpace is built, shipped to players and kept up to date: the cross-compil
 web and mobile export, game export from the editor, the dedicated-server export, the five CI jobs, the release workflow, the
 Supabase and GitHub update feed, and the Steam upload kit. Files: `scripts/`, `.github/workflows/` (read-only here), `steam/`,
 `cmake/`, and the export code in `editor/main.cpp` (namespace `builder`). The CMake and tool plumbing itself is mapped in 41.
-Open work: release PR #573 (2.849.0) and PR #572 (adds an automated-testing runner and test changes in `tests/CMakeLists.txt`).
+Release 2.849.0 is published (PR #573 merged, tag `v2.849.0`); the 2.850.0 release PR (#580, draft, branch `release-2850`, touches only `CMakeLists.txt`, `ROADMAP.md` and `dist/CHANGELOG.txt`) is being cut. The automated-testing runner of #572 (`okay-playtest`) is merged and runs as ctests.
 
 ## 18. Build, export & release
 
@@ -72,7 +72,7 @@ Open work: release PR #573 (2.849.0) and PR #572 (adds an automated-testing runn
 ### 18.4 Release workflow
 - **What:** `.github/workflows/release.yml` turns a version into a GitHub Release (and, when a secret exists, an update on Supabase) plus the Linux game server. A release PR bumps the version first.
 - **Parts:**
-  - 18.4.1 Trigger and version - `.github/workflows/release.yml` - runs on a `v*` tag or "Run workflow"; the version is read from `build-win-dist/VERSION.txt`, which comes from `CMakeLists.txt`; a release PR ("Release 2.849.0", #573) bumps `project(VERSION)`, adds a `ROADMAP.md` row and a `dist/CHANGELOG.txt` entry
+  - 18.4.1 Trigger and version - `.github/workflows/release.yml` - runs on a `v*` tag or "Run workflow"; the version is read from `build-win-dist/VERSION.txt`, which comes from `CMakeLists.txt`; a release PR ("Release 2.849.0", #573; "Release 2.850.0", #580 in draft) bumps `project(VERSION)`, adds a `ROADMAP.md` row and a `dist/CHANGELOG.txt` entry
   - 18.4.2 Windows job - `windows-exe` - 45 min limit; warns if the repository variable `OKAY_AC_TRUSTED_KEYS` is empty; installs MinGW, NSIS, ccache with apt retries and cache; fetches SDL2 2.30.9 and libsodium 1.0.20; runs `scripts/build-windows-dist.sh`
   - 18.4.3 Packaging - `windows-exe` - zip `OkaySpace-windows-v<ver>.zip`, installer `OkaySpace-Setup.exe` via `makensis`, workflow artifact
   - 18.4.4 GitHub Release - `windows-exe` - `softprops/action-gh-release` uploads the zip, installer and the individual files the in-app updater downloads by name (`OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `SDL2.dll`, `VERSION.txt`, symbols, `dist/CHANGELOG.txt`); tags the commit the run built
@@ -83,8 +83,8 @@ Open work: release PR #573 (2.849.0) and PR #572 (adds an automated-testing runn
 - **Editor:** none
 - **Docs:** `docs/releasing.md`, `docs/packaging.md`
 - **Tests:** none in the workflow (no ctest); `publish_supabase_checks` tests the publish script
-- **Status:** Works - the workflow file is read in full; 2.848.0 is the latest release
-- **Open:** the header comment says the manual run releases "the version in dist/VERSION.txt" but the code uses `build-win-dist/VERSION.txt` (stale comment; `dist/VERSION.txt` says 2.412.0); the release runs no tests of its own; real Steamworks is not built in; a missing `OKAY_AC_TRUSTED_KEYS` is only a warning (planned to become a failure); PR #573 (2.849.0) is open
+- **Status:** Works - the workflow file is read in full; 2.849.0 is the latest release (published 2026-11-09)
+- **Open:** the header comment says the manual run releases "the version in dist/VERSION.txt" but the code uses `build-win-dist/VERSION.txt` (stale comment; `dist/VERSION.txt` says 2.412.0); the release runs no tests of its own; real Steamworks is not built in; a missing `OKAY_AC_TRUSTED_KEYS` is only a warning (planned to become a failure); the 2.850.0 release (PR #580) is not cut yet
 - **Related:** 18.5, 18.1, 41.8, 41.9, 39.7
 - **Words:** release, release.yml, tag, v2.848.0, GitHub Release, installer, changelog, softprops, Run workflow, linux-server, CHANGELOG.txt, ROADMAP
 - **Seen as:** a release has no installer or is missing an exe the updater wants; the changelog in the launcher is empty; the Linux server asset is missing

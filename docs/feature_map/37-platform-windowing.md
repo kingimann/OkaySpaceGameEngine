@@ -150,7 +150,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Docs:** `docs/save_games.md`, `docs/packaging.md`
 - **Tests:** -
 - **Status:** Basic - the three folder rules read in code; three separate implementations, no shared path helper
-- **Open:** achievements and launcher data use different base folders (LOCALAPPDATA versus APPDATA); a shared `Core/Paths` helper (per-platform data, config, cache and log folders) is in flight in PR #571 (core wave 4, branch `claude/core-wave4-combined`) but not on main; no macOS-specific Application Support handling in the engine helpers
+- **Open:** achievements and launcher data use different base folders (LOCALAPPDATA versus APPDATA); a shared `Core/Paths` helper (per-platform data, config, cache and log folders, 1.18.2) is on main since #571 but nothing outside `engine/src/Core/Paths.cpp` calls it yet (grep), so those folders were not unified; the helper does compute the macOS Application Support folder
 - **Related:** 1.7, 35, 17.1, 18.1
 - **Words:** persistent data path, save folder, AppData, LOCALAPPDATA, APPDATA, XDG_CONFIG_HOME, SDL_GetPrefPath, per-user folder, user directory, company name
 - **Seen as:** saves are lost after an update; saves land next to the exe; two games share or overwrite saves

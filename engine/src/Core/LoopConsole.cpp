@@ -1,5 +1,6 @@
 #include "okay/Core/LoopConsole.hpp"
 #include "okay/Core/Console.hpp"
+#include "okay/Core/FrameOverlay.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Time.hpp"
@@ -92,6 +93,18 @@ LoopConsole::LoopConsole(GameLoop& loop, const std::string& prefix) : m_prefix(p
         if (!l->RequestStep((int)n)) return "error: the game is not paused (time.pause on)";
         return "stepping " + std::to_string(l->StepsRemaining()) + " frame(s)";
     }, "while paused, run n frames of simulation", "step [n]");
+
+    add("run", [l](const Args& a) -> std::string {
+        double n = 1.0, fps = 0.0;
+        if (!a.empty() && (!ParseNumber(a[0], n) || n < 1.0 || n > (double)GameLoop::kMaxStepRequest)) return "error: expected a whole number of frames >= 1";
+        if (a.size() > 1 && (!ParseNumber(a[1], fps) || fps <= 0.0 || fps > (double)GameLoop::kMaxCaptureFps)) return "error: expected a frame rate above 0 and up to 1000";
+        const bool wasPaused = Game::Paused();
+        if (!l->RunFrames((int)n, fps > 0.0 ? (float)(1.0 / fps) : 0.0f)) return "error: could not start the run";
+        return wasPaused ? "stepping " + std::to_string((int)n) + " frame(s), the game stays paused"
+                         : "running " + std::to_string((int)n) + " frame(s), then pausing";
+    }, "run n frames of the running game, then pause (a frame rate makes every frame exactly that long)", "run [n] [fps]");
+
+    add("overlay", [l](const Args&) { return FrameOverlay::Text(*l); }, "the performance overlay text: frame times, hitches, time scale, pause reasons", "overlay");
 }
 
 LoopConsole::~LoopConsole() {

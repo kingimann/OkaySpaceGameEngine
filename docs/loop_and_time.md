@@ -504,7 +504,7 @@ What it does **not** touch, on purpose: `Time::ElapsedTime()`, `UnscaledTime()` 
 
 ```cpp
 GameLoop loop;
-LoopConsole commands(loop);              // time.stats, time.stats_csv <file>, time.scale [x], time.debug_scale [x], time.pause [on|off], time.step [n]
+LoopConsole commands(loop);              // time.stats, time.stats_csv <file>, time.scale [x], time.debug_scale [x], time.pause [on|off], time.step [n], time.run [n] [fps], time.overlay
 Console::Execute("time.stats");          // "240 frames: 59.8 fps avg (16.72 ms), 1% low 41.2 fps, ..." and the hitch counters
 Console::Execute("time.scale 0.25");
 ```
@@ -702,7 +702,7 @@ These are the exact call sites, all on `ed.playLoop()` (`EditorState::m_loop`), 
 2. **Slow motion buttons.** In the toolbar next to Step (`stepHit`, about line 6436): "Slower" is `ed.playLoop().SetDebugTimeScale(GameLoop::NextDebugTimeScale(ed.playLoop().DebugTimeScale(), -1))`, "Faster" the same with `+1`, "1x" is `SetDebugTimeScale(1.0f)`; the label is `ed.playLoop().DebugTimeScale()`. The debug scale survives Play and Stop (by design), so call `SetDebugTimeScale(1.0f)` in `EditorState::Stop()` if it should not.
 3. **Run N frames, then pause.** Once, where `ed.playTick` is set (about line 44630): `ed.playLoop().OnRunFramesDone = [] { g_paused = true; };`. The button calls `ed.playLoop().RunFrames(n, 1.0f / 60.0f, "editor")`: the reason must be `EditorState::kPauseReason` (`"editor"`), the one `ed.SetPaused(g_paused)` holds, so when the run ends the loop's pause and `g_paused` agree and the Resume button releases it. While the game is paused the same call steps `n` frames and stays paused (the editor lifts its own pause around the scene tick for step frames already).
 4. **Scripts: `Time.sessionTime` and `Time.sessionFrameCount`.** Next to `Time.time` / `Time.frameCount` in `Script/EngineApi.cpp` (the `Time` type, about line 891) and `Scripting/OkayScriptVM.cpp` (`Time.time` about line 2078, builtin `time` about line 3719), return `Time::SessionTime()` and `Time::SessionFrameCount()`; regenerate `docs/engine_api.md`. Until then a script that needs "since Play" can store `Time.time` in `Start`.
-5. **Console.** `LoopConsole(ed.playLoop())` (declared after the loop) gives `time.stats`, `time.scale`, `time.debug_scale`, `time.pause`, `time.step`; `time.pause` and `time.stats` match what the buttons do.
+5. **Console.** `LoopConsole(ed.playLoop())` (declared after the loop) gives `time.stats`, `time.scale`, `time.debug_scale`, `time.pause`, `time.step`, and from this pass `time.run [n] [fps]` (`RunFrames`: with `fps` every frame is exactly 1/fps s) and `time.overlay` (the `FrameOverlay` text); they do what the buttons do. Without the editor hook 3 the pause that `time.run` ends with is the reason `"manual"`.
 
 ### What changed (fourth pass)
 
@@ -710,6 +710,7 @@ These are the exact call sites, all on `ed.playLoop()` (`EditorState::m_loop`), 
 - `Time`: `SessionTime`, `SessionUnscaledTime`, `SessionFrameCount`, `MarkSessionStart` (called by `Game::BeginSession`); a scaled step is held in float range; `SmoothedFPS` ignores a denormal frame (`kMaxFps`); `FixedTimestep::kMaxStepsCap`.
 - `GameLoop`: `RunFrames`, `OnRunFramesDone`, `CancelRunFrames`, `IsRunningFrames`, `RunFramesRemaining`, `NextDebugTimeScale`, `kDebugScalePresets`; the debug-scaled step is held in float range.
 - `Clock::Tick` holds its step in float range. `TimeSnapshot::hasTimeScale`. `FrameRecording` accepts `INT_MIN` markers. `Application::TargetFrameSeconds`. `TickPacer` saturates.
+- `LoopConsole`: `time.run [n] [fps]`, `time.overlay`.
 - New `Core/FrameOverlay.hpp/.cpp`: `FrameOverlay::Lines`, `Format`, `StateOf`, `Text`, `RecentFps`, `RecentMs`. `player/main.cpp`: F3 uses it.
 - `Random::Gaussian`, the `rnd::Point*` helpers: bad numbers. New `rnd::SampleIndices`, `rnd::PoissonDisk2D`, `ShuffleBag::SaveState / RestoreState / Save / Load`, `WeightedTable::DrawnMask / RestoreDrawn / Drawn / Save / Load`.
 - Not done: `Time.sessionTime` in the scripts (hook 4), a `PseudoRandom` "bad luck protection" chance (a streak-aware crit chance; small, but nothing asked for it yet), `Rng` was left alone (it belongs to the math wave).

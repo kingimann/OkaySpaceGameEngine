@@ -5,11 +5,14 @@
 #include "test_framework.hpp"
 #include "okay/Core/Application.hpp"
 #include "okay/Core/Clock.hpp"
+#include "okay/Core/Console.hpp"
+#include "okay/Core/Countdown.hpp"
 #include "okay/Core/FrameOverlay.hpp"
 #include "okay/Core/FrameRecord.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/LoopConsole.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/TickPacer.hpp"
@@ -506,6 +509,32 @@ int main() {
         CHECK(rec.Recording().At(3, s) && (s.flags & kFramePaused) && !(s.flags & kFrameSynthetic));
     }
 
+    // ---- console: time.run and time.overlay -------------------------------------------------------------------------------------------------
+    {
+        Fresh();
+        Console::Reset();
+        GameLoop loop(Plain());
+        {
+            LoopConsole commands(loop);
+            CHECK(Console::HasCommand("time.run") && Console::HasCommand("time.overlay"));
+            Console::Result r = Console::Execute("time.run 3 60");
+            CHECK(r.ok && r.output == "running 3 frame(s), then pausing" && loop.RunFramesRemaining() == 3);
+            for (int i = 0; i < 3; ++i) loop.BeginFrame(0.5);
+            CHECK(Game::Paused() && Near(Time::ElapsedTimeD(), 3.0 / 60.0, 1e-6));
+            r = Console::Execute("time.run 2");                                // paused now: it steps and stays paused
+            CHECK(r.ok && r.output.find("stays paused") != std::string::npos && loop.StepsRemaining() == 2);
+            Game::SetPaused(false);
+            r = Console::Execute("time.run");                                  // no argument: one frame
+            CHECK(r.ok && loop.RunFramesRemaining() == 1);
+            for (const char* bad : {"time.run 0", "time.run x", "time.run 2000000", "time.run 3 0", "time.run 3 nan", "time.run 3 5000", "time.run -1"})
+                CHECK(!Console::Execute(bad).ok);
+            r = Console::Execute("time.overlay");
+            CHECK(r.ok && r.output.find("time x1.00") != std::string::npos && r.output.find("fps") != std::string::npos);
+        }
+        CHECK(!Console::HasCommand("time.run") && !Console::HasCommand("time.overlay"));
+        Console::Reset();
+    }
+
     // ---- debug time scale presets for a slower / faster button pair ------------------------------------------------------------
     {
         CHECK(GameLoop::NextDebugTimeScale(1.0f, 1) == 2.0f && GameLoop::NextDebugTimeScale(1.0f, -1) == 0.5f);
@@ -684,6 +713,52 @@ int main() {
         }
         if (broken) std::cerr << "  fuzz:" << why << "\n";
         CHECK(!broken);
+    }
+
+    // ---- random walks over a Clock and over Countdown / Cooldown with good and bad numbers: the invariants hold at every step ----------------------------
+    {
+        const float vals[] = {0.0f, 1e-45f, 0.001f, 0.016f, 0.5f, 1.0f, 5.0f, 100.0f, 1e9f, 3.4e38f, -1.0f, -1e30f, std::numeric_limits<float>::quiet_NaN(),
+                              std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
+        const int nv = (int)(sizeof vals / sizeof vals[0]);
+        std::uint64_t st = 7;
+        auto rnd = [&](int n) { st = st * 6364136223846793005ull + 1442695040888963407ull; return (int)((st >> 33) % (std::uint64_t)n); };
+        auto good = [](float x) { return std::isfinite(x) && x >= 0.0f; };
+        bool clocksOk = true, timersOk = true;
+        for (int run = 0; run < 3000; ++run) {
+            Clock c("x", rnd(2) ? Clock::Source::Scaled : Clock::Source::Unscaled, rnd(2) != 0);
+            double last = 0.0;
+            for (int i = 0; i < 100; ++i) {
+                switch (rnd(8)) {
+                    case 0: c.SetScale(vals[rnd(nv)]); break;
+                    case 1: c.RampScale(vals[rnd(nv)], vals[rnd(nv)]); break;
+                    case 2: c.CancelRamp(); break;
+                    case 3: c.SetPaused(rnd(2) != 0); break;
+                    case 4: c.Restore(vals[rnd(nv)], (std::uint64_t)rnd(1000)); last = c.Elapsed(); break;
+                    case 5: c.Reset(); last = 0.0; break;
+                    default: c.Tick(vals[rnd(nv)], vals[rnd(nv)], rnd(2) != 0); break;
+                }
+                if (!good(c.Delta()) || !std::isfinite(c.Elapsed()) || c.Elapsed() < last - 1e-9 || !(c.Scale() >= 0.0f) || c.Scale() > Time::kMaxTimeScale ||
+                    !std::isfinite(c.RampSecondsLeft()) || c.RampSecondsLeft() < -1e-6f)
+                    clocksOk = false;
+                last = c.Elapsed();
+            }
+            Countdown cd;
+            Cooldown cool(vals[rnd(nv)]);
+            for (int i = 0; i < 100; ++i) {
+                const float v = vals[rnd(nv)];
+                switch (rnd(12)) {
+                    case 0: cd.Start(v); break; case 1: cd.Restart(); break; case 2: cd.Stop(); break; case 3: cd.Pause(); break; case 4: cd.Resume(); break;
+                    case 5: cd.Extend(v); break; case 6: cd.Tick(v); break; case 7: cd.Consume(); break;
+                    case 8: cool.TryUse(); break; case 9: cool.Tick(v); break; case 10: cool.Reduce(v); break; default: cool.SetDuration(v); break;
+                }
+                if (!good(cd.Remaining()) || !good(cd.Duration()) || !good(cd.Elapsed()) || !good(cd.Overshoot()) || cd.Progress() < 0.0f || cd.Progress() > 1.0f ||
+                    cd.Remaining() > Countdown::kMaxSeconds || cd.Duration() > Countdown::kMaxSeconds || (cd.Done() && cd.Remaining() != 0.0f))
+                    timersOk = false;
+                if (!good(cool.Remaining()) || !good(cool.Duration()) || cool.Progress() < 0.0f || cool.Progress() > 1.0f) timersOk = false;
+            }
+        }
+        CHECK(clocksOk);
+        CHECK(timersOk);
     }
 
     // ---- hostile recordings and snapshot blocks never crash and never leave a bad number behind ------------------------------------------------------------

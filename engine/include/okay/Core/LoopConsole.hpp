@@ -15,6 +15,9 @@
 //   time.debug_scale [x]       show / set the loop's debug time scale (GameLoop::SetDebugTimeScale)
 //   time.pause [on|off]        pause / resume as the reason "manual" (no argument toggles it)
 //   time.step [n]              while paused, run n frames of simulation (GameLoop::RequestStep)
+//   time.run [n] [fps]         run n frames of the running game, then pause (GameLoop::RunFrames); with fps
+//                              every one of those frames is exactly 1/fps seconds
+//   time.overlay               the performance overlay text (FrameOverlay::Lines)
 //
 // The prefix ("time.") is a constructor argument, so two loops (a client and a server in one process)
 // can each have their own. The object removes its commands when it is destroyed; destroy it before the

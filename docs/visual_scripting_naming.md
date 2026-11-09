@@ -41,9 +41,6 @@ Put the unit in the words when it matters: `Wait Seconds`, pin `Seconds`.
 Not `Wait (s)` and not a pin named `s`. `On Physics Update` is the steady
 50-steps-a-second clock; the node help says that, the title does not say "tick".
 
-Put the unit in the words when it matters: `Wait Seconds`, pin `Seconds`.
-Not `Wait (s)` and not a pin named `s`.
-
 Pins use the same words: `Seconds`, `Target`, `Speed`, `Amount`, `Name`,
 `Value`, `Text`, `Point`, `Object`, `Previous`, `First`, `Last`, `Count`.
 Not `s`, `t`, `dt`, `pos`, `obj`, `In`, `Out`, `Bool`, `Old`, `Var`.
@@ -52,24 +49,52 @@ An empty flow pin (the triangle with no word) is fine. Do not label it `Exec`.
 
 ## Categories
 
-Sidebar groups use the same voice. Old group on the left, name to use on the right.
+The Add Node menu has one topic per node, in this order. Common topics come
+first. A large topic also has subcategories; the everyday nodes stay in the
+topic itself, and the subcategory list appears when that topic is selected.
+There is no catch-all: not "Do something", "Check something", "Actions",
+"Data", "Engine API", "Basic", "Look", or "World". Those old words are search
+keywords only.
 
-| Was | Use |
-|---|---|
-| Events | Events |
-| Flow | Flow |
-| Variables | Values |
-| Math | Numbers |
-| Logic | Choices |
-| Input | Controls |
-| Transform | Movement |
-| Actions | Actions |
-| Data | Words |
-| Multiplayer & Steam | Online |
-| Engine API | Objects |
+| Topic | What goes here | Subcategories, when the topic is large |
+|---|---|---|
+| Events | Where a script starts: the frame, enable, a message | |
+| Flow | Order, choices, loops, waiting, functions | Loops, Timing, Functions |
+| Variables | Numbers and yes/no remembered on an object, the scene, or a save | Compare, Change, Shared, Saved, Story |
+| Math | Arithmetic, comparisons, vectors, random numbers | Compare, Random, Vectors, Angles, Curves |
+| Text | Words, sentences, language | Language |
+| Lists & Maps | Several values under one name | Lists, Maps |
+| Objects | Find, spawn, show, hide, name, items | Items, Appearance, Lines, Survival |
+| Movement | Position, rotation, scale, and moving toward something. Search also finds these under Transform | Turn, Size, Tweens |
+| Physics | Forces, velocity, collisions, triggers, raycasts | Collisions, Queries |
+| Animation | Clips, character actions, IK, cutscenes | Character, IK, Cutscenes |
+| Audio | Sound effects and music | |
+| Input | Keys, mouse, movement axes, controller actions | Keys, Mouse, Axes, Controls |
+| Camera | Where the player looks, shake, zoom | |
+| UI | On-screen text, buttons, bars | Buttons, Bars, Fields, Layout, Popups, Theme |
+| Scene | Loading, weather, story, navigation, building | Story, Navigation, Building, Atmosphere |
+| Time | The clock, the frame, game speed | |
+| Online | Hosting, joining, messages, Steam | Steam, PlayFab |
+| Debug | Messages for you while building | |
+| Advanced | Behavior trees and asking an object for a component | Behavior |
 
-Switch a group’s sidebar label when that group’s nodes are renamed, not before.
-Until then the old label stays, so a half-renamed list is not a mix of both.
+A new node, including the ones added on the logic-runtime branch, picks one of
+these topics (and a subcategory from that row when the node is a special case
+of a large topic). Add the type to `VsPlaceForNode` in
+`editor/VisualScriptCategories.hpp` (or `VsPlaceForApi` / `VsPlaceForStep` for
+a script binding or an action step). Do not invent a new topic, and do not put
+the node in a catch-all. `tests/test_vs_palette_categories.cpp` fails if a node
+has no topic or lands in a catch-all.
+
+Two entries that do the same job are one row while browsing. A script binding
+that matches a hand-written node (Mathf.Abs, Transform.Translate) and an
+Actions step that matches one (Wait, Play Sound, Set Position) stay out of the
+browse list. Searching for the old name still finds them.
+
+Old menu words still find the node. "Engine API", "Transform", "Actions", and
+the old step group (Move, Look, Variables) are search keywords. A script node
+that does the same job as a hand-written node (Mathf.Abs, Transform.Translate)
+stays out of the browse list and still appears when you search for its old name.
 
 ## Old names still work
 

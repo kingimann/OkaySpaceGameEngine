@@ -269,7 +269,7 @@ data node to read one back.
 **Input & engine:** Raycast 2D (origin, direction, max distance; outputs Hit),
 Mouse Wheel, Time Scale, Frame Count.
 
-**Multiplayer & Steam** (its own palette category): Host Game, Join Game
+**Online:** Host Game, Join Game
 (`host port` or `host:port`), Disconnect, Is Connected / Is Server / Is Client,
 Peer Count, My Net Id, Send Message, Set / Get Net Var, Send Chat, Call RPC, Net
 Spawn / Despawn, Set Ready, Start Match, Match Started, All Ready, Steam Name,
@@ -280,9 +280,11 @@ Submit Score.
 - **Search** is forgiving: `ply snd` finds Play Sound. Close matches come first,
   and the matched letters are highlighted.
 - **Keys:** **Up / Down** pick a result and **Enter** adds it.
-- **Sidebar:** browse by category, by **Do something** / **Check something**
-  (the Actions library), by **Recent**, or by **Favourites**. Click a node's star
-  to make it a favourite.
+- **Sidebar:** browse by topic (Events, Flow, Variables, Math, and the rest in
+  [visual_scripting_naming.md](visual_scripting_naming.md)), by **Recent**, or by
+  **Favourites**. A large topic opens into subcategories. Click a node's star
+  to make it a favourite. Searching for an old group name ("Do something",
+  "Check something", "Engine API", "Transform") still finds those nodes.
 - **Details:** the strip at the bottom says what the highlighted node takes and
   gives.
 - **Dragging from a pin:** only the nodes that fit that pin are listed.
@@ -370,10 +372,11 @@ Every N Times.
 The Flow Graph window and the Actions list are gone as separate editors: everything
 is built in the **Visual Script** graph.
 
-- **+ Add > Do something / Check something** lists every step the Actions component
-  had (Move, Play Sound, Set Variable, Has Tag, ...). They become `Action` and
-  `Condition` (Check, True/False) nodes; click a node's grey line to edit its
-  arguments with the same friendly fields.
+- The Add Node menu lists every step the Actions component had (Move, Play Sound,
+  Set Variable, Has Tag, ...) in the topic it belongs to. A step that does the
+  same job as a hand-written node is not a second browse row; search still finds
+  it by its old label. They become `Action` and `Condition` (Check, True/False)
+  nodes; click a node's grey line to edit its arguments with the same friendly fields.
 - **Action Steps** (`Actions`) keeps a whole list together: Wait, If / Repeat /
   While blocks, jumps. The chain continues once the list finishes.
 - **Delay (s)** really pauses the chain and continues it later (once). The older
@@ -647,9 +650,11 @@ entry OnStart 0
 
 ## Engine API nodes
 
-The **Engine API** group in the node search holds one node for every property and
-method of the typed script language: GameObject, Transform, Rigidbody, Vector3, Input,
-Time, Mathf and Debug. That language is `okayscript-next` in the Script Editor's
+Every property and method of the typed script language is a node in the topic it
+belongs to (Movement, Math, Physics, Input, and the rest). There is no separate
+Engine API group. Search for "engine api" still lists them. A binding that does
+the same job as a hand-written node (Mathf.Abs, Transform.Translate) is hidden
+while browsing and still appears in search. That language is `okayscript-next` in the Script Editor's
 language list, with scripts written as `class Name : Behaviour { ... }`. These nodes
 are generated from the same binding table that language uses, and they call the same
 code. Anything added to that table appears as a
@@ -686,7 +691,7 @@ it equals:
   parameters it takes).
 
 The older hand-made nodes (Translate, Get Position, Add Force...) still work and stay
-in their groups. The **Engine API** nodes are the ones that match the scripts exactly.
+in the same topic. The script-binding nodes are the ones that match the scripts exactly.
 The generated-code preview doesn't translate Engine API nodes yet. It lists them as
 not translated, and each node's tooltip gives the line of script.
 
@@ -835,10 +840,11 @@ The keys work while the Visual Script window has focus.
 
 ## Palette index
 
-Every hand-written node in the editor's node list (`Registry()` in `editor/VisualScriptEditor.hpp`), under the same group names as the sidebar.
+Every hand-written node in the editor's node list (`Registry()` in `editor/VisualScriptEditor.hpp`).
+The Add Node menu uses the topics in [visual_scripting_naming.md](visual_scripting_naming.md), not the older group headings below.
 The words in bold are the name on the node. The word in backticks is the type stored in a `.okayvs` file.
 Names follow [visual_scripting_naming.md](visual_scripting_naming.md). Searching for an older name (for example "On Collision" or "On Var Changed") still finds the node.
-The **Engine API** group is the generated list in [engine_api.md](engine_api.md): one node for each script property and method. It is not copied here.
+Script-binding nodes are the generated list in [engine_api.md](engine_api.md): one node for each script property and method. They are not copied here.
 
 ### Events
 

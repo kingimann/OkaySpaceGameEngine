@@ -1046,6 +1046,12 @@ target_include_directories(test_vs_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OK
 target_link_libraries(test_vs_names PRIVATE okay::engine)
 add_test(NAME vs_names COMMAND test_vs_names)
 
+add_executable(test_vs_palette_categories test_vs_palette_categories.cpp)
+target_include_directories(test_vs_palette_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_palette_categories PRIVATE okay::engine)
+target_compile_definitions(test_vs_palette_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_palette_categories COMMAND test_vs_palette_categories)
+
 add_executable(test_vs_flow_behaviour test_vs_flow_behaviour.cpp)
 target_include_directories(test_vs_flow_behaviour PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_flow_behaviour PRIVATE okay::engine)

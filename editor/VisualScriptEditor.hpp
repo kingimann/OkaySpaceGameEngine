@@ -14,6 +14,7 @@
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
+#include "VisualScriptNames.hpp"
 #include "VsCanvasTools.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -98,10 +99,28 @@ inline std::vector<VsDef> VsWithApiDefs(std::vector<VsDef> defs) {
 }
 inline bool IsApiNode(const std::string& t) { return okay::vs::VsApiFind(t) != nullptr; }
 
+// Titles and renamed pins come from VisualScriptNames.hpp. The strings in the
+// list below stay the file token's fallback for nodes that are not renamed yet.
+inline std::vector<VsDef> ApplyFriendlyNames(std::vector<VsDef> defs) {
+    for (VsDef& d : defs) {
+        const VsName* n = FindVsName(d.type);
+        if (!n) continue;
+        if (n->title && n->title[0]) d.title = n->title;
+        auto apply = [](std::vector<const char*>& pins, const char* const* repl, int count) {
+            if (!repl) return;
+            for (int i = 0; i < count && i < (int)pins.size(); ++i)
+                if (repl[i] && repl[i][0]) pins[(std::size_t)i] = repl[i];
+        };
+        apply(d.dataIn, n->inPins, n->inCount);
+        apply(d.dataOut, n->outPins, n->outCount);
+    }
+    return defs;
+}
+
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime),
 // then the generated engine-API nodes.
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = VsWithApiDefs(VsWithTargetPins({
+    static const std::vector<VsDef> defs = ApplyFriendlyNames(VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -545,7 +564,7 @@ inline const std::vector<VsDef>& Registry() {
         {"OnVarChanged",       "On Var Changed",        CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
         {"OnSceneVarChanged",  "On Scene Var Changed",  CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
         {"OnGlobalVarChanged", "On Global Var Changed", CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
-    }));
+    })));
     return defs;
 }
 
@@ -3432,7 +3451,9 @@ inline void Draw(EditorState& ed, bool* open) {
                 for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
                     pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
             }
-            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc + " " + pins);
+            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " +
+                                            (e.def ? VsSearchKeywords(e.def->type) : std::string()) + " " +
+                                            (e.step ? e.step->op : "") + " " + e.desc + " " + pins);
             return extra.find(needle) != std::string::npos ? 40 : 0;
         };
 

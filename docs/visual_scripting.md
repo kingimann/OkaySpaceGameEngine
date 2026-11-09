@@ -836,52 +836,60 @@ The keys work while the Visual Script window has focus.
 ## Palette index
 
 Every hand-written node in the editor's node list (`Registry()` in `editor/VisualScriptEditor.hpp`), under the same group names as the sidebar.
-The word in backticks is the type stored in a `.okayvs` file.
+The words in bold are the name on the node. The word in backticks is the type stored in a `.okayvs` file.
+Names follow [visual_scripting_naming.md](visual_scripting_naming.md). Searching for an older name (for example "On Collision" or "On Var Changed") still finds the node.
 The **Engine API** group is the generated list in [engine_api.md](engine_api.md): one node for each script property and method. It is not copied here.
 
 ### Events
 
 - **On Start** (`OnStart`)
-- **On Update** (`OnUpdate`)
-- **On Collision** (`OnCollision`)
-- **On Trigger** (`OnTrigger`)
-- **On Click** (`OnClick`)
-- **On Anim Event** (`OnAnimEvent`) — setting: event (blank = any)
+- **On Every Frame** (`OnUpdate`) — was On Update
+- **On After Every Frame** (`OnLateUpdate`) — was On Late Update
+- **On Steady Tick** (`OnFixedUpdate`) — was On Fixed Update
+- **On Becomes Active** (`OnEnable`) — was On Enable
+- **On Becomes Inactive** (`OnDisable`) — was On Disable
+- **On Destroyed** (`OnDestroy`) — was On Destroy
+- **On Every Few Seconds** (`OnTimer`) — was On Timer
 - **On Key Pressed** (`OnKey`) — setting: key
 - **On Key Released** (`OnKeyUp`) — setting: key
-- **On Timer** (`OnTimer`) — setting: every N seconds
-- **On Custom Event** (`OnEvent`) — out Value; setting: event name
-- **On Collision Exit** (`OnCollisionExit`)
-- **On Trigger Exit** (`OnTriggerExit`)
-- **On Mouse Enter** (`OnMouseEnter`)
-- **On Mouse Down** (`OnMouseDown`)
-- **On Mouse Up** (`OnMouseUp`)
-- **On Mouse Over** (`OnMouseOver`)
-- **On Collision Stay** (`OnCollisionStay`)
-- **On Late Update** (`OnLateUpdate`)
-- **On Fixed Update** (`OnFixedUpdate`)
-- **On Enable** (`OnEnable`)
-- **On Disable** (`OnDisable`)
-- **On Destroy** (`OnDestroy`)
-- **On Mouse Exit** (`OnMouseExit`)
+- **On Click** (`OnClick`)
+- **On Mouse Pressed** (`OnMouseDown`) — was On Mouse Down
+- **On Mouse Released** (`OnMouseUp`) — was On Mouse Up
+- **On Mouse Entered** (`OnMouseEnter`) — was On Mouse Enter
+- **On Mouse Left** (`OnMouseExit`) — was On Mouse Exit
+- **On Mouse Hover** (`OnMouseOver`) — was On Mouse Over
+- **On Bump** (`OnCollision`) — was On Collision
+- **On Still Bumping** (`OnCollisionStay`) — was On Collision Stay
+- **On Bump Ended** (`OnCollisionExit`) — was On Collision Exit
+- **On Entered Area** (`OnTrigger`) — was On Trigger
+- **On Still Inside Area** (`OnTriggerStay`) — was On Trigger Stay
+- **On Left Area** (`OnTriggerExit`) — was On Trigger Exit
+- **On Animation Marker** (`OnAnimEvent`) — was On Anim Event; setting: event (blank = any)
+- **On Message** (`OnEvent`) — was On Custom Event; out Value; setting: event name
 - **On Object Placed** (`OnObjectPlaced`)
 - **On Object Removed** (`OnObjectRemoved`)
-- **On Logic Signal** (`OnLogicSignal`)
+- **On Signal** (`OnLogicSignal`) — was On Logic Signal
 - **On Item Added** (`OnItemAdded`)
 - **On Item Removed** (`OnItemRemoved`)
 - **On Inventory Full** (`OnInventoryFull`)
 - **On Item Used** (`OnItemUsed`)
-- **On Equip** (`OnEquip`)
-- **On Craft** (`OnCraft`)
-- **On Sequence Event** (`OnSequenceEvent`, optional name)
-- **On Language Changed** (`OnLanguageChanged`) — Event Name is the new language's code
+- **On Item Equipped** (`OnEquip`) — was On Equip
+- **On Item Crafted** (`OnCraft`) — was On Craft
+- **On Cutscene Marker** (`OnSequenceEvent`) — was On Sequence Event
+- **On Conversation Line** (`OnDialogueEvent`) — was On Dialogue Event
+- **On Conversation Ended** (`OnDialogueEnd`) — was On Dialogue End
+- **On Quest Started** (`OnQuestStarted`)
+- **On Quest Completed** (`OnQuestCompleted`)
+- **On Quest Failed** (`OnQuestFailed`)
+- **On Objective Completed** (`OnObjectiveCompleted`)
+- **On Quest Message** (`OnQuestEvent`) — was On Quest Event
 - **On Cheat Detected** (`OnCheatDetected`)
-- **On Validate Rpc** (`OnValidateRpc`)
-- **On Validate Hit** (`OnValidateHit`)
-- **On Trigger Stay** (`OnTriggerStay`)
-- **On Var Changed** (`OnVarChanged`) — out Value, Old; setting: variable
-- **On Scene Var Changed** (`OnSceneVarChanged`) — out Value, Old; setting: variable
-- **On Global Var Changed** (`OnGlobalVarChanged`) — out Value, Old; setting: variable
+- **On Network Action** (`OnValidateRpc`) — was On Validate Rpc
+- **On Hit Check** (`OnValidateHit`) — was On Validate Hit
+- **On Language Changed** (`OnLanguageChanged`) — the message name is the new language's code
+- **On Value Changed** (`OnVarChanged`) — was On Var Changed; out Value, Previous
+- **On Scene Value Changed** (`OnSceneVarChanged`) — was On Scene Var Changed; out Value, Previous
+- **On Game Value Changed** (`OnGlobalVarChanged`) — was On Global Var Changed; out Value, Previous
 
 ### Flow
 

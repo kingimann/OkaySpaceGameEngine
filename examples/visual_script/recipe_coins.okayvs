@@ -1,0 +1,9 @@
+# Collect: On Start banks 1 point. A coin trigger banks another and is removed.
+node 1 OnStart
+entry OnStart 1
+node 2 ScoreAdd
+default 2 0 1
+exec 1 0 2
+node 3 SetVar banked
+default 3 0 1
+exec 2 0 3

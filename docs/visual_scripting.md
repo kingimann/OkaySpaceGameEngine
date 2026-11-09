@@ -733,6 +733,14 @@ Lists are shared: every node that reads `bag` sees the same list. The other list
 - **Map Keys** / **Map Values** are lists, keys in sorted order, so a run is repeatable
 - **For Each Map** walks those entries. Break stops early
 
+### Ready-made gameplay
+
+A beginner set sits on top of the low-level nodes. It does not replace Move Towards, Look At, Teleport, Nav Move To, Clamp, Lerp, Play Sound, Play Music, Load Scene, or the other nodes that already did that job. Each new node uses a sensible default when a pin is left empty, and a missing object or component is a node error.
+
+Movement: Rotate Towards, Orbit Around, Follow Path, Bob, Spin, Knockback, Smooth Follow. Tweens (the caller waits): Tween Position, Rotation, Scale and Color. Animation: Crossfade Animation, Stop Animation, Wait For Animation End. Interaction: On Interact (E within 2 units), Pick Up, Drop, Door Open, Door Close, Lever, Collect, On Tag Enter / Stay / Exit, Proximity. Combat: Damage, Heal, Is Dead, On Death, On Health Changed, Respawn (a Health component), Spawn Projectile, Shoot, Ammo. AI: Patrol Waypoints, Chase Target, Flee, Wander, Can See Target. Spawning: Spawn Every, Destroy After, Pool Get, Pool Release. Flow: Score Add / Set / Get, Countdown, Win, Lose, Restart Scene, Checkpoint Save / Load (the existing save). UI: Set Progress Bar, Show Floating Text, Fade Screen. Camera: Set Camera Target, Zoom, Switch Camera. Audio: Play Sound At, Stop Sound (the Audio Source; music stays on Play Music / Stop Music). Input: On Action Pressed / Released / Held (interact, jump, fire, or a key name) and Get Move Axis. Utility: Random Pick, Random Point In Area, Shuffle, Min Of List, Max Of List, On Collision With Tag.
+
+The Visual Script toolbar's Recipes menu drops in a whole graph: collect coins and score, an enemy that chases and damages, a door with a key, a health pickup, and a countdown that ends in a win.
+
 ### Switches, gates and calling out
 
 - **Switch (name)** (`SwitchString`) and **Switch (cases)** (`SwitchCases`): one pin per case in the text field (comma separated, or **+ case**), then Default. An older file that wired Default to pin 4 still hits Default. Switch (int) is still the fixed 0 / 1 / 2 / Default node.

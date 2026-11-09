@@ -4,6 +4,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
 #include "okay/VisualScript/NodesLoops.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 
@@ -74,6 +75,7 @@ void VisualScriptComponent::ScanPolledEvents() {
     m_scanned = m_graph.get();
     m_keyEntries.clear();
     m_timerEntries.clear();
+    m_actionEntries.clear();
     m_watches.clear();
     if (!m_graph) return;
     for (const auto& kv : m_graph->AllEntries()) {
@@ -86,7 +88,13 @@ void VisualScriptComponent::ScanPolledEvents() {
             float p = 1.0f;
             try { p = std::stof(n.substr(8)); } catch (...) {}
             m_timerEntries.push_back({n, p > 0.001f ? p : 0.001f, 0.0f});
-        } else if (n.rfind("OnVarChanged:", 0) == 0 || n.rfind("OnSceneVarChanged:", 0) == 0 ||
+        } else if (n.rfind("OnAction:", 0) == 0)
+            m_actionEntries.push_back({n, n.substr(9), 0});
+        else if (n.rfind("OnActionUp:", 0) == 0)
+            m_actionEntries.push_back({n, n.substr(11), 1});
+        else if (n.rfind("OnActionHeld:", 0) == 0)
+            m_actionEntries.push_back({n, n.substr(13), 2});
+        else if (n.rfind("OnVarChanged:", 0) == 0 || n.rfind("OnSceneVarChanged:", 0) == 0 ||
                    n.rfind("OnGlobalVarChanged:", 0) == 0) {
             for (int id : kv.second)
                 if (auto* ev = dynamic_cast<vs::VarChangedEventNode*>(m_graph->Node(id))) {
@@ -195,8 +203,73 @@ void VisualScriptComponent::Update(float dt) {
         while (t.acc >= t.period && guard++ < 4) { t.acc -= t.period; Fire(t.entry.c_str(), nullptr); }
         if (t.acc > t.period) t.acc = 0.0f;
     }
+    PollGameplay(dt);
     // On Variable Changed: also catches changes made by other graphs and scripts.
     CheckWatches();
+}
+
+namespace {
+bool ActionDown(const std::string& name) {
+    if (name == "interact" || name == "use") return Input::GetKeyDown('e');
+    if (name == "jump") return Input::GetKeyDown(' ');
+    if (name == "fire" || name == "attack") return Input::GetMouseButtonDown(0);
+    if (name == "crouch") return Input::GetKeyDown('c');
+    return Input::GetKeyDown(Input::KeyFromName(name));
+}
+bool ActionUp(const std::string& name) {
+    if (name == "interact" || name == "use") return Input::GetKeyUp('e');
+    if (name == "jump") return Input::GetKeyUp(' ');
+    if (name == "fire" || name == "attack") return Input::GetMouseButtonUp(0);
+    if (name == "crouch") return Input::GetKeyUp('c');
+    return Input::GetKeyUp(Input::KeyFromName(name));
+}
+bool ActionHeld(const std::string& name) {
+    if (name == "interact" || name == "use") return Input::GetKey('e');
+    if (name == "jump") return Input::GetKey(' ');
+    if (name == "fire" || name == "attack") return Input::GetMouseButton(0);
+    if (name == "crouch") return Input::GetKey('c');
+    return Input::GetKey(Input::KeyFromName(name));
+}
+}
+
+void VisualScriptComponent::FireTagged(const char* prefix, GameObject* other) {
+    if (!other || other->tag.empty()) return;
+    std::string tag = other->tag;
+    for (char& c : tag) if (c == ' ' || c == '\t') c = '_';
+    Fire((std::string(prefix) + tag).c_str(), other);
+}
+
+void VisualScriptComponent::PollGameplay(float) {
+    if (!m_graph || !gameObject) return;
+    if (!m_graph->Entries("OnInteract").empty() && Input::GetKeyDown('e') && transform && gameObject->scene()) {
+        GameObject* best = nullptr;
+        float bestD = 2.0f;
+        for (const auto& up : gameObject->scene()->Objects()) {
+            if (!up || up.get() == gameObject || !up->transform || !up->active) continue;
+            const float d = (up->transform->Position() - transform->Position()).Magnitude();
+            if (d <= bestD) { bestD = d; best = up.get(); }
+        }
+        if (best) Fire("OnInteract", best);
+    }
+    for (const ActionEntry& a : m_actionEntries) {
+        const bool go = a.edge == 0 ? ActionDown(a.action) : a.edge == 1 ? ActionUp(a.action) : ActionHeld(a.action);
+        if (go) Fire(a.entry.c_str(), nullptr);
+    }
+    if (auto* hp = gameObject->GetComponent<HealthStat>()) {
+        if (m_sawHealth && hp->health != m_lastHealth && !m_graph->Entries("OnHealthChanged").empty()) {
+            m_ctx.variables["event_value"] = vs::VsValue(hp->health);
+            Fire("OnHealthChanged", nullptr);
+        }
+        if (hp->IsDead()) {
+            if (!m_deathFired && !m_graph->Entries("OnDeath").empty()) {
+                m_deathFired = true;
+                m_ctx.variables["event_value"] = vs::VsValue(0.0f);
+                Fire("OnDeath", nullptr);
+            }
+        } else m_deathFired = false;
+        m_lastHealth = hp->health;
+        m_sawHealth = true;
+    }
 }
 
 void VisualScriptComponent::OnDestroy() {

@@ -285,6 +285,77 @@ inline const std::vector<VsDef>& Registry() {
         {"ParticlePlay",   "Play Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ParticleStop",   "Stop Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ParticleBurst",  "Burst Particles",     CAT_ACTION, true, {""}, {"Count"}, {}, 0, nullptr},
+        // High-level gameplay. Ready-made actions; the low-level nodes above stay as they are.
+        {"RotateTowards", "Rotate Towards", CAT_XFORM, true, {""}, {"Speed","Target"}, {}, 0, nullptr},
+        {"OrbitAround", "Orbit Around", CAT_XFORM, true, {""}, {"Centre","Radius","Speed"}, {}, 0, nullptr},
+        {"FollowPath", "Follow Path", CAT_XFORM, true, {"Moving","Done"}, {"Speed","Points"}, {}, 1, "x,y,z; x,y,z"},
+        {"Bob", "Bob", CAT_XFORM, true, {""}, {"Height","Speed"}, {}, 0, nullptr},
+        {"Spin", "Spin", CAT_XFORM, true, {""}, {"Speed"}, {}, 0, nullptr},
+        {"Knockback", "Knockback", CAT_XFORM, true, {""}, {"From","Force"}, {}, 0, nullptr},
+        {"SmoothFollow", "Smooth Follow", CAT_XFORM, true, {""}, {"Target","Smoothing"}, {}, 0, nullptr},
+        {"TweenPosition", "Tween Position", CAT_XFORM, true, {""}, {"To","Seconds"}, {}, 1, "linear, in, out, inout"},
+        {"TweenRotation", "Tween Rotation", CAT_XFORM, true, {""}, {"Yaw","Seconds"}, {}, 1, "linear, in, out, inout"},
+        {"TweenScale", "Tween Scale", CAT_XFORM, true, {""}, {"To","Seconds"}, {}, 1, "linear, in, out, inout"},
+        {"TweenColor", "Tween Color", CAT_XFORM, true, {""}, {"R","G","B","A","Seconds"}, {}, 1, "linear, in, out, inout"},
+        {"CrossfadeClip", "Crossfade Animation", CAT_ACTION, true, {""}, {"Blend"}, {}, 1, "clip name"},
+        {"StopAnimation", "Stop Animation", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"WaitAnimEnd", "Wait For Animation End", CAT_FLOW, true, {""}, {}, {}, 0, nullptr},
+        {"OnInteract", "On Interact", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"PickUp", "Pick Up", CAT_ACTION, true, {""}, {"Item"}, {}, 0, nullptr},
+        {"Drop", "Drop", CAT_ACTION, true, {""}, {"Item"}, {}, 0, nullptr},
+        {"DoorOpen", "Door Open", CAT_ACTION, true, {""}, {"Degrees","Seconds"}, {}, 0, nullptr},
+        {"DoorClose", "Door Close", CAT_ACTION, true, {""}, {"Seconds"}, {}, 0, nullptr},
+        {"Lever", "Lever", CAT_ACTION, true, {"On","Off"}, {}, {}, 0, nullptr},
+        {"Collect", "Collect", CAT_ACTION, true, {""}, {"Amount"}, {}, 0, nullptr},
+        {"OnTagEnter", "On Tag Enter", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
+        {"OnTagStay", "On Tag Stay", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
+        {"OnTagExit", "On Tag Exit", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
+        {"Proximity", "Proximity", CAT_LOGIC, false, {}, {"Target","Distance"}, {"Near"}, 0, nullptr},
+        {"Damage", "Damage", CAT_ACTION, true, {""}, {"Amount","Target"}, {}, 0, nullptr},
+        {"Heal", "Heal", CAT_ACTION, true, {""}, {"Amount","Target"}, {}, 0, nullptr},
+        {"IsDead", "Is Dead", CAT_LOGIC, false, {}, {"Target"}, {"Dead"}, 0, nullptr},
+        {"OnDeath", "On Death", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnHealthChanged", "On Health Changed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"Respawn", "Respawn", CAT_ACTION, true, {""}, {"Target"}, {}, 0, nullptr},
+        {"SpawnProjectile", "Spawn Projectile", CAT_ACTION, true, {""}, {"Speed"}, {"Object"}, 1, "prefab"},
+        {"Shoot", "Shoot", CAT_ACTION, true, {""}, {"Max Dist","Damage"}, {"Hit","Object"}, 0, nullptr},
+        {"Ammo", "Ammo", CAT_ACTION, true, {"Fired","Empty"}, {}, {"Left"}, 1, "shots"},
+        {"Patrol", "Patrol Waypoints", CAT_ACTION, true, {""}, {"Speed","Points"}, {}, 1, "x,y,z; x,y,z"},
+        {"Chase", "Chase Target", CAT_ACTION, true, {""}, {"Target","Speed"}, {}, 0, nullptr},
+        {"Flee", "Flee", CAT_ACTION, true, {""}, {"Threat","Speed"}, {}, 0, nullptr},
+        {"Wander", "Wander", CAT_ACTION, true, {""}, {"Radius","Speed"}, {}, 0, nullptr},
+        {"CanSee", "Can See Target", CAT_LOGIC, false, {}, {"Target","Distance","Cone"}, {"Seen"}, 0, nullptr},
+        {"SpawnEvery", "Spawn Every", CAT_ACTION, true, {""}, {"Seconds"}, {"Object"}, 1, "prefab"},
+        {"DestroyAfter", "Destroy After", CAT_ACTION, true, {""}, {"Seconds","Target"}, {}, 0, nullptr},
+        {"PoolGet", "Pool Get", CAT_ACTION, true, {""}, {}, {"Object"}, 1, "prefab"},
+        {"PoolRelease", "Pool Release", CAT_ACTION, true, {""}, {"Item"}, {}, 1, "pool name"},
+        {"ScoreAdd", "Score Add", CAT_VAR, true, {""}, {"Amount"}, {}, 0, nullptr},
+        {"ScoreSet", "Score Set", CAT_VAR, true, {""}, {"Value"}, {}, 0, nullptr},
+        {"ScoreGet", "Score Get", CAT_VAR, false, {}, {}, {"Score"}, 0, nullptr},
+        {"Countdown", "Countdown", CAT_FLOW, true, {""}, {"Seconds"}, {}, 1, "seconds"},
+        {"Win", "Win", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"Lose", "Lose", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"RestartScene", "Restart Scene", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"CheckpointSave", "Checkpoint Save", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"CheckpointLoad", "Checkpoint Load", CAT_ACTION, true, {"Loaded","Missing"}, {}, {}, 0, nullptr},
+        {"SetProgress", "Set Progress Bar", CAT_ACTION, true, {""}, {"Value","Target"}, {}, 0, nullptr},
+        {"ShowFloatingText", "Show Floating Text", CAT_ACTION, true, {""}, {"Text","Target"}, {}, 0, nullptr},
+        {"FadeScreen", "Fade Screen", CAT_ACTION, true, {""}, {"Amount","Panel"}, {}, 0, nullptr},
+        {"SetCameraTarget", "Set Camera Target", CAT_ACTION, true, {""}, {"Target","Smoothing"}, {}, 0, nullptr},
+        {"Zoom", "Zoom", CAT_ACTION, true, {""}, {"Delta"}, {}, 0, nullptr},
+        {"SwitchCamera", "Switch Camera", CAT_ACTION, true, {""}, {}, {}, 1, "camera name"},
+        {"PlaySoundAt", "Play Sound At", CAT_ACTION, true, {""}, {"Source"}, {}, 0, nullptr},
+        {"StopSound", "Stop Sound", CAT_ACTION, true, {""}, {"Source"}, {}, 0, nullptr},
+        {"OnAction", "On Action Pressed", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
+        {"OnActionUp", "On Action Released", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
+        {"OnActionHeld", "On Action Held", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
+        {"GetMoveAxis", "Get Move Axis", CAT_INPUT, false, {}, {}, {"Move"}, 0, nullptr},
+        {"RandomPick", "Random Pick", CAT_MATH, false, {}, {"List"}, {"Item"}, 0, nullptr},
+        {"RandomPoint", "Random Point In Area", CAT_MATH, false, {}, {"Center","Size"}, {"Point"}, 0, nullptr},
+        {"ShuffleList", "Shuffle", CAT_MATH, false, {}, {"List"}, {"List"}, 0, nullptr},
+        {"ListMin", "Min Of List", CAT_MATH, false, {}, {"List"}, {"Min"}, 0, nullptr},
+        {"ListMax", "Max Of List", CAT_MATH, false, {}, {"List"}, {"Max"}, 0, nullptr},
+        {"OnCollisionTag", "On Collision With Tag", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -724,7 +795,12 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnEvent") return "OnEvent:" + tok(arg, "Event");
     if (type == "OnNetRpc") return "OnNetRpc:" + tok(arg, "rpc");
     if (type == "OnVarChanged" || type == "OnSceneVarChanged" || type == "OnGlobalVarChanged") return type + ":" + tok(arg, "x");
-    if (type == "OnLanguageChanged") return type;
+    if (type == "OnLanguageChanged" || type == "OnInteract" || type == "OnDeath" || type == "OnHealthChanged") return type;
+    if (type == "OnTagEnter" || type == "OnTagStay" || type == "OnTagExit" || type == "OnCollisionTag")
+        return type + ":" + tok(arg, "Player");
+    if (type == "OnAction") return "OnAction:" + tok(arg, "interact");
+    if (type == "OnActionUp") return "OnActionUp:" + tok(arg, "interact");
+    if (type == "OnActionHeld") return "OnActionHeld:" + tok(arg, "interact");
     return {};
 }
 
@@ -753,6 +829,11 @@ struct VsEditGraph {
             {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"}, {"FindObject", "Player"},
             {"NearestWithTag", "Enemy"}, {"Teleport", "self"},
             {"ShowUI", "self"}, {"HideUI", "self"}, {"Delay", "1"}, {"Action", "log Hello"},
+            {"FollowPath", "0,0,0; 2,0,0"}, {"Patrol", "0,0,0; 3,0,0; 3,0,3"},
+            {"OnTagEnter", "Player"}, {"OnTagStay", "Player"}, {"OnTagExit", "Player"}, {"OnCollisionTag", "Player"},
+            {"OnAction", "interact"}, {"OnActionUp", "interact"}, {"OnActionHeld", "interact"},
+            {"Countdown", "5"}, {"Ammo", "6"}, {"CrossfadeClip", "Idle"}, {"TweenPosition", "inout"},
+            {"TweenRotation", "inout"}, {"TweenScale", "inout"}, {"TweenColor", "inout"},
             {"Condition", "always"}, {"Actions", "log Hello"},
             {"SetBuildPalette", "Block=Assets/block.okayprefab"}, {"SaveCreation", "creation"}, {"LoadCreation", "creation"},
             {"AddItem", "item"}, {"RemoveItem", "item"}, {"HasItem", "item"}, {"ItemCount", "item"}, {"EquipItem", "item"},
@@ -2257,6 +2338,33 @@ inline void Draw(EditorState& ed, bool* open) {
     ImGui::SameLine();
     if (ImGui::Button("Save")) doSave();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save this graph (Ctrl+S)");
+    ImGui::SameLine();
+    if (ImGui::Button("Recipes")) ImGui::OpenPopup("##vsrecipes");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop in a ready-made graph: coins, a chasing enemy, a door, a health pickup, a countdown.");
+    if (ImGui::BeginPopup("##vsrecipes")) {
+        struct Rec { const char* name; const char* text; };
+        static const Rec recs[] = {
+            {"Collect coins and score",
+             "node 1 OnStart\npos 1 40 40\nentry OnStart 1\nnode 2 ScoreAdd\npos 2 280 40\ndefault 2 0 1\nexec 1 0 2\n"
+             "node 3 OnTagEnter coin\npos 3 40 220\nentry OnTagEnter:coin 3\nnode 4 Collect\npos 4 300 220\ndefault 4 0 1\nexec 3 0 4\n"},
+            {"Enemy chases and damages",
+             "node 1 OnUpdate\npos 1 40 40\nentry OnUpdate 1\nnode 2 FindWithTag Player\npos 2 40 200\nnode 3 Chase\npos 3 300 40\n"
+             "exec 1 0 3\ndata 3 0 2 0\nnode 4 OnTagEnter Player\npos 4 40 380\nentry OnTagEnter:Player 4\n"
+             "node 5 Damage\npos 5 320 380\ndefault 5 0 10\nexec 4 0 5\n"},
+            {"Door with a key",
+             "node 1 OnStart\npos 1 40 40\nentry OnStart 1\nnode 2 Const true\npos 2 40 200\nnode 3 SetVar has_key\npos 3 280 40\nexec 1 0 3\ndata 3 0 2 0\n"
+             "node 4 OnInteract\npos 4 40 400\nentry OnInteract 4\nnode 5 GetVar has_key\npos 5 40 560\nnode 6 Branch\npos 6 280 400\n"
+             "exec 4 0 6\ndata 6 0 5 0\nnode 7 DoorOpen\npos 7 540 400\ndefault 7 0 90\ndefault 7 1 0.35\nexec 6 0 7\n"},
+            {"Health pickup",
+             "node 1 OnTagEnter Player\npos 1 40 40\nentry OnTagEnter:Player 1\nnode 2 Heal\npos 2 300 40\ndefault 2 0 25\nexec 1 0 2\n"
+             "node 3 Destroy\npos 3 540 40\nexec 2 0 3\n"},
+            {"Countdown then win",
+             "node 1 OnStart\npos 1 40 40\nentry OnStart 1\nnode 2 Countdown 0.4\npos 2 300 40\nexec 1 0 2\nnode 3 Win\npos 3 560 40\nexec 2 0 3\n"},
+        };
+        for (const Rec& r : recs)
+            if (ImGui::MenuItem(r.name)) { st.templateText = r.text; st.pasteTemplate = true; }
+        ImGui::EndPopup();
+    }
     ImGui::SameLine();
     {
         const std::string nm = g.path.empty() ? std::string("Untitled graph")

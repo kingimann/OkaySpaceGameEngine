@@ -3,8 +3,10 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/VisualScript/VsVariables.hpp"
 
 #include <cmath>
 #include <limits>
@@ -368,6 +370,52 @@ int main() {
         CHECK(v->Variables().count("from_sub") == 0);     // not restarted from a full 0.25s
         s.Update(0.1f);
         CHECK_NEAR(v->GetVariable("from_sub").AsFloat(), 9.0f, 1e-4f);
+    }
+
+    // ---- Ready-made recipes, headless ---------------------------------------
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = AttachFile(s, "Coins", Ex("recipe_coins.okayvs"));
+        s.Start();
+        CHECK(v->GetVariable("banked").AsBool());
+        CHECK_NEAR(vs::SceneVariables(&s)["score"].AsFloat(), 1.0f, 1e-3f);
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = AttachFile(s, "Clock", Ex("recipe_countdown.okayvs"));
+        s.Start();
+        CHECK(v->Variables().count("finished") == 0);
+        Updates(s, 6, 0.05f);
+        CHECK(v->GetVariable("finished").AsBool());
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = AttachFile(s, "Door", Ex("recipe_door.okayvs"));
+        s.Start();
+        CHECK(v->GetVariable("has_key").AsBool());
+        Updates(s, 6, 0.05f);
+        CHECK(std::fabs(v->gameObject->transform->localRotation.ToEuler().y) > 60.0f);
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* player = s.CreateGameObject("Player");
+        player->tag = "Player";
+        player->transform->SetPosition({4, 0, 0});
+        auto* v = AttachFile(s, "Enemy", Ex("recipe_chase.okayvs"));
+        s.Start();
+        Updates(s, 15, 0.05f);
+        CHECK(v->gameObject->transform->Position().x > 1.0f);
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = AttachFile(s, "Body", Ex("recipe_health.okayvs"));
+        auto* hp = v->gameObject->AddComponent<HealthStat>();
+        hp->playDeathAnim = false;
+        hp->maxHealth = 50;
+        s.Start();
+        s.Update(0.016f);
+        CHECK(hp->health < 50.0f);
+        CHECK(!v->GetVariable("dead").AsBool());
     }
 
     vs::SetRuntimeErrorHook(nullptr);

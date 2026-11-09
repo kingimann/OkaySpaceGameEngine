@@ -1,0 +1,15 @@
+# Heal, then a small hit, once the Health component has started.
+node 1 OnUpdate
+entry OnUpdate 1
+node 2 Once
+exec 1 0 2
+node 3 Heal
+default 3 0 5
+exec 2 0 3
+node 4 Damage
+default 4 0 10
+exec 3 0 4
+node 5 IsDead
+node 6 SetVar dead
+exec 4 0 6
+data 6 0 5 0

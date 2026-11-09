@@ -1,0 +1,8 @@
+# Countdown, then record a win.
+node 1 OnStart
+entry OnStart 1
+node 2 Countdown 0.25
+exec 1 0 2
+node 3 SetVar finished
+default 3 0 1
+exec 2 0 3

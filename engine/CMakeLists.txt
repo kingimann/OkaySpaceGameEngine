@@ -459,6 +459,8 @@ target_sources(okay_engine PRIVATE
     src/Scene/Properties.cpp
     src/Scene/PropertyRegistry.cpp
     src/Scene/BuiltinProperties.cpp
+    src/Scene/BuiltinPropertiesGameplay.cpp
+    src/Scene/BuiltinPropertiesUI.cpp
 )
 
 # ---- Core runtime foundations: job system, memory arenas, handles and ids, frame pacing ----

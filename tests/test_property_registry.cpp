@@ -359,12 +359,17 @@ static void TestRegistryBasics() {
     const std::size_t count = PropertyRegistry::All().size();
     RegisterBuiltinProperties();   // idempotent
     CHECK(PropertyRegistry::All().size() == count);
-    CHECK(count >= 20);
+    CHECK(count >= 61);
 
     const char* expected[] = {"GameObject", "Transform", "Camera", "Light", "SpriteRenderer", "MeshRenderer", "Rigidbody2D", "Rigidbody3D",
         "BoxCollider2D", "CircleCollider2D", "CapsuleCollider2D", "EdgeCollider2D", "PolygonCollider2D",
         "BoxCollider3D", "SphereCollider3D", "CapsuleCollider3D", "CylinderCollider3D", "MeshCollider3D", "AudioSource", "ParticleSystem",
-        "Mover", "Spinner", "Lifetime", "CameraFollow", "Canvas", "UIPanel"};
+        "Mover", "Spinner", "Lifetime", "CameraFollow", "Canvas", "UIPanel",
+        "PlayerController", "PlayerView", "FirstPersonController", "ThirdPersonController", "CharacterController2D", "CharacterController3D",
+        "TopDownController", "TopDownController2D", "FreeRoamController", "ClickToMoveController", "ThirdPersonShooterController",
+        "TopDownShooterController", "Platformer25DController", "VehicleController", "VehicleController2D", "Projectile3D", "Spawner",
+        "MusicPlayer", "NavMeshAgent", "NavMeshObstacle", "NavMeshSurface", "NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar",
+        "NetworkPlayerSpawner", "UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");
@@ -416,7 +421,7 @@ static void TestThreadSafeRegistration() {
     RUN_SUITE("registry: concurrent first use");
     PropertyRegistry::Clear();   // only the built-ins from here on
     const std::size_t count = PropertyRegistry::All().size();
-    CHECK(count >= 26);
+    CHECK(count >= 61);
 
     // A fresh table (as in a new process), four threads racing to be the first user:
     // every one of them must see the complete table, and it must hold each entry once.
@@ -1043,7 +1048,7 @@ static void TestEveryPropertyRoundTrip() {
         }
     }
     std::cout << "  covered " << comps << " component types, " << props << " properties\n";
-    CHECK(comps >= 26 && props >= 300);
+    CHECK(comps >= 61 && props >= 1100);
 }
 
 // ---- Cross-check against the scene serializer ---------------------------------------------------------------
@@ -1107,7 +1112,7 @@ static void TestSerializerCrossCheck() {
               << " read-only/runtime/derived and " << skippedList << " listed; components:";
     for (const auto& c : coveredComponents) std::cout << " " << c;
     std::cout << "\n";
-    CHECK(checked >= 250);
+    CHECK(checked >= 1000);
 }
 
 // Properties the scene file writes only together with another one: each rides on its
@@ -1123,6 +1128,16 @@ static const std::map<std::string, std::pair<std::string, PropertyValue>>& Compa
         {"MeshRenderer.outlineWidth", {"MeshRenderer.outline", PropertyValue::MakeBool(true)}},
         {"MeshRenderer.normalStrength", {"MeshRenderer.normalMap", PropertyValue::MakeAssetPath("n.png")}},
         {"MeshRenderer.aoStrength", {"MeshRenderer.aoMap", PropertyValue::MakeAssetPath("ao.png")}},
+        // the vehicle's suspension record is written only while the suspension is on
+        {"VehicleController.rideHeight", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.springStrength", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.springDamping", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.suspensionTravel", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.wheelBase", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.trackWidth", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.bodyLean", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.maxTilt", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.tiltSmooth", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
     };
     return companion;
 }
@@ -1297,6 +1312,243 @@ static void TestCustomComponent() {
     PropertyRegistry::Register(noTypeB);
     CHECK(PropertyRegistry::FindByName("NoTypeA") && PropertyRegistry::FindByName("NoTypeB"));
     CHECK(PropertyRegistry::FindByType(typeid(void)) == nullptr);
+}
+
+// The key codes the scene records that write one raw character can hold.
+static bool KeyCodeOkForTextRecord(int code) { return !(code == '-' || code == ' ' || (code >= 9 && code <= 13)); }
+
+// ---- The controllers, navigation, networking and UI widget registrations ---------------------------------
+
+// Every property of every type, built-in or not, describes itself consistently.
+static void TestDescriptorsAreSane() {
+    RUN_SUITE("every registered descriptor: names, ranges, defaults, options");
+    RegisterBuiltinProperties();
+    int checked = 0;
+    for (const auto& info : PropertyRegistry::All()) {
+        for (const PropertyDesc& d : info->properties) {
+            ++checked;
+            const std::string path = info->name + "." + d.name;
+            // a name a path can address
+            CHECK(!d.name.empty() && d.name.find_first_of(".# \t") == std::string::npos);
+            if (d.hasRange) {
+                CHECK(std::isfinite(d.rangeMin) && std::isfinite(d.rangeMax) && d.rangeMin <= d.rangeMax);
+                CHECK(d.step >= 0.0);
+            }
+            if (d.type == PropertyType::Enum) {
+                CHECK(!d.enumOptions.empty());
+                std::set<std::string> seen;
+                for (const auto& o : d.enumOptions) CHECK(!o.empty() && seen.insert(o).second);
+            }
+            if (d.type == PropertyType::AssetPath) CHECK(!d.assetKind.empty());
+            // the value of a freshly made component is a value the descriptor accepts as it is
+            if (d.defaultValue.IsValid() && !d.IsReadOnly()) {
+                PropertyValue n;
+                const bool ok = d.Normalize(d.defaultValue, n);
+                if (!ok || n != d.defaultValue) std::cerr << "  DEFAULT " << path << ": '" << d.defaultValue.ToString() << "' is not accepted as it is\n";
+                CHECK(ok && n == d.defaultValue);
+            }
+        }
+    }
+    std::cout << "  " << checked << " descriptors\n";
+    CHECK(checked > 1000);
+}
+
+static void TestControllerRegistrations() {
+    RUN_SUITE("controllers: view mode, key bindings, nested settings");
+    RegisterBuiltinProperties();
+    auto find = [](const char* n) { return PropertyRegistry::FindByName(n); };
+    for (const char* name : {"PlayerController", "PlayerView", "FirstPersonController", "ThirdPersonController", "CharacterController2D",
+                             "CharacterController3D", "TopDownController", "TopDownController2D", "FreeRoamController", "ClickToMoveController",
+                             "ThirdPersonShooterController", "TopDownShooterController", "Platformer25DController"}) {
+        auto info = find(name);
+        CHECK(info != nullptr);
+        if (info) { CHECK(info->category == "Controllers" && info->add != nullptr && info->properties.size() >= 2); }
+    }
+
+    {   // PlayerController.viewMode adds and removes the parts, like the Inspector's View setting
+        Scene s("s");
+        GameObject* go = s.CreateGameObject("Player");
+        Component* pc = find("PlayerController")->add(*go);
+        CHECK(pc != nullptr && go->GetComponent<FirstPersonController>() && go->GetComponent<ThirdPersonController>() && go->GetComponent<PlayerView>());
+        CHECK(PropertyRegistry::GetPropertyText(*go, "PlayerController.viewMode") == "Both");
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.walkSpeed", PropertyValue::MakeFloat(6.5f)));
+        CHECK(PropertyRegistry::SetProperty(*go, "PlayerView.allowToggle", PropertyValue::MakeBool(false)));
+        int fires = 0;
+        const int hook = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++fires; });
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "PlayerController.viewMode", "Third"));
+        CHECK(fires == 1);
+        CHECK(go->GetComponent<ThirdPersonController>() && !go->GetComponent<FirstPersonController>() && !go->GetComponent<PlayerView>());
+        CHECK(!PropertyRegistry::GetProperty(*go, "FirstPersonController.walkSpeed").IsValid());   // gone with its view
+        CHECK(!PropertyRegistry::SetProperty(*go, "PlayerController.viewMode", PropertyValue::MakeEnum(3)));
+        PropertyRegistry::RemoveChangeHook(hook);
+        // survives the scene file, with the settings of the view that stayed
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.distance", PropertyValue::MakeFloat(7.5f)));
+        Scene s2("s2");
+        CHECK(SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s)));
+        GameObject* back = s2.FindByGuid(go->Guid());
+        CHECK(back != nullptr);
+        if (back) {
+            CHECK(PropertyRegistry::GetPropertyText(*back, "PlayerController.viewMode") == "Third");
+            CHECK(PropertyRegistry::GetProperty(*back, "ThirdPersonController.distance") == PropertyValue::MakeFloat(7.5f));
+            CHECK(!back->GetComponent<FirstPersonController>());
+        }
+        // "Both" again brings the other view back with its defaults
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "PlayerController.viewMode", "both"));
+        CHECK(go->GetComponent<FirstPersonController>() && go->GetComponent<PlayerView>());
+        CHECK(PropertyRegistry::GetProperty(*go, "FirstPersonController.walkSpeed") == PropertyValue::MakeFloat(FirstPersonController().walkSpeed));
+    }
+
+    {   // key bindings are key codes 0..255; the records that write a raw character refuse what it cannot hold
+        Scene s("s");
+        GameObject* go = s.CreateGameObject("Walker");
+        go->AddComponent<FirstPersonController>();
+        go->AddComponent<TopDownController>();
+        auto d = find("FirstPersonController")->Find("sprintKey");
+        CHECK(d && d->type == PropertyType::Int && d->hasRange && d->rangeMin == 0 && d->rangeMax == 255);
+        CHECK(PropertyRegistry::GetProperty(*go, "FirstPersonController.sprintKey") == PropertyValue::MakeInt((int)(unsigned char)Input::KeyShift));
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt('e')));
+        CHECK(go->GetComponent<FirstPersonController>()->sprintKey == 'e');
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt((int)(unsigned char)Input::KeyAlt)));   // a code above 127
+        CHECK(go->GetComponent<FirstPersonController>()->sprintKey == Input::KeyAlt);
+        CHECK(PropertyRegistry::GetProperty(*go, "FirstPersonController.sprintKey") == PropertyValue::MakeInt(150));
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt(0)) && go->GetComponent<FirstPersonController>()->sprintKey == 0);
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt(300)) && go->GetComponent<FirstPersonController>()->sprintKey == (char)255);   // clamped to the range
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt(32)));      // a number record holds any code, even Space
+        // TopDownController.sprintKey is written as one raw character
+        CHECK(PropertyRegistry::SetProperty(*go, "TopDownController.sprintKey", PropertyValue::MakeInt('q')));
+        for (int bad : std::vector<int>{' ', '-', 9, 10, 13}) {
+            std::string err;
+            CHECK(!PropertyRegistry::SetProperty(*go, "TopDownController.sprintKey", PropertyValue::MakeInt(bad), &err) && !err.empty());
+            CHECK(go->GetComponent<TopDownController>()->sprintKey == 'q');
+        }
+        CHECK(PropertyRegistry::SetProperty(*go, "TopDownController.sprintKey", PropertyValue::MakeInt(0)));
+        // every code those records accept comes back from a saved scene unchanged
+        for (int code : std::vector<int>{0, 1, 16, 17, 33, 45 + 1, 'a', 'Z', 126, 127, 150, 200, 255}) {
+            if (!KeyCodeOkForTextRecord(code)) continue;
+            Scene a("a");
+            GameObject* g = a.CreateGameObject("g");
+            g->AddComponent<TopDownController>();
+            g->AddComponent<ClickToMoveController>();
+            CHECK(PropertyRegistry::SetProperty(*g, "TopDownController.sprintKey", PropertyValue::MakeInt(code)));
+            CHECK(PropertyRegistry::SetProperty(*g, "ClickToMoveController.rotateLeftKey", PropertyValue::MakeInt(code)));
+            Scene b("b");
+            CHECK(SceneSerializer::Deserialize(b, SceneSerializer::Serialize(a)));
+            GameObject* back = b.FindByGuid(g->Guid());
+            CHECK(back != nullptr);
+            if (back) {
+                CHECK(PropertyRegistry::GetProperty(*back, "TopDownController.sprintKey") == PropertyValue::MakeInt(code));
+                CHECK(PropertyRegistry::GetProperty(*back, "ClickToMoveController.rotateLeftKey") == PropertyValue::MakeInt(code));
+            }
+        }
+    }
+
+    {   // the dodge settings live in a struct member of the controller: flattened as dodge...
+        Scene s("s");
+        GameObject* go = s.CreateGameObject("Dodger");
+        go->AddComponent<ThirdPersonController>();
+        for (const char* n : {"canDodge", "dodgeKey", "dodgeImpulse", "dodgeDuration", "dodgeCooldown", "dodgeStamina", "dodgeIFrames"})
+            CHECK(PropertyRegistry::GetProperty(*go, std::string("ThirdPersonController.") + n).IsValid());
+        auto* tp = go->GetComponent<ThirdPersonController>();
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.canDodge", PropertyValue::MakeBool(true)) && tp->dodge.canDodge);
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.dodgeKey", PropertyValue::MakeInt('x')) && tp->dodge.key == 'x');
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.dodgeImpulse", PropertyValue::MakeFloat(9.0f)) && tp->dodge.impulse == 9.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.dodgeIFrames", PropertyValue::MakeBool(true)) && tp->dodge.iFrames);
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.dodgeCooldown", PropertyValue::MakeFloat(-1.0f)) && tp->dodge.cooldown == 0.0f);
+        // the runtime timer next to them is not a property
+        CHECK(!PropertyRegistry::GetProperty(*go, "ThirdPersonController.timer").IsValid());
+    }
+
+    {   // enums keep the names of the enum they stand for
+        auto sh = find("TopDownShooterController");
+        CHECK(sh->Find("aimMode")->enumOptions == (std::vector<std::string>{"Mouse", "MoveDirection", "Auto"}));
+        CHECK(sh->Find("fireMode")->enumOptions == (std::vector<std::string>{"Bullets", "Prefab", "Hitscan"}));
+        CHECK(find("CharacterController2D")->Find("mode")->enumOptions == (std::vector<std::string>{"TopDown", "Platformer"}));
+        Scene s("s");
+        GameObject* go = s.CreateGameObject("Hero");
+        go->AddComponent<CharacterController2D>();
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "CharacterController2D.mode", "platformer"));
+        CHECK(go->GetComponent<CharacterController2D>()->mode == CharacterController2D::Mode::Platformer);
+        CHECK(PropertyRegistry::SetProperty(*go, "CharacterController2D.maxJumps", PropertyValue::MakeInt(0)) && go->GetComponent<CharacterController2D>()->maxJumps == 1);
+        CHECK(PropertyRegistry::SetProperty(*go, "CharacterController2D.maxJumps", PropertyValue::MakeInt(99)) && go->GetComponent<CharacterController2D>()->maxJumps == 16);
+        CHECK(PropertyRegistry::SetProperty(*go, "CharacterController2D.speed", PropertyValue::MakeFloat(1e9f)) && go->GetComponent<CharacterController2D>()->speed == 10000.0f);
+        CHECK(!PropertyRegistry::SetProperty(*go, "CharacterController2D.speed", PropertyValue::MakeFloat(NAN)));
+    }
+}
+
+static void TestNavNetUiRegistrations() {
+    RUN_SUITE("navigation, networking and UI widgets");
+    RegisterBuiltinProperties();
+    auto find = [](const char* n) { return PropertyRegistry::FindByName(n); };
+    for (const char* name : {"NavMeshAgent", "NavMeshObstacle", "NavMeshSurface"}) CHECK(find(name) && find(name)->category == "Navigation");
+    for (const char* name : {"NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar", "NetworkPlayerSpawner"}) CHECK(find(name) && find(name)->category == "Networking");
+    for (const char* name : {"UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown"})
+        CHECK(find(name) && find(name)->category == "UI");
+
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    {   // navigation: the agent's tuning, the obstacle box and the bake settings (a struct member, flattened)
+        go->AddComponent<NavMeshAgent>();
+        go->AddComponent<NavMeshObstacle>();
+        go->AddComponent<NavMeshSurface>();
+        auto* agent = go->GetComponent<NavMeshAgent>();
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.speed", PropertyValue::MakeFloat(6.0f)) && agent->speed == 6.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.avoidancePriority", PropertyValue::MakeInt(150)) && agent->avoidancePriority == 99);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.stoppingDistance", PropertyValue::MakeFloat(-3.0f)) && agent->stoppingDistance == 0.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.size", PropertyValue::MakeVec3(Vec3{2, 3, 4})) && go->GetComponent<NavMeshObstacle>()->size.z == 4.0f);
+        auto* surface = go->GetComponent<NavMeshSurface>();
+        CHECK(PropertyRegistry::GetProperty(*go, "NavMeshSurface.agentRadius") == PropertyValue::MakeFloat(surface->settings.agentRadius));
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.agentRadius", PropertyValue::MakeFloat(0.75f)) && surface->settings.agentRadius == 0.75f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.maxSlope", PropertyValue::MakeFloat(120.0f)) && surface->settings.maxSlope == 89.0f);   // the limits the bake itself applies
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.cellSize", PropertyValue::MakeFloat(0.0f)) && surface->settings.cellSize == 0.05f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.agentHeight", PropertyValue::MakeFloat(0.0f)) && surface->settings.agentHeight == 0.1f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.layerMask", PropertyValue::MakeInt(0x0F0F)) && surface->layerMask == 0x0F0Fu);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.layerMask", PropertyValue::MakeInt(-5)) && surface->layerMask == 0u);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.layerMask", PropertyValue::MakeInt(0xFFFFFFFFLL)) && surface->layerMask == 0xFFFFFFFFu);
+        // the baked mesh and the bake state are not properties
+        CHECK(!PropertyRegistry::GetProperty(*go, "NavMeshSurface.mesh").IsValid() && !PropertyRegistry::GetProperty(*go, "NavMeshSurface.sceneDir").IsValid());
+    }
+    {   // networking: ids and authority; an id may not hold the '/' that splits it from an RPC name
+        go->AddComponent<NetworkObject>();
+        go->AddComponent<NetworkSync>();
+        go->AddComponent<NetworkTransform>();
+        auto* no = go->GetComponent<NetworkObject>();
+        CHECK(PropertyRegistry::SetProperty(*go, "NetworkObject.netId", PropertyValue::MakeString("door-3")) && no->netId == "door-3");
+        std::string err;
+        CHECK(!PropertyRegistry::SetProperty(*go, "NetworkObject.netId", PropertyValue::MakeString("door/3"), &err) && no->netId == "door-3" && !err.empty());
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "NetworkObject.authority", "manual") && no->authority == NetworkObject::Authority::Manual);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "NetworkSync.authority", "Mine") && go->GetComponent<NetworkSync>()->authority == NetworkSync::Authority::Mine);
+        CHECK(PropertyRegistry::GetProperty(*go, "NetworkTransform.enabled") == PropertyValue::MakeBool(true));
+        CHECK(find("NetworkTransform")->properties.size() == 1);   // only `enabled`
+    }
+    {   // UI widgets: the same anchor and shape lists as the panel
+        for (const char* name : {"UIButton", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown", "TextRenderer"})
+            CHECK(find(name)->Find("anchor") && find(name)->Find("anchor")->enumOptions == find("UIPanel")->Find("anchor")->enumOptions);
+        for (const char* name : {"UIButton", "UIImage", "UIInputField", "UIStepper", "UIDropdown"})
+            CHECK(find(name)->Find("shape") && find(name)->Find("shape")->enumOptions == find("UIPanel")->Find("shape")->enumOptions);
+        CHECK(find("UIPanel")->Find("shape")->enumOptions.size() == (std::size_t)kUIShapeCount);
+        CHECK(find("UIPanel")->Find("shape")->enumOptions[(std::size_t)UIShape::Pill] == "Pill");
+        CHECK(find("UIPanel")->Find("shape")->enumOptions[(std::size_t)UIShape::ArrowDown] == "ArrowDown");
+
+        go->AddComponent<UIButton>();
+        go->AddComponent<UISlider>();
+        go->AddComponent<UIDropdown>();
+        auto* button = go->GetComponent<UIButton>();
+        CHECK(PropertyRegistry::SetProperty(*go, "UIButton.label", PropertyValue::MakeString("Play")) && button->label == "Play");
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIButton.color", "#ff0000") && button->color.r == 1.0f && button->color.g == 0.0f);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIButton.shape", "pill") && button->shape == UIShape::Pill);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIButton.anchor", "BottomRight") && button->anchor == UIAnchor::BottomRight);
+        CHECK(PropertyRegistry::SetProperty(*go, "UIButton.size.x", PropertyValue::MakeFloat(300.0f)) && button->size.x == 300.0f);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIButton.transitionEase", "EaseOut") && button->transitionEase == 2);
+        CHECK(PropertyRegistry::SetProperty(*go, "UIButton.icon", PropertyValue::MakeAssetPath("icons/play.png")) && button->icon == "icons/play.png");
+        CHECK(find("UIButton")->Find("icon")->assetKind == "image" && find("UIButton")->Find("fontPath")->assetKind == "font");
+        CHECK(!PropertyRegistry::GetProperty(*go, "UIButton.loc").IsValid());   // the string-table key is not a property
+        // the dropdown's index may be -1 (nothing chosen); its option list is a list, not a property
+        CHECK(PropertyRegistry::SetProperty(*go, "UIDropdown.value", PropertyValue::MakeInt(-5)) && go->GetComponent<UIDropdown>()->value == -1);
+        CHECK(!PropertyRegistry::GetProperty(*go, "UIDropdown.options").IsValid());
+        // a slider's own limits are properties; the value is held to what a slider can show
+        CHECK(PropertyRegistry::SetProperty(*go, "UISlider.maxValue", PropertyValue::MakeFloat(10.0f)) && PropertyRegistry::SetProperty(*go, "UISlider.value", PropertyValue::MakeFloat(4.0f)));
+        CHECK(go->GetComponent<UISlider>()->maxValue == 10.0f && go->GetComponent<UISlider>()->value == 4.0f);
+    }
 }
 
 // ---- Audit: hooks while firing, the type table, text coercion ---------------------------------------------
@@ -1805,6 +2057,9 @@ int main() {
     TestSerializerCrossCheck();
     TestSerializerCrossCheckIsolated();
     TestCustomComponent();
+    TestDescriptorsAreSane();
+    TestControllerRegistrations();
+    TestNavNetUiRegistrations();
     TestAuditHooksWhileFiring();
     TestAuditWriteResult();
     TestAuditBuilderEdges();

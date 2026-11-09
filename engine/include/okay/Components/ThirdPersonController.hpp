@@ -300,7 +300,9 @@ public:
         bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
         bool aim = !uiBlocked && Input::GetMouseButton(1);
         in.yaw = yaw; in.pitch = pitch;
-        if (m_haveMouse && !uiBlocked) {
+        const int mouseSpace = MouseSpaceGeneration();
+        const bool spaceChanged = mouseSpace != m_mouseSpace;
+        if (m_haveMouse && !uiBlocked && !spaceChanged) {
             float sens = mouseSensitivity * (aimWithRightMouse && aim ? aimSensitivity : 1.0f);
             // Pixels, then degrees. m_lookDt is only the idle timer below; it
             // does not scale the look, so a hitch cannot swing the orbit.
@@ -323,7 +325,7 @@ public:
         }
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
         // camera doesn't snap on the first frame after the panel closes.
-        m_lastMouse = mp; m_haveMouse = !uiBlocked;
+        m_lastMouse = mp; m_haveMouse = !uiBlocked; m_mouseSpace = mouseSpace;
         float wheel = uiBlocked ? 0.0f : Input::MouseWheel();
         if (wheel != 0.0f) distance = Mathf::Clamp(distance - wheel * zoomSpeed, minDistance, maxDistance);
         if (aim) in.held |= PlayerInput::AltFire;
@@ -833,6 +835,7 @@ private:
     }
 
     Vec2 m_lastMouse{0, 0};
+    int m_mouseSpace = 0;            // MouseSpaceGeneration last applied; a change is a cursor warp
     float m_lookDt = 0.0f;           // this frame's dt, for the look smoothing in ReadLocalInput
     bool m_haveMouse = false;
     bool m_runToggled = false;

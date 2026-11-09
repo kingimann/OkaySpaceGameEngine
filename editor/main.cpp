@@ -44454,6 +44454,7 @@ int main(int argc, char** argv) {
                     // canvas sample the controller already took as its baseline.
                     s_gameVMouse = s_playLookAnchor;
                     s_playLookLocked = true;
+                    NoteMouseSpaceChanged();
                 } else if (std::abs(dxp) + std::abs(dyp) <= 600) {
                     s_gameVMouse.x += (float)dxp;
                     s_gameVMouse.y += (float)dyp;
@@ -44466,6 +44467,9 @@ int main(int argc, char** argv) {
             } else {
                 if (s_playLookLocked) {
                     SDL_SetRelativeMouseMode(SDL_FALSE);
+                    // The virtual cursor and the canvas cursor are not the same
+                    // point. Without this the orbit treats that jump as a look.
+                    NoteMouseSpaceChanged();
                     // Disabling relative mode puts the cursor back on the Play
                     // button. Park it in the game view so that restore is not a
                     // click on Stop. A click there grabs the mouse again.

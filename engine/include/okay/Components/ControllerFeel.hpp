@@ -216,6 +216,15 @@ private:
     float m_len = -1.0f;
 };
 
+/// The Game view (and the player) switch the pointer between canvas pixels and
+/// a relative-mode virtual cursor. Call this on that switch, before the mouse
+/// position is fed: the next look sample adopts the new position and does not
+/// treat the jump as a turn. A warp under the 700 px drop in LookPixels (a short
+/// look, then Esc, then a click back on the Game view) used to snap the orbit.
+inline int& MouseSpaceGenerationSlot() { static int g = 0; return g; }
+inline void NoteMouseSpaceChanged() { ++MouseSpaceGenerationSlot(); }
+inline int MouseSpaceGeneration() { return MouseSpaceGenerationSlot(); }
+
 /// Mouse pixels this frame, before sensitivity. A warp (capture starting, or a
 /// tool injecting a jump) is dropped. A large flick is capped. Never scale this
 /// by frame time: degrees are pixels times sensitivity, so a hitch cannot swing

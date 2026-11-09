@@ -176,6 +176,14 @@ inline VsLevel VsLevelForNode(const char* type) {
         VsLevelIs(type, "PickByIndex") || VsLevelIs(type, "FirstValid") || VsLevelIs(type, "IsInState") ||
         VsLevelIs(type, "GetState") || VsLevelIs(type, "SetState"))
         return VsLevel::Basic;
+    if (VsLevelIs(type, "IsSlightly") || VsLevelIs(type, "IsMostly") || VsLevelIs(type, "IsVery") ||
+        VsLevelIs(type, "PickBest") || VsLevelIs(type, "InsideArea") || VsLevelIs(type, "CountNearby") ||
+        VsLevelIs(type, "EaseToward"))
+        return VsLevel::Basic;
+    if (VsLevelIs(type, "TryFirst") || VsLevelIs(type, "AllSucceed") || VsLevelIs(type, "FlipOutcome") ||
+        VsLevelIs(type, "AlwaysSucceed") || VsLevelIs(type, "RepeatUntilFail") || VsLevelIs(type, "WaitBetween") ||
+        VsLevelIs(type, "SucceedNow") || VsLevelIs(type, "FailNow") || VsLevelIs(type, "CheckOutcome"))
+        return VsLevel::Advanced;
     return VsLevel::Intermediate;
 }
 

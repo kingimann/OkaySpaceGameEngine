@@ -1,0 +1,12 @@
+node 1 OnUpdate
+entry OnUpdate 1
+node 2 GetX
+node 3 EaseToward
+default 3 1 2.5
+default 3 2 1.2
+data 3 0 2 0
+node 4 SetPosition
+default 4 1 0.5
+default 4 2 0
+data 4 0 3 0
+exec 1 0 4

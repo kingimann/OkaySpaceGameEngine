@@ -1,0 +1,27 @@
+node 1 OnUpdate
+pos 1 40 80
+entry OnUpdate 1
+node 2 FindObject Post
+pos 2 280 200
+node 3 InCone
+pos 3 520 180
+default 3 1 90
+data 3 0 2 0
+node 4 CheckOutcome
+pos 4 760 80
+data 4 0 3 0
+node 5 Translate
+pos 5 1040 40
+default 5 2 0.08
+exec 4 0 5
+node 6 AlwaysSucceed
+pos 6 760 280
+node 7 Translate
+pos 7 1040 280
+default 7 2 -0.04
+exec 6 0 7
+node 8 TryFirst
+pos 8 300 40
+exec 1 0 8
+exec 8 0 4
+exec 8 1 6

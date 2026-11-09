@@ -15,6 +15,7 @@
 #include "okay/VisualScript/NodesLogic.hpp"
 #include "okay/VisualScript/NodesGameplay.hpp"
 #include "okay/VisualScript/NodesLogicRound.hpp"
+#include "okay/VisualScript/NodesSmart.hpp"
 #include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -875,6 +876,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "GetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), false);
     if (auto play = MakeGameplayNode(type, args)) return play;
     if (auto logic = MakeLogicRoundNode(type, args)) return logic;
+    if (auto smart = MakeSmartNode(type, args)) return smart;
     if (type == "MouseWheel")  return std::make_unique<EngineReadNode>(EngineReadNode::Op::MouseWheel);
     if (type == "TimeScale")   return std::make_unique<EngineReadNode>(EngineReadNode::Op::TimeScale);
     if (type == "FrameCount")  return std::make_unique<EngineReadNode>(EngineReadNode::Op::FrameCount);

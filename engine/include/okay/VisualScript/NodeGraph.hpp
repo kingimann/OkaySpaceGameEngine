@@ -92,6 +92,8 @@ public:
     // turns it on so a running graph can light up and show live values).
     unsigned execCount = 0;                  ///< times this node has run
     std::vector<VsValue> lastOut;            ///< last value produced per data output pin
+    /// Behaviour result for the tree nodes: 0 succeeded, 1 failed, -1 not a behaviour node.
+    int outcome = -1;
 
     /// Number of execution output pins (0 means this is a pure data node).
     virtual int ExecOutCount() const { return 0; }

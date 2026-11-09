@@ -202,6 +202,28 @@ inline VsPlace VsPlaceForNewNode(const char* type) {
         VsIs(type, "WeightedBranch") || VsIs(type, "SetState") || VsIs(type, "GetState") ||
         VsIs(type, "WhenStateBecomes") || VsIs(type, "WhenStateLeaves"))
         return VsAt("Flow");
+    if (VsIs(type, "HeldLong") || VsIs(type, "HappenedNear") || VsIs(type, "EveryWhile") ||
+        VsIs(type, "BlendTime") || VsIs(type, "Stopwatch") || VsIs(type, "WaitBetween"))
+        return VsAt("Flow", "Timing");
+    if (VsIs(type, "EaseToward")) return VsAt("Math", "Curves");
+    if (VsIs(type, "IsSlightly") || VsIs(type, "IsMostly") || VsIs(type, "IsVery") || VsIs(type, "PickBest"))
+        return VsAt("Math", "Compare");
+    if (VsIs(type, "ShuffleBag") || VsIs(type, "ChanceEachSecond")) return VsAt("Math", "Random");
+    if (VsIs(type, "TryFirst") || VsIs(type, "AllSucceed") || VsIs(type, "FlipOutcome") ||
+        VsIs(type, "AlwaysSucceed") || VsIs(type, "RepeatUntilFail") || VsIs(type, "SucceedNow") ||
+        VsIs(type, "FailNow") || VsIs(type, "CheckOutcome"))
+        return VsAt("Advanced", "Behavior");
+    if (VsIs(type, "InCone") || VsIs(type, "LineOfSight") || VsIs(type, "CountNearby") ||
+        VsIs(type, "NearestObject") || VsIs(type, "FarthestObject"))
+        return VsAt("Physics", "Queries");
+    if (VsIs(type, "InsideArea") || VsIs(type, "SortByDistance")) return VsAt("Scene");
+    if (VsIs(type, "WhenChanged") || VsIs(type, "DoUnless")) return VsAt("Flow");
+    if (VsIs(type, "RememberValue") || VsIs(type, "RecallValue")) return VsAt("Variables", "Saved");
+    if (VsIs(type, "HealthEmpty") || VsIs(type, "HealthFull") || VsIs(type, "AddBuff"))
+        return VsAt("Objects", "Survival");
+    if (VsIs(type, "AdvanceObjective")) return VsAt("Scene", "Story");
+    if (VsIs(type, "AssertThis") || VsIs(type, "LogOnce") || VsIs(type, "DrawDebugLine"))
+        return VsAt("Debug");
     if (VsIs(type, "GetProperty") || VsIs(type, "SetProperty") || VsIs(type, "CallMethod") ||
         VsIs(type, "GetComponent") || VsIs(type, "AddComponent") || VsIs(type, "RunSnippet") ||
         VsIs(type, "CallScript"))

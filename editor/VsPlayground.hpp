@@ -48,6 +48,8 @@ inline const VsPlaygroundDemo* VsPlaygroundDemos(int* count = nullptr) {
          "Min and max of a list, plus add, clamp and lerp."},
         {"logic", "Logic", "logic.okayscene", "logic.okayvs", "Marker",
          "The cube steps on even counts, then the state becomes done."},
+        {"smart", "Smart Logic", "smart.okayscene", "smart.okayvs", "Guide",
+         "A cube slides, a guide walks toward a post, and a chooser moves because that score won."},
     };
     if (count) *count = (int)(sizeof(kDemos) / sizeof(kDemos[0]));
     return kDemos;
@@ -95,6 +97,19 @@ inline const char* VsPlaygroundForNode(const char* type) {
         {"CountUntil", "logic"}, {"WeightedBranch", "logic"}, {"WaitSteady", "logic"},
         {"StepThrough", "logic"}, {"WaitLimit", "logic"}, {"SetState", "logic"}, {"GetState", "logic"},
         {"IsInState", "logic"}, {"WhenStateBecomes", "logic"}, {"WhenStateLeaves", "logic"},
+        {"HeldLong", "smart"}, {"HappenedNear", "smart"}, {"EveryWhile", "smart"},
+        {"EaseToward", "smart"}, {"BlendTime", "smart"}, {"Stopwatch", "smart"},
+        {"IsSlightly", "smart"}, {"IsMostly", "smart"}, {"IsVery", "smart"},
+        {"PickBest", "smart"}, {"ShuffleBag", "smart"}, {"ChanceEachSecond", "smart"},
+        {"TryFirst", "smart"}, {"AllSucceed", "smart"}, {"FlipOutcome", "smart"},
+        {"AlwaysSucceed", "smart"}, {"RepeatUntilFail", "smart"}, {"WaitBetween", "smart"},
+        {"SucceedNow", "smart"}, {"FailNow", "smart"}, {"CheckOutcome", "smart"},
+        {"InCone", "smart"}, {"LineOfSight", "smart"}, {"InsideArea", "smart"},
+        {"CountNearby", "smart"}, {"NearestObject", "smart"}, {"FarthestObject", "smart"},
+        {"SortByDistance", "smart"}, {"WhenChanged", "smart"}, {"DoUnless", "smart"},
+        {"RememberValue", "smart"}, {"RecallValue", "smart"}, {"HealthEmpty", "smart"},
+        {"HealthFull", "smart"}, {"AddBuff", "smart"}, {"AdvanceObjective", "smart"},
+        {"AssertThis", "smart"}, {"LogOnce", "smart"}, {"DrawDebugLine", "smart"},
     };
     if (!type) return nullptr;
     for (const Row& r : kRows) if (std::strcmp(r.type, type) == 0) return r.demo;

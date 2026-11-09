@@ -1191,6 +1191,10 @@ target_compile_definitions(test_vs_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT
 add_executable(test_vs_logic_round test_vs_logic_round.cpp)
 target_link_libraries(test_vs_logic_round PRIVATE okay::engine)
 add_test(NAME vs_logic_round COMMAND test_vs_logic_round)
+
+add_executable(test_vs_smart_logic test_vs_smart_logic.cpp)
+target_link_libraries(test_vs_smart_logic PRIVATE okay::engine)
+add_test(NAME vs_smart_logic COMMAND test_vs_smart_logic)
 add_test(NAME vs_playground COMMAND test_vs_playground)
 
 add_executable(test_vs_script_coverage test_vs_script_coverage.cpp)

@@ -424,20 +424,22 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 23.4.1 Console panel - `editor/ConsolePanel.*` - error, warning, info toggles with counts, search, collapse of repeats, details pane, clear on play, pause on error, Copy and Save to `console_log.txt`; tab badge shows error and warning counts
   - 23.4.2 Open script at the error line - `editor/ConsolePanel.*` - the details pane offers Open Script (line) for script errors
   - 23.4.3 Log core - `Core/Log` - levels, categories, `OKAY_LOG` string, rotating file sink, sink hook used by the Console
-  - 23.4.4 Console model (#574) - `Debug/ConsoleModel` - ring buffer with collapse, filters, source links to objects and assets, pause-on-error request
-- **Code:** `editor/ConsolePanel.*`, `Core/Log`, `Debug/ConsoleModel`
-- **API:** `ConsoleLog(msg, level)`, `Log::Info/Warning/Error`, `Log::Category`, `Log::Configure`; `ConsoleModel`, `ParseConsoleSource`
-- **Editor:** Console tab
+  - 23.4.4 Console model (#574) - `Debug/ConsoleModel` - ring buffer with collapse, filters, source links to objects and assets, pause-on-error request; `Add` takes an explicit `ConsoleSource` (guid, component, node) and a `ConsoleSourceScope` stamps runtime lines
+  - 23.4.5 Diagnostics - `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - severity, stable code, message, how-to-fix hint, source (object guid or path, component, asset, script file and line, graph and node); dedupe, clear by source, clear by owner; new rows log through `Log` so the Console shows them
+  - 23.4.6 Problems and build gate - `editor/ProblemsPanel.*` - the live list (15.11.8); Build stops on errors, lists warnings, and links to Problems
+- **Code:** `editor/ConsolePanel.*`, `editor/ProblemsPanel.*`, `Core/Log`, `Debug/ConsoleModel`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics`
+- **API:** `ConsoleLog(msg, level)`, `Log::Info/Warning/Error`, `Log::Category`, `Log::Configure`; `ConsoleModel`, `ParseConsoleSource`, `ConsoleSourceScope`; `EditorDiagnostics`, `CollectProjectDiagnostics`, `ApplyDiagnosticFix`, `AddNodeRequirement`
+- **Editor:** Console tab; Problems tab; status-bar Problems count
 - **Docs:** `docs/core_logging_profiling.md`; `docs/debug_tools.md`
-- **Tests:** `log`; `debug_console`
-- **Status:** Partial - a good console exists; clicking an error does not select the object it came from.
-- **Exists today:** Everything in Parts 23.4.1-23.4.3 is in use; `ConsoleModel` (#574, test `debug_console`) is on main but the editor Console does not read it. Messages must be written as `[Object: World/Crate]` or `[Asset: path:line]` for its source links to work, so log call sites need updating.
+- **Tests:** `log`; `debug_console`; `diagnostics`
+- **Status:** Works - clicking a Console row selects its source object; runtime script and graph errors carry that object; Problems is the single list of what is wrong. The editor Console still keeps its own 500-row buffer and fills each row's source from `ConsoleModel`'s parser and `ConsoleSourceScope`, rather than drawing `ConsoleModel::Rows()`.
+- **Exists today:** Parts 23.4.1-23.4.6. `ConsoleModel` is used for parsing and for the explicit source on each log line. Validators in `CollectProjectDiagnostics` merge `Scene::Validate` and `SceneValidator` and add RequireComponent, player collider and rigidbody, an Animator with no states, a Nav Mesh Agent with no bake, script compile errors and visual-script graph errors (including `AddNodeRequirement`).
 - **Work packages:**
-  1. M - Console reads from `ConsoleModel` (category filter, source links). Depends on: #574 (on main).
-  2. M - Click an entry with `[Object: path]` selects it in the Hierarchy; `[Asset: path:line]` opens the asset. Depends on: package 1.
-  3. S - Script and scene-load errors use the linkable message form. Depends on: package 1.
+  1. M - Console reads from `ConsoleModel` (category filter, source links). Depends on: #574 (on main). Done for the source link; the panel still draws its own buffer.
+  2. M - Click an entry with an object source selects it in the Hierarchy; a script line stays available from the details pane. Depends on: package 1. Done.
+  3. S - Script and scene-load errors use the linkable message form. Depends on: package 1. Diagnostics log `[Object:]` / `[Asset:]`, and Play wraps script and graph calls in `ConsoleSourceScope`.
   4. S - Category dropdown (net, physics, script) using `Log::Category`. Depends on: package 1.
-- **Open:** the editor Console has its own entry type (`ConsoleEntry`) separate from the log sink; capped at 500 entries.
+- **Open:** the editor Console has its own entry type (`ConsoleEntry`) separate from the log sink; capped at 500 entries. A category dropdown is not in the panel yet.
 - **Related:** 1.10, 15.9, 13.5, 33.2
 - **Words:** console, error console, log, warnings, errors, ConsoleLog, ConsoleModel, collapse, pause on error, console_log.txt
 - **Seen as:** thousands of repeated lines; cannot find the object that logged an error; log lost when the editor closes
@@ -1351,18 +1353,18 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 33.2.4 Scene validation (#575) - `Scene/SceneValidation` - `Scene::Validate`, `SceneSerializer::ValidateFile`: unknown components and fields, missing assets, broken parent links, duplicate guids
 - **Code:** `VisualScript/VsTypes`, `editor/EditorState.cpp`, `Core/AssetDatabase`, `Testing/SceneValidator`, `Scene/SceneValidation`
 - **API:** `vs::ValidateSceneGraphs`; `SceneValidator::Validate`, `ValidateFile`, `Scene::Validate`
-- **Editor:** Console output at Play; no validation window
+- **Editor:** Problems panel (15.11.8) updates in edit mode; Build blocks on errors and lists warnings; Console output at Play still prints graph errors
 - **Docs:** `docs/visual_scripting.md`; `docs/automated_testing.md`, `docs/scene_hierarchy_search.md`
-- **Tests:** `vs_types`; `scene_validator`, `scene_hierarchy_search`
-- **Status:** Partial - three validators now exist on main (`Testing/SceneValidator` #572, `Scene/SceneValidation` #575, `AssetDatabase::FindMissing` #568) and each is tested, but the editor only runs the visual-script one at Play; no window, no Build gate.
-- **Exists today:** Play-time validation of visual script graphs, the asset database's missing-reference report, and the two scene validators as library calls (`SceneValidator::Validate`, `scene.Validate`).
+- **Tests:** `vs_types`; `scene_validator`, `scene_hierarchy_search`, `diagnostics`
+- **Status:** Works - `CollectProjectDiagnostics` feeds both `SceneValidator` and `Scene::Validate` into one list, and the Problems panel and the Build gate read it. `AssetDatabase::FindMissing` is still a separate report.
+- **Exists today:** Play-time validation of visual script graphs, the asset database's missing-reference report, the two scene validators as library calls, and the editor list that merges those two plus the gameplay checks (player body, animator, navmesh, node requirements).
 - **Work packages:**
-  1. S - Decide one validator: keep `Testing/SceneValidator` (rich checks) and have `Scene::Validate` (load-level checks) feed it. Depends on: #572, #575 (both on main).
-  2. M - Editor Validate button and window: list issues, double-click selects the object, severity filter. Depends on: package 1.
-  3. S - Run validation on Play and on Build (blocking errors, warnings listed). Depends on: package 2.
+  1. S - Decide one validator: keep `Testing/SceneValidator` (rich checks) and have `Scene::Validate` (load-level checks) feed it. Depends on: #572, #575 (both on main). Done in `CollectProjectDiagnostics` (duplicate missing-asset rows are dropped).
+  2. M - Editor Validate button and window: list issues, click selects the object, severity filter. Depends on: package 1. Done (Problems, live rather than a button).
+  3. S - Run validation on Play and on Build (blocking errors, warnings listed). Depends on: package 2. Build gate done; the list itself refreshes in edit mode, and Play still prints graph errors.
   4. S - CI step that validates every scene in the sample projects. Depends on: package 1.
   5. M - Project-specific rules (naming, required tags) registered by the game. Depends on: package 1.
-- **Open:** possible duplicate: `Scene::Validate` (#575) and `SceneValidator` (#572) both check missing assets, duplicate ids and so on; `AssetDatabase::FindMissing` is a third; decide one owner now that both are on main.
+- **Open:** `AssetDatabase::FindMissing` is still a third missing-file report and is not merged into Problems; no CI step walks the sample scenes.
 - **Related:** 1.3, 1.5, 20.2, 23.4, 33.1
 - **Words:** scene validation, validator, missing references, missing assets, missing component, validate scene, health check, pre-build check
 - **Seen as:** pink or empty objects because a file is missing; game starts with a broken script; no warning before building

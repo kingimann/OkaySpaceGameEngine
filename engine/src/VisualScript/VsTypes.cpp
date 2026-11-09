@@ -704,7 +704,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                         " is wired into an input that needs a " + PinTypeName(to);
         const std::string hint = ConversionHint(from, to);
         if (!hint.empty()) m += " - " + hint;
-        issues.push_back({0, d.consumer, m});
+        issues.push_back({0, d.consumer, m, d.inPin, 0});
     }
 
     // 2) Exec nodes no event (or function) reaches never run.

@@ -322,6 +322,10 @@ add_executable(test_debug_console test_debug_console.cpp)
 target_link_libraries(test_debug_console PRIVATE okay::engine)
 add_test(NAME debug_console COMMAND test_debug_console)
 
+add_executable(test_diagnostics test_diagnostics.cpp)
+target_link_libraries(test_diagnostics PRIVATE okay::engine)
+add_test(NAME diagnostics COMMAND test_diagnostics)
+
 add_executable(test_debug_overlay test_debug_overlay.cpp)
 target_link_libraries(test_debug_overlay PRIVATE okay::engine)
 add_test(NAME debug_overlay COMMAND test_debug_overlay)

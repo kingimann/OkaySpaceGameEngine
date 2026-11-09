@@ -1,5 +1,6 @@
 #pragma once
 // The editor log (ConsoleLog, written to by every tool) and the Console panel.
+#include "okay/Debug/ConsoleModel.hpp"
 #include <string>
 #include <vector>
 
@@ -12,6 +13,7 @@ struct ConsoleEntry {
     std::string text;
     std::string time;
     int count = 1;
+    okay::ConsoleSource source;   // object, script or graph this line came from
 };
 extern std::vector<ConsoleEntry> g_console;
 extern int g_consoleCounts[3];   // running totals per level (for the toggles)

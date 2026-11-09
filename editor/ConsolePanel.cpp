@@ -3,26 +3,46 @@
 #include "ConsolePanel.hpp"
 #include "EditorWidgets.hpp"
 #include "MainShared.hpp"
+#include "ProblemsPanel.hpp"
 
 namespace oked {
 
 std::vector<ConsoleEntry> g_console;
 int g_consoleCounts[3] = {0, 0, 0};   // running totals per level (for the toggles)
 
+static void MergeConsoleSource(okay::ConsoleSource& src, const okay::ConsoleSource& extra) {
+    if (src.kind == okay::ConsoleSource::Kind::None && extra.kind != okay::ConsoleSource::Kind::None)
+        src.kind = extra.kind;
+    else if (extra.kind == okay::ConsoleSource::Kind::Object || extra.kind == okay::ConsoleSource::Kind::Script ||
+             extra.kind == okay::ConsoleSource::Kind::Graph)
+        src.kind = extra.kind;
+    if (!extra.path.empty()) src.path = extra.path;
+    if (!extra.guid.empty()) src.guid = extra.guid;
+    if (!extra.component.empty()) src.component = extra.component;
+    if (!extra.nodeId.empty()) src.nodeId = extra.nodeId;
+    if (extra.line) src.line = extra.line;
+    if (extra.column) src.column = extra.column;
+}
+
 void ConsoleLog(const std::string& msg, int level) {
     if (level < 0) level = 0;
     if (level > 2) level = 2;
+    okay::ConsoleSource src = okay::ParseConsoleSource(msg);
+    MergeConsoleSource(src, okay::ActiveConsoleSource());
     // Collapse an immediate repeat of the same message into a count.
     if (!g_console.empty() && g_console.back().text == msg && g_console.back().level == level) {
         g_console.back().count++;
         g_consoleCounts[level]++;
+        if (!g_console.back().source.Valid()) g_console.back().source = src;
         return;
     }
     char ts[16];
     std::time_t t = std::time(nullptr);
     std::tm* lt = std::localtime(&t);
     std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d", lt ? lt->tm_hour : 0, lt ? lt->tm_min : 0, lt ? lt->tm_sec : 0);
-    g_console.push_back({level, msg, ts, 1});
+    ConsoleEntry row;
+    row.level = level; row.text = msg; row.time = ts; row.count = 1; row.source = src;
+    g_console.push_back(std::move(row));
     g_consoleCounts[level]++;
     if (g_console.size() > 500) g_console.erase(g_console.begin());
 }
@@ -176,7 +196,10 @@ void DrawConsole() {
             std::string label = "     " + e.time + "  " + e.text;   // leading room for the dot
             if (mergedCount[row] > 1) label += "  (" + std::to_string(mergedCount[row]) + ")";
             label += "##c" + std::to_string(i);
-            if (ImGui::Selectable(label.c_str(), selected == i, 0, ImVec2(0, ImGui::GetTextLineHeight() + 10.0f))) selected = i;
+            if (ImGui::Selectable(label.c_str(), selected == i, 0, ImVec2(0, ImGui::GetTextLineHeight() + 10.0f))) {
+                selected = i;
+                if (e.source.Valid()) ActivateBoundConsoleSource(e.source);
+            }
             {
                 float dr = ImGui::GetFontSize() * 0.22f;
                 ImGui::GetWindowDrawList()->AddCircleFilled(

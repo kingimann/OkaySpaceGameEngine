@@ -58,6 +58,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     SplineTools.cpp                                                    # splines: Scene-view editing, inspectors, lines / trails
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
+    ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors

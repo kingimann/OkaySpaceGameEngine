@@ -13,6 +13,7 @@ add_library(okay_engine
     src/Core/SaveFrameworkSync.cpp
     src/Core/Scheduler.cpp
     src/Core/Tween.cpp
+    src/Core/TimerDebug.cpp
     src/Core/Prefs.cpp
     src/Core/DataAsset.cpp
     src/Core/Undo.cpp

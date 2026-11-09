@@ -1614,6 +1614,32 @@ add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
 add_executable(test_scene_hierarchy_search test_scene_hierarchy_search.cpp)
 target_link_libraries(test_scene_hierarchy_search PRIVATE okay::engine)
 add_test(NAME scene_hierarchy_search COMMAND test_scene_hierarchy_search)
+
+# Scene graph (1.3): a 100000-deep chain, Transform audit and helpers, scene / GameObject audit,
+# project tag list and layer names, spawning (Instantiate / Duplicate / unique names), Mover / Spinner / Lifetime
+add_executable(test_deep_hierarchy test_deep_hierarchy.cpp)
+target_link_libraries(test_deep_hierarchy PRIVATE okay::engine)
+add_test(NAME deep_hierarchy COMMAND test_deep_hierarchy)
+
+add_executable(test_transform_graph test_transform_graph.cpp)
+target_link_libraries(test_transform_graph PRIVATE okay::engine)
+add_test(NAME transform_graph COMMAND test_transform_graph)
+
+add_executable(test_scene_graph_audit test_scene_graph_audit.cpp)
+target_link_libraries(test_scene_graph_audit PRIVATE okay::engine)
+add_test(NAME scene_graph_audit COMMAND test_scene_graph_audit)
+
+add_executable(test_layers_tags_project test_layers_tags_project.cpp)
+target_link_libraries(test_layers_tags_project PRIVATE okay::engine)
+add_test(NAME layers_tags_project COMMAND test_layers_tags_project)
+
+add_executable(test_scene_spawn test_scene_spawn.cpp)
+target_link_libraries(test_scene_spawn PRIVATE okay::engine)
+add_test(NAME scene_spawn COMMAND test_scene_spawn)
+
+add_executable(test_mover_spinner_lifetime test_mover_spinner_lifetime.cpp)
+target_link_libraries(test_mover_spinner_lifetime PRIVATE okay::engine)
+add_test(NAME mover_spinner_lifetime COMMAND test_mover_spinner_lifetime)
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)

@@ -1741,6 +1741,56 @@ static void TestAuditWriteResult() {
     PropertyRegistry::RemoveChangeHook(hook);
 }
 
+namespace {
+struct KeyWidget : Component {
+    struct Dodge { char key = 'x'; float power = 2.0f; };
+    char jump = ' ';
+    char sprint = 0;
+    Dodge dodge;
+};
+}
+
+static void TestBuilderKeyBindings() {
+    RUN_SUITE("builder: key bindings and fields of a struct member");
+    PropertyBuilder<KeyWidget> b("KeyWidget", "keywidget", "Test");
+    b.AddKey("jump", &KeyWidget::jump)
+     .AddKey("sprint", &KeyWidget::sprint, /*rawCharRecord=*/true)
+     .AddKey("dodgeKey", &KeyWidget::dodge, &KeyWidget::Dodge::key).Tooltip("Dodge key")
+     .AddFloat("dodgePower", &KeyWidget::dodge, &KeyWidget::Dodge::power).Range(0, 10);
+    b.Commit();
+    auto info = PropertyRegistry::FindByName("KeyWidget");
+    CHECK(info && info->properties.size() == 5);   // enabled + the four
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("w");
+    auto* w = go->AddComponent<KeyWidget>();
+    const PropertyDesc* d = info->Find("jump");
+    CHECK(d && d->type == PropertyType::Int && d->hasRange && d->rangeMin == 0 && d->rangeMax == 255 && !d->tooltip.empty());
+    CHECK(d->defaultValue == PropertyValue::MakeInt(' '));
+    CHECK(info->Find("dodgeKey")->tooltip == "Dodge key");
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt('q')) && w->jump == 'q');
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt(200)) && (unsigned char)w->jump == 200);
+    CHECK(PropertyRegistry::GetProperty(*go, "KeyWidget.jump") == PropertyValue::MakeInt(200));   // not -56
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt(1000)) && (unsigned char)w->jump == 255);
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt(' ')) && w->jump == ' ');   // an ordinary key accepts Space
+    CHECK(!PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeFloat(3.0f)));
+    // a raw-character record cannot hold white space or '-'
+    for (int bad : std::vector<int>{' ', '-', 9, 10, 11, 12, 13}) CHECK(!PropertyRegistry::SetProperty(*go, "KeyWidget.sprint", PropertyValue::MakeInt(bad)) && w->sprint == 0);
+    for (int ok : std::vector<int>{0, 1, 8, 14, 33, 45 - 1, 45 + 1, 'a', 126, 127, 128, 255}) {
+        CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.sprint", PropertyValue::MakeInt(ok)) && PropertyRegistry::GetProperty(*go, "KeyWidget.sprint") == PropertyValue::MakeInt(ok));
+    }
+    // a field of a struct member reads and writes through the member
+    CHECK(PropertyRegistry::GetProperty(*go, "KeyWidget.dodgeKey") == PropertyValue::MakeInt('x'));
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.dodgeKey", PropertyValue::MakeInt('z')) && w->dodge.key == 'z');
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.dodgePower", PropertyValue::MakeFloat(50.0f)) && w->dodge.power == 10.0f);
+    CHECK(PropertyRegistry::GetProperty(*go, "KeyWidget.dodgePower") == PropertyValue::MakeFloat(10.0f));
+    // snapshot, diff and revert see them like any other property
+    const PropertySnapshot before = SnapshotProperties(*go);
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.dodgeKey", PropertyValue::MakeInt('c')));
+    const auto diff = DiffProperties(before, SnapshotProperties(*go));
+    CHECK(diff.size() == 1 && diff[0].path == "KeyWidget.dodgeKey");
+    CHECK(ApplyPropertyDiff(*go, diff, false) == 1 && w->dodge.key == 'z');
+}
+
 static void TestAuditRegistryTable() {
     RUN_SUITE("audit: registering types, names and duplicates");
     PropertyRegistry::Clear();   // the built-ins only, whatever earlier suites added
@@ -2125,6 +2175,7 @@ int main() {
     TestAuditHooksWhileFiring();
     TestAuditWriteResult();
     TestAuditBuilderEdges();
+    TestBuilderKeyBindings();
     TestAuditTextCoercion();
     TestAuditRegistryTable();
     TestAuditSceneEdges();

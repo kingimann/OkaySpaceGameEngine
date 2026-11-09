@@ -236,6 +236,8 @@ More of the builder:
   `Component.property[.x]`, so a name may not contain `.`, `#` or white space.
 - **A component that needs more than `AddComponent<C>()`** (a controller that also adds its parts):
   `.Adder([](GameObject& go) -> Component* { return PlayerController::Add(&go); })`.
+- **A key binding** held in a `char` field: `.AddKey("jumpKey", &C::jumpKey)` (also for a `char` in a struct
+  member). It is an Int property 0..255 holding the key code.
 - **Not addable** (a Transform): `.NoAdd()`.
 - A modifier called before the first property (`Tooltip` right after the constructor) is ignored
   instead of writing through an empty list, and a `Custom` with an empty getter adds nothing.
@@ -255,7 +257,7 @@ More of the builder:
    name does not explain itself. Leave out what the file does not keep (runtime pointers,
    caches, lists such as a dropdown's options); a registered field that is not saved fails
    the cross-check below.
-3. Key bindings (`char` fields holding a key code) use `AddKey(b, "sprintKey", &C::sprintKey)`: an Int
+3. Key bindings (`char` fields holding a key code) use `.AddKey("sprintKey", &C::sprintKey)`: an Int
    0..255. Pass `true` as the last argument when the scene record writes the key as one raw
    character (`tdctrl`, `tdctrl2d`, `charctrl2d`, `ctmctrl`, `tpsctrl`): white space and `-` cannot
    be stored there and are refused.
@@ -431,6 +433,6 @@ Audit of the registry (each with a failing test first):
   or the scene round trip: 4246 edge values and every enum option survive the scene file.
 
 New: `PropertyRegistry::WriteProperty` and `WritePropertyFromText` (old and stored value),
-`PropertyBuilder::Adder` and the nested-field overloads, the controllers, navigation, networking and
+`PropertyBuilder::Adder`, `AddKey` and the nested-field overloads, the controllers, navigation, networking and
 UI widgets, no-code gameplay, joints and environment components listed above (59 new types, 1022 new
 properties: 336 on 26 types became 1358 on 85), and the three registration files.

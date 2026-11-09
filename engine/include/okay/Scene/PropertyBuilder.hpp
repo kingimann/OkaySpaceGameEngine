@@ -153,6 +153,21 @@ public:
             [outer, inner](Component& c, const PropertyValue& v) { (As<Owner>(c).*outer).*inner = v.AsVec3(); return true; });
     }
 
+    // ---- Key bindings ------------------------------------------------------------------
+    /// A key binding held in a `char` field: an Int property 0..255 holding the key code
+    /// (0 = none; 1..31 are the special keys such as Shift, Ctrl and the arrows, see Input.hpp).
+    /// Pass `rawCharRecord` when the file format writes the key as one raw character: white
+    /// space and '-' (its "none") cannot be stored there, so those codes are refused.
+    template <class Owner> PropertyBuilder& AddKey(const char* name, char Owner::*m, bool rawCharRecord = false) {
+        return AddKeyImpl(name, [m](const Component& c) { return As<Owner>(c).*m; },
+                          [m](Component& c, char k) { As<Owner>(c).*m = k; }, rawCharRecord);
+    }
+    /// The same for a `char` inside a struct member: `AddKey("dodgeKey", &C::dodge, &Dodge::key)`.
+    template <class Owner, class Inner> PropertyBuilder& AddKey(const char* name, Inner Owner::*outer, char Inner::*inner, bool rawCharRecord = false) {
+        return AddKeyImpl(name, [outer, inner](const Component& c) { return (As<Owner>(c).*outer).*inner; },
+                          [outer, inner](Component& c, char k) { (As<Owner>(c).*outer).*inner = k; }, rawCharRecord);
+    }
+
     // ---- Computed properties -----------------------------------------------------
     /// A property with its own accessors, for values that are not one plain field.
     /// `setter` gets a value already checked against the descriptor and may refuse.
@@ -231,6 +246,21 @@ private:
         d.getter = std::move(getter);
         d.setter = std::move(setter);
         m_info.properties.push_back(std::move(d));
+        return *this;
+    }
+    template <class Get, class Set>
+    PropertyBuilder& AddKeyImpl(const char* name, Get get, Set set, bool rawCharRecord) {
+        Prop(name, PropertyType::Int,
+            [get](const Component& c) { return PropertyValue::MakeInt(static_cast<int>(static_cast<unsigned char>(get(c)))); },
+            [set, rawCharRecord](Component& c, const PropertyValue& v) {
+                const int code = static_cast<int>(v.AsInt());
+                if (rawCharRecord && (code == '-' || code == ' ' || (code >= 9 && code <= 13))) return false;
+                set(c, static_cast<char>(code));
+                return true;
+            });
+        PropertyDesc& d = m_info.properties.back();
+        d.hasRange = true; d.rangeMin = 0.0; d.rangeMax = 255.0; d.step = 1.0;
+        d.tooltip = "Key code (0 = none)";
         return *this;
     }
     // The property the modifiers apply to. Before any property was added there is none:

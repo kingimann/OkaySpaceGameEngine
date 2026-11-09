@@ -397,10 +397,10 @@ void RegisterUIKeybindField() {
     b.AddVec2("position", &UIKeybindField::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor (margins for a stretch anchor)")
      .AddVec2("size", &UIKeybindField::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels")
      .AddEnum("anchor", &UIKeybindField::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
-     .AddString("action", &UIKeybindField::action);
-    AddKey(b, "key", &UIKeybindField::key, false);
-    AddKey(b, "defaultKey", &UIKeybindField::defaultKey, false);
-    b.AddString("prefKey", &UIKeybindField::prefKey).Tooltip("Prefs name to persist the binding under (\"\" = don't)")
+     .AddString("action", &UIKeybindField::action)
+     .AddKey("key", &UIKeybindField::key, false)
+     .AddKey("defaultKey", &UIKeybindField::defaultKey, false)
+     .AddString("prefKey", &UIKeybindField::prefKey).Tooltip("Prefs name to persist the binding under (\"\" = don't)")
      .AddString("inputAction", &UIKeybindField::inputAction).Tooltip("An InputActions action to rebind (\"\" = use `key`)")
      .AddBool("gamepad", &UIKeybindField::gamepad).Tooltip("With inputAction: bind a controller button")
      .AddInt("part", &UIKeybindField::part).Range(-1, 3, 1).Tooltip("With inputAction: 0..3 = one key of a four-key direction")

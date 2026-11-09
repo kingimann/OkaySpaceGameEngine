@@ -393,6 +393,17 @@ static int RunSelfTest() {
         check(!clicked.released && clicked.editorSeesMouse,
               "a click on the Game view locks the cursor even while a text field wanted input");
         check(PlayStopShortcut(true, true), "Ctrl+P works while the script editor is focused");
+        {
+            EditorState spawn;
+            spawn.NewScene3D();
+            spawn.PushUndo();
+            GameObject* p = Templates::AddThirdPersonPlayer(spawn.scene());
+            spawn.SettleSpawn(p);
+            const Vec3 at = p->transform->Position();
+            check(at.x * at.x + at.z * at.z > 0.64f, "third person spawn is clear of the cube and sphere");
+            check(spawn.Undo(), "placing the spawn is the same undo step as creating it");
+            check(spawn.scene().Find("Player") == nullptr, "one undo removes the settled player");
+        }
         check(!PlayStopShortcut(false, true), "P alone does not stop play");
     }
     ed.Tick(0.1f);
@@ -6068,39 +6079,39 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::BeginMenu("Player")) {           // ready-to-play premade players
             if (ImGui::MenuItem("Third Person")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddThirdPersonPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene())));
                 ConsoleLog("Added Third-Person player"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Humanoid (foot IK)")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddHumanoidPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddHumanoidPlayer(ed.scene())));
                 ConsoleLog("Added Humanoid player (rig + capsule + foot IK)"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("First Person")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddFirstPersonPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddFirstPersonPlayer(ed.scene())));
                 ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Mixamo Soldier")) { spawnMixamo("Soldier.glb", "Soldier"); created = true; }
             if (ImGui::MenuItem("Mixamo Xbot")) { spawnMixamo("Xbot.glb", "Xbot"); created = true; }
             if (ImGui::MenuItem("Third Person Shooter")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddThirdPersonShooterPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonShooterPlayer(ed.scene())));
                 ConsoleLog("Added Third-Person Shooter player"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Top Down (3D)")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddTopDownPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddTopDownPlayer(ed.scene())));
                 ConsoleLog("Added Top-Down player"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Top Down Shooter (3D)")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddTopDownShooterPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddTopDownShooterPlayer(ed.scene())));
                 ConsoleLog("Added Top-Down Shooter player (WASD, mouse aim, LMB fire, Space dash)"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("2.5D Platformer (LittleBigPlanet)")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddPlatformer25DPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddPlatformer25DPlayer(ed.scene())));
                 ConsoleLog("Added 2.5D player (A/D run, Space jump, W/S change layer, E grab, Ctrl crouch, Z prone)"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Top Down (2D)")) {
@@ -6110,7 +6121,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
             if (ImGui::MenuItem("Click To Move")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddClickToMovePlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddClickToMovePlayer(ed.scene())));
                 ConsoleLog("Added Click-To-Move player"); ed.dirty = true; created = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops a fully set-up player (Character + controller + physics) into this scene.");
@@ -6191,6 +6202,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 GameObject* g = ed.CreateEmpty("Character");
                 g->AddComponent<Character>()->Apply();
                 HumanoidLibrary::EnsureAnimator(g);
+                ed.SettleSpawn(g);
                 ed.Select(g); ed.view3D = true; ed.dirty = true; created = true;
                 ConsoleLog("Created Character");
             }

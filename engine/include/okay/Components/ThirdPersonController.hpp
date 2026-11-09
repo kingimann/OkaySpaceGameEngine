@@ -21,6 +21,7 @@
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 #include "okay/Components/ControllerFeel.hpp"
+#include "okay/Scene/ClearSpawn.hpp"
 #include "okay/Components/PlayerCamera.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/DeathLock.hpp"
@@ -359,6 +360,7 @@ public:
     /// server running this player's inputs). Reads no Input:: globals.
     void Simulate(const PlayerInput& in, float dt) override {
         if (!transform) return;
+        m_wish = Vec3::Zero;
         yaw = in.yaw;
         // Clamped when it changes (a script may park the view past the limits, as before).
         {
@@ -387,6 +389,7 @@ public:
         float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
+        m_wish = moving ? dir : Vec3::Zero;
 
         // Waist-deep water is a swim. Shallower is wading, so the shore still walks out.
         {
@@ -731,6 +734,7 @@ public:
             baseShoulder = view->shoulderOffset;
             if (view->Blending()) applyShake = false;   // the blend itself doesn't shake
         }
+        if (SimActive()) EaseOutOfSolids(gameObject, dt, m_separate, m_wish);
         if (sc->mainCamera) sc->mainCamera->pointerIgnore = gameObject;
         if (!m_smoothedThisUpdate) {
             const float lookSmooth = orbitSmoothing > 0.0f ? orbitSmoothing : lookSmoothing;
@@ -880,6 +884,8 @@ private:
     float m_jumpBuf = 0.0f;         // remaining jump-buffer window
     LookSmoother m_smooth;
     bool m_smoothedThisUpdate = false;
+    Vec3 m_wish{0.0f, 0.0f, 0.0f};
+    SeparationMemory m_separate;
 
     void ApplyCursorMode() {
         if (cursorMode <= 0) {

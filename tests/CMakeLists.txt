@@ -1143,6 +1143,10 @@ target_link_libraries(test_head_stability PRIVATE okay::engine)
 target_compile_definitions(test_head_stability PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME head_stability COMMAND test_head_stability)
 
+add_executable(test_clear_spawn test_clear_spawn.cpp)
+target_link_libraries(test_clear_spawn PRIVATE okay::engine)
+add_test(NAME clear_spawn COMMAND test_clear_spawn)
+
 add_executable(test_gap_stuck test_gap_stuck.cpp)
 target_link_libraries(test_gap_stuck PRIVATE okay::engine)
 add_test(NAME gap_stuck COMMAND test_gap_stuck)

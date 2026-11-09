@@ -10,6 +10,7 @@
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
+#include "okay/Scene/ClearSpawn.hpp"
 #include <filesystem>
 
 namespace {
@@ -223,6 +224,13 @@ void EditorState::AdoptCamera(Camera* cam) {
     dirty = true;
 }
 
+GameObject* EditorState::SettleSpawn(GameObject* go) {
+    if (!go || !go->transform) return go;
+    const Vec3 hint = (camTarget.x != 0.0f || camTarget.z != 0.0f) ? camTarget : Vec3::Zero;
+    go->transform->SetPosition(ClearFeetPosition(m_scene, go, hint));
+    return go;
+}
+
 GameObject* EditorState::CreateCube(const std::string& name) {
     PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
@@ -230,6 +238,7 @@ GameObject* EditorState::CreateCube(const std::string& name) {
     mr->mesh = Mesh::Cube();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
+    SettleSpawn(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -243,6 +252,7 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     mr->mesh = Mesh::Pyramid();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
+    SettleSpawn(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -256,6 +266,7 @@ GameObject* EditorState::CreateMesh(const std::string& meshName) {
     mr->mesh = Mesh::FromName(meshName);
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
+    SettleSpawn(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -381,7 +392,9 @@ void EditorState::NewScene3D() {
         mr->color = Color::FromBytes(150, 154, 150);   // soft neutral, not pure gray
         mr->specular = 0.05f; mr->shininess = 16.0f;
         mr->groundShadow = false;                       // it IS the ground
-        ground->AddComponent<MeshCollider3D>();         // things rest on it
+        auto* groundCol = ground->AddComponent<MeshCollider3D>();
+        groundCol->autoFit = true;
+        FitColliders(ground);                         // the plane is the floor, not a 1 m box
     }
 
     // ---- Hero shapes on the ground ----

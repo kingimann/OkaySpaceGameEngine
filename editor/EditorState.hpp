@@ -68,6 +68,9 @@ public:
     void DeleteSelected();
     /// Clone the selected object(s) (and their children); selects the clones.
     GameObject* DuplicateSelected();
+    /// Move a just-created object onto open ground near the scene-view focus.
+    /// Call it in the same undo step that created the object.
+    GameObject* SettleSpawn(GameObject* go);
     /// Wrap the current selection in a new empty parent,
     /// keeping each object's world position. Returns the new group (selected), or null
     /// if nothing is selected. Only top-level selected objects are reparented.

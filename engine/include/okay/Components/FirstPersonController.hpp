@@ -18,6 +18,7 @@
 #include "okay/Input/Cursor.hpp"
 #include "okay/Components/StepUp.hpp"
 #include "okay/Components/ControllerFeel.hpp"
+#include "okay/Scene/ClearSpawn.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/DeathLock.hpp"
 #include "okay/Components/Water.hpp"
@@ -348,6 +349,7 @@ public:
     /// Look, stance, lean and move by `in` for `dt` seconds (local play and a
     /// server running this player's inputs). Reads no Input:: globals.
     void Simulate(const PlayerInput& in, float dt) override {
+        m_wish = Vec3::Zero;
         if (!transform) return;
         yaw   = in.yaw;
         // Clamped when it changes (a script may park the view past the limits, as before).
@@ -407,6 +409,7 @@ public:
         float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
+        m_wish = moving ? dir : Vec3::Zero;
         // Running only stands up: you can't sprint while crouched or prone, or swim.
         bool running = !m_swimming && m_stance == Stance::Stand && moving && IsRunHeld(in);
         // The speed cap follows the body from one stance's to the next. Swimming is slower.
@@ -675,6 +678,7 @@ public:
     /// angles; movement and the input sent to a server keep the exact ones.
     /// Camera only: Simulate never reads any of it.
     void LateUpdate(float dt) override {
+        if (SimActive()) EaseOutOfSolids(gameObject, dt, m_separate, m_wish);
         if (!transform || !m_haveEyeBase) return;   // the eye starts once this peer has simulated the player
         // Settled third person leaves the orbit on the camera. During a blend the
         // eye is written so Player View can read it, then the blend overwrites.
@@ -912,6 +916,8 @@ private:
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     LookSmoother m_smooth;
+    Vec3 m_wish{0.0f, 0.0f, 0.0f};
+    SeparationMemory m_separate;
     FovKick m_fov;
     Landing m_landing;
     AnimLink m_anim;

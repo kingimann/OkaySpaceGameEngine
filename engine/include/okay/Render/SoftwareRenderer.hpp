@@ -8,7 +8,9 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Culling.hpp"
+#include "okay/Render/Visibility.hpp"
 #include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
@@ -882,7 +884,9 @@ inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull
             if (qx * qx + qy * qy + qz * qz > cr2) continue;
         }
         Mat4 mvp = cas.viewProj * model;
-        const auto& V = mr->DisplayMesh().vertices; const auto& T = mr->DisplayMesh().triangles;
+        const Mesh* shMesh = visibility::Current().ShadowMesh(go.get(), mr);
+        if (!shMesh) continue;
+        const auto& V = shMesh->vertices; const auto& T = shMesh->triangles;
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             float sxv[3], syv[3], szv[3]; bool ok = true;
             for (int k = 0; k < 3; ++k) {
@@ -1516,6 +1520,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // The scene's Ambient Mode (shared with the GPU shaders).
     SceneLights::Hemisphere() = rs.ambientMode != Scene::RenderSettings::AmbientFlat;
     SceneAmbientColors(rs, SceneLights::AmbientColor(), SceneLights::SkyAmbient(), SceneLights::GroundAmbient());
+    const visibility::Frame& vis = visibility::Build(scene, vp, eye, r.width, r.height, visibility::RenderViewFovY(), ignore);
     RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
     if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;
@@ -1530,15 +1535,20 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Frustum culling is decided here too (its bounds cache isn't thread-safe);
     // the bands only read the result.
     const Frustum viewFrustum = Frustum::FromVP(vp);
+    (void)viewFrustum;
     std::unordered_set<const GameObject*> swCulled;
+    int swDrawn = 0;
     for (const auto& go : scene.Objects()) {
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr) continue;
-        if (CulledByFrustum(viewFrustum, go.get(), mr)) { swCulled.insert(go.get()); continue; }
+        if (!vis.Visible(go.get())) { swCulled.insert(go.get()); continue; }
+        ++swDrawn;
         if (!mr->texture.empty())     GetCachedMips(mr->texture);
         if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
         if (!mr->specularMap.empty()) GetCachedMips(mr->specularMap);
         if (!mr->aoMap.empty())       GetCachedMips(mr->aoMap);
+        if (!mr->metallicRoughnessMap.empty()) GetCachedMips(mr->metallicRoughnessMap);
+        if (!mr->emissiveMap.empty()) GetCachedMips(mr->emissiveMap);
         if (!mr->matcap.empty() && !mr->unlit && mr->shader != MeshRenderer::Shader::Unlit) GetCachedTexture(mr->matcap);
     }
     // Rasterize the meshes across CPU cores: each worker owns a horizontal band
@@ -1558,17 +1568,20 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const float scrollU = mr->uvScroll.x * Time::ElapsedTime();
         const float scrollV = mr->uvScroll.y * Time::ElapsedTime();
         Mat4 model = go->transform->LocalToWorldMatrix();
-        const auto& v = mr->DisplayMesh().vertices;
-        const auto& t = mr->DisplayMesh().triangles;
-        const bool hasUV = mr->DisplayMesh().uvs.size() == v.size();
-        const bool faceCols = mr->DisplayMesh().HasFaceColors();   // per-triangle colors?
+        const Mesh* lodMesh = vis.MeshFor(go.get());
+        if (!lodMesh) { continue; }
+        const Mesh& drawMesh = *lodMesh;
+        const auto& v = drawMesh.vertices;
+        const auto& t = drawMesh.triangles;
+        const bool hasUV = drawMesh.uvs.size() == v.size();
+        const bool faceCols = drawMesh.HasFaceColors();   // per-triangle colors?
         const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
         const std::vector<Image>* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         const std::vector<Image>* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
         const std::vector<Image>* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
         Image* mcap = (mr->matcap.empty() || unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
-        const bool useMatcap = mcap && mr->DisplayMesh().HasNormals();
+        const bool useMatcap = mcap && drawMesh.HasNormals();
         // Smooth (Gouraud) shading when the mesh carries per-vertex normals and
         // isn't textured/unlit — interpolated lighting across each face. Matcap
         // also rides the smooth path (it interpolates a per-vertex sampled color).
@@ -1658,12 +1671,46 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // carries its own UVs).
             Vec3 ln = Vec3::Cross(v[idx[1]] - v[idx[0]], v[idx[2]] - v[idx[0]]);
             float ax = std::fabs(ln.x), ay = std::fabs(ln.y), az = std::fabs(ln.z);
+            float faceMetal = mr->metallic, faceShine = mr->shininess, faceSpec = mr->specular;
+            float faceEr = mr->emissive.r, faceEg = mr->emissive.g, faceEb = mr->emissive.b;
+            if (!mr->metallicRoughnessMap.empty() || !mr->emissiveMap.empty()) {
+                float su = 0.0f, sv = 0.0f;
+                for (int k = 0; k < 3; ++k) {
+                    float uu, vt;
+                    if (hasUV) { uu = drawMesh.uvs[idx[k]].x; vt = drawMesh.uvs[idx[k]].y; }
+                    else {
+                        const Vec3& p = v[idx[k]];
+                        if (ax >= ay && ax >= az) { uu = p.z + 0.5f; vt = p.y + 0.5f; }
+                        else if (ay >= ax && ay >= az) { uu = p.x + 0.5f; vt = p.z + 0.5f; }
+                        else { uu = p.x + 0.5f; vt = p.y + 0.5f; }
+                    }
+                    su += uu; sv += vt;
+                }
+                su = su / 3.0f * mr->tiling.x + mr->texOffset.x + scrollU;
+                sv = sv / 3.0f * mr->tiling.y + mr->texOffset.y + scrollV;
+                if (!mr->metallicRoughnessMap.empty())
+                    if (const auto* mm = GetCachedMips(mr->metallicRoughnessMap); mm && !mm->empty()) {
+                        const Color c = (*mm)[0].Sample(su, sv);
+                        faceMetal *= c.b;
+                        float rough0 = 1.0f - (faceShine - 4.0f) / 124.0f;
+                        if (rough0 < 0.0f) rough0 = 0.0f; if (rough0 > 1.0f) rough0 = 1.0f;
+                        float rough = rough0 * c.g; if (rough < 0.0f) rough = 0.0f; if (rough > 1.0f) rough = 1.0f;
+                        faceShine = 4.0f + (1.0f - rough) * 124.0f;
+                        float specScale = 1.0f - rough; if (specScale < 0.04f) specScale = 0.04f;
+                        faceSpec *= specScale;
+                    }
+                if (!mr->emissiveMap.empty())
+                    if (const auto* em = GetCachedMips(mr->emissiveMap); em && !em->empty()) {
+                        const Color c = (*em)[0].Sample(su, sv);
+                        faceEr *= c.r; faceEg *= c.g; faceEb *= c.b;
+                    }
+            }
             CV in[3];
             float uvx[3], uvy[3];
             for (int k = 0; k < 3; ++k) {
                 Vec4 c = vp * Vec4{wp[k], 1.0f};
                 float uu, vt;
-                if (hasUV) { uu = mr->DisplayMesh().uvs[idx[k]].x; vt = mr->DisplayMesh().uvs[idx[k]].y; }
+                if (hasUV) { uu = drawMesh.uvs[idx[k]].x; vt = drawMesh.uvs[idx[k]].y; }
                 else {
                     const Vec3& p = v[idx[k]];
                     if (ax >= ay && ax >= az) { uu = p.z + 0.5f; vt = p.y + 0.5f; }
@@ -1673,8 +1720,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 uvx[k] = uu; uvy[k] = vt;
                 // Per-vertex world normal (smoothed if the mesh has normals, else
                 // the face normal), flipped to match a culled back face.
-                Vec3 nk = mr->DisplayMesh().HasNormals()
-                              ? xformNormal(mr->DisplayMesh().normals[idx[k]]).Normalized()
+                Vec3 nk = drawMesh.HasNormals()
+                              ? xformNormal(drawMesh.normals[idx[k]]).Normalized()
                               : normal;
                 if (facing < 0.0f) nk = nk * -1.0f;
 
@@ -1715,7 +1762,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     Vec3 toE = (eye - wp[k]).Normalized();
                     Vec3 hv = (toL.Normalized() + toE).Normalized();
                     float nh = Vec3::Dot(nk, hv);
-                    if (nh > 0.0f) spk = std::pow(nh, mr->shininess) * mr->specular;
+                    if (nh > 0.0f) spk = std::pow(nh, faceShine) * faceSpec;
                 }
                 in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x + scrollU, vt * mr->tiling.y + scrollV,
                          lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok, spk};
@@ -1776,14 +1823,20 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 Vec3 toEye = (eye - centroid).Normalized();
                 Vec3 h = (toLight.Normalized() + toEye).Normalized();
                 float nh = Vec3::Dot(normal, h);
-                if (nh > 0.0f) spec = std::pow(nh, mr->shininess) * mr->specular;
+                if (nh > 0.0f) spec = std::pow(nh, faceShine) * faceSpec;
             }
             // Per-face color when the mesh carries one (e.g. character skin /
             // outfit / hair); otherwise the renderer's single albedo color.
-            const Color& base = faceCols ? mr->DisplayMesh().triColors[i / 3] : mr->color;
-            float cr = base.r * lit.x + spec + mr->emissive.r;
-            float cg = base.g * lit.y + spec + mr->emissive.g;
-            float cb = base.b * lit.z + spec + mr->emissive.b;
+            // LOD debug tint multiplies the albedo the same way the GPU backends do.
+            float lodR = 1, lodG = 1, lodB = 1;
+            if (auto* lg = go->GetComponent<LODGroup>()) lg->DebugTint(lg->activeLevel, lodR, lodG, lodB);
+            Color shaded = mr->color;
+            shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
+            const Color& base = faceCols ? drawMesh.triColors[i / 3] : shaded;
+            const float metalK = mr->metallicRoughnessMap.empty() ? 1.0f : (1.0f - 0.9f * std::min(1.0f, std::max(0.0f, faceMetal)));
+            float cr = base.r * lit.x * metalK + spec + faceEr;
+            float cg = base.g * lit.y * metalK + spec + faceEg;
+            float cb = base.b * lit.z * metalK + spec + faceEb;
             // Distance fog: blend the color toward the fog color by how far the
             // triangle is, between fogStart and fogEnd (per-tri factor).
             float fogF = 0.0f;
@@ -1841,11 +1894,11 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float wy[3] = {tri[0]->wy, tri[1]->wy, tri[2]->wy};
                     float wz[3] = {tri[0]->wz, tri[1]->wz, tri[2]->wz};
                     r.TrianglePhong(sx, sy, sd, iw, uu, vv, nx, ny, nz, wx, wy, wz,
-                                    tex, base, mr->color, eye, mr->shininess, mr->specular,
-                                    mr->emissive.r, mr->emissive.g, mr->emissive.b,
+                                    tex, base, shaded, eye, faceShine, faceSpec,
+                                    faceEr, faceEg, faceEb,
                                     fo, fogR, fogG, fogB,
                                     normalMips, triTangent, mr->normalStrength,
-                                    mr->reflectivity, specMips, mr->metallic,
+                                    mr->reflectivity, specMips, faceMetal,
                                     (mr->shader == MeshRenderer::Shader::Toon ? mr->toonBands : 0),
                                     mr->rimStrength, mr->rimPower,
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
@@ -1856,15 +1909,15 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
-                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, lr, lg, lb, sp3,
-                                  mr->emissive.r, mr->emissive.g, mr->emissive.b,
+                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, shaded, lr, lg, lb, sp3,
+                                  faceEr, faceEg, faceEb,
                                   fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else if (smooth) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
                     r.TriangleSmooth(sx, sy, sd, lr, lg, lb, base, sp3,
-                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
+                                     faceEr, faceEg, faceEb,
                                      fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else
                     r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1],
@@ -1880,6 +1933,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     ApplyToneMap(r);                                                 // filmic highlight rolloff
     ApplyColorGrade(r);                                              // brightness/contrast/sat/vignette/gamma
     ApplyFXAA(r);                                                    // edge anti-aliasing
+    LastCullCounters().drawn = swDrawn;
 }
 
 /// Supersampled render for smoother (anti-aliased) edges: draw the scene at `ss`x
@@ -1931,6 +1985,17 @@ inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32
                 ((std::uint32_t)(b / n) << 16) | ((std::uint32_t)(a / n) << 24);
         }
     return out.data();
+}
+
+/// A second software pass that only exists to publish SceneOcclusionDepth.
+/// Restores the cull counters from the real frame so a stats read still
+/// describes the picture, not this cheaper depth pass.
+inline void FillOcclusionDepth(Raster& work, std::vector<std::uint32_t>& out,
+                               const Scene& scene, const Mat4& vp, const Vec3& eye,
+                               int w, int h, const GameObject* ignore = nullptr) {
+    const CullCounters saved = LastCullCounters();
+    RenderMeshesSS(work, out, scene, vp, eye, w, h, 1, ignore);
+    LastCullCounters() = saved;
 }
 
 } // namespace okay

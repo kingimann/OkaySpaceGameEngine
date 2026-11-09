@@ -83,6 +83,10 @@
 
 // Built-in components
 #include "okay/Components/Camera.hpp"
+#include "okay/Render/CameraStack.hpp"
+#include "okay/Render/Visibility.hpp"
+#include "okay/Components/LODGroup.hpp"
+#include "okay/Components/Occluder.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/MeshRenderer.hpp"

@@ -3576,7 +3576,6 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 8.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 12.0f));
-        static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API","Script builtins"};
         okay::vs::PinType dragged = okay::vs::PinType::Any;
         if (st.linkPending && !st.linkExec)
             dragged = st.linkFromOutput ? VsOutPinType(g, st.linkNode, st.linkPin)
@@ -3589,18 +3588,55 @@ inline void Draw(EditorState& ed, bool* open) {
             ImVec4 v = ImGui::ColorConvertU32ToFloat4(c);
             return ImGui::GetColorU32(ImVec4(v.x + (1 - v.x) * 0.45f, v.y + (1 - v.y) * 0.45f, v.z + (1 - v.z) * 0.45f, 1.0f));
         };
-        // Every placeable thing: core nodes, plus each Actions step ("Do" / "Check").
+        // One hue per topic in kPaletteCategories (docs/visual_scripting_naming.md).
+        auto catColor = [](int index) {
+            static const ImU32 cols[] = {
+                IM_COL32(158, 96, 102, 255), IM_COL32(86, 112, 158, 255), IM_COL32(72, 138, 116, 255),
+                IM_COL32(64, 132, 150, 255), IM_COL32(120, 150, 170, 255), IM_COL32(90, 140, 120, 255),
+                IM_COL32(176, 114, 78, 255), IM_COL32(70, 146, 146, 255), IM_COL32(90, 120, 170, 255),
+                IM_COL32(170, 110, 150, 255), IM_COL32(180, 140, 70, 255), IM_COL32(168, 132, 78, 255),
+                IM_COL32(110, 130, 180, 255), IM_COL32(150, 120, 90, 255), IM_COL32(100, 140, 100, 255),
+                IM_COL32(130, 130, 160, 255), IM_COL32(84, 114, 170, 255), IM_COL32(140, 140, 140, 255),
+                IM_COL32(120, 110, 150, 255),
+            };
+            const int n = (int)(sizeof cols / sizeof cols[0]);
+            return cols[(index >= 0 && index < n) ? index : 0];
+        };
+        // Every placeable thing sits in one of those topics. Old buckets
+        // (Do something, Check something, Actions, Data, Engine API) are search words only.
         struct Entry {
             const VsDef* def = nullptr; const VsStepInfo* step = nullptr; bool cond = false;
-            std::string title, cat, key, desc, keywords; int group = 0; ImU32 col = 0;
+            std::string title, cat, sub, key, desc, keywords;
+            int catIndex = -1; bool browse = true; ImU32 col = 0;
         };
         std::vector<Entry> all;
         for (const auto& d : Registry()) {
             if (!fits(d)) continue;
-            Entry e; e.def = &d; e.title = d.title; e.cat = catNames[d.cat]; e.key = std::string("n:") + d.type;
-            const okay::vs::VsApiEntry* api = d.cat == CAT_API ? okay::vs::VsApiFind(d.type) : nullptr;
-            if (api) e.cat += " / " + api->apiType;
-            e.group = d.cat; e.col = bright(CatColor(d.cat));
+            const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
+            const VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str())
+                                      : VsPlaceForNode(d.type);
+            bool dup = false;
+            if (api) {
+                for (const auto& h : Registry()) {
+                    if (std::strchr(h.type, '.')) continue;
+                    if (VsApiDuplicatesHandNode(api->member.c_str(), h.type)) { dup = true; break; }
+                }
+            }
+            Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type;
+            e.cat = place.category ? place.category : "";
+            e.sub = place.subcategory ? place.subcategory : "";
+            e.catIndex = VsPaletteCategoryIndex(place.category);
+            e.browse = place.browse && !dup && e.catIndex >= 0;
+            e.col = bright(catColor(e.catIndex));
+            e.keywords = VsNodeSearchText(d.type);
+            if (api) { if (!e.keywords.empty()) e.keywords += ' '; e.keywords += "engine api"; }
+            if (d.cat >= 0 && d.cat < CAT_COUNT) {
+                static const char* oldCat[] = {
+                    "Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data",
+                    "Multiplayer & Steam","Engine API","Script builtins"};
+                if (!e.keywords.empty()) e.keywords += ' ';
+                e.keywords += oldCat[d.cat];
+            }
             // Built from the pins: what goes in, what comes out.
             auto join = [](const std::vector<const char*>& v) {
                 std::string s; for (const char* p : v) if (p && *p) { if (!s.empty()) s += ", "; s += p; } return s;
@@ -3616,7 +3652,6 @@ inline void Draw(EditorState& ed, bool* open) {
             if (!out.empty()) e.desc += "Gives: " + out + ". ";
             if (!ex.empty())  e.desc += "Continues to: " + ex + ". ";
             if (d.param && d.paramHint) e.desc += std::string("Setting: ") + d.paramHint + ".";
-            e.keywords = VsNodeSearchText(d.type);
             all.push_back(std::move(e));
         }
         for (int pass = 0; pass < 2; ++pass) {
@@ -3626,10 +3661,18 @@ inline void Draw(EditorState& ed, bool* open) {
             if (const auto* cat = StepCatalog(cond))
                 for (const auto& si : *cat) {
                     if (si.listOnly) continue;
+                    const VsPlace place = VsPlaceForStep(si.op.c_str(), si.group.c_str());
+                    bool sameAsNode = false;
+                    for (const auto& h : Registry()) if (h.title && si.label == h.title) { sameAsNode = true; break; }
                     Entry e; e.def = sd; e.step = &si; e.cond = cond; e.title = si.label;
-                    e.cat = std::string(cond ? "Check" : "Do") + (si.group.empty() ? "" : " / " + si.group);
+                    e.cat = place.category ? place.category : "";
+                    e.sub = place.subcategory ? place.subcategory : "";
+                    e.catIndex = VsPaletteCategoryIndex(place.category);
+                    e.browse = place.browse && !sameAsNode && e.catIndex >= 0;
                     e.key = std::string(cond ? "c:" : "a:") + si.op; e.desc = si.desc;
-                    e.group = CAT_COUNT + pass; e.col = bright(CatColor(CAT_ACTION));
+                    // The old menu words still find the step. They are not a topic.
+                    e.keywords = si.group + (cond ? " check something" : " do something");
+                    e.col = bright(catColor(e.catIndex));
                     all.push_back(std::move(e));
                 }
         }
@@ -3701,7 +3744,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
                     pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
             }
-            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc + " " + e.keywords + " " + pins);
+            const std::string extra = lower(e.cat + " " + e.sub + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc + " " + e.keywords + " " + pins);
             return extra.find(needle) != std::string::npos ? 40 : 0;
         };
 
@@ -3721,9 +3764,8 @@ inline void Draw(EditorState& ed, bool* open) {
             sdl->AddText(ImVec2(p.x + 16, p.y), ImGui::GetColorU32(ImGuiCol_Text), label);
             sdl->PopClipRect();
             if (count >= 0) sdl->AddText(ImVec2(right - nw, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), n);
-            if (ImGui::IsItemHovered()) {   // what the category is for
-                const char* blurb = id >= 0 && id < CAT_COUNT ? VsCatBlurb(id) : id == CAT_COUNT ? VsStepCatBlurb(false)
-                                  : id == CAT_COUNT + 1 ? VsStepCatBlurb(true) : nullptr;
+            if (ImGui::IsItemHovered()) {   // what the topic is for
+                const char* blurb = (id >= 0 && id < VsPaletteCategoryCount()) ? kPaletteCategories[id].blurb : nullptr;
                 if (blurb && *blurb) {
                     ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
                     ImGui::TextUnformatted(label); ImGui::TextDisabled("%s", blurb);
@@ -3732,15 +3774,18 @@ inline void Draw(EditorState& ed, bool* open) {
             }
             ImGui::PopID();
         };
-        auto countIn = [&](int grp) { int n = 0; for (const auto& e : all) if (e.group == grp) ++n; return n; };
-        sideItem(-3, "All", 0, (int)all.size());
+        int browseAll = 0;
+        for (const auto& e : all) if (e.browse) ++browseAll;
+        sideItem(-3, "All", 0, browseAll);
         sideItem(-2, "Recent", 0, -1);
         sideItem(-1, "Favourites", 0, (int)s_fav.size());
         ImGui::Separator();
-        for (int c = 0; c < CAT_COUNT; ++c) { const int n = countIn(c); if (n) sideItem(c, catNames[c], bright(CatColor(c)), n); }
-        ImGui::Separator();
-        if (int n = countIn(CAT_COUNT)) sideItem(CAT_COUNT, "Do something", bright(CatColor(CAT_ACTION)), n);
-        if (int n = countIn(CAT_COUNT + 1)) sideItem(CAT_COUNT + 1, "Check something", bright(CatColor(CAT_ACTION)), n);
+        // The documented topic order. No catch-all (not Do something, Check something, Actions, Data, or Engine API).
+        for (int c = 0; c < VsPaletteCategoryCount(); ++c) {
+            int n = 0;
+            for (const auto& e : all) if (e.browse && e.catIndex == c) ++n;
+            if (n) sideItem(c, kPaletteCategories[c].name, bright(catColor(c)), n);
+        }
         ImGui::EndChild();
         ImGui::SameLine();
 
@@ -3748,7 +3793,9 @@ inline void Draw(EditorState& ed, bool* open) {
         struct Row { const Entry* e; int sc; std::vector<int> hits; };
         std::vector<Row> rows;
         for (const auto& e : all) {
-            if (s_side >= 0 && e.group != s_side) continue;
+            // Hidden duplicates stay out of the list until someone searches for the old name.
+            if (needle.empty() && !e.browse) continue;
+            if (s_side >= 0 && e.catIndex != s_side) continue;
             if (s_side == -1 && !isFav(e.key)) continue;
             if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
             Row r{&e, 0, {}};
@@ -3757,6 +3804,8 @@ inline void Draw(EditorState& ed, bool* open) {
         }
         if (!needle.empty())
             std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.sc > b.sc; });
+        else if (s_side == -3)
+            std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.e->catIndex < b.e->catIndex; });
         else if (s_side == -2)
             std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
                 return std::find(s_recent.begin(), s_recent.end(), a.e->key) < std::find(s_recent.begin(), s_recent.end(), b.e->key);
@@ -3778,10 +3827,10 @@ inline void Draw(EditorState& ed, bool* open) {
         for (int i = 0; i < (int)rows.size(); ++i) {
             const Entry& e = *rows[i].e;
             // Group headers while browsing everything (not while searching).
-            if (needle.empty() && s_side == -3 && e.group != lastGroup) {
-                lastGroup = e.group;
+            if (needle.empty() && s_side == -3 && e.catIndex != lastGroup) {
+                lastGroup = e.catIndex;
                 if (i) ImGui::Spacing();
-                ImGui::TextDisabled("%s", e.group < CAT_COUNT ? catNames[e.group] : e.group == CAT_COUNT ? "Do something" : "Check something");
+                ImGui::TextDisabled("%s", e.cat.c_str());
             }
             ImGui::PushID(i);
             const ImVec2 p = ImGui::GetCursorScreenPos();

@@ -127,7 +127,8 @@ inline float BounceInOut(float t) {
 }
 
 /// A falloff for punches and shakes: 1 at t = 0, 0 at t = 1. `rate` <= 0 (or NaN) is a straight line;
-/// a larger rate drops exponentially (a big first swing and a short tail), reaching exactly 0 at t = 1.
+/// a larger rate drops exponentially (the motion is quiet sooner and the tail is short; the loudest part is
+/// always the very start), reaching exactly 0 at t = 1.
 inline float Decay(float t, float rate) {
     if (!(t > 0.0f)) return 1.0f;
     if (t >= 1.0f) return 0.0f;

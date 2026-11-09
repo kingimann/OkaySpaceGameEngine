@@ -18,6 +18,8 @@ class GameObject;
 ///
 /// Not thread safe: schedule, cancel and update from the thread that runs the
 /// scene. Callbacks may schedule and cancel freely (see docs/timers_and_tweens.md).
+/// A callback may even call Update on this scheduler: the nested update advances every other
+/// task, but the task whose callback is running is not run (or stepped) again by it.
 ///
 /// Cost: every lookup by handle (Cancel, SetPaused, IsPaused, SetInterval, Remaining,
 /// IsScheduled) is O(1); CancelByTag / CancelByOwner / CancelByObject / SetPausedByTag /
@@ -163,6 +165,7 @@ private:
         bool   isTween;
         bool   unscaled = false;
         bool   paused = false;
+        bool   running = false;       // one of its own callbacks is on the stack: a nested Update leaves it alone
         const void* owner = nullptr;
         std::string tag;
         std::string clock;            // channel name; empty = scene / unscaled time

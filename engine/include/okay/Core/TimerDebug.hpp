@@ -38,6 +38,8 @@ public:
         int topOldest = 3;          ///< longest-running tasks and tweens listed
         bool showGroups = true;     ///< the tag / owner / id lines
         bool showOldest = true;     ///< the "oldest" lines
+        // Capture builds the group tables (byTag, byOwner, byId) unless showGroups is false and topGroups is 0,
+        // and `oldest` holds at most topOldest entries: Summary and a BuildLines that hides them pay for neither.
     };
 
     struct GroupCount {

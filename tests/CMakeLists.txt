@@ -981,6 +981,11 @@ add_executable(test_loc_tools test_loc_tools.cpp)
 target_link_libraries(test_loc_tools PRIVATE okay::engine)
 add_test(NAME loc_tools COMMAND test_loc_tools)
 
+# Localization runtime, second pass: keys, language matching, plural rules, number/select placeholders, CSV
+add_executable(test_loc_runtime test_loc_runtime.cpp)
+target_link_libraries(test_loc_runtime PRIVATE okay::engine)
+add_test(NAME loc_runtime COMMAND test_loc_runtime)
+
 # Accessibility: colour vision, safe palette, subtitles and captions, settings
 add_executable(test_accessibility test_accessibility.cpp)
 target_link_libraries(test_accessibility PRIVATE okay::engine)

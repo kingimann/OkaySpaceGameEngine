@@ -16,7 +16,16 @@ Core additions in `okay/Core/Localization.hpp`, `Prefs.hpp` and `Time.hpp`. Test
 | pl | 1 one; 2-4 (not 12-14) few; other whole numbers many; fractions other |
 | cs, sk | 1 one; 2-4 few; fractions many; else other |
 | ar | 0 zero, 1 one, 2 two, 3-10 (mod 100) few, 11-99 many, else other |
-| ja, zh, ko, vi, th, id, ms | always other |
+| hr, sr, bs | one (1, 21, 101...), few (2-4, 22-24...), other (0, 5-20, 11-14, 25...); fractions other |
+| sl | one (1, 101...), two (2, 102...), few (3, 4, 103... and fractions), other |
+| lt | one (1, 21...), few (2-9, 22-29...; not the teens), other; fractions many |
+| lv | zero (0, 10, 20, 11-19...), one (1, 21...), other |
+| ro | 1 one; 0 and 2-19 (mod 100) few; other; fractions few |
+| he | 1 one, 2 two, other; fractions below 1 one |
+| hi, bn, fa, gu, kn, zu, am | 0 and 1 are one (fractions below 1 too), else other |
+| cy, ga, mt | Welsh (0 zero, 1 one, 2 two, 3 few, 6 many), Irish (1, 2, 3-6 few, 7-10 many), Maltese |
+| is, mk, da | is and mk: one for 1, 21, 31... (not 11); da: 1 is one, fractions 0 to 2 too |
+| ja, zh, ko, vi, th, id, ms, lo, my, km, jv | always other |
 
 `SetPluralRule(lang, fn)` still overrides any of them.
 
@@ -24,7 +33,7 @@ Core additions in `okay/Core/Localization.hpp`, `Prefs.hpp` and `Time.hpp`. Test
 
 ## Fallback chain
 
-`Get`, `TryGet`, `Localize` now fall back region -> base language -> default language -> key (`pt-BR` -> `pt` -> default), each miss reported once. `LocArg` integers keep their exact digits (a 64-bit id used to be rounded through a double).
+`Get`, `TryGet`, `Localize` now fall back through the parents of the language -> default language -> key (`pt-BR` -> `pt` -> default; `zh-Hant-TW` -> `zh-Hant` -> `zh` -> default), each miss reported once. A language never borrows from a sibling script (`zh-Hans` does not fall back to `zh-Hant`). `LocArg` integers keep their exact digits (a 64-bit id used to be rounded through a double).
 
 ## Formatting
 
@@ -33,6 +42,8 @@ Core additions in `okay/Core/Localization.hpp`, `Prefs.hpp` and `Time.hpp`. Test
 ## Typed Prefs
 
 `SetBool/GetBool`, `SetVec3/GetVec3`, `SetColor/GetColor` join the int / float / string accessors; every getter takes a default for a missing or unparsable key. `HasKey`, `DeleteKey`, `DeleteAll` are aliases of `Has`, `Delete`, `Clear`. Values stay text in the file (`1`/`0`, `x,y,z`, `r,g,b,a`) so the file format is unchanged and older builds read it.
+
+Prefs files are written whole or not at all (temp file, flush, rename), keys in order, and the previous good file is kept as `<file>.bak`. `Load` reads CR LF files, refuses a cut-off or zero-filled file and then reads `<file>.bak` (`Prefs::LastLoadUsedBackup()`; `Prefs::LastError()` says why a load or save failed or fell back). Every `Prefs` call may be made from any thread; a listener runs on the thread that made the change, outside the lock. See [save_games.md](save_games.md#what-changed-hardening-pass).
 
 `Prefs::AddListener(fn)` / `RemoveListener(id)`: `fn(key)` runs after a Set changes a value (setting the same value is silent), after a delete, once per key on `DeleteAll`, and with `""` after `Load`.
 

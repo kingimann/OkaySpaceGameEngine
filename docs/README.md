@@ -16,6 +16,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [packaging.md](packaging.md): how a build is laid out for distribution.
 - [releasing.md](releasing.md): releasing an update to players.
 - [steam_release.md](steam_release.md): releasing on Steam.
+- [release_channels.md](release_channels.md): the latest and LTS channels, the update bucket, versions.json, how to cut an LTS.
 
 ## Scripting
 - [scripting.md](scripting.md): the OkayScript language guide.

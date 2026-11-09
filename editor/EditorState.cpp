@@ -748,6 +748,10 @@ bool EditorState::Save(const std::string& path, std::string* error) {
 }
 
 bool EditorState::Load(const std::string& path, std::string* error) {
+    if (beforeLoad) {   // the project version gate: nothing is read, let alone changed, for a project nobody has answered for
+        std::string why;
+        if (!beforeLoad(path, &why)) { if (error) *error = why.empty() ? "This project can't be opened yet." : why; return false; }
+    }
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (m_playing) Stop();
     StopNetwork();

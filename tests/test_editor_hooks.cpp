@@ -5,6 +5,11 @@
 #include "test_framework.hpp"
 #include "EditorState.hpp"
 #include "okay/Core/Clock.hpp"
+#include "ProjectUpgrade.hpp"
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 
 using namespace okay;
 using okay::editor::EditorState;
@@ -360,6 +365,56 @@ int main() {
         CHECK(ProjectLists::Write().find("layer_name_8=Enemy\n") != std::string::npos);
         CHECK(Layers::ClearName(8) && Layers::Name(8) == "Layer 8" && std::string(Layers::DefaultName(8)).empty());
         ProjectLists::Reset();
+    }
+
+    // ---- The project version gate under Load: a scene of a project nobody has answered for does not open ----------
+    {
+        namespace fs = std::filesystem;
+        const fs::path base = fs::temp_directory_path() / ("okay_hooks_gate_" + std::to_string((long long)std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::error_code ec;
+        fs::create_directories(base / "Game" / "Assets", ec);
+        {
+            Scene made("Level");
+            made.CreateGameObject("Hero");
+            std::ofstream(base / "Game" / "Assets" / "Level.okayscene", std::ios::binary) << SceneSerializer::Serialize(made);
+            std::ofstream(base / "Game" / "project.okayproj", std::ios::binary) << "company=Me\nengine_version=2.850.0\n";
+        }
+        const std::string scenePath = (base / "Game" / "Assets" / "Level.okayscene").string();
+        auto projectText = [&] { std::ifstream f(base / "Game" / "project.okayproj", std::ios::binary); return std::string(std::istreambuf_iterator<char>(f), {}); };
+        auto has = [](EditorState& e, const char* name) { for (const auto& o : e.scene().Objects()) if (o->name == name) return true; return false; };
+
+        okayup::GateEnv env;
+        env.running = "2.855.0";
+        okayup::ProjectGate gate(env);
+        EditorState::beforeLoad = [&gate](const std::string& p, std::string* why) { return gate.MayLoad(p, why); };
+        EditorState ed;
+        ed.scene().CreateGameObject("Mine");
+        std::string err;
+        CHECK(!ed.Load(scenePath, &err) && err.find("v2.850.0") != std::string::npos && err.find("upgrade") != std::string::npos);
+        CHECK(has(ed, "Mine") && !has(ed, "Hero") && ed.projectDir().empty() && ed.path().empty());   // refused before anything changed
+        CHECK(projectText() == "company=Me\nengine_version=2.850.0\n");                              // and nothing written
+
+        // asking first: Cancel keeps the refusal, Upgrade then Continue opens the project (the editor's own code path)
+        int opened = 0, cancelled = 0;
+        auto open = [&] { std::string e; if (ed.Load(scenePath, &e)) ++opened; };
+        gate.Open(scenePath, open, [&] { ++cancelled; });
+        CHECK(gate.prompt().kind == okayup::PromptKind::Older && opened == 0 && projectText() == "company=Me\nengine_version=2.850.0\n");
+        gate.Answer(okayup::Choice::Cancel);
+        CHECK(cancelled == 1 && opened == 0 && !ed.Load(scenePath, &err) && has(ed, "Mine"));
+        gate.Open(scenePath, open, [&] { ++cancelled; });
+        gate.Answer(okayup::Choice::Upgrade);
+        for (int i = 0; i < 100000 && gate.prompt().kind == okayup::PromptKind::Working; ++i) gate.Tick(std::chrono::milliseconds(0));
+        CHECK(gate.prompt().kind == okayup::PromptKind::Done && opened == 0);
+        gate.Answer(okayup::Choice::Continue);
+        CHECK(opened == 1 && has(ed, "Hero") && !has(ed, "Mine") && ed.path() == scenePath && ed.projectDir() == (base / "Game").string());
+        CHECK(projectText().find("engine_version=2.855.0") != std::string::npos);                    // stamped by the upgrade
+        CHECK(ed.Load(scenePath, &err));                                                             // answered: opens like any scene
+        // a scene outside any project is nobody's business, and a same-version project needs no answer
+        fs::create_directories(base / "loose", ec);
+        std::ofstream(base / "loose" / "x.okayscene", std::ios::binary) << SceneSerializer::Serialize(Scene("x"));
+        CHECK(ed.Load((base / "loose" / "x.okayscene").string(), &err));
+        EditorState::beforeLoad = nullptr;
+        fs::remove_all(base, ec);
     }
 
     TEST_MAIN_RESULT();

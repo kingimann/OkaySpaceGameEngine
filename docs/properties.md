@@ -321,7 +321,8 @@ How the new types are described, so a tool can rely on it:
   component says so).
 - Ranges are wide enough for every legitimate setup and tight enough to refuse nonsense: speeds
   and times are not negative, angles stay within a turn, the navigation bake settings use the limits the
-  bake itself applies (cell size at least 0.05, slope at most 89 degrees), a UI colour is 0..1. `UIDropdown.value` may be -1 (nothing chosen).
+  bake itself applies (cell size at least 0.05, slope at most 89 degrees), a UI colour is 0..1.
+  `UIDropdown.value` may be -1 (nothing chosen).
 - A property whose meaning depends on another (`UISlider.value` against `minValue` and `maxValue`)
   is held to its own range only; the widget clamps it when it draws.
 
@@ -335,15 +336,16 @@ internal state; lists (`UIDropdown.options`, `MusicPlayer.tracks`, `NetworkManag
 the localisation key of a widget (`loc`, its own `loc` record); and every field the scene record
 does not keep: the first-person controller's pitch limits, `lockCursor`, `showBody`, `yaw` and `pitch`,
 the swimming, fall-reset, step offset and slope settings of the first and third person and the 3D
-character controllers, the transient state of a button or a dropdown (`open`, `focused`). Registering one of those would break the rule that every authored property
-survives Save and Load, which the tests check.
+character controllers, the transient state of a button or a dropdown (`open`, `focused`). Registering
+one of those would break the rule that every authored property survives Save and Load, which the tests
+check.
 
 **Not registered yet:** scripts (`ScriptComponent` and `VisualScriptComponent` keep their
 source and a free-form `fields` table, not named properties), `NetworkManager` and the anti-cheat
 settings (record plus lists), the UI tabs, toast, tooltip, theme, context menu, list view, slot grid
-and colour picker, the minimap (markers are lists), inventory, crafting, dialogue, quest and survival
-components, terrain, voxel and spline components, ragdoll, the tilemap, and the sequence and
-cinematic components. Animation and IK components
+and colour picker, the minimap (markers are lists), `PauseMenu`, `HoldPrompt`, `LoadingScreen`, `Stats`,
+`ItemPickup`, inventory, crafting, dialogue, quest and survival components, terrain, voxel and spline
+components, ragdoll, the tilemap, and the sequence and cinematic components. Animation and IK components
 are left to the animation work. They can all register themselves with the builder.
 
 ## What the tests check

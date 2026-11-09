@@ -15,6 +15,8 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/LODGroup.hpp"
+#include "okay/Components/Occluder.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/MeshModifiers.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -610,8 +612,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cam->physicalCamera ? 1 : 0) << " " << cam->focalLength << " " << cam->sensorHeight
             << " " << cam->zoom << " " << cam->dutch << " " << cam->lensShiftX << " " << cam->lensShiftY
             << " " << (cam->pixelPerfect ? 1 : 0) << " " << cam->pixelsPerUnit
-            << " " << cam->shakeAmount << " " << cam->shakeAngle << " " << cam->shakeFrequency << " " << cam->shakeRecovery
-            << "\n";
+            << " " << cam->shakeAmount << " " << cam->shakeAngle << " " << cam->shakeFrequency << " " << cam->shakeRecovery;
+        if (!cam->renderTarget.empty()) out << " " << Quote(cam->renderTarget);
+        out << "\n";
     }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
@@ -722,6 +725,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Ambient-occlusion map + strength (separate record so older scenes still load).
         if (!mr->aoMap.empty())
             out << "  aomap " << Quote(mr->aoMap) << " " << mr->aoStrength << "\n";
+        if (!mr->metallicRoughnessMap.empty())
+            out << "  mrmap " << Quote(mr->metallicRoughnessMap) << "\n";
+        if (!mr->emissiveMap.empty())
+            out << "  emissivemap " << Quote(mr->emissiveMap) << "\n";
         // Shading model (separate record so older scenes still load).
         if (mr->shader != MeshRenderer::Shader::Standard)
             out << "  shader " << (int)mr->shader << " " << mr->toonBands
@@ -3346,7 +3353,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut{out}.str("spline", sm->spline)("mode", (int)sm->mode)("profile", (int)sm->profile)("width", sm->width)
             ("height", sm->height)("sides", sm->sides)
             .str("custom", PointList(sm->customProfile))
-            .b("cclosed", sm->closedProfile)("seg", sm->segmentLength)("uv", sm->uvTileLength).str("src", sm->sourceMesh)
+            .b("cclosed", sm->closedProfile).b("caps", sm->capEnds)("seg", sm->segmentLength)("uv", sm->uvTileLength).str("src", sm->sourceMesh)
             ("axis", (int)sm->meshAxis)("spacing", sm->spacing)("msx", sm->meshScale.x)("msy", sm->meshScale.y)
             ("msz", sm->meshScale.z).b("fit", sm->stretchToFit).b("collider", sm->generateCollider);
         out << "\n";
@@ -3943,6 +3950,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                                        >> cam->shakeFrequency >> cam->shakeRecovery;
                                     cam->pixelPerfect = (pp != 0);
                                     if (!(cam->zoom > 0.01f)) cam->zoom = 1.0f;
+                                    in >> std::ws;
+                                    if (in.peek() == '"') cam->renderTarget = ReadQuoted(in);
                                 }
                             }
                         }
@@ -4562,6 +4571,16 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> std::ws;
                         int p = in.peek();   // optional trailing strength
                         if (std::isdigit(p) || p == '-' || p == '.') in >> mr->aoStrength;
+                    }
+                } else if (field == "mrmap") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->metallicRoughnessMap = ReadQuoted(in);
+                    }
+                } else if (field == "emissivemap") {
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                        in >> std::ws;
+                        if (in.peek() == '"') mr->emissiveMap = ReadQuoted(in);
                     }
                 } else if (field == "shader") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
@@ -8076,7 +8095,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     const std::vector<float> cp = ReadNumberList(k, "custom");
                     sm->customProfile.clear();
                     for (std::size_t i = 0; i + 1 < cp.size(); i += 2) sm->customProfile.push_back({cp[i], cp[i + 1]});
-                    k.b("cclosed", sm->closedProfile); k.f("seg", sm->segmentLength); k.f("uv", sm->uvTileLength);
+                    k.b("cclosed", sm->closedProfile); k.b("caps", sm->capEnds); k.f("seg", sm->segmentLength); k.f("uv", sm->uvTileLength);
                     k.str("src", sm->sourceMesh); k.i("axis", axis);
                     sm->meshAxis = axis == 2 ? SplineMesh::Axis::Z : SplineMesh::Axis::X;
                     k.f("spacing", sm->spacing);
@@ -8530,7 +8549,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
         if (auto* mp = go->GetComponent<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
-        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); }
+        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
         if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); }
         if (auto* ps = go->GetComponent<ParticleSystem>())  add(ps->texture);
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
@@ -8650,6 +8669,64 @@ void RegisterBuiltinComponentSerializers() {
         ReadGradientKv(k, "g", tr->colorGradient);
     };
     ComponentSerializerRegistry::Register(std::move(trail));
+
+    ComponentSerializerRegistry::Entry lod;
+    lod.name = "lodgroup";
+    lod.write = [](const GameObject& go, std::ostream& out) {
+        auto* lg = go.GetComponent<LODGroup>();
+        if (!lg || lg->levels.empty()) return;
+        out << "  lodgroup";
+        KvOut k{out};
+        k.b("screen", lg->useScreenSize)("hyst", lg->hysteresis)("cullD", lg->cullDistance)
+         ("cullS", lg->cullScreen)("force", lg->forceLevel).b("tint", lg->debugTint)
+         ("n", (int)lg->levels.size());
+        const int n = std::min((int)lg->levels.size(), LODGroup::kMaxLevels);
+        for (int i = 0; i < n; ++i) {
+            const auto& L = lg->levels[(std::size_t)i];
+            k(("d" + std::to_string(i)).c_str(), L.distance);
+            k(("s" + std::to_string(i)).c_str(), L.screenSize);
+            k(("r" + std::to_string(i)).c_str(), L.ratio);
+        }
+        out << "\n";
+    };
+    lod.read = [](GameObject& go, std::istream& in) {
+        auto* lg = go.GetComponent<LODGroup>();
+        if (!lg) lg = go.AddComponent<LODGroup>();
+        KvIn k(in);
+        int n = 0, force = -1;
+        k.b("screen", lg->useScreenSize); k.f("hyst", lg->hysteresis);
+        k.f("cullD", lg->cullDistance); k.f("cullS", lg->cullScreen);
+        k.i("force", force); lg->forceLevel = force;
+        k.b("tint", lg->debugTint); k.i("n", n);
+        if (n < 1) n = 1;
+        if (n > LODGroup::kMaxLevels) n = LODGroup::kMaxLevels;
+        lg->levels.assign((std::size_t)n, {});
+        for (int i = 0; i < n; ++i) {
+            k.f(("d" + std::to_string(i)).c_str(), lg->levels[(std::size_t)i].distance);
+            k.f(("s" + std::to_string(i)).c_str(), lg->levels[(std::size_t)i].screenSize);
+            k.f(("r" + std::to_string(i)).c_str(), lg->levels[(std::size_t)i].ratio);
+        }
+        if (auto* mr = go.GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty() && n > 1)
+            lg->RebuildFromRatios(mr->DisplayMesh());
+    };
+    ComponentSerializerRegistry::Register(std::move(lod));
+
+    ComponentSerializerRegistry::Entry occ;
+    occ.name = "occluder";
+    occ.write = [](const GameObject& go, std::ostream& out) {
+        auto* o = go.GetComponent<Occluder>();
+        if (!o) return;
+        out << "  occluder";
+        KvOut{out}.b("mesh", o->useMesh);
+        out << "\n";
+    };
+    occ.read = [](GameObject& go, std::istream& in) {
+        auto* o = go.GetComponent<Occluder>();
+        if (!o) o = go.AddComponent<Occluder>();
+        KvIn k(in);
+        k.b("mesh", o->useMesh);
+    };
+    ComponentSerializerRegistry::Register(std::move(occ));
 }
 } // namespace detail
 

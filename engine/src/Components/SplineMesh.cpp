@@ -210,6 +210,37 @@ bool SplineMesh::Build(const Spline& sp, Mesh& out) const {
                 const int a = r * cols + c, b = r * cols + c + 1, cc = (r + 1) * cols + c + 1, dd = (r + 1) * cols + c;
                 out.triangles.insert(out.triangles.end(), {a, dd, cc, a, cc, b});
             }
+        // Close the open ends of a volume (road, tube, rail). A closed curve has
+        // no ends. A strip is a ribbon. Caps face out along the curve.
+        const bool volume = profile == Profile::Road || profile == Profile::Tube || profile == Profile::Rail
+                            || (profile == Profile::Custom && loop && P >= 3);
+        if (capEnds && !sp.closed && volume && R >= 2 && P >= 3) {
+            auto capRing = [&](int ring, const Vec3& outward) {
+                Vec3 c{0, 0, 0};
+                for (int i = 0; i < P; ++i) c += out.vertices[(std::size_t)(ring * cols + i)];
+                c = c * (1.0f / (float)P);
+                const int center = (int)out.vertices.size();
+                out.vertices.push_back(c);
+                const float v = ring == 0 ? 0.0f : ds.back().d / tile;
+                out.uvs.push_back({0.5f, v});
+                const int first = (int)out.triangles.size();
+                for (int s = 0; s < P; ++s) {
+                    const int a = ring * cols + s;
+                    const int b = ring * cols + (s + 1) % P;
+                    out.triangles.insert(out.triangles.end(), {center, a, b});
+                }
+                const Vec3& va = out.vertices[(std::size_t)out.triangles[(std::size_t)first + 1]];
+                const Vec3& vb = out.vertices[(std::size_t)out.triangles[(std::size_t)first + 2]];
+                if (Vec3::Dot(Vec3::Cross(va - c, vb - c), outward) < 0.0f) {
+                    for (int t = first; t + 2 < (int)out.triangles.size(); t += 3)
+                        std::swap(out.triangles[(std::size_t)t + 1], out.triangles[(std::size_t)t + 2]);
+                }
+            };
+            const Vec3 startOut = relDir.MultiplyVector(sp.LocalSampleAtDistance(ds.front().d).tangent) * -1.0f;
+            const Vec3 endOut = relDir.MultiplyVector(sp.LocalSampleAtDistance(ds.back().d).tangent);
+            capRing(0, startOut);
+            capRing(R - 1, endOut);
+        }
         if (profile == Profile::Tube) out.ComputeSmoothNormals();   // a round pipe, not facets
         return true;
     }
@@ -275,7 +306,7 @@ std::uint64_t SplineMesh::Signature(const Spline* sp) const {
     h.Add((int)mode); h.Add((int)profile); h.Add(width); h.Add(height); h.Add(sides);
     h.Add(customProfile.size());
     for (const Vec2& p : customProfile) h.Add(p);
-    h.Add(closedProfile); h.Add(segmentLength); h.Add(uvTileLength);
+    h.Add(closedProfile); h.Add(capEnds); h.Add(segmentLength); h.Add(uvTileLength);
     h.Add(sourceMesh); h.Add((int)meshAxis); h.Add(spacing); h.Add(meshScale); h.Add(stretchToFit);
     h.Add(generateCollider);
     return h.h;

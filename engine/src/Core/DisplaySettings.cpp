@@ -65,6 +65,21 @@ void DisplaySettings::ApplyQuality() {
     BloomEnabled() = high;
     SSAOEnabled() = high;
     FXAAEnabled() = !low;
+    // Shadow resolution and how far cascades reach. High matches the historical
+    // defaults (2048, 80 m, 3 cascades) so an untouched install looks the same.
+    if (low) {
+        ShadowMapResolution() = 512;
+        ShadowDistance() = 40.0f;
+        ShadowCascades() = 1;
+    } else if (!high) {
+        ShadowMapResolution() = 1024;
+        ShadowDistance() = 60.0f;
+        ShadowCascades() = 2;
+    } else {
+        ShadowMapResolution() = 2048;
+        ShadowDistance() = 80.0f;
+        ShadowCascades() = 3;
+    }
 }
 
 } // namespace okay

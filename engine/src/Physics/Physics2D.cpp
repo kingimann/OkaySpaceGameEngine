@@ -3,6 +3,7 @@
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/NearestLookup.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -541,7 +542,7 @@ void Physics2D::Step(Scene& scene, float dt) {
         Transform* ta = j->transform;
         Rigidbody2D* rbB = nullptr; Transform* tb = nullptr;
         if (!j->connectedBody.empty())
-            if (GameObject* g = scene.Find(j->connectedBody)) { tb = g->transform; rbB = g->GetComponent<Rigidbody2D>(); }
+            if (GameObject* g = FindNearest(scene, j->connectedBody, j->gameObject)) { tb = g->transform; rbB = g->GetComponent<Rigidbody2D>(); }
         Vec3 pa3 = ta->Position();
         Vec2 pa{pa3.x, pa3.y};
         Vec2 pb = j->anchor;

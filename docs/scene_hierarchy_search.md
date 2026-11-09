@@ -58,8 +58,12 @@ Streams that set their own precision, width or fixed / scientific flags are unch
 | Call | Notes |
 | --- | --- |
 | `scene.FindGameObjectsWithTag(tag)` | every match, in scene order |
-| `scene.FindByPath("A/B/C")` | a root named A, its child B, its child C. `Find("A/B/C")` also accepts a path |
+| `scene.FindByPath("A/B/C")` | a root named A, its child B, its child C. `Find("A/B/C")` also accepts a path. Duplicate names are all tried (see "fifth pass") |
+| `scene.FindAllByPath("A/B")` | every object the path names, in scene and sibling order |
+| `FindNearest(scene, "Axle", go)` | the object called "Axle" nearest to `go` in the hierarchy (its own subtree, then its parent's, ...), then the scene-wide `Find` |
+| `go->ForEachDescendant(fn, includeInactive = true, includeSelf = false)` | pre-order walk, `fn(GameObject&)` may return `false` to stop |
 | `scene.Roots()` | objects without a parent |
+| `go->GetOrAddComponent<T>(args...)` | the first `T`, or a new one |
 | `go->GetComponentInChildren<T>(includeInactive = false)` | the object itself first, then depth first |
 | `go->GetComponentsInChildren<T>(includeInactive = false)` | every match, pre-order |
 | `go->GetComponentInParent<T>(includeInactive = false)` | the object, then each parent |
@@ -76,6 +80,9 @@ An inactive object is skipped together with its children unless `includeInactive
 `GetSiblingIndex()` / `SetSiblingIndex(i)` (children use the parent's list, roots use the
 scene's root order; the index is clamped), `SetPositionAndRotation(pos, rot)`,
 `SetLocalPositionAndRotation(pos, rot)`, `SetParent(parent, keepWorld, siblingIndex)`.
+The look-at family: `LookAt(target, up)`, `LookAt(const Transform*, up)`, `LookDirection(dir, up)`,
+`LookAtYaw(target, up)` (turn about the up axis only), `LookAt2D(target, Facing2D::Right | Up)` and
+`RotateTowards(target, maxDegrees, up)` (see "fifth pass").
 
 ## Validation
 
@@ -293,3 +300,105 @@ file may be. Added: `ValidatorOptions::checkLinks` with `scene.duplicate_guid` a
 `ValidateSceneLinks`. Tests: `core_validation`. Not done: the third list, `AssetDatabase::FindMissing` (33.2), is a
 different question (what is not in the project's database), and `CollectAssetPaths` was left alone because builds
 depend on it.
+
+## What changed: scene graph, fifth pass (1.3)
+
+Tests: `scene_graph_wave5`, `object_pool_wave5`, `component_order` (extended). Scene files from before load unchanged; the
+`comporder` record of the fourth pass is now written for more objects (see `scene_serializer.md`).
+
+### World reads: what is true, what was done
+
+A cached world matrix per `Transform` already existed (since before the fourth pass). It cannot be keyed on a dirty flag or a
+version that the setters bump: `localPosition`, `localRotation` and `localScale` are public fields that about 2400 places write
+directly (components, the editor's drag boxes, the script bindings, tests), and no setter sees `t->localPosition.x = 3`. A cache
+that skipped the check would answer wrongly after such a write. So the cache keeps the local values it was built from and
+checks them on every read, level by level up the parents. That check is what a world read costs, and it stays proportional to the
+depth. What changed:
+
+* An unchanged chain is checked in **one read-only loop** (a few compares per level, no copying, no matrix math); only the levels
+  from the first changed one downward are rebuilt, each once. Before, every read first copied the whole chain and then ran a
+  refresh call on each level.
+* `LossyScale()` is cached with the matrix (it was a separate walk of the chain that multiplied the scales again on every call);
+  `Position()`, `Rotation()`, `LossyScale()` and `LocalToWorldMatrix()` now cost the same single check.
+* `SetParent(parent, true)` (keep the world pose) walks the new parent's chain **once**, and the old parent's once: it used to
+  walk it about three times after the move and once for each of position, rotation and scale before it. Rebuilding a 1500-deep chain
+  that way now takes 1124250 level checks (one walk per `SetParent`: the sum of the depths), where the old code did three. The numbers
+  it computes are the same expressions as before.
+* Diagnostics, counted per thread: `Transform::WorldWalkSteps()` (levels looked at), `Transform::WorldRebuilds()` (matrices
+  rebuilt). `scene_graph_wave5` checks that 4000 random edits (plain field writes, `Translate`, `Rotate`, `SetPosition`,
+  `SetRotation`, `SetLossyScale`, `SetParent` with and without keeping the world pose, `SetSiblingIndex`, `LookAt`,
+  `DetachChildren`) always read the same pose as a walk of the local fields with no cache, and that one edit in the middle of a
+  200-deep chain rebuilds exactly the levels below it.
+* Thread safety is what it was: reading the world pose of a chain whose caches are current only reads (several threads may);
+  a read that has to rebuild writes the caches of that chain, so it must not run at the same time as another read of the same
+  chain. Editing the hierarchy is single-threaded.
+
+Not done, and why: reading a leaf of a 5000-deep chain still looks at 5000 levels each time (about 1.1 ns per level: 5.5 microseconds
+a read; a 40-bone skeleton is 40 levels). Making that constant needs every
+write to the local fields to go through a setter (a breaking change of 2400 call sites and of the editor), or a read pass that
+promises not to write (nothing in 1.3 runs one; renderers and physics would have to opt in).
+
+### Child lists
+
+`SetParent(nullptr)` (or to another parent) on one of a parent's 300000 children used to find and erase it in a vector: linear in
+the list, so taking all of them out one at a time was quadratic (taking 300000 children out from the front moves about 45 billion list
+slots). Now:
+
+* each child knows its slot in its parent's list;
+* a list of up to 64 children is erased from as before; a longer one leaves a hole where the child was and sweeps the holes out in
+  bulk (when more than half the slots are holes, and when the list is read), so a removal costs a constant and the order of the
+  others never changes;
+* `Children()` and `GetChild(i)` settle the list first, so a reader never sees a hole (readers on several threads are fine: the
+  sweep takes a lock), `ChildCount()` is exact without settling, `GetSiblingIndex()` is a lookup instead of a scan;
+* `Transform::ChildListWork()` counts the slots visited or moved by list maintenance: taking all 300000 children out of one parent
+  from the front, one at a time, costs 901100 slot visits (3 per child) and about 30 ms on the test machine.
+
+### Bugs fixed
+
+| Bug | Fix |
+| --- | --- |
+| `FindByPath("Root/Door/Lock")` returned `nullptr` when two siblings were called "Door" and only the second had a "Lock": the search took the first match at each level and never went back. An object whose name contains `/` could not be found by path. | Every match is tried, in scene and sibling order; the path is read from the left against whole names. `FindAllByPath` lists them all. Runs of `/` still count as one. |
+| The order of plain `AddComponent` calls was lost on save and load (components came back in the writer's order, so `Update` order changed). | `comporder` is written when the object's order is not the one its records load as; see `scene_serializer.md`. |
+| A copy made with `Instantiate` / `Duplicate` resolved the names its components point at (`Joint2D` / `Joint3D` `connectedBody`) with `Scene::Find`, which answers with the first object of that name: the original's. A cloned vehicle's joint pulled on the original's axle. | `FindNearest(scene, name, from)` looks in the asking object's own hierarchy first; the two physics joint loops use it. Other components that point at an object by name (`CameraFollow::targetName`, `Teleporter`, ...) still call `Scene::Find`: they are listed in the report as follow-ups. |
+| A tag or a layer name was limited to 64 / 32 **bytes**: a Japanese or Cyrillic name of 22 / 11 characters was refused. Two layers could be named "Enemy" and "enemy" apart, but also "Énemy" and "énemy". | Counted in characters (UTF-8), at most four bytes each so a run of broken bytes cannot grow without end. Layer names compare without regard to case for Latin-1, Latin Extended-A, Greek and Cyrillic too (`Layers::Fold`). |
+| `ObjectPool`: a body reused from the pool kept its velocity, spin, waiting forces and render-interpolation history; a `Lifetime` kept the time it had already lived (an object released at 1.9 s of 2 died 0.1 s into its next use). | A reused object is reset: new `Component::OnPoolReuse()`, implemented by `Rigidbody2D`, `Rigidbody3D` and `Lifetime`. |
+| `ObjectPool`: a `Destroy(go, seconds)` that was still waiting when the object was released destroyed the object during its next use. | `Release` takes it back (`Scene::CancelDelayedDestroy`). |
+| `ObjectPool`: an object queued for destruction (or waiting for a delayed one) while pooled could be handed out and then vanish. | `Get` skips it and forgets it (`Scene::IsDestroyPending`); `Release` of such an object lets it go. |
+| `ObjectPool`: the tag, layer, `active` flag and enabled components of a reused object (and the pose, tag, layer and flags of its children) stayed as the last use left them (an enemy tagged "Dead", an AI component switched off on death). | Put back to the template's, when the hierarchy and the components still have the template's shape (the root is always put back). |
+| `ObjectPool`: every `Get`, `Release` and count looked up every object the pool held (a pool of 5000 bullets: 10000 locked lookups per call), `Release` searched the idle list, and objects destroyed behind its back counted against `maxSize`. | `Get` and `Release` look at one or two objects; the counts prune only after the scene's structure changed; dead objects are dropped before the limit is checked. `ObjectPool::LookupCount()` counts the work. |
+
+### New
+
+| Call | Notes |
+| --- | --- |
+| `go->GetOrAddComponent<T>(args...)` | the first `T`, or a new one made with `args` (rules from `RequireComponent` / `DisallowMultipleComponent` apply) |
+| `go->ForEachDescendant(fn, includeInactive = true, includeSelf = false)` | pre-order, siblings in order, explicit stack (100000 deep is fine); `fn` may return `bool`: `false` stops and the call returns `false`; a child added to the object just visited is visited |
+| `go->HasLiveComponentInHierarchy()` | `HasLiveComponent` over the object and everything below it |
+| `transform->LookDirection(dir, up)` | face a direction; a zero or non-finite direction does nothing; a direction along the up hint takes a world axis for the hint, so the result is always finite |
+| `transform->LookAtYaw(target, up = Up)` | turn about the up axis only (an enemy facing the player on level ground, a turret base); nothing when the target is straight above or below |
+| `transform->LookAt2D(target, Transform::Facing2D::Right / Up)` | turn about Z so the object's right (or up) axis points at the target in the X / Y plane |
+| `transform->RotateTowards(target, maxDegrees, up)` | turn at most `maxDegrees` toward facing the target, `true` once it does; frame-rate independent when `maxDegrees` is speed times frame time |
+| `transform->LookAt(const Transform*, up)` | the same as `LookAt(target->Position(), up)`; null does nothing |
+| `scene.FindAllByPath(path)`, `FindNearest(scene, name, from)` | see above (`okay/Scene/NearestLookup.hpp`) |
+| `scene.UpdateCount()`, `scene.IsDestroyPending(go)`, `scene.CancelDelayedDestroy(go)` | counts the Updates that delivered OnEnable / OnDisable; "queued or waiting to be destroyed?"; take a delayed destroy back |
+| `Component::OnPoolReuse()` | an `ObjectPool` is handing this component's object out again: reset the runtime state of the last use |
+| `ObjectPool::LookupCount()`, `Transform::WorldWalkSteps()`, `WorldRebuilds()`, `ChildListWork()` | diagnostics for tests and overlays |
+
+### Checked and found right
+
+`Scene::Stats()` on 150000 objects with a 50000-deep chain (counts right, `ActiveInHierarchy` walks stay linear, a second call
+walks nothing); `Mover` / `Spinner` under a parent that is destroyed in the same frame (they run once more, then freeze with the
+shell; an object adopted while its parent is destroyed carries on as a root with its `Mover` running); `Layers` / `Tags` and
+`ProjectLists` with 10000 objects carrying their own tag in another language; a very long path through a 20000-deep chain.
+
+### Notes
+
+* A name in a path is matched whole: `FindByPath("a/b")` finds an object called "a/b" and also an object "b" under "a", the first in
+  scene order wins.
+* Components still point at other objects by name. A clone has the same names as the original, so a component that looks a name up
+  with `Scene::Find` reaches the original's object (the joints no longer do). Give the parts of a prefab names that are unique in the
+  scene, or look them up with `FindNearest(scene, name, gameObject)` or `transform->Find("Arm/Hand")`.
+* `ObjectPool` is main-thread only like the scene, and must not outlive its scene (it keeps a pointer to it).
+* Merge: a `comporder` line that two branches both edit (each added a different component to an object whose order is not the
+  writer's) is one conflicting record for `SceneMerge`, like any other single-line record.
+

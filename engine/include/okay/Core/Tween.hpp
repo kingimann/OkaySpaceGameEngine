@@ -185,6 +185,10 @@ protected:
     virtual void DoApply(float k, float u, int loop) = 0;
     /// A sequence also rewinds its children when a loop restarts.
     virtual void DoLoopRestart() {}
+    /// The tween ended for good (Kill, a manager Clear, its object died). A sequence ends the tweens it
+    /// holds too, silently, so a handle to one of them stops reporting IsActive() and cannot write into
+    /// a scene that is gone.
+    virtual void DoKill() {}
     bool  m_initialized = false;
 
 private:
@@ -201,6 +205,8 @@ private:
     double m_age = 0.0;         // seconds of play the manager gave it (a debug view lists the oldest)
     bool   m_started = false, m_complete = false, m_killed = false, m_nested = false;
     void   Advance(float dt);
+    /// Kill without OnKill (and without completing): what a Clear and a dying object do.
+    void   EndSilently() { if (m_killed) return; m_killed = true; DoKill(); }
     /// The delay as used: NaN and negative count as 0, and it stops at kMaxSeconds.
     double DelayD() const { return delay > 0.0f ? (double)(delay < kMaxSeconds ? delay : kMaxSeconds) : 0.0; }
 };
@@ -275,6 +281,7 @@ public:
 protected:
     void DoApply(float k, float u, int loop) override;
     void DoLoopRestart() override;
+    void DoKill() override;
 private:
     struct Item { std::shared_ptr<Tweener> tween; float at; };
     struct Call { float at; Callback fn; };
@@ -339,7 +346,11 @@ public:
     int  Complete(const std::string& id);
     int  PauseTarget(const GameObject* go);
     int  PlayTarget(const GameObject* go);
-    /// Pause / resume everything (a pause menu): unscaled tweens keep playing when `keepUnscaled`.
+    /// Pause / resume everything (a pause menu). With `keepUnscaled` the tweens that do not follow the game's
+    /// time keep playing: the ones that ignore the time scale (SetUpdate(true)) and the ones on a Clock channel
+    /// that runs on real time, is not held by the game pause and is not paused itself ("ui" and a channel of
+    /// your own). Tweens on "game" or "cinematic", on a paused channel, and on scene time are paused. A tween
+    /// with a channel follows the channel only, so SetUpdate does not exempt it.
     void PauseAll(bool keepUnscaled = false);
     void PlayAll();
 
@@ -377,6 +388,7 @@ private:
     friend class TweenSequence;
     void Adopt(const std::shared_ptr<Tweener>& t);
     void Detach(Tweener* t);
+    bool KeepsRunningThroughPause(const Tweener& t) const;
     std::vector<std::shared_ptr<Tweener>> m_tweens;
     Handle m_next = 1;
     ClockSet* m_clocks = nullptr;

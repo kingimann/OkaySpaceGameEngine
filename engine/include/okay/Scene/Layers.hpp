@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <string>
+#include "okay/Core/Utf8.hpp"
 
 namespace okay {
 
@@ -14,7 +15,32 @@ namespace okay {
 /// (ProjectLists saves and loads them with the project settings). Main thread only.
 struct Layers {
     static constexpr int kCount = 32;
+    /// The longest layer name, counted in characters (an accented or Japanese letter is one character, not
+    /// its two or three bytes); a name is also never more than four bytes per character.
     static constexpr std::size_t kMaxNameLength = 32;
+    /// A letter in lower case, for comparing names without regard to case: ASCII, Latin-1, Latin Extended-A,
+    /// Greek and Cyrillic (the scripts that have case); anything else is returned as it is.
+    static std::uint32_t FoldCode(std::uint32_t c) {
+        if (c < 0x80) return (c >= 'A' && c <= 'Z') ? c + 32 : c;
+        if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return c + 32;                              // Latin-1 capitals
+        if ((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) return (c & 1u) ? c : c + 1;   // Latin Extended-A pairs
+        if (c >= 0x391 && c <= 0x3A9 && c != 0x3A2) return c + 32;                           // Greek
+        if (c >= 0x410 && c <= 0x42F) return c + 32;                                         // Cyrillic
+        if (c >= 0x400 && c <= 0x40F) return c + 80;
+        return c;
+    }
+    /// The name with every letter folded to lower case (see FoldCode).
+    static std::string Fold(const std::string& s) {
+        std::string out;
+        out.reserve(s.size());
+        for (std::size_t i = 0; i < s.size();) {
+            const std::size_t start = i;
+            const std::uint32_t cp = utf8::Next(s, i);
+            if (cp == utf8::kReplacement) { out.append(s, start, i - start); continue; }   // a broken sequence stays as it was
+            utf8::Append(out, FoldCode(cp));
+        }
+        return out;
+    }
     static bool IsValid(int i) { return i >= 0 && i < kCount; }
     /// The name a layer starts with (empty for the layers a new project leaves unnamed).
     static const char* DefaultName(int i) {
@@ -23,11 +49,11 @@ struct Layers {
     }
     /// Whether layer `i` has a name of its own (rather than showing as "Layer N").
     static bool IsNamed(int i) { return IsValid(i) && !Names()[static_cast<std::size_t>(i)].empty(); }
-    /// A name a layer can take: 1 to 32 characters, no control characters, no leading or
+    /// A name a layer can take: 1 to 32 characters (not bytes), no control characters, no leading or
     /// trailing space, no ',' or '!' (they are mask-list syntax) and not only digits (a number
     /// reads as a layer index).
     static bool IsValidName(const std::string& n) {
-        if (n.empty() || n.size() > kMaxNameLength) return false;
+        if (n.empty() || n.size() > kMaxNameLength * 4 || utf8::Length(n) > kMaxNameLength) return false;
         if (n.front() == ' ' || n.back() == ' ') return false;
         bool digits = true;
         for (unsigned char c : n) {
@@ -42,12 +68,11 @@ struct Layers {
         const std::size_t b = name.find_first_not_of(" \t");
         if (b == std::string::npos) return -1;
         const std::string t = name.substr(b, name.find_last_not_of(" \t") - b + 1);
-        auto lower = [](std::string x) { for (char& ch : x) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch))); return x; };
-        const std::string want = lower(t);
+        const std::string want = Fold(t);
         bool digits = true;
         for (char c : t) if (c < '0' || c > '9') { digits = false; break; }
         if (digits) return t.size() <= 2 && std::atoi(t.c_str()) < kCount ? std::atoi(t.c_str()) : -1;
-        for (int i = 0; i < kCount; ++i) if (lower(Name(i)) == want) return i;
+        for (int i = 0; i < kCount; ++i) if (Fold(Name(i)) == want) return i;
         return -1;
     }
     /// Give layer `i` a name. False (nothing changes) when `i` is not 0-31, the name is not valid
@@ -130,10 +155,9 @@ struct Layers {
                     int i = std::atoi(tok.c_str());
                     if (i >= 0 && i < 32) mask |= (1u << i);
                 } else {
-                    // Names match without regard to case ("default" finds "Default").
-                    auto lower = [](std::string s) { for (char& ch : s) ch = (char)std::tolower((unsigned char)ch); return s; };
-                    const std::string want = lower(tok);
-                    for (int i = 0; i < 32; ++i) if (lower(Name(i)) == want) { mask |= (1u << i); break; }
+                    // Names match without regard to case ("default" finds "Default", "ÉNEMY" finds "énemy").
+                    const std::string want = Fold(tok);
+                    for (int i = 0; i < 32; ++i) if (Fold(Name(i)) == want) { mask |= (1u << i); break; }
                 }
             }
             start = end + 1;

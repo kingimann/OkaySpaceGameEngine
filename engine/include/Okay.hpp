@@ -76,6 +76,7 @@
 #include "okay/Scene/SceneLocalization.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Scene/ObjectPool.hpp"
+#include "okay/Scene/NearestLookup.hpp"
 
 // Graphics assets
 #include "okay/Graphics/Image.hpp"

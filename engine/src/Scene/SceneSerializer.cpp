@@ -204,6 +204,15 @@ namespace okay {
 // points at can be found next to it in an exported game.
 static thread_local std::string g_loadingSceneDir;
 
+namespace detail {
+std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
+std::uint64_t ComponentSerializerGeneration();   // ComponentSerializer.cpp
+} // namespace detail
+
+// Defined further down; the component-order check (WriteComponents) loads one object's records into a scratch scene.
+static bool ParseInto(Scene& scene, const std::string& text, bool clear, GameObject** firstNew, std::string* error,
+                      std::vector<std::string>* warnings);
+
 namespace {
 
 // Floats in scene text are written with the fewest digits that read back as the
@@ -576,10 +585,8 @@ void WriteDisabledComponents(std::ostream& out, const GameObject* go) {
     }
 }
 
-// `comporder "Type" "Type" ...`: the order of an object whose components were arranged on purpose
-// (GameObject::HasCustomComponentOrder). An object nobody arranged writes nothing, so its text is unchanged.
-void WriteComponentOrder(std::ostream& out, const GameObject* go) {
-    if (!go->HasCustomComponentOrder()) return;
+// `comporder "Type" "Type" ...`: the stored order of an object's components after the Transform.
+void WriteComponentOrderLine(std::ostream& out, const GameObject* go) {
     std::string line;
     int n = 0;
     for (const auto& c : go->Components()) {
@@ -588,6 +595,91 @@ void WriteComponentOrder(std::ostream& out, const GameObject* go) {
         ++n;
     }
     if (n >= 2) out << "  comporder" << line << "\n";
+}
+
+// The type names of an object's components after the Transform, in stored order.
+std::vector<std::string> ComponentKeys(const GameObject* go) {
+    std::vector<std::string> keys;
+    for (const auto& c : go->Components()) {
+        if (c.get() == static_cast<const Component*>(go->transform)) continue;
+        keys.push_back(ComponentSerializerRegistry::TypeKey(*c));
+    }
+    return keys;
+}
+
+// Do two component lists agree on the order of the components they share? The Nth component of a type is
+// the same component in both; one that only one list has (the loader added a required one, or the writer
+// saved only the first of two) is ignored.
+bool SameSharedOrder(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+    auto number = [](const std::vector<std::string>& v) {
+        std::unordered_map<std::string, int> seen;
+        std::vector<std::string> ids;
+        ids.reserve(v.size());
+        for (const std::string& k : v) ids.push_back(k + "#" + std::to_string(seen[k]++));
+        return ids;
+    };
+    const std::vector<std::string> ia = number(a), ib = number(b);
+    const std::unordered_set<std::string> sa(ia.begin(), ia.end()), sb(ib.begin(), ib.end());
+    std::vector<const std::string*> ca, cb;
+    for (const std::string& id : ia) if (sb.count(id)) ca.push_back(&id);
+    for (const std::string& id : ib) if (sa.count(id)) cb.push_back(&id);
+    if (ca.size() != cb.size()) return false;
+    for (std::size_t i = 0; i < ca.size(); ++i) if (*ca[i] != *cb[i]) return false;
+    return true;
+}
+
+// Would a file made of these component records give the object its components in the order it has now?
+// The loader adds a component when it meets its record, so the answer is what loading the records produces:
+// found by loading them once into a scratch scene. It depends on which components there are and which records
+// they wrote, not on their values, so the answer is kept per (type names, record names) and the next object of
+// the same shape costs a lookup and no load. An answer that cannot be found (the text does not load) counts as
+// "yes": nothing is written then, as before.
+bool LoadsInStoredOrder(const GameObject* go, const std::string& records) {
+    const std::vector<std::string> live = ComponentKeys(go);
+    std::string key;
+    for (const std::string& k : live) { key += k; key += ','; }
+    key += '|';
+    for (std::size_t at = 0; at < records.size();) {   // the first word of each record line
+        std::size_t nl = records.find('\n', at);
+        if (nl == std::string::npos) nl = records.size();
+        std::size_t b = at;
+        while (b < nl && records[b] == ' ') ++b;
+        std::size_t e = b;
+        while (e < nl && records[e] != ' ') ++e;
+        key.append(records, b, e - b);
+        key += ';';
+        at = nl + 1;
+    }
+    // The answer also depends on the RequireComponent rules and on which serializers are registered: the memo is dropped when they change.
+    const std::uint64_t generation = detail::ComponentRulesGeneration() * 1000003u + detail::ComponentSerializerGeneration();
+    struct Memo { std::mutex mutex; std::unordered_map<std::string, bool> verdict; std::uint64_t generation = 0; };
+    static Memo memo;
+    {
+        std::lock_guard<std::mutex> lock(memo.mutex);
+        if (memo.generation != generation) { memo.verdict.clear(); memo.generation = generation; }
+        auto it = memo.verdict.find(key);
+        if (it != memo.verdict.end()) return it->second;
+    }
+    static thread_local bool probing = false;   // a load that saves (it should not) never starts another probe
+    if (probing) return true;
+    probing = true;
+    bool natural = true;
+    {
+        Scene probe("component order");
+        const std::string text = "okayscene 3\ngameobject 0 \"O\"\n  active 1\n  parent -1\n" + records + "end\n";
+        GameObject* root = nullptr;
+        std::string error;
+        std::vector<std::string> warnings;   // kept here so nothing is printed
+        if (ParseInto(probe, text, /*clear=*/false, &root, &error, &warnings) && root)
+            natural = SameSharedOrder(live, ComponentKeys(root));
+    }
+    probing = false;
+    std::lock_guard<std::mutex> lock(memo.mutex);
+    if (memo.generation == generation) {   // not if the rules changed while this was being worked out
+        if (memo.verdict.size() > 4096) memo.verdict.clear();   // shapes are few; this only bounds a pathological run
+        memo.verdict[key] = natural;
+    }
+    return natural;
 }
 
 // Bring an object's components into the order of a `comporder` record: the Nth name of a type is the Nth
@@ -608,8 +700,9 @@ void ApplyComponentOrder(GameObject& go, const std::vector<std::string>& names) 
     go.ReorderComponents(want);
 }
 
-// Write a GameObject's Transform + all known components (no header/parent line).
-void WriteComponents(std::ostream& out, GameObject* go) {
+// Write a GameObject's Transform + all known components (no header/parent line). The records come in a fixed
+// order; WriteComponents adds the `comporder` record when the object's own order differs from what they load as.
+void WriteComponentRecords(std::ostream& out, GameObject* go) {
     Transform* t = go->transform;
     const Vec3& p = t->localPosition;
     const Quat& q = t->localRotation;
@@ -2859,8 +2952,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (ta->autoPlay ? 1 : 0) << " " << (ta->autoKill ? 1 : 0) << " " << (ta->unscaled ? 1 : 0)
             << " " << ta->vibrato << " " << ta->elasticity << " " << ta->jumps << " " << (ta->enabled ? 1 : 0)
             << " " << Quote(ta->id);
-        // Optional tail (older files stop after the id): clock channel, ease as text.
-        if (!ta->clock.empty() || !ta->easeCurve.empty()) out << " " << Quote(ta->clock) << " " << Quote(ta->easeCurve);
+        // Optional tail (older files stop after the id): clock channel, ease as text; then, only when one of
+        // them is set, decay, speed based and tag. A reader that stops after the ease text sees the numbers as
+        // an unknown field and steps over the rest of the line.
+        const float decay = std::isfinite(ta->decay) && ta->decay > 0.0f ? ta->decay : 0.0f;
+        const bool newTail = decay > 0.0f || ta->speedBased || !ta->tag.empty();
+        if (!ta->clock.empty() || !ta->easeCurve.empty() || newTail) out << " " << Quote(ta->clock) << " " << Quote(ta->easeCurve);
+        if (newTail) out << " " << decay << " " << (ta->speedBased ? 1 : 0) << " " << Quote(ta->tag);
         out << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
@@ -3408,7 +3506,24 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     // Components that registered with ComponentSerializerRegistry (trailrenderer, ...).
     ComponentSerializerRegistry::WriteAll(*go, out);
     WriteDisabledComponents(out, go);
-    WriteComponentOrder(out, go);
+}
+
+// The components of an object come back in the order their records are written (see WriteComponentRecords), so an
+// object whose components are stored in another order (added in another order, or arranged with MoveComponent /
+// ReorderComponents) also writes a `comporder` record that puts them back. An object that already loads in its own
+// order writes no extra line, so a scene made of such objects is saved exactly as before; so is an object with one
+// component or none. An object that was arranged on purpose (HasCustomComponentOrder) always writes the record.
+void WriteComponents(std::ostream& out, GameObject* go) {
+    std::size_t others = 0;
+    for (const auto& c : go->Components()) if (c.get() != static_cast<const Component*>(go->transform)) ++others;
+    if (others < 2) { WriteComponentRecords(out, go); return; }
+    if (go->HasCustomComponentOrder()) { WriteComponentRecords(out, go); WriteComponentOrderLine(out, go); return; }
+    std::ostringstream records;   // this object's records only: they are read back to see what order they load in
+    records.copyfmt(out);
+    WriteComponentRecords(records, go);
+    const std::string text = records.str();
+    out << text;
+    if (!LoadsInStoredOrder(go, text)) WriteComponentOrderLine(out, go);
 }
 } // namespace
 
@@ -7301,11 +7416,19 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ta->relative = rel != 0; ta->from = frm != 0; ta->autoPlay = ap != 0; ta->autoKill = ak != 0;
                     ta->unscaled = us != 0; ta->enabled = en != 0;
                     ta->id = ReadQuoted(in);
-                    in >> std::ws;   // optional tail: clock channel, ease as text
+                    in >> std::ws;   // optional tail: clock channel, ease as text, then decay, speed based, tag
                     if (in.peek() == '"') {
                         ta->clock = ReadQuoted(in);
                         in >> std::ws;
                         if (in.peek() == '"') ta->easeCurve = ReadQuoted(in);
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) {   // a number: the writer's second part (a quoted field would be a newer build's)
+                            int sb = 0;
+                            in >> ta->decay >> sb;
+                            ta->speedBased = sb != 0;
+                            in >> std::ws;
+                            if (in.peek() == '"') ta->tag = ReadQuoted(in);
+                        }
                     }
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
@@ -8734,10 +8857,12 @@ std::string FirstToken(const std::string& line) {
 }
 
 // Records that describe the object's link to its prefab or its place in a
-// document, not its content: never overridden.
+// document, not its content: never overridden. `comporder` is derived from the components the object has and the
+// order they were added in, which a plain AddComponent now records (an instance that gained a component also
+// reads as having a different order); the component record is what differs, so this one is not listed twice.
 bool IsBookkeepingRecord(const std::string& tok) {
     return tok == "prefab" || tok == "override" || tok == "guid" || tok == "sibling" || tok == "parent" ||
-           tok == "srcscene" || tok == "locked" || tok.empty();
+           tok == "srcscene" || tok == "locked" || tok == "comporder" || tok.empty();
 }
 
 // A record's identity inside one object: its name plus which occurrence of it (so two

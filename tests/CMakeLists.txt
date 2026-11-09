@@ -1363,6 +1363,9 @@ add_test(NAME timer_debug COMMAND test_timer_debug)
 add_executable(test_timers_audit test_timers_audit.cpp)
 target_link_libraries(test_timers_audit PRIVATE okay::engine)
 add_test(NAME timers_audit COMMAND test_timers_audit)
+add_executable(test_timers_fifth test_timers_fifth.cpp)
+target_link_libraries(test_timers_fifth PRIVATE okay::engine)
+add_test(NAME timers_fifth COMMAND test_timers_fifth)
 
 add_executable(test_editor_tabs test_editor_tabs.cpp)
 target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -1619,6 +1622,9 @@ endif()
 add_executable(test_vs_media test_vs_media.cpp)
 target_link_libraries(test_vs_media PRIVATE okay::engine)
 add_test(NAME vs_media COMMAND test_vs_media)
+add_executable(test_vs_tween test_vs_tween.cpp)
+target_link_libraries(test_vs_tween PRIVATE okay::engine)
+add_test(NAME vs_tween COMMAND test_vs_tween)
 
 # Script navmesh queries: nav_path_exists / nav_path_length / nav_point_walkable / nav_nearest_point
 add_executable(test_script_nav test_script_nav.cpp)
@@ -1729,6 +1735,17 @@ add_test(NAME component_order COMMAND test_component_order)
 add_executable(test_scene_graph_wave4 test_scene_graph_wave4.cpp)
 target_link_libraries(test_scene_graph_wave4 PRIVATE okay::engine)
 add_test(NAME scene_graph_wave4 COMMAND test_scene_graph_wave4)
+
+# Scene graph (1.3, wave 5): world-cache check against a plain walk, constant-cost child-list removal, look-at variants,
+# GetOrAddComponent / ForEachDescendant, FindByPath with duplicates, Stats on a huge scene, tag / layer names in other languages
+add_executable(test_scene_graph_wave5 test_scene_graph_wave5.cpp)
+target_link_libraries(test_scene_graph_wave5 PRIVATE okay::engine)
+add_test(NAME scene_graph_wave5 COMMAND test_scene_graph_wave5)
+set_tests_properties(scene_graph_wave5 PROPERTIES TIMEOUT 240)   # 300000 children, 100000-deep chains
+
+add_executable(test_object_pool_wave5 test_object_pool_wave5.cpp)
+target_link_libraries(test_object_pool_wave5 PRIVATE okay::engine)
+add_test(NAME object_pool_wave5 COMMAND test_object_pool_wave5)
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)

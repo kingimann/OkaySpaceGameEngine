@@ -73,8 +73,8 @@ Not fixed (seen):
 - (Fixed in the fourth pass, see `scene_hierarchy_search.md` "What changed: scene graph, fourth pass":
   `Clear()` / `LoadFromFile` / `Deserialize` from inside a callback are queued to the end of the frame;
   destroying a huge parent or a deep chain is linear; component order that was arranged on purpose is saved in
-  an optional `comporder` record. The order of plain `AddComponent` calls is still not saved, see
-  `scene_serializer.md`.)
+  an optional `comporder` record. In the fifth pass the order of plain `AddComponent` calls is saved too, for the objects
+  whose order the loader would not reproduce; see `scene_serializer.md`.)
 - `Instantiate` copies only what the serializer writes: a plain C++ `Behaviour` subclass without a
   serializer entry is not cloned, and a type with several instances other than the per-instance ones
   saves only the first.

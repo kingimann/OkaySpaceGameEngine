@@ -79,8 +79,10 @@ public:
 
     /// Serialize an entire scene to a string.
     static std::string Serialize(const Scene& scene);
-    /// Write a scene to a file. Returns false on I/O error.
-    static bool SaveToFile(const Scene& scene, const std::string& path);
+    /// Write a scene to a file. Returns false on I/O error, with `error` saying why. The old file is
+    /// replaced only once the new one is complete and checked (it keeps one rolling "<path>.bak"), so a
+    /// failed save (read-only file, missing folder, full disk) leaves the scene on disk as it was.
+    static bool SaveToFile(const Scene& scene, const std::string& path, std::string* error = nullptr);
     /// Forget the decoded prefab text InstantiateFromFile keeps for recently read files. The engine's
     /// own writers call this; call it after changing a prefab file by other means.
     static void ClearPrefabCache();

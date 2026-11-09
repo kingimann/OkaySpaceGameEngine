@@ -150,9 +150,14 @@ void Fire(const PropertyChange& ch) {
     }
 }
 
+// Would a change made now be delivered to anyone?
+bool Listening() {
+    return t_suppress == 0 && t_fireDepth < kMaxFireDepth && GetTable().hookCount.load(std::memory_order_relaxed) != 0;
+}
+
 void FireFor(const PropertyRef& ref, const PropertyDesc& d, const PropertyValue& oldValue, const PropertyValue& newValue) {
     // Nobody listening (the usual case for a tween writing every frame): build nothing.
-    if (t_suppress > 0 || t_fireDepth >= kMaxFireDepth || GetTable().hookCount.load(std::memory_order_relaxed) == 0) return;
+    if (!Listening()) return;
     PropertyChange ch;
     ch.component = ref.component;
     ch.object = ref.component->gameObject;
@@ -184,6 +189,10 @@ bool StoreAndNotify(const PropertyRef& ref, const PropertyValue& value, std::str
         // A derived property is another view of authored ones: announce those instead
         // (writing Transform.eulerAngles announces Transform.rotation), so a subscriber
         // sees each stored value once and can restore it exactly.
+        if (!Listening()) {
+            if (!d.Set(*ref.component, incoming)) return SetErr(error, "'" + d.name + "' refused the value");
+            return true;
+        }
         const PropertySnapshot before = SnapshotComponent(*ref.component);
         if (!d.Set(*ref.component, incoming)) return SetErr(error, "'" + d.name + "' refused the value");
         const PropertySnapshot after = SnapshotComponent(*ref.component);

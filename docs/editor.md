@@ -387,6 +387,109 @@ the editor so Build Game always has a runtime to copy. Pass a scene path as the
 first argument (`OkaySpacePlayer.exe my.okayscene`) or it loads `game.okayscene`
 from beside the executable.
 
+## Projects, saving and loading
+
+### What a project is on disk
+
+A project is a folder. The editor keeps everything that belongs to the project inside it:
+
+```
+MyGame/
+  project.okayproj          Project Settings (company, version, resolution, gravity, ambient, skybox, splash),
+                            the tag list and the layer names
+  Assets/
+    MyGame.okayscene        the first scene (the project's name)
+    Scenes/ Scripts/ Prefabs/ Materials/ Models/ Textures/ Audio/     the standard folders (empty to start)
+  .okay/
+    build_live.cfg          Build Settings as you left the dialog (with or without a profile)
+    build_profiles.cfg      the named build profiles
+    scene_build.txt         Scenes In Build, in order (Scene Manager)
+  items.okayitems           the Item Database          strings.okayloc   the string table (Localization window)
+```
+
+Each project has its own `project.okayproj` and its own build settings: opening another project loads that
+project's, and a new project starts from the defaults. (Earlier versions kept one `project.okayproj` beside the
+editor, shared by every project. A project with no file of its own takes that old file once, then keeps its own.)
+Editor preferences (theme, layouts, the recent list, the Project panel's view) are not project data: they live in
+`okay_settings.txt`, `okay_layouts.txt`, `okay_recent.txt` and `okay_projectview.txt` in the working folder, and
+`imgui.ini` holds the window layout.
+
+### New project
+
+**File > New Project...** (and the launcher's Create page, which sends the same request) asks for a name, a
+location and a template. The name is checked as you type: it can't be empty or contain `/ \ : * ? " < > |`, can't
+start or end with a dot, can't be a Windows device name (CON, NUL, COM1...), and is at most 64 characters.
+The location must exist (or be creatable), be writable and have free space; the full path may not be so long that a
+scene can't be saved into it. The form shows the exact folder that will be made. If the name is taken by a project,
+the new one is `Name-2`, `Name-3`, ... and the form says so. Every template has a one-line description.
+
+Creating is all or nothing. The folders and the project's own files are made first, then the template scene is
+saved as `Assets/<Name>.okayscene` and opened. If any step fails (no permission, disk full, a file in the way),
+everything that was made is removed again, **the scene you had open stays open**, and a window says what happened.
+With unsaved changes you are asked first (see below). Starting the editor without a project shows a chooser:
+recent projects (one that was moved or deleted is marked *missing* and can be removed from the list), Open a
+project folder, and the same New Project form.
+
+### Saving
+
+- **Save Scene** (Ctrl+S), **Save Scene As** (Ctrl+Shift+S), **Save Project** (Ctrl+Alt+S: the scene, every edited
+  script, the open visual script, project and build settings, preferences). Quitting with unsaved work, and the
+  launcher's "save and close", save everything the same way.
+- A save is whole or not at all: the new file is written beside the old one (`<name>.savetmp`), checked, and then
+  renamed over it. The previous good copy is kept as `<name>.okayscene.bak`. A read-only file, a missing folder or a
+  full disk is refused with the reason, nothing on disk changes, and the scene stays open and unsaved (the status
+  bar shows a red **Save failed**; click it for the details). The project settings, build settings, scene build list,
+  recent list, preferences and saved layouts are written the same way.
+- **Play never saves.** While the game runs, the scene in memory is the running game: Save, Save As and Build
+  refuse or stop Play first. Whatever happens in Play (moved objects, spawned objects, Inspector changes) is
+  thrown away on Stop and does not make the scene count as changed. Hosting a multiplayer session from the editor
+  no longer puts its `__Network` object into the scene file.
+- Project Settings and Build Settings save themselves as you change them (checked about once a second, and when you
+  leave the project or quit). The Build Settings you last used are still there next time, with or without a named
+  profile (they used to be kept only inside a profile).
+
+### Unsaved changes
+
+The title bar reads `OkaySpace Editor - <project> / <scene> *` and the status bar shows the project, the scene file
+and an amber **unsaved** marker; after a save a green **Saved** shows for five seconds. The editor does not trust the
+marker alone: it also compares the scene's saved text with what was last saved, so an edit that forgot to raise the
+flag is still found. Every way of replacing the open scene asks **Save / Don't Save / Cancel** first when something is
+unsaved: New 2D / 3D Scene, Open, Open Recent, Open Project Folder, New Project, opening a scene from the Project panel,
+the Scene Manager, or by dropping it on the Hierarchy or Scene view, a project handed over by the launcher, and Exit.
+A file that can't be opened (missing, damaged) is refused with the reason and leaves the open scene exactly as it was.
+Opening a scene starts a fresh undo history, so Ctrl+Z can't carry the previous scene's objects into the new file.
+
+### Autosave and recovery
+
+With **File > Autosave** on, a `<scene>.autosave` copy is written every interval (default 120 s) when the scene
+has unsaved changes, and offered back ("Recover Autosave") the next time the scene is opened after an unclean exit.
+A scene that has never been saved has no file to put it beside, so it is not autosaved; the first Ctrl+S puts it in
+`Assets/Scenes`. The engine-side `RecoveryManager` and `BackupManager` (see [undo_recovery.md](undo_recovery.md)) are
+not used by the editor yet.
+
+### Duplicate components
+
+Two components of one type on an object are saved and loaded back for the types the format keeps per instance:
+scripts, visual scripts, action lists, tweens, sync vars, state machines, **every 2D and 3D collider** (a compound
+collider keeps all its shapes) and **audio sources**. Other types still save their first instance only
+(see [scene_serializer.md](scene_serializer.md)).
+
+### What changed (project creation, saving, loading)
+
+- Project settings are per project (`<project>/project.okayproj`), not one file beside the editor; opening or
+  creating a project no longer leaks the previous project's settings, tags and layer names.
+- Build Settings persist without a profile, are per project, and Save Project / quit no longer erase the saved
+  build profiles when the Build dialog was not opened that session.
+- File > New Project... in the editor, with live validation, the full path, a description of every template and
+  recent locations; creating a project is all or nothing (before, a failed create left a half-made folder and had
+  already replaced the open scene).
+- Scene saves are atomic and report why they failed; the previous file is never moved or removed before the new
+  one is complete.
+- A failed Open changes nothing; Open no longer lets Undo put the old scene into the new file.
+- Unsaved-changes prompt on every path that replaces the scene (before only Exit and the launcher hand-off asked).
+- Build and Export stop Play first and ship the scene you edited.
+- Title bar and status bar show the project and scene and the save state.
+
 ## Notes
 
 This editor renders the scene with ImGui's 2D draw lists, which is perfect for

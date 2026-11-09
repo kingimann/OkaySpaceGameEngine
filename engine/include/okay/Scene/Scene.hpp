@@ -251,8 +251,10 @@ public:
     /// The pairs that do not collide, each once with first <= second (a layer that ignores itself is (n, n)).
     std::vector<std::pair<int, int>> DisabledLayerPairs() const;
     /// Look an object up by hierarchy path: "Parent/Child/Leaf" starts at a root object
-    /// called "Parent" and follows child names (the first match at each level). A leading
-    /// '/' is allowed. Find() also accepts a path when no object is literally named so.
+    /// called "Parent" and follows child names. Siblings with the same name are all tried (the
+    /// first complete match in scene and sibling order wins), names that contain '/' work, runs
+    /// of '/' count as one and a leading or trailing '/' is allowed. Find() also accepts a path
+    /// when no object is literally named so.
     GameObject* FindByPath(const std::string& path) const;
     /// Every object a hierarchy path names, in scene order and sibling order. With two siblings called
     /// "Door" a path through one of them that has no match below it goes on to the other one, which

@@ -1,5 +1,30 @@
 OkaySpace Game Engine — Changelog
 
+v2.851.0
+  Editor
+  - A roomier editor layout: larger type, more space and bigger click targets
+    across the shell, hierarchy, inspector, project browser, scene toolbar,
+    console, Visual Script editor and Script Editor. Shortcuts, file formats and
+    scripting behavior are unchanged (#577).
+  - Visual Script editor: a variables outline, snap and align for nodes, and an
+    inline line on a node that nothing runs (#577).
+  - Script Editor: a find and replace bar with a match count and highlighted
+    matches (#577).
+  Loop and time
+  - Frame stepping and a debug time scale, and a capture mode with a fixed frame
+    time for recording video and screenshots (#581).
+  - A frame recorder and player that saves a run's frame times and plays them
+    back, plus rolling frame-time statistics (#581).
+  - The dedicated server paces its ticks with a shared tick pacer (#581).
+  Fixes
+  - Thirteen more loop and time bugs found by an audit of the first pass, each
+    with a test (#581).
+  - The scene diff, merge and canonical-form tools now know the 3D gravity record
+    that scenes carry, so they no longer fail on current scene files (#582).
+  Docs
+  - The feature map is now generated from one detail page per area, with every
+    source file mapped, numbered parts, an A-Z index and a by-symptom table (#576).
+
 v2.850.0
   Loop and time
   - A shared per-frame game loop (GameLoop): it clamps one huge frame after a

@@ -156,6 +156,20 @@ int main() {
         ClockSet::Global().Reset();
     }
 
+    {   // No explicit tick: the manager ticks the process-wide clocks once per Time frame itself.
+        ClockSet::Global().Reset();
+        TweenManager m;
+        float v = 0, w = 0;
+        linear(m, v, 1.0f, 1.0f)->SetClock("ui");
+        linear(m, w, 1.0f, 1.0f)->SetClock("ui");
+        Time::Step(0.25f); m.Update(Time::DeltaTime(), Time::UnscaledDeltaTime());
+        CHECK_NEAR(v, 0.25f, 1e-6f); CHECK_NEAR(w, 0.25f, 1e-6f);
+        Time::Step(0.25f); ClockSet::Global().TickFromTime();       // a host that ticks itself: no second tick
+        m.Update(Time::DeltaTime(), Time::UnscaledDeltaTime()); m.Update(Time::DeltaTime(), Time::UnscaledDeltaTime());
+        CHECK_NEAR(v, 0.5f, 1e-6f);
+        ClockSet::Global().Reset();
+    }
+
     // ------------------------------------------------------ property tween ----
     {   // Any registered property by path: a float, a vector, one vector component, a colour, a rotation, an int.
         Scene s("S");

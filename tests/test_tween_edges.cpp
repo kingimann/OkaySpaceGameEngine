@@ -264,10 +264,8 @@ int main(int argc, char** argv) {
         bool grew = false;
         child->OnUpdate([&] {
             if (grew || child->Elapsed() > 0.0f) return;     // only on the restart render at time 0
-            if (seq->CompletedLoops() > 0 || m.Count() >= 0) {
-                grew = true;
-                for (int i = 0; i < 16; ++i) seq->Append(linear(m, extra, 1.0f, 0.1f));
-            }
+            grew = true;
+            for (int i = 0; i < 16; ++i) seq->Append(linear(m, extra, 1.0f, 0.1f));
         });
         m.Update(1.2f, 1.2f);                           // into the second loop: DoLoopRestart runs
         m.Update(5.0f, 5.0f);
@@ -296,13 +294,71 @@ int main(int argc, char** argv) {
         TweenManager m;
         auto seq = m.Sequence();
         std::string log;
+        int completes = 0;
         seq->AppendInterval(0.5f);
         seq->AppendCallback([&] { log += "A"; if (log == "A") seq->Complete(); });
         seq->AppendInterval(0.5f);
         seq->AppendCallback([&] { log += "B"; });
+        seq->OnComplete([&] { ++completes; });
         m.Update(0.6f, 0.6f);
         CHECK(log == "AB");
+        CHECK(seq->IsComplete());
+        m.Update(2.0f, 2.0f);
+        CHECK(completes == 1);                        // not fired a second time by the next frame
         CHECK(m.Count() == 0);
+    }
+
+    BLOCK(12) {  // Clearing the whole manager from inside a tween callback (a scene unload) ends the update cleanly.
+        TweenManager m;
+        float a = 0, b = 0;
+        int after = 0;
+        auto ta = linear(m, a, 1.0f, 1.0f);
+        auto tb = linear(m, b, 1.0f, 1.0f);
+        ta->OnUpdate([&] { m.Clear(); });
+        ta->OnComplete([&] { ++after; });
+        tb->OnUpdate([&] { ++after; });
+        m.Update(0.5f, 0.5f);
+        CHECK(after == 0);                            // nothing fires for a tween that was just cleared
+        CHECK(!ta->IsActive() && !tb->IsActive() && m.Count() == 0);
+        float c = 0;
+        linear(m, c, 1.0f, 1.0f);
+        m.Update(1.0f, 1.0f);
+        CHECK_NEAR(c, 1.0f, 1e-5f);                   // and the manager is reusable
+    }
+    BLOCK(13) {  // Endless tweens sent to absurd times stay finite and keep working.
+        TweenManager m;
+        float v = 0;
+        auto t = linear(m, v, 1.0f, 1.0f);
+        t->SetLoops(-1, LoopType::Yoyo).SetAutoKill(false);
+        for (float to : {1.0e30f, inf, 3.0e38f, 5.0e8f}) {
+            t->Goto(to);
+            CHECK(std::isfinite(v) && v >= 0.0f && v <= 1.0f && std::isfinite(t->Elapsed()));
+        }
+        t->Restart();
+        m.Update(0.25f, 0.25f);
+        CHECK_NEAR(v, 0.25f, 1e-5f);
+        float w = 0;
+        auto u = linear(m, w, 1.0f, 0.5f);
+        u->SetLoops(std::numeric_limits<int>::max()).SetAutoKill(false);
+        m.Update(1.0e30f, 1.0e30f);
+        CHECK(std::isfinite(w) && std::isfinite(u->FullDuration()));
+        u->Kill();
+        t->Kill();
+    }
+
+    BLOCK(14) {  // A negative, NaN or infinite frame time moves nothing (it must not rewind the tweens).
+        TweenManager m;
+        float v = 0, u = 0;
+        linear(m, v, 1.0f, 1.0f);
+        linear(m, u, 1.0f, 1.0f)->SetUpdate(true);
+        m.Update(0.5f, 0.5f);
+        m.Update(-0.25f, -0.25f);
+        m.Update(nan, nan);
+        m.Update(inf, inf);
+        CHECK_NEAR(v, 0.5f, 1e-5f);
+        CHECK_NEAR(u, 0.5f, 1e-5f);
+        m.Update(0.25f, 0.25f);
+        CHECK_NEAR(v, 0.75f, 1e-5f);
     }
 
     TEST_MAIN_RESULT();

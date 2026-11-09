@@ -272,6 +272,27 @@ int main() {
         ClockSet::Global().Reset();
     }
 
+    {   // A host that never ticks the clocks (not GameLoop: the player, the editor's Play) still gets
+        // channel time: the scheduler ticks the global set once per Time frame, and never twice.
+        ClockSet::Global().Reset();
+        Scheduler s;
+        Scheduler::Options ui; ui.clock = "ui";
+        int n = 0;
+        s.InvokeRepeating(0.5f, [&] { ++n; }, -1, ui);
+        Time::Step(0.25f); s.Update(Time::DeltaTime());
+        Time::Step(0.25f); s.Update(Time::DeltaTime());
+        CHECK(n == 1);
+        Time::Step(0.25f); ClockSet::Global().TickFromTime();       // this host did tick: not ticked again
+        s.Update(Time::DeltaTime()); s.Update(Time::DeltaTime());
+        Time::Step(0.25f); ClockSet::Global().TickFromTime(); s.Update(Time::DeltaTime());
+        CHECK(n == 2);
+        Time::SetTimeScale(0.0f);                                   // the "ui" channel ignores the pause
+        Time::Step(0.5f); s.Update(Time::DeltaTime());
+        CHECK(n == 3);
+        Time::SetTimeScale(1.0f);
+        ClockSet::Global().Reset();
+    }
+
     // ---------------------------------------------- tags, owners, listings ----
     {   // Pause and resume a group by tag or owner; counts by tag.
         Scheduler s;

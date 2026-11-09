@@ -70,6 +70,7 @@ void Tweener::RenderAt(float time) {
     const float full = FullDuration();
     if (!(time >= 0.0f)) time = 0.0f;   // also NaN
     if (time > full) time = full;
+    if (time > 1.0e9f) time = 1.0e9f;   // an endless tween sent to infinity stays a number (31 years in)
     m_time = time;
     const float p = time - delay;
     if (p < 0.0f) {   // still in the delay (or rewound into it): show the start
@@ -365,11 +366,18 @@ std::shared_ptr<Tweener> TweenManager::DelayedCall(float seconds, std::function<
 }
 
 void TweenManager::Update(float dt, float unscaledDt) {
+    // A frame time that is NaN, negative or infinite moves nothing (a negative one would rewind every tween).
+    if (!(dt > 0.0f) || !std::isfinite(dt)) dt = 0.0f;
+    if (!(unscaledDt > 0.0f) || !std::isfinite(unscaledDt)) unscaledDt = 0.0f;
     // Tweens may be added, killed or moved into a sequence by callbacks while we go, so
     // walk by index and let Detach correct the cursor when one leaves the list under it.
     const std::ptrdiff_t outerCursor = m_cursor;
     const bool outerUpdating = m_updating;
     m_updating = true;
+    // See Scheduler::Update: tick the process-wide clocks once per Time frame when a tween follows a channel.
+    if (!m_clocks)
+        for (const auto& t : m_tweens)
+            if (!t->clock.empty() && !t->m_killed) { ClockSet::Global().TickOncePerFrame(); break; }
     std::exception_ptr failure;
     for (m_cursor = 0; m_cursor < (std::ptrdiff_t)m_tweens.size(); ++m_cursor) {
         std::shared_ptr<Tweener> t = m_tweens[(std::size_t)m_cursor];   // keep alive through its callbacks

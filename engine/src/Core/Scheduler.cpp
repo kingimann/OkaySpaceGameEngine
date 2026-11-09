@@ -352,6 +352,13 @@ void Scheduler::Update(float dt, float unscaledDt) {
     if (!(dt > 0.0f) || !std::isfinite(dt)) dt = 0.0f;
     if (!(unscaledDt > 0.0f) || !std::isfinite(unscaledDt)) unscaledDt = 0.0f;
 
+    // A host that does not run GameLoop (the player, the editor's Play mode) never ticked the
+    // process-wide clocks: do it, once per Time frame, when something here follows a channel.
+    // A frame GameLoop or the host already ticked is skipped.
+    if (!m_clocks)
+        for (const Task& t : m_tasks)
+            if (!t.clock.empty() && t.handle != InvalidHandle) { ClockSet::Global().TickOncePerFrame(); break; }
+
     // Iterate by index and re-fetch the task after every callback: a callback
     // may Invoke (appending, possibly reallocating the list) or Cancel/Clear
     // (which only mark tasks dead while we're here). Each callback is moved out

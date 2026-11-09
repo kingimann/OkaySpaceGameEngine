@@ -45,10 +45,10 @@ public:
         /// owner for CancelByOwner when `owner` is not set. A task for an object that is
         /// already destroyed is not scheduled at all (the handle is InvalidHandle).
         const GameObject* object = nullptr;
-        /// Checked once per Update before the task would advance, and again right before
-        /// it runs; when it returns false the task is dropped silently. For owners that are
-        /// not GameObjects (hold a std::weak_ptr and return !expired()). Keep it cheap.
-        /// A predicate that throws counts as false.
+        /// Checked once per Update before the task advances (and between the runs of a
+        /// catch-up burst); when it returns false the task is dropped silently, without
+        /// running. For owners that are not GameObjects (hold a std::weak_ptr and return
+        /// !expired()). Keep it cheap. A predicate that throws counts as false.
         std::function<bool()> alive{};
     };
 

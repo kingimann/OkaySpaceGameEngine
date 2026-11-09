@@ -4,6 +4,7 @@
 #include "okay/Core/Clock.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
+#include "okay/Core/FrameRecord.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include <cmath>
@@ -452,6 +453,100 @@ int main() {
         };
         const std::vector<double> a = run(), b = run();
         CHECK(a.size() == b.size() && a == b);
+    }
+
+    // ---- fuzz: every control at once, in any order, keeps the loop's invariants ---------------------------------------------------------------------------------
+    {
+        std::uint32_t seed = 1u;
+        auto rnd = [&] { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return seed; };
+        auto unit = [&] { return (float)(rnd() >> 8) / 16777216.0f; };
+        long long frames = 0;
+        bool finite = true, frozenMatches = true, alphaOk = true, capOk = true, budgetOk = true, monotonic = true, recordOk = true, stepsOk = true;
+        for (int session = 0; session < 40; ++session) {
+            seed = 1000u + (std::uint32_t)session * 7919u;
+            Fresh();
+            GameLoop::Options o;
+            o.maxFixedSteps = 1 + (int)(rnd() % 6u);
+            o.smoothDelta = rnd() % 2u == 0u;
+            o.refreshHz = rnd() % 2u ? 60.0f : 0.0f;
+            GameLoop loop(o);
+            FrameRecorder rec;
+            FramePlayer player;
+            bool recording = false;
+            std::uint64_t recordedBefore = 0;
+            double lastElapsed = 0.0;
+            for (int op = 0; op < 500; ++op) {
+                switch (rnd() % 24u) {
+                    case 0: Game::PushPause("a"); break;
+                    case 1: Game::PopPause("a"); break;
+                    case 2: Game::SetPaused(rnd() % 2u == 0u); break;
+                    case 3: loop.RequestStep(1 + (int)(rnd() % 4u), rnd() % 3u ? unit() * 0.05f : 0.0f); break;
+                    case 4: loop.CancelStep(); break;
+                    case 5: loop.SetDebugTimeScale(rnd() % 5u == 0u ? std::numeric_limits<float>::quiet_NaN() : unit() * 12.0f); break;
+                    case 6: loop.SetCapture(rnd() % 4u == 0u ? -1.0f : 1.0f + unit() * 120.0f, rnd() % 3u ? 0 : (long long)(rnd() % 30u)); break;
+                    case 7: loop.ClearCapture(); break;
+                    case 8: loop.SetFrameBudget(rnd() % 3u ? 0 : (long long)(rnd() % 40u)); break;
+                    case 9: if (rnd() % 6u == 0u) { loop.Reset(); } break;
+                    case 10: if (rnd() % 8u == 0u) { loop.BeginSession(); } break;
+                    case 11: Time::HitStop(unit() * 0.2f, unit()); break;
+                    case 12: Time::SetTimeScale(unit() * 2.0f); break;
+                    case 13: Time::RampTimeScale(unit() * 2.0f, unit() * 0.5f); break;
+                    case 14: loop.SetFrameMarker((int)(rnd() % 100u)); break;
+                    case 15:
+                        if (!recording) { rec.Clear(); loop.AttachRecorder(&rec); recording = true; recordedBefore = loop.FrameCount(); }
+                        else { loop.AttachRecorder(nullptr); recording = false; }
+                        break;
+                    case 16: {
+                        GameLoop::Options n = loop.options();
+                        n.fixedStep = rnd() % 2u ? 0.0f : 0.005f + unit() * 0.05f;
+                        n.maxFixedSteps = 1 + (int)(rnd() % 8u);
+                        n.maxDelta = rnd() % 4u ? 0.25f : 0.0f;
+                        loop.SetOptions(n);
+                        break;
+                    }
+                    case 17: if (rnd() % 20u == 0u) { Game::CancelQuit(); } break;
+                    default: {
+                        const double host = rnd() % 10u == 0u ? std::numeric_limits<double>::quiet_NaN() : (rnd() % 8u == 0u ? 3.0 : unit() * 0.04);
+                        const std::int64_t remainingBefore = loop.FramesRemaining();
+                        const std::uint64_t tf = Time::FrameCount();
+                        const std::uint64_t lf = loop.FrameCount();
+                        const std::uint64_t rf = rec.Recording().Frames();
+                        const bool more = loop.BeginFrame(host);
+                        ++frames;
+                        const bool ran = Time::FrameCount() != tf;
+                        if (remainingBefore == 0 && (ran || more)) budgetOk = false;       // a spent budget runs nothing
+                        if (ran && loop.FrameCount() != lf + 1 && loop.FrameCount() != 1) budgetOk = false;   // (a callback-free Reset can not happen mid-frame)
+                        if (!std::isfinite(Time::DeltaTime()) || Time::DeltaTime() < 0.0f || !std::isfinite(Time::UnscaledDeltaTime()) || Time::UnscaledDeltaTime() < 0.0f) finite = false;
+                        if (Time::Frozen() != Game::Paused()) frozenMatches = false;
+                        if (!(loop.Alpha() >= 0.0f && loop.Alpha() < 1.0f)) alphaOk = false;
+                        const double dbg = (double)loop.DebugTimeScale();
+                        const long long cap = (long long)loop.options().maxFixedSteps * (long long)std::ceil(dbg > 1.0 ? dbg : 1.0);
+                        if (ran && loop.FixedStepsThisFrame() > cap) capOk = false;   // (a refused frame leaves the last frame's count)
+                        if (Time::ElapsedTimeD() + 1e-12 < lastElapsed) monotonic = false;
+                        lastElapsed = Time::ElapsedTimeD();
+                        if (loop.StepsRemaining() < 0 || loop.StepsRemaining() > GameLoop::kMaxStepRequest) stepsOk = false;
+                        if (loop.FramesRemaining() < -1) budgetOk = false;
+                        if (recording && ran && rec.Recording().Frames() != rf + 1 && !rec.Full()) recordOk = false;
+                        (void)recordedBefore;
+                        break;
+                    }
+                }
+            }
+            loop.AttachRecorder(nullptr);
+            // whatever was recorded saves and loads back whole
+            FrameRecording again;
+            if (!FrameRecording::FromText(rec.Recording().ToText(), again) || !(again == rec.Recording())) recordOk = false;
+        }
+        CHECK(frames > 3000);
+        CHECK(finite);
+        CHECK(frozenMatches);
+        CHECK(alphaOk);
+        CHECK(capOk);
+        CHECK(budgetOk);
+        CHECK(monotonic);
+        CHECK(recordOk);
+        CHECK(stepsOk);
+        Fresh();
     }
 
     Fresh();

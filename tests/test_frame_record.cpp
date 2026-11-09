@@ -161,6 +161,13 @@ int main() {
         CHECK(FrameRecording::FromText(t, back, &err) && err.empty());
         CHECK(back == r && back.Frames() == 126 && back.TotalMicros() == r.TotalMicros());
         CHECK(back.ToText() == t);                             // canonical: writing it again gives the same bytes
+        // the example in docs/loop_and_time.md is a real, checksummed recording
+        {
+            FrameRecording doc; std::string why;
+            const std::string sample = "okayframes 1\nframes 126\nmicros 2353373\n16667*120 16666 250000/h 16667/p@7*2 20000/ps 33333/c@-42\nchecksum 34c4491ed3039bc2\n";
+            CHECK(FrameRecording::FromText(sample, doc, &why));
+            CHECK(doc == r && doc.ToText() == sample);
+        }
         // an empty recording
         FrameRecording e, e2;
         CHECK(FrameRecording::FromText(e.ToText(), e2) && e2.Empty());

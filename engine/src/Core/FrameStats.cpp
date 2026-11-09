@@ -48,8 +48,7 @@ void FrameStats::SetWindow(std::size_t window) {
     m_ring.swap(fresh);
     m_cap = window;
     m_size = keep;
-    m_head = 0;
-    if (m_cap > 0 && m_size == m_cap) m_head = 0;   // full: the oldest is slot 0
+    m_head = 0;   // the oldest frame is slot 0
 }
 
 void FrameStats::Clear() {

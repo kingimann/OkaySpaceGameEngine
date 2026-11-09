@@ -34,14 +34,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.2.3 Procedural textures - `Render/ProcTexture` - `proc:checker`, `grid`, `brick`, `wood`, `stone`, `tiles`, `marble`, `metal`, `noise`, `grass`, `sand`, `lava`; 256x256, tileable, deterministic, usable anywhere a texture path goes
   - 2.2.4 Mesh geometry - `Render/Mesh` - indexed triangle mesh with optional normals, UVs and per-face colours; primitives (Cube, Sphere, Cylinder, Cone, Torus, TorusKnot, Tube, Capsule, Icosphere...), prop library (Tree, House, Campfire, Bench...), `FromName`
   - 2.2.5 Mesh operations - `Render/Mesh` - smooth normals, UV projections, Combine, Weld, Subdivide, extrude, inset, Boolean, ConvexHull, Decimate, OBJ load and save; shared with the modeling windows (3.1-3.5)
-  - 2.2.6 Model loaders - `Render/Gltf`, `Render/ModelImport` - glTF and GLB, OBJ, FBX built in, many more formats through optional Assimp; materials resolved for the MeshRenderer; detail and tests in 3.6
+  - 2.2.6 Model loaders - `Render/Gltf`, `Render/ModelImport` - glTF and GLB, OBJ, FBX built in, many more formats through optional Assimp; base colour, normal, occlusion, packed metallic-roughness (green roughness, blue metallic) and emissive textures land on the MeshRenderer; detail and tests in 3.6
 - **Code:** `Render/Material`, `Render/ProcTexture`, `Render/Mesh`, `Render/Gltf`, `Render/ModelImport`, `Components/MeshRenderer`
 - **API:** `Material`, `Material::ApplyTo`, `MeshRenderer`, `Mesh::Cube`, `Mesh::FromName`, `GenerateProcTexture`, `ImportModel`, `proc:wood`
 - **Editor:** Mesh Renderer inspector section and material ball preview (editor/main.cpp); Project panel materials; Modeling window (3.1)
 - **Docs:** `docs/rendering.md`, `docs/modeling.md`
-- **Tests:** `material`, `shaders`, `mesh3d`, `mesh_variant_hash`, `3d`
+- **Tests:** `material`, `shaders`, `mesh3d`, `mesh_variant_hash`, `3d`, `gltf_pbr_maps`
 - **Status:** Works - read `Material.hpp`, `ProcTexture.hpp`, headers of `Mesh`, `Gltf`, `ModelImport`; tests cover round trips and primitive geometry
-- **Open:** material editor window with live preview, visual shader graph, custom shader files and a PBR model are area 26; glTF packed metallic-roughness and emissive textures are not imported (Gltf.hpp header); `Mesh.hpp` is one 4k-line header mixing primitives, props, OBJ and editing ops
+- **Open:** material editor window with live preview, visual shader graph, custom shader files and a full energy-conserving PBR model are area 26; `Mesh.hpp` is one 4k-line header mixing primitives, props, OBJ and editing ops
 - **Related:** 2.1, 3.5, 3.6, 26, 38.8
 - **Words:** Material, okaymat, MeshRenderer, shader, toon, rim light, outline, triplanar, normal map, procedural texture, proc:, Mesh, primitive, OBJ, glTF, FBX, Assimp, materials, textures
 - **Seen as:** model dark, inside out or without textures; a material change does not show; texture tiles wrong; a primitive has the wrong winding
@@ -62,7 +62,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Docs:** `docs/lighting.md`, `docs/day_night_cycle.md`
 - **Tests:** `lighting`, `light_shadows`, `shadows`, `daynight`, `terrain`
 - **Status:** Works - read `Lighting.hpp`, `ShadowSetup.hpp`, `Light.hpp`; tests cover the GPU shadow plan, flicker, save/reload and the software renderer's switches
-- **Open:** only the first Directional light casts shadows; at most 16 lights shaded per frame on the GPU; the software renderer has sun shadows only; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
+- **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; the software renderer has sun shadows only; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
 - **Related:** 2.4, 2.5, 38.2, 38.3, 38.5, 15.3
 - **Words:** Light, sun, point light, spot light, area light, shadow, cascade, shadow map, PCF, lightmap, bake, ambient, flicker, DayNightCycle, day night, time of day, lights, shadows, day/night
 - **Seen as:** shadows look wrong, blocky or shimmer; a point light casts no shadow; the scene is too dark; sunrise does not change the sky; a flashlight does not light the ground
@@ -96,14 +96,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.5.1 Settings and chain order - `Scene/Scene` (PostSettings), `Render/Atmosphere` - exposure, tonemap (None, ACES, Filmic), bloom, grading (temperature, tint, saturation, contrast, lift/gamma/gain), vignette; chain: SSAO, bloom, exposure/tonemap/grade/vignette, depth of field, FXAA, in an HDR target
   - 2.5.2 GPU chain - `Render/GLRenderer`, `Render/D3D11Renderer` - OpenGL runs every effect; Direct3D 11 has bloom, tonemap, grading, vignette and FXAA but no SSAO or depth of field (code and docs agree); Direct3D 12 has none (see 38)
   - 2.5.3 Software passes - `Render/SoftwareRenderer` - its own CPU SSAO, bloom, tonemap, colour grade, vignette and FXAA with process-wide switches, row-parallel
-  - 2.5.4 Quality presets - `Core/DisplaySettings` - Low/Medium/High flips the shared shadow, bloom, SSAO, FXAA and per-pixel switches (see 1.15)
+  - 2.5.4 Quality presets - `Core/DisplaySettings` - Low/Medium/High flips shadows, bloom, SSAO, FXAA and per-pixel lighting, and sets shadow map resolution, cascade count and shadow distance (Low 512/1/40 m, Medium 1024/2/60 m, High 2048/3/80 m)
 - **Code:** `Render/Atmosphere`, `Render/SoftwareRenderer`, `Scene/Scene`, `Core/DisplaySettings`
 - **API:** `Scene::RenderSettings::PostSettings`, `PostActive`, `TonemapACES`, `ExposureScale`, `BloomEnabled()`, `SSAOEnabled()`, script `post_set`
 - **Editor:** View > Lighting panel: Post-processing section and Look Preset; "Rendering (Lighting & Post FX)" holds the editor's own process-wide switches
 - **Docs:** `docs/rendering.md`
 - **Tests:** `post_sky`
 - **Status:** Works - read `Atmosphere.hpp`, the post fields of `Scene.hpp` and the effect counts in the backends; settings round-trip per `post_sky`
-- **Open:** SSAO and depth of field are OpenGL only; Direct3D 11 and 12 and software differ in what they apply; Low/Medium/High flips shared switches that OpenGL and Direct3D 11 read for shadows and bloom (OpenGL also SSAO) while FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
+- **Open:** SSAO and depth of field are OpenGL only; Direct3D 11 and 12 and software differ in what they apply; FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
 - **Related:** 2.4, 1.15, 38.2, 38.3, 38.5, 26
 - **Words:** post-processing, post FX, bloom, tonemap, ACES, exposure, colour grading, vignette, FXAA, SSAO, ambient occlusion, depth of field, DoF, HDR, look preset
 - **Seen as:** bloom or occlusion missing on one renderer; the frame looks washed out or too contrasty; vignette drawn twice; effects change between editor and player
@@ -122,10 +122,10 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
 - **API:** `Terrain::RaiseAt`, `Terrain::Erode`, `VoxelTerrain::Dig`, `TerrainDigger`, `Water`, `WorldStreamer`, `Tilemap`, `TilemapCollider2D`
 - **Editor:** GameObject > Create > Terrain, Voxel Terrain (caves), Water, Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
-- **Docs:** - (no page; the Terrain Sandbox and Voxel Sandbox templates are in 1.6)
+- **Docs:** `docs/terrain_water.md`
 - **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
 - **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
-- **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; no documentation page for terrain, water or streaming; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
+- **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
 - **Related:** 2.2, 2.4, 6.2, 27, 29, 1.6
 - **Words:** Terrain, heightmap, sculpt, brush, erosion, VoxelTerrain, marching cubes, cave, dig, TerrainDigger, VoxelDigger, Water, ocean, lake, buoyancy, WorldStreamer, world partition, streaming, Tilemap, tile
 - **Seen as:** the ground has holes or cracks; digging is slow or leaves floating bits; the water has no waves or sinks objects; far chunks pop in or never unload; the player falls through the tilemap
@@ -139,14 +139,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.7.3 Motion modules - `Components/ParticleSystem` - noise, orbit, vortex, inherited velocity, local space
   - 2.7.4 Line renderer - `Components/LineRenderer` - camera-facing or flat ribbons; points from the Inspector, a script or a Spline; stretch or tile texture
   - 2.7.5 Trail renderer - `Components/LineRenderer` - fading ribbon behind a moving object; saved through the component serializer registry
-  - 2.7.6 How they are drawn - built on the CPU each frame and drawn over the 3D image by the player and editor, depth-sorted; hide behind geometry only where scene depth is known (software path, or the player's half-resolution depth pass)
+  - 2.7.6 How they are drawn - built on the CPU each frame and drawn over the 3D image by the player and editor, depth-sorted; hide behind geometry where scene depth is known (software path, or a half-resolution depth pass in the player and the GPU editor view)
 - **Code:** `Components/ParticleSystem`, `Components/LineRenderer`
 - **API:** `ParticleSystem`, `ParticleSystem::ApplyPreset`, `ParticleGradient`, `ParticleCurve`, `LineRenderer`, `TrailRenderer`, `BuildRibbon`, script `emit`
 - **Editor:** Particle System, Line Renderer and Trail Renderer inspector sections (editor/main.cpp); spline-driven lines in 2.11
-- **Docs:** `docs/splines.md` (lines and trails), `docs/rendering.md` (weather)
+- **Docs:** `docs/particles.md`, `docs/splines.md` (lines and trails), `docs/rendering.md` (weather)
 - **Tests:** `particles_fx`, `particles_serialize`, `particles_tilemap`
 - **Status:** Works - read the `ParticleSystem.hpp` fields and `LineRenderer.hpp` header; tests cover gradients, curves, presets and scene round trips
-- **Open:** particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows and, in the editor with a GPU renderer, are not hidden behind objects (docs/splines.md); one Line and one Trail renderer per object; no particle doc page
+- **Open:** particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows; one Line and one Trail renderer per object
 - **Related:** 2.4, 2.11, 38.10, 11.7
 - **Words:** particles, ParticleSystem, emitter, burst, gradient, trail, TrailRenderer, LineRenderer, laser, rope, ribbon, fire, smoke, sparks, explosion, rain, lines, trails
 - **Seen as:** particles show through walls in the editor; a trail looks flat or jagged; an explosion preset is too slow; too many particles tank the frame rate
@@ -158,14 +158,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.8.1 Frustum culling - `Render/Culling` - `Frustum`, a world bounding sphere per object (cached local bounds for static meshes, bone positions for skinned ones), `CulledByFrustum`
   - 2.8.2 Culling switch and counters - `Render/Culling` - `FrustumCullingEnabled()` to debug a missing object, `LastCullCounters()` drawn/culled counts for the Stats panel
   - 2.8.3 GPU skinning - `Render/GLRenderer`, `Render/D3D11Renderer` - bone rows in the vertex shader (`SupportsGpuSkinning`, `GpuSkinJoints`); otherwise the CPU builds the pose (SkinnedMesh is 5.5)
-  - 2.8.4 LOD, occlusion, batching - `Optimize/LodGroup`, `OcclusionBuffer`, `BatchPlanner`, `StreamingGrid`, `MeshSimplify` - (#574) data-layer code on main with tests (area 27); no renderer calls it, there is no LOD component
+  - 2.8.4 LOD, occlusion, batching - `Components/LODGroup`, `Components/Occluder`, `Render/Visibility`, `Optimize/LodGroup`, `OcclusionBuffer`, `BatchPlanner` - the renderers ask Visibility before they draw: LOD Group picks a mesh per camera, Occluder components hide what is behind them, static and small dynamic batches merge where the pixels stay the same
 - **Code:** `Render/Culling`, `Optimize/LodGroup`, `Optimize/OcclusionBuffer`, `Optimize/BatchPlanner`, `Optimize/MeshSimplify`
 - **API:** `Frustum`, `CulledByFrustum`, `FrustumCullingEnabled`, `LastCullCounters`, `GLRenderer::SupportsGpuSkinning`
-- **Editor:** Stats panel (draw counts); Scene view debug toggles
+- **Editor:** Stats panel (drawn, frustum-culled, occluded, LOD level, batches, draws saved); LOD Group and Occluder inspectors; Scene view distance rings on a selected LOD Group
 - **Docs:** `docs/optimization_tools.md`
-- **Tests:** `frustum_culling`, `optimize_simplify`, `optimize_occlusion`, `optimize_batching`
-- **Status:** Works - frustum culling read in `Culling.hpp` and tested; GPU skinning is in OpenGL and Direct3D 11 only (Direct3D 12 has no skinning code)
-- **Open:** LOD groups, occlusion culling, static and dynamic batching and streaming are area 27: the algorithms exist (#574) but nothing in the renderers uses them; software and Direct3D 12 skinning stays on the CPU
+- **Tests:** `frustum_culling`, `visibility_lod`, `optimize_simplify`, `optimize_occlusion`, `optimize_batching`
+- **Status:** Works - frustum culling, GPU skinning (OpenGL and Direct3D 11), and the LOD / occlusion / batching pass are in the renderers. A scene with no LOD Group and no Occluder still draws every visible mesh; batching only merges opaque, unskinned, non-scrolling meshes that share a material
+- **Open:** streaming is still area 27.4 (World Streamer does not use StreamingGrid); software and Direct3D 12 skinning stays on the CPU; occlusion is a CPU buffer and can cost more than it saves when few triangles are hidden
 - **Related:** 27, 5.5, 38.2, 38.3, 2.10
 - **Words:** culling, frustum culling, frustum, bounding sphere, GPU skinning, LOD, occlusion, culled objects, draw calls
 - **Seen as:** low FPS in big scenes; objects vanish at screen edges; a skinned character is slow
@@ -198,14 +198,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.10.2 Projection and picking - `Components/Camera` - `ViewMatrix`, `ProjectionMatrix`, `WorldToScreen`, `WorldToViewportPoint`, `ScreenPointToRay`, `ScreenToWorldPoint`, `IsPointVisible`
   - 2.10.3 Framing and effects - `Components/Camera` - zoom, dutch angle, lens shift, pixel-perfect snap, trauma-based `Shake`, `ZoomTo`, `ignoreObject` for first person
   - 2.10.4 Main camera choice - `Scene/EnsureCamera`, `Scene/Scene` - `PickRenderCamera` (Main flag, then depth), `ResolveMainCamera` every frame, `EnsureSceneCamera` creates one when missing
-  - 2.10.5 Camera stack - `Scene/Scene`, `Components/Camera` - `CameraStack()` lowest depth first and `ClearPlan` (Skybox, SolidColor, DepthOnly, DontClear); the player and editor still draw only the main camera
+  - 2.10.5 Camera stack - `Render/CameraStack`, `Scene/Scene`, `Components/Camera` - `CameraStack()` lowest depth first; the editor Game view (including Play) and the player composite every camera's viewport, culling mask and clear mode. One camera keeps the previous full-frame path. A named Render Target keeps that camera's picture (`CameraTarget`)
 - **Code:** `Components/Camera`, `Scene/EnsureCamera`
 - **API:** `Camera`, `Camera::ScreenPointToRay`, `Camera::Shake`, `Scene::CameraStack`, `Scene::ResolveMainCamera`, `PickRenderCamera`, `EnsureSceneCamera`
 - **Editor:** Camera inspector, Camera Preview window and the Game view (editor/main.cpp, 15.3)
 - **Docs:** `docs/layers_tags_cameras.md`
-- **Tests:** `camera_cine`, `worldtoscreen`, `scene_cameras`, `layers_tags_cameras`, `core_audit`
-- **Status:** Partial - the main-camera path works and is tested; the stack exists as API and tests only (docs/layers_tags_cameras.md; grep finds no caller in editor or player)
-- **Open:** render the whole stack in the player and editor (loop `CameraStack()` with `ClearPlan`, each camera's rect and culling mask); per-camera render targets; the old Camera audit asked for aspect and clip fixes, done in #565
+- **Tests:** `camera_cine`, `worldtoscreen`, `scene_cameras`, `layers_tags_cameras`, `camera_stack`, `core_audit`
+- **Status:** Works - one camera still renders exactly as before; two or more are drawn lowest depth first into their rectangles in the Game view, Play mode and the player. Depth Only and Don't Clear overlay the cameras underneath. The Inspector lists all four clear flags and can add an overlay camera
+- **Open:** a 2D orthographic scene still draws sprites from the main camera only; overlay cameras do not depth-test against the cameras under them (they draw on top inside their rectangle)
 - **Related:** 4.6, 4.7, 4.8, 1.3, 2.8, 12.6
 - **Words:** Camera, main camera, camera stack, depth, clear flags, culling mask, viewport rect, split screen, minimap camera, field of view, orthographic, perspective, screen shake, pixel perfect, ScreenPointToRay, WorldToScreen
 - **Seen as:** the wrong camera renders after switching; a minimap camera draws over the main view or replaces it; picking rays miss; UI labels do not line up with objects; the camera shakes forever
@@ -225,7 +225,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Docs:** `docs/splines.md`
 - **Tests:** `splines`
 - **Status:** Works - read the headers and `SplineTools.hpp`; the 928-line `splines` test covers evaluation, arc length, frames, editing, meshes, instancers and scene records
-- **Open:** clicking a Catmull-Rom curve inserts a point that changes the shape slightly (only Bezier splits are exact); spline mesh roads and tubes have open ends and no underside; one Spline per object (docs/splines.md); dolly cameras use `DollyPath` (4.8), not this
+- **Open:** clicking a Catmull-Rom curve inserts a point that changes the shape slightly (only Bezier splits are exact); a road has no underside (the end caps close the ends; turn Cap Ends off to keep them open); one Spline per object (docs/splines.md); dolly cameras use `DollyPath` (4.8), not this
 - **Related:** 2.7, 4.8, 15.3, 29
 - **Words:** spline, Bezier, Catmull-Rom, SplineFollower, SplineMesh, SplineInstancer, road, fence, rail, path, curve, handle, dolly, splines
 - **Seen as:** the curve flips or twists; a road has gaps; instanced trees float above terrain; points cannot be picked in the Scene view

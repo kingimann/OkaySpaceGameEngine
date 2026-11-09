@@ -756,13 +756,13 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 27.1.2 LOD group data and selection (#574) - `Optimize/LodGroup` - `SelectLod` with hysteresis and cross-fade, switch distances from screen error
   - 27.1.3 Existing vertex-clustering Decimate - `Modeling/Modifiers`, `Render/Mesh` - a simple Decimate modifier (merge vertices in grid cells) on main; not topology-safe
   - 27.1.4 Mip budget (#574) - `Optimize/MipBudget` - which texture mip levels to keep resident for a memory budget
-- **Code:** `Optimize/MeshSimplify`, `Optimize/LodGroup`, `Optimize/MipBudget`, `Modeling/Modifiers`, `Render/Mesh`
+- **Code:** `Components/LODGroup`, `Render/Visibility`, `Optimize/MeshSimplify`, `Optimize/LodGroup`, `Optimize/MipBudget`, `Modeling/Modifiers`, `Render/Mesh`
 - **API:** `SimplifyMesh`, `GenerateLodChain`, `LodGroup`, `SelectLod`, `MakeLodGroup`; on main: `Mesh::Decimate`, Decimate modifier
-- **Editor:** none yet
+- **Editor:** LOD Group inspector (Add Component > Rendering) and distance rings in the Scene view
 - **Docs:** `docs/optimization_tools.md`
-- **Tests:** `optimize_simplify`
-- **Status:** Partial - the simplifier, LOD selection and mip budget are on main (#574, test `optimize_simplify`); there is no component, no renderer use and no editor UI (grep finds no caller outside `Optimize/`).
-- **Exists today:** Nothing in the renderers chooses a mesh by distance. `docs/optimization_tools.md` states that a `LODGroup` component is not included because it needs the scene serializer and component factory.
+- **Tests:** `optimize_simplify`, `visibility_lod`
+- **Status:** Partial - `LODGroup` is a component with an Inspector, distances or screen size, Generate LODs and Scene-view rings. OpenGL, Direct3D 11, Direct3D 12 and the software renderer pick the level with `SelectLod`. The mip budget is still unused.
+- **Exists today:** A Mesh Renderer with an LOD Group switches meshes by distance or screen size in every backend. Hysteresis uses the last choice. Skinned meshes stay on the full mesh. Generate builds 100/50/25/10 percent levels.
 - **Work packages:**
   1. M - `LODGroup` component (levels, thresholds, fade) with serializer entry and Inspector. Depends on: #574 (on main).
   2. M - Software, GL and D3D11 visibility passes pick the level with `SelectLod` per camera and shadow pass. Depends on: package 1.
@@ -786,9 +786,9 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `Frustum`, `FrustumCullingEnabled`, `LastCullCounters`; `OcclusionBuffer`, `PortalCells`
 - **Editor:** Stats panel shows drawn and culled counts
 - **Docs:** `docs/optimization_tools.md`
-- **Tests:** `frustum_culling`; `optimize_occlusion`
-- **Status:** Partial - frustum culling works on all renderers; `OcclusionBuffer` and `PortalCells` are on main (#574, test `optimize_occlusion`) as data-layer code that no renderer calls.
-- **Exists today:** Frustum culling (static meshes by cached bounds, skinned meshes around their bones) is shared by the renderers. No object is ever skipped for being behind another.
+- **Tests:** `frustum_culling`, `optimize_occlusion`, `visibility_lod`
+- **Status:** Partial - frustum culling works on all renderers. An Occluder component is rasterized into `OcclusionBuffer` and the visibility pass skips what it hides (Stats shows Occluded). `PortalCells` is still unused.
+- **Exists today:** Without an Occluder, nothing is occlusion-culled, so old scenes are unchanged. With one, objects behind it can be skipped. The buffer is conservative and CPU-side; on a tiny scene the test can cost more than the triangles it skips.
 - **Work packages:**
   1. M - `Occluder` marker (box or mesh) and `OcclusionVolume`; objects flagged Static are candidate occluders. Depends on: #574 (on main).
   2. M - Visibility pass tests candidates against `OcclusionBuffer` after frustum culling, behind a setting. Depends on: package 1.
@@ -812,9 +812,9 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `ui2d::BatchPainter`; `GameObject::isStatic`; `PlanBatches`, `BuildMergedMeshes`, `MergeStaticMeshes`, `AnalyzeScene`
 - **Editor:** Inspector "Static" checkbox
 - **Docs:** `docs/optimization_tools.md`
-- **Tests:** `ui_render_bench`; `optimize_batching`, `optimize_report`
-- **Status:** Partial - only the UI is batched; the mesh batch planner, static merge and the scene optimization report are on main (#574, tests `optimize_batching`, `optimize_report`) but no renderer or editor window calls them.
-- **Exists today:** `ui_render_bench` asserts that 500 widgets draw in under 1 ms of CPU and under 20 draw calls (timing only in optimized builds). Mesh rendering draws object by object.
+- **Tests:** `ui_render_bench`, `optimize_batching`, `optimize_report`, `visibility_lod`
+- **Status:** Partial - the UI is batched, and the mesh renderers merge static (and small dynamic) opaque objects that share a material via `MergeStaticMeshes`. The optimization report window is still not in the editor.
+- **Exists today:** Stats shows Batches and Draws saved. Skinned, transparent, outlined, scrolling and ground-shadow fallback meshes stay one draw each. A scene with nothing safe to merge is unchanged.
 - **Work packages:**
   1. S - Optimization report window: run `AnalyzeScene` on the open scene, list findings worst first, click to select. Depends on: #574 (on main).
   2. M - Draw-call and state-change counts in Stats (needs the recorder in 23.3). Depends on: 23.3 package 1.

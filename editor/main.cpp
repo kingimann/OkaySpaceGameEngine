@@ -497,6 +497,7 @@ int main(int argc, char** argv) {
 #  include <fcntl.h>      // open() for the single-instance lock file
 #  include <sys/file.h>   // flock() for the single-instance lock
 #endif
+#include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
 
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
@@ -1478,24 +1479,31 @@ std::string BustCache(const std::string& url) {
 // curl first (ships on Win10+/macOS/Linux), then a platform fallback. -f makes
 // curl fail (non-zero) on a 404 so we don't cache an error page as a binary.
 // No-cache headers + a unique query string defeat the GitHub raw CDN cache.
-bool Download(const std::string& url, const std::string& outPath) {
+bool Download(const std::string& url, const fs::path& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
     std::string u = BustCache(url);
-    // No-cache headers + a User-Agent (the GitHub API rejects requests without one).
-    const char* noCache = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" -A \"OkaySpace-Updater\" ";
+    const std::string out = okay::restart::Utf8(outPath);
+    // Arguments, not a shell line: a path with spaces, parentheses or '&' can't
+    // be split or expanded the way the old quoted curl command was.
+    const std::vector<std::string> curl = {
+        "curl", "-L", "-s", "-f", "-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache",
+        "-A", "OkaySpace-Updater", "-o", out, u};
+    if (okay::restart::RunAndWait(curl) == 0 && fs::exists(outPath)) return true;
 #if defined(_WIN32)
-    std::string c1 = "curl -L -s -f " + std::string(noCache) + "-o \"" + outPath + "\" \"" + u + "\"";
-    if (SysNoWindow(c1.c_str()) == 0 && fs::exists(outPath)) return true;
-    std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
-                     "-Headers @{'Cache-Control'='no-cache'} "
-                     "-UseBasicParsing -Uri '" + u + "' -OutFile '" + outPath +
-                     "' } catch { exit 1 }\"";
-    return SysNoWindow(c2.c_str()) == 0 && fs::exists(outPath);
+    auto psQuote = [](const std::string& s) {
+        std::string o; o.reserve(s.size());
+        for (char c : s) { if (c == '\'') o += "''"; else o += c; }
+        return o;
+    };
+    const std::string script =
+        "try { Invoke-WebRequest -Headers @{'Cache-Control'='no-cache'} "
+        "-UseBasicParsing -Uri '" + psQuote(u) + "' -OutFile '" + psQuote(out) +
+        "' } catch { exit 1 }";
+    const std::vector<std::string> pw = {"powershell", "-NoProfile", "-Command", script};
+    return okay::restart::RunAndWait(pw) == 0 && fs::exists(outPath);
 #else
-    std::string c1 = "curl -L -s -f " + std::string(noCache) + "-o \"" + outPath + "\" \"" + u + "\" 2>/dev/null";
-    if (SysNoWindow(c1.c_str()) == 0 && fs::exists(outPath)) return true;
-    std::string c2 = "wget -q --no-cache -O \"" + outPath + "\" \"" + u + "\" 2>/dev/null";
-    return SysNoWindow(c2.c_str()) == 0 && fs::exists(outPath);
+    const std::vector<std::string> wget = {"wget", "-q", "--no-cache", "-O", out, u};
+    return okay::restart::RunAndWait(wget) == 0 && fs::exists(outPath);
 #endif
 }
 
@@ -1615,14 +1623,19 @@ void Relaunch(const std::string& path) {
 // to be available (so this never loops on an already-current build).
 std::string InstallUpdate(const std::string& latest, const std::string& ref = "main") {
     std::error_code ec;
-    fs::path self = SelfPath();
+    fs::path self = okay::restart::CurrentExecutable();
+    if (self.empty()) {
+        const std::string narrow = SelfPath();
+        if (!narrow.empty()) self = fs::path(narrow);
+    }
     if (self.empty()) return "Couldn't locate the running executable.";
     fs::path newFile = self; newFile += ".new";
     // Download the new build from the commit-pinned URL so the CDN can never hand
     // back the old binary (the cause of "it updated but stayed the same version").
-    if (!Download(RawUrl(ref, "OkayEngine.exe"), newFile.string()))
+    if (!Download(RawUrl(ref, "OkayEngine.exe"), newFile))
         return "Download of v" + latest + " failed.";
-    if (fs::file_size(newFile, ec) < 100000) {
+    const auto downloadedBytes = fs::file_size(newFile, ec);
+    if (ec || downloadedBytes < 100000) {
         fs::remove(newFile, ec);
         return "Downloaded file looked invalid; update aborted.";
     }
@@ -1635,38 +1648,28 @@ std::string InstallUpdate(const std::string& latest, const std::string& ref = "m
             return "Downloaded file wasn't a valid program (CDN cache?). Try again.";
         }
     }
-#if defined(_WIN32)
-    // A running .exe can't always be renamed in place (AV / file locks), which is
-    // why a swap could silently fail. Instead hand the swap to a tiny batch helper
-    // that waits for THIS process to exit (the move retries until the lock frees),
-    // overwrites the exe, and relaunches it.
-    fs::path bat = self.parent_path() / "okay_update.bat";
-    std::string sp = self.string(), np = newFile.string();
-    {
-        std::ofstream b(bat, std::ios::binary);
-        b << "@echo off\r\n"
-          << ":retry\r\n"
-          << "move /y \"" << np << "\" \"" << sp << "\" >nul 2>&1\r\n"
-          << "if errorlevel 1 ( ping -n 2 127.0.0.1 >nul & goto retry )\r\n"
-          << "start \"\" \"" << sp << "\"\r\n"
-          << "del \"%~f0\"\r\n";
-    }
-    SysNoWindow(("start \"\" /min cmd /c \"" + bat.string() + "\"").c_str());
-    pendingQuit = true;   // exit so the helper can replace the exe
-    return "Updating to v" + latest + "... reopening.";
-#else
-    fs::path backup = self; backup += ".old";
-    fs::remove(backup, ec);
-    fs::rename(self, backup, ec);
-    if (ec) { fs::remove(newFile, ec); return "Couldn't replace the app: " + ec.message(); }
-    fs::rename(newFile, self, ec);
-    if (ec) { fs::rename(backup, self, ec); return "Couldn't install the update: " + ec.message(); }
-    fs::permissions(self, fs::perms::owner_exec | fs::perms::group_exec |
-                    fs::perms::others_exec, fs::perm_options::add, ec);
-    Relaunch(self.string());
+    // Hand the swap and relaunch to a detached helper. It waits until THIS
+    // process has exited (so the single-instance lock and the file lock are
+    // gone), installs the staged build, and starts it once with the same
+    // arguments and working directory. If the helper cannot be started, stay
+    // open — quitting here used to leave nothing running.
+    okay::restart::Request req;
+    req.executable = self;
+    req.arguments = okay::restart::CurrentArguments();
+    req.workingDirectory = fs::current_path(ec);
+    req.waitForPid = okay::restart::CurrentPid();
+    req.logFile = self.parent_path() / "okay_update.log";
+    req.replaceTarget = self;
+    req.replaceSource = newFile;
+    req.replaceBackup = self;
+    req.replaceBackup += ".old";
+    req.minBytes = 100000;
+    req.keepBackup = true;
+    std::string err;
+    if (!okay::restart::StartHelper(req, err))
+        return "Couldn't start the updater (" + err + "). This version is unchanged. See okay_update.log next to the app.";
     pendingQuit = true;
-    return "Updated to v" + latest + "! Reopening...";
-#endif
+    return "Updating to v" + latest + "... reopening.";
 }
 
 } // namespace updater
@@ -43672,6 +43675,8 @@ static int RunBuildGameCli(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+    if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
+    okay::restart::RememberArguments(argc, argv);
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
 #elif defined(__linux__) || defined(__APPLE__)
@@ -43721,6 +43726,14 @@ int main(int argc, char** argv) {
                  SDL_INIT_GAMECONTROLLER) != 0) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
         return 1;
+    }
+    {
+        // The previous build is kept as <exe>.old until this process is actually
+        // up. A relaunch that loses the single-instance check, or fails to
+        // initialize, exits above and leaves the backup in place.
+        std::error_code ec;
+        std::filesystem::path self = okay::restart::CurrentExecutable();
+        if (!self.empty()) { std::filesystem::path old = self; old += ".old"; std::filesystem::remove(old, ec); }
     }
 
     // Open the first connected game controller (optional) so the playable

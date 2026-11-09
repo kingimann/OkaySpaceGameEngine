@@ -1244,6 +1244,14 @@ target_compile_features(test_project_delete PRIVATE cxx_std_17)
 target_include_directories(test_project_delete PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME project_delete COMMAND test_project_delete)
 
+# Editor/launcher self-update: wait for the old process, swap, relaunch once.
+add_executable(test_app_restart test_app_restart.cpp)
+target_compile_features(test_app_restart PRIVATE cxx_std_17)
+target_include_directories(test_app_restart PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR})
+find_package(Threads REQUIRED)
+target_link_libraries(test_app_restart PRIVATE Threads::Threads)
+add_test(NAME app_restart COMMAND test_app_restart)
+
 # The launcher's official game (shared/OfficialGame.hpp): header-only, so no engine link.
 add_executable(test_official_game test_official_game.cpp)
 target_include_directories(test_official_game PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)

@@ -390,3 +390,13 @@ endif()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
+
+# ---- Core runtime foundations: job system, memory arenas, handles and ids, console variables ----
+# (docs/core_runtime.md). Appended as a block; Jobs.cpp, StringId.cpp and CVar.cpp keep their
+# threading behind engine/src/Core/CoreThreads.hpp (native Win32 primitives on Windows).
+target_sources(okay_engine PRIVATE
+    src/Core/Jobs.cpp
+    src/Core/StringId.cpp
+    src/Core/CVar.cpp
+    src/Core/FramePacing.cpp
+)

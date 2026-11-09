@@ -19,6 +19,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [visual_scripting.md](visual_scripting.md): the visual scripting text format (OkayVS) and Action Lists.
 - [engine_api.md](engine_api.md): the engine API reference.
 - [core_logging_profiling.md](core_logging_profiling.md): logging (categories, file sink, OKAY_LOG) and the frame profiler (trace and CSV export).
+- [core_runtime.md](core_runtime.md): the job system, memory arenas and pools, generational handles, string ids, console variables and frame pacing.
 - [editor-plugins.md](editor-plugins.md): extend the editor with plugins.
 
 ## Characters and animation

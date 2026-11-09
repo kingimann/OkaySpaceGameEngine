@@ -632,6 +632,11 @@ add_executable(test_dataasset test_dataasset.cpp)
 target_link_libraries(test_dataasset PRIVATE okay::engine)
 add_test(NAME dataasset COMMAND test_dataasset)
 
+# Core wave 6, 1.14: DataAsset BOM / numbers / typed getters / safe Invalidate, DataPack damage and size cases
+add_executable(test_core_data test_core_data.cpp)
+target_link_libraries(test_core_data PRIVATE okay::engine)
+add_test(NAME core_data COMMAND test_core_data)
+
 add_executable(test_item_dragdrop test_item_dragdrop.cpp)
 target_link_libraries(test_item_dragdrop PRIVATE okay::engine)
 add_test(NAME item_dragdrop COMMAND test_item_dragdrop)

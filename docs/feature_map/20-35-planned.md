@@ -273,14 +273,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** The editor quietly saves a recovery copy of your work every few minutes so a crash costs little.
 - **Parts:**
   - 22.2.1 Scene autosave sidecar - `editor/main.cpp` - writes `<scene>.autosave` every 120 s by default (30-600 s) while the scene has unsaved edits and is not playing; File > Autosave
-  - 22.2.2 Rotating autosave with session locks (#572) - `Core/Recovery` - `RecoveryManager`: three rotating slots per session, checksummed files, atomic writes, skips unchanged text
+  - 22.2.2 Rotating autosave with session locks (#572) - `Core/Recovery`, `editor/DocRecovery.hpp`, `editor/main.cpp` - `RecoveryManager` autosaves dirty graphs, scripts and the scene into `okay_recovery` every 30 s (File > Autosave) and when the window loses focus; atomic checksummed slots; untitled documents included; the real file is overwritten only if "Also save the real file" is on
   - 22.2.3 In-game Auto Save component - `Components/AutoSave` - saves the game (not the editor scene) to a slot on a timer or when a scene starts; see 35.2
 - **Code:** `editor/main.cpp`, `Core/Recovery`, `Components/AutoSave`
 - **API:** File > Autosave (Enabled, Interval); `RecoveryManager::SetProvider`, `StartSession`, `Tick`, `OnSaved`, `EndSession`
 - **Editor:** File > Autosave submenu
 - **Docs:** `docs/editor.md`; `docs/undo_recovery.md`
-- **Tests:** `recovery`
-- **Status:** Partial - the sidecar autosave works for the open scene only; one file is overwritten each time; the rotating `RecoveryManager` is on main (#572, test `recovery`) but the editor does not call it.
+- **Tests:** `recovery`, `doc_recovery`
+- **Status:** Partial - graphs, scripts and the scene now autosave through `RecoveryManager` (test `doc_recovery`); the older `<scene>.autosave` sidecar is still written as well.
 - **Exists today:** One `<scene>.autosave` per open scene, saved with `SceneSerializer::SaveToFile`. Nothing is kept for an unsaved new scene without a path (the code requires `ed.path()` non-empty).
 - **Work packages:**
   1. M - Replace the sidecar with `RecoveryManager` (rotating slots, per-session lock, clean-exit cleanup). Depends on: #572 (on main).
@@ -299,13 +299,13 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 22.3.1 Recover Autosave prompt - `editor/main.cpp` - opening a scene that has a newer `.autosave` shows "Recover Autosave"
   - 22.3.2 Crash handlers and breadcrumbs - `editor/main.cpp` - Windows exception filter and a Linux/macOS signal handler write `okay_crash.txt` and append `okay_crashlog.txt`; `OKAY_TRACE` records the last step
   - 22.3.3 Crash Log tab and launcher page - `editor/main.cpp`, `shared/CrashReports.hpp`, `launcher/main.cpp` - View > Crash Log; Settings > Crash reports in the launcher with a notification per new crash
-  - 22.3.4 Unclean-shutdown detection (#572) - `Core/Recovery` - lock files tell a crashed session from a running one and list recoverable autosaves
+  - 22.3.4 Unclean-shutdown detection (#572) - `Core/Recovery`, `editor/main.cpp` - a killed editor leaves its lock; the next start offers Restore, Compare or Discard and keeps the copy until one of those is chosen
 - **Code:** `editor/main.cpp`, `shared/CrashReports.hpp`, `launcher/main.cpp`, `Core/Recovery`
 - **API:** `OKAY_TRACE`, `okaycrash::ParseLog`, `okaycrash::Load`; `RecoveryManager::FindRecoverable`, `Restore`, `Discard`
 - **Editor:** "Recover Autosave" dialog, View > Crash Log
 - **Docs:** `docs/editor.md`, `docs/launcher-multiplayer.md`
 - **Tests:** `crash_reports`; `recovery`
-- **Status:** Partial - recovery of the scene and crash reports work; the player (the shipped game) has no crash handler of its own (not found in `player/main.cpp`); the unclean-shutdown list (`RecoveryManager`) is on main but unused by the editor.
+- **Status:** Partial - the editor offers recovered graphs, scripts and the scene after a kill (`DrawDocRecoveryPopup`); the player still has no crash handler of its own.
 - **Exists today:** All of Parts 22.3.1-22.3.3 are used by the editor; 22.3.4 exists only as engine code. The recover popup compares the autosave with the scene; the reports are plain text with version, last step, exception and backtrace.
 - **Work packages:**
   1. M - Recovery dialog lists every recoverable session (`FindRecoverable`) with time and size, restore or discard. Depends on: 22.2 package 1.
@@ -325,10 +325,10 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 22.4.2 Timestamped backups with a prune policy (#572) - `Core/Backup` - `BackupManager::SaveWithBackup`, keep-last N plus one per day, size cap, restore after backing up the current file
 - **Code:** `Scene/SceneSerializer`, `Core/SaveGame`, `Core/Backup`
 - **API:** `SceneSerializer::SaveToFile`; `BackupManager`, `BackupPolicy`
-- **Editor:** none (no "Restore from backup" window)
+- **Editor:** Visual Script > Graph > Restore previous version (the last 5 saves of that graph, via `BackupManager`)
 - **Docs:** `docs/save_games.md`; `docs/undo_recovery.md`
-- **Tests:** `durable_saves`, `save_game`; `backup`
-- **Status:** Partial - exactly one previous version is kept; no list and no restore UI; `BackupManager` (many timestamped backups, #572, test `backup`) is on main but unused by the editor.
+- **Tests:** `durable_saves`, `save_game`; `backup`; `doc_recovery` (keeps the newest 5)
+- **Status:** Partial - graph and script saves keep the last 5 timestamped backups in `okay_backups`; scene saves still keep a single `.bak`.
 - **Exists today:** Scene saves are atomic (temp file then rename) and keep one `.bak` (`SceneSerializer::SaveToFile`). `Core/Backup` adds many timestamped backups and pruning, not called by the editor.
 - **Work packages:**
   1. S - Editor Save goes through `BackupManager::SaveWithBackup` (backups under `<project>/.okay/backups`). Depends on: #572 (on main).

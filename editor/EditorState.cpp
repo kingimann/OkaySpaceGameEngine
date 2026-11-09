@@ -11,6 +11,7 @@
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
 #include <filesystem>
+#include <fstream>
 
 namespace {
 // Every new 3D primitive ships with a collider fitted to its mesh, so
@@ -709,6 +710,21 @@ bool EditorState::Save(const std::string& path) {
     if (!SceneSerializer::SaveToFile(m_scene, path)) return false;
     m_path = path;
     dirty = false;
+    return true;
+}
+
+bool EditorState::LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error) {
+    const std::string tmp = keepPath.empty() ? std::string("okay_scene_recovery.okayscene") : keepPath + ".recovery-tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary);
+        if (!f) { if (error) *error = "couldn't write the recovery file"; return false; }
+        f << text;
+    }
+    if (!Load(tmp, error)) return false;
+    m_path = keepPath;
+    dirty = true;
+    std::error_code ec;
+    std::filesystem::remove(tmp, ec);
     return true;
 }
 

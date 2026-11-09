@@ -108,6 +108,9 @@ public:
     /// vertices, triangles possibly re-ordered): mesh edit mode drops face/edge selections.
     static inline std::function<void(GameObject*)> onMeshTrianglesReordered;
     bool Load(const std::string& path, std::string* error = nullptr);
+    /// Load scene text recovered from an autosave. The scene's path stays `keepPath`
+    /// and the scene is left unsaved, so the real file is not overwritten.
+    bool LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
 
     // ---- Project (a folder on disk holding the scenes + assets) ---------

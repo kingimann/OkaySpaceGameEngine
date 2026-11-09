@@ -1038,6 +1038,16 @@ target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/edit
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
+add_executable(test_vs_node_docs test_vs_node_docs.cpp)
+target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
+add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
+
+add_executable(test_doc_recovery test_doc_recovery.cpp)
+target_include_directories(test_doc_recovery PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_doc_recovery PRIVATE okay::engine)
+add_test(NAME doc_recovery COMMAND test_doc_recovery)
+
 add_executable(test_anim_clip_tools test_anim_clip_tools.cpp)
 target_link_libraries(test_anim_clip_tools PRIVATE okay::engine)
 add_test(NAME anim_clip_tools COMMAND test_anim_clip_tools)

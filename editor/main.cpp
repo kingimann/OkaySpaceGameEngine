@@ -2034,7 +2034,9 @@ static void EmptyState(const char* glyph, const char* title, const char* hint = 
 }
 bool g_autosave = true;          // periodically write a crash-recovery sidecar
 double g_lastAutosave = 0.0;     // seconds since last autosave
-float  g_autosaveInterval = 120.0f;  // seconds between autosaves
+float  g_autosaveInterval = 120.0f;  // seconds between scene autosaves (legacy sidecar)
+float  g_docAutosaveSec = 30.0f;     // graphs and scripts, via RecoveryManager
+bool   g_autosaveToFile = false;     // also overwrite the real file (off unless chosen)
 double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI)
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
@@ -2105,6 +2107,8 @@ void LoadSettings() {
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "sidetabs") g_sideTabs = (v < 0 || v > 2) ? 0 : v;
+        else if (k == "docautosave") g_docAutosaveSec = (float)(v < 5 ? 5 : (v > 600 ? 600 : v));
+        else if (k == "autosavetofile") g_autosaveToFile = (v != 0);
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
@@ -2151,7 +2155,9 @@ void SaveSettings() {
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
       << "uisubdivy " << g_uiSubdivY << "\n"
-      << "sidetabs " << g_sideTabs << "\n";
+      << "sidetabs " << g_sideTabs << "\n"
+      << "docautosave " << (int)(g_docAutosaveSec + 0.5f) << "\n"
+      << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n";
 }
 
 // ---- Reusable custom-action library (persisted globally) -----------------
@@ -2439,7 +2445,12 @@ void DrawVarWatch() {
 static void SaveSceneCmd(EditorState& ed);       // File > Save Scene (Ctrl+S)
 static void SaveSceneAsCmd(EditorState& ed);     // File > Save Scene As (Ctrl+Shift+S)
 static bool SaveProject(EditorState& ed, bool interactive);   // File > Save Project (Ctrl+Alt+S): everything
-static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts or the open graph
+static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts or open graphs
+static bool SaveEditorDocument(const std::string& path, const std::string& content);  // backup, then atomic write
+static void RequestPlay(EditorState& ed);
+static void RequestStop(EditorState& ed);
+static void RequestLoad(EditorState& ed, const std::string& path);
+static void DrawActionPrompt(EditorState& ed);
 void SaveAllBeforeExit(EditorState& ed) {
     if (SaveProject(ed, false)) ConsoleLog("Saved everything before updating.", 0);
 }
@@ -5683,8 +5694,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 bool exists = std::filesystem::exists(p, fec);   // moved/deleted files gray out
                 if (ImGui::MenuItem(p.c_str(), nullptr, false, exists)) {
                     std::string err;
-                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
-                    else ConsoleLog("Open failed: " + err);
+                    RequestLoad(ed, p);
                 }
                 if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     ImGui::SetTooltip("File not found (moved or deleted)");
@@ -5723,6 +5733,12 @@ void DrawMenuAndToolbar(EditorState& ed) {
                                     SDL_GetTicks64() / 1000.0 - g_autosaveStamp);
             ImGui::TextDisabled("Writes a <scene>.autosave recovery copy;");
             ImGui::TextDisabled("offered on next open if it's newer than the scene.");
+            ImGui::Separator();
+            ImGui::TextDisabled("Graphs and scripts");
+            ImGui::SetNextItemWidth(150);
+            if (ImGui::SliderFloat("Recovery interval (s)", &g_docAutosaveSec, 5.0f, 300.0f, "%.0f")) SaveSettings();
+            if (ImGui::MenuItem("Also save the real file", nullptr, &g_autosaveToFile)) SaveSettings();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: recovery copies only. On: also overwrite the file you saved.");
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Build Settings...", "Ctrl+B")) g_showBuildGame = true;
@@ -6402,11 +6418,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
             okay::editor::apreview::Stop(ed.scene());   // before the snapshot, so Play doesn't save the preview pose
             CompileOpenScriptBuffers(ed.scene());
             NavigationBeforePlay(ed);   // surfaces set to bake before Play
-            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
-            g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
+            RequestPlay(ed);
         } else {
-            okay::editor::apreview::Stop(ed.scene());   // before Stop destroys the play copy
-            ed.Stop(); g_paused = false; ConsoleLog("Stop");
+            RequestStop(ed);
         }
     }
     // Pause
@@ -9359,8 +9373,7 @@ void DrawProject(EditorState& ed) {
         if (isDir) std::strncpy(dirBuf, full.c_str(), sizeof(dirBuf) - 1);
         else if (ext == ".okayscene") {
             std::string err;
-            if (ed.Load(full, &err)) ConsoleLog("Opened " + full);
-            else ConsoleLog("Open failed: " + err);
+            RequestLoad(ed, full);
         } else if (ext == ".okayprefab") {
             ed.PushUndo();
             std::string err;
@@ -10896,6 +10909,7 @@ void SceneBuildApply(EditorState&, const std::vector<SceneBuildEntry>& entries) 
 // Prompt to save unsaved work before quitting. Routed through g_quitRequested
 // (set by Exit, the window close button, or SDL_QUIT) so closing never silently
 // discards changes.
+static bool ScriptTabDirty(okay::ScriptComponent* t);
 void DrawQuitPrompt(EditorState& ed, bool& running) {
     static bool open = false;
     if (g_quitRequested && !open) {
@@ -10907,22 +10921,31 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("You have unsaved changes. Save before quitting?");
-        ImGui::TextDisabled("Save keeps everything: the scene, edited scripts and the open visual script.");
+        ImGui::TextDisabled("Save keeps the scene, every edited script and every open graph.");
+        {
+            std::vector<std::string> names;
+            if (ed.dirty) names.push_back("Scene: " + (ed.path().empty() ? ed.scene().Name() : ed.path()));
+            for (okay::ScriptComponent* t : g_scriptTabs)
+                if (t && ScriptTabDirty(t)) names.push_back("Script: " + (t->Path().empty() ? std::string("Untitled") : t->Path()));
+            okay::editor::vsed::VsDirtyTitles(names);
+            for (const std::string& n : names) ImGui::BulletText("%s", n.c_str());
+        }
         ImGui::Separator();
-        if (ImGui::Button("Save", ImVec2(110, 0))) {
+        if (ImGui::Button("Save", ImVec2(120, 0))) {
             const bool ok = SaveProject(ed, false);
             g_quitRequested = false; open = false;
             if (ok) running = false;   // something failed: stay open so nothing is lost
             ImGui::CloseCurrentPopup();
         }
+        ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
-        if (ImGui::Button("Don't Save", ImVec2(110, 0))) {
-            running = false; g_quitRequested = false; open = false;
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            g_quitRequested = false; open = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) {
-            g_quitRequested = false; open = false;
+        if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+            running = false; g_quitRequested = false; open = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -13029,7 +13052,85 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     ImGui::EndPopup();
 }
 
+static okay::ScriptComponent* g_scriptCloseAsk = nullptr;
+static void CloseScriptTab(okay::ScriptComponent* closeTab, bool remember) {
+    if (!closeTab) return;
+    if (remember) {
+        const char* live = PeekCodeBuffer(closeTab);
+        okay::editor::docrec::ClosedDoc c;
+        c.kind = "script";
+        c.path = closeTab->Path();
+        c.key = c.path.empty() ? std::string("untitled-script") : c.path;
+        c.text = live ? live : closeTab->Source();
+        auto it = g_scriptSaved.find(closeTab);
+        c.baseline = it == g_scriptSaved.end() ? closeTab->Source() : it->second;
+        const std::string baseline = c.baseline;
+        okay::editor::docrec::RememberClosed(std::move(c));
+        if (live) SetCodeBuffer(closeTab, baseline);
+    }
+    g_scriptTabs.erase(std::remove(g_scriptTabs.begin(), g_scriptTabs.end(), closeTab), g_scriptTabs.end());
+    if (g_activeScriptTab == closeTab)
+        g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
+    g_scriptSaved.erase(closeTab);
+    g_looseScripts.erase(std::remove_if(g_looseScripts.begin(), g_looseScripts.end(),
+        [&](const std::unique_ptr<okay::ScriptComponent>& u){ return u.get() == closeTab; }),
+        g_looseScripts.end());
+}
+static void ReopenClosedScript() {
+    auto& stack = okay::editor::docrec::ClosedStack();
+    for (std::size_t i = 0; i < stack.size(); ++i) {
+        if (stack[i].kind != "script") continue;
+        okay::editor::docrec::ClosedDoc c = std::move(stack[i]);
+        stack.erase(stack.begin() + (std::ptrdiff_t)i);
+        if (!c.path.empty()) OpenScriptFileInEditor(c.path);
+        else {
+            auto sc = std::make_unique<okay::ScriptComponent>("okayscript");
+            okay::ScriptComponent* raw = sc.get();
+            g_looseScripts.push_back(std::move(sc));
+            g_scriptTabs.push_back(raw);
+            g_activeScriptTab = raw; g_focusScriptTab = raw;
+            g_showScriptEditor = true;
+        }
+        if (g_activeScriptTab) {
+            SetCodeBuffer(g_activeScriptTab, c.text);
+            g_scriptSaved[g_activeScriptTab] = c.baseline;
+        }
+        return;
+    }
+}
+static void DrawScriptClosePrompt() {
+    if (g_scriptCloseAsk && !ImGui::IsPopupOpen("Save this script?")) ImGui::OpenPopup("Save this script?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Save this script?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    okay::ScriptComponent* sc = g_scriptCloseAsk;
+    const std::string name = sc && !sc->Path().empty() ? sc->Path() : std::string("Untitled script");
+    ImGui::TextUnformatted("Save this script before closing it?");
+    ImGui::TextDisabled("%s", name.c_str());
+    ImGui::Spacing();
+    if (ImGui::Button("Save", ImVec2(120, 0)) && sc) {
+        const char* live = PeekCodeBuffer(sc);
+        std::string p = sc->Path();
+        if (p.empty()) p = "Assets/Untitled.okay";
+        if (live && SaveEditorDocument(p, live)) {
+            sc->SetPath(p); sc->SetSource(live); g_scriptSaved[sc] = live;
+        }
+        CloseScriptTab(sc, false);
+        g_scriptCloseAsk = nullptr;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0))) { g_scriptCloseAsk = nullptr; ImGui::CloseCurrentPopup(); }
+    ImGui::SameLine();
+    if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+        CloseScriptTab(sc, true);
+        g_scriptCloseAsk = nullptr;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
 void DrawScriptEditor(EditorState& ed) {
+    struct ClosePromptGuard { ~ClosePromptGuard() { DrawScriptClosePrompt(); } } closePromptGuard;
     // Float/Dock request from the toolbar (applied for one frame before Begin):
     // 1 = undock into a floating window, 2 = dock back into the main area as a tab.
     if (g_scriptDockReq == 1) {
@@ -13149,15 +13250,15 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::EndTabBar();
         g_focusScriptTab = nullptr;
         if (closeTab) {
-            g_scriptTabs.erase(std::remove(g_scriptTabs.begin(), g_scriptTabs.end(), closeTab),
-                               g_scriptTabs.end());
-            if (g_activeScriptTab == closeTab)
-                g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
-            g_scriptSaved.erase(closeTab);   // drop the modified-marker baseline
-            // Free a loose (Project-opened) script when its tab is closed.
-            g_looseScripts.erase(std::remove_if(g_looseScripts.begin(), g_looseScripts.end(),
-                [&](const std::unique_ptr<ScriptComponent>& u){ return u.get() == closeTab; }),
-                g_looseScripts.end());
+            if (ScriptTabDirty(closeTab)) g_scriptCloseAsk = closeTab;
+            else CloseScriptTab(closeTab, false);
+        }
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+            if (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_T)) ReopenClosedScript();
+            else if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_W) && g_activeScriptTab) {
+                if (ScriptTabDirty(g_activeScriptTab)) g_scriptCloseAsk = g_activeScriptTab;
+                else CloseScriptTab(g_activeScriptTab, false);
+            }
         }
     }
     ImGui::PopStyleVar();
@@ -13302,7 +13403,7 @@ void DrawScriptEditor(EditorState& ed) {
                 std::filesystem::path assets = std::filesystem::path(ed.projectDir()) / "Assets";
                 if (std::filesystem::is_directory(assets, sc_ec)) p = (assets / p).string();
             }
-            if (extide::WriteFile(p, buf.data())) {
+            if (SaveEditorDocument(p, buf.data())) {
                 sc->SetPath(p);
                 sc->SetSource(buf.data());        // persist edits so a scene save keeps them
                 ConsoleLog("Saved " + p);
@@ -15782,8 +15883,7 @@ void HandleShortcuts(EditorState& ed) {
     // clashed with the in-game jump — pressing Space in play mode stopped the game.
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
         if (ed.isPlaying()) {
-            okay::editor::apreview::Stop(ed.scene());
-            ed.Stop(); g_paused = false; ConsoleLog("Stop");
+            RequestStop(ed);
         }
         else {
             if (g_clearConsoleOnPlay) ConsoleClear();
@@ -15791,8 +15891,7 @@ void HandleShortcuts(EditorState& ed) {
             okay::editor::apreview::Stop(ed.scene());
             CompileOpenScriptBuffers(ed.scene());
             NavigationBeforePlay(ed);   // surfaces set to bake before Play
-            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
-            g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
+            RequestPlay(ed);
         }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) {
@@ -15980,8 +16079,7 @@ void DrawFileDialogs(EditorState& ed) {
         }
         if (ImGui::Button("Open", ImVec2(120, 0)) || openGo) {
             std::string err;
-            if (ed.Load(g_pathBuf, &err)) { ConsoleLog("Opened " + std::string(g_pathBuf)); AddRecent(g_pathBuf); }
-            else ConsoleLog("Open failed: " + err);
+            RequestLoad(ed, g_pathBuf);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -18164,9 +18262,7 @@ void DrawHierarchy(EditorState& ed) {
                     ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + path);
                 } else ConsoleLog("Prefab load failed: " + err);
             } else if (ext == ".okayscene") {
-                std::string err;
-                if (ed.Load(path, &err)) ConsoleLog("Opened " + path);
-                else ConsoleLog("Open failed: " + err);
+                RequestLoad(ed, path);
             }
         }
         ImGui::EndDragDropTarget();
@@ -31715,7 +31811,7 @@ void DrawInspector(EditorState& ed) {
     // ---- In-game build mode + logic links ----
     // One-letter key field ("" = unbound), mouse button and gamepad button pickers.
     auto bmKey = [&](const char* label, char& key) {
-        char b[2] = {key > ' ' ? key : (key == ' ' ? '_' : 0), 0};
+        char b[2] = {static_cast<char>(key > ' ' ? key : (key == ' ' ? '_' : 0)), 0};
         ImGui::SetNextItemWidth(40);
         if (ImGui::InputText(label, b, sizeof(b))) {
             char c = b[0];
@@ -37168,10 +37264,11 @@ void DrawInspector(EditorState& ed) {
                 std::error_code mk; fsn::create_directories(dir, mk);
                 fsn::path p = dir / (go->name + "Graph.okayvs");
                 for (int k = 2; fsn::exists(p, mk); ++k) p = dir / (go->name + "Graph" + std::to_string(k) + ".okayvs");
+                okay::editor::vsed::NewGraph(true);
                 auto& vg = okay::editor::vsed::State().g;
-                okay::editor::vsed::SeedStarterGraph(vg);
-                okay::editor::vsed::State().frameAll = true;
-                if (vg.save(p.string())) {
+                if (SaveEditorDocument(p.string(), vg.toText())) {
+                    vg.path = p.string();
+                    okay::editor::vsed::VsMarkClean(okay::editor::vsed::State());
                     AttachScriptAsset(ed, go, p.string());
                     g_showVisualScript = true;
                 } else ConsoleLog("Couldn't create " + p.string(), 2);
@@ -42160,9 +42257,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
                 if (!placed) ConsoleLog("Prefab load failed: " + err);
             } else if (ext == ".okayscene") {
-                std::string err;
-                if (ed.Load(path, &err)) ConsoleLog("Opened " + path);
-                else ConsoleLog("Open failed: " + err);
+                RequestLoad(ed, path);
             } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
                 ed.PushUndo();
                 std::filesystem::path fp(path);
@@ -43419,12 +43514,191 @@ static void SaveSceneCmd(EditorState& ed) {
     if (ed.path().empty()) { SaveSceneAsCmd(ed); return; }   // first save: choose where
     SaveSceneTo(ed, ed.path());
 }
+static okay::RecoveryManager& DocRecovery() {
+    static okay::RecoveryManager* r = nullptr;
+    if (!r) {
+        okay::RecoveryManager::Config cfg;
+        cfg.directory = "okay_recovery";
+        cfg.baseName = "editor";
+        cfg.intervalSeconds = 30.0f;
+        cfg.slots = 3;
+        r = new okay::RecoveryManager(cfg);
+    }
+    return *r;
+}
+static std::vector<okay::RecoveryManager::Candidate> g_docRecover;
+static int g_docCompare = -1;
+static okay::BackupManager& EditorBackups() {
+    static okay::BackupManager* m = nullptr;
+    if (!m) {
+        okay::BackupManager::Config cfg;
+        cfg.directory = "okay_backups";
+        cfg.policy = okay::editor::docrec::LastSavesPolicy(5);
+        m = new okay::BackupManager(cfg);
+    }
+    return *m;
+}
+static bool SaveEditorDocument(const std::string& path, const std::string& content) {
+    return EditorBackups().SaveWithBackup(path, content);
+}
 static bool AnyUnsavedWork(EditorState& ed) {
     if (ed.dirty) return true;
     for (okay::ScriptComponent* t : g_scriptTabs)
-        if (t && !t->Path().empty() && ScriptTabDirty(t)) return true;
-    const auto& vg = okay::editor::vsed::State().g;
-    return vg.dirty && !vg.path.empty();
+        if (t && ScriptTabDirty(t)) return true;
+    return okay::editor::vsed::VsAnyUnsaved();
+}
+static int g_pendingAction = 0;          // 1 play, 2 stop, 3 load scene
+static std::string g_pendingPath;
+static void StartPlayNow(EditorState& ed) {
+    if (g_clearConsoleOnPlay) ConsoleClear();
+    StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
+    okay::editor::apreview::Stop(ed.scene());
+    CompileOpenScriptBuffers(ed.scene());
+    NavigationBeforePlay(ed);
+    ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+    g_showGame = true; g_focusGameOnPlay = true;
+}
+static void StopPlayNow(EditorState& ed) {
+    okay::editor::apreview::Stop(ed.scene());
+    ed.Stop(); g_paused = false; ConsoleLog("Stop");
+}
+static void LoadSceneNow(EditorState& ed, const std::string& path) {
+    std::string err;
+    if (ed.Load(path, &err)) { ConsoleLog("Opened " + path); AddRecent(path); }
+    else ConsoleLog("Open failed: " + err, 2);
+}
+static void RunPendingAction(EditorState& ed) {
+    const int a = g_pendingAction; g_pendingAction = 0;
+    const std::string path = std::move(g_pendingPath); g_pendingPath.clear();
+    if (a == 1) StartPlayNow(ed);
+    else if (a == 2) StopPlayNow(ed);
+    else if (a == 3) LoadSceneNow(ed, path);
+}
+static void RequestPlay(EditorState& ed) {
+    if (AnyUnsavedWork(ed)) { g_pendingAction = 1; return; }
+    StartPlayNow(ed);
+}
+static void RequestStop(EditorState& ed) {
+    if (AnyUnsavedWork(ed)) { g_pendingAction = 2; return; }
+    StopPlayNow(ed);
+}
+static void RequestLoad(EditorState& ed, const std::string& path) {
+    if (AnyUnsavedWork(ed)) { g_pendingAction = 3; g_pendingPath = path; return; }
+    LoadSceneNow(ed, path);
+}
+static void DrawActionPrompt(EditorState& ed) {
+    if (!g_pendingAction) return;
+    if (!ImGui::IsPopupOpen("Save before continuing?")) ImGui::OpenPopup("Save before continuing?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Save before continuing?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const char* what = g_pendingAction == 1 ? "playing" : g_pendingAction == 2 ? "stopping" : "opening another scene";
+    ImGui::Text("Save your work before %s?", what);
+    std::vector<std::string> names;
+    if (ed.dirty) names.push_back("Scene");
+    for (okay::ScriptComponent* t : g_scriptTabs)
+        if (t && ScriptTabDirty(t)) names.push_back("Script: " + (t->Path().empty() ? std::string("Untitled") : t->Path()));
+    okay::editor::vsed::VsDirtyTitles(names);
+    for (const std::string& n : names) ImGui::BulletText("%s", n.c_str());
+    ImGui::Spacing();
+    if (ImGui::Button("Save", ImVec2(120, 0))) {
+        if (SaveProject(ed, true)) RunPendingAction(ed);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        g_pendingAction = 0; g_pendingPath.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+        RunPendingAction(ed);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor::docrec::Buffer>& docs) {
+    for (const auto& b : docs) {
+        if (b.kind == "graph" || b.kind == "closed") okay::editor::vsed::VsRestoreBuffer(b);
+        else if (b.kind == "script") {
+            if (b.key.rfind("untitled", 0) == 0) {
+                auto sc = std::make_unique<okay::ScriptComponent>("okayscript");
+                okay::ScriptComponent* raw = sc.get();
+                g_looseScripts.push_back(std::move(sc));
+                g_scriptTabs.push_back(raw);
+                g_activeScriptTab = raw; g_focusScriptTab = raw;
+                SetCodeBuffer(raw, b.text);
+                g_scriptSaved[raw] = "";
+            } else {
+                OpenScriptFileInEditor(b.key);
+                if (g_activeScriptTab) {
+                    SetCodeBuffer(g_activeScriptTab, b.text);
+                    std::ifstream f(b.key, std::ios::binary);
+                    std::stringstream ss; if (f) ss << f.rdbuf();
+                    g_scriptSaved[g_activeScriptTab] = ss.str();
+                }
+            }
+            g_showScriptEditor = true;
+        } else if (b.kind == "scene") {
+            const std::string keep = (b.key == "untitled-scene") ? std::string() : b.key;
+            std::string err;
+            if (!ed.LoadRecoveredText(b.text, keep, &err)) ConsoleLog("Couldn't restore the scene: " + err, 2);
+        }
+    }
+    g_showVisualScript = true;
+}
+static void DrawDocRecoveryPopup(EditorState& ed) {
+    if (g_docRecover.empty()) return;
+    if (!ImGui::IsPopupOpen("Restore recovered work?")) ImGui::OpenPopup("Restore recovered work?");
+    ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Restore recovered work?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const auto& c = g_docRecover.front();
+    ImGui::TextWrapped("The editor closed without a clean exit. A recovery copy from that session is still here.");
+    ImGui::TextDisabled("%s", c.label.c_str());
+    ImGui::Spacing();
+    std::string payload, err;
+    std::vector<okay::editor::docrec::Buffer> docs;
+    const bool ok = DocRecovery().Restore(c, payload, &err) && okay::editor::docrec::DecodeBundle(payload, docs, &err);
+    if (!ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "The copy could not be read: %s", err.c_str());
+    else for (const auto& b : docs) ImGui::BulletText("%s  %s", b.kind.c_str(), b.key.c_str());
+    ImGui::Spacing();
+    if (ImGui::Button("Restore", ImVec2(120, 0)) && ok) {
+        ApplyRecoveredBundle(ed, docs);
+        DocRecovery().Discard(c);
+        g_docRecover.erase(g_docRecover.begin());
+        g_docCompare = -1;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine();
+    if (ImGui::Button("Compare", ImVec2(120, 0))) g_docCompare = g_docCompare < 0 ? 0 : -1;
+    ImGui::SameLine();
+    if (ImGui::Button("Discard", ImVec2(120, 0))) {
+        DocRecovery().Discard(c);
+        g_docRecover.erase(g_docRecover.begin());
+        g_docCompare = -1;
+        ImGui::CloseCurrentPopup();
+    }
+    if (g_docCompare >= 0 && ok) {
+        ImGui::Separator();
+        ImGui::BeginChild("##reccompare", ImVec2(600, 220), ImGuiChildFlags_Borders);
+        for (const auto& b : docs) {
+            std::string disk;
+            bool exists = false;
+            if (!b.key.empty() && b.key.rfind("untitled", 0) != 0) {
+                std::ifstream f(b.key, std::ios::binary);
+                exists = (bool)f;
+                if (f) { std::stringstream ss; ss << f.rdbuf(); disk = ss.str(); }
+            }
+            if (!okay::editor::docrec::BufferWorthRestoring(b.text, disk, exists)) continue;
+            ImGui::Text("%s  %s", b.kind.c_str(), b.key.c_str());
+            ImGui::TextDisabled("Recovered (%d characters). On disk: %s.", (int)b.text.size(), exists ? "different" : "no file yet");
+            ImGui::Spacing();
+        }
+        ImGui::EndChild();
+    }
+    ImGui::EndPopup();
 }
 // Save everything: the scene (an unsaved one goes to Assets/Scenes), every edited
 // script file, the open visual-script graph, project + build settings and the
@@ -43445,17 +43719,23 @@ static bool SaveProject(EditorState& ed, bool interactive) {
     }
     int scripts = 0;
     for (okay::ScriptComponent* t : g_scriptTabs) {
-        if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
+        if (!t || !ScriptTabDirty(t)) continue;
         const char* live = PeekCodeBuffer(t);
-        std::ofstream f(t->Path(), std::ios::binary);
-        if (f && live) { f << live; g_scriptSaved[t] = live; ++scripts; }
+        if (!live) continue;
+        if (t->Path().empty()) {
+            namespace fs = std::filesystem;
+            const fs::path dir = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            std::error_code ec; fs::create_directories(dir, ec);
+            std::string p = (dir / "Untitled.okay").string();
+            for (int k = 2; fs::exists(p, ec); ++k) p = (dir / ("Untitled" + std::to_string(k) + ".okay")).string();
+            t->SetPath(p);
+        }
+        if (SaveEditorDocument(t->Path(), live)) { g_scriptSaved[t] = live; ++scripts; }
         else { ok = false; ConsoleLog("Couldn't save " + t->Path(), 2); }
     }
     if (scripts) saved.push_back(std::to_string(scripts) + (scripts == 1 ? " script" : " scripts"));
-    auto& vg = okay::editor::vsed::State().g;
-    if (vg.dirty && !vg.path.empty()) {
-        if (vg.save(vg.path)) saved.push_back("visual script"); else { ok = false; ConsoleLog("Couldn't save " + vg.path, 2); }
-    }
+    const int graphs = okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
+    if (graphs) saved.push_back(graphs == 1 ? "visual script" : std::to_string(graphs) + " visual scripts");
     SaveProjectSettings();
     SaveBuildProfiles(ed);
     SaveCustomActions();
@@ -44073,6 +44353,84 @@ int main(int argc, char** argv) {
     // the loading screen could use the project's custom splash.)
     // Route the node editor's log messages to the editor console.
     okay::editor::vsed::LogFn = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+    okay::editor::vsed::SaveTextFile = [](const std::string& path, const std::string& content) {
+        return SaveEditorDocument(path, content);
+    };
+    okay::editor::vsed::VsBackupMenu = [](const std::string& path) {
+        const auto list = EditorBackups().List(path);
+        if (list.empty()) { ImGui::TextDisabled("No earlier saves of this file."); return; }
+        int shown = 0;
+        for (const auto& b : list) {
+            if (shown++ >= 5) break;
+            const std::string label = okay::BackupManager::FormatStamp(b.timestamp);
+            if (ImGui::MenuItem(label.c_str())) {
+                std::string text;
+                if (!EditorBackups().Read(b, text)) { ConsoleLog("Couldn't read that backup", 2); continue; }
+                auto& st = okay::editor::vsed::State();
+                st.undo.push_back(st.g.toText());
+                st.g.fromText(text);
+                okay::editor::vsed::VsRefreshDirty(st);
+                ConsoleLog("Restored a previous version. Save if you want to keep it.");
+            }
+        }
+    };
+    okay::editor::vsed::VsHasComponent = [](GameObject* go, const char* id) -> bool {
+        if (!go || !id) return false;
+        const std::string n = id;
+        if (n == "Rigidbody3D") return go->GetComponent<Rigidbody3D>() != nullptr;
+        if (n == "Rigidbody2D") return go->GetComponent<Rigidbody2D>() != nullptr;
+        if (n == "Rigidbody") return go->GetComponent<Rigidbody3D>() || go->GetComponent<Rigidbody2D>();
+        if (n == "AnimStateMachine") return go->GetComponent<AnimStateMachine>() != nullptr;
+        if (n == "Animator") return go->GetComponent<Animator>() != nullptr;
+        if (n == "NavMeshAgent") return go->GetComponent<NavMeshAgent>() != nullptr;
+        if (n == "Inventory") return go->GetComponent<Inventory>() != nullptr;
+        if (n == "Equipment") return go->GetComponent<Equipment>() != nullptr;
+        if (n == "Crafting") return go->GetComponent<Crafting>() != nullptr;
+        if (n == "AudioSource") return go->GetComponent<AudioSource>() != nullptr;
+        if (n == "ParticleSystem") return go->GetComponent<ParticleSystem>() != nullptr;
+        if (n == "Spline") return go->GetComponent<Spline>() != nullptr;
+        if (n == "LineRenderer") return go->GetComponent<LineRenderer>() != nullptr;
+        if (n == "TrailRenderer") return go->GetComponent<TrailRenderer>() != nullptr;
+        if (n == "BehaviorTreeRunner") return go->GetComponent<BehaviorTreeRunner>() != nullptr;
+        if (n == "NetworkObject") return go->GetComponent<NetworkObject>() != nullptr;
+        if (n == "FullBodyIK") return go->GetComponent<FullBodyIK>() != nullptr;
+        if (n == "TextRenderer") return go->GetComponent<TextRenderer>() != nullptr;
+        if (n == "DialogueRunner") return go->GetComponent<DialogueRunner>() != nullptr;
+        if (n == "MusicPlayer") return go->GetComponent<MusicPlayer>() != nullptr;
+        if (n == "BuildMode") return go->GetComponent<BuildMode>() != nullptr;
+        if (n == "SequencePlayer") return go->GetComponent<SequencePlayer>() != nullptr;
+        if (n == "HealthStat") return go->GetComponent<HealthStat>() != nullptr;
+        return false;
+    };
+    okay::editor::vsed::VsAddComponentById = [](GameObject* go, const char* id) -> bool {
+        if (!go || !id) return false;
+        const std::string n = id;
+        auto add = [&](auto* p) { if (p) { ConsoleLog(std::string("Added ") + id); return true; } return false; };
+        if (n == "Rigidbody3D" || n == "Rigidbody") return add(go->AddComponent<Rigidbody3D>());
+        if (n == "Rigidbody2D") return add(go->AddComponent<Rigidbody2D>());
+        if (n == "AnimStateMachine") return add(go->AddComponent<AnimStateMachine>());
+        if (n == "Animator") return add(go->AddComponent<Animator>());
+        if (n == "NavMeshAgent") return add(go->AddComponent<NavMeshAgent>());
+        if (n == "Inventory") return add(go->AddComponent<Inventory>());
+        if (n == "Equipment") return add(go->AddComponent<Equipment>());
+        if (n == "Crafting") return add(go->AddComponent<Crafting>());
+        if (n == "AudioSource") return add(go->AddComponent<AudioSource>());
+        if (n == "ParticleSystem") return add(go->AddComponent<ParticleSystem>());
+        if (n == "Spline") return add(go->AddComponent<Spline>());
+        if (n == "LineRenderer") return add(go->AddComponent<LineRenderer>());
+        if (n == "TrailRenderer") return add(go->AddComponent<TrailRenderer>());
+        if (n == "BehaviorTreeRunner") return add(go->AddComponent<BehaviorTreeRunner>());
+        if (n == "NetworkObject") return add(go->AddComponent<NetworkObject>());
+        if (n == "FullBodyIK") return add(go->AddComponent<FullBodyIK>());
+        if (n == "TextRenderer") return add(go->AddComponent<TextRenderer>());
+        if (n == "DialogueRunner") return add(go->AddComponent<DialogueRunner>());
+        if (n == "MusicPlayer") return add(go->AddComponent<MusicPlayer>());
+        if (n == "BuildMode") return add(go->AddComponent<BuildMode>());
+        if (n == "SequencePlayer") return add(go->AddComponent<SequencePlayer>());
+        if (n == "HealthStat") return add(go->AddComponent<HealthStat>());
+        ConsoleLog(std::string("Can't add ") + id + " from here.", 1);
+        return false;
+    };
     // Visual-script debugger: a breakpoint (or step) freezes the game here, shows
     // where in the Visual Script window, and waits for Continue / Step.
     okay::vs::VsDebugger::Get().onStop = [](okay::vs::NodeGraph& g, okay::vs::VsNode& n, okay::vs::VsContext& ctx) {
@@ -44097,7 +44455,7 @@ int main(int argc, char** argv) {
         v.sceneVars = sorted(okay::vs::SceneVariables(ctx.gameObject ? ctx.gameObject->scene() : nullptr));
         v.globalVars = sorted(okay::vs::GlobalVariables());
         auto& vst = okay::editor::vsed::State();
-        if (!v.key.empty() && vst.g.path != v.key && !vst.g.dirty) okay::editor::vsed::OpenFile(v.key);
+        if (!v.key.empty() && vst.g.path != v.key) okay::editor::vsed::OpenFile(v.key);
         g_showVisualScript = true;
         ConsoleLog("Visual Script paused before node #" + std::to_string(v.node) + " (" + v.nodeType + ") on '" + v.object +
                    "'. F5 continue, F10 step, F11 step into.");
@@ -44230,6 +44588,38 @@ int main(int argc, char** argv) {
     bool running = true;
     std::string lastTitle;
     Uint64 last = SDL_GetPerformanceCounter();
+    DocRecovery().SetInterval(g_docAutosaveSec);
+    DocRecovery().SetEnabled(true);
+    DocRecovery().SetProvider([&](std::string& payload, std::string& label) {
+        std::vector<okay::editor::docrec::Buffer> docs;
+        okay::editor::vsed::VsCollectUnsaved(docs);
+        for (okay::ScriptComponent* t : g_scriptTabs) {
+            if (!t || !ScriptTabDirty(t)) continue;
+            const char* live = PeekCodeBuffer(t);
+            if (!live) continue;
+            okay::editor::docrec::Buffer b;
+            b.kind = "script";
+            b.key = t->Path().empty() ? "untitled-script" : t->Path();
+            b.text = live;
+            docs.push_back(std::move(b));
+        }
+        for (const auto& c : okay::editor::docrec::ClosedStack()) {
+            if (c.kind != "script") continue;
+            docs.push_back({"closed", c.key, c.text});
+        }
+        if (ed.dirty && !ed.isPlaying()) {
+            okay::editor::docrec::Buffer b;
+            b.kind = "scene";
+            b.key = ed.path().empty() ? "untitled-scene" : ed.path();
+            b.text = SceneSerializer::Serialize(ed.scene());
+            docs.push_back(std::move(b));
+        }
+        if (docs.empty()) return false;
+        payload = okay::editor::docrec::EncodeBundle(docs);
+        label = std::to_string(docs.size()) + " unsaved";
+        return true;
+    });
+    if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
     while (running) {
         Uint64 g_frameT0 = SDL_GetPerformanceCounter();
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
@@ -44271,8 +44661,10 @@ int main(int argc, char** argv) {
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
                 e.window.windowID == SDL_GetWindowID(window))
                 g_quitRequested = true;
-            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST && ed.isPlaying())
-                g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
+            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                if (ed.isPlaying()) g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
+                DocRecovery().Autosave();
+            }
             // Route typed characters to the playing game's UI input fields (but not
             // while an ImGui field — inspector/markup box — is capturing text).
             if (e.type == SDL_TEXTINPUT && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
@@ -44684,6 +45076,17 @@ int main(int argc, char** argv) {
 
         // Autosave a crash-recovery sidecar ("<scene>.autosave") while editing —
         // never mid-Play, and without touching the real file or the dirty flag.
+        DocRecovery().SetInterval(g_docAutosaveSec);
+        if (DocRecovery().Tick(dt) && g_autosaveToFile) {
+            okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
+            for (okay::ScriptComponent* t : g_scriptTabs) {
+                if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
+                const char* live = PeekCodeBuffer(t);
+                if (live && SaveEditorDocument(t->Path(), live)) g_scriptSaved[t] = live;
+            }
+            if (ed.dirty && !ed.isPlaying() && !ed.path().empty()) SaveSceneTo(ed, ed.path());
+        }
+        if (!AnyUnsavedWork(ed)) DocRecovery().OnSaved();
         if (g_autosave && !ed.isPlaying() && ed.dirty && !ed.path().empty()) {
             double t = SDL_GetTicks64() / 1000.0;
             if (t - g_lastAutosave > (double)g_autosaveInterval) {
@@ -44993,7 +45396,7 @@ int main(int argc, char** argv) {
             }
             // OKAY_UI_VSFILE=graph.okayvs: open that graph file in the Visual Script editor.
             if (const char* vf = std::getenv("OKAY_UI_VSFILE"); vf && s_focusFrames == 42) {
-                okay::editor::vsed::State().g.load(vf);
+                okay::editor::vsed::OpenFile(vf);
                 okay::editor::vsed::State().frameAll = true;
                 g_showVisualScript = true;
             }
@@ -45111,11 +45514,11 @@ int main(int argc, char** argv) {
             }
         }
         { OKAY_PROFILE("UI.FileDialogs"); DrawFileDialogs(ed); }
-        { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); }
+        { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); DrawActionPrompt(ed); }
         PollLauncherRequest(ed, running);   // the launcher asked us to save and close
         { OKAY_PROFILE("UI.UpdatePopup"); DrawUpdatePopup(ed); }
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
-        { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); }
+        { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); DrawDocRecoveryPopup(ed); }
         { OKAY_PROFILE("UI.ProjectSettings"); DrawProjectSettings(ed); }
         { OKAY_PROFILE("UI.Hierarchy"); if (g_showHierarchy) DrawHierarchy(ed); }
         {   // Edit mode: keep skinned meshes deformed by their bones (scripts don't
@@ -45325,6 +45728,7 @@ int main(int argc, char** argv) {
 
         if (updater::pendingQuit) running = false; // auto-update relaunched
     }
+    DocRecovery().EndSession(true);   // clean exit: the user saved or chose not to
     FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first
 
     ImGui_ImplSDLRenderer2_Shutdown();

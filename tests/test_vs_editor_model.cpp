@@ -214,6 +214,45 @@ int main() {
         if (bad) std::printf("  %d of %d generated scripts don't load\n", bad, total);
     }
 
+    // A new graph is its own tab. Opening a file focuses the tab that already has it.
+    // Dirty tracks the saved text, so undo back to that text is clean again.
+    {
+        VsEditState a;
+        a.g.add("OnStart", 0, 0);
+        VsMarkClean(a);
+        CHECK(!a.g.dirty);
+        a.g.add("Print", 10, 10);
+        VsRefreshDirty(a);
+        CHECK(a.g.dirty);
+        const std::string edited = a.g.toText();
+        a.g.fromText(a.cleanText);
+        VsRefreshDirty(a);
+        CHECK(!a.g.dirty);
+        a.g.fromText(edited);
+        VsRefreshDirty(a);
+        CHECK(a.g.dirty);
+        // Two tabs: creating another does not replace the first.
+        Session().tabs.clear();
+        NewGraph(true);
+        const int first = Session().active;
+        const int firstNodes = (int)State().g.nodes.size();
+        NewGraph(false);
+        CHECK((int)Session().tabs.size() == 2);
+        CHECK(Session().active != first);
+        CHECK(Session().tabs[(std::size_t)first]->g.nodes.size() == (std::size_t)firstNodes);
+        // A missing file is an error tab, not a crash, and the other tab stays.
+        OpenFile("/tmp/okay_no_such_graph_e755.okayvs");
+        CHECK(State().missing);
+        CHECK((int)Session().tabs.size() == 3);
+        OpenFile("/tmp/okay_no_such_graph_e755.okayvs");
+        CHECK((int)Session().tabs.size() == 3);
+        std::vector<int> hits;
+        CHECK(VsFuzzyScore("brnach", "Branch", "flow if", hits) >= 180);
+        CHECK(VsFuzzyScore("raycst", "Raycast 3D", "trace hit", hits) >= 30);
+        CHECK(VsEditDistance("brnach", "branch") <= 1);
+        Session().tabs.clear();
+    }
+
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

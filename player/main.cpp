@@ -2217,13 +2217,60 @@ int main(int argc, char** argv) {
                 vw = std::max(1, (int)(rw * w + 0.5f)); vh = std::max(1, (int)(rh * h + 0.5f));
                 vx = (int)(rx * w + 0.5f); vy = std::max(0, h - vh - (int)(ry * h + 0.5f));
             }
-            const bool fullView = vx == 0 && vy == 0 && vw == w && vh == h;
+            bool fullView = vx == 0 && vy == 0 && vw == w && vh == h;
             Mat4 vp = cam->ProjectionMatrix(vh > 0 ? (float)vw / vh : 1.0f) * cam->ViewMatrix();
             if (w > 0 && h > 0) {
                 ApplySceneLight(scene);                 // a Light object aims the shading
                 const GameObject* ignore = cam ? cam->ignoreObject : nullptr;
                 okay::RenderCullingMask() = cam ? cam->cullingMask : ~0;   // honor the camera's layer mask (software + GPU)
+                if (cam && cam->projection == Camera::Projection::Perspective)
+                    okay::visibility::RenderViewFovY() = cam->VerticalFovDegrees(vh > 0 ? (float)vw / (float)vh : 1.0f);
                 const std::uint32_t* px = nullptr;
+                std::vector<std::uint32_t> stackHold;
+                const okay::CameraStackPlan stackPlan = okay::PlanCameraStack(scene, w, h, ignore);
+                if (!stackPlan.singleFullFrame) {
+                    auto onePass = [&](const okay::CameraPass& p) -> const std::uint32_t* {
+                        const bool prevSky = okay::SkyPassEnabled();
+                        const int prevMask = okay::RenderCullingMask();
+                        const float prevFov = okay::visibility::RenderViewFovY();
+                        okay::SkyPassEnabled() = p.sky && scene.renderSettings.skybox;
+                        okay::RenderCullingMask() = p.cullingMask;
+                        okay::visibility::RenderViewFovY() = p.fovY;
+                        const std::uint32_t* got = nullptr;
+                        if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
+#if defined(_WIN32)
+                            if (!got && d3d12Ready && d3d12Renderer)
+                                got = d3d12Renderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
+                                                                    p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+                            if (!got && d3dReady && d3dRenderer)
+                                got = d3dRenderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
+                                                                  p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+#endif
+                            if (!got && glReady && glRenderer && glWindow && glCtx) {
+                                if (SDL_GL_MakeCurrent(glWindow, glCtx) == 0) {
+                                    got = glRenderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
+                                                                     p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+                                    SDL_GL_MakeCurrent(nullptr, nullptr);
+                                }
+                            }
+                        }
+                        if (!got) {
+                            static Raster stackR[4];
+                            static std::vector<std::uint32_t> stackD[4];
+                            static int stackN = 0;
+                            const int s = stackN++ & 3;
+                            got = RenderMeshesSS(stackR[s], stackD[s], scene, p.vp, p.eye, p.w, p.h, 1, p.ignore);
+                        }
+                        okay::SkyPassEnabled() = prevSky;
+                        okay::RenderCullingMask() = prevMask;
+                        okay::visibility::RenderViewFovY() = prevFov;
+                        return got;
+                    };
+                    if (okay::CompositeCameraStack(stackPlan, onePass, stackHold)) {
+                        px = stackHold.data();
+                        vx = 0; vy = 0; vw = w; vh = h; fullView = true;
+                    }
+                }
                 // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
                 // offscreen target and reading back RGBA8. A self-heal counter disables
                 // the GPU path after repeated failures so the game is never stuck.
@@ -2255,6 +2302,8 @@ int main(int argc, char** argv) {
                 if (!px)
                     px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, vw, vh,
                                         cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
+                if (px && cam && !cam->renderTarget.empty() && stackPlan.singleFullFrame)
+                    okay::StoreCameraTarget(cam->renderTarget, px, vw, vh);
                 if (px) {
                     if (!mesh3DTex || mesh3DW != vw || mesh3DH != vh) {
                         if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
@@ -2286,7 +2335,7 @@ int main(int argc, char** argv) {
                     if (anyParticles) {
                         static Raster occWork; static std::vector<std::uint32_t> occDown;
                         int hw = w > 1 ? w / 2 : 1, hh = h > 1 ? h / 2 : 1;
-                        RenderMeshesSS(occWork, occDown, scene, vp, camPos, hw, hh, 1, ignore);
+                        FillOcclusionDepth(occWork, occDown, scene, vp, camPos, hw, hh, ignore);
                     }
                 }
                 // Particles in 3D: camera-facing billboards projected with the camera

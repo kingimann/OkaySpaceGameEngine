@@ -331,6 +331,27 @@ written while they are empty, so scenes without them are byte for byte as before
 older engine reads a newer scene and ignores the tail). Every float of the component
 round trips exactly. Removing the component (or its object) now ends its tween.
 
+The Inspector shows both (editor hooks): under **Ease** there is a **Curve** text field and a
+**Clock** combo.
+
+- **Curve** takes what `EaseCurve::Parse` takes: `cubic-bezier(0.4, 0, 0.2, 1)`, `steps(4)`,
+  `steps(4, start)`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, or a preset name (`OutBack`). While the text
+  parses it is stored in `easeCurve` and replaces the preset; the **Ease** combo then reads "Custom curve" and
+  the small drawing at the end of its row is the curve you typed (a staircase is drawn as steps, a bezier
+  that overshoots is kept inside the box). Text that does not parse is shown in red under the field and
+  the old value stays; when the field loses focus the stored text is shown again. Empty goes back to the
+  preset. A scene that already holds text the parser refuses shows "Not an ease: the Ease above is used".
+- **Clock** is "Scene time" (empty `clock`), then every channel of `ClockSet::Global().Names()` (`game`,
+  `ui`, `cinematic`, plus any channel a game made), then a "custom channel..." box with a **Use** button for
+  a name that does not exist yet (`Clock::Get` makes it on real time the first time something reads it). A
+  custom name already on the component is listed too. The channel's scale and pause apply, and it wins
+  over **Ignore time scale**.
+- The editor's **Preview** button plays the tween on real time whatever its clock is: there are no
+  running clocks while editing, so a "ui" or "cinematic" tween would otherwise not move.
+- Scripts: `tween_clock` and `tween_prop` are listed in the Script Editor's API reference and its
+  autocomplete next to the other `tween_*` builtins, and the reference now says that the ease argument
+  takes curve text.
+
 ## What changed
 
 Bugs fixed (each with a regression test):
@@ -377,8 +398,7 @@ Added:
 - Scripts: `tween_clock(id, channel)`, `tween_prop(path, to, dur)`, and `tween_ease` (and the
   ease argument of the `tween_*` builtins) accept curve text.
 
-Not done (follow-ups): an inspector field for `clock` / `easeCurve` and a preview of the
-curve (editor); `Dump()` in a debug overlay panel; visual-script nodes for a named or
+Not done (follow-ups): `Dump()` in a debug overlay panel; visual-script nodes for a named or
 bezier ease and for springs; `Scheduler` lookups by handle are still a linear scan (fine
 for hundreds of tasks; cancel big groups by tag or owner); a `Quat` version of
 `Mathf::SmoothDamp` is `Spring::StepQuatCritical`.

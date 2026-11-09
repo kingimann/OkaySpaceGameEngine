@@ -17,6 +17,7 @@
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "okay/Core/Utf8.hpp"
+#include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "okay/Components/HoldPrompt.hpp"
@@ -11392,6 +11393,8 @@ void DrawScriptDocs() {
         ImGui::TextDisabled("Every tween returns an id. Set it up (each returns the id, so they nest):");
         fapi("tween_loops(id, n[, \"yoyo\"|\"incremental\"]) / tween_delay(id, s)", "repeat (-1 forever) / wait first");
         fapi("tween_ease(id, e) / tween_speed(id, x) / tween_unscaled(id)", "ease / speed / ignore time scale");
+        fapi("tween_clock(id, channel)", "follow a Clock channel (\"ui\", \"cinematic\", your own); \"\" = scene time");
+        fapi("tween_prop(path, to, dur[, ease][, \"done\"])", "tween any property by path (\"Light.intensity\")");
         fapi("tween_from(id) / tween_relative(id) / tween_set_id(id, \"name\")", "from the end value / offset / name it");
         fapi("tween_on_complete(id, \"fn\") / tween_on_step / tween_on_start", "callbacks");
         fapi("tween_pause / play / restart / rewind / complete / kill(id)", "control one tween");
@@ -11400,7 +11403,7 @@ void DrawScriptDocs() {
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
         fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
-        ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce.");
+        ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce,\nor a curve as text: \"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\".");
     }
 
     if (sec("Persistence, PlayerPrefs & Data Assets")) {
@@ -11721,7 +11724,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "tween_ui_move","tween_ui_size","tween_jump","tween_path","tween_path_smooth",
         "tween_loop_scale","tween_loop_rotate","tween_number","tween_text","tween_var","tween_call",
         "tween_punch_pos","tween_punch_rotate","tween_shake_rotate","tween_shake_scale","flash",
-        "tween_loops","tween_delay","tween_ease","tween_speed","tween_unscaled","tween_from",
+        "tween_loops","tween_delay","tween_ease","tween_speed","tween_unscaled","tween_clock","tween_prop","tween_from",
         "tween_relative","tween_set_id","tween_keep","tween_on_complete","tween_on_step",
         "tween_on_start","tween_on_update","tween_kill","tween_pause","tween_play","tween_toggle",
         "tween_restart","tween_rewind","tween_complete","tween_backwards","tween_goto",
@@ -25278,20 +25281,34 @@ static float ButtonW(const char* label) {
 static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls, ImVec2 pos, ImVec2 size,
                                   float previewTime = -1.0f);
 // Ease picker: every ease by name, each with a drawing of its curve.
-static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, okay::Ease e, ImU32 col) {
+// Any ease as a curve (a preset, a cubic bezier or steps) inside the box (p0, sz); a bezier that overshoots
+// stays inside the box, and a staircase gets more points so its jumps read as steps.
+static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, const okay::EaseCurve& c, ImU32 col) {
     const float pad = sz.y * 0.22f;
+    const int n = c.kind == okay::EaseCurve::Kind::Steps ? 96 : 24;
     ImVec2 prev;
-    for (int i = 0; i <= 24; ++i) {
-        const float t = i / 24.0f, k = okay::Easing::Evaluate(e, t);
-        ImVec2 pt(p0.x + t * sz.x, p0.y + sz.y - pad - k * (sz.y - pad * 2.0f));
+    for (int i = 0; i <= n; ++i) {
+        const float t = (float)i / (float)n, k = c.Evaluate(t);
+        ImVec2 pt(p0.x + t * sz.x, std::clamp(p0.y + sz.y - pad - k * (sz.y - pad * 2.0f), p0.y, p0.y + sz.y));
         if (i > 0) dl->AddLine(prev, pt, col, 1.5f);
         prev = pt;
     }
 }
-static bool EaseCombo(const char* label, int& ease) {
+static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, okay::Ease e, ImU32 col) {
+    DrawEaseCurve(dl, p0, sz, okay::EaseCurve::OfPreset(e), col);
+}
+// `curveText` (optional): the ease as text from the component (TweenAnimation::easeCurve). While it parses it
+// replaces the preset, so the combo reads "Custom curve" and the small drawing at the end of the row is that curve.
+static bool EaseCombo(const char* label, int& ease, const std::string* curveText = nullptr) {
     bool changed = false;
     const int cur = std::clamp(ease, 0, (int)okay::Ease::Count - 1);
-    if (ImGui::BeginCombo(label, okay::Easing::Name((okay::Ease)cur), ImGuiComboFlags_HeightLarge)) {
+    okay::EaseCurve effective = okay::EaseCurve::OfPreset((okay::Ease)cur);
+    bool custom = false;
+    if (curveText && !curveText->empty()) {
+        okay::EaseCurve parsed;
+        if (okay::EaseCurve::Parse(*curveText, parsed)) { effective = parsed; custom = true; }
+    }
+    if (ImGui::BeginCombo(label, custom ? "Custom curve" : okay::Easing::Name((okay::Ease)cur), ImGuiComboFlags_HeightLarge)) {
         const float h = ImGui::GetTextLineHeight();
         for (int i = 0; i < (int)okay::Ease::Count; ++i) {
             ImGui::PushID(i);
@@ -25307,8 +25324,41 @@ static bool EaseCombo(const char* label, int& ease) {
         const ImVec2 mx = ImGui::GetItemRectMax(), mn = ImGui::GetItemRectMin();
         const float h = mx.y - mn.y;
         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(mx.x + 4, mn.y), ImVec2(mx.x + 4 + h * 1.8f, mx.y), IM_COL32(0, 0, 0, 60), 3.0f);
-        DrawEaseCurve(ImGui::GetWindowDrawList(), ImVec2(mx.x + 6, mn.y), ImVec2(h * 1.8f - 4, h), (okay::Ease)cur, ImGui::GetColorU32(AccentCol(1.0f)));
+        DrawEaseCurve(ImGui::GetWindowDrawList(), ImVec2(mx.x + 6, mn.y), ImVec2(h * 1.8f - 4, h), effective, ImGui::GetColorU32(AccentCol(1.0f)));
     }
+    return changed;
+}
+// The ease as text: a preset name ("OutBack"), cubic-bezier(x1,y1,x2,y2), steps(n[,start]) or one of ease, ease-in,
+// ease-out, ease-in-out (okay::EaseCurve::Parse). While the text parses it is stored and replaces the preset; text
+// that does not parse is shown in red and the stored value stays. Empty = use the preset. Returns true when the
+// stored text changed.
+static bool EaseCurveField(const char* label, std::string& stored) {
+    struct Edit { std::string text, err; };
+    static std::unordered_map<ImGuiID, Edit> s_edits;   // the text being typed, per field (a few components at most)
+    const ImGuiID id = ImGui::GetID(label);
+    if (s_edits.size() > 64) s_edits.clear();
+    Edit& e = s_edits[id];
+    // Not typing here: show the stored value (it may have changed elsewhere, and a mistake is dropped when the
+    // field loses focus, so the old value reads again).
+    if (e.text != stored && ImGui::GetActiveID() != id) { e.text = stored; e.err.clear(); }
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "%s", e.text.c_str());
+    bool changed = false;
+    if (ImGui::InputTextWithHint(label, "preset, cubic-bezier(0.4,0,0.2,1) or steps(4)", buf, sizeof(buf))) {
+        e.text = buf;
+        okay::EaseCurve parsed;
+        if (e.text.empty()) { changed = !stored.empty(); stored.clear(); e.err.clear(); }
+        else if (okay::EaseCurve::Parse(e.text, parsed)) { changed = stored != e.text; stored = e.text; e.err.clear(); }
+        else e.err = "Not an ease: use a preset name, cubic-bezier(x1,y1,x2,y2) or steps(n)";
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("An ease as text; while it parses it replaces the Ease above.\n"
+                          "  cubic-bezier(0.4, 0, 0.2, 1)   steps(4)   steps(4, start)\n"
+                          "  ease  ease-in  ease-out  ease-in-out   or a preset name (OutBack).\n"
+                          "Empty = the Ease above. A text with a mistake is not applied (the old one stays).");
+    if (!e.err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", e.err.c_str());
+    else if (okay::EaseCurve unused; !stored.empty() && !okay::EaseCurve::Parse(stored, unused))
+        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "Not an ease: the Ease above is used");
     return changed;
 }
 // Tween Animation preview in edit mode: play its tween on the real object, then put
@@ -25347,7 +25397,7 @@ static void StartTweenPreview(EditorState& ed, okay::TweenAnimation* ta) {
     if (UIRect r = GetUIRect(go); r.valid) { p.hasUI = true; if (r.position) p.uiPos = *r.position; if (r.sizePtr) p.uiSize = *r.sizePtr; }
     if (auto* tr = go->GetComponent<TextRenderer>()) p.text = tr->text;
     auto t = ta->CreateTween();
-    if (t) t->SetAutoKill(false);
+    if (t) { t->SetAutoKill(false); t->SetClock(std::string{}); }   // editing has no running clocks: preview on real time
     p.tween = t;
 }
 // Each editor frame: advance the preview; put the object back shortly after a
@@ -35473,7 +35523,34 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Duration (s)##ta", &ta->duration, 0.01f, 0.01f, 120.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Delay (s)##ta", &ta->delay, 0.01f, 0.0f, 120.0f)) ed.dirty = true;
-            if (!punchy && EaseCombo("Ease##ta", ta->ease)) ed.dirty = true;
+            if (!punchy && EaseCombo("Ease##ta", ta->ease, &ta->easeCurve)) ed.dirty = true;
+            if (!punchy && EaseCurveField("Curve##ta", ta->easeCurve)) ed.dirty = true;
+            {   // Which clock drives it: scene time, or a Clock channel ("ui", "cinematic", your own).
+                const std::string curClock = ta->clock;
+                if (ImGui::BeginCombo("Clock##ta", curClock.empty() ? "Scene time" : curClock.c_str())) {
+                    if (ImGui::Selectable("Scene time", curClock.empty())) { ta->clock.clear(); ed.dirty = true; }
+                    std::vector<std::string> names = okay::ClockSet::Global().Names();
+                    if (!curClock.empty() && std::find(names.begin(), names.end(), curClock) == names.end()) names.push_back(curClock);
+                    for (const std::string& n : names)
+                        if (ImGui::Selectable(n.c_str(), n == curClock)) { ta->clock = n; ed.dirty = true; }
+                    ImGui::Separator();
+                    static char customClock[64] = "";
+                    ImGui::SetNextItemWidth(130);
+                    const bool entered = ImGui::InputTextWithHint("##taclockname", "custom channel...", customClock, sizeof(customClock),
+                                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine();
+                    if ((ImGui::Button("Use##taclock") || entered) && customClock[0]) {
+                        ta->clock = customClock; ed.dirty = true; customClock[0] = '\0';
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Scene time, or a Clock channel to follow instead: \"game\" (scaled), \"ui\" (real time),\n"
+                                      "\"cinematic\", or your own name (made on first use, on real time).\n"
+                                      "The channel's own scale and pause apply, and it wins over Ignore time scale.\n"
+                                      "The editor Preview plays on real time whatever the clock is.");
+            }
             {
                 bool forever = ta->loops < 0;
                 int n = forever ? 1 : ta->loops;

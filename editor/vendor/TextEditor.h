@@ -198,6 +198,8 @@ public:
 
 	const Palette& GetPalette() const { return mPaletteBase; }
 	void SetPalette(const Palette& aValue);
+	void SetLineSpacing(float aValue) { mLineSpacing = aValue < 1.0f ? 1.0f : aValue; }
+	void SetLeftMargin(int aMargin) { mLeftMargin = aMargin < 0 ? 0 : aMargin; }
 
 	void SetErrorMarkers(const ErrorMarkers& aMarkers) { mErrorMarkers = aMarkers; }
 	// Extra type names declared in the text (classes, enums); recolours on change.

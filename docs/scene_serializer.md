@@ -53,9 +53,18 @@ page covers what an object round trip keeps.
   positive number is written as 0.
 - **Duplicate components:** `AddComponent` twice is allowed at runtime and
   `GetComponent` returns the first. Scripts, visual scripts, action lists, tweens, sync vars,
-  validators and state machines are saved per instance. Every other type, including
-  two colliders of the same type, saves only its first instance. A text with two records of one of those types loads both and adds a
-  warning (`object N has two 'X' components; only the first is saved`).
+  validators, state machines, every 2D and 3D collider (a compound collider is several shapes on one
+  object) and audio sources are saved per instance, in order, with their own values and their own
+  `compoff` switch. Every other type saves only its first instance. A text with two records of one of those
+  other types loads both and adds a warning (`object N has two 'X' components; only the first is saved`).
+  The per-instance types are exactly those `AllowsMultiple` lists in `SceneSerializer.cpp`; to add one, make
+  its writer loop over `GetComponents<T>()` (the reader already adds one component per record) and add it
+  there. The trigger filter record (`trigfilter2d` / `trigfilter3d`) is still one per object and applies to
+  every collider on it.
+- **Saving a file:** `SaveToFile(scene, path, &error)` writes `<path>.savetmp`, checks it, and renames it over the
+  target; the target is never moved or removed first. It keeps one rolling `<path>.bak` (a copy of the previous
+  file), refuses a read-only target or a missing folder with a message, and leaves the old file untouched when
+  anything fails.
 
 ## Component serializer registry
 

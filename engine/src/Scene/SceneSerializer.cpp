@@ -1,5 +1,6 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
+#include <cerrno>
 #include <iostream>
 #include <charconv>
 #include <limits>
@@ -570,7 +571,9 @@ bool AllowsMultiple(const Component* c) {
     return dynamic_cast<const ScriptComponent*>(c) || dynamic_cast<const VisualScriptComponent*>(c) ||
            dynamic_cast<const ActionList*>(c) || dynamic_cast<const SyncVar*>(c) ||
            dynamic_cast<const NetValidator*>(c) || dynamic_cast<const TweenAnimation*>(c) ||
-           dynamic_cast<const AnimStateMachine*>(c);
+           dynamic_cast<const AnimStateMachine*>(c) ||
+           dynamic_cast<const Collider2D*>(c) || dynamic_cast<const Collider3D*>(c) ||   // compound colliders
+           dynamic_cast<const AudioSource*>(c);
 }
 
 // `compoff` records for every component that is switched off (per-component flags
@@ -1461,22 +1464,22 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (rb->allowSleep ? 1 : 0)
             << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
-    if (auto* bc = go->GetComponent<BoxCollider2D>()) {
+    for (auto* bc : go->GetComponents<BoxCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
             << bc->offset.x << " " << bc->offset.y << " " << (bc->isTrigger ? 1 : 0)
             << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cc = go->GetComponent<CircleCollider2D>()) {
+    for (auto* cc : go->GetComponents<CircleCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  circlecollider2d " << cc->radius << " "
             << cc->offset.x << " " << cc->offset.y << " " << (cc->isTrigger ? 1 : 0)
             << " " << cc->layer << " " << (cc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cap = go->GetComponent<CapsuleCollider2D>()) {
+    for (auto* cap : go->GetComponents<CapsuleCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  capsulecollider2d " << cap->size.x << " " << cap->size.y << " "
             << (int)cap->direction << " " << cap->offset.x << " " << cap->offset.y << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* ec = go->GetComponent<EdgeCollider2D>()) {
+    for (auto* ec : go->GetComponents<EdgeCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  edgecollider2d " << ec->offset.x << " " << ec->offset.y << " "
             << (ec->isTrigger ? 1 : 0) << " " << ec->layer << " "
             << (ec->oneWay ? 1 : 0) << " " << ec->oneWayNormal.x << " " << ec->oneWayNormal.y
@@ -1484,7 +1487,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (const Vec2& p : ec->points) out << " " << p.x << " " << p.y;
         out << "\n";
     }
-    if (auto* pc = go->GetComponent<PolygonCollider2D>()) {
+    for (auto* pc : go->GetComponents<PolygonCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  polygoncollider2d " << pc->offset.x << " " << pc->offset.y << " "
             << (pc->isTrigger ? 1 : 0) << " " << pc->layer
             << " " << pc->points.size();
@@ -1731,12 +1734,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // Mesh + Cylinder colliders derive from Box/Capsule, so write them first and guard
     // the base records by exact shape() (else GetComponent<BoxCollider3D> matches a mesh).
-    if (auto* mc = go->GetComponent<MeshCollider3D>()) {
+    for (auto* mc : go->GetComponents<MeshCollider3D>()) {
         out << "  meshcollider3d " << mc->size.x << " " << mc->size.y << " " << mc->size.z << " "
             << mc->offset.x << " " << mc->offset.y << " " << mc->offset.z << " "
             << (mc->isTrigger ? 1 : 0) << " " << mc->layer << " " << (mc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cy = go->GetComponent<CylinderCollider3D>()) {
+    for (auto* cy : go->GetComponents<CylinderCollider3D>()) {
         out << "  cylindercollider3d " << cy->radius << " " << cy->height << " " << cy->axis << " "
             << cy->offset.x << " " << cy->offset.y << " " << cy->offset.z << " "
             << (cy->isTrigger ? 1 : 0) << " " << cy->layer << " " << (cy->autoFit ? 1 : 0) << "\n";
@@ -1768,19 +1771,26 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     const bool resized = stance && stance->captured && std::fabs(stance->curH - stance->standH) > 1e-4f;
     const float standOffY = resized ? stance->feetY + stance->standH * 0.5f : 0.0f;
-    if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
-        out << "  boxcollider3d " << bc->size.x << " " << (resized ? stance->standH : bc->size.y) << " " << bc->size.z << " "
-            << bc->offset.x << " " << (resized ? standOffY : bc->offset.y) << " " << bc->offset.z << " "
+    bool firstBox = true, firstCapsule = true;   // a crouched body resizes the first one only, as before
+    for (auto* bc : go->GetComponents<BoxCollider3D>()) {
+        if (bc->shape() != Collider3D::Shape::Box) continue;   // a Mesh collider derives from Box: its own record above
+        const bool rs = resized && firstBox;
+        firstBox = false;
+        out << "  boxcollider3d " << bc->size.x << " " << (rs ? stance->standH : bc->size.y) << " " << bc->size.z << " "
+            << bc->offset.x << " " << (rs ? standOffY : bc->offset.y) << " " << bc->offset.z << " "
             << (bc->isTrigger ? 1 : 0) << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* sc = go->GetComponent<SphereCollider3D>()) {
+    for (auto* sc : go->GetComponents<SphereCollider3D>()) {
         out << "  spherecollider3d " << sc->radius << " "
             << sc->offset.x << " " << sc->offset.y << " " << sc->offset.z << " "
             << (sc->isTrigger ? 1 : 0) << " " << sc->layer << " " << (sc->autoFit ? 1 : 0) << "\n";
     }
-    if (auto* cap = go->GetComponent<CapsuleCollider3D>(); cap && cap->shape() == Collider3D::Shape::Capsule) {
-        out << "  capsulecollider3d " << cap->radius << " " << (resized ? stance->standH : cap->height) << " " << cap->axis << " "
-            << cap->offset.x << " " << (resized ? standOffY : cap->offset.y) << " " << cap->offset.z << " "
+    for (auto* cap : go->GetComponents<CapsuleCollider3D>()) {
+        if (cap->shape() != Collider3D::Shape::Capsule) continue;   // a Cylinder collider derives from Capsule: its own record above
+        const bool rs = resized && firstCapsule;
+        firstCapsule = false;
+        out << "  capsulecollider3d " << cap->radius << " " << (rs ? stance->standH : cap->height) << " " << cap->axis << " "
+            << cap->offset.x << " " << (rs ? standOffY : cap->offset.y) << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
     // Trigger tag / layer filter for the object's 3D colliders (only when set).
@@ -2712,7 +2722,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    if (auto* au = go->GetComponent<AudioSource>()) {
+    for (auto* au : go->GetComponents<AudioSource>()) {   // a music bed and a sound effect can sit on one object
         out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
             << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << " "
@@ -3701,33 +3711,58 @@ void SceneSerializer::ClearPrefabCache() {
     PrefabCacheMap().clear();
 }
 
-bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path) {
+bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path, std::string* error) {
     ClearPrefabCacheOnExit clearPrefabCache;   // whatever happens below, the next read sees the new file
     namespace fs = std::filesystem;
-    // Atomic save: write to a temp file, then rename over the target, so a crash
-    // or full disk mid-write can never leave a truncated/corrupt scene. Keep one
-    // rolling ".bak" of the previous good file for manual recovery.
-    std::string tmp = path + ".savetmp";
-    {
-        std::ofstream f(tmp, std::ios::trunc);
-        if (!f) return false;
-        f << Serialize(scene);
-        f.flush();
-        if (!f) { std::error_code rc; fs::remove(tmp, rc); return false; }
-    }
+    // Atomic save: the new text goes to "<path>.savetmp" first and is checked, then renamed over the
+    // target, so a crash or a full disk mid-write can never leave a truncated scene. The target is
+    // never moved or removed before the new file is complete: one rolling "<path>.bak" keeps the
+    // previous good copy (a copy, so a failed rename leaves the scene exactly where it was).
+    auto fail = [&](const std::string& why) { if (error) *error = why; return false; };
     std::error_code ec;
-    if (fs::exists(path, ec)) {
-        std::string bak = path + ".bak";
-        fs::remove(bak, ec);
-        fs::rename(path, bak, ec);   // best-effort previous-version backup
-        ec.clear();
+    const fs::path target(path);
+    if (fs::exists(target, ec)) {
+        if (fs::is_directory(target, ec)) return fail("\"" + path + "\" is a folder, not a scene file.");
+        const fs::perms perm = fs::status(target, ec).permissions();
+        if (!ec && (perm & (fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write)) == fs::perms::none)
+            return fail("\"" + target.filename().string() + "\" is read-only. Make it writable, or save under another name.");
     }
-    fs::rename(tmp, path, ec);        // atomic replace on the same filesystem
+    if (target.has_parent_path() && !fs::is_directory(target.parent_path(), ec))
+        return fail("The folder \"" + target.parent_path().string() + "\" doesn't exist.");
+    const std::string text = Serialize(scene);
+    const std::string tmp = path + ".savetmp";
+    {
+        errno = 0;
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return fail("Couldn't write \"" + tmp + "\": " + (errno ? std::error_code(errno, std::generic_category()).message() : std::string("no permission")));
+        f.write(text.data(), (std::streamsize)text.size());
+        f.flush();
+        if (!f) {
+            const int e = errno;
+            f.close();
+            fs::remove(tmp, ec);
+            return fail("Couldn't write \"" + path + "\": " + (e ? std::error_code(e, std::generic_category()).message() : std::string("the disk may be full")));
+        }
+    }
+    const std::uintmax_t written = fs::file_size(tmp, ec);
+    if (ec || written != text.size()) {
+        fs::remove(tmp, ec);
+        return fail("Couldn't write \"" + path + "\": the file came out the wrong size (is the disk full?).");
+    }
+    if (fs::exists(target, ec)) {   // best-effort previous-version backup; the target itself stays put
+        std::error_code be;
+        fs::copy_file(target, path + ".bak", fs::copy_options::overwrite_existing, be);
+    }
+    ec.clear();
+    fs::rename(tmp, target, ec);      // atomic replace on the same filesystem
     if (ec) {
-        // Cross-device or locked: fall back to a direct overwrite copy.
-        std::error_code ce; fs::copy_file(tmp, path, fs::copy_options::overwrite_existing, ce);
-        std::error_code rc; fs::remove(tmp, rc);
-        return !ce;
+        // Locked or a platform that won't rename over an existing file: overwrite by copy. The old file is
+        // still in place until this succeeds, and the backup above holds its content if it half-fails.
+        std::error_code ce;
+        fs::copy_file(tmp, target, fs::copy_options::overwrite_existing, ce);
+        std::error_code rc;
+        fs::remove(tmp, rc);
+        if (ce) return fail("Couldn't replace \"" + path + "\": " + ce.message());
     }
     return true;
 }

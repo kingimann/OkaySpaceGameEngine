@@ -225,6 +225,8 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `tween_number(from, to, dur [, "prefix"])` | Count a sibling text number (score ticks) |
 | `tween_punch_scale(amount, dur [, vib])` / `tween_punch_pos(dx, dy, dur [, vib])` | Punch & settle ("juice") |
 | `tween_shake(intensity, dur)` | Random shake that decays to a stop |
+| `tween_clock(id, channel)` | Follow a Clock channel (`"game"`, `"ui"`, `"cinematic"`, or your own) instead of scene time; `""` goes back. Returns the id |
+| `tween_prop(path, to, dur [, ease][, "done"])` | Tween any property of this object by path (`"Light.intensity"`, `"Transform.scale.y"`; see docs/properties.md). The ease is a name or curve text: `"cubic-bezier(0.4,0,0.2,1)"`, `"steps(4)"` |
 | `save_game([slot] [, label])` / `load_game([slot])` | Save / load the whole game (see docs/save_games.md) |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/cutscenes.md) |

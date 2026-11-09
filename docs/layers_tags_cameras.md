@@ -39,9 +39,8 @@ scene.ResetLayerCollisions();
   control characters, no leading or trailing space).
 * `GameObject::SetTag` applies `Tags::Accepts`: valid name, and listed when
   `Tags::Strict()` is on. Direct assignment (`go->tag = x`) is never refused.
-* The editor still keeps its own tag list in the project settings; it is not wired to
-  `Tags` yet (the engine side is complete: see "What changed: project tag list" below for
-  the small change the editor needs).
+* The editor's tag dropdown, "Add" field and project settings file use `Tags` (see "Editor
+  hook" below; done).
 
 ## Cameras
 
@@ -116,16 +115,36 @@ layer_name_8=Enemy       a layer name that differs from the default; "layer_name
 | `ProjectLists::Save(path)` | rewrites only our lines in an existing file (creates it when missing) |
 | `ProjectLists::Reset()` | no custom tags, not strict, default layer names |
 
-**Editor hook (for after the editor rewrite lands).** `editor/main.cpp` keeps `g_project.customTags`
-and its own preset list. The change: in `LoadProjectSettings` call
-`okay::ProjectLists::ApplyLine(k, v)` first for every line (it returns false for the keys the editor
-owns, so its `if / else if` chain follows); in `SaveProjectSettings` append
-`f << okay::ProjectLists::Write();` instead of the `tag=` loop; replace `kTagPresets` and
-`g_project.customTags` with `Tags::All()` / `Tags::Add` / `Tags::Remove` / `Tags::Rename` plus
-`Scene::ReplaceTag`; use `go->SetTag(...)` (it returns false for a name the list refuses in strict
-mode, and `Tags::WhyInvalid` says why); and give the layer dropdown a rename box that calls
-`Layers::SetName` / `ClearName`. The tag lines the editor writes today are the same `tag=` lines,
-so existing project files load unchanged.
+**Editor hook (done).** The editor's own tag list (`g_project.customTags` and a preset array) is gone;
+`editor/main.cpp` now reads and writes the same lists the engine does:
+
+- `LoadProjectSettings` calls `okay::ProjectLists::Reset()` once the file opens, then
+  `okay::ProjectLists::ApplyLine(k, v)` for every line first (it returns false for the keys the editor
+  owns, so the `if / else if` chain follows), and `SaveProjectSettings` ends with
+  `f << okay::ProjectLists::Write();` in place of the `tag=` loop. The tag lines are the same `tag=`
+  lines the editor always wrote, so an existing `project.okayproj` loads unchanged (a duplicate or an
+  invalid name is skipped, as `Tags::Add` does); `strict_tags=` and `layer_name_N=` are new optional lines.
+- The object inspector's **Tag** dropdown lists "Untagged", `Tags::Builtin()` and `Tags::Custom()`. Picking
+  one calls `go->SetTag(...)`. The "new tag..." field calls `Tags::Add`, saves the project file when the
+  name is new, applies it, and shows `Tags::WhyInvalid(name)` in red when the name is refused (or "the tag
+  list is full"). Right-click a custom tag: **Rename** (`Tags::Rename`, then `Scene::ReplaceTag(old, new)`
+  on this scene, one undo step for the objects, the project file saved) or **Remove tag from list**
+  (`Tags::Remove`; objects keep the tag). Other scenes and prefabs keep the old name until they are
+  opened and the tag is renamed there too (`Scene::UnlistedTags()` finds tags a scene carries that the
+  list lacks).
+- The **Layer** dropdown on an object and the camera's **Culling Mask** list show
+  `Layers::Name(i)`. Right-click a layer in either list to rename it: a text box with
+  `Layers::DefaultName(i)` (or "Layer N") as its hint; Enter calls `Layers::SetName`, an empty box or
+  "Reset to default" calls `Layers::ClearName` (or sets the default name back), a refused name shows why
+  in red (`Layers::IsValidName`, or another layer has it), and the project file is saved. The layer
+  mask text fields (`Ground Layers`, `Collision Layers`, trigger filters) already accept names, so they
+  follow the renames.
+- Not wired: a `Strict tags` toggle (`Tags::Strict()` is read and saved, so a hand-edited
+  `strict_tags=1` works, and the dropdown only offers listed tags), and a "Tags and Layers" section in
+  Project Settings (the window has none; renaming is in the lists above).
+- Not run: the ImGui UI itself (no display here). The data path it drives is covered by
+  `layers_tags_project` and by `editor_hooks` (an old project file's `tag=` lines load into the list in
+  order and write back the same, a rename keeps the tag's place and renames the objects).
 
 ### Collision matrix helpers
 

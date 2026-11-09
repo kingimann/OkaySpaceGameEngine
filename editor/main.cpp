@@ -17,6 +17,7 @@
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "okay/Core/Utf8.hpp"
+#include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "okay/Components/HoldPrompt.hpp"
@@ -2802,7 +2803,6 @@ struct ProjectSettings {
     float gravity3D[3]  = {0.0f, -9.81f, 0.0f};
     float ambient       = 0.30f;
     bool  skybox        = true;
-    std::vector<std::string> customTags;   // project-wide user tags, persisted
     // ---- Editor loading screen (per-project splash customization) ----
     char  splashLogo[260] = "";            // optional PNG shown instead of the cube
     float splashBgTop[3]  = {0.094f, 0.094f, 0.106f};
@@ -2832,18 +2832,19 @@ void SaveProjectSettings() {
     f << "splash_bg_top=" << g_project.splashBgTop[0] << " " << g_project.splashBgTop[1] << " " << g_project.splashBgTop[2] << "\n";
     f << "splash_bg_bot=" << g_project.splashBgBot[0] << " " << g_project.splashBgBot[1] << " " << g_project.splashBgBot[2] << "\n";
     f << "splash_accent=" << g_project.splashAccent[0] << " " << g_project.splashAccent[1] << " " << g_project.splashAccent[2] << "\n";
-    for (const std::string& t : g_project.customTags)
-        if (!t.empty()) f << "tag=" << t << "\n";
+    f << okay::ProjectLists::Write();   // the tag list (tag= lines, strict_tags) and the layer names (layer_name_N=)
 }
 
 void LoadProjectSettings() {
     std::ifstream f("project.okayproj");
     if (!f) return;
+    okay::ProjectLists::Reset();   // the tag list and layer names come from this file (or stay the defaults)
     std::string line;
     while (std::getline(f, line)) {
         std::size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        if (okay::ProjectLists::ApplyLine(k, v)) continue;   // tag=, strict_tags=, layer_name_N=
         if      (k == "company") std::strncpy(g_project.company, v.c_str(), sizeof(g_project.company) - 1);
         else if (k == "version") std::strncpy(g_project.version, v.c_str(), sizeof(g_project.version) - 1);
         else if (k == "width")   g_project.defaultWidth = std::atoi(v.c_str());
@@ -2858,8 +2859,68 @@ void LoadProjectSettings() {
         else if (k == "splash_bg_top") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashBgTop[0], &g_project.splashBgTop[1], &g_project.splashBgTop[2]);
         else if (k == "splash_bg_bot") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashBgBot[0], &g_project.splashBgBot[1], &g_project.splashBgBot[2]);
         else if (k == "splash_accent") std::sscanf(v.c_str(), "%f %f %f", &g_project.splashAccent[0], &g_project.splashAccent[1], &g_project.splashAccent[2]);
-        else if (k == "tag") { if (!v.empty()) g_project.customTags.push_back(v); }
     }
+}
+// A layer's name is a project setting (okay::Layers, saved in project.okayproj with the tag list). Right-click a
+// layer in a list to rename it: Enter applies, an empty box (or Reset) goes back to the default name, which
+// the box shows as its hint. Call it right after the layer's own item, inside the list's popup.
+static void LayerRenameMenu(int layer) {
+    if (!okay::Layers::IsValid(layer)) return;
+    if (!ImGui::BeginPopupContextItem((std::string("layerctx") + std::to_string(layer)).c_str())) return;
+    static char buf[48] = "";
+    static std::string err;
+    if (ImGui::IsWindowAppearing()) {
+        std::snprintf(buf, sizeof(buf), "%s", okay::Layers::IsNamed(layer) ? okay::Layers::Name(layer).c_str() : "");
+        err.clear();
+    }
+    auto apply = [&](const std::string& name) {
+        err.clear();
+        const bool ok = name.empty() ? okay::Layers::ClearName(layer) : okay::Layers::SetName(layer, name);
+        if (ok) { SaveProjectSettings(); return true; }
+        err = name.empty() ? "Layer 0 always keeps a name"
+            : !okay::Layers::IsValidName(name) ? "1 to 32 characters; no comma or !, no space at either end, not only digits"
+            : "another layer already has that name";
+        return false;
+    };
+    ImGui::TextDisabled("Layer %d name", layer);
+    ImGui::SetNextItemWidth(170);
+    const std::string hint = okay::Layers::DefaultName(layer)[0] ? okay::Layers::DefaultName(layer) : "Layer " + std::to_string(layer);
+    if (ImGui::InputTextWithHint("##layername", hint.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue))
+        if (apply(buf)) ImGui::CloseCurrentPopup();
+    if (ImGui::SmallButton("Reset to default")) {
+        if (apply(okay::Layers::DefaultName(layer))) ImGui::CloseCurrentPopup();
+    }
+    if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
+    ImGui::EndPopup();
+}
+// The right-click menu of a custom tag: rename it (the list, and the tag on every object of this scene that
+// carries it) before "Remove tag from list".
+static void TagRenameMenu(EditorState& ed, const std::string& tag) {
+    static char buf[80] = "";
+    static std::string err;
+    if (ImGui::IsWindowAppearing()) { std::snprintf(buf, sizeof(buf), "%s", tag.c_str()); err.clear(); }
+    ImGui::SetNextItemWidth(170);
+    const bool enter = ImGui::InputText("##tagrename", buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    const bool click = ImGui::Button("Rename");
+    if (enter || click) {
+        const std::string to = buf;
+        if (to == tag) ImGui::CloseCurrentPopup();
+        else if (okay::Tags::Contains(to)) err = "that tag is already in the list";
+        else if (!okay::Tags::IsValidName(to)) err = okay::Tags::WhyInvalid(to);
+        else {
+            ed.PushUndo();   // the objects that carry the tag change too
+            if (okay::Tags::Rename(tag, to)) {
+                const int n = ed.scene().ReplaceTag(tag, to);
+                SaveProjectSettings();
+                ed.dirty = true;
+                ConsoleLog("Renamed tag " + tag + " to " + to + " (" + std::to_string(n) + " object" + (n == 1 ? "" : "s") + " in this scene)");
+                ImGui::CloseCurrentPopup();
+            } else err = "that tag cannot be renamed";
+        }
+    }
+    if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
+    ImGui::Separator();
 }
 bool  g_snap = false;
 float g_snapSize = 1.0f;
@@ -6372,7 +6433,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         dl->AddTriangleFilled(ImVec2(c.x - s * 1.1f, c.y - s), ImVec2(c.x - s * 1.1f, c.y + s), ImVec2(c.x + s * 0.5f, c.y), col);
         dl->AddRectFilled(ImVec2(c.x + s * 0.75f, c.y - s), ImVec2(c.x + s * 0.75f + tb * 0.075f, c.y + s), col, 1.0f);
     }
-    if (stepHit) { g_paused = true; TickGame(ed, 1.0f / 60.0f); }
+    if (stepHit) { g_paused = true; ed.StepFrame(); }   // one frame of 1/60 s, run by the next Play frame
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Advance one frame (pauses first)");
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
@@ -11332,6 +11393,8 @@ void DrawScriptDocs() {
         ImGui::TextDisabled("Every tween returns an id. Set it up (each returns the id, so they nest):");
         fapi("tween_loops(id, n[, \"yoyo\"|\"incremental\"]) / tween_delay(id, s)", "repeat (-1 forever) / wait first");
         fapi("tween_ease(id, e) / tween_speed(id, x) / tween_unscaled(id)", "ease / speed / ignore time scale");
+        fapi("tween_clock(id, channel)", "follow a Clock channel (\"ui\", \"cinematic\", your own); \"\" = scene time");
+        fapi("tween_prop(path, to, dur[, ease][, \"done\"])", "tween any property by path (\"Light.intensity\")");
         fapi("tween_from(id) / tween_relative(id) / tween_set_id(id, \"name\")", "from the end value / offset / name it");
         fapi("tween_on_complete(id, \"fn\") / tween_on_step / tween_on_start", "callbacks");
         fapi("tween_pause / play / restart / rewind / complete / kill(id)", "control one tween");
@@ -11340,7 +11403,7 @@ void DrawScriptDocs() {
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
         fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
-        ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce.");
+        ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce,\nor a curve as text: \"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\".");
     }
 
     if (sec("Persistence, PlayerPrefs & Data Assets")) {
@@ -11661,7 +11724,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "tween_ui_move","tween_ui_size","tween_jump","tween_path","tween_path_smooth",
         "tween_loop_scale","tween_loop_rotate","tween_number","tween_text","tween_var","tween_call",
         "tween_punch_pos","tween_punch_rotate","tween_shake_rotate","tween_shake_scale","flash",
-        "tween_loops","tween_delay","tween_ease","tween_speed","tween_unscaled","tween_from",
+        "tween_loops","tween_delay","tween_ease","tween_speed","tween_unscaled","tween_clock","tween_prop","tween_from",
         "tween_relative","tween_set_id","tween_keep","tween_on_complete","tween_on_step",
         "tween_on_start","tween_on_update","tween_kill","tween_pause","tween_play","tween_toggle",
         "tween_restart","tween_rewind","tween_complete","tween_backwards","tween_goto",
@@ -25218,20 +25281,34 @@ static float ButtonW(const char* label) {
 static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls, ImVec2 pos, ImVec2 size,
                                   float previewTime = -1.0f);
 // Ease picker: every ease by name, each with a drawing of its curve.
-static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, okay::Ease e, ImU32 col) {
+// Any ease as a curve (a preset, a cubic bezier or steps) inside the box (p0, sz); a bezier that overshoots
+// stays inside the box, and a staircase gets more points so its jumps read as steps.
+static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, const okay::EaseCurve& c, ImU32 col) {
     const float pad = sz.y * 0.22f;
+    const int n = c.kind == okay::EaseCurve::Kind::Steps ? 96 : 24;
     ImVec2 prev;
-    for (int i = 0; i <= 24; ++i) {
-        const float t = i / 24.0f, k = okay::Easing::Evaluate(e, t);
-        ImVec2 pt(p0.x + t * sz.x, p0.y + sz.y - pad - k * (sz.y - pad * 2.0f));
+    for (int i = 0; i <= n; ++i) {
+        const float t = (float)i / (float)n, k = c.Evaluate(t);
+        ImVec2 pt(p0.x + t * sz.x, std::clamp(p0.y + sz.y - pad - k * (sz.y - pad * 2.0f), p0.y, p0.y + sz.y));
         if (i > 0) dl->AddLine(prev, pt, col, 1.5f);
         prev = pt;
     }
 }
-static bool EaseCombo(const char* label, int& ease) {
+static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, okay::Ease e, ImU32 col) {
+    DrawEaseCurve(dl, p0, sz, okay::EaseCurve::OfPreset(e), col);
+}
+// `curveText` (optional): the ease as text from the component (TweenAnimation::easeCurve). While it parses it
+// replaces the preset, so the combo reads "Custom curve" and the small drawing at the end of the row is that curve.
+static bool EaseCombo(const char* label, int& ease, const std::string* curveText = nullptr) {
     bool changed = false;
     const int cur = std::clamp(ease, 0, (int)okay::Ease::Count - 1);
-    if (ImGui::BeginCombo(label, okay::Easing::Name((okay::Ease)cur), ImGuiComboFlags_HeightLarge)) {
+    okay::EaseCurve effective = okay::EaseCurve::OfPreset((okay::Ease)cur);
+    bool custom = false;
+    if (curveText && !curveText->empty()) {
+        okay::EaseCurve parsed;
+        if (okay::EaseCurve::Parse(*curveText, parsed)) { effective = parsed; custom = true; }
+    }
+    if (ImGui::BeginCombo(label, custom ? "Custom curve" : okay::Easing::Name((okay::Ease)cur), ImGuiComboFlags_HeightLarge)) {
         const float h = ImGui::GetTextLineHeight();
         for (int i = 0; i < (int)okay::Ease::Count; ++i) {
             ImGui::PushID(i);
@@ -25247,8 +25324,41 @@ static bool EaseCombo(const char* label, int& ease) {
         const ImVec2 mx = ImGui::GetItemRectMax(), mn = ImGui::GetItemRectMin();
         const float h = mx.y - mn.y;
         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(mx.x + 4, mn.y), ImVec2(mx.x + 4 + h * 1.8f, mx.y), IM_COL32(0, 0, 0, 60), 3.0f);
-        DrawEaseCurve(ImGui::GetWindowDrawList(), ImVec2(mx.x + 6, mn.y), ImVec2(h * 1.8f - 4, h), (okay::Ease)cur, ImGui::GetColorU32(AccentCol(1.0f)));
+        DrawEaseCurve(ImGui::GetWindowDrawList(), ImVec2(mx.x + 6, mn.y), ImVec2(h * 1.8f - 4, h), effective, ImGui::GetColorU32(AccentCol(1.0f)));
     }
+    return changed;
+}
+// The ease as text: a preset name ("OutBack"), cubic-bezier(x1,y1,x2,y2), steps(n[,start]) or one of ease, ease-in,
+// ease-out, ease-in-out (okay::EaseCurve::Parse). While the text parses it is stored and replaces the preset; text
+// that does not parse is shown in red and the stored value stays. Empty = use the preset. Returns true when the
+// stored text changed.
+static bool EaseCurveField(const char* label, std::string& stored) {
+    struct Edit { std::string text, err; };
+    static std::unordered_map<ImGuiID, Edit> s_edits;   // the text being typed, per field (a few components at most)
+    const ImGuiID id = ImGui::GetID(label);
+    if (s_edits.size() > 64) s_edits.clear();
+    Edit& e = s_edits[id];
+    // Not typing here: show the stored value (it may have changed elsewhere, and a mistake is dropped when the
+    // field loses focus, so the old value reads again).
+    if (e.text != stored && ImGui::GetActiveID() != id) { e.text = stored; e.err.clear(); }
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "%s", e.text.c_str());
+    bool changed = false;
+    if (ImGui::InputTextWithHint(label, "preset, cubic-bezier(0.4,0,0.2,1) or steps(4)", buf, sizeof(buf))) {
+        e.text = buf;
+        okay::EaseCurve parsed;
+        if (e.text.empty()) { changed = !stored.empty(); stored.clear(); e.err.clear(); }
+        else if (okay::EaseCurve::Parse(e.text, parsed)) { changed = stored != e.text; stored = e.text; e.err.clear(); }
+        else e.err = "Not an ease: use a preset name, cubic-bezier(x1,y1,x2,y2) or steps(n)";
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("An ease as text; while it parses it replaces the Ease above.\n"
+                          "  cubic-bezier(0.4, 0, 0.2, 1)   steps(4)   steps(4, start)\n"
+                          "  ease  ease-in  ease-out  ease-in-out   or a preset name (OutBack).\n"
+                          "Empty = the Ease above. A text with a mistake is not applied (the old one stays).");
+    if (!e.err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", e.err.c_str());
+    else if (okay::EaseCurve unused; !stored.empty() && !okay::EaseCurve::Parse(stored, unused))
+        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "Not an ease: the Ease above is used");
     return changed;
 }
 // Tween Animation preview in edit mode: play its tween on the real object, then put
@@ -25287,7 +25397,7 @@ static void StartTweenPreview(EditorState& ed, okay::TweenAnimation* ta) {
     if (UIRect r = GetUIRect(go); r.valid) { p.hasUI = true; if (r.position) p.uiPos = *r.position; if (r.sizePtr) p.uiSize = *r.sizePtr; }
     if (auto* tr = go->GetComponent<TextRenderer>()) p.text = tr->text;
     auto t = ta->CreateTween();
-    if (t) t->SetAutoKill(false);
+    if (t) { t->SetAutoKill(false); t->SetClock(std::string{}); }   // editing has no running clocks: preview on real time
     p.tween = t;
 }
 // Each editor frame: advance the preview; put the object back shortly after a
@@ -27596,32 +27706,28 @@ void DrawInspector(EditorState& ed) {
     }
 
     // Row 2: Tag dropdown + Save-as-Prefab.
-    // Built-in presets, then any project-wide custom tags (persisted in project.okayproj),
+    // The project's tag list (okay::Tags: the built-ins, then the custom tags saved in project.okayproj),
     // then an "Add Tag" field that creates a new tag AND applies it in one step.
-    static const char* kTagPresets[] = {"Untagged", "Player", "MainCamera", "Enemy",
-                                        "Respawn", "Finish", "GameController", "UI"};
     std::string curTag = go->tag.empty() ? "Untagged" : go->tag;
     const float tagLblW = ImGui::CalcTextSize("Layer").x + ImGui::GetStyle().ItemInnerSpacing.x;
     const float comboW = std::clamp(ImGui::GetContentRegionAvail().x - tagLblW, 90.0f, 150.0f);
     ImGui::SetNextItemWidth(comboW);
     if (ImGui::BeginCombo("Tag", curTag.c_str())) {
-        for (const char* t : kTagPresets) {
-            bool sel = (curTag == t);
-            if (ImGui::Selectable(t, sel)) {
-                go->tag = (std::strcmp(t, "Untagged") == 0) ? "" : t; ed.dirty = true;
-            }
-        }
-        // Project-wide custom tags (click to apply; right-click to remove from the list).
-        if (!g_project.customTags.empty()) {
+        if (ImGui::Selectable("Untagged", curTag == "Untagged")) { go->SetTag(""); ed.dirty = true; }
+        for (const std::string& t : okay::Tags::Builtin())
+            if (ImGui::Selectable(t.c_str(), curTag == t) && go->SetTag(t)) ed.dirty = true;
+        // Project-wide custom tags (click to apply; right-click to rename or remove from the list).
+        if (!okay::Tags::Custom().empty()) {
             ImGui::Separator();
-            for (std::size_t i = 0; i < g_project.customTags.size(); ++i) {
-                const std::string& t = g_project.customTags[i];
-                if (t.empty()) continue;
+            const std::vector<std::string> custom = okay::Tags::Custom();   // a copy: the menu below edits the list
+            for (std::size_t i = 0; i < custom.size(); ++i) {
+                const std::string& t = custom[i];
                 bool sel = (curTag == t);
-                if (ImGui::Selectable(t.c_str(), sel)) { go->tag = t; ed.dirty = true; }
+                if (ImGui::Selectable(t.c_str(), sel) && go->SetTag(t)) ed.dirty = true;
                 if (ImGui::BeginPopupContextItem((std::string("tagctx") + std::to_string(i)).c_str())) {
+                    TagRenameMenu(ed, t);
                     if (ImGui::MenuItem("Remove tag from list")) {
-                        g_project.customTags.erase(g_project.customTags.begin() + i);
+                        okay::Tags::Remove(t);
                         SaveProjectSettings();
                         ImGui::EndPopup();
                         break;
@@ -27633,33 +27739,41 @@ void DrawInspector(EditorState& ed) {
         ImGui::Separator();
         // Add a brand-new tag: type a name, press Enter or click Add → it's saved to
         // the project tag list and applied to this object immediately.
-        static char newTag[64] = "";
+        static char newTag[72] = "";
+        static std::string newTagErr;
+        if (ImGui::IsWindowAppearing()) newTagErr.clear();
         ImGui::SetNextItemWidth(120);
         bool entered = ImGui::InputTextWithHint("##newtag", "new tag...", newTag, sizeof(newTag),
                                                 ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine();
         bool clicked = ImGui::Button("Add");
         if ((entered || clicked) && newTag[0]) {
-            std::string nt = newTag;
-            bool known = false;
-            for (const char* p : kTagPresets) if (nt == p) known = true;
-            for (const std::string& e : g_project.customTags) if (e == nt) known = true;
-            if (!known) { g_project.customTags.push_back(nt); SaveProjectSettings(); }
-            go->tag = nt; ed.dirty = true; newTag[0] = '\0';
-            ImGui::CloseCurrentPopup();
+            const std::string nt = newTag;
+            const bool listed = okay::Tags::Contains(nt);
+            if (nt == "Untagged") { go->SetTag(""); ed.dirty = true; newTag[0] = '\0'; newTagErr.clear(); ImGui::CloseCurrentPopup(); }
+            else if (!okay::Tags::Add(nt)) newTagErr = okay::Tags::IsValidName(nt) ? "the tag list is full" : okay::Tags::WhyInvalid(nt);
+            else {
+                if (!listed) SaveProjectSettings();
+                if (go->SetTag(nt)) ed.dirty = true;
+                newTag[0] = '\0'; newTagErr.clear();
+                ImGui::CloseCurrentPopup();
+            }
         }
+        if (!newTagErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", newTagErr.c_str());
         ImGui::EndCombo();
     }
     SameLineOrWrap(comboW + tagLblW);
-    // Layer dropdown: which of the 32 named layers the object sits on.
+    // Layer dropdown: which of the 32 named layers the object sits on. Right-click a layer to rename it.
     ImGui::SetNextItemWidth(comboW);
     if (ImGui::BeginCombo("Layer", okay::Layers::Name(go->layer).c_str())) {
+        ImGui::TextDisabled("Right-click a layer to rename it");
         for (int i = 0; i < 32; ++i) {
             std::string nm = okay::Layers::Name(i);
             bool sel = (go->layer == i);
             if (ImGui::Selectable((nm + "##layer" + std::to_string(i)).c_str(), sel)) {
                 go->layer = i; ed.dirty = true;
             }
+            LayerRenameMenu(i);
         }
         ImGui::EndCombo();
     }
@@ -30196,6 +30310,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Selectable("Everything", cam->cullingMask == ~0)) { cam->cullingMask = ~0; ed.dirty = true; }
                 if (ImGui::Selectable("Nothing", cam->cullingMask == 0)) { cam->cullingMask = 0; ed.dirty = true; }
                 ImGui::Separator();
+                ImGui::TextDisabled("Right-click a layer to rename it");
                 for (int i = 0; i < 32; ++i) {
                     std::string nm = okay::Layers::Name(i);
                     bool on = (cam->cullingMask & (1 << i)) != 0;
@@ -30204,6 +30319,7 @@ void DrawInspector(EditorState& ed) {
                         else    cam->cullingMask &= ~(1 << i);
                         ed.dirty = true;
                     }
+                    LayerRenameMenu(i);   // right-click: rename the layer
                 }
                 ImGui::EndCombo();
             }
@@ -35408,7 +35524,34 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Duration (s)##ta", &ta->duration, 0.01f, 0.01f, 120.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Delay (s)##ta", &ta->delay, 0.01f, 0.0f, 120.0f)) ed.dirty = true;
-            if (!punchy && EaseCombo("Ease##ta", ta->ease)) ed.dirty = true;
+            if (!punchy && EaseCombo("Ease##ta", ta->ease, &ta->easeCurve)) ed.dirty = true;
+            if (!punchy && EaseCurveField("Curve##ta", ta->easeCurve)) ed.dirty = true;
+            {   // Which clock drives it: scene time, or a Clock channel ("ui", "cinematic", your own).
+                const std::string curClock = ta->clock;
+                if (ImGui::BeginCombo("Clock##ta", curClock.empty() ? "Scene time" : curClock.c_str())) {
+                    if (ImGui::Selectable("Scene time", curClock.empty())) { ta->clock.clear(); ed.dirty = true; }
+                    std::vector<std::string> names = okay::ClockSet::Global().Names();
+                    if (!curClock.empty() && std::find(names.begin(), names.end(), curClock) == names.end()) names.push_back(curClock);
+                    for (const std::string& n : names)
+                        if (ImGui::Selectable(n.c_str(), n == curClock)) { ta->clock = n; ed.dirty = true; }
+                    ImGui::Separator();
+                    static char customClock[64] = "";
+                    ImGui::SetNextItemWidth(130);
+                    const bool entered = ImGui::InputTextWithHint("##taclockname", "custom channel...", customClock, sizeof(customClock),
+                                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine();
+                    if ((ImGui::Button("Use##taclock") || entered) && customClock[0]) {
+                        ta->clock = customClock; ed.dirty = true; customClock[0] = '\0';
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Scene time, or a Clock channel to follow instead: \"game\" (scaled), \"ui\" (real time),\n"
+                                      "\"cinematic\", or your own name (made on first use, on real time).\n"
+                                      "The channel's own scale and pause apply, and it wins over Ignore time scale.\n"
+                                      "The editor Preview plays on real time whatever the clock is.");
+            }
             {
                 bool forever = ta->loops < 0;
                 int n = forever ? 1 : ta->loops;
@@ -44473,9 +44616,10 @@ int main(int argc, char** argv) {
         {   // Frozen at a visual-script breakpoint: Continue / Step resume that same tick.
             auto& dv = okay::editor::vsed::DebugView();
             if (g_gameFiber.Suspended()) { if (dv.resume) { dv.resume = false; g_gameFiber.Resume(); } }
-            else if (!g_paused) {
+            else {   // (was `else if (!g_paused)`: the editor's Pause is a Game pause the Play loop honours, see EditorState::SetPaused)
                 // One hitch (a compile, an asset load, a window drag) mustn't become
-                // one huge physics step: clamp like the built game, then even it out.
+                // one huge physics step: the Play loop (ed.PlayFrame, a GameLoop) clamps
+                // to 0.1 s like the built game, then evens it out.
                 static float s_refreshHz = 0.0f;
                 static int s_refreshAge = 0;
                 if (s_refreshAge-- <= 0) {
@@ -44483,9 +44627,13 @@ int main(int argc, char** argv) {
                     s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
                     s_refreshAge = 120;
                 }
-                float playDt = dt > 0.1f ? 0.1f : dt;
-                if (g_smoothFrameTime) playDt = okay::Time::SmoothDelta(playDt, g_vsync ? s_refreshHz : 0.0f);
-                TickGame(ed, okay::Game::Paused() ? 0.0f : playDt);
+                if (ed.isPlaying()) {
+                    if (!ed.playTick) ed.playTick = [&ed](float gdt) { TickGame(ed, gdt); };   // the Play loop's update (debugger fiber aware)
+                    ed.SetPaused(g_paused);   // the Pause button = Game::PushPause("editor")
+                    // Steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the
+                    // scene by the scaled delta: 0 while the game or the editor is paused, as before.
+                    ed.PlayFrame((double)dt, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f);
+                } else TickGame(ed, dt > 0.1f ? 0.1f : dt);   // editing never steps Time
             }
         }
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).

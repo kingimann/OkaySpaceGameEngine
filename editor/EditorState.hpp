@@ -1,6 +1,8 @@
 #pragma once
 #include <functional>
 #include <Okay.hpp>
+#include "okay/Core/Game.hpp"
+#include "okay/Core/GameLoop.hpp"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -162,6 +164,32 @@ public:
     /// Advance the simulation by dt (only has effect while playing).
     void Tick(float dt);
 
+    // ---- The Play loop (okay/Core/GameLoop.hpp) ------------------------
+    // Play frames go through one GameLoop, as in the built player, so Time::DeltaTime(),
+    // ElapsedTime(), Time.timeScale, hit stops, time-scale ramps and the Clock channels all
+    // work during Play. Editing never steps Time: PlayFrame does nothing outside Play.
+    /// Run one frame of Play for `realSeconds` of real time: clamp it to 0.1 s (a compile or a
+    /// window drag is not one huge step), optionally even it out (Time::SmoothDelta, snapped to
+    /// `refreshHz` with vsync), step Time and the clocks, then run playTick with the scaled
+    /// delta. False when nothing ran (not playing) or the game asked to quit.
+    bool PlayFrame(double realSeconds, bool smooth = true, float refreshHz = 0.0f);
+    /// What a Play frame runs with Time::DeltaTime(). Empty means Tick(dt); the editor sets it
+    /// so the visual-script debugger can run the tick on its own fiber.
+    std::function<void(float)> playTick;
+    /// The editor's Pause button, held as Game::PushPause("editor") so the loop, the clocks and
+    /// the game's own pause menu agree. Paused, Time::DeltaTime() is 0 and the scene is not
+    /// updated (as before). Ignored outside Play; Play() and Stop() clear it.
+    void SetPaused(bool paused);
+    bool paused() const { return Game::IsPausedBy(kPauseReason); }
+    /// The Step button: pause, then advance exactly one frame of `seconds` at the next
+    /// PlayFrame. The scene sees a running game for that frame (Game::Paused() reads false for the
+    /// editor's own pause, so controllers that skip a paused game still move); the time scale and
+    /// hit stops apply. False when not playing.
+    bool StepFrame(float seconds = 1.0f / 60.0f);
+    /// The loop itself (statistics, debug time scale, capture mode, frame recording).
+    GameLoop& playLoop() { return m_loop; }
+    static constexpr const char* kPauseReason = "editor";
+
     // ---- 2D editor camera (world units) -------------------------------
     Vec2  cameraPos{0, 0};
     float cameraZoom = 18.0f; // world units visible vertically
@@ -186,6 +214,8 @@ private:
 
     std::unique_ptr<ISteamService>   m_steam;
     NetworkManager* m_net = nullptr; // component on a scene GameObject
+
+    GameLoop m_loop;   // the Play loop (set up in the constructor)
 
     std::vector<std::string> m_undo, m_redo;
     bool m_suppressUndo = false;

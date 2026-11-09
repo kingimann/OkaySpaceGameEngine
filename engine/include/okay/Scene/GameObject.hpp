@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Tags.hpp"
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <typeinfo>
@@ -14,6 +15,34 @@
 namespace okay {
 
 class GameObject;
+
+namespace detail {
+/// Moves whenever an `active` flag changes value or a parent link changes, anywhere in the process.
+/// GameObject::ActiveInHierarchy() keeps its answer for as long as this number stays the same.
+inline std::atomic<std::uint64_t> g_activeEpoch{1};
+/// How many objects ActiveInHierarchy() had to look at to compute an answer (cache hits cost nothing).
+inline std::atomic<std::uint64_t> g_activeWalkSteps{0};
+} // namespace detail
+
+/// The type of GameObject::active: a bool that notes every change of its value, so
+/// GameObject::ActiveInHierarchy() can remember its answer instead of walking the parents again for
+/// every component every frame. It reads and assigns like a bool (`if (go->active)`, `go->active = false`);
+/// assigning the value it already holds changes nothing.
+class ActiveFlag {
+public:
+    explicit constexpr ActiveFlag(bool on = true) : m_on(on) {}
+    ActiveFlag(const ActiveFlag& o) : m_on(o.m_on) {}
+    ActiveFlag& operator=(const ActiveFlag& o) { Set(o.m_on); return *this; }
+    ActiveFlag& operator=(bool on) { Set(on); return *this; }
+    operator bool() const { return m_on; }
+private:
+    void Set(bool on) {
+        if (on == m_on) return;
+        m_on = on;
+        detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);
+    }
+    bool m_on;
+};
 
 /// Process-wide, data-driven rules for AddComponent: components a type needs next to
 /// it (RequireComponent) and types that may appear once per object
@@ -45,8 +74,8 @@ public:
     std::string name;
     /// This object's own on/off flag ("activeSelf"). Inactive GameObjects are skipped
     /// by Update, Render and physics, and so are their children: what the engine
-    /// tests is ActiveInHierarchy(), which also looks at every parent.
-    bool active = true;
+    /// tests is ActiveInHierarchy(), which also looks at every parent. (An ActiveFlag: use it as a bool.)
+    ActiveFlag active{true};
     /// Scene bookkeeping: the `active` value last reported to OnEnable/OnDisable
     /// (-1 = not seen yet, so the first frame never fires either).
     signed char activeSeen = -1;
@@ -130,19 +159,20 @@ public:
 
     /// True when this object and every parent above it are active. A child of an
     /// inactive parent does not update, render or simulate even if its own `active`
-    /// is true. Walks the parent chain (a few pointer reads for a normal hierarchy).
+    /// is true. The answer is kept until some `active` flag or parent link changes anywhere
+    /// (then it is worked out again, sharing the work with the objects above it), so a frame over a
+    /// long chain costs a few reads per component, not a walk to the top of the hierarchy.
+    /// Reading it from several threads is safe while nothing is being changed.
     bool ActiveInHierarchy() const {
-        // The whole chain is walked (a hierarchy deeper than any fixed cap is still one). A loop
-        // cannot exist (SetParent refuses it); the generous bound only keeps a corrupted
-        // pointer from spinning for ever.
-        const GameObject* g = this;
-        for (long guard = 0; g && guard < (1L << 26); ++guard) {
-            if (!g->active) return false;
-            const Transform* p = g->transform ? g->transform->Parent() : nullptr;
-            g = p ? p->gameObject : nullptr;
-        }
-        return true;
+        const std::uint64_t epoch = detail::g_activeEpoch.load(std::memory_order_relaxed);
+        const std::uint64_t seen = m_activeCache.load(std::memory_order_relaxed);
+        if ((seen >> 1) == epoch) return (seen & 1u) != 0;
+        return ComputeActiveInHierarchy(epoch);
     }
+    /// Diagnostic: how many objects ActiveInHierarchy() has had to examine since the process
+    /// started. An answer that comes from the cache adds nothing; tests use the difference to show
+    /// that a frame does linear work.
+    static std::uint64_t ActiveWalkSteps() { return detail::g_activeWalkSteps.load(std::memory_order_relaxed); }
 
     /// Attach a new component of type T, forwarding constructor arguments.
     template <typename T, typename... Args>
@@ -274,6 +304,10 @@ private:
     void NotifyComponentAdded(Component* component);
     /// Adds the components `owner` requires that are missing (guards against cycles).
     void ApplyRequirements(std::type_index owner);
+
+    /// The cache behind ActiveInHierarchy(): (epoch << 1) | answer. Valid while its epoch is current.
+    bool ComputeActiveInHierarchy(std::uint64_t epoch) const;
+    mutable std::atomic<std::uint64_t> m_activeCache{0};
 
     Scene* m_scene = nullptr;
     std::vector<std::unique_ptr<Component>> m_components;

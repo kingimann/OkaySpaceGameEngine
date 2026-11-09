@@ -125,6 +125,43 @@ bool GameObject::IsSelfOrDescendantOf(const GameObject* other) const {
     return false;
 }
 
+// The answer for this object, worked out for `epoch`. The walk climbs only until it meets an object whose
+// answer is already known for this epoch (or an inactive one, or the top), then writes the answer into
+// every object it passed on the way down. So after a change the first question costs the length of the
+// chain, and every other object below that point finds its parent answered: the whole hierarchy is
+// re-answered in linear time, however deep it is.
+bool GameObject::ComputeActiveInHierarchy(std::uint64_t epoch) const {
+    const GameObject* small[32];
+    std::vector<const GameObject*> big;
+    std::size_t n = 0;
+    auto push = [&](const GameObject* g) {
+        if (big.empty() && n < 32) { small[n++] = g; return; }
+        if (big.empty()) big.assign(small, small + n);
+        big.push_back(g);
+        n = big.size();
+    };
+    auto at = [&](std::size_t i) { return big.empty() ? small[i] : big[i]; };
+    auto store = [epoch](const GameObject* g, bool answer) {
+        g->m_activeCache.store((epoch << 1) | (answer ? 1u : 0u), std::memory_order_relaxed);
+    };
+    bool value = true;   // the answer for what is above the last object pushed (true past the top)
+    std::uint64_t steps = 0;
+    const GameObject* g = this;
+    // The bound only keeps a corrupted pointer from spinning for ever; a hierarchy cannot loop (SetParent refuses it).
+    for (long guard = 0; g && guard < (1L << 26); ++guard) {
+        ++steps;
+        const std::uint64_t seen = g->m_activeCache.load(std::memory_order_relaxed);
+        if ((seen >> 1) == epoch) { value = (seen & 1u) != 0; break; }
+        if (!g->active) { value = false; store(g, false); break; }
+        push(g);
+        const Transform* p = g->transform ? g->transform->Parent() : nullptr;
+        g = p ? p->gameObject : nullptr;
+    }
+    for (std::size_t i = n; i-- > 0;) store(at(i), value);   // every object pushed is itself active, so it takes its parent's answer
+    detail::g_activeWalkSteps.fetch_add(steps, std::memory_order_relaxed);
+    return value;
+}
+
 void GameObject::NotifyComponentAdded(Component* component) {
     if (m_scene) m_scene->QueuePending(component);
 }

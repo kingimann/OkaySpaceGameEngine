@@ -182,6 +182,12 @@ void Scene::Clear() {
     for (auto& d : abandoned) d(false);
 }
 
+void Scene::ApplyPendingClear() {
+    if (!m_clearPending || m_busy > 0) return;
+    m_clearPending = false;
+    Clear();
+}
+
 void Scene::QueuePending(Component* component) {
     ++m_componentVersion;
     m_pending.push_back(component);
@@ -539,16 +545,19 @@ void Scene::DispatchPointer() {
         for (const auto& up : m_objects) {
             GameObject* go = up.get();
             if (!go->transform || !go->ActiveInHierarchy()) continue;
+            // Only an object that can be picked pays for its world pose (reading it walks the parent
+            // chain: for every object that made a frame over a deep hierarchy quadratic).
+            auto* sr = go->GetComponent<SpriteRenderer>();
+            auto* bc = sr ? nullptr : go->GetComponent<BoxCollider2D>();
+            if (!sr && !bc) continue;
             Vec3 c = go->transform->Position();
             Vec3 ls = go->transform->LossyScale();
             Vec2 half; int order = 0;
-            if (auto* sr = go->GetComponent<SpriteRenderer>()) {
+            if (sr) {
                 half = {sr->size.x * ls.x * 0.5f, sr->size.y * ls.y * 0.5f};
                 order = sr->sortOrder;
-            } else if (auto* bc = go->GetComponent<BoxCollider2D>()) {
-                half = {bc->size.x * ls.x * 0.5f, bc->size.y * ls.y * 0.5f};
             } else {
-                continue;
+                half = {bc->size.x * ls.x * 0.5f, bc->size.y * ls.y * 0.5f};
             }
             if (world.x >= c.x - half.x && world.x <= c.x + half.x &&
                 world.y >= c.y - half.y && world.y <= c.y + half.y && order >= best) {
@@ -695,7 +704,69 @@ void Scene::DispatchActivation() {
     }
 }
 
+// Take every dying object out of the hierarchy: each becomes a root shell at the world pose it had, and
+// each list of children (a surviving parent's, or a dying parent's) loses its dying children in one pass.
+// The objects are visited top down (a parent before its children) with each one's world matrix, rotation
+// and scale carried from its parent's, so the whole job is linear in the number of objects: reading a
+// pose through the chain for every object, or erasing one child at a time from a long list, is not.
+void Scene::DetachDying(const std::vector<GameObject*>& batch, const std::unordered_set<const GameObject*>& inScene) {
+    auto dying = [&inScene](const Transform* t) { return t && t->gameObject && inScene.count(t->gameObject) != 0; };
+    struct Frozen { Mat4 world; Quat rotation; Vec3 scale; };
+    struct Entry { Transform* t; int parent; };   // parent: index into `order` of the dying parent, or -1
+    std::vector<Entry> order;
+    std::vector<Frozen> frozen;
+    order.reserve(inScene.size());
+    frozen.reserve(inScene.size());
+    std::unordered_set<Transform*> survivingParents;   // lists a dying top is taken out of
+    std::vector<std::pair<Transform*, int>> stack;
+    for (GameObject* go : batch) {
+        if (!go || !inScene.count(go) || !go->transform) continue;
+        Transform* top = go->transform;
+        if (dying(top->m_parent)) continue;   // reached from its dying parent below
+        if (top->m_parent) survivingParents.insert(top->m_parent);
+        stack.push_back({top, -1});
+        while (!stack.empty()) {
+            auto [t, parent] = stack.back(); stack.pop_back();
+            const int me = static_cast<int>(order.size());
+            Frozen f;
+            if (parent < 0) { f.world = t->LocalToWorldMatrix(); f.rotation = t->Rotation(); f.scale = t->LossyScale(); }
+            else {
+                const Frozen& up = frozen[static_cast<std::size_t>(parent)];
+                f.world = up.world * Mat4::TRS(t->localPosition, t->localRotation, t->localScale);
+                f.rotation = (up.rotation * t->localRotation).Normalized();
+                f.scale = {up.scale.x * t->localScale.x, up.scale.y * t->localScale.y, up.scale.z * t->localScale.z};
+            }
+            order.push_back({t, parent});
+            frozen.push_back(f);
+            const auto& kids = t->m_children;
+            for (std::size_t i = kids.size(); i-- > 0;)
+                if (dying(kids[i])) stack.push_back({kids[i], me});
+        }
+    }
+    if (order.empty()) return;
+    for (std::size_t i = 0; i < order.size(); ++i) {   // each becomes a root at the pose that was read
+        Transform* t = order[i].t;
+        const Frozen& f = frozen[i];
+        t->m_parent = nullptr;
+        t->localPosition = {f.world.m[12], f.world.m[13], f.world.m[14]};
+        t->localRotation = f.rotation.Normalized();
+        t->localScale = f.scale;
+    }
+    auto trim = [&dying](Transform* list) {   // the dying children leave this list together; the others keep their order
+        auto& kids = list->m_children;
+        kids.erase(std::remove_if(kids.begin(), kids.end(), dying), kids.end());
+    };
+    for (Transform* p : survivingParents) trim(p);
+    for (const Entry& e : order) if (!e.t->m_children.empty()) trim(e.t);
+    detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);   // parent links changed
+}
+
 void Scene::FlushDestroyed() {
+    FlushDestroyedNow();
+    ApplyPendingClear();   // a Clear asked for during the walk (not when this flush itself runs inside one)
+}
+
+void Scene::FlushDestroyedNow() {
     BusyScope busy(*this);   // OnDestroy handlers run: a DestroyImmediate from one only queues
     // OnDestroy handlers (scripts, visual scripts) may destroy or spawn more
     // objects: take the queue as a batch so they can't invalidate it, and treat
@@ -750,6 +821,8 @@ void Scene::FlushDestroyed() {
     if (m_mousePress && dying.count(m_mousePress)) m_mousePress = nullptr;
     m_dontDestroy.erase(std::remove_if(m_dontDestroy.begin(), m_dontDestroy.end(),
         [&dying](GameObject* g) { return dying.count(g) != 0; }), m_dontDestroy.end());
+    // Unlink every dying object from its parent first, all of them in one pass (see DetachDying).
+    DetachDying(batch, inScene);
     // Keep the shells (GameObject + Transform) in the graveyard; free the rest. One pass
     // that keeps the survivors in order.
     {
@@ -758,11 +831,8 @@ void Scene::FlushDestroyed() {
         for (auto& obj : m_objects) {
             GameObject* go = obj.get();
             if (!inScene.count(go)) { kept.push_back(std::move(obj)); continue; }
-            // Unlink the shell from a surviving parent, or it lingers in the
-            // Hierarchy as an empty, inactive child (a deleted camera showed up
-            // as "a camera with no Camera component").
-            // A dying parent's shell is detached from too, so a shell freed from the
-            // graveyard never leaves a child pointing at it.
+            // Anything DetachDying did not reach (a hierarchy whose child lists disagree) is unlinked
+            // here the slow way, so no shell is left with a parent.
             if (Transform* t = go->transform)
                 if (t->Parent()) t->SetParent(nullptr, /*worldPositionStays=*/true);
             go->StripToTransform();

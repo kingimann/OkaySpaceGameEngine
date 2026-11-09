@@ -236,6 +236,7 @@ bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
     }
     m_parent = parent;
     if (m_parent) m_parent->m_children.push_back(this);
+    detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);   // what is above this object changed: its active state is worked out again
     if (gameObject)   // a reparent changes which bones / names a model's caches see
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
     // Preserve the world pose (position, rotation and scale) only when asked.
@@ -324,6 +325,7 @@ void Transform::DetachChildren() {
         k->localRotation = poses[i].rotation.Normalized();
         k->localScale = poses[i].scale;
     }
+    detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);
     if (gameObject)
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
 }

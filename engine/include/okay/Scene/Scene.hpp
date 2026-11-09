@@ -473,6 +473,10 @@ private:
     const std::vector<GameObject*>* TagList(const std::string& tag) const;   // checked against what the objects carry now
     struct BusyScope;                  // marks the stretches where component lists are being walked
     int m_busy = 0;
+    bool m_clearPending = false;       // a Clear / RequestClear waiting for the end of the walk
+    void ApplyPendingClear();          // runs it once nothing is being walked
+    void FlushDestroyedNow();          // FlushDestroyed without the queued Clear
+    void DetachDying(const std::vector<GameObject*>& batch, const std::unordered_set<const GameObject*>& inScene);
     mutable std::unordered_map<std::string, std::vector<GameObject*>> m_tagIndex;
     mutable std::uint64_t m_tagIndexStructure = 0, m_tagIndexTags = 0;
     mutable std::size_t   m_tagIndexCount = 0;

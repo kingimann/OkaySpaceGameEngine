@@ -1667,6 +1667,17 @@ add_test(NAME mover_spinner_lifetime COMMAND test_mover_spinner_lifetime)
 add_executable(test_transform_world test_transform_world.cpp)
 target_link_libraries(test_transform_world PRIVATE okay::engine)
 add_test(NAME transform_world COMMAND test_transform_world)
+
+add_executable(test_scene_graph_perf test_scene_graph_perf.cpp)
+target_link_libraries(test_scene_graph_perf PRIVATE okay::engine)
+add_test(NAME scene_graph_perf COMMAND test_scene_graph_perf)
+set_tests_properties(scene_graph_perf PROPERTIES TIMEOUT 240)   # the old per-object detach took minutes at these sizes
+
+# Scene graph (1.3, wave 4): world math (singular inverse, shear, negative scale), a cached active state and linear
+# destroy on deep / wide hierarchies, Clear and loads from inside callbacks, saved component order, audit and additions
+add_executable(test_transform_world test_transform_world.cpp)
+target_link_libraries(test_transform_world PRIVATE okay::engine)
+add_test(NAME transform_world COMMAND test_transform_world)
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)

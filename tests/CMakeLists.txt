@@ -1808,11 +1808,6 @@ add_executable(test_random_threads test_random_threads.cpp)
 target_link_libraries(test_random_threads PRIVATE okay::engine)
 add_test(NAME random_threads COMMAND test_random_threads)
 
-# 1.1 fifth pass: Random::Shared() is thread safe (std::thread tests; header-only, also built standalone under a thread sanitizer)
-add_executable(test_random_threads test_random_threads.cpp)
-target_link_libraries(test_random_threads PRIVATE okay::engine)
-add_test(NAME random_threads COMMAND test_random_threads)
-
 add_executable(test_application_loop test_application_loop.cpp)
 target_link_libraries(test_application_loop PRIVATE okay::engine)
 add_test(NAME application_loop COMMAND test_application_loop)
@@ -1917,6 +1912,10 @@ add_test(NAME loop_audit4 COMMAND test_loop_audit4)
 add_executable(test_loop_audit5 test_loop_audit5.cpp)
 target_link_libraries(test_loop_audit5 PRIVATE okay::engine)
 add_test(NAME loop_audit5 COMMAND test_loop_audit5)
+
+add_executable(test_script_time test_script_time.cpp)
+target_link_libraries(test_script_time PRIVATE okay::engine)
+add_test(NAME script_time COMMAND test_script_time)
 
 add_executable(test_frame_overlay test_frame_overlay.cpp)
 target_link_libraries(test_frame_overlay PRIVATE okay::engine)

@@ -11,6 +11,6 @@ data 3 0 2 0
 node 4 Branch
 data 4 0 3 0
 node 5 Translate
-default 5 0 0.06
+default 5 0 0.2
 exec 1 0 4
 exec 4 0 5

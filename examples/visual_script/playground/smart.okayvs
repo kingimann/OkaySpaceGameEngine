@@ -12,13 +12,13 @@ pos 4 760 80
 data 4 0 3 0
 node 5 Translate
 pos 5 1040 40
-default 5 2 0.08
+default 5 0 0.1
 exec 4 0 5
 node 6 AlwaysSucceed
 pos 6 760 280
 node 7 Translate
 pos 7 1040 280
-default 7 2 -0.04
+default 7 0 -0.05
 exec 6 0 7
 node 8 TryFirst
 pos 8 300 40

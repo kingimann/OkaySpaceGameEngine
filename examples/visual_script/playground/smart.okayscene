@@ -33,7 +33,7 @@ end
 gameobject 4 "Guide"
   active 1
   parent -1
-  transform 0 0.5 -1.5 0 0 0 1 0.7 0.7 0.7
+  transform -2 0.5 0 0 0.707107 0 0.707107 0.7 0.7 0.7
     mesh "Cube" 0.25 0.45 0.95 1 0 "" 0
     material 0 0 0 0 8 1 "" 1 1
     visualscript ""
@@ -42,14 +42,14 @@ end
 gameobject 5 "Post"
   active 1
   parent -1
-  transform 0 0.5 2 0 0 0 1 0.45 1.2 0.45
+  transform 1.2 0.5 0 0 0 0 1 0.45 1.2 0.45
     mesh "Cube" 0.95 0.55 0.2 1 0 "" 0
     material 0 0 0 0 8 1 "" 1 1
 end
 gameobject 6 "Chooser"
   active 1
   parent -1
-  transform 1.6 0.5 -1.5 0 0 0 1 0.7 0.7 0.7
+  transform 0 0.5 1.6 0 0 0 1 0.7 0.7 0.7
     mesh "Cube" 0.3 0.8 0.4 1 0 "" 0
     material 0 0 0 0 8 1 "" 1 1
     visualscript ""

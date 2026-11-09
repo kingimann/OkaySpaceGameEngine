@@ -1,5 +1,55 @@
 OkaySpace Game Engine — Changelog
 
+v2.850.0
+  Loop and time
+  - A shared per-frame game loop (GameLoop): it clamps one huge frame after a
+    breakpoint or alt-tab, counts hitches, runs fixed steps with a catch-up cap
+    and a render interpolation value, and fires pause and resume events. The
+    console Application already runs on it (#579).
+  - Separate clocks for game, UI and cinematics, so a pause menu can freeze
+    gameplay while menu animation keeps running. Hit stop and smooth time-scale
+    ramps that combine with the time scale instead of overwriting it (#579).
+  - Pausing works through reasons: two systems that pause no longer un-pause each
+    other. Quit can carry a reason and an exit code, and a guard can veto it (for
+    example unsaved changes). The game can pause when its window loses focus (#579).
+  - More Random helpers: points and directions on circles and spheres, shuffle
+    bags, weighted tables, dice such as "2d6+3" that never throws, and string
+    seeds with the same result on every platform (#579).
+  Scenes and prefabs
+  - Nested prefabs and prefab variants, unpack, and per-field apply and revert
+    that rewrites the prefab file safely. Cycles, deep nesting and damaged inner
+    files are reported instead of breaking the scene (#578).
+  - A property registry: read, write, watch, snapshot and compare any component
+    field by name, for undo, live editing and prefab overrides (#578).
+  - Scene text tools for version control: a canonical form, a readable diff, a
+    three-way merge with a conflict report, and format migration (#578).
+  - An inactive parent now disables its children everywhere. Scenes can be
+    searched by path, validated for broken links, duplicate ids and missing
+    files, and report why a load failed. Components get FixedUpdate and
+    OnDestroy when a scene is cleared (#575).
+  Tools and performance
+  - A job system with ParallelFor, task dependencies and a main-thread queue,
+    plus frame arenas, pool allocators, generational handles and string ids (#578).
+  - Profiling and debugging data: frame history, render statistics, memory
+    tracking, a draw-call recorder and a stats overlay (#574).
+  - Optimization tools: mesh simplification and LOD chains, LOD selection,
+    occlusion culling, batching plans, streaming and an optimization report (#574).
+  - Localization tools: translation tables with CSV and JSON import and export,
+    missing and unused key reports, pseudo-localization, font coverage (#574).
+  - Accessibility: subtitles and captions, colour-blindness simulation and a safe
+    palette, directional UI focus, and a remapping model (#574).
+  Fixes
+  - Time no longer turns to NaN when a frame step is NaN, negative or infinite,
+    an infinite time scale is capped, the FPS readout is right after the first
+    frame, and the game stopwatch no longer freezes in long sessions (#579).
+  - Random.Range no longer overflows on very wide float ranges, and UTF-8
+    helpers handle surrogates and reads past the end of a string (#579).
+  - A script error in the console game loop no longer leaves the terminal in raw
+    mode, and the quit key is ignored while a text field is active (#579).
+  - Floats in scene files are written with the digits needed to read back the
+    same value, so a position like 12345.678 is no longer rounded on every save,
+    undo step or prefab copy (#575).
+
 v2.849.0
   Scenes and objects
   - Scenes load all-or-nothing: a damaged or truncated scene file no longer

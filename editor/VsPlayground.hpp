@@ -46,6 +46,8 @@ inline const VsPlaygroundDemo* VsPlaygroundDemos(int* count = nullptr) {
          "Pick from a list, shuffle it, and jump to a random point."},
         {"math", "Math", "math.okayscene", "math.okayvs", "Marker",
          "Min and max of a list, plus add, clamp and lerp."},
+        {"logic", "Logic", "logic.okayscene", "logic.okayvs", "Marker",
+         "The cube steps on even counts, then the state becomes done."},
     };
     if (count) *count = (int)(sizeof(kDemos) / sizeof(kDemos[0]));
     return kDemos;
@@ -86,6 +88,13 @@ inline const char* VsPlaygroundForNode(const char* type) {
         {"OnAction", "input"}, {"OnActionUp", "input"}, {"OnActionHeld", "input"}, {"GetMoveAxis", "input"},
         {"RandomPick", "random"}, {"RandomPoint", "random"}, {"ShuffleList", "random"},
         {"ListMin", "math"}, {"ListMax", "math"},
+        {"NotAnd", "logic"}, {"NotOr", "logic"}, {"AllTrue", "logic"}, {"AnyTrue", "logic"},
+        {"IsEven", "logic"}, {"IsOdd", "logic"}, {"PickByIndex", "logic"}, {"FirstValid", "logic"},
+        {"BranchInOrder", "logic"}, {"DoWhile", "logic"}, {"ForStep", "logic"},
+        {"WaitUntil", "logic"}, {"WaitWhile", "logic"}, {"BecameTrue", "logic"}, {"BecameFalse", "logic"},
+        {"CountUntil", "logic"}, {"WeightedBranch", "logic"}, {"WaitSteady", "logic"},
+        {"StepThrough", "logic"}, {"WaitLimit", "logic"}, {"SetState", "logic"}, {"GetState", "logic"},
+        {"IsInState", "logic"}, {"WhenStateBecomes", "logic"}, {"WhenStateLeaves", "logic"},
     };
     if (!type) return nullptr;
     for (const Row& r : kRows) if (std::strcmp(r.type, type) == 0) return r.demo;

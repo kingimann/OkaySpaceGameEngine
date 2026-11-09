@@ -190,6 +190,18 @@ inline VsPlace VsPlaceForNewNode(const char* type) {
         return VsAt("Lists & Maps", "Lists");
     if (VsPre(type, "Map") || VsIs(type, "NewMap")) return VsAt("Lists & Maps", "Maps");
     if (VsIs(type, "IsValid")) return VsAt("Math", "Compare");
+    if (VsIs(type, "NotAnd") || VsIs(type, "NotOr") || VsIs(type, "AllTrue") || VsIs(type, "AnyTrue") ||
+        VsIs(type, "IsEven") || VsIs(type, "IsOdd") || VsIs(type, "PickByIndex") || VsIs(type, "FirstValid") ||
+        VsIs(type, "IsInState"))
+        return VsAt("Math", "Compare");
+    if (VsIs(type, "DoWhile") || VsIs(type, "ForStep") || VsIs(type, "StepThrough") || VsIs(type, "CountUntil"))
+        return VsAt("Flow", "Loops");
+    if (VsIs(type, "WaitUntil") || VsIs(type, "WaitWhile") || VsIs(type, "WaitSteady") || VsIs(type, "WaitLimit"))
+        return VsAt("Flow", "Timing");
+    if (VsIs(type, "BranchInOrder") || VsIs(type, "BecameTrue") || VsIs(type, "BecameFalse") ||
+        VsIs(type, "WeightedBranch") || VsIs(type, "SetState") || VsIs(type, "GetState") ||
+        VsIs(type, "WhenStateBecomes") || VsIs(type, "WhenStateLeaves"))
+        return VsAt("Flow");
     if (VsIs(type, "GetProperty") || VsIs(type, "SetProperty") || VsIs(type, "CallMethod") ||
         VsIs(type, "GetComponent") || VsIs(type, "AddComponent") || VsIs(type, "RunSnippet") ||
         VsIs(type, "CallScript"))

@@ -93,8 +93,29 @@ struct CompareNode : VsNode {
     enum class Op { Gt, Lt, Ge, Le, Eq, Ne } op;
     explicit CompareNode(Op o) : op(o) {}
     VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
-        float a = In(0, g, ctx).AsFloat();
-        float b = In(1, g, ctx).AsFloat();
+        const VsValue av = In(0, g, ctx);
+        const VsValue bv = In(1, g, ctx);
+        if (av.IsObject() || bv.IsObject()) {
+            if (op != Op::Eq && op != Op::Ne) {
+                g.Error(this, ctx, "objects can only be compared as the same or not the same");
+                return false;
+            }
+            const bool eq = av.IsObject() && bv.IsObject() && av.AsObjectId() == bv.AsObjectId();
+            return op == Op::Eq ? eq : !eq;
+        }
+        if (av.IsString() || bv.IsString()) {
+            const int c = av.AsString().compare(bv.AsString());
+            switch (op) {
+                case Op::Gt: return c > 0;
+                case Op::Lt: return c < 0;
+                case Op::Ge: return c >= 0;
+                case Op::Le: return c <= 0;
+                case Op::Eq: return c == 0;
+                case Op::Ne: return c != 0;
+            }
+        }
+        const float a = av.AsFloat();
+        const float b = bv.AsFloat();
         switch (op) {
             case Op::Gt: return a > b;
             case Op::Lt: return a < b;

@@ -171,6 +171,11 @@ inline VsLevel VsLevelForNode(const char* type) {
         VsLevelIs(type, "CallMethod") || VsLevelIs(type, "GetComponent") ||
         VsLevelIs(type, "AddComponent") || VsLevelIs(type, "RunSnippet"))
         return VsLevel::Advanced;
+    if (VsLevelIs(type, "NotAnd") || VsLevelIs(type, "NotOr") || VsLevelIs(type, "AllTrue") ||
+        VsLevelIs(type, "AnyTrue") || VsLevelIs(type, "IsEven") || VsLevelIs(type, "IsOdd") ||
+        VsLevelIs(type, "PickByIndex") || VsLevelIs(type, "FirstValid") || VsLevelIs(type, "IsInState") ||
+        VsLevelIs(type, "GetState") || VsLevelIs(type, "SetState"))
+        return VsLevel::Basic;
     return VsLevel::Intermediate;
 }
 

@@ -807,39 +807,45 @@ void ActionList::Update(float dt) {
                  op == "punch_scale" || op == "tween_rotate") {
             Transform* tt = transform;
             if (scene && tt) {
-                Scheduler& sch = scene->scheduler();
+                // These effects write to this object's components, so they end with the object
+                // (destroyed or its scene unloaded) instead of running on freed memory.
+                Scheduler& schedulerRef = scene->scheduler();
+                Scheduler::Options bound; bound.object = gameObject;
+                auto tween = [&](float dur, std::function<void(float)> update, std::function<void()> done = {}) {
+                    schedulerRef.Tween(dur, std::move(update), std::move(done), bound);
+                };
                 const auto easeOf = EaseByName;   // shared ease-name mapping
                 if (op == "tween_move") {           // x y seconds [ease]
                     Vec3 start = tt->localPosition, target{Num(it, 0), Num(it, 1), start.z};
                     Ease e = easeOf(Str(it, 3));
-                    sch.Tween(Num(it, 2), [tt, start, target, e](float u) {
+                    tween(Num(it, 2), [tt, start, target, e](float u) {
                         float k = Easing::Evaluate(e, u);
                         tt->localPosition = start + (target - start) * k;
                     });
                 } else if (op == "tween_scale") {   // scale seconds [ease]
                     Vec3 start = tt->localScale; float v = Num(it, 0); Vec3 target{v, v, v};
                     Ease e = easeOf(Str(it, 2));
-                    sch.Tween(Num(it, 1), [tt, start, target, e](float u) {
+                    tween(Num(it, 1), [tt, start, target, e](float u) {
                         float k = Easing::Evaluate(e, u);
                         tt->localScale = start + (target - start) * k;
                     });
                 } else if (op == "shake") {         // intensity seconds
                     Vec3 start = tt->localPosition; float inten = Num(it, 0);
-                    sch.Tween(Num(it, 1), [tt, start, inten](float u) {
+                    tween(Num(it, 1), [tt, start, inten](float u) {
                         float decay = (1.0f - u) * inten;
                         tt->localPosition = start + Vec3{Random::Shared().Range(-1.0f, 1.0f) * decay,
                                                          Random::Shared().Range(-1.0f, 1.0f) * decay, 0.0f};
                     }, [tt, start]() { tt->localPosition = start; });
                 } else if (op == "punch_scale") {    // amount seconds
                     Vec3 start = tt->localScale; float amount = Num(it, 0);
-                    sch.Tween(Num(it, 1), [tt, start, amount](float u) {
+                    tween(Num(it, 1), [tt, start, amount](float u) {
                         float osc = Mathf::Sin(u * Mathf::PI * 6.0f) * amount * (1.0f - u);
                         tt->localScale = start + Vec3{osc, osc, osc};
                     }, [tt, start]() { tt->localScale = start; });
                 } else {                             // tween_rotate: degrees seconds [ease]
                     Quat start = tt->localRotation; float deg = Num(it, 0);
                     Ease e = easeOf(Str(it, 2));
-                    sch.Tween(Num(it, 1), [tt, start, deg, e](float u) {
+                    tween(Num(it, 1), [tt, start, deg, e](float u) {
                         float k = Easing::Evaluate(e, u);
                         tt->localRotation = start * Quat::Euler({0, 0, deg * k});
                     });
@@ -863,19 +869,25 @@ void ActionList::Update(float dt) {
                     return Color{a.r + (b.r - a.r) * k, a.g + (b.g - a.g) * k,
                                  a.b + (b.b - a.b) * k, a.a + (b.a - a.a) * k};
                 };
-                Scheduler& sch = scene->scheduler();
+                // These effects write to this object's components, so they end with the object
+                // (destroyed or its scene unloaded) instead of running on freed memory.
+                Scheduler& schedulerRef = scene->scheduler();
+                Scheduler::Options bound; bound.object = gameObject;
+                auto tween = [&](float dur, std::function<void(float)> update, std::function<void()> done = {}) {
+                    schedulerRef.Tween(dur, std::move(update), std::move(done), bound);
+                };
                 if (op == "tween_color") {          // r g b seconds [ease]
                     Color to{Num(it, 0), Num(it, 1), Num(it, 2), start.a};
                     float dur = it.args.size() > 3 ? Num(it, 3) : 0.3f;
                     Ease e = EaseByName(Str(it, 4));
-                    sch.Tween(dur, [apply, mix, start, to, e](float u) {
+                    tween(dur, [apply, mix, start, to, e](float u) {
                         apply(mix(start, to, Easing::Evaluate(e, u)));
                     });
                 } else if (op == "fade") {          // alpha seconds [ease]
                     Color to = start; to.a = Num(it, 0);
                     float dur = it.args.size() > 1 ? Num(it, 1) : 0.3f;
                     Ease e = EaseByName(Str(it, 2));
-                    sch.Tween(dur, [apply, mix, start, to, e](float u) {
+                    tween(dur, [apply, mix, start, to, e](float u) {
                         apply(mix(start, to, Easing::Evaluate(e, u)));
                     });
                 } else {                            // flash [seconds] [r g b] — blink, then restore
@@ -883,7 +895,7 @@ void ActionList::Update(float dt) {
                     if (dur <= 0.0f) dur = 0.2f;
                     Color fc = it.args.size() > 3 ? Color{Num(it, 1), Num(it, 2), Num(it, 3), start.a}
                                                   : Color{1.0f, 1.0f, 1.0f, start.a};
-                    sch.Tween(dur, [apply, mix, start, fc](float u) {
+                    tween(dur, [apply, mix, start, fc](float u) {
                         apply(mix(start, fc, 1.0f - std::fabs(2.0f * u - 1.0f)));   // up, then back
                     }, [apply, start]() { apply(start); });
                 }

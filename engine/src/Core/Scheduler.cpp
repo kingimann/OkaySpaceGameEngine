@@ -146,7 +146,7 @@ namespace {
 // The real frame time for a scaled `dt`: undo the time scale; at scale 0 (paused)
 // the only source left is Time's own record of the frame.
 float UnscaledFrom(float dt) {
-    const float ts = Time::TimeScale();
+    const float ts = Time::EffectiveTimeScale();   // scale x hit stop: what dt was multiplied by
     return ts > 1e-6f ? dt / ts : Time::UnscaledDeltaTime();
 }
 std::uint64_t g_globalFrame = ~std::uint64_t(0);   // Time::FrameCount() of the last global tick

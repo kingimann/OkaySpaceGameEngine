@@ -80,6 +80,7 @@
 #  include <fcntl.h>
 #  include <csignal>
 #endif
+#include "AppRestart.hpp"   // detached self-update: wait until this process exits, then relaunch once
 
 #if defined(_WIN32)
 // Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
@@ -297,30 +298,35 @@ int RunCmd(const std::string& cmd, bool wait) {
 }
 
 // Download a URL to a file using whatever HTTP client is on the system.
-bool Download(const std::string& url, const std::string& out) {
+bool Download(const std::string& url, const fs::path& out) {
     std::error_code ec; fs::remove(out, ec);
     if (!ShellSafeUrl(url)) return false;
     std::string u = BustCache(url);
+    const std::string outUtf = okay::restart::Utf8(out);
     // Native first (no curl process per file; pooled TLS connections).
     if (okay::http::NativeAvailable()) {
-        okay::http::Result r = okay::http::Request("GET", u, {"Cache-Control: no-cache", "Pragma: no-cache"}, {}, {}, out);
+        okay::http::Result r = okay::http::Request("GET", u, {"Cache-Control: no-cache", "Pragma: no-cache"}, {}, {}, out.string());
         if (r.reached && r.status >= 200 && r.status < 300 && fs::exists(out, ec)) return true;
         fs::remove(out, ec);
     }
-    const char* nc = "-H \"Cache-Control: no-cache\" -H \"Pragma: no-cache\" ";
+    // argv, not a shell string, so the output path is not re-parsed by cmd.exe.
+    const std::vector<std::string> curl = {
+        "curl", "-L", "-s", "-f", "-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache",
+        "-o", outUtf, u};
+    if (okay::restart::RunAndWait(curl) == 0 && fs::exists(out)) return true;
 #if defined(_WIN32)
-    std::string c1 = "curl -L -s -f " + std::string(nc) + "-o \"" + out + "\" \"" + u + "\"";
-    if (RunCmd(c1, true) == 0 && fs::exists(out)) return true;
-    std::string c2 = "powershell -NoProfile -Command \"try { Invoke-WebRequest "
-                     "-Headers @{'Cache-Control'='no-cache'} "
-                     "-UseBasicParsing -Uri '" + u + "' -OutFile '" + out +
-                     "' } catch { exit 1 }\"";
-    return RunCmd(c2, true) == 0 && fs::exists(out);
+    auto psQuote = [](const std::string& s) {
+        std::string o; o.reserve(s.size());
+        for (char c : s) { if (c == '\'') o += "''"; else o += c; }
+        return o;
+    };
+    const std::string script =
+        "try { Invoke-WebRequest -Headers @{'Cache-Control'='no-cache'} "
+        "-UseBasicParsing -Uri '" + psQuote(u) + "' -OutFile '" + psQuote(outUtf) +
+        "' } catch { exit 1 }";
+    return okay::restart::RunAndWait({"powershell", "-NoProfile", "-Command", script}) == 0 && fs::exists(out);
 #else
-    std::string c1 = "curl -L -s -f " + std::string(nc) + "-o \"" + out + "\" \"" + u + "\" 2>/dev/null";
-    if (RunCmd(c1, true) == 0 && fs::exists(out)) return true;
-    std::string c2 = "wget -q --no-cache -O \"" + out + "\" \"" + u + "\" 2>/dev/null";
-    return RunCmd(c2, true) == 0 && fs::exists(out);
+    return okay::restart::RunAndWait({"wget", "-q", "--no-cache", "-O", outUtf, u}) == 0 && fs::exists(out);
 #endif
 }
 
@@ -699,7 +705,7 @@ long long RemoteSize(const std::string& url) {
 // Download helper that runs curl on a short-lived thread while the caller polls
 // the growing output file, publishing byte progress into the update globals so
 // the dialog can show a live MB / percentage bar.
-struct DlMonitor { std::string url, out; SDL_atomic_t done; SDL_atomic_t ok; };
+struct DlMonitor { std::string url; fs::path out; SDL_atomic_t done; SDL_atomic_t ok; };
 int DlMonitorThread(void* p) {
     DlMonitor* d = (DlMonitor*)p;
     bool r = Download(d->url, d->out);
@@ -707,7 +713,7 @@ int DlMonitorThread(void* p) {
     SDL_AtomicSet(&d->done, 1);
     return 0;
 }
-bool DownloadProgress(const std::string& url, const std::string& out) {
+bool DownloadProgress(const std::string& url, const fs::path& out) {
     SDL_AtomicSet(&g_upBytesNow, 0);
     SDL_AtomicSet(&g_upBytesTotal, (int)RemoteSize(url));   // 0 if unknown
     DlMonitor d; d.url = url; d.out = out;
@@ -727,27 +733,20 @@ bool DownloadProgress(const std::string& url, const std::string& out) {
 bool ReplaceFile(const std::string& url, const fs::path& dest, bool inUse,
                  bool progress = false) {
     fs::path tmp = dest; tmp += ".new";
-    bool got = progress ? DownloadProgress(url, tmp.string())
-                        : Download(url, tmp.string());
+    bool got = progress ? DownloadProgress(url, tmp) : Download(url, tmp);
     std::error_code ec;
     if (!got) { fs::remove(tmp, ec); return false; }   // no empty .new left behind
-    if (!fs::exists(tmp, ec) || fs::file_size(tmp, ec) < 100000) {
-        fs::remove(tmp, ec);
+    fs::path old = dest; old += ".old";
+    // Move the live file aside first and put it back if the staged file can't
+    // take its place. Deleting it first left no program when the install failed.
+    const okay::restart::SwapResult sw =
+        okay::restart::SwapFile(dest, tmp, old, 100000, /*keepBackup=*/inUse);
+    if (!sw.ok) {
+        okay::restart::AppendLog(dest.parent_path() / "okay_update.log",
+                                 "replace failed for " + okay::restart::Utf8(dest) + ": " + sw.error);
+        if (fs::exists(tmp, ec)) fs::remove(tmp, ec);
         return false;
     }
-    if (inUse) {
-        fs::path old = dest; old += ".old";
-        fs::remove(old, ec);
-        fs::rename(dest, old, ec);          // running exe -> .old (allowed on Win)
-    } else {
-        fs::remove(dest, ec);
-    }
-    fs::rename(tmp, dest, ec);
-    if (ec) return false;
-#if !defined(_WIN32)
-    fs::permissions(dest, fs::perms::owner_exec | fs::perms::group_exec |
-                    fs::perms::others_exec, fs::perm_options::add, ec);
-#endif
     return true;
 }
 
@@ -952,9 +951,10 @@ int RunUpdateCheck(void*) {
     if (newer) {
         SetUpMsg("Updating launcher...");
         SetUpStep("Updating launcher (OkaySpace)", 2, kSteps);
-        launcherOk = !g_selfPath.empty() &&
-            ReplaceFile(base + "OkaySpace.exe",
-                        fs::path(g_selfPath), true, /*progress=*/true);
+        fs::path selfExe = okay::restart::CurrentExecutable();
+        if (selfExe.empty() && !g_selfPath.empty()) selfExe = fs::path(g_selfPath);
+        launcherOk = !selfExe.empty() &&
+            ReplaceFile(base + "OkaySpace.exe", selfExe, true, /*progress=*/true);
     }
 
     if (ok) {
@@ -1244,6 +1244,30 @@ unsigned long CurrentPid() {
 #else
     return (unsigned long)getpid();
 #endif
+}
+
+// The update has already swapped this exe aside. Relaunch only after this
+// process exits, so the new one can take the single-instance lock. One success
+// is enough: a second click must not start a second helper.
+static bool BeginUpdatedRestart() {
+    static bool started = false;
+    if (started) return true;
+    okay::restart::Request req;
+    req.executable = okay::restart::CurrentExecutable();
+    if (req.executable.empty() && !g_selfPath.empty()) req.executable = fs::path(g_selfPath);
+    req.arguments = okay::restart::CurrentArguments();
+    std::error_code ec;
+    req.workingDirectory = fs::current_path(ec);
+    req.waitForPid = CurrentPid();
+    req.keepBackup = true;
+    if (!req.executable.empty()) req.logFile = req.executable.parent_path() / "okay_update.log";
+    std::string err;
+    if (!okay::restart::StartHelper(req, err)) {
+        Toast(err.empty() ? "Couldn't restart after the update. See okay_update.log next to the app." : err, 2);
+        return false;
+    }
+    started = true;
+    return true;
 }
 
 // Launch the editor with a handshake token: "--launcher <pid>". The editor refuses
@@ -16375,15 +16399,14 @@ static void DrawOfficialAdmin(okay::account::AccountService& account) {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
+    okay::restart::RememberArguments(argc, argv);
     SDL_SetMainReady();
-    if (argc > 0) {
+    {
         std::error_code ec;
-        fs::path self = fs::absolute(argv[0], ec);
-        if (!ec) { g_exeDir = self.parent_path().string(); g_selfPath = self.string(); }
-    }
-    // Clean up a launcher we replaced on a previous run.
-    if (!g_selfPath.empty()) {
-        std::error_code ec; fs::remove(fs::path(g_selfPath + ".old"), ec);
+        fs::path self = okay::restart::CurrentExecutable();
+        if (self.empty() && argc > 0) self = fs::absolute(argv[0], ec);
+        if (!self.empty()) { g_exeDir = self.parent_path().string(); g_selfPath = self.string(); }
     }
 
     // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE SDL video init so
@@ -16394,6 +16417,13 @@ int main(int argc, char** argv) {
     // One launcher at a time: a second launch asks the running one to come
     // forward (restoring it from the tray / taskbar) and then exits quietly.
     if (!AcquireSingleInstance()) { SDL_Quit(); return 0; }
+    // Only the instance that stays up removes the previous exe. A second launch
+    // that loses the single-instance race used to delete it and then exit.
+    {
+        std::error_code ec;
+        fs::path self = okay::restart::CurrentExecutable();
+        if (!self.empty()) { fs::path old = self; old += ".old"; fs::remove(old, ec); }
+    }
 
     // Show the bundled version and DON'T phone home on startup: the published build
     // on GitHub can lag this one, so an auto-check used to download an OLDER engine
@@ -16784,7 +16814,11 @@ int main(int argc, char** argv) {
         if (g_upRelaunchNeeded && GetState() == Up_Updated) {
             static Uint32 relaunchAt = 0;
             if (relaunchAt == 0) relaunchAt = SDL_GetTicks() + 1600;
-            else if (SDL_GetTicks() >= relaunchAt) { if (EditorRunning()) { g_afterEditor = 3; relaunchAt = 0xFFFFFFFFu; } else { Launch(g_selfPath); running = false; } }
+            else if (SDL_GetTicks() >= relaunchAt) {
+                relaunchAt = 0xFFFFFFFFu;   // one attempt; a failure must not spawn a helper every frame
+                if (EditorRunning()) g_afterEditor = 3;
+                else if (BeginUpdatedRestart()) running = false;
+            }
         }
 
         // Periodic update check — runs while open AND while minimized (this block
@@ -16918,7 +16952,7 @@ int main(int argc, char** argv) {
                     ImGui::CloseCurrentPopup();
                     if (act == 1) running = false;
                     else if (act == 2) StartUpdateCheck(g_afterEditorShowDialog);
-                    else if (act == 3) { Launch(g_selfPath); running = false; }   // restart to finish an update
+                    else if (act == 3) { if (BeginUpdatedRestart()) running = false; }   // restart to finish an update
                 } else if (!s_closing) {
                     ImGui::TextUnformatted("The OkaySpace editor is still open.");
                     ImGui::TextDisabled(upd ? "It has to close before the update can replace it."
@@ -17067,7 +17101,7 @@ int main(int argc, char** argv) {
                 // Action buttons depend on state.
                 if (us == Up_Updated && g_upRelaunchNeeded) {
                     if (ImGui::Button("Restart now", ImVec2(140, 34))) {
-                        if (EditorRunning()) g_afterEditor = 3; else { Launch(g_selfPath); running = false; }
+                        if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; }
                         g_upModalOpen = false; ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
@@ -17682,7 +17716,7 @@ int main(int argc, char** argv) {
                 if (click) {
                     if (upAvail) StartUpdateCheck(true);
                     else if (st == Up_Failed) StartUpdateCheck();
-                    else if (g_upRelaunchNeeded && st == Up_Updated) { if (EditorRunning()) g_afterEditor = 3; else { Launch(g_selfPath); running = false; } }
+                    else if (g_upRelaunchNeeded && st == Up_Updated) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
                 }
                 ImGui::Dummy(ImVec2(0, 2));
             } else if (upNote) {
@@ -17713,7 +17747,7 @@ int main(int argc, char** argv) {
                 }
                 if (g_upRelaunchNeeded && st == Up_Updated) {
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
-                    if (PrimaryButton("Restart now", ImVec2(w - 48, 24))) { if (EditorRunning()) g_afterEditor = 3; else { Launch(g_selfPath); running = false; } }
+                    if (PrimaryButton("Restart now", ImVec2(w - 48, 24))) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
                 }
                 ImGui::SetCursorScreenPos(ImVec2(mn.x, mn.y + h + 8.0f));
             }
@@ -18549,7 +18583,7 @@ int main(int argc, char** argv) {
                 ImGui::SetCursorPos(ImVec2(top.x + ImGui::GetContentRegionMax().x - top.x - bw, top.y + (below - top.y - 32.0f) * 0.5f));
                 if (avail) { if (PrimaryButton("Install now", ImVec2(bw, 32))) StartUpdateCheck(true); }
                 else if (us == Up_Updated && g_upRelaunchNeeded) {
-                    if (PrimaryButton("Restart now", ImVec2(bw, 32))) { if (EditorRunning()) g_afterEditor = 3; else { Launch(g_selfPath); running = false; } }
+                    if (PrimaryButton("Restart now", ImVec2(bw, 32))) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
                 }
                 else { ImGui::BeginDisabled(busy); if (ImGui::Button(busy ? "Checking\xE2\x80\xA6" : "Check for updates", ImVec2(bw, 32))) StartUpdateCheck(); ImGui::EndDisabled(); }
                 if (ImGui::GetCursorPosY() < below) { ImGui::SetCursorPosY(below); ImGui::Dummy(ImVec2(0, 0)); }

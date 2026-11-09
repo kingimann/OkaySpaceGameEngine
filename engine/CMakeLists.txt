@@ -8,10 +8,16 @@ add_library(okay_engine
     src/Core/Console.cpp
     src/Core/DebugOverlay.cpp
     src/Core/SaveGame.cpp
+    src/Core/SaveFramework.cpp
+    src/Core/SaveFrameworkScene.cpp
+    src/Core/SaveFrameworkSync.cpp
     src/Core/Scheduler.cpp
     src/Core/Tween.cpp
     src/Core/Prefs.cpp
     src/Core/DataAsset.cpp
+    src/Core/Undo.cpp
+    src/Core/Recovery.cpp
+    src/Core/Backup.cpp
     src/Core/AssetManager.cpp
     src/Core/ImportSettings.cpp
     src/Core/AssetDatabase.cpp
@@ -174,6 +180,12 @@ add_library(okay_engine
     src/Optimize/StreamingGrid.cpp
     src/Optimize/MipBudget.cpp
     src/Optimize/SceneOptimizationReport.cpp
+    src/Testing/TestRegistry.cpp
+    src/Testing/PlayTest.cpp
+    src/Testing/ObjectPath.cpp
+    src/Testing/SceneValidator.cpp
+    src/Testing/Regression.cpp
+    src/Testing/GoldenImage.cpp
     third_party/ufbx/ufbx.c
 )
 

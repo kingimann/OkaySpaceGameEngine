@@ -12,13 +12,19 @@ page covers what an object round trip keeps.
   switched off gets a `compoff "<Type>" <n>` record (type name, and which of that type),
   applied after the object's components exist. A record for a component that is not
   there is ignored.
-- **Component order** is not saved: components come back in the order the writer emits
-  them, not the order they were added in. (Looked at for the scene graph wave and left out: the
-  writer emits records in a fixed chain of `GetComponent<T>()` calls, so an exact `comporder`
-  record that is written only when the order differs would need a table of each type's emit rank,
-  and a record written for every object would make every component add or remove touch one line
-  that two branches both edit, which the three-way merge cannot combine. Scripts, visual scripts,
-  action lists and the other per-instance types already keep their order among themselves.)
+- **Component order:** components of an object that nobody arranged come back in the order the writer emits
+  them (a fixed chain of `GetComponent<T>()` calls), as always. An object whose components were arranged on
+  purpose (`GameObject::MoveComponent`, `GameObject::ReorderComponents`, or a loaded `comporder` record: see
+  `GameObject::HasCustomComponentOrder()`) also writes `comporder "Type" "Type" ...`, the type names
+  (`ComponentSerializerRegistry::TypeKey`) of its components after the Transform in order, and gets that order
+  back after a load, a clone (`Instantiate`) and an undo snapshot. Optional and backward compatible: a file without the
+  record loads exactly as before; an older build reads the line as an unknown record, skips it and warns; a name the
+  object has no component for is ignored, and components the record does not name follow the named ones in their loaded
+  order. The Nth name of a type means the object's Nth component of that type (two scripts keep their order).
+  Only an explicit arrangement is recorded, not the order of `AddComponent` calls: that would need a table of the
+  writer's emit rank per type (or a trial load of every object), and a record on every multi-component object would
+  make each component add or remove edit one line that two branches both change, which the three-way merge cannot
+  combine. A record written only for arranged objects keeps an untouched scene's text identical to before.
 - **Runtime-only objects:** an object with `transient` set is never written, and neither is
   anything below it (a child saved without its parent would load as a loose root). The same holds for
   a clone made with `Instantiate` / `Duplicate`.

@@ -1,6 +1,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -179,6 +180,37 @@ void GameObject::MoveComponent(Component* component, int delta) {
     auto owned = std::move(m_components[index]);
     m_components.erase(m_components.begin() + index);
     m_components.insert(m_components.begin() + target, std::move(owned));
+    m_customOrder = true;   // arranged on purpose: the scene file keeps it
+}
+
+bool GameObject::ReorderComponents(const std::vector<Component*>& first) {
+    std::vector<Component*> want;   // this object's own components named in `first`, once each, never the Transform
+    for (Component* c : first) {
+        if (!c || c == static_cast<Component*>(transform)) continue;
+        if (std::find(want.begin(), want.end(), c) != want.end()) continue;
+        bool mine = false;
+        for (const auto& own : m_components) if (own.get() == c) { mine = true; break; }
+        if (mine) want.push_back(c);
+    }
+    if (want.empty()) return false;
+    m_customOrder = true;
+    Component* const pinned = transform;   // stays first
+    std::vector<Component*> order;
+    order.reserve(m_components.size());
+    if (pinned) order.push_back(pinned);
+    for (Component* w : want) order.push_back(w);
+    for (const auto& c : m_components)
+        if (c.get() != pinned && std::find(want.begin(), want.end(), c.get()) == want.end()) order.push_back(c.get());
+    bool changed = false;
+    for (std::size_t i = 0; i < order.size(); ++i) if (order[i] != m_components[i].get()) { changed = true; break; }
+    if (!changed) return false;
+    std::vector<std::unique_ptr<Component>> next;
+    next.reserve(m_components.size());
+    for (Component* o : order)
+        for (auto& c : m_components)
+            if (c.get() == o) { next.push_back(std::move(c)); break; }
+    m_components.swap(next);
+    return true;
 }
 
 bool GameObject::RemoveComponent(Component* component) {

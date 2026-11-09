@@ -255,6 +255,16 @@ public:
     /// Transform itself nor any other component can be moved to index 0. Out-of-range
     /// moves or an unknown component are no-ops.
     void MoveComponent(Component* component, int delta);
+    /// Arrange the components: the ones in `first` that belong to this object come right after the
+    /// Transform, in that order; everything else follows in the order it already had. A null, the
+    /// Transform, a component of another object and a repeat are skipped. Returns true when the order
+    /// changed. Calling it with at least one component of this object (or a MoveComponent that moved)
+    /// marks the order as arranged on purpose, so the scene file keeps it (see HasCustomComponentOrder).
+    bool ReorderComponents(const std::vector<Component*>& first);
+    /// True once the component order was arranged on purpose (MoveComponent, ReorderComponents, or
+    /// loaded from a `comporder` record). The scene serializer writes the order of such an object, and
+    /// only of such an object, so an object nobody arranged saves exactly as before.
+    bool HasCustomComponentOrder() const { return m_customOrder; }
 
     /// If another component on this object needs `component` (RequireComponent),
     /// that dependent; else nullptr. Lets an editor refuse to remove it. RemoveComponent
@@ -312,6 +322,7 @@ private:
     Scene* m_scene = nullptr;
     std::vector<std::unique_ptr<Component>> m_components;
     bool m_destroyed = false;
+    bool m_customOrder = false;
 };
 
 // ---- Template implementations -----------------------------------------

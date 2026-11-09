@@ -1767,6 +1767,7 @@ add_test(NAME object_pool_audit COMMAND test_object_pool_audit)
 add_executable(test_loading_screen_async test_loading_screen_async.cpp)
 target_link_libraries(test_loading_screen_async PRIVATE okay::engine)
 add_test(NAME loading_screen_async COMMAND test_loading_screen_async)
+
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)

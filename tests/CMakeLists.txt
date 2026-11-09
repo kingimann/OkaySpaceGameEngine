@@ -1634,9 +1634,6 @@ target_link_libraries(test_arena_handles PRIVATE okay::engine)
 add_test(NAME arena_handles COMMAND test_arena_handles)
 
 # Console variables: parsing, ranges, flags, callbacks, command line, console lines, Prefs round trip.
-add_executable(test_cvars test_cvars.cpp)
-target_link_libraries(test_cvars PRIVATE okay::engine)
-add_test(NAME cvars COMMAND test_cvars)
 
 # Frame delta clamp, frame timer and frame limiter.
 add_executable(test_frame_pacing test_frame_pacing.cpp)

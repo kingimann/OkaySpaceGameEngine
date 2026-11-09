@@ -1,5 +1,5 @@
 #pragma once
-// Private threading shim for the Core runtime (Jobs.cpp, StringId.cpp, CVar.cpp).
+// Private threading shim for the Core runtime (Jobs.cpp, StringId.cpp).
 // Include it from .cpp files only, never from a public header: the MinGW CI job
 // uses the "win32" thread model, where <mutex>, <thread> and <condition_variable>
 // are not dependable from headers. On Windows this wraps the native primitives

@@ -12,12 +12,11 @@ calling them from your own loop.
 | `okay/Core/Memory.hpp` | `FrameArena`, `PoolAllocator<T>`, `AllocStats` | header only |
 | `okay/Core/SlotMap.hpp` | `Handle<T>`, `SlotMap<T>` | header only |
 | `okay/Core/StringId.hpp` | `StringId`, the `_sid` literal | `Core/StringId.cpp` |
-| `okay/Core/CVar.hpp` | `CVar<T>`, `CVarRegistry` | `Core/CVar.cpp` |
 | `okay/Core/FramePacing.hpp` | `ClampFrameDelta`, `FrameTimer`, `FrameLimiter` | `Core/FramePacing.cpp` |
 
 None of them is included by `Okay.hpp`; include the header you need.
 
-Tests: `test_jobs`, `test_arena_handles`, `test_cvars`, `test_frame_pacing`.
+Tests: `test_jobs`, `test_arena_handles`, `test_frame_pacing`.
 
 ## Job system
 
@@ -231,85 +230,10 @@ builds and off in release builds; `SetCollisionCheck` changes it. `InternWithHas
 
 ## Console variables
 
-```cpp
-static CVar<int>   s_maxFps("render.max_fps", 0, "Frame cap (0 = off)", CVarFlags::Persist, 0, 1000);
-static CVar<bool>  s_vsync ("render.vsync", true, "Wait for the display", CVarFlags::Persist);
-static CVar<float> s_gamma ("render.gamma", 2.2f, "Display gamma", CVarFlags::None, 1.0f, 3.0f);
-static CVar<std::string> s_name("player.name", "Ada", "Display name");
-
-if (s_vsync) { ... }                  // Get(): an atomic load for bool / int / float
-s_maxFps.Set(120);                    // from code
-s_maxFps.OnChange([](const int& now, const int& was) { limiter.SetTargetFps(now); });
-```
-
-Names match `[A-Za-z_][A-Za-z0-9_.]*` (the words `list`, `reset`, `toggle`, `help` are taken). Registering a name that
-already exists with the same type returns the same variable (the first default, flags and range stay), so a static in a header
-is fine; a clash of type or a bad name leaves a *detached* handle (`Valid()` false, `Get()` returns the default) and
-is listed in `RegistrationErrors()`. Variables register in the process-wide `CVarRegistry::Global()`; tests and tools can make
-their own registry.
-
-### Ranges, flags, callbacks
-
-- A range clamps both the default and every later value. `Set` from code and `SetFromString` both clamp
-  (`CVarResult::Clamped`).
-- `ReadOnly`: the console, command line and `Execute` cannot change it; code can (`Set` ignores the flag).
-- `Cheat`: the user can change it only while the built-in bool variable `cheats` is true.
-- `Persist`: saved to Prefs under `cvar.<name>` (below).
-- `RestartRequired`: a new value is kept aside. `Get()` keeps returning the value the program started with,
-  `NeedsRestart()` is true, `RestartPending()` lists the variables, and the Prefs file gets the new value. The command line applies at
-  once (it is startup configuration).
-- `OnChange(fn)` calls `fn(new, old)` after the value in effect changed, on the thread that changed it, with no lock held. It does not
-  fire for an unchanged value or a pending restart value; a listener that keeps setting its own variable is cut off after 8 levels.
-- `Get()` of a bool, int or float is lock free; strings take a lock. Everything else is safe to call from any thread.
-
-### Parsing and formatting
-
-Bools read `1 0 true false on off yes no` in any case. Ints are whole decimal numbers within `int` range (a sign is allowed, `0x10`,
-`1.5` and `1e3` are not). Floats are finite decimal numbers (`1.5`, `.5`, `-2`, `1e3`), never `nan` or `inf`, whatever the program's
-locale. Text for a float is the shortest string that reads back as the same value. A parse error leaves the variable unchanged and says
-what was expected.
-
-### Console lines: `Execute`
-
-`CVarRegistry::Global().Execute(line)` returns the text to show and never throws. Errors start with `error: `.
-
-| Line | Does |
-|---|---|
-| `name` | show the value, default, type, range, flags and description |
-| `name value`, `name=value`, `name = value` | set it (spaces kept in a string; surrounding quotes dropped) |
-| `toggle name` | flip a bool |
-| `reset name` | back to the default |
-| `list [prefix]` | `name = value` per line, with `(default x)` for changed ones |
-| `help` | the lines above |
-
-A name is matched exactly, or ignoring case when that finds exactly one. An unknown name suggests the names it is a prefix of. Blank lines
-and lines starting with `#` or `//` return an empty string. For autocomplete use `Names(prefix)`, `Complete(prefix)`, and `CompleteCommon(prefix)` (the text
-Tab should insert).
-
-### Command line: `ApplyArgs`
-
-```cpp
-int main(int argc, char** argv) {
-    CVarRegistry& cv = CVarRegistry::Global();
-    cv.LoadPersistent("game.okayprefs");            // saved settings first
-    std::vector<std::string> problems;
-    cv.ApplyArgs(argc, argv, &problems);            // then +name=value overrides
-    ...
-}
-```
-
-Accepted forms: `+name=value`, `+name value`, and a bare `+name` for a bool (true). The next word is not taken as a bool's value unless it reads as a
-bool. Overrides follow the user's rules (`ReadOnly` and `Cheat` apply) and are for this run only: `StoreToPrefs` skips a variable that still holds a command-line
-value. A name that is not registered yet is kept and applied when it registers (`UnresolvedOverrides()` lists them, for a warning).
-
-### Persistence
-
-`Persist` variables are saved through the existing `Prefs` API as `cvar.<name>` strings, so the same file holds them next to your other prefs.
-
-- `StoreToPrefs()` writes them into the Prefs store (a variable at its default has its key removed); `Prefs::Save(path)` writes the file. `SavePersistent(path)` does both.
-- `Prefs::Load(path)` then `LoadFromPrefs()` applies them; `LoadPersistent(path)` does both. Call it after registration (statics register before `main`).
-- A variable registered after the Prefs file was loaded picks up its saved value at registration.
-- A saved value that no longer parses is ignored; one outside the range is clamped.
+Console variables already exist: see `okay/Core/Cvar.hpp` (`Cvars`, `Cvar`) and the console in
+`okay/Core/Console.hpp`. They have ranges, change callbacks, a command-line override and file persistence. A
+first version of this runtime work also had a second registry with read-only, cheat and restart-required flags;
+it was left out so there is one system. Those flags are a follow-up for `Cvar`.
 
 ## Frame pacing
 
@@ -338,4 +262,3 @@ while (running) {
 - No hook into `Application` or the Profiler window yet: call `Time::Step`, `PumpMainThread`, `Reset` and the stats yourself.
 - Work stealing and per-worker queues (see Limits above).
 - `SlotMap` and `FrameArena` are not thread safe by design.
-- `CVar` has no float/int vectors or enums, only bool, int, float and string.

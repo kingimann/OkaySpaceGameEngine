@@ -12,7 +12,9 @@ struct SceneIssue {
         MissingAsset,           // a texture / mesh / audio / prefab ... file that does not exist
         BrokenParentLink,       // `parent N` names an object that is not in the file
         DuplicateGuid,          // two objects carry the same `guid`
-        LoadError               // the text could not be loaded at all (see message)
+        LoadError,              // the text could not be loaded at all (see message)
+        UnknownTag,             // an object carries a tag that is not in the project tag list (reported only when Tags::Strict())
+        BadLayer                // a `layer` outside 0-31 (the load used it modulo 32)
     };
     Kind kind = Kind::LoadError;
     std::string object;    // "Name (#index)" of the object concerned, empty for scene-level issues
@@ -33,7 +35,7 @@ struct SceneValidationReport {
         std::string s;
         for (const auto& i : issues) {
             static const char* names[] = {"missing component type", "unknown field", "missing asset",
-                                          "broken parent link", "duplicate guid", "load error"};
+                                          "broken parent link", "duplicate guid", "load error", "unknown tag", "bad layer"};
             s += names[static_cast<int>(i.kind)];
             if (!i.object.empty()) s += " [" + i.object + "]";
             s += ": " + i.message + "\n";

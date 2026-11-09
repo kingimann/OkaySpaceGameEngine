@@ -109,6 +109,7 @@ private:
     friend class GameObject;
     bool m_started = false;
     bool m_live = false;   // OnEnable delivered and not yet undone by OnDisable
+    bool m_removing = false;   // GameObject::RemoveComponent is running its callbacks
     /// OnDisable (if one is owed) ahead of OnDestroy.
     void DeliverDisableBeforeDestroy();
 };

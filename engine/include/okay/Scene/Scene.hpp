@@ -7,6 +7,7 @@
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Render/Color.hpp"
+#include "okay/Math/Bounds.hpp"
 #include "okay/Scene/SceneValidation.hpp"
 #include <algorithm>
 #include <memory>
@@ -14,6 +15,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace okay {
@@ -48,9 +50,30 @@ public:
     /// does the same OnDestroy pass.
     void Clear();
 
-    /// Clone a prefab (a GameObject and its descendants) into this scene.
+    /// Clone a prefab (a GameObject and its descendants) into this scene. The clone is a root
+    /// object with the original's LOCAL pose, whatever the original's parent was (Duplicate
+    /// keeps the parent). Components, tags, layers and the hierarchy below it are copied;
+    /// the clone gets its own instance id and guid.
     GameObject* Instantiate(const GameObject& prefab);
     GameObject* Instantiate(const GameObject& prefab, const Vec3& position);
+    /// A root clone at a world position and rotation (scale as the original's).
+    GameObject* Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation);
+    /// A clone under `parent` (nullptr = a root). `worldPositionStays` false keeps the original's
+    /// local pose relative to the new parent; true keeps the pose it would have as a root. A
+    /// parent that is refused (destroyed, or in another scene) leaves the clone a root.
+    GameObject* Instantiate(const GameObject& prefab, Transform* parent, bool worldPositionStays = false);
+    /// A clone at a WORLD position and rotation under `parent` (nullptr = a root), like a bullet
+    /// leaving a muzzle that is itself moving.
+    GameObject* Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation, Transform* parent);
+    /// A copy of `original` and everything below it, under the same parent with the same local
+    /// pose, placed right after it among its siblings, named with UniqueName so "Crate" becomes
+    /// "Crate (1)". nullptr when the original is destroyed.
+    GameObject* Duplicate(const GameObject& original);
+    /// `base` if no sibling already has that name, else "base (1)", "base (2)" ... (the first
+    /// free number; a trailing " (n)" on `base` counts from its stem, so "Crate (1)" gives
+    /// "Crate (2)"). Siblings are the children of `parent`, or the root objects when it is
+    /// null. An empty base reads as "GameObject".
+    std::string UniqueName(const std::string& base, const Transform* parent = nullptr) const;
 
     /// Mark a GameObject for destruction; removed at the end of the frame. Until
     /// then it keeps its place in the hierarchy (and so its world pose), and its
@@ -58,8 +81,14 @@ public:
     void Destroy(GameObject* go);
     /// Destroy `go` after `seconds` of this scene's time (the Update deltas).
     /// Destroying it earlier cancels this; asking again keeps the sooner time.
-    /// Zero or less destroys it like Destroy(go).
+    /// Zero, less or NaN destroys it like Destroy(go).
     void Destroy(GameObject* go, float seconds);
+    /// Destroy `go` and everything below it right now (OnDestroy runs, the objects are freed),
+    /// together with anything else already queued by Destroy. From inside an Update, a physics
+    /// callback or an OnDestroy the scene is walking its component lists, so there it does what
+    /// Destroy does and the objects go at the end of the frame. Meant for tools, edit mode and
+    /// tests; game code should use Destroy.
+    void DestroyImmediate(GameObject* go);
     /// Keep `go` and its children when this scene is replaced by RequestLoad (not
     /// by RequestMerge), with the same objects and instance ids. A kept object that
     /// still has a parent outside the kept set moves to the root, keeping its pose.
@@ -137,6 +166,23 @@ public:
     GameObject* FindWithTag(const std::string& tag) const;
     /// Every object carrying `tag`, in scene order.
     std::vector<GameObject*> FindGameObjectsWithTag(const std::string& tag) const;
+    /// How many objects carry `tag` (0 for the empty tag).
+    int CountWithTag(const std::string& tag) const;
+    /// Every object called exactly `name`, in scene order.
+    std::vector<GameObject*> FindGameObjectsWithName(const std::string& name) const;
+    /// Every object on `layer` (0-31; anything else matches nothing), in scene order, and how many.
+    std::vector<GameObject*> FindGameObjectsOnLayer(int layer) const;
+    int CountOnLayer(int layer) const;
+    /// The tags objects carry that are not in the project tag list (Tags::All), sorted, each once.
+    std::vector<std::string> UnlistedTags() const;
+    /// Give every object tagged `from` the tag `to` ("" removes the tag). Returns how many changed;
+    /// 0 and nothing changed when `from` is empty or `to` is not accepted (Tags::Accepts).
+    int ReplaceTag(const std::string& from, const std::string& to);
+    /// The world-space box around the renderers (mesh and sprite) of `root` and, with
+    /// `includeChildren`, everything below it. Inactive objects (with their subtrees) and disabled
+    /// renderers are left out. Empty (Bounds::IsEmpty) when nothing draws. Reads every mesh
+    /// vertex: cache the result rather than calling it every frame on a big model.
+    static Bounds WorldBounds(const GameObject& root, bool includeChildren = true);
 
     // ---- Layer collision matrix (shared by 2D and 3D physics) ----------
     /// Whether colliders on layers a and b interact (all do by default). Applies to
@@ -148,6 +194,16 @@ public:
     /// Every layer collides with every other again.
     void ResetLayerCollisions();
     bool HasCustomLayerCollisions() const;
+    /// Ready-made matrices. Everything = the default; Nothing = no pair collides (not even a layer
+    /// with itself); SameLayerOnly = a layer collides with itself and with no other.
+    enum class LayerCollisionPreset { Everything, Nothing, SameLayerOnly };
+    void ApplyLayerCollisionPreset(LayerCollisionPreset preset);
+    /// Set every pair (a, b) with layer a in `maskA` and layer b in `maskB` (bit n = layer n).
+    void SetLayerCollisionGroups(std::uint32_t maskA, std::uint32_t maskB, bool enabled);
+    /// SetLayerCollision with layer names (Layers::NameToLayer). False, nothing changed, when a name is unknown.
+    bool SetLayerCollisionByName(const std::string& a, const std::string& b, bool enabled);
+    /// The pairs that do not collide, each once with first <= second (a layer that ignores itself is (n, n)).
+    std::vector<std::pair<int, int>> DisabledLayerPairs() const;
     /// Look an object up by hierarchy path: "Parent/Child/Leaf" starts at a root object
     /// called "Parent" and follows child names (the first match at each level). A leading
     /// '/' is allowed. Find() also accepts a path when no object is literally named so.
@@ -414,6 +470,9 @@ public:
 
 private:
     const std::unordered_map<std::string, std::vector<GameObject*>>& TagIndex() const;
+    const std::vector<GameObject*>* TagList(const std::string& tag) const;   // checked against what the objects carry now
+    struct BusyScope;                  // marks the stretches where component lists are being walked
+    int m_busy = 0;
     mutable std::unordered_map<std::string, std::vector<GameObject*>> m_tagIndex;
     mutable std::uint64_t m_tagIndexStructure = 0, m_tagIndexTags = 0;
     mutable std::size_t   m_tagIndexCount = 0;

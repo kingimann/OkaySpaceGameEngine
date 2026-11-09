@@ -34,6 +34,8 @@ inline const char* VsCatBlurb(int cat) {
         "spawn networked objects, achievements, stats and leaderboards.",
         "The engine API C#-style scripts use, as nodes: GameObject, Transform, Rigidbody, Vector3, "
         "Input, Time, Mathf and Debug. Each node does exactly what its line of script does.",
+        "Every text-script builtin, one node each (Fn.print, Fn.move, ...). Search for the builtin name. "
+        "Wire only the arguments that builtin takes.",
     };
     return (cat >= 0 && cat < (int)(sizeof blurbs / sizeof blurbs[0])) ? blurbs[cat] : "";
 }
@@ -46,6 +48,9 @@ inline const char* VsStepCatBlurb(bool cond) {
 }
 
 inline const char* VsNodeHelp(const char* type) {
+    if (type && std::strncmp(type, "Fn.", 3) == 0)
+        return "Calls this text-script builtin on the current object. Requires: wire only the arguments it takes "
+               "(A, B, C, D). A failure is an error on this node. Search for the builtin name.";
     static const std::unordered_map<std::string, const char*> help = {
         // ---- Events ----
         {"OnStart",        "Runs once when the object starts (the scene loads or the object is spawned)."},
@@ -514,6 +519,17 @@ inline const char* VsNodeHelp(const char* type) {
         {"ListMin", "The smallest number in List. Errors when the list is empty."},
         {"ListMax", "The largest number in List. Errors when the list is empty."},
         {"OnCollisionTag", "Runs when this object collides with something of this tag. Other is that object. Requires a collider."},
+        {"GetProperty", "Reads Component.property (Transform.position, Light.intensity, GameObject.name, ...). Requires the component on Target, or on this object. A bad path is an error."},
+        {"SetProperty", "Writes Component.property. Requires the component on Target, or on this object. A read-only or unknown path is an error."},
+        {"CallMethod", "Calls Type.Method on this object (Mathf.Abs, Transform.Translate, Rigidbody.AddForce, ...). Requires that component when the method is not static. A wrong value is an error on this node."},
+        {"GetComponent", "The object when it has this component type, and Has. Requires the type name (Light, AudioSource, ...)."},
+        {"AddComponent", "Adds a component by type name (Light, AudioSource, ...). Requires a type the engine can add. An unknown type is an error."},
+        {"FindByTag", "The first active object with this tag, or no object. Find Object is the by-name version. All With Tag is every one of them."},
+        {"SendMessage", "Runs this message on Target: a text-script function of that name, and a visual-script On Event with that name. Requires an object."},
+        {"Broadcast", "Send Message to every active object in the scene. Requires a scene."},
+        {"RunSnippet", "Runs one line of text script on this object and gives back what it returns. Requires the line to parse (try 2 + 3). A parse or runtime failure is an error on this node."},
+        {"CallScript", "Calls a function in this object's text script. Requires a text script that defines that function."},
+        {"AllWithTag", "Every active object with this tag, as a list. Requires a scene."},
     };
     if (!type) return nullptr;
     auto it = help.find(type);

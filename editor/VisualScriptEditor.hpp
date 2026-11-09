@@ -12,6 +12,8 @@
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
 #include "VsCanvasTools.hpp"
@@ -34,7 +36,7 @@
 namespace okay::editor::vsed {
 
 // ---- Node registry: describes each node type the editor can place ----------
-enum VsCat { CAT_EVENT, CAT_FLOW, CAT_VAR, CAT_MATH, CAT_LOGIC, CAT_INPUT, CAT_XFORM, CAT_ACTION, CAT_DATA, CAT_NET, CAT_API, CAT_COUNT };
+enum VsCat { CAT_EVENT, CAT_FLOW, CAT_VAR, CAT_MATH, CAT_LOGIC, CAT_INPUT, CAT_XFORM, CAT_ACTION, CAT_DATA, CAT_NET, CAT_API, CAT_SCRIPT, CAT_COUNT };
 
 inline ImU32 CatColor(int cat) {
     // Calm, distinct header colours: readable at a glance, not neon.
@@ -49,6 +51,7 @@ inline ImU32 CatColor(int cat) {
         case CAT_ACTION: return IM_COL32(176, 114, 78, 255);
         case CAT_NET:    return IM_COL32(84, 114, 170, 255);
         case CAT_API:    return IM_COL32(122, 142, 88, 255);
+        case CAT_SCRIPT: return IM_COL32(150, 118, 72, 255);
         default:         return IM_COL32(108, 114, 128, 255);
     }
 }
@@ -99,10 +102,29 @@ inline std::vector<VsDef> VsWithApiDefs(std::vector<VsDef> defs) {
 }
 inline bool IsApiNode(const std::string& t) { return okay::vs::VsApiFind(t) != nullptr; }
 
+// One node per text-script builtin, plus the escape hatches. Pointers stay valid:
+// BuiltinNodes() keeps its strings for the process lifetime.
+inline std::vector<VsDef> VsWithBuiltinDefs(std::vector<VsDef> defs) {
+    for (const okay::vs::BuiltinNodeInfo& n : okay::vs::BuiltinNodes()) {
+        VsDef d{n.type.c_str(), n.title.c_str(), CAT_SCRIPT, true, {""}, {"A","B","C","D"}, {"Result"}, 0, nullptr};
+        defs.push_back(std::move(d));
+    }
+    defs.push_back({"GetProperty", "Get Property", CAT_DATA, true, {""}, {"Path","Target"}, {"Value"}, 1, "Component.property"});
+    defs.push_back({"SetProperty", "Set Property", CAT_ACTION, true, {""}, {"Value","Path","Target"}, {}, 1, "Component.property"});
+    defs.push_back({"CallMethod", "Call Method", CAT_ACTION, true, {""}, {"A","B","C","D","Method"}, {"Result"}, 1, "Type.Method"});
+    defs.push_back({"GetComponent", "Get Component", CAT_DATA, true, {""}, {"Target","Type"}, {"Object","Has"}, 1, "component type"});
+    defs.push_back({"AddComponent", "Add Component", CAT_ACTION, true, {""}, {"Target","Type"}, {}, 1, "component type"});
+    defs.push_back({"FindByTag", "Find By Tag", CAT_DATA, false, {}, {"Tag"}, {"Object"}, 1, "tag"});
+    defs.push_back({"SendMessage", "Send Message", CAT_ACTION, true, {""}, {"Message","Target"}, {}, 1, "message name"});
+    defs.push_back({"Broadcast", "Broadcast", CAT_ACTION, true, {""}, {"Message"}, {}, 1, "message name"});
+    defs.push_back({"RunSnippet", "Run Snippet", CAT_ACTION, true, {""}, {"Code"}, {"Result"}, 1, "a line of text script"});
+    return defs;
+}
+
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime),
 // then the generated engine-API nodes.
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = VsWithApiDefs(VsWithTargetPins({
+    static const std::vector<VsDef> defs = VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -631,7 +653,7 @@ inline const std::vector<VsDef>& Registry() {
         {"IsValid",         "Is Valid",         CAT_LOGIC, false, {}, {"Value"}, {"Yes"}, 0, nullptr},
         {"CallScript",      "Call Script",      CAT_ACTION, true, {""}, {"Argument"}, {"Result"}, 1, "function"},
         {"RunGraph",        "Run Graph",        CAT_FLOW,  true, {""}, {}, {}, 1, "file.okayvs or file|Event"},
-    }));
+    })));
     return defs;
 }
 
@@ -3518,7 +3540,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 8.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 12.0f));
-        static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API"};
+        static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API","Script builtins"};
         okay::vs::PinType dragged = okay::vs::PinType::Any;
         if (st.linkPending && !st.linkExec)
             dragged = st.linkFromOutput ? VsOutPinType(g, st.linkNode, st.linkPin)
@@ -3984,6 +4006,40 @@ inline void Draw(EditorState& ed, bool* open) {
                             ImGui::SetTooltip("Open the %s playground scene. Press Play and follow the text on screen.", d->title);
                     }
                 }
+            }
+            if (sn->type == "GetProperty" || sn->type == "SetProperty" || sn->type == "CallMethod" ||
+                sn->type == "GetComponent" || sn->type == "AddComponent") {
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::TextUnformatted(sn->type == "CallMethod" ? "Pick a method" : "Pick a property or type");
+                static char filt[64] = "";
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##vspick", "filter", filt, sizeof filt);
+                std::string needle = filt;
+                for (char& c : needle) c = (char)std::tolower((unsigned char)c);
+                ImGui::BeginChild("##vspicklist", ImVec2(0, 160), true);
+                int shown = 0;
+                auto offer = [&](const std::string& label) {
+                    if (shown > 40) return;
+                    std::string low = label;
+                    for (char& c : low) c = (char)std::tolower((unsigned char)c);
+                    if (!needle.empty() && low.find(needle) == std::string::npos) return;
+                    if (ImGui::Selectable(label.c_str())) { if (VsEditNode* edn = g.find(sn->id)) { edn->arg = label; g.dirty = true; } }
+                    ++shown;
+                };
+                if (sn->type == "CallMethod") {
+                    for (const std::string& m : okay::vs::VsApiMethodLabels()) offer(m);
+                } else if (sn->type == "GetComponent" || sn->type == "AddComponent") {
+                    for (const auto& info : okay::PropertyRegistry::All())
+                        if (info && !info->name.empty()) offer(info->name);
+                } else {
+                    for (const auto& info : okay::PropertyRegistry::All()) {
+                        if (!info) continue;
+                        for (const auto& p : info->properties)
+                            if (!p.name.empty()) offer(info->name + "." + p.name);
+                    }
+                }
+                ImGui::EndChild();
             }
             if (d) {
                 ImGui::Spacing();

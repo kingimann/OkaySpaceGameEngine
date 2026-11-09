@@ -42,6 +42,13 @@ public:
     const std::unordered_map<std::string, vs::VsValue>& Variables() const { return m_ctx.variables; }
     /// Read back a blackboard variable (handy for tests/gameplay glue).
     vs::VsValue GetVariable(const std::string& name) const;
+    /// Run a named message: the entry of that name, and OnEvent:<name>.
+    /// Send Message and Broadcast use this. Does nothing when the graph has neither.
+    void Send(const std::string& message) {
+        if (message.empty()) return;
+        Fire(message.c_str(), nullptr);
+        Fire(("OnEvent:" + message).c_str(), nullptr);
+    }
 
     void Start() override;
     void Update(float dt) override;

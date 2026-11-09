@@ -42,6 +42,11 @@ public:
     using Builtin = std::function<vs::VsValue(std::vector<vs::VsValue>&)>;
     void AddBuiltin(const std::string& name, Builtin fn);
 
+    /// Run one builtin by name against this VM's bound host. Unknown names and
+    /// exceptions become `error` and an empty value. Visual-script nodes use this
+    /// so every text-script builtin is reachable from a graph.
+    vs::VsValue CallBuiltin(const std::string& name, std::vector<vs::VsValue> args, std::string* error = nullptr);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

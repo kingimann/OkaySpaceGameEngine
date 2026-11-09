@@ -13,6 +13,7 @@
 #include "okay/VisualScript/NodesStory.hpp"
 #include "okay/VisualScript/NodesLogic.hpp"
 #include "okay/VisualScript/NodesGameplay.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 
@@ -406,6 +407,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "OnLanguageChanged") return std::make_unique<EventNode>();   // Event Name = the new language
     // Engine-API nodes ("Transform.Translate/3"): generated from the script bindings.
     if (auto api = MakeApiNode(type)) return api;
+    // Fn.<builtin> and the property / method / snippet escape hatches.
+    if (auto cov = MakeCoverageNode(type, args)) return cov;
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
         type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||

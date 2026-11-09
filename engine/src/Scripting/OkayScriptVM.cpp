@@ -10242,6 +10242,20 @@ void OkayScriptVM::AddBuiltin(const std::string& name, Builtin fn) {
     m_impl->rt.builtins[name] = std::move(fn);
 }
 
+vs::VsValue OkayScriptVM::CallBuiltin(const std::string& name, std::vector<vs::VsValue> args, std::string* error) {
+    auto it = m_impl->rt.builtins.find(name);
+    if (it == m_impl->rt.builtins.end()) {
+        if (error) *error = "no text-script builtin named \"" + name + "\"";
+        return {};
+    }
+    try {
+        return it->second(args);
+    } catch (const std::exception& e) {
+        if (error) *error = e.what();
+        return {};
+    }
+}
+
 std::vector<std::string> OkayScriptVM::BuiltinNames() const {
     std::vector<std::string> out;
     out.reserve(m_impl->rt.builtins.size());

@@ -1173,6 +1173,11 @@ target_link_libraries(test_vs_playground PRIVATE okay::engine)
 target_compile_definitions(test_vs_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_playground COMMAND test_vs_playground)
 
+add_executable(test_vs_script_coverage test_vs_script_coverage.cpp)
+target_link_libraries(test_vs_script_coverage PRIVATE okay::engine)
+target_compile_definitions(test_vs_script_coverage PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_script_coverage COMMAND test_vs_script_coverage)
+
 add_executable(test_ui_animation test_ui_animation.cpp)
 target_link_libraries(test_ui_animation PRIVATE okay::engine)
 add_test(NAME ui_animation COMMAND test_ui_animation)

@@ -1,6 +1,7 @@
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -516,6 +517,10 @@ std::vector<std::string> AllNodeTypes() {
     std::vector<std::string> v;
     for (const Row& r : kRows) v.push_back(r.type);
     for (const VsApiEntry& e : VsApiEntries()) v.push_back(e.type);
+    for (const BuiltinNodeInfo& b : BuiltinNodes()) v.push_back(b.type);
+    for (const char* t : {"GetProperty","SetProperty","CallMethod","GetComponent","AddComponent",
+                          "FindByTag","SendMessage","Broadcast","RunSnippet"})
+        v.push_back(t);
     return v;
 }
 
@@ -529,6 +534,16 @@ const NodeSignature* SignatureFor(const std::string& type) {
         if (it != Table().end()) return &it->second;
     }
     if (const VsApiEntry* e = VsApiFind(type)) return &e->sig;
+    if (IsBuiltinNode(type)) return &BuiltinSignature();
+    if (type == "GetProperty") { static const NodeSignature s{true, "TO", "A"}; return &s; }
+    if (type == "SetProperty") { static const NodeSignature s{true, "ATO", ""}; return &s; }
+    if (type == "CallMethod")  { static const NodeSignature s{true, "AAAAT", "A"}; return &s; }
+    if (type == "GetComponent"){ static const NodeSignature s{true, "OT", "OB"}; return &s; }
+    if (type == "AddComponent"){ static const NodeSignature s{true, "OT", ""}; return &s; }
+    if (type == "FindByTag")   { static const NodeSignature s{false, "T", "O"}; return &s; }
+    if (type == "SendMessage") { static const NodeSignature s{true, "TO", ""}; return &s; }
+    if (type == "Broadcast")   { static const NodeSignature s{true, "T", ""}; return &s; }
+    if (type == "RunSnippet")  { static const NodeSignature s{true, "T", "A"}; return &s; }
     return nullptr;
 }
 

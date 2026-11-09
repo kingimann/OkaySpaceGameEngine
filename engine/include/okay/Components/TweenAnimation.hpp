@@ -52,17 +52,26 @@ public:
     float duration = 1.0f;
     float delay = 0.0f;
     int   ease = (int)Ease::QuadOut;
+    /// An ease as text that replaces `ease` when it parses: "cubic-bezier(0.4,0,0.2,1)",
+    /// "steps(4)", "OutBack"... (EaseCurve::Parse). Empty = use `ease`.
+    std::string easeCurve;
     int   loops = 1;                  ///< -1 = forever
     int   loopType = (int)LoopType::Restart;
     bool  autoPlay = true;            ///< start when the scene starts
     bool  autoKill = true;            ///< off: keep it after it ends, so it can replay
     bool  unscaled = false;           ///< ignore the time scale (pause menus)
+    /// A Clock channel to follow ("ui", "cinematic", your own) instead of scene time;
+    /// empty = scene time (or real time with `unscaled`). See Tweener::SetClock.
+    std::string clock;
     int   vibrato = 10;               ///< punch / shake
     float elasticity = 1.0f;          ///< punch
     int   jumps = 1;
     std::string id;                   ///< for tween_play_id("...") etc.
 
     void Start() override { if (autoPlay) Play(); }
+    /// Removing this component (or its object) ends its tween: nothing keeps animating
+    /// an object after the component that drives it is gone.
+    void OnDestroy() override { Kill(); }
 
     /// Play it (creating the tween the first time, or after it was killed).
     void Play() {
@@ -105,8 +114,12 @@ public:
         }
         if (!t) return nullptr;
         const bool punchy = type >= (int)Type::PunchPosition && type <= (int)Type::ShakeScale;
-        if (!punchy) t->SetEase((Ease)ease);
+        if (!punchy) {
+            t->SetEase((Ease)ease);
+            if (!easeCurve.empty()) t->SetEaseSpec(easeCurve);
+        }
         t->SetDelay(delay).SetLoops(loops, (LoopType)loopType).SetAutoKill(autoKill).SetUpdate(unscaled);
+        if (!clock.empty()) t->SetClock(clock);
         if (relative) t->SetRelative();
         if (from) t->From();
         if (!id.empty()) t->SetId(id);

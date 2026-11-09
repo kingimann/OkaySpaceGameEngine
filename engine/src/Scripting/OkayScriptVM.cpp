@@ -8992,6 +8992,14 @@ struct OkayScriptVM::Impl {
             if (i >= a.size() || !a[i].IsString()) return Ease::Linear;
             return Easing::FromName(a[i].AsString(), Ease::Linear);
         };
+        // Apply the ease named by arg `i` to a tween: a preset name as above, or a curve
+        // as text ("cubic-bezier(0.4,0,0.2,1)", "steps(4)"). Unknown text is linear.
+        auto applyEase = [easeFromArg](Tweener& t, std::vector<Value>& a, std::size_t i) {
+            EaseCurve c;
+            if (i < a.size() && a[i].IsString() && EaseCurve::Parse(a[i].AsString(), c) && c.kind != EaseCurve::Kind::Preset)
+                t.SetEaseSpec(a[i].AsString());
+            else t.SetEase(easeFromArg(a, i));
+        };
         auto tweens = [this]() -> TweenManager* {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 return &rt.host->gameObject->scene()->tweens();
@@ -9027,9 +9035,9 @@ struct OkayScriptVM::Impl {
             return t && t->IsActive() ? t : nullptr;
         };
         // Finish a new tween: ease from arg `ei` (else keep its own), on-complete from `di`.
-        auto finish = [easeFromArg, fnFromArg, reg](std::vector<Value>& a, std::shared_ptr<Tweener> t, std::size_t ei, std::size_t di) -> Value {
+        auto finish = [applyEase, easeFromArg, fnFromArg, reg](std::vector<Value>& a, std::shared_ptr<Tweener> t, std::size_t ei, std::size_t di) -> Value {
             if (!t) return Value{0.0f};
-            if (ei < a.size() && a[ei].IsString()) t->SetEase(easeFromArg(a, ei));
+            if (ei < a.size() && a[ei].IsString()) applyEase(*t, a, ei);
             else if (ei != (std::size_t)-1) t->SetEase(Ease::Linear);
             if (auto f = fnFromArg(a, di)) t->OnComplete(f);
             return reg(t);
@@ -9226,9 +9234,11 @@ struct OkayScriptVM::Impl {
             };
         };
         b["tween_delay"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetDelay(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
-        b["tween_ease"]     = setting([easeFromArg](Tweener& t, std::vector<Value>& a) { t.SetEase(easeFromArg(a, 1)); });
+        b["tween_ease"]     = setting([applyEase](Tweener& t, std::vector<Value>& a) { applyEase(t, a, 1); });
         b["tween_speed"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetSpeed(a.size() > 1 ? a[1].AsFloat() : 1.0f); });
         b["tween_unscaled"] = setting([](Tweener& t, std::vector<Value>& a) { t.SetUpdate(a.size() > 1 ? a[1].AsBool() : true); });
+        // tween_clock(id, "ui"): follow a named clock channel ("game", "ui", "cinematic", your own); "" = scene time.
+        b["tween_clock"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetClock(a.size() > 1 ? a[1].AsString() : std::string{}); });
         b["tween_set_id"]   = setting([](Tweener& t, std::vector<Value>& a) { t.SetId(a.size() > 1 ? a[1].AsString() : std::string{}); });
         b["tween_from"]     = setting([](Tweener& t, std::vector<Value>&) { t.From(); });
         b["tween_relative"] = setting([](Tweener& t, std::vector<Value>&) { t.SetRelative(); });

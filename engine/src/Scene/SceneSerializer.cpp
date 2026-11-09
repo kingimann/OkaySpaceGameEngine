@@ -2775,7 +2775,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ta->duration << " " << ta->delay << " " << ta->ease << " " << ta->loops << " " << ta->loopType
             << " " << (ta->autoPlay ? 1 : 0) << " " << (ta->autoKill ? 1 : 0) << " " << (ta->unscaled ? 1 : 0)
             << " " << ta->vibrato << " " << ta->elasticity << " " << ta->jumps << " " << (ta->enabled ? 1 : 0)
-            << " " << Quote(ta->id) << "\n";
+            << " " << Quote(ta->id);
+        // Optional tail (older files stop after the id): clock channel, ease as text.
+        if (!ta->clock.empty() || !ta->easeCurve.empty()) out << " " << Quote(ta->clock) << " " << Quote(ta->easeCurve);
+        out << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
@@ -7170,6 +7173,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ta->relative = rel != 0; ta->from = frm != 0; ta->autoPlay = ap != 0; ta->autoKill = ak != 0;
                     ta->unscaled = us != 0; ta->enabled = en != 0;
                     ta->id = ReadQuoted(in);
+                    in >> std::ws;   // optional tail: clock channel, ease as text
+                    if (in.peek() == '"') {
+                        ta->clock = ReadQuoted(in);
+                        in >> std::ws;
+                        if (in.peek() == '"') ta->easeCurve = ReadQuoted(in);
+                    }
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
                     tt->text = ReadQuoted(in);

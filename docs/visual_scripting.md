@@ -756,6 +756,8 @@ Seven node types shape motion with the engine's tween, spring and ease code (the
 | **Pause Tweens With Tag** (`TweenPauseTag`) | exec; out **Count**; setting: tag | Freezes them where they are. |
 | **Play Tweens With Tag** (`TweenPlayTag`) | exec; out **Count**; setting: tag | Resumes them. |
 
+In the editor all seven are in the node search and palette (**Ease With Curve** and **Spring Step** under Math, the rest under Action), with their help text. **Generate script** turns Ease With Curve into `ease_curve(t, "text")`, Tween Move / Tween Move By Speed into `tween_move3(...)` (wrapped in `tween_speed_based(...)` and `tween_tag(..., "tag")`), and the tag nodes into `tween_kill_tag` / `tween_pause_tag` / `tween_play_tag`; **Spring Step** has no script call and is listed under "NOT TRANSLATED".
+
 A graph that eases a number by hand:
 
 ```

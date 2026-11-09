@@ -59,7 +59,7 @@ Streams that set their own precision, width or fixed / scientific flags are unch
 | --- | --- |
 | `scene.FindGameObjectsWithTag(tag)` | every match, in scene order |
 | `scene.FindByPath("A/B/C")` | a root named A, its child B, its child C. `Find("A/B/C")` also accepts a path. Duplicate names are all tried (see "fifth pass") |
-| `scene.FindAllByPath("A/B")` | every object the path names, in scene and sibling order |
+| `scene.FindAllByPath("A/B")` | every object the path names, in scene and sibling order (the editor's Hierarchy search box lists them when the text contains a `/`) |
 | `FindNearest(scene, "Axle", go)` | the object called "Axle" nearest to `go` in the hierarchy (its own subtree, then its parent's, ...), then the scene-wide `Find` |
 | `go->ForEachDescendant(fn, includeInactive = true, includeSelf = false)` | pre-order walk, `fn(GameObject&)` may return `false` to stop |
 | `scene.Roots()` | objects without a parent |
@@ -103,7 +103,33 @@ std::cerr << r.ToString();
 | `LoadError` | the text could not be loaded at all |
 
 Limits: unknown keys inside a known key=value record are skipped silently by the loader and
-are not reported; the asset check covers what `CollectAssetPaths` knows about.
+are not reported.
+
+### Which validator? (core wave 6)
+
+There are two, on purpose, and they now share the parts that overlapped:
+
+| | `Scene::Validate`, `SceneSerializer::Validate(Text/File)` | `testing::SceneValidator::Validate(/Text/File)` (see `automated_testing.md`) |
+| --- | --- | --- |
+| Works on | the scene text (no scene needed; usable by a diff, merge or migration tool) | a loaded `Scene` (the Text and File forms load into a scratch scene) |
+| Answers | is the file intact: unknown records and component types, broken parent links, duplicate guids, bad layers, unknown tags, missing assets, does it load | does the scene make sense: missing assets (per object and component), cameras, duplicate names, scripts that do not compile, bad references, NaN transforms, a Rigidbody without a Collider |
+| Report | `SceneValidationReport` (kinds) | `ValidationReport` (codes, severities, JSON) |
+
+For CI and "check before you ship" use `SceneValidator::ValidateFile`: its report also carries the two findings only the
+text shows (`scene.duplicate_guid`, `scene.broken_parent`, switch `checkLinks`) next to the load warnings. Use the text
+validator where there is no scene. What they share:
+
+- "Does this file exist" is decided in one place, `SceneValidator::AssetExists`: a built-in `proc:` texture and a URL are not
+  missing files (the text validator used to report `proc:checker` as "file not found"), and the working directory is tried
+  as well as the asset root.
+- The text validator now also walks the per-object list `SceneValidator::AssetReferences` (every component, fonts, voxel
+  terrain), so a missing font is found and the message names the object (`"Label"`, `TextRenderer.fontPath`). The list
+  `CollectAssetPaths` keeps is for builds (what must ship: the first component of each kind, a sequence's audio cues, the item
+  database) and is still checked first.
+- `ValidateSceneLinks(text)` is the one text pass behind both for duplicate guids and broken parent links.
+- A damaged data pack is a `LoadError` in `SceneSerializer::ValidateFile` ("tampered or unreadable"), as it is in
+  `SceneValidator::ValidateFile` (`scene.load`); it used to unpack to an empty text and report the misleading "missing 'okayscene' header".
+- A parent cycle is a load error in both (the loader refuses the file).
 
 ## What changed: scene graph audit (1.3)
 
@@ -236,7 +262,7 @@ See `scene_serializer.md`: `GameObject::MoveComponent` and the new `ReorderCompo
 | --- | --- |
 | `go->GetComponentsInParent<T>(includeInactive = false)` | every match on the object and each parent, nearest first |
 | `go->ReorderComponents({a, b})`, `go->HasCustomComponentOrder()` | the named components come right after the Transform, in that order; saved |
-| `scene.DestroyChildren(go)` | queue every child of `go`; returns how many direct children were asked |
+| `scene.DestroyChildren(go)` | queue every child of `go`; returns how many direct children were asked (the editor's Hierarchy right-click **Delete Children** calls it through `EditorState::DeleteChildrenOfSelected()`: one undo step, the children leave the selection first) |
 | `transform->SetPositionAndRotation(pos, rot)` / `SetLocalPositionAndRotation(pos, rot)` | both at once (world / parent frame; the rotation is normalized) |
 | `transform->SetParent(parent, keepWorld, siblingIndex)` | reparent and place among the new siblings (clamped; `nullptr` = among the scene's roots) |
 | `scene.RequestClear()`, `HasPendingClear()`, `IsUpdating()` | see above |
@@ -250,6 +276,8 @@ Already there, so not added: `FindByPath`, `GetComponentInChildren(s)` with an i
 ```cpp
 for (const std::string& line : scene.Stats().Lines(3)) overlay.Add(line);   // "Objects: 120 (3 roots, 40 inactive, depth 4)" ...
 ```
+
+The editor's Game view **Stats** overlay prints these lines (`EditorState::SceneLines()`), under the loop's frame statistics while playing.
 
 ### Notes
 
@@ -265,6 +293,15 @@ for (const std::string& line : scene.Stats().Lines(3)) overlay.Add(line);   // "
   calls is not saved, only an arranged order (see `scene_serializer.md`).
 * The wide and deep destroy checks in `scene_graph_perf` rely on size (a 100000-deep chain built leaf first would have taken about 8 minutes
   before, by the growth measured at 20000 deep; 100000 children took 4.7 s); the test has a ctest `TIMEOUT` of 240 s instead of a clock inside it.
+
+## What changed: validators (core wave 6)
+
+See "Which validator?" above. Fixed: `proc:` textures reported as missing files; a damaged data pack reported as "missing 'okayscene' header";
+missing fonts and voxel terrain textures not reported by `Scene::Validate`; the two validators disagreeing on where a
+file may be. Added: `ValidatorOptions::checkLinks` with `scene.duplicate_guid` and `scene.broken_parent`, and
+`ValidateSceneLinks`. Tests: `core_validation`. Not done: the third list, `AssetDatabase::FindMissing` (33.2), is a
+different question (what is not in the project's database), and `CollectAssetPaths` was left alone because builds
+depend on it.
 
 ## What changed: scene graph, fifth pass (1.3)
 

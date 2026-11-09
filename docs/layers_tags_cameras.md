@@ -139,10 +139,14 @@ layer_name_8=Enemy       a layer name that differs from the default; "layer_name
   in red (`Layers::IsValidName`, or another layer has it), and the project file is saved. The layer
   mask text fields (`Ground Layers`, `Collision Layers`, trigger filters) already accept names, so they
   follow the renames.
-- Not wired: a `Strict tags` toggle (`Tags::Strict()` is read and saved, so a hand-edited
-  `strict_tags=1` works, and the dropdown only offers listed tags), and a "Tags and Layers" section in
-  Project Settings (the window has none; renaming is in the lists above).
-- Not run: the ImGui UI itself (no display here). The data path it drives is covered by
+- **Project Settings > Tags and Layers (wired, editor wiring pass).** A **Strict tags** switch (`Tags::Strict()`, saved as
+  `strict_tags=1`); the tag list with each tag's object count in the open scene (`Scene::CountWithTag`), **Rename**
+  (`Tags::Rename`, then `Scene::ReplaceTag` on this scene) and **Remove**, and an **Add tag** field (`Tags::Add`,
+  `Tags::WhyInvalid` shown in red); a warning with an **Add them** button for tags the open scene carries that the list
+  lacks (`Scene::UnlistedTags`; in red when Strict is on, since `SetTag` would refuse them); and the 32 layer names
+  as text boxes (`Layers::SetName` / `ClearName`, the default name as the hint, **Reset** per layer and **Reset all layer
+  names**). Every change is written to `project.okayproj` at once through `ProjectLists`.
+- The Project Settings section was checked in a real editor window (an Xvfb display) in the editor wiring pass; the right-click menus in the lists were not re-checked. The data path it drives is covered by
   `layers_tags_project` and by `editor_hooks` (an old project file's `tag=` lines load into the list in
   order and write back the same, a rename keeps the tag's place and renames the objects).
 

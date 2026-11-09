@@ -130,7 +130,16 @@ GameObject* Scene::FindByGuid(const std::string& guid) const {
     return nullptr;
 }
 
+// Counts the stretches where the scene is walking its component lists and calling user code
+// (Awake/Start, Update, physics, render, OnDestroy). DestroyImmediate waits for the end of those.
+struct Scene::BusyScope {
+    Scene& s;
+    explicit BusyScope(Scene& sc) : s(sc) { ++s.m_busy; }
+    ~BusyScope() { --s.m_busy; }
+};
+
 void Scene::DestroyAllLive() {
+    BusyScope busy(*this);   // an OnDisable / OnDestroy that calls Clear() or loads a scene is queued, not re-entered
     // Components that were awakened get OnDisable (if owed) and OnDestroy once, like a
     // destroyed object's. Slots of components a handler removes are nulled in m_active
     // (never erased), so walking by index stays valid; anything a handler adds waits in
@@ -147,6 +156,7 @@ void Scene::DestroyAllLive() {
 }
 
 void Scene::Clear() {
+    if (m_busy > 0) { m_clearPending = true; return; }   // objects are in use right now: the end of the frame does it
     DestroyAllLive();   // OnDestroy for what the old scene still had running
     vs::ForgetSceneVariables(this);   // a fresh scene (another level loaded) starts with none
     NextScriptVM::ForgetSceneStatics(this);   // ... and script statics start again
@@ -179,6 +189,7 @@ void Scene::Clear() {
     m_graveyard.clear();
     ++m_structureVersion;
     renderSettings = RenderSettings{};   // back to default sky/ambient
+    m_clearPending = false;              // what asked for another Clear while this one ran is done
     for (auto& d : abandoned) d(false);
 }
 
@@ -213,14 +224,6 @@ bool CanRun(const Component* c) {
     return c->enabled && (!c->gameObject || c->gameObject->ActiveInHierarchy());
 }
 } // namespace
-
-// Counts the stretches where the scene is walking its component lists and calling user code
-// (Awake/Start, Update, physics, render, OnDestroy). DestroyImmediate waits for the end of those.
-struct Scene::BusyScope {
-    Scene& s;
-    explicit BusyScope(Scene& sc) : s(sc) { ++s.m_busy; }
-    ~BusyScope() { --s.m_busy; }
-};
 
 void Scene::FlushPending() {
     if (m_pending.empty()) return;
@@ -268,8 +271,11 @@ void Scene::StartComponent(Component* c) {
 
 void Scene::Start() {
     ActionList::UseScene(this);
-    BusyScope busy(*this);
-    FlushPending();
+    {
+        BusyScope busy(*this);
+        FlushPending();
+    }
+    ApplyPendingClear();   // an Awake / Start that asked for a Clear
 }
 
 void Scene::DetachKept(KeptState& k) {

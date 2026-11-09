@@ -8285,6 +8285,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             if (!ParseCore(probe, text, true, nullptr, error, &found)) return false;
         }
         report();
+        if (scene.IsUpdating()) { scene.RequestLoadText(text); return true; }   // objects are in use: loaded at the end of the frame
         scene.Clear();
         return ParseCore(scene, text, true, firstNew, error, nullptr);   // accepted above
     }
@@ -8578,6 +8579,7 @@ bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::s
     std::string raw = ss.str();
     std::string text = DataPack::Unpack(raw);   // decode if obfuscated (plaintext passes through)
     if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
+    if (scene.IsUpdating()) { scene.RequestLoad(path); return true; }   // objects are in use (a callback): loaded at the end of the frame
     // Mesh files the scene points at are also looked for next to it.
     const std::size_t slash = path.find_last_of("/\\");
     const std::string prevDir = g_loadingSceneDir;

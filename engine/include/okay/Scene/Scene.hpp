@@ -48,7 +48,20 @@ public:
     /// are live get OnDisable / OnDestroy first, and the 3D physics world and its gravity
     /// go back to their defaults, like everything else the old scene held. The destructor
     /// does the same OnDestroy pass.
+    /// Called while the scene is walking its component lists (from an Awake, Start, Update, LateUpdate,
+    /// FixedUpdate, OnRender, OnDisable, OnDestroy or a physics, timer or tween callback: IsUpdating())
+    /// the objects are in use, so the call is queued like RequestClear and the scene is emptied at the
+    /// end of the frame. Everything made after the call goes with the old scene; to replace the world,
+    /// call RequestLoad.
     void Clear();
+    /// Empty the scene (what Clear does) at the end of the current frame. Safe from anywhere: a script, a
+    /// callback, another thread's main loop hook. The scene is not touched until then; a pending load
+    /// then runs on the emptied scene. HasPendingClear() is true until it happened.
+    void RequestClear() { m_clearPending = true; }
+    bool HasPendingClear() const { return m_clearPending; }
+    /// True while the scene is walking its component lists and calling user code (see Clear). Objects
+    /// must not be freed then; Clear and SceneSerializer::LoadFromFile / Deserialize check it themselves.
+    bool IsUpdating() const { return m_busy > 0; }
 
     /// Clone a prefab (a GameObject and its descendants) into this scene. The clone is a root
     /// object with the original's LOCAL pose, whatever the original's parent was (Duplicate

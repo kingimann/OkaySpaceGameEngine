@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "4320a30c2fa55ace2ba5fe1da7be6def"
+  guid "d16470c9a747b6d4a4259ebd765edeac"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "461d87ed46d5ea9f46a54e5cf46bf67c"
+  guid "2718a8d5ef66b113321552e31d56f462"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. inventory" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "273cb708de70aa847b6b659136a4d4a8"
+  guid "2c4e4f973a7bf57059f14ae1018b229c"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -28,7 +28,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Backpack"
-  guid "b4f15c37264c9bcf5e2bd4b8d66bbc0c"
+  guid "6c70ea1ace3a20913d67c566c2d6fd12"
   active 1
   parent -1
   transform 0 0.5 0 0 0 0 1 1 1 1

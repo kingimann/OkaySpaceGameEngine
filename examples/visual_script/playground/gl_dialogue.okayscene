@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "9fdf614f69bc9bcac81a5f53effab757"
+  guid "0bf31888826601c0456fccf11fc11f24"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "049f686603b9943e5d217f073da127d0"
+  guid "03e23e3a3217f1fdbc2b8a343a12f923"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. dialogue" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "6853e298e09d07143af19a416e3d6df0"
+  guid "e1fdc2527320d8e01d977bffb267e413"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -28,7 +28,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Guide"
-  guid "c67173531bc621e45dfc4959bf3b5b3a"
+  guid "6569ad4d16e34e9f405536f17b0500d5"
   active 1
   parent -1
   transform 0 0.5 0 0 0 0 1 1 1 1
@@ -36,6 +36,6 @@ gameobject 3 "Guide"
   material 0 0 0 0 16 0 "" 1 1
   visualscript ""
   visualscriptpath "gl_dialogue.okayvs"
-  dialoguerunner file="examples/visual_script/playground/gl_dialogue.okaydialog" mode=0 key=101 range=3 prompt="" pobj="Hold Prompt" pause=1 type=0 auto=0 ui=0 cancel=1 start=-1 player=""
+  dialoguerunner file="gl_dialogue.okaydialog" mode=0 key=101 range=3 prompt="" pobj="Hold Prompt" pause=1 type=0 auto=0 ui=0 cancel=1 start=-1 player=""
   comporder "MeshRenderer" "DialogueRunner" "VisualScriptComponent"
 end

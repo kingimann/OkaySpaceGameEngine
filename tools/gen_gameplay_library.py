@@ -558,7 +558,7 @@ PG_INFO.update({
         _hero("Guide", "(0, 0.5f, 0)", "(0.7f, 0.5f, 0.9f, 1)", "GameObject* qo = sc.CreateGameObject(\"Quests\"); auto* ql = qo->AddComponent<QuestLog>(); ql->drawUI = false; QuestDef qd; qd.id = \"q1\"; qd.title = \"First quest\"; ql->quests.push_back(qd);")),
     "dialogue": ("Gameplay - Dialogue", "Guide",
         "The guide starts a conversation. The readout shows the line, the speaker and the options.",
-        _hero("Guide", "(0, 0.5f, 0)", "(0.9f, 0.7f, 0.4f, 1)", "auto* dlg = hero->AddComponent<DialogueRunner>(); dlg->drawUI = false; dlg->typewriterSpeed = 0.0f; dlg->graphFile = \"examples/visual_script/playground/gl_dialogue.okaydialog\";")),
+        _hero("Guide", "(0, 0.5f, 0)", "(0.9f, 0.7f, 0.4f, 1)", "auto* dlg = hero->AddComponent<DialogueRunner>(); dlg->drawUI = false; dlg->typewriterSpeed = 0.0f; dlg->graphFile = \"gl_dialogue.okaydialog\";")),
     "saving": ("Gameplay - Saving", "Courier",
         "The courier's graph holds the save and load position nodes.",
         _hero("Courier", "(2, 0.5f, 1)", "(0.9f, 0.9f, 0.9f, 1)")),
@@ -1033,7 +1033,7 @@ static void CheckPlaygrounds() {{
             if (const char* w = std::getenv("OKAY_WRITE_GL_PLAYGROUND"); w && w[0] == '1') {{
                 std::ofstream df(dir + "gl_dialogue.okaydialog"); df << TalkGraph().Write();
             }}
-            Character::SetAssetBaseDir(std::string(OKAY_SOURCE_DIR));   // the graph file is repo-relative
+            Character::SetAssetBaseDir(dir);   // the graph file sits beside the scene
         }}
         const std::string graph = ReadFile(dir + base + ".okayvs");
         CHECK(!graph.empty());

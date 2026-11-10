@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "91053da103fb3fed52f2e30886ce5361"
+  guid "6d489644c0142b6b648a37cb684f1ab9"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "b19538b2584ee3c3b069a360ff169366"
+  guid "447d36fdaedcb06c99cc2b4a04935c67"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. health" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "a4bf39b996acf418bc4697ec27492c56"
+  guid "78deefa9a085dc44a40c66fe765088db"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -28,7 +28,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Fighter"
-  guid "77d2dd7175078ed80279d4832dce1d29"
+  guid "32968de9e7b7139724fd9e0f69707a4d"
   active 1
   parent -1
   transform 0 0.8 0 0 0 0 1 0.8 1.6 0.8

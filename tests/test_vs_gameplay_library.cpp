@@ -145,7 +145,7 @@ static void BuildPlayground(Scene& sc, const std::string& name, const std::strin
     if (name == "animation") { GameObject* hero = sc.CreateGameObject("Pulser"); hero->transform->SetPosition(Vec3(0, 0.7f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.6f, 0.9f, 0.5f, 1); hero->AddComponent<SpriteRenderer>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "audio") { GameObject* hero = sc.CreateGameObject("Speaker"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.5f, 0.2f, 1); hero->AddComponent<AudioSource>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "camera") { cam->AddComponent<VisualScriptComponent>()->SetPath(file); GameObject* mark = sc.CreateGameObject("Landmark"); mark->transform->SetPosition(Vec3(0, 0.5f, 0)); mark->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.8f, 0.3f, 1); }
-    if (name == "dialogue") { GameObject* hero = sc.CreateGameObject("Guide"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.7f, 0.4f, 1); auto* dlg = hero->AddComponent<DialogueRunner>(); dlg->drawUI = false; dlg->typewriterSpeed = 0.0f; dlg->graphFile = "examples/visual_script/playground/gl_dialogue.okaydialog"; hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
+    if (name == "dialogue") { GameObject* hero = sc.CreateGameObject("Guide"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.7f, 0.4f, 1); auto* dlg = hero->AddComponent<DialogueRunner>(); dlg->drawUI = false; dlg->typewriterSpeed = 0.0f; dlg->graphFile = "gl_dialogue.okaydialog"; hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "groups") { GameObject* hero = sc.CreateGameObject("Boss"); hero->transform->SetPosition(Vec3(0, 0.5f, -3)); hero->AddComponent<MeshRenderer>()->color = Color(0.8f, 0.3f, 0.3f, 1);  hero->AddComponent<VisualScriptComponent>()->SetPath(file); for (int i = 0; i < 3; ++i) { GameObject* cr = sc.CreateGameObject("Crate" + std::to_string(i)); cr->tag = "crate"; cr->transform->SetPosition(Vec3(-2.0f + 2.0f * i, 0.5f, 1)); cr->AddComponent<MeshRenderer>()->color = Color(0.7f, 0.5f, 0.3f, 1); } }
     if (name == "health") { GameObject* hero = sc.CreateGameObject("Fighter"); hero->transform->SetPosition(Vec3(0, 0.8f, 0)); hero->transform->SetScale(Vec3(0.8f, 1.6f, 0.8f)); hero->AddComponent<MeshRenderer>()->color = Color(0.3f, 0.55f, 0.95f, 1); hero->AddComponent<HealthStat>()->playDeathAnim = false; hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "input") { GameObject* hero = sc.CreateGameObject("Player"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.4f, 0.9f, 0.6f, 1);  hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
@@ -194,7 +194,7 @@ static void CheckPlaygrounds() {
             if (const char* w = std::getenv("OKAY_WRITE_GL_PLAYGROUND"); w && w[0] == '1') {
                 std::ofstream df(dir + "gl_dialogue.okaydialog"); df << TalkGraph().Write();
             }
-            Character::SetAssetBaseDir(std::string(OKAY_SOURCE_DIR));   // the graph file is repo-relative
+            Character::SetAssetBaseDir(dir);   // the graph file sits beside the scene
         }
         const std::string graph = ReadFile(dir + base + ".okayvs");
         CHECK(!graph.empty());

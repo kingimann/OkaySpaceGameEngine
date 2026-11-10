@@ -602,6 +602,32 @@ static void CheckEvents() {
     }
 }
 
+// A scene that ends in the middle of a vault leaves a job keyed by the body's address. The next body given
+// that address used to look busy, so Vault / Mantle never worked for it. The new body must be able to vault.
+static void CheckStaleTraversal() {
+    GameObject* oldAddress = nullptr;
+    {
+        Scene a; a.physicsEnabled = true;
+        GameObject* me = a.CreateGameObject("First");
+        Geo(a, me, 0.9f, 0.0f);
+        CHECK(HumanoidActions::RequestVault(me));
+        CHECK(TraverseBusy(me));
+        oldAddress = me;
+    }   // the scene ends with the move unfinished
+    Scene b; b.physicsEnabled = true;
+    GameObject* reused = nullptr;
+    std::vector<GameObject*> keep;
+    for (int i = 0; i < 400 && !reused; ++i) {
+        GameObject* g = b.CreateGameObject("Probe" + std::to_string(i));
+        if (g == oldAddress) reused = g; else keep.push_back(g);
+    }
+    if (!reused) { std::printf("  stale traversal: the allocator did not hand the old address out again; nothing to check\n"); return; }
+    for (GameObject* g : keep) b.Destroy(g);
+    Geo(b, reused, 0.9f, 0.0f);
+    CHECK(!TraverseBusy(reused));
+    CHECK(HumanoidActions::RequestVault(reused));
+}
+
 int main() {
     RUN_SUITE("vs_registry_effect");
     g_wav = MakeWav("registry_effect_silence.wav");
@@ -792,6 +818,7 @@ int main() {
     for (const auto& u : unproven) if (!known.count(u)) { std::printf("  unproven, not on the known list: %s\n", u.c_str()); CHECK(false); }
     for (const auto& k : known) if (!now.count(k)) { std::printf("  on the known list but now proven: %s (remove it)\n", k.c_str()); CHECK(false); }
     CheckEvents();
+    CheckStaleTraversal();
     Game::CancelQuit();
     TEST_MAIN_RESULT();
 }

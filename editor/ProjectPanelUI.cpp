@@ -229,6 +229,10 @@ bool Combo(const char* label, int& value, std::initializer_list<const char*> ite
 }
 } // namespace
 
+// Texture Filter / Wrap / Mipmaps work in the software and OpenGL renderers only. The Direct3D renderers (the
+// default on Windows) do not read them yet, so the controls stay hidden until they do. Turn this on then.
+constexpr bool kShowTextureSamplerSettings = false;
+
 bool HasImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
     (void)browser;
     const okay::AssetType k = okay::AssetTypeFromPath(assetPath);
@@ -258,6 +262,7 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             for (int i = 0; i < 11; ++i) if (sizes[i] == e.texture.maxSize) si = i;
             if (Combo("Largest side", si, {"No limit", "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192", "16384"})) e.texture.maxSize = sizes[si];
             ImGui::TextDisabled("Bigger pictures are made smaller when loaded.");
+            if (kShowTextureSamplerSettings) {
             int fi = static_cast<int>(e.texture.filter);
             if (Combo("Filter", fi, {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)"})) e.texture.filter = static_cast<ok::TextureImportSettings::Filter>(fi);
             ImGui::TextDisabled("Point keeps hard pixel edges.");
@@ -267,6 +272,7 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             ImGui::Checkbox("Mipmaps", &e.texture.mipmaps);
             ImGui::TextDisabled("Smaller copies for far away. Off: always full size.");
             ImGui::TextDisabled("Applies in the editor view and OpenGL / software games.");
+            }
             break;
         }
         case ok::AssetType::Model: {

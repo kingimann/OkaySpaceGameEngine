@@ -26,10 +26,9 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
 - **Find References.** Right-click an asset: lists what uses it and what it uses. Click a line to show it.
 - **Import Settings.** For textures and models, the info strip has an Import Settings button (stored in the asset's
   `.okaymeta`). Everything offered has an effect, and the settings file is copied into a build beside the asset.
-  Textures: **Largest side** (the picture is made smaller when loaded), **Filter** (Point keeps hard texels, Bilinear
-  blends neighbours, Trilinear also blends mip levels), **Wrap** (Repeat, Clamp, Mirror past the edge) and **Mipmaps**
-  (off always reads the full picture). They apply in the editor's scene view and in the software and OpenGL renderers
-  (a built game on those); the Direct3D renderers use one shared sampler and do not read Filter, Wrap or Mipmaps.
+  Textures: **Largest side** (the picture is made smaller when loaded). Filter, Wrap and Mipmaps are honoured by the
+  software and OpenGL renderers but are hidden here until the Direct3D renderers read them (the `.okaymeta` keys and
+  the code stay; one flag, `kShowTextureSamplerSettings` in `ProjectPanelUI.cpp`, shows them again).
   Models: **Scale** and **Normals** (from the file, calculated with a **Smoothing angle**, or flat) and **Import
   animations** (off drops the clips and leaves the rest pose). Models apply when the model is added to a scene (rigged
   parts keep the file's normals); parts already in a scene are not changed. **Apply** reloads the picture right away

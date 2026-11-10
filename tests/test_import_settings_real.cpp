@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Core/ImportSidecar.hpp"
+#include "okay/Core/ImportSettings.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -225,5 +226,24 @@ int main() {
         const TextureSampling dflt = TextureImportSampling(d.at("nothing.png"));
         CHECK(dflt.filter == TextureSampling::Trilinear && dflt.wrap == TextureSampling::Repeat && dflt.mipmaps);
     }
+    RUN_SUITE("a settings file written for another reason keeps the sampling");
+    {
+        Dir d;
+        // The stored default is what a picture with no settings file renders with.
+        const ImportSettings def = ImportSettings::Defaults(AssetType::Texture);
+        CHECK(def.texture.filter == TextureImportSettings::Filter::Trilinear);
+        const std::string none = MakePng(d, "none.png", "");
+        CHECK(TextureImportSampling(none).filter == TextureSampling::Trilinear);
+        // Change only Largest side, write the whole block as the editor does: the sampling must not move.
+        ImportSettings edited = def;
+        edited.texture.maxSize = 512;
+        std::string meta = "importer texture " + std::to_string(edited.version) + "\n";
+        for (const auto& kv : edited.ToPairs()) meta += "set " + kv.first + " " + kv.second + "\n";
+        const std::string withMeta = MakePng(d, "withmeta.png", meta);
+        const TextureSampling t = TextureImportSampling(withMeta);
+        CHECK(t.filter == TextureSampling::Trilinear && t.wrap == TextureSampling::Repeat && t.mipmaps);
+        CHECK(Near(Sample(withMeta, 0.5f, 0.25f, 0.5f).b, Sample(none, 0.5f, 0.25f, 0.5f).b));   // identical pixels
+    }
+
     TEST_MAIN_RESULT();
 }

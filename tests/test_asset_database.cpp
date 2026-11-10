@@ -205,7 +205,7 @@ int main() {
         std::vector<std::string> notes;
         ImportSettings bad = ImportSettings::FromPairs(AssetType::Texture, 2,
             {{"filter", "fancy"}, {"maxSize", "999999"}, {"srgb", "maybe"}, {"wrap", "CLAMP"}}, &notes);
-        CHECK(bad.texture.filter == TextureImportSettings::Filter::Bilinear);
+        CHECK(bad.texture.filter == TextureImportSettings::Filter::Trilinear);
         CHECK(bad.texture.maxSize == 16384);
         CHECK(bad.texture.sRGB);
         CHECK(bad.texture.wrap == TextureImportSettings::Wrap::Clamp);

@@ -137,7 +137,7 @@ Queries:
 | Type | Field | Meta key | Values (default) |
 |---|---|---|---|
 | texture | `sRGB` | `srgb` | 1 / 0 (1) |
-| | `filter` | `filter` | `point`, `bilinear`, `trilinear` (`bilinear`) |
+| | `filter` | `filter` | `point`, `bilinear`, `trilinear` (`trilinear`) |
 | | `wrap` | `wrap` | `repeat`, `clamp`, `mirror` (`repeat`) |
 | | `maxSize` | `maxSize` | 0 (no limit) or 32..16384 (2048) |
 | | `mipmaps` | `mipmaps` | 1 / 0 (1) |
@@ -232,7 +232,7 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
   seen; a name that happens to end in a known extension inside a quoted string can be taken for a path.
 - Binary formats are not parsed: a `.fbx` that points at external textures has no edges (a `.gltf` does).
 - Import settings are stored and signalled. These are read (through `okay/Core/ImportSidecar.hpp`): a texture's
-  `maxSize`, `filter`, `wrap` and `mipmaps` (software and OpenGL renderers), and a model's `scale` (the editor),
+  `maxSize`, `filter`, `wrap` and `mipmaps` (software and OpenGL renderers; the Direct3D renderers do not read them, so the editor hides those three controls until they do), and a model's `scale` (the editor),
   `normals`, `smoothingAngle` and `importAnimations` (`ImportModelScene`). The other keys (`srgb`, `compress`, the
   audio options) are stored but no importer reads them yet.
 - GUID references inside scene files do not exist yet (scenes store paths); `FixStaleReferences` is the bridge.

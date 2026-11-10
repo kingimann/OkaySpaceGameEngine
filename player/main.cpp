@@ -43,8 +43,8 @@
 #include "okay/UI/OkayUI.hpp"
 #include "OkayScriptUIBridge.hpp"
 #include "OkayTestPanel.hpp"
-#include "DevLog.hpp"
 #endif
+#include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>

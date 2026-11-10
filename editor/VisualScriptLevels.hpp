@@ -115,6 +115,7 @@ inline int VsSharedLevelCount() { return (int)(sizeof kSharedLevels / sizeof kSh
 // list stays the 84 types both branches already agree on.
 inline const VsSharedLevel kLogicLevels[] = {
 #include "generated/library_levels.inc"
+#include "generated/gplib_levels.inc"
 };
 
 inline int VsLogicLevelCount() { return (int)(sizeof kLogicLevels / sizeof kLogicLevels[0]); }

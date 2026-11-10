@@ -1,0 +1,67 @@
+# Gameplay library: health. Every node below is declared here; the first chain runs in Play.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 GlDamageOverTime
+pos 2 300 40
+default 2 0 12
+exec 1 0 2
+node 3 GlGetHealth
+pos 3 300 240
+node 4 SetVar health
+pos 4 560 40
+exec 2 0 4
+data 4 0 3 0
+node 5 OnStart
+pos 5 40 340
+entry OnStart 5
+node 6 GlSetHealth
+pos 6 300 340
+default 6 0 100
+exec 5 0 6
+node 100 GlGetHealth
+pos 100 40 520
+node 101 GlGetHealthPortion
+pos 101 300 520
+node 102 GlGetMaxHealth
+pos 102 560 520
+node 103 GlSetHealth
+pos 103 820 520
+default 103 0 30
+node 104 GlSetMaximumHealth
+pos 104 1080 520
+default 104 0 50
+node 105 GlIsHealthLow
+pos 105 1340 520
+default 105 0 0.25
+node 106 GlIsHealthFull
+pos 106 40 710
+node 107 GlHealToFull
+pos 107 300 710
+node 108 GlKill
+pos 108 560 710
+node 109 GlSetInvincible
+pos 109 820 710
+default 109 0 true
+node 110 GlIsInvincible
+pos 110 1080 710
+node 111 GlDamageOverTime
+pos 111 1340 710
+default 111 0 10
+node 112 GlHealOverTime
+pos 112 40 900
+default 112 0 10
+node 113 GlSetArmor
+pos 113 300 900
+default 113 0 5
+node 114 GlGetArmor
+pos 114 560 900
+node 115 GlSetRegeneration
+pos 115 820 900
+default 115 0 4
+default 115 1 1
+node 116 GlDamageAfterArmor
+pos 116 1080 900
+default 116 0 20
+default 116 1 5
+default 116 2 0.5

@@ -1,0 +1,6 @@
+        {"gl_health", "Gameplay - Health", "gl_health.okayscene", "gl_health.okayvs", "Fighter",
+         "The fighter loses health every second, and Get Health reads it into a variable. The other health nodes are in the graph."},
+        {"gl_inventory", "Gameplay - Inventory", "gl_inventory.okayscene", "gl_inventory.okayvs", "Backpack",
+         "The backpack is given five coins, and Count Item reads how many it holds. The other item nodes are in the graph."},
+        {"gl_movement", "Gameplay - Movement", "gl_movement.okayscene", "gl_movement.okayvs", "Hero",
+         "The white cube drives forward, turns, and is kept inside a box. The rest of the movement nodes are in the graph."},

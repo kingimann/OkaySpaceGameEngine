@@ -237,6 +237,9 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsPre(type, "Lb")) {
 #include "generated/library_place.inc"
     }
+    if (VsPre(type, "Gl") && type[2] >= 'A' && type[2] <= 'Z') {   // the gameplay library (GlGetHealth ...)
+#include "generated/gplib_place.inc"
+    }
     if (VsPre(type, "Fn.")) return VsPlaceForBuiltin(type + 3);
     // Events that belong with the thing they listen to.
     if (VsPre(type, "OnKey")) return VsAt("Input", "Keys");

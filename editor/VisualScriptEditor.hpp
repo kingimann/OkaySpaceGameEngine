@@ -498,6 +498,7 @@ inline const std::vector<VsDef>& Registry() {
         {"LogOnce", "Log Once", CAT_ACTION, true, {""}, {"Value","Reset"}, {}, 0, nullptr},
         {"DrawDebugLine", "Draw Debug Line", CAT_ACTION, true, {""}, {"From","To"}, {}, 0, nullptr},
 #include "generated/library_reg.inc"
+#include "generated/gplib_reg.inc"
         // --- Tweens, springs and eases (the engine's Tween / Spring / Easing code) ---
         {"EaseCurve",      "Ease With Curve",     CAT_MATH, false, {}, {"Time"}, {"Value"}, 1, "ease (OutBack, cubic-bezier(..), steps(4))"},
         {"SpringStep",     "Spring Step",         CAT_MATH, true, {""}, {"Target","Stiffness","Damping"}, {"Value","Velocity"}, 1, "start value (blank: first target)"},

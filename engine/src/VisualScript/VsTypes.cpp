@@ -562,6 +562,7 @@ const Row kRows[] = {
         {"LogOnce", true, "AB", ""},
         {"DrawDebugLine", true, "VV", ""},
 #include "okay/VisualScript/library_rows.inc"
+#include "okay/VisualScript/gplib_rows.inc"
         // Tweens, springs and eases.
         {"EaseCurve", false, "N", "N"},
         {"SpringStep", true, "NNN", "NN"},

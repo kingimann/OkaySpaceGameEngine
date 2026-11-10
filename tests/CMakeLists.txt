@@ -1313,6 +1313,11 @@ add_executable(test_vs_smart_logic test_vs_smart_logic.cpp)
 target_link_libraries(test_vs_smart_logic PRIVATE okay::engine)
 add_test(NAME vs_smart_logic COMMAND test_vs_smart_logic)
 
+add_executable(test_vs_gameplay_library test_vs_gameplay_library.cpp)
+target_link_libraries(test_vs_gameplay_library PRIVATE okay::engine)
+target_compile_definitions(test_vs_gameplay_library PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_gameplay_library COMMAND test_vs_gameplay_library)
+
 add_executable(test_vs_logic_library test_vs_logic_library.cpp)
 target_link_libraries(test_vs_logic_library PRIVATE okay::engine)
 add_test(NAME vs_logic_library COMMAND test_vs_logic_library)

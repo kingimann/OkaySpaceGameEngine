@@ -59,6 +59,7 @@ inline const VsPlaygroundDemo* VsPlaygroundDemos(int* count = nullptr) {
          "The white cube eases back and forth. Smooth Step shapes the move."},
         {"logic_advanced", "Logic - Advanced", "logic_advanced.okayscene", "logic_advanced.okayvs", "Marker",
          "The white cube springs toward the option with the highest weighted score."},
+#include "generated/gplib_demos.inc"
     };
     if (count) *count = (int)(sizeof(kDemos) / sizeof(kDemos[0]));
     return kDemos;
@@ -121,6 +122,10 @@ inline const char* VsPlaygroundForNode(const char* type) {
         {"AssertThis", "smart"}, {"LogOnce", "smart"}, {"DrawDebugLine", "smart"},
     };
     if (!type) return nullptr;
+    static const Row kGameplayLib[] = {
+#include "generated/gplib_playground.inc"
+    };
+    for (const Row& r : kGameplayLib) if (std::strcmp(r.type, type) == 0) return r.demo;
     if (std::strncmp(type, "Lb", 2) == 0) {
         const VsLevel lv = VsLevelForNode(type);
         if (lv == VsLevel::Basic) return "logic_basics";

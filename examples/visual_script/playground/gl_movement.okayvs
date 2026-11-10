@@ -1,0 +1,64 @@
+# Gameplay library: movement. Every node below is declared here; the first chain runs in Play.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 GlMoveForward
+pos 2 300 40
+default 2 0 2
+exec 1 0 2
+node 3 GlTurnBy
+pos 3 560 40
+default 3 0 60
+exec 2 0 3
+node 4 GlKeepInsideBox
+pos 4 820 40
+default 4 0 -6
+default 4 1 6
+default 4 2 -6
+default 4 3 6
+exec 3 0 4
+node 100 GlGetSpeed
+pos 100 40 520
+node 101 GlIsMoving
+pos 101 300 520
+default 101 0 0.1
+node 102 GlSetVelocity
+pos 102 560 520
+default 102 0 2
+default 102 1 0
+default 102 2 1
+node 103 GlPushWithImpulse
+pos 103 820 520
+default 103 0 2
+default 103 1 0
+default 103 2 0
+node 104 GlStopMoving
+pos 104 1080 520
+node 105 GlMoveForward
+pos 105 1340 520
+default 105 0 4
+node 106 GlMoveSideways
+pos 106 40 710
+default 106 0 2
+node 107 GlTurnBy
+pos 107 300 710
+default 107 0 90
+node 108 GlFaceDirection
+pos 108 560 710
+default 108 0 1
+default 108 1 0
+node 109 GlKeepInsideBox
+pos 109 820 710
+default 109 0 -1
+default 109 1 1
+default 109 2 -2
+default 109 3 2
+node 110 GlWrapAroundBox
+pos 110 1080 710
+default 110 0 -1
+default 110 1 1
+default 110 2 -1
+default 110 3 1
+node 111 GlSnapToGrid
+pos 111 1340 710
+default 111 0 1

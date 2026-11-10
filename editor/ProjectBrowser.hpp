@@ -130,8 +130,22 @@ public:
     /// operation or the info pane needs the database). Returns true when the scan found changes.
     bool Poll(std::uint64_t nowMs);
     bool Indexed() const { return m_indexed; }
-    /// How many assets use this one (0 when unknown). Cheap: no scan.
+    /// How many assets use this one (0 when none). Cheap: no scan.
     int UsersOf(const std::string& path);
+    /// Make the meta file (the asset's GUID) for one asset if it has none, and return its GUID. Opening a project
+    /// writes no metas: they appear only for assets that are given settings or labels.
+    okay::Guid EnsureMeta(const std::string& path);
+    /// Import settings of a texture or model (defaults when the asset has no meta). False for other kinds.
+    bool GetImportSettings(const std::string& path, okay::ImportSettings& out);
+    /// Store settings. Nothing is written when the asset has no meta and the settings are the defaults.
+    bool SetImportSettings(const std::string& path, const okay::ImportSettings& settings, std::string* error = nullptr);
+    /// Read a file again after it changed outside: forgets what was learned about it.
+    bool Reimport(const std::string& path);
+    /// A cache key for the thumbnail of a file: from its path, size and time (no meta, no reading).
+    void ThumbKey(const std::string& path, okay::Guid& guid, std::uint64_t& hash) const;
+    /// Copy a file or folder from anywhere (an OS drop, the Import button) into `destDir`, under a free name.
+    /// All or nothing; undo-able.
+    Result ImportFile(const std::string& source, const std::string& destDir);
 
     /// Test hook: called before each file step with the step's name ("rename", "copy", "remove", "mkdir", "write")
     /// and the path; return true to make that step fail.
@@ -171,6 +185,12 @@ private:
     okay::AssetDatabase m_db;
     bool m_indexed = false;
     std::uint64_t m_nextPoll = 0;
+    struct RefEntry { std::int64_t stamp = 0; std::uint64_t size = 0; std::vector<std::string> targets; };
+    std::map<std::string, RefEntry> m_refs;                         // text asset -> the asset files it names
+    std::map<std::string, std::vector<std::string>> m_users;        // asset -> text assets that name it
+    bool m_usersValid = false;
+    bool RefreshRefs();
+    void BuildUsers();
     std::function<bool(const char*, const std::string&)> m_fail;
     std::vector<UndoEntry> m_undo;
 
@@ -180,6 +200,34 @@ private:
     Result TrashCore(const std::vector<std::string>& paths, bool pushUndo);
     std::string CheckInside(const std::string& path, bool allowRoot) const;
     void PushUndo(const std::string& label, std::function<Result()> run);
+};
+
+// ---- favourites -------------------------------------------------------------------------------
+
+/// Where `abs` ends up after the moves in `map` (a folder entry moves what is inside it); "" when it does not move.
+std::string RemapPath(const PathMap& map, const std::string& abs);
+
+/// Starred files and folders, kept in the project (<project>/.okay/favourites.txt, one path relative to Assets per
+/// line) so they travel with it. Missing items are dropped when listed; moves and renames are followed.
+class Favourites {
+public:
+    /// Read the list for the project whose Assets folder is `assetsRoot` (a missing or damaged file is an empty list).
+    void Load(const std::string& assetsRoot);
+    bool Has(const std::string& abs) const;
+    /// Add or remove. Returns false (and changes nothing) when the item is outside Assets or the list cannot be saved.
+    bool Toggle(const std::string& abs, std::string* error = nullptr);
+    /// Favourites that still exist, as absolute paths, in the order they were added.
+    std::vector<std::string> List() const;
+    /// Follow renames and moves; saves when something changed.
+    void Remap(const PathMap& map);
+    const std::string& Root() const { return m_root; }
+    /// Test hook for the save step.
+    void SetFailureHook(std::function<bool()> hook) { m_fail = std::move(hook); }
+private:
+    bool Save(std::string* error);
+    std::string m_root;
+    std::vector<std::string> m_items;   // relative to Assets, '/' separated
+    std::function<bool()> m_fail;
 };
 
 // ---- clipboard --------------------------------------------------------------------------------

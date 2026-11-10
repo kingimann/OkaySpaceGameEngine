@@ -70,6 +70,8 @@ struct Proj {
         WriteFile(td.at("Art/other.png"), "PNGDATA-other");
         WriteFile(mat, "okaymat 1\ntexture " + tex + "\n");
         WriteFile(script, "class Move {}\n");
+        WriteFile(td.path.generic_u8string() + "/Ext/in.png", "x");        // files outside the project, for the import tests
+        WriteFile(td.path.generic_u8string() + "/Ext/d/in.png", "x");
         WriteFile(prefab, "gameobject \"Hero\"\n  sprite texture \"" + tex + "\"\n");
         WriteFile(scene,
             "scene \"Main\"\n"
@@ -220,8 +222,9 @@ int main() {
         Proj p;
         Browser b(p.td.assets());
         CHECK(b.Sync());
-        const okay::Guid g = b.Db().PathToGuid("Art/hero.png");
-        CHECK(!g.IsNull());
+        CHECK(!Exists(p.tex + ".okaymeta"));                                     // looking at a project writes no metas
+        const okay::Guid g = b.EnsureMeta(p.tex);                                // (this asset is given one)
+        CHECK(!g.IsNull() && b.Db().PathToGuid("Art/hero.png") == g);
         CHECK(Exists(p.tex + ".okaymeta"));
         const Tree before = Snap(p.td.path);
 
@@ -238,7 +241,7 @@ int main() {
         CHECK(Has(sc, "gameobject \"hero.png\""));                                 // a name is never touched
         CHECK(Has(sc, "other.png\"") && !Has(sc, "texture \"hero.png\""));
         CHECK(Has(ReadFile(p.prefab), "Warrior.png") && Has(ReadFile(p.mat), "texture " + p.td.at("Art/Warrior.png") + "\n"));
-        CHECK(b.Db().UsedBy(g).size() == 3);                                     // the graph follows
+        CHECK(b.UsersOf(p.td.at("Art/Warrior.png")) == 3);                    // the users follow
 
         auto u = b.Undo();                                                      // undo puts all of it back
         CHECK(u.ok);
@@ -281,8 +284,8 @@ int main() {
         Proj p;
         Browser b(p.td.assets());
         CHECK(b.Sync());
-        const okay::Guid g = b.Db().PathToGuid("Art/hero.png");
-        const okay::Guid gm = b.Db().PathToGuid("Art/hero.okaymat");
+        const okay::Guid g = b.EnsureMeta(p.tex);
+        const okay::Guid gm = b.EnsureMeta(p.mat);
         auto r = b.Rename(p.td.at("Art"), "Pictures");
         CHECK(r.ok && Exists(p.td.at("Pictures/hero.png")) && !Exists(p.td.at("Art")));
         CHECK(Exists(p.td.at("Pictures/hero.png.okaymeta")));
@@ -313,6 +316,7 @@ int main() {
         Proj p;
         Browser b(p.td.assets());
         CHECK(b.Sync());
+        CHECK(!b.EnsureMeta(p.tex).IsNull());
         auto r = b.Duplicate(p.tex);
         CHECK(r.ok && r.paths[0] == p.td.at("Art/hero copy.png") && ReadFile(r.paths[0]) == "PNGDATA-hero");
         r = b.Duplicate(p.tex);
@@ -351,7 +355,7 @@ int main() {
         Proj p;
         Browser b(p.td.assets());
         CHECK(b.Sync());
-        const okay::Guid g = b.Db().PathToGuid("Art/hero.png");
+        const okay::Guid g = b.EnsureMeta(p.tex);
         const Tree before = Snap(p.td.path);
         auto r = b.Trash({p.tex, p.td.at("Scenes")});
         CHECK(r.ok && !Exists(p.tex) && !Exists(p.tex + ".okaymeta") && !Exists(p.scene));
@@ -421,16 +425,144 @@ int main() {
         CHECK(b.UsersOf(p.script) == 0 && b.UsersOf(p.td.at("nope.png")) == 0);
         std::uint64_t t = 10000000;
         b.Poll(t);                                                                 // settle
-        WriteFile(p.td.at("Art/new.png"), "fresh from another program");
+        WriteFile(p.td.at("Scenes/second.okayscene"), "scene \"B\"\ngameobject \"X\"\n  sprite texture \"" + p.tex + "\"\n");
         CHECK(!b.Poll(t + 1));                                                     // not due yet: it waits at least 2 seconds
-        CHECK(b.Poll(t + 1000000));                                                // due: finds the new file
-        CHECK(!b.Db().PathToGuid("Art/new.png").IsNull() && Exists(p.td.at("Art/new.png.okaymeta")));
+        CHECK(b.Poll(t + 1000000) && b.UsersOf(p.tex) == 4);                       // due: sees the new scene and what it uses
         CHECK(!b.Poll(t + 1000001));                                               // nothing changed since
-        // moved outside the editor: the GUID is followed
-        const okay::Guid g = b.Db().PathToGuid("Art/new.png");
-        fs::rename(fs::u8path(p.td.at("Art/new.png")), fs::u8path(p.td.at("Art/renamed.png")));
-        fs::rename(fs::u8path(p.td.at("Art/new.png.okaymeta")), fs::u8path(p.td.at("Art/renamed.png.okaymeta")));
-        CHECK(b.Poll(t + 2000000) && b.Db().PathToGuid("Art/renamed.png") == g);
+        fs::remove(fs::u8path(p.td.at("Scenes/second.okayscene")));
+        CHECK(b.Poll(t + 2000000) && b.UsersOf(p.tex) == 3);
+        // a file with a meta that is moved outside the editor keeps its GUID
+        const okay::Guid g = b.EnsureMeta(p.td.at("Art/other.png"));
+        fs::rename(fs::u8path(p.td.at("Art/other.png")), fs::u8path(p.td.at("Art/moved.png")));
+        fs::rename(fs::u8path(p.td.at("Art/other.png.okaymeta")), fs::u8path(p.td.at("Art/moved.png.okaymeta")));
+        CHECK(b.Poll(t + 4000000) && b.Db().PathToGuid("Art/moved.png") == g);
+    }
+
+    RUN_SUITE("no meta files unless an asset needs one");
+    {
+        auto countMetas = [](const fs::path& root) {
+            int n = 0; std::error_code ec;
+            for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec))
+                if (it->path().extension() == ".okaymeta") ++n;
+            return n;
+        };
+        Proj p;
+        Browser b(p.td.assets());
+        CHECK(b.Sync() && b.UsersOf(p.tex) == 3 && !b.ReferencesTo({p.tex}).empty());
+        CHECK(b.Rename(p.tex, "Warrior").ok && b.Move({p.td.at("Art/Warrior.png")}, p.td.at("Scenes")).ok);   // references still follow
+        CHECK(Has(ReadFile(p.scene), "Scenes/Warrior.png"));
+        CHECK(b.Duplicate(p.td.at("Scenes/Warrior.png")).ok && b.Trash({p.td.at("Scenes/Warrior copy.png")}).ok);
+        CHECK(countMetas(p.td.path) == 0);                                         // none of that wrote a meta
+        const std::string tex = p.td.at("Scenes/Warrior.png");
+        okay::ImportSettings s;
+        CHECK(b.GetImportSettings(tex, s) && s.kind == okay::AssetType::Texture && s.texture.maxSize == 2048);
+        CHECK(b.SetImportSettings(tex, s) && countMetas(p.td.path) == 0);          // the defaults need no file
+        s.texture.maxSize = 512;
+        CHECK(b.SetImportSettings(tex, s) && countMetas(p.td.path) == 1);          // a real choice does
+        CHECK(Has(ReadFile(tex + ".okaymeta"), "set maxSize 512"));
+        okay::ImportSettings back;
+        CHECK(b.GetImportSettings(tex, back) && back.texture.maxSize == 512);
+        CHECK(!b.GetImportSettings(p.script, back));                               // scripts have none
+        // the asset with settings keeps them (and its GUID) through a rename
+        const okay::Guid g = b.Db().PathToGuid("Scenes/Warrior.png");
+        CHECK(b.Rename(tex, "Hero").ok && b.Db().PathToGuid("Scenes/Hero.png") == g);
+        okay::ImportSettings again;
+        CHECK(b.GetImportSettings(p.td.at("Scenes/Hero.png"), again) && again.texture.maxSize == 512);
+        CHECK(b.Reimport(p.td.at("Scenes/Hero.png")));
+        okay::Guid k1, k2; std::uint64_t h1 = 0, h2 = 0;
+        b.ThumbKey(p.td.at("Scenes/Hero.png"), k1, h1);
+        WriteFile(p.td.at("Scenes/Hero.png"), "different, longer picture data");
+        b.ThumbKey(p.td.at("Scenes/Hero.png"), k2, h2);
+        CHECK(k1 == k2 && h1 != h2 && !k1.IsNull());                               // same picture slot, new content
+    }
+
+    RUN_SUITE("importing from outside");
+    {
+        Proj p;
+        Browser b(p.td.assets());
+        const std::string out = p.td.path.generic_u8string() + "/Elsewhere";
+        WriteFile(out + "/Pic \xC3\xA9.png", "external picture");
+        WriteFile(out + "/folder/a.txt", "a");
+        WriteFile(out + "/folder/deep/b.txt", "b");
+        auto r = b.ImportFile(out + "/Pic \xC3\xA9.png", p.td.at("Art"));
+        CHECK(r.ok && ReadFile(p.td.at("Art/Pic \xC3\xA9.png")) == "external picture" && Exists(out + "/Pic \xC3\xA9.png"));
+        r = b.ImportFile(out + "/Pic \xC3\xA9.png", p.td.at("Art"));
+        CHECK(r.ok && r.paths[0] == p.td.at("Art/Pic \xC3\xA9 2.png"));              // a taken name gets a number
+        CHECK(!Exists(p.td.at("Art/Pic \xC3\xA9 2.png.tmp")));
+        r = b.ImportFile(out + "/folder", p.td.at("Art"));
+        CHECK(r.ok && ReadFile(p.td.at("Art/folder/deep/b.txt")) == "b");
+        CHECK(!b.ImportFile(out + "/missing.png", p.td.at("Art")).ok);
+        CHECK(!b.ImportFile(out + "/Pic \xC3\xA9.png", out).ok);                      // only into the project
+        WriteFile(out + "/x.okaymeta", "m");
+        CHECK(!b.ImportFile(out + "/x.okaymeta", p.td.at("Art")).ok);
+        CHECK(b.Undo().ok && !Exists(p.td.at("Art/folder")));                      // undo takes the folder back out
+        CHECK(b.Undo().ok && !Exists(p.td.at("Art/Pic \xC3\xA9 2.png")));
+    }
+
+    RUN_SUITE("importers read the settings that are stored next to an asset");
+    {
+        TempDir td;
+        okay::Image big(200, 100);
+        big.Fill(okay::Color(0.2f, 0.6f, 0.3f, 1.0f));
+        const std::string png = td.at("big.png"), png2 = td.at("plain.png"), png3 = td.at("free.png");
+        CHECK(big.SavePNG(png) && big.SavePNG(png2) && big.SavePNG(png3));
+        WriteFile(png + ".okaymeta", "okaymeta 1\nguid 0123456789abcdef0123456789abcdef\ntype texture\nimporter texture 2\nset maxSize 64\n");
+        WriteFile(png3 + ".okaymeta", "okaymeta 1\ntype texture\nimporter texture 2\nset maxSize 0\n");
+        CHECK(okay::TextureImportMaxSize(png) == 64 && okay::TextureImportMaxSize(png2) == 0 && okay::TextureImportMaxSize(png3) == 0);
+        okay::Image* a = okay::GetCachedTexture(png);                              // the renderer's texture cache
+        CHECK(a && a->Width() == 64 && a->Height() == 32);                         // longest side 64, shape kept
+        okay::Image* b = okay::GetCachedTexture(png2);
+        CHECK(b && b->Width() == 200 && b->Height() == 100);                       // no settings: as it is
+        okay::Image* c = okay::GetCachedTexture(png3);
+        CHECK(c && c->Width() == 200);                                             // 0 means no limit
+        okay::Image small(16, 16);
+        small.Fill(okay::Color(1, 1, 1, 1));
+        okay::ApplyTextureImportSettings(png, small);
+        CHECK(small.Width() == 16);                                                // never enlarged
+        WriteFile(td.at("m.glb.okaymeta"), "okaymeta 1\ntype model\nimporter model 1\nset scale 2.5\nset normals flat\n");
+        CHECK(okay::ModelImportScale(td.at("m.glb")) == 2.5f && okay::ModelImportScale(td.at("none.glb")) == 1.0f);
+        WriteFile(td.at("bad.glb.okaymeta"), "okaymeta 1\nimporter model 1\nset scale 0\n");
+        CHECK(okay::ModelImportScale(td.at("bad.glb")) == 1.0f);                   // out of range: ignored
+        WriteFile(td.at("old.png.okaymeta"), "okaymeta 1\ntype texture\nimporter texture 1\nset maxsize 128\n");
+        CHECK(okay::TextureImportMaxSize(td.at("old.png")) == 128);                // the older key still counts
+        WriteFile(td.at("wrong.png.okaymeta"), "okaymeta 1\nimporter audio 2\nset maxSize 64\n");
+        CHECK(okay::TextureImportMaxSize(td.at("wrong.png")) == 0);                // only a texture block counts
+    }
+
+    RUN_SUITE("favourites");
+    {
+        Proj p;
+        Favourites f;
+        f.Load(p.td.assets());
+        CHECK(f.List().empty() && !f.Has(p.tex));
+        CHECK(f.Toggle(p.tex) && f.Toggle(p.td.at("Art")) && f.Has(p.tex) && f.Has(p.td.at("Art")));
+        CHECK(f.List().size() == 2 && f.List()[0] == p.tex);
+        CHECK(Has(ReadFile(p.td.path.generic_u8string() + "/.okay/favourites.txt"), "Art/hero.png"));
+        Favourites g;                                                              // another session: read back from the project
+        g.Load(p.td.assets());
+        CHECK(g.Has(p.tex) && g.Has(p.td.at("Art")) && g.List().size() == 2);
+        CHECK(f.Toggle(p.tex) && !f.Has(p.tex) && f.List().size() == 1);          // star off
+        CHECK(!f.Toggle(p.td.assets()) && !f.Toggle(p.td.path.generic_u8string() + "/Elsewhere/x.png"));   // not Assets itself, nothing outside
+        // a failed save changes nothing
+        f.SetFailureHook([] { return true; });
+        CHECK(!f.Toggle(p.script) && !f.Has(p.script));
+        f.SetFailureHook(nullptr);
+        // renames and moves are followed, a deleted item drops out of the list
+        Browser b(p.td.assets());
+        auto r = b.Rename(p.td.at("Art"), "Pictures");
+        CHECK(r.ok);
+        f.Remap(r.moved);
+        CHECK(f.Has(p.td.at("Pictures")) && !f.Has(p.td.at("Art")));
+        Favourites h; h.Load(p.td.assets());
+        CHECK(h.Has(p.td.at("Pictures")));
+        fs::remove_all(fs::u8path(p.td.at("Pictures")));
+        CHECK(h.List().empty());
+        // damaged or hostile lines are ignored
+        WriteFile(p.td.path.generic_u8string() + "/.okay/favourites.txt", "# x\n../../etc/passwd\n/abs/path\nScripts/move.okay\n\n");
+        Favourites k; k.Load(p.td.assets());
+        CHECK(k.List().size() == 1 && k.Has(p.script));
+        CHECK(RemapPath({{p.td.at("Scenes"), p.td.at("S2")}}, p.scene) == p.td.at("S2/main.okayscene"));
+        CHECK(RemapPath({{p.td.at("Scenes"), p.td.at("S2")}}, p.tex).empty());
     }
 
     RUN_SUITE("references rewriting on its own");
@@ -498,6 +630,8 @@ int main() {
             {"delete two", [](Browser& b, Proj& p) { return b.Trash({p.tex, p.td.at("Scenes")}); }},
             {"create a file", [](Browser& b, Proj& p) { return b.MakeFile(p.td.at("Art"), "new.okayvs", "okayvs\n"); }},
             {"create a folder", [](Browser& b, Proj& p) { return b.CreateFolder(p.td.at("Art"), "More"); }},
+            {"import a file", [](Browser& b, Proj& p) { return b.ImportFile(p.td.path.generic_u8string() + "/Ext/in.png", p.td.at("Art")); }},
+            {"import a folder", [](Browser& b, Proj& p) { return b.ImportFile(p.td.path.generic_u8string() + "/Ext/d", p.td.at("Art")); }},
         };
         for (const Case& c : cases) {
             int steps = 0;

@@ -6,6 +6,7 @@
 // built and registered. A node that is none of these and not on the known list fails.
 #include "test_framework.hpp"
 #include "VisualScriptEditor.hpp"
+#include "VisualScriptPalette.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
@@ -835,6 +836,21 @@ int main() {
         const bool ok = mild ? help.find("build mode") != std::string::npos : help.find("not saved") != std::string::npos;
         if (!ok) std::printf("  help for %s does not warn: %s\n", d.type, help.c_str());
         CHECK(ok);
+    }
+    // Online nodes no suite covers are hidden from the Add Node menu (factory kept). The list is fixed here.
+    {
+        static const char* const expected[] = {"Fn.net_join_link", "Fn.net_pin_host", "Fn.pf_delete", "Fn.pf_leaderboard_top", "Fn.pf_load", "Fn.pf_login", "Fn.pf_login_password", "Fn.pf_register", "Fn.pf_save", "Fn.pf_set_stat"};
+        std::set<std::string> have, want(std::begin(expected), std::end(expected));
+        for (const VsHiddenUntilTested& h : kHiddenUntilTested) {
+            have.insert(h.type);
+            CHECK(h.reason && h.reason[0]);
+            CHECK(VsPaletteHiddenUntilTested(h.type));
+            CHECK(vs::SignatureFor(h.type) != nullptr);   // the node still exists, so old graphs load
+        }
+        CHECK(have == want);
+        int hiddenInRegistry = 0;
+        for (const VsDef& d : Registry()) if (VsPaletteHiddenUntilTested(d.type)) ++hiddenInRegistry;
+        CHECK(hiddenInRegistry == (int)want.size());
     }
     CheckEvents();
     CheckStaleTraversal();

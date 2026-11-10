@@ -171,6 +171,29 @@ inline void DrawCategoryIcon(ImDrawList* dl, ImVec2 c, float r, int cat, ImU32 c
     }
 }
 
+/// Nodes that stay out of the Add Node menu until a test shows what they do. The factory stays, so old graphs
+/// and text scripts that already use them still load and run. tests/test_vs_registry_effect.cpp asserts this
+/// exact list, so it cannot grow without a reason being written here.
+struct VsHiddenUntilTested { const char* type; const char* reason; };
+inline const VsHiddenUntilTested kHiddenUntilTested[] = {
+    {"Fn.net_join_link",         "no suite joins by an okay:// link, and it needs a live host"},
+    {"Fn.net_pin_host",          "no suite covers pinning the host, and it needs a live session"},
+    {"Fn.pf_delete",             "PlayFab web request; no suite exercises it"},
+    {"Fn.pf_leaderboard_top",    "PlayFab web request; no suite exercises it"},
+    {"Fn.pf_load",               "PlayFab web request; no suite exercises it"},
+    {"Fn.pf_login",              "PlayFab web request; no suite exercises it"},
+    {"Fn.pf_login_password",     "PlayFab web request; no suite exercises it"},
+    {"Fn.pf_register",           "PlayFab web request; no suite exercises it"},
+    {"Fn.pf_save",               "PlayFab web request; no suite exercises it"},
+    {"Fn.pf_set_stat",           "PlayFab web request; no suite exercises it"},
+};
+inline bool VsPaletteHiddenUntilTested(const char* type) {
+    if (!type) return false;
+    for (const VsHiddenUntilTested& h : kHiddenUntilTested)
+        if (std::strcmp(h.type, type) == 0) return true;
+    return false;
+}
+
 /// True when a Registry row is the same job as a hand-written node of the same title
 /// (an engine-API binding such as Animator.Roll next to Roll). It is not listed twice.
 inline bool VsPaletteHidesAsDuplicate(const VsDef& d) {
@@ -253,7 +276,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (!fits(d)) continue;
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
-        if (VsPaletteHidesAsDuplicate(d)) continue;   // one row per job
+        if (VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type)) continue;   // one row per job; untested nodes wait
         const bool dup = false;
         Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type;
         e.cat = place.category ? place.category : "";

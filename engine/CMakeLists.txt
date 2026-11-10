@@ -154,6 +154,8 @@ add_library(okay_engine
     src/Debug/MemoryTracker.cpp
     src/Debug/DrawCallRecorder.cpp
     src/Debug/ConsoleModel.cpp
+    src/Debug/Diagnostics.cpp
+    src/Debug/ProjectDiagnostics.cpp
     src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
     src/UI/UIBatcher.cpp

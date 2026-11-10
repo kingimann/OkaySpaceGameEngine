@@ -46,6 +46,9 @@ endif()
 
 # Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.
 set(OKAY_LAUNCHER_SOURCES main.cpp
+    VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
+    VersionsNet.cpp       # the cancellable curl download behind it
+    VersionsUI.cpp        # the page itself
     ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c   # native file picker (chat attachments)
     ${CMAKE_SOURCE_DIR}/engine/src/Net/ServerQuery.cpp                # server browser queries (+ LAN scan)
     ${CMAKE_SOURCE_DIR}/engine/src/Net/UdpSocket.cpp)

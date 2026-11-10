@@ -246,18 +246,18 @@ void ExpectDemo(Scene& scene, const char* where) {
     auto* rt = read->GetComponent<TextRenderer>();
     CHECK(vs && rt);
     if (!vs) return;
-    auto near = [&](const char* name, float want) {
+    auto nearVal = [&](const char* name, float want) {
         const float got = Var(vs, name);
         if (std::fabs(got - want) > 0.01f)
             std::printf("  %s: %s is %g, wanted %g\n", where, name, got, want);
         CHECK(std::fabs(got - want) < 0.01f);
     };
-    near("loop", 3); near("each", 30); near("c", 3); near("reps", 4);
-    near("patha", 1); near("pathb", 10); near("gatev", 5); near("don", 2);
-    near("oncev", 1); near("ch", 4); near("en", 2); near("sw", 7); near("ctr", 3);
-    near("cd", 1); near("delayed", 1); near("waited", 1); near("brk", 3);
-    near("cont", 8); near("fun", 8); near("branched", 1); near("seqa", 1); near("seqb", 10);
-    near("ticks", 4);
+    nearVal("loop", 3); nearVal("each", 30); nearVal("c", 3); nearVal("reps", 4);
+    nearVal("patha", 1); nearVal("pathb", 10); nearVal("gatev", 5); nearVal("don", 2);
+    nearVal("oncev", 1); nearVal("ch", 4); nearVal("en", 2); nearVal("sw", 7); nearVal("ctr", 3);
+    nearVal("cd", 1); nearVal("delayed", 1); nearVal("waited", 1); nearVal("brk", 3);
+    nearVal("cont", 8); nearVal("fun", 8); nearVal("branched", 1); nearVal("seqa", 1); nearVal("seqb", 10);
+    nearVal("ticks", 4);
     CHECK_NEAR(runner->transform->Position().x, 4.0f, 0.01f);
     CHECK(rt->text.find("Ticks 4") != std::string::npos);
     CHECK(vs->Graph() && vs->Graph()->ErrorCount() == 0);

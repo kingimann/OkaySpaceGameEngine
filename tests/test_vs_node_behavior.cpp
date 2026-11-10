@@ -57,10 +57,10 @@ static VisualScriptComponent* Attach(Scene& s, const char* name, const std::stri
 }
 static void Tick(Scene& s, int n, float dt = 0.05f) { for (int i = 0; i < n; ++i) s.Update(dt); }
 static void Keys(std::initializer_list<char> down) { Input::FeedKeys(std::vector<char>(down)); }
-static HealthStat* Hp(GameObject* go, float max = 100) {
+static HealthStat* Hp(GameObject* go, float maxHp = 100) {
     auto* h = go->AddComponent<HealthStat>();
     h->playDeathAnim = false; h->destroyOnDeath = false; h->respawn = false;
-    h->maxHealth = max; h->health = max;
+    h->maxHealth = maxHp; h->health = maxHp;
     return h;
 }
 

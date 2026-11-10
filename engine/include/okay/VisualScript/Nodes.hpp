@@ -657,6 +657,14 @@ inline NetworkManager* VsNet(VsContext& ctx, bool create = false) {
     return n;
 }
 
+// The same, for a node that has to do something: with no network session it says so (the flow carries on)
+// instead of quietly doing nothing, so a graph that forgot Host / Join shows the problem in Problems.
+inline NetworkManager* VsNetOrSay(VsNode* node, NodeGraph& g, VsContext& ctx) {
+    NetworkManager* n = VsNet(ctx);
+    if (!n) g.Error(node, ctx, "there is no network session in this scene yet: run Host or Join first");
+    return n;
+}
+
 struct NetConnectedNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override { auto* n = VsNet(ctx); return n && n->IsConnected(); }
 };
@@ -694,22 +702,22 @@ struct NetSendNode : VsNode {
     std::string channel;
     explicit NetSendNode(std::string c) : channel(std::move(c)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Send(channel, In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Send(channel, In(0, g, ctx).AsString()); return 0; }
 };
 struct NetSetVarNode : VsNode {
     std::string key;
     explicit NetSetVarNode(std::string k) : key(std::move(k)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->SetVar(key, In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->SetVar(key, In(0, g, ctx).AsString()); return 0; }
 };
 struct NetDisconnectNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Stop(); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Stop(); return 0; }
 };
 // Broadcast a chat line (in0 = text).
 struct NetChatNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Chat(In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Chat(In(0, g, ctx).AsString()); return 0; }
 };
 // RPC on this object's NetworkObject (in0 = payload). The name is local to the object.
 struct NetObjRpcNode : VsNode {
@@ -717,9 +725,10 @@ struct NetObjRpcNode : VsNode {
     explicit NetObjRpcNode(std::string nm) : name(std::move(nm)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject)
-            if (auto* o = ctx.gameObject->GetComponent<NetworkObject>())
-                o->Rpc(name, In(0, g, ctx).AsString());
+        if (ctx.gameObject) {
+            if (auto* o = ctx.gameObject->GetComponent<NetworkObject>()) o->Rpc(name, In(0, g, ctx).AsString());
+            else g.Error(this, ctx, "this object has no Network Object to send the RPC from");
+        }
         return 0;
     }
 };
@@ -734,7 +743,7 @@ struct SyncVarSetNode : VsNode {
         if (!ctx.gameObject) return 0;
         for (auto* sv : ctx.gameObject->GetComponents<SyncVar>())
             if (sv->name == varName) { sv->Set(val); return 0; }
-        if (auto* n = VsNet(ctx)) {
+        if (auto* n = VsNetOrSay(this, g, ctx)) {
             auto* o = ctx.gameObject->GetComponent<NetworkObject>();
             if (!o || o->IsLocallyOwned()) {
                 const std::string id = o ? o->Id() : ctx.gameObject->name;
@@ -763,15 +772,15 @@ struct NetRpcNode : VsNode {
     std::string name;
     explicit NetRpcNode(std::string nm) : name(std::move(nm)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Rpc(name, In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Rpc(name, In(0, g, ctx).AsString()); return 0; }
 };
 // Spawn a prefab THIS peer owns + auto-syncs, at this object's position.
 struct NetSpawnOwnedNode : VsNode {
     std::string path;
     explicit NetSpawnOwnedNode(std::string p) : path(std::move(p)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
-        if (auto* n = VsNet(ctx))
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNetOrSay(this, g, ctx))
             n->SpawnOwned(VsBareAsset(path), ctx.transform ? ctx.transform->localPosition : Vec3::Zero);
         return 0;
     }
@@ -779,17 +788,17 @@ struct NetSpawnOwnedNode : VsNode {
 // Despawn a SpawnOwned object on every peer (in0 = its sync id).
 struct NetDespawnNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Despawn(In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Despawn(In(0, g, ctx).AsString()); return 0; }
 };
 // Mark this peer ready / not ready in the lobby (in0 = bool).
 struct NetReadyNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->SetReady(In(0, g, ctx).AsBool()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->SetReady(In(0, g, ctx).AsBool()); return 0; }
 };
 // Host only: start the match for everyone in the room.
 struct NetStartMatchNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->StartMatch(); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->StartMatch(); return 0; }
 };
 // True once the match has started for this peer's room.
 struct NetMatchStartedNode : VsNode {

@@ -239,10 +239,26 @@ a matching scene). Node ids start with `Gl`. Do not edit the generated files.
 | Audio | | Volume, pitch, looping, muting, fading |
 | Animation | Procedural | Pulse, sway, fade a sprite |
 | Scene | Story | Start, complete, fail and count quests, and their objectives |
+| Scene | Dialogue | Start a conversation, show a line, offer choices, read the answer, end it (nine nodes, run against a conversation file kept beside the scene) |
 | Variables | Saved | Save and load a position or health under a name |
 | Math | Progression | Level from experience, stat growth, prices, cooldown share, roll a chance |
 | Time | | Slow motion, game speed, session time |
 | Input | Axes, Keys, Mouse | Horizontal and vertical input, sprint, crouch, jump, fire, aim |
 
-The count is in `tools/gameplay_library_count.txt`. A new node needs a test in
+There are 241 gameplay library nodes. The count is in `tools/gameplay_library_count.txt`. A new node needs a test in
 the generator, or the run fails the check that every node is covered.
+
+## Every node must do something
+
+`tests/test_vs_registry_effect.cpp` builds every registered node and runs it
+against the same graph without it. A node passes when something you can see
+differs (a transform, a component value, a variable, a log line, a saved key, a
+render setting) or when it reports a clear error. It runs in the plain test scene,
+then in a scene with the components it drives (an animator, a nav agent, a
+behaviour tree, Full Body IK, particles, a line, a music player), then in a
+targeted scenario (a hurt body, a seat, a wall to vault, a quest, a playing
+sound). Online nodes run with no session and must report or return a value; the
+ones that would open a connection are built only. Event nodes are fired by what
+raises them. A node that does none of this fails the test, so it has to be fixed
+or hidden from the Add Node menu (its factory stays so old graphs still load).
+`tests/vs_registry_known_gaps.inc` is the list of exceptions and is empty.

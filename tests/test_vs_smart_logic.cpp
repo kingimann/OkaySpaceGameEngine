@@ -291,10 +291,10 @@ int main() {
     }
     {
         Scene s; s.physicsEnabled = false;
-        GameObject* near = s.CreateGameObject("NearOne");
-        near->transform->SetPosition({1, 0, 0});
-        GameObject* far = s.CreateGameObject("FarOne");
-        far->transform->SetPosition({30, 0, 0});
+        GameObject* nearObj = s.CreateGameObject("NearOne");
+        nearObj->transform->SetPosition({1, 0, 0});
+        GameObject* farObj = s.CreateGameObject("FarOne");
+        farObj->transform->SetPosition({30, 0, 0});
         auto* v = Attach(s, "Query",
             "node 1 OnStart\nentry OnStart 1\n"
             "node 2 CountNearby\ndefault 2 0 5\n"

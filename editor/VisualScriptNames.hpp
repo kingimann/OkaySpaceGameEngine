@@ -341,14 +341,14 @@ inline std::string LintVsTitle(const char* titleIn, VsNameKind kind) {
         const std::string& w = words[i];
         const std::string low = VsLower(w);
         if (VsBannedWord(low)) return "\"" + w + "\" is jargon or an abbreviation; say it in ordinary words";
-        const bool small = VsSmallWord(low);
-        bool capSmall = small && !w.empty() && std::isupper((unsigned char)w[0]);
+        const bool smallWord = VsSmallWord(low);
+        bool capSmall = smallWord && !w.empty() && std::isupper((unsigned char)w[0]);
         for (std::size_t k = 1; capSmall && k < w.size(); ++k)
             if (!std::islower((unsigned char)w[k])) capSmall = false;
         if (i == 0) {
             if (!(VsMajorWord(w) || capSmall))
                 return "\"" + w + "\" should be a full word starting with a capital";
-        } else if (small) {
+        } else if (smallWord) {
             if (w != low) return "small word \"" + w + "\" stays lowercase";
         } else if (!VsMajorWord(w)) {
             return "\"" + w + "\" should be a full word (no symbols, digits, or abbreviations)";

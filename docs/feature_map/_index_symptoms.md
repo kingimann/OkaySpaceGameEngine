@@ -192,6 +192,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a prefab built from other prefabs loses their link | [21.2](20-35-planned.md#212-nested-prefabs) Nested prefabs |
 | a primitive has the wrong winding | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | a primitive is dark or inside out | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
+| a problem does not select its object | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
 | a project is missing from the list | [17.12](17-launcher-platform.md#1712-create-page-projects-templates-and-git) Create page: projects, templates and Git |
 | a proxy `version.dll` next to the exe is flagged | [39.4](39-security-anticheat.md#394-client-integrity-signed-manifest-and-launch-check) Client integrity: signed manifest and launch check |
 | a public field is missing or reset in the Inspector | [13.4](13-scripting.md#134-script-components-and-script-ui) Script components and script UI |

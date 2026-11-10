@@ -1908,6 +1908,22 @@ inline bool VsWireOk(const VsEditGraph& g, int consumer, int inPin, int producer
 
 inline VsEditState& State() { static VsEditState s; return s; }
 
+// Open a graph in this window and frame one node. Diagnostics uses this when a
+// Problems row names a graph; the node browser does not.
+inline void ShowGraphText(const std::string& text, int nodeId) {
+    VsEditState& st = State();
+    st.g.fromText(text);
+    st.g.dirty = false;
+    if (nodeId >= 0) { st.focusNode = nodeId; st.sel = {nodeId}; st.selected = nodeId; }
+    else st.frameAll = true;
+}
+inline void ShowGraphFile(const std::string& path, int nodeId) {
+    VsEditState& st = State();
+    if (!st.g.load(path)) return;
+    if (nodeId >= 0) { st.focusNode = nodeId; st.sel = {nodeId}; st.selected = nodeId; }
+    else st.frameAll = true;
+}
+
 // ---- Debugger (Play mode) ----------------------------------------------------
 // Filled by the editor when the game freezes at a breakpoint or a step: where it
 // stopped and what the running graph could see right then. The game stays frozen
@@ -2877,7 +2893,12 @@ inline void Draw(EditorState& ed, bool* open) {
             ImVec2 pp(p0.x, ly + li * ROW_H + ROW_H * 0.5f);
             const bool linked = inputLinked(n.id, i);
             const okay::vs::PinType pt = VsInPinType(g, n.id, i);
-            dataDot(pp, linked, VsPinColor(pt));
+            bool badPin = false;
+            for (const auto& l : g.dataLinks)
+                if (l.consumer == n.id && l.inPin == i && !VsWireOk(g, l.consumer, l.inPin, l.producer, l.outPin)) badPin = true;
+            for (const auto& is : st.issues)
+                if (is.node == n.id && is.pin == i && is.pinDir == 0 && is.severity == 0) badPin = true;
+            dataDot(pp, linked || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
             if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
                 ImGui::SetTooltip("%s  (%s)", d->dataIn[i], okay::vs::PinTypeName(pt));
             text(ImVec2(p0.x + PAD, pp.y - fs * 0.5f), labelCol, d->dataIn[i]);
@@ -2912,10 +2933,15 @@ inline void Draw(EditorState& ed, bool* open) {
         }
         for (int i = 0; i < (int)d->dataOut.size(); ++i, ++ri) {
             ImVec2 pp(p1.x, ly + ri * ROW_H + ROW_H * 0.5f);
-            bool used = false;
-            for (const auto& l : g.dataLinks) if (l.producer == n.id && l.outPin == i) { used = true; break; }
+            bool used = false, badPin = false;
+            for (const auto& l : g.dataLinks) if (l.producer == n.id && l.outPin == i) {
+                used = true;
+                if (!VsWireOk(g, l.consumer, l.inPin, l.producer, l.outPin)) badPin = true;
+            }
+            for (const auto& is : st.issues)
+                if (is.node == n.id && is.pin == i && is.pinDir == 1 && is.severity == 0) badPin = true;
             const okay::vs::PinType pt = VsOutPinType(g, n.id, i);
-            dataDot(pp, used, VsPinColor(pt));
+            dataDot(pp, used || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
             if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
                 ImGui::SetTooltip("%s  (%s)", d->dataOut[i], okay::vs::PinTypeName(pt));
             ImVec2 ts = ImGui::CalcTextSize(d->dataOut[i]);

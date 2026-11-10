@@ -60,6 +60,25 @@ downloads `releases/latest/download/<name>`), and never prunes anything.
 - The index is maintained by `scripts/versions_index.py` (self-test: `python3 scripts/versions_index.py --self-test`, also
   run by ctest as `versions_index`).
 
+## What the launcher does with it
+
+The launcher's **Versions** page ([launcher_versions.md](launcher_versions.md)) reads `versions.json` and installs a version next to the
+running one: `<bucket>/<bucketPath>` when `inBucket`, then the `archive` address with the same file names; the size and SHA-256 of every file
+must match before it is used. It also checks the launcher's own updates against the list when the version is in it. Without a usable index it
+falls back to the heads in `VERSION.txt` / `LTS.txt` (no checksums, so it refuses unless the size matches and the person confirms).
+Choosing the **LTS** channel makes the in-place updater follow `LTS.txt`: only patches of the LTS line, never a downgrade of the launcher (an
+LTS editor is installed next to a newer launcher instead), and nothing at all when no LTS is published or reachable.
+
+What the launcher still wants from the release tooling:
+
+* **`SDL2.dll` in `files`** (and in the bucket at `v<version>/SDL2.dll`). A side-by-side copy needs it next to the editor; the GitHub release
+  has it, the bucket and the index do not. Until it is published the launcher copies its own `SDL2.dll` (same SDL 2.x) and cannot check it.
+* **The index before the heads.** `versions.json` should be uploaded before `VERSION.txt` / `LTS.txt` (they are the "this version is
+  complete" signal). The launcher copes with an index that lags by adding the newer head without checksums, but then the version cannot be
+  checked.
+* Keep the `archive` GitHub address stable and every asset (`OkayEngine.exe`, `OkaySpacePlayer.exe`, `OkaySpace.exe`, `SDL2.dll`) on
+  every release forever: versions that left the bucket come from there.
+
 ## Cutting an LTS
 
 1. **Choose the line.** Pick a normal release that has been in use for a while and contains the project version stamp and the
@@ -94,3 +113,6 @@ pruned like any other (its versions stay on GitHub).
 
 Release channels were added in one change: `CHANNEL` in `scripts/publish-supabase.sh`, `LTS.txt` and `NOTES-LTS.txt`,
 `versions.json` (`scripts/versions_index.py`), the `channel` input and `make_latest` in `.github/workflows/release.yml`.
+
+The launcher side (Versions page, the channel setting, keeping the previous editor on update) came after: see
+[launcher_versions.md](launcher_versions.md). No change to the feed's format was needed; `SDL2.dll` in `files` is the one wish above.

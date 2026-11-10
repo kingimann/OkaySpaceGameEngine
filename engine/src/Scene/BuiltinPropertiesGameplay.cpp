@@ -67,7 +67,7 @@ void RegisterPlayerView() {
     PropertyBuilder<PlayerView> b("PlayerView", "playerview", "Controllers");
     b.AddBool("allowToggle", &PlayerView::allowToggle).Tooltip("V / gamepad switches view. Off: controller is unchanged")
      .AddEnum("defaultView", &PlayerView::defaultView, {"First", "Third"}).Tooltip("View a fresh play starts in")
-     .AddKey("toggleKey", &PlayerView::toggleKey, false)
+     .AddKey("toggleKey", &PlayerView::toggleKey)
      .AddInt("toggleGamepadButton", &PlayerView::toggleGamepadButton).Range(-1, 31, 1).Tooltip("Back. -1 = none. (No separate stick-click id.)")
      .AddFloat("blendTime", &PlayerView::blendTime).Range(0, 1000, 0.1).Tooltip("Seconds for a full switch; a reverse starts from here")
      .AddEnum("switchEase", &PlayerView::switchEase, {"Linear", "Smooth", "In", "Out"}).Tooltip("Easing of the view switch")
@@ -93,7 +93,7 @@ void RegisterFirstPersonController() {
      .AddFloat("coyoteTime", &FirstPersonController::coyoteTime).Range(0, 3600, 0.05).Tooltip("Forgiving jump timing: coyote time (jump just after a ledge) + jump buffer (press just before landing)")
      .AddFloat("jumpBufferTime", &FirstPersonController::jumpBufferTime).Range(0, 3600, 0.05).Tooltip("A jump pressed this long before landing still counts, seconds")
      .AddInt("maxJumps", &FirstPersonController::maxJumps).Range(1, 16, 1).Tooltip("1 = single jump, 2 = double jump, etc")
-     .AddKey("sprintKey", &FirstPersonController::sprintKey, false).Tooltip("Hold (or tap, if toggleRun) to run; 0 = disabled")
+     .AddKey("sprintKey", &FirstPersonController::sprintKey).Tooltip("Hold (or tap, if toggleRun) to run; 0 = disabled")
      .AddBool("toggleRun", &FirstPersonController::toggleRun).Tooltip("Tap sprint to keep running instead of holding")
      .AddBool("canJump", &FirstPersonController::canJump).Tooltip("Allow jumping")
      .AddBool("driveAnimation", &FirstPersonController::driveAnimation).Tooltip("Set a sibling Character's anim from movement")
@@ -111,8 +111,8 @@ void RegisterFirstPersonController() {
      .AddFloat("bobGroundGrace", &FirstPersonController::bobGroundGrace).Range(0, 3600, 0.05).Tooltip("S the bob and landing dip still count you as grounded (stairs, slopes)")
      .AddFloat("eyeStepSmoothing", &FirstPersonController::eyeStepSmoothing).Range(0, 1000, 0.1).Tooltip("How fast the eye eases over steps (0 = none)")
      .Section("Stance")
-     .AddKey("crouchKey", &FirstPersonController::crouchKey, false)
-     .AddKey("proneKey", &FirstPersonController::proneKey, false)
+     .AddKey("crouchKey", &FirstPersonController::crouchKey)
+     .AddKey("proneKey", &FirstPersonController::proneKey)
      .AddBool("toggleStance", &FirstPersonController::toggleStance).Tooltip("Tap to toggle vs hold to hold the stance")
      .AddFloat("crouchSpeed", &FirstPersonController::crouchSpeed).Range(0, 10000, 0.1).Tooltip("Speed while crouched")
      .AddFloat("proneSpeed", &FirstPersonController::proneSpeed).Range(0, 10000, 0.1).Tooltip("Speed while prone")
@@ -127,8 +127,8 @@ void RegisterFirstPersonController() {
      .AddFloat("proneEyeHeight", &FirstPersonController::proneEyeHeight).Range(0, kBig, 0.05).Tooltip("Camera height while prone")
      .AddFloat("stanceLerp", &FirstPersonController::stanceLerp).Range(0, 1000, 0.1).Tooltip("How fast the eye follows the body down / up")
      .Section("Lean")
-     .AddKey("leanLeftKey", &FirstPersonController::leanLeftKey, false)
-     .AddKey("leanRightKey", &FirstPersonController::leanRightKey, false)
+     .AddKey("leanLeftKey", &FirstPersonController::leanLeftKey)
+     .AddKey("leanRightKey", &FirstPersonController::leanRightKey)
      .AddFloat("leanAngle", &FirstPersonController::leanAngle).Range(0, 360, 1).Tooltip("Camera roll while leaning (degrees)")
      .AddFloat("leanOffset", &FirstPersonController::leanOffset).Range(-kBig, kBig, 0.05).Tooltip("Sideways camera shift while leaning (units)")
      .AddFloat("leanSpeed", &FirstPersonController::leanSpeed).Range(0, 10000, 0.1).Tooltip("How fast the lean eases in/out")
@@ -158,7 +158,7 @@ void RegisterFirstPersonController() {
      .AddBool("ikLook", &FirstPersonController::ikLook).Tooltip("A Full Body IK on the body looks where the camera aims");
     b.Section("Dodge")
      .AddBool("canDodge", &FirstPersonController::dodge, &DodgeMove::canDodge).Tooltip("Key dodge. Off by default so existing games do not change")
-     .AddKey("dodgeKey", &FirstPersonController::dodge, &DodgeMove::key, false).Tooltip("Key code of the dodge (0 = no key; a script can still call dodge())")
+     .AddKey("dodgeKey", &FirstPersonController::dodge, &DodgeMove::key).Tooltip("Key code of the dodge (0 = no key; a script can still call dodge())")
      .AddFloat("dodgeImpulse", &FirstPersonController::dodge, &DodgeMove::impulse).Range(0, 1000, 0.1).Tooltip("Horizontal speed of the burst")
      .AddFloat("dodgeDuration", &FirstPersonController::dodge, &DodgeMove::duration).Range(0, 60, 0.05)
      .AddFloat("dodgeCooldown", &FirstPersonController::dodge, &DodgeMove::cooldown).Range(0, 3600, 0.05)
@@ -174,7 +174,7 @@ void RegisterThirdPersonController() {
      .AddFloat("walkSpeed", &ThirdPersonController::walkSpeed).Range(0, 10000, 0.1).Tooltip("Walking speed, units per second")
      .AddFloat("runSpeed", &ThirdPersonController::runSpeed).Range(0, 10000, 0.1).Tooltip("Speed while the sprint key is held")
      .AddFloat("jumpForce", &ThirdPersonController::jumpForce).Range(0, kBig, 0.1).Tooltip("Upward speed of a jump")
-     .AddKey("sprintKey", &ThirdPersonController::sprintKey, false).Tooltip("Hold (or tap, if toggleRun) to run; 0 = disabled")
+     .AddKey("sprintKey", &ThirdPersonController::sprintKey).Tooltip("Hold (or tap, if toggleRun) to run; 0 = disabled")
      .AddBool("toggleRun", &ThirdPersonController::toggleRun).Tooltip("Tap sprint to keep running instead of holding")
      .AddBool("canJump", &ThirdPersonController::canJump).Tooltip("Allow jumping")
      .AddBool("driveAnimation", &ThirdPersonController::driveAnimation).Tooltip("Drive a sibling Character's idle, walk and run from the movement")
@@ -189,8 +189,8 @@ void RegisterThirdPersonController() {
      .AddFloat("jumpBufferTime", &ThirdPersonController::jumpBufferTime).Range(0, 3600, 0.05).Tooltip("A jump pressed this long before landing still counts, seconds")
      .AddInt("maxJumps", &ThirdPersonController::maxJumps).Range(1, 16, 1).Tooltip("1 = single jump, 2 = double jump, etc")
      .Section("Stance")
-     .AddKey("crouchKey", &ThirdPersonController::crouchKey, false)
-     .AddKey("proneKey", &ThirdPersonController::proneKey, false)
+     .AddKey("crouchKey", &ThirdPersonController::crouchKey)
+     .AddKey("proneKey", &ThirdPersonController::proneKey)
      .AddBool("toggleStance", &ThirdPersonController::toggleStance).Tooltip("Tap to toggle vs hold")
      .AddFloat("crouchSpeed", &ThirdPersonController::crouchSpeed).Range(0, 10000, 0.1).Tooltip("Speed while crouched")
      .AddFloat("proneSpeed", &ThirdPersonController::proneSpeed).Range(0, 10000, 0.1).Tooltip("Speed while prone")
@@ -204,8 +204,8 @@ void RegisterThirdPersonController() {
      .AddFloat("proneHeightDrop", &ThirdPersonController::proneHeightDrop).Range(0, kBig, 0.05).Tooltip("...and when prone")
      .AddFloat("stanceLerp", &ThirdPersonController::stanceLerp).Range(0, 1000, 0.1).Tooltip("How fast the camera follows the body down / up")
      .Section("Lean")
-     .AddKey("leanLeftKey", &ThirdPersonController::leanLeftKey, false)
-     .AddKey("leanRightKey", &ThirdPersonController::leanRightKey, false)
+     .AddKey("leanLeftKey", &ThirdPersonController::leanLeftKey)
+     .AddKey("leanRightKey", &ThirdPersonController::leanRightKey)
      .AddFloat("leanAngle", &ThirdPersonController::leanAngle).Range(0, 360, 1).Tooltip("Camera roll while leaning (degrees)")
      .AddFloat("leanOffset", &ThirdPersonController::leanOffset).Range(-kBig, kBig, 0.05).Tooltip("Sideways camera shift while leaning (units)")
      .AddFloat("leanSpeed", &ThirdPersonController::leanSpeed).Range(0, 10000, 0.1).Tooltip("How fast the lean eases in/out")
@@ -264,7 +264,7 @@ void RegisterThirdPersonController() {
      .AddBool("ikLook", &ThirdPersonController::ikLook).Tooltip("A Full Body IK on the body looks where the camera aims");
     b.Section("Dodge")
      .AddBool("canDodge", &ThirdPersonController::dodge, &DodgeMove::canDodge).Tooltip("Key dodge. Off by default so existing games do not change")
-     .AddKey("dodgeKey", &ThirdPersonController::dodge, &DodgeMove::key, false).Tooltip("Key code of the dodge (0 = no key; a script can still call dodge())")
+     .AddKey("dodgeKey", &ThirdPersonController::dodge, &DodgeMove::key).Tooltip("Key code of the dodge (0 = no key; a script can still call dodge())")
      .AddFloat("dodgeImpulse", &ThirdPersonController::dodge, &DodgeMove::impulse).Range(0, 1000, 0.1).Tooltip("Horizontal speed of the burst")
      .AddFloat("dodgeDuration", &ThirdPersonController::dodge, &DodgeMove::duration).Range(0, 60, 0.05)
      .AddFloat("dodgeCooldown", &ThirdPersonController::dodge, &DodgeMove::cooldown).Range(0, 3600, 0.05)
@@ -280,7 +280,7 @@ void RegisterCharacterController2D() {
      .Section("Movement")
      .AddFloat("speed", &CharacterController2D::speed).Range(0, 10000, 0.1).Tooltip("Walk / move speed")
      .AddFloat("runSpeed", &CharacterController2D::runSpeed).Range(0, 10000, 0.1).Tooltip("Speed while the sprint key is held")
-     .AddKey("sprintKey", &CharacterController2D::sprintKey, true).Tooltip("Hold to run (0 = disabled)")
+     .AddKey("sprintKey", &CharacterController2D::sprintKey).Tooltip("Hold to run (0 = disabled)")
      .AddFloat("acceleration", &CharacterController2D::acceleration).Range(0, kBig, 1).Tooltip("Units/s^2 toward the target speed (0 = instant)")
      .AddFloat("deceleration", &CharacterController2D::deceleration).Range(0, kBig, 1).Tooltip("Units/s^2 back toward 0 with no input (0 = instant)")
      .AddBool("normalizeDiagonal", &CharacterController2D::normalizeDiagonal).Tooltip("Top-down: diagonals aren't faster")
@@ -309,7 +309,7 @@ void RegisterCharacterController3D() {
     PropertyBuilder<CharacterController3D> b("CharacterController3D", "charctrl3d", "Controllers");
     b.AddFloat("speed", &CharacterController3D::speed).Range(0, 10000, 0.1).Tooltip("Walk speed on the ground plane")
      .AddFloat("runSpeed", &CharacterController3D::runSpeed).Range(0, 10000, 0.1).Tooltip("Speed while the sprint key is held")
-     .AddKey("sprintKey", &CharacterController3D::sprintKey, false).Tooltip("Hold to run (0 = disabled)")
+     .AddKey("sprintKey", &CharacterController3D::sprintKey).Tooltip("Hold to run (0 = disabled)")
      .AddFloat("jumpForce", &CharacterController3D::jumpForce).Range(0, kBig, 0.1).Tooltip("Upward velocity on jump")
      .AddBool("canJump", &CharacterController3D::canJump).Tooltip("Platformer-style jump on space")
      .AddFloat("acceleration", &CharacterController3D::acceleration).Range(0, kBig, 1).Tooltip("How fast velocity ramps toward the target (units/s^2)")
@@ -326,7 +326,7 @@ void RegisterTopDownController() {
     b.Section("Movement")
      .AddFloat("walkSpeed", &TopDownController::walkSpeed).Range(0, 10000, 0.1).Tooltip("Walking speed, units per second")
      .AddFloat("runSpeed", &TopDownController::runSpeed).Range(0, 10000, 0.1).Tooltip("Speed while the sprint key is held")
-     .AddKey("sprintKey", &TopDownController::sprintKey, true).Tooltip("Hold to run (0 = disabled)")
+     .AddKey("sprintKey", &TopDownController::sprintKey).Tooltip("Hold to run (0 = disabled)")
      .AddBool("driveAnimation", &TopDownController::driveAnimation).Tooltip("Drive a sibling Character's idle, walk and run from the movement")
      .AddBool("footIK", &TopDownController::footIK).Tooltip("Plant the Character's feet on the ground")
      .AddBool("rotateToFace", &TopDownController::rotateToFace).Tooltip("Turn the body toward travel")
@@ -349,13 +349,13 @@ void RegisterTopDownController2D() {
     b.Section("Movement")
      .AddFloat("speed", &TopDownController2D::speed).Range(0, 10000, 0.1).Tooltip("Walk speed")
      .AddFloat("runSpeed", &TopDownController2D::runSpeed).Range(0, 10000, 0.1).Tooltip("Speed while the sprint key is held")
-     .AddKey("sprintKey", &TopDownController2D::sprintKey, true).Tooltip("Hold to run (0 = disabled)")
+     .AddKey("sprintKey", &TopDownController2D::sprintKey).Tooltip("Hold to run (0 = disabled)")
      .AddBool("normalizeDiagonal", &TopDownController2D::normalizeDiagonal).Tooltip("W+D isn't faster than W alone")
      .AddBool("useGamepad", &TopDownController2D::useGamepad).Tooltip("Left stick overrides the keys when pushed")
      .AddFloat("acceleration", &TopDownController2D::acceleration).Range(0, kBig, 1).Tooltip("Momentum: units/s^2 toward the target speed (0 = instant, arcade-snappy)")
      .AddFloat("deceleration", &TopDownController2D::deceleration).Range(0, kBig, 1).Tooltip("How fast the speed drops with no input (units/s^2, 0 = instant)")
      .Section("Dash")
-     .AddKey("dashKey", &TopDownController2D::dashKey, true).Tooltip("Tap to dash (0 = disabled)")
+     .AddKey("dashKey", &TopDownController2D::dashKey).Tooltip("Tap to dash (0 = disabled)")
      .AddFloat("dashSpeed", &TopDownController2D::dashSpeed).Range(0, 10000, 0.1).Tooltip("Speed during a dash")
      .AddFloat("dashDuration", &TopDownController2D::dashDuration).Range(0, 3600, 0.05).Tooltip("Seconds")
      .AddFloat("dashCooldown", &TopDownController2D::dashCooldown).Range(0, 3600, 0.05).Tooltip("Seconds between dashes")
@@ -371,7 +371,7 @@ void RegisterTopDownController2D() {
      .AddVec2("boundsMax", &TopDownController2D::boundsMax).Range(-kBig, kBig, 0.1).Tooltip("Upper-right corner of the allowed area")
      .AddBool("screenWrap", &TopDownController2D::screenWrap).Tooltip("Wrap around the camera view edges instead")
      .Section("Combat")
-     .AddKey("fireKey", &TopDownController2D::fireKey, true).Tooltip("Hold to shoot (0 = disabled)")
+     .AddKey("fireKey", &TopDownController2D::fireKey).Tooltip("Hold to shoot (0 = disabled)")
      .AddInt("fireButton", &TopDownController2D::fireButton).Range(-1, 4, 1).Tooltip("Mouse button to shoot (-1 = off; 0 = left)")
      .AddString("projectile", &TopDownController2D::projectile).Tooltip("Prefab spawned as a bullet (give it a Rigidbody2D + Lifetime)")
      .AddFloat("projectileSpeed", &TopDownController2D::projectileSpeed).Range(0, 10000, 0.1).Tooltip("Speed of a projectile, units per second")
@@ -385,9 +385,9 @@ void RegisterFreeRoamController() {
     PropertyBuilder<FreeRoamController> b("FreeRoamController", "frctrl", "Controllers");
     b.AddFloat("moveSpeed", &FreeRoamController::moveSpeed).Range(0, 10000, 0.1).Tooltip("Units/sec")
      .AddFloat("boostMultiplier", &FreeRoamController::boostMultiplier).Range(0, 1000, 0.01).Tooltip("Hold sprint to fly faster")
-     .AddKey("sprintKey", &FreeRoamController::sprintKey, false)
-     .AddKey("upKey", &FreeRoamController::upKey, false).Tooltip("Rise (Space)")
-     .AddKey("downKey", &FreeRoamController::downKey, false).Tooltip("Descend ('c'; Ctrl also descends)")
+     .AddKey("sprintKey", &FreeRoamController::sprintKey)
+     .AddKey("upKey", &FreeRoamController::upKey).Tooltip("Rise (Space)")
+     .AddKey("downKey", &FreeRoamController::downKey).Tooltip("Descend ('c'; Ctrl also descends)")
      .AddFloat("mouseSensitivity", &FreeRoamController::mouseSensitivity).Range(0, kBig, 0.1).Tooltip("Degrees per pixel")
      .AddBool("invertY", &FreeRoamController::invertY).Tooltip("Invert vertical mouse look")
      .AddBool("lockCursor", &FreeRoamController::lockCursor).Tooltip("Capture the cursor and always look")
@@ -405,7 +405,7 @@ void RegisterClickToMoveController() {
     PropertyBuilder<ClickToMoveController> b("ClickToMoveController", "ctmctrl", "Controllers");
     b.AddFloat("walkSpeed", &ClickToMoveController::walkSpeed).Range(0, 10000, 0.1).Tooltip("Walking speed, units per second")
      .AddFloat("runSpeed", &ClickToMoveController::runSpeed).Range(0, 10000, 0.1).Tooltip("Speed while the sprint key is held")
-     .AddKey("runKey", &ClickToMoveController::runKey, true).Tooltip("Hold to run (0 = disabled)")
+     .AddKey("runKey", &ClickToMoveController::runKey).Tooltip("Hold to run (0 = disabled)")
      .AddFloat("stopDistance", &ClickToMoveController::stopDistance).Range(0, kBig, 0.05).Tooltip("How close counts as \"arrived\"")
      .AddFloat("arriveRadius", &ClickToMoveController::arriveRadius).Range(0, kBig, 0.05).Tooltip("Ease to a stop over the last this-many metres")
      .AddFloat("turnSpeed", &ClickToMoveController::turnSpeed).Range(0, 36000, 1).Tooltip("How fast the body turns toward travel")
@@ -430,8 +430,8 @@ void RegisterClickToMoveController() {
      .AddFloat("maxPitch", &ClickToMoveController::maxPitch).Range(-90, 90, 1).Tooltip("Highest look angle, degrees")
      .AddFloat("rotateSpeed", &ClickToMoveController::rotateSpeed).Range(0, 36000, 1).Tooltip("Degrees per pixel of middle-drag")
      .AddFloat("keyRotateSpeed", &ClickToMoveController::keyRotateSpeed).Range(0, 36000, 1).Tooltip("Degrees/sec for the rotate keys")
-     .AddKey("rotateLeftKey", &ClickToMoveController::rotateLeftKey, true).Tooltip("E.g. 'q' (0 = disabled)")
-     .AddKey("rotateRightKey", &ClickToMoveController::rotateRightKey, true).Tooltip("E.g. 'e'")
+     .AddKey("rotateLeftKey", &ClickToMoveController::rotateLeftKey).Tooltip("E.g. 'q' (0 = disabled)")
+     .AddKey("rotateRightKey", &ClickToMoveController::rotateRightKey).Tooltip("E.g. 'e'")
      .AddFloat("cameraDamping", &ClickToMoveController::cameraDamping).Range(0, 1000, 0.1).Tooltip("0 = snap; higher = smoother follow");
     b.Commit();
 }
@@ -443,7 +443,7 @@ void RegisterThirdPersonShooterController() {
      .AddFloat("walkSpeed", &ThirdPersonShooterController::walkSpeed).Range(0, 10000, 0.1).Tooltip("Walking speed, units per second")
      .AddFloat("runSpeed", &ThirdPersonShooterController::runSpeed).Range(0, 10000, 0.1).Tooltip("Speed while the sprint key is held")
      .AddFloat("jumpForce", &ThirdPersonShooterController::jumpForce).Range(0, kBig, 0.1).Tooltip("Upward speed of a jump")
-     .AddKey("sprintKey", &ThirdPersonShooterController::sprintKey, true).Tooltip("Hold to run (matches the other controllers)")
+     .AddKey("sprintKey", &ThirdPersonShooterController::sprintKey).Tooltip("Hold to run (matches the other controllers)")
      .AddBool("canJump", &ThirdPersonShooterController::canJump).Tooltip("Allow jumping")
      .AddInt("maxJumps", &ThirdPersonShooterController::maxJumps).Range(1, 16, 1).Tooltip("1 = single jump, 2 = double jump, etc")
      .AddBool("driveAnimation", &ThirdPersonShooterController::driveAnimation).Tooltip("Drive a sibling Character's idle, walk and run from the movement")
@@ -486,8 +486,8 @@ void RegisterThirdPersonShooterController() {
      .Section("Cursor")
      .AddBool("lockCursor", &ThirdPersonShooterController::lockCursor).Tooltip("Hide + lock the cursor while playing")
      .Section("Lean")
-     .AddKey("leanLeftKey", &ThirdPersonShooterController::leanLeftKey, false)
-     .AddKey("leanRightKey", &ThirdPersonShooterController::leanRightKey, false)
+     .AddKey("leanLeftKey", &ThirdPersonShooterController::leanLeftKey)
+     .AddKey("leanRightKey", &ThirdPersonShooterController::leanRightKey)
      .AddFloat("leanAngle", &ThirdPersonShooterController::leanAngle).Range(0, 360, 1).Tooltip("Camera roll + body-lean degrees")
      .AddFloat("leanOffset", &ThirdPersonShooterController::leanOffset).Range(-kBig, kBig, 0.05).Tooltip("Sideways camera shift while leaning")
      .AddFloat("leanSpeed", &ThirdPersonShooterController::leanSpeed).Range(0, 10000, 0.1).Tooltip("How fast the lean eases in and out");
@@ -500,7 +500,7 @@ void RegisterTopDownShooterController() {
     b.Section("Movement")
      .AddFloat("walkSpeed", &TopDownShooterController::walkSpeed).Range(0, 10000, 0.1).Tooltip("Walking speed, units per second")
      .AddFloat("runSpeed", &TopDownShooterController::runSpeed).Range(0, 10000, 0.1).Tooltip("Speed while the sprint key is held")
-     .AddKey("sprintKey", &TopDownShooterController::sprintKey, false).Tooltip("Hold to run (0 = off: shooters usually don't)")
+     .AddKey("sprintKey", &TopDownShooterController::sprintKey).Tooltip("Hold to run (0 = off: shooters usually don't)")
      .AddFloat("acceleration", &TopDownShooterController::acceleration).Range(0, kBig, 1).Tooltip("How fast the speed rises toward the target (units/s^2, 0 = instant)")
      .AddFloat("deceleration", &TopDownShooterController::deceleration).Range(0, kBig, 1).Tooltip("How fast the speed drops with no input (units/s^2, 0 = instant)")
      .AddFloat("backpedalMultiplier", &TopDownShooterController::backpedalMultiplier).Range(0, 1000, 0.01).Tooltip("Speed when moving away from the aim")
@@ -512,7 +512,7 @@ void RegisterTopDownShooterController() {
      .Section("Weapon")
      .AddEnum("fireMode", &TopDownShooterController::fireMode, {"Bullets", "Prefab", "Hitscan"}).Tooltip("How a shot is made")
      .AddInt("fireButton", &TopDownShooterController::fireButton).Range(0, 4, 1).Tooltip("Mouse button (0 = left)")
-     .AddKey("fireKey", &TopDownShooterController::fireKey, false).Tooltip("Optional keyboard fire")
+     .AddKey("fireKey", &TopDownShooterController::fireKey).Tooltip("Optional keyboard fire")
      .AddInt("fireGamepadButton", &TopDownShooterController::fireGamepadButton).Range(-1, 31, 1).Tooltip("Gamepad button that fires (-1 = none)")
      .AddBool("autoFire", &TopDownShooterController::autoFire).Tooltip("Hold to keep firing")
      .AddFloat("fireRate", &TopDownShooterController::fireRate).Range(0, 10000, 0.1).Tooltip("Shots per second")
@@ -530,11 +530,11 @@ void RegisterTopDownShooterController() {
      .AddFloat("muzzleForward", &TopDownShooterController::muzzleForward).Range(-kBig, kBig, 0.05).Tooltip("... and this far in front")
      .Section("Ammo")
      .AddInt("magazineSize", &TopDownShooterController::magazineSize).Range(0, kBig, 1).Tooltip("0 = never reload")
-     .AddKey("reloadKey", &TopDownShooterController::reloadKey, false)
+     .AddKey("reloadKey", &TopDownShooterController::reloadKey)
      .AddFloat("reloadTime", &TopDownShooterController::reloadTime).Range(0, 3600, 0.05).Tooltip("Seconds a reload takes")
      .AddBool("autoReload", &TopDownShooterController::autoReload).Tooltip("Reload when you fire an empty magazine")
      .Section("Dash")
-     .AddKey("dashKey", &TopDownShooterController::dashKey, false).Tooltip("Space")
+     .AddKey("dashKey", &TopDownShooterController::dashKey).Tooltip("Space")
      .AddInt("dashGamepadButton", &TopDownShooterController::dashGamepadButton).Range(-1, 31, 1).Tooltip("Pad A (-1 = none)")
      .AddFloat("dashSpeed", &TopDownShooterController::dashSpeed).Range(0, 10000, 0.1).Tooltip("Peak speed at the start of the dash")
      .AddFloat("dashTime", &TopDownShooterController::dashTime).Range(0, 3600, 0.05).Tooltip("Seconds a dash lasts")
@@ -560,7 +560,7 @@ void RegisterPlatformer25DController() {
     b.Section("Run")
      .AddFloat("walkSpeed", &Platformer25DController::walkSpeed).Range(0, 10000, 0.1).Tooltip("Walking speed, units per second")
      .AddFloat("runSpeed", &Platformer25DController::runSpeed).Range(0, 10000, 0.1).Tooltip("Speed while the sprint key is held")
-     .AddKey("sprintKey", &Platformer25DController::sprintKey, false)
+     .AddKey("sprintKey", &Platformer25DController::sprintKey)
      .AddFloat("acceleration", &Platformer25DController::acceleration).Range(0, kBig, 1).Tooltip("How fast the speed rises toward the target (units/s^2, 0 = instant)")
      .AddFloat("deceleration", &Platformer25DController::deceleration).Range(0, kBig, 1).Tooltip("How fast the speed drops with no input (units/s^2, 0 = instant)")
      .AddFloat("airControl", &Platformer25DController::airControl).Range(0, 1000, 0.01).Tooltip("Control while airborne (0 = none, 1 = full)")
@@ -569,7 +569,7 @@ void RegisterPlatformer25DController() {
      .AddBool("driveAnimation", &Platformer25DController::driveAnimation).Tooltip("Drive a sibling Character's idle, walk and run from the movement")
      .Section("Jump")
      .AddBool("canJump", &Platformer25DController::canJump).Tooltip("Allow jumping")
-     .AddKey("jumpKey", &Platformer25DController::jumpKey, false)
+     .AddKey("jumpKey", &Platformer25DController::jumpKey)
      .AddInt("jumpGamepadButton", &Platformer25DController::jumpGamepadButton).Range(-1, 31, 1).Tooltip("A (-1 = none)")
      .AddFloat("jumpForce", &Platformer25DController::jumpForce).Range(0, kBig, 0.1).Tooltip("Upward speed of a jump")
      .AddInt("maxJumps", &Platformer25DController::maxJumps).Range(1, 16, 1).Tooltip("2 = double jump")
@@ -579,8 +579,8 @@ void RegisterPlatformer25DController() {
      .AddFloat("coyoteTime", &Platformer25DController::coyoteTime).Range(0, 3600, 0.05).Tooltip("A jump still works this long after leaving a ledge, seconds")
      .AddFloat("jumpBufferTime", &Platformer25DController::jumpBufferTime).Range(0, 3600, 0.05).Tooltip("A jump pressed this long before landing still counts, seconds")
      .Section("Stance")
-     .AddKey("crouchKey", &Platformer25DController::crouchKey, false)
-     .AddKey("proneKey", &Platformer25DController::proneKey, false)
+     .AddKey("crouchKey", &Platformer25DController::crouchKey)
+     .AddKey("proneKey", &Platformer25DController::proneKey)
      .AddBool("toggleStance", &Platformer25DController::toggleStance).Tooltip("Tap to toggle vs hold")
      .AddFloat("crouchSpeed", &Platformer25DController::crouchSpeed).Range(0, 10000, 0.1).Tooltip("Speed while crouched")
      .AddFloat("proneSpeed", &Platformer25DController::proneSpeed).Range(0, 10000, 0.1).Tooltip("Speed while prone")
@@ -595,8 +595,8 @@ void RegisterPlatformer25DController() {
      .AddFloat("layerSpacing", &Platformer25DController::layerSpacing).Range(0, kBig, 0.05).Tooltip("Distance between layers (world Z)")
      .AddFloat("frontLayerZ", &Platformer25DController::frontLayerZ).Range(-kBig, kBig, 0.05).Tooltip("World Z of layer 0; deeper layers are further from the camera")
      .AddInt("layer", &Platformer25DController::layer).Range(0, 15, 1).Tooltip("Current layer (the starting layer when the scene starts)")
-     .AddKey("layerBackKey", &Platformer25DController::layerBackKey, false)
-     .AddKey("layerFrontKey", &Platformer25DController::layerFrontKey, false)
+     .AddKey("layerBackKey", &Platformer25DController::layerBackKey)
+     .AddKey("layerFrontKey", &Platformer25DController::layerFrontKey)
      .AddFloat("layerSwitchSpeed", &Platformer25DController::layerSwitchSpeed).Range(0, 10000, 0.1).Tooltip("How quickly you slide between layers")
      .AddBool("checkLayerFree", &Platformer25DController::checkLayerFree).Tooltip("Only switch when the other layer has room")
      .AddFloat("bodyRadius", &Platformer25DController::bodyRadius).Range(0, kBig, 0.05).Tooltip("For the room check")
@@ -605,7 +605,7 @@ void RegisterPlatformer25DController() {
      .AddFloat("faceCameraAngle", &Platformer25DController::faceCameraAngle).Range(0, 360, 1).Tooltip("Turn this far toward the camera so the face shows")
      .Section("Grab")
      .AddBool("canGrab", &Platformer25DController::canGrab).Tooltip("Allow grabbing and dragging objects")
-     .AddKey("grabKey", &Platformer25DController::grabKey, false)
+     .AddKey("grabKey", &Platformer25DController::grabKey)
      .AddInt("grabGamepadButton", &Platformer25DController::grabGamepadButton).Range(-1, 31, 1).Tooltip("Gamepad button that grabs (-1 = none)")
      .AddFloat("grabReach", &Platformer25DController::grabReach).Range(0, kBig, 0.05).Tooltip("How far the player can reach to grab")
      .AddFloat("grabPullSpeed", &Platformer25DController::grabPullSpeed).Range(0, 10000, 0.1).Tooltip("Speed multiplier while dragging something")
@@ -653,7 +653,7 @@ void RegisterVehicleController() {
      .AddFloat("camDistance", &VehicleController::camDistance).Range(0, kBig, 0.05).Tooltip("Distance of the chase camera behind the car")
      .AddFloat("camHeight", &VehicleController::camHeight).Range(0, kBig, 0.05).Tooltip("Height of the chase camera above the car")
      .AddFloat("camLerp", &VehicleController::camLerp).Range(0, 1000, 0.1).Tooltip("How fast the chase camera follows")
-     .AddKey("handbrakeKey", &VehicleController::handbrakeKey, false);
+     .AddKey("handbrakeKey", &VehicleController::handbrakeKey);
     b.Commit();
 }
 
@@ -669,7 +669,7 @@ void RegisterVehicleController2D() {
      .AddFloat("grip", &VehicleController2D::grip).Range(0, 1000, 0.01).Tooltip("How fast sideways slide is killed (high = sticky)")
      .AddFloat("handbrakeGrip", &VehicleController2D::handbrakeGrip).Range(0, 1000, 0.01).Tooltip("Sideways grip while the handbrake is held (low = drifty)")
      .AddBool("sideView", &VehicleController2D::sideView).Tooltip("True = platformer car (drive on X, gravity on)")
-     .AddKey("handbrakeKey", &VehicleController2D::handbrakeKey, false);
+     .AddKey("handbrakeKey", &VehicleController2D::handbrakeKey);
     b.Commit();
 }
 
@@ -701,7 +701,8 @@ void RegisterSpawner() {
      .AddInt("count", &Spawner::count).Range(1, 100000, 1).Tooltip("Spawns per wave")
      .AddInt("waves", &Spawner::waves).Range(0, kBig, 1).Tooltip("Waves to run (0 = endless)")
      .AddFloat("waveDelay", &Spawner::waveDelay).Range(0, 3600, 0.05).Tooltip("Pause between waves (0 = just `interval`)")
-     .AddBool("autoStart", &Spawner::autoStart).Tooltip("Begin at scene start (off = spawner_start / StartWaves)");
+     .AddBool("autoStart", &Spawner::autoStart).Tooltip("Begin at scene start (off = spawner_start / StartWaves)")
+     .AddBool("usePool", &Spawner::usePool).Tooltip("Make the copies from an ObjectPool (reused, see Scene::Despawn)");
     b.Commit();
 }
 
@@ -831,7 +832,7 @@ void RegisterDropZone() {
 // Flashlight
 void RegisterFlashlight() {
     PropertyBuilder<Flashlight> b("Flashlight", "flashlight", "Gameplay");
-    b.AddKey("toggleKey", &Flashlight::toggleKey, false).Tooltip("Press to toggle (0 = no key; still starts in `on`)")
+    b.AddKey("toggleKey", &Flashlight::toggleKey).Tooltip("Press to toggle (0 = no key; still starts in `on`)")
      .AddBool("on", &Flashlight::on).Tooltip("Current state")
      .AddFloat("range", &Flashlight::range).Range(0, kBig, 0.05).Tooltip("How far the beam reaches (world units)")
      .AddFloat("angle", &Flashlight::angle).Range(1, 179, 1).Tooltip("Cone width (full angle, degrees)")
@@ -1025,7 +1026,7 @@ void RegisterNetworkPlayerSpawner() {
      .AddVec3("spawnPoint", &NetworkPlayerSpawner::spawnPoint).Range(-kBig, kBig, 0.1).Tooltip("Where players appear")
      .AddFloat("spawnSpread", &NetworkPlayerSpawner::spawnSpread).Range(0, kBig, 0.1).Tooltip("Stagger remotes so they don't stack")
      .AddBool("spawnLocalPlayer", &NetworkPlayerSpawner::spawnLocalPlayer).Tooltip("Also spawn + own the local player")
-     .AddKey("glyph", &NetworkPlayerSpawner::glyph, false).Tooltip("Avatar glyph for the manager roster");
+     .AddKey("glyph", &NetworkPlayerSpawner::glyph).Tooltip("Avatar glyph for the manager roster");
     b.Commit();
 }
 

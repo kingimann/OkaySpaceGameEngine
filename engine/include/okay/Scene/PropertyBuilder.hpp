@@ -156,16 +156,14 @@ public:
     // ---- Key bindings ------------------------------------------------------------------
     /// A key binding held in a `char` field: an Int property 0..255 holding the key code
     /// (0 = none; 1..31 are the special keys such as Shift, Ctrl and the arrows, see Input.hpp).
-    /// Pass `rawCharRecord` when the file format writes the key as one raw character: white
-    /// space and '-' (its "none") cannot be stored there, so those codes are refused.
-    template <class Owner> PropertyBuilder& AddKey(const char* name, char Owner::*m, bool rawCharRecord = false) {
+    template <class Owner> PropertyBuilder& AddKey(const char* name, char Owner::*m) {
         return AddKeyImpl(name, [m](const Component& c) { return As<Owner>(c).*m; },
-                          [m](Component& c, char k) { As<Owner>(c).*m = k; }, rawCharRecord);
+                          [m](Component& c, char k) { As<Owner>(c).*m = k; });
     }
     /// The same for a `char` inside a struct member: `AddKey("dodgeKey", &C::dodge, &Dodge::key)`.
-    template <class Owner, class Inner> PropertyBuilder& AddKey(const char* name, Inner Owner::*outer, char Inner::*inner, bool rawCharRecord = false) {
+    template <class Owner, class Inner> PropertyBuilder& AddKey(const char* name, Inner Owner::*outer, char Inner::*inner) {
         return AddKeyImpl(name, [outer, inner](const Component& c) { return (As<Owner>(c).*outer).*inner; },
-                          [outer, inner](Component& c, char k) { (As<Owner>(c).*outer).*inner = k; }, rawCharRecord);
+                          [outer, inner](Component& c, char k) { (As<Owner>(c).*outer).*inner = k; });
     }
 
     // ---- Computed properties -----------------------------------------------------
@@ -249,13 +247,11 @@ private:
         return *this;
     }
     template <class Get, class Set>
-    PropertyBuilder& AddKeyImpl(const char* name, Get get, Set set, bool rawCharRecord) {
+    PropertyBuilder& AddKeyImpl(const char* name, Get get, Set set) {
         Prop(name, PropertyType::Int,
             [get](const Component& c) { return PropertyValue::MakeInt(static_cast<int>(static_cast<unsigned char>(get(c)))); },
-            [set, rawCharRecord](Component& c, const PropertyValue& v) {
-                const int code = static_cast<int>(v.AsInt());
-                if (rawCharRecord && (code == '-' || code == ' ' || (code >= 9 && code <= 13))) return false;
-                set(c, static_cast<char>(code));
+            [set](Component& c, const PropertyValue& v) {
+                set(c, static_cast<char>(static_cast<int>(v.AsInt())));
                 return true;
             });
         PropertyDesc& d = m_info.properties.back();

@@ -105,7 +105,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Docs:** `docs/editor.md` (Script Editor), `docs/scripting.md`
 - **Tests:** `editor` (selftest covers ScriptText outline, identifier search and the lint), `starter_script`
 - **Status:** Works - features are present as menu items and code per the editor source; no separate unit tests except the selftest
-- **Open:** earlier map: "meaningful syntax only; classes and templates for New Script" (open); no step debugger for text scripts (only the visual-script debugger, 14.5); the 2.7k-line window lives in `main.cpp` (15.10)
+- **Open:** earlier map: "meaningful syntax only; classes and templates for New Script" (open); no step debugger for text scripts (only the visual-script debugger, 14.5); the 2.7k-line window lives in `main.cpp` (15.10). Script compile errors and missing script files are also rows in the project Problems panel (15.11.8), separate from this window's own Problems list
 - **Related:** 13.1, 13.2, 13.4, 15.10, 15.8
 - **Words:** script editor, code editor, autocomplete, red squiggles, problems, rename symbol, format document, find in files, go to definition, outline, snippets, external IDE, VS Code, live sync, syntax highlighting
 - **Seen as:** red squiggles are wrong or missing; autocomplete does not offer a function; Rename misses a usage; Format changes code; a save in the external IDE does not reload; typing lags in a big script

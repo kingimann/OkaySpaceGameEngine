@@ -480,11 +480,15 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     for (const auto& e : all) {
         if (!passesLevel(e.level)) continue;
         if (needle.empty() && !e.browse) continue;
-        if (s_side == -4 && !(e.def && VsIsStarter(e.def->type))) continue;
-        if (s_side >= 0 && e.catIndex != s_side) continue;
-        if (s_side >= 0 && s_sub >= 0 && e.sub != s_subName) continue;
-        if (s_side == -1 && !isFav(e.key)) continue;
-        if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
+        // Typing searches every topic, so a name is found wherever it lives.
+        // Only the level filter still applies.
+        if (needle.empty()) {
+            if (s_side == -4 && !(e.def && VsIsStarter(e.def->type))) continue;
+            if (s_side >= 0 && e.catIndex != s_side) continue;
+            if (s_side >= 0 && s_sub >= 0 && e.sub != s_subName) continue;
+            if (s_side == -1 && !isFav(e.key)) continue;
+            if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
+        }
         Row r{&e, 0, {}};
         r.sc = score(e, r.hits);
         if (r.sc > 0) rows.push_back(std::move(r));
@@ -529,7 +533,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImGui::TextDisabled(s_side == -1 ? "No favourites yet: click the star on a node to add one."
                           : s_side == -2 ? "Nodes you add show up here."
                           : s_side == -4 ? "Nothing at this level in the starter set."
-                          : needle.empty() ? "Nothing here at this level." : "No node matches that.");
+                          : needle.empty() ? "Nothing here at this level."
+                              : s_filter != 0 ? "No node matches that at this level. Try All." : "No node matches that.");
     } else if (st.linkPending && needle.empty()) {
         ImGui::TextDisabled("Suggested for this pin");
     } else if (s_side == -4 && needle.empty()) {

@@ -2774,7 +2774,9 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
     const std::string preview = value.empty() ? std::string("(choose a ") + VsChoiceKindName(kind) + ")" : value;
     ImGui::SetNextItemWidth(width);
     if (missing) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
+    bool colorPushed = missing;
     if (ImGui::BeginCombo("##choice", preview.c_str())) {
+        if (colorPushed) { ImGui::PopStyleColor(); colorPushed = false; }   // the open list uses the normal text colour
         auto section = [&](const char* title, const std::vector<std::string>& items) {
             if (items.empty()) return;
             ImGui::TextDisabled("%s", title);
@@ -2790,7 +2792,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
         if (rows.empty()) ImGui::TextDisabled("Nothing to pick yet. You can still drop a file.");
         ImGui::EndCombo();
     }
-    if (missing) ImGui::PopStyleColor();
+    if (colorPushed) ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
         if (missing) ImGui::SetTooltip("\"%s\" is not in the list any more. Pick another, or drop a file.", value.c_str());
         else ImGui::SetTooltip("Pick a %s, or drop one from the Project window.", VsChoiceKindName(kind));
@@ -2810,10 +2812,9 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
         }
         ImGui::EndDragDropTarget();
     }
-    if (missing) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
-        ImGui::TextUnformatted("Not in the list");
-        ImGui::PopStyleColor();
+    if (missing) {   // drawn on the canvas under the box (a widget here would land at the window's left edge)
+        const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddText(ImVec2(r0.x, r1.y + 1.0f), IM_COL32(255, 140, 115, 255), "Not in the list");
     }
     return changed;
 }

@@ -19,6 +19,13 @@ ImU32 U32(const Color& c, float alpha = 1.0f) {
     return IM_COL32(b(c.r), b(c.g), b(c.b), b(c.a * alpha));
 }
 
+// Dim help text that wraps inside the Inspector instead of running off its edge.
+void Hint(const char* text) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
+}
+
 // "cornerRadius" -> "Corner Radius"
 std::string Nice(const std::string& n) {
     std::string out;
@@ -303,23 +310,21 @@ bool DrawRuntimeUIComponentInspector(Component* comp, EditorState& ed, Component
             char nb[64]; std::snprintf(nb, sizeof nb, "%s", sv->themeName.c_str());
             if (ImGui::InputText("Theme Name##uisv", nb, sizeof nb)) { sv->themeName = nb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Leave empty to use the scene's first UI Theme.");
-            ImGui::TextDisabled("Applied when the theme is applied. Change the look and every role follows.");
+            Hint("Applied when the theme is applied. Change the look and every role follows.");
         }
         return true;
     }
     if (auto* dn = dynamic_cast<UIDamageNumbers*>(comp)) {
         if (hooks.header("UI Damage Numbers", dn, toRemove, true)) {
             DrawProps(*dn, ed);
-            ImGui::TextDisabled("Floating combat text. A button's On Click can call Hit, Crit, Heal, Miss or Info on this object;");
-            ImGui::TextDisabled("scripts use ui_damage_number(\"-25\", x, y).");
+            Hint("Floating combat text. A button's On Click can call Hit, Crit, Heal, Miss or Info on this object; scripts use ui_damage_number(\"-25\", x, y).");
         }
         return true;
     }
     if (auto* db = dynamic_cast<UIDialogueBox*>(comp)) {
         if (hooks.header("UI Dialogue Box", db, toRemove, true)) {
             DrawProps(*db, ed);
-            ImGui::TextDisabled("Finds children named Speaker, Body, Choice1-3, Next and Box.");
-            ImGui::TextDisabled("Scripts: ui_dialogue_show(\"Mara\", \"Hello\", \"Yes\", \"No\"), ui_dialogue_choice().");
+            Hint("Finds children named Speaker, Body, Choice1-3, Next and Box. Scripts: ui_dialogue_show(\"Mara\", \"Hello\", \"Yes\", \"No\"), ui_dialogue_choice().");
         }
         return true;
     }

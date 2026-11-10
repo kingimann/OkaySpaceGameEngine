@@ -33,6 +33,7 @@
 #include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
+#include "okay/Components/UIInventoryBind.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
@@ -3438,6 +3439,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         k("dbCps", db->charsPerSecond).b("dbHide", db->hideWhenDone).b("dbClick", db->advanceOnClick).b("dbStartHidden", db->startHidden);
         out << "\n";
     }
+    if (auto* ib = go->GetComponent<UIInventoryBind>()) {
+        out << "  uiinvbind";
+        KvOut k{out};
+        k.str("inv", ib->inventoryName).b("fit", ib->fitRows)("fscale", ib->slotFontScale);
+        out << "\n";
+    }
     // Runtime UI extras (radio groups, pointer-blocking panels, draggable windows, theme roles, floating
     // numbers, dialogue boxes). One key=value record that is only written when something is non-default,
     // so older scenes are byte-for-byte the same and older builds skip it.
@@ -3445,7 +3452,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         std::ostringstream xs; UseRoundTripFloats(xs);
         KvOut k{xs};
         if (auto* pn = go->GetComponent<UIPanel>(); pn && pn->blocksPointer) k.b("pblock", true);
+        if (auto* rtx = go->GetComponent<TextRenderer>(); rtx && rtx->richText) k.b("rich", true);
         if (auto* tg = go->GetComponent<UIToggle>(); tg && !tg->radioGroup.empty()) k.str("rgroup", tg->radioGroup);
+        if (auto* sg = go->GetComponent<UISlotGrid>(); sg && (sg->fontScale != 1.5f || !sg->numberEmptySlots || sg->textColor.r != 1.0f || sg->textColor.g != 1.0f || sg->textColor.b != 1.0f || sg->textColor.a != 1.0f))
+            k("sgFont", sg->fontScale).b("sgNum", sg->numberEmptySlots).col("sgText", sg->textColor);
         if (auto* dg = go->GetComponent<UIDraggable>()) {
             if (dg->dragParent) k.b("dragParent", true);
             if (dg->keepOnScreen) k.b("keepOnScreen", true);
@@ -6269,7 +6279,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // Runtime UI extras: only the keys present are applied, so scenes saved before them load as they were.
                     KvIn k(in);
                     if (auto* pn = go->GetComponent<UIPanel>()) k.b("pblock", pn->blocksPointer);
+                    if (auto* rtx = go->GetComponent<TextRenderer>()) k.b("rich", rtx->richText);
                     if (auto* tg = go->GetComponent<UIToggle>()) k.str("rgroup", tg->radioGroup);
+                    if (auto* sg = go->GetComponent<UISlotGrid>()) { k.f("sgFont", sg->fontScale); k.b("sgNum", sg->numberEmptySlots); k.col("sgText", sg->textColor); }
                     if (auto* dg = go->GetComponent<UIDraggable>()) { k.b("dragParent", dg->dragParent); k.b("keepOnScreen", dg->keepOnScreen); }
                 } else if (field == "uivariant") {
                     auto* sv = go->AddComponent<UIStyleVariant>();
@@ -6285,6 +6297,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("dnAtX", dn->spawnAt.x); k.f("dnAtY", dn->spawnAt.y);
                     k.col("dnNormal", dn->normalColor); k.col("dnCritC", dn->critColor); k.col("dnHeal", dn->healColor);
                     k.col("dnMiss", dn->missColor); k.col("dnInfo", dn->infoColor);
+                } else if (field == "uiinvbind") {
+                    auto* ib = go->AddComponent<UIInventoryBind>();
+                    KvIn k(in);
+                    k.str("inv", ib->inventoryName); k.b("fit", ib->fitRows); k.f("fscale", ib->slotFontScale);
                 } else if (field == "uidialoguebox") {
                     auto* db = go->AddComponent<UIDialogueBox>();
                     KvIn k(in);

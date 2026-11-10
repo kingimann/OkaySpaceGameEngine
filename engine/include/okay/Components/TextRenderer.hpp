@@ -7,6 +7,7 @@
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Utf8.hpp"
+#include "okay/UI/RichText.hpp"
 #include <string>
 #include <cmath>
 #include <cctype>
@@ -84,6 +85,10 @@ public:
     bool  uppercase = false;
     /// Word-wrap the text to the box width (screen space). Long words overflow.
     bool  wrap = false;
+    /// Read [color=#rrggbb]...[/color], [b]...[/b] and [i]...[/i] in the text (screen space; see
+    /// okay/UI/RichText.hpp). The tags take no room: wrapping, alignment and the typing effect see the
+    /// plain text. Bold is drawn by doubling the glyphs; italic leans the built-in font only.
+    bool  richText = false;
 
     /// Best Fit: auto-scale the text so it fills its `size` box — big
     /// when there's room, shrinking to fit when the string is long. Overrides
@@ -131,9 +136,13 @@ public:
     /// Same, without a copy per frame: returns `text` itself when nothing changes it,
     /// else builds the result in `scratch` (reused, so its capacity carries over).
     const std::string& DisplayText(std::string& scratch) const {
+        thread_local std::string plainTags;   // the text without its tags (rich text only)
+        const std::string* srcp = &text;
+        if (richText && RichTextHasTags(text)) { plainTags = ParseRichText(text).plain; srcp = &plainTags; }
+        const std::string& src = *srcp;
         int vis = EffectiveVisible();
-        const std::size_t cutAt = vis >= 0 ? utf8::Offset(text, (std::size_t)vis) : text.size();   // whole characters
-        const bool cut = cutAt < text.size();
+        const std::size_t cutAt = vis >= 0 ? utf8::Offset(src, (std::size_t)vis) : src.size();   // whole characters
+        const bool cut = cutAt < src.size();
         int maxChars = 0;
         float boxW = size.x;
         if (screenSpace) {
@@ -145,8 +154,8 @@ public:
             float glyphW = Advance() * pixelSize;
             maxChars = glyphW > 0.0f ? (int)(boxW / glyphW) : 0;
         }
-        if (!cut && !uppercase && maxChars < 1) return text;
-        scratch.assign(text, 0, cutAt);
+        if (!cut && !uppercase && maxChars < 1) { if (srcp == &text) return text; scratch = src; return scratch; }
+        scratch.assign(src, 0, cutAt);
         if (uppercase)
             for (char& c : scratch) c = (char)std::toupper((unsigned char)c);
         if (maxChars >= 1) scratch = WrapTo(scratch, maxChars);

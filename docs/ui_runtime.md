@@ -51,7 +51,7 @@ floating damage numbers, a dialogue box, the UI Gallery, and the script and C++ 
 | Retro Pixel | square corners, 2 px white border, hard black drop shadow, instant changes |
 | Minimal | near-white, black buttons, hairline border |
 | Neon | dark violet, magenta and cyan glow |
-| Glass | frosted white cards (best over a picture; there is no real blur) |
+| Glass | see-through cards with a bright edge and a soft shadow, so the picture behind shows through. It does **not** blur what is behind it (the UI draw path cannot read the screen back), and it is not called frosted for that reason |
 | Military | olive and khaki, square, gold accent |
 | Horror | near-black, dried-blood red, dark red glow |
 
@@ -73,7 +73,8 @@ widgets; nothing moves.
 | Damage Numbers | UI Damage Numbers | `Spawn(text, kind, pos)` (canvas pixels) or `SpawnAtWorld(text, kind, point)`; the numbers are made under the scene's Canvas. Buttons can call `Hit`, `Crit`, `Heal`, `Miss`, `Info`. Numbers drift by a fixed pattern, so a replay looks the same. |
 | Dialogue Box | UI Dialogue Box | Children named `Box`, `Speaker`, `Body`, `Choice1-3`, `Next`. Typing speed, skip on click or Space, up to four choices. |
 | Nameplate | Prebuilt Screens > Nameplate | A plate with name, level and health bar. The "in the world" version follows a 3D object and faces the camera. |
-| Inventory | Prebuilt Screens > Inventory | A bag with a slot grid you can click. |
+| Inventory | Prebuilt Screens > Inventory | A bag screen with a slot grid you can click. A **UI Inventory Bind** on the grid shows the real Inventory: the Player's, else the one named in **Inventory Name**, else the first in the scene. Each slot shows its item and stack size ("Potion 7"), empty places stay blank, and the grid gets as many rows as the bag has room for. `SelectedItem()` and `SelectedCount()` say what is in the clicked slot. With no Inventory in the scene the grid keeps its sample names. It shows the bag; moving items between bags is done by the Inventory itself. |
+| Rich text | Text > **Rich Text** | See below. |
 
 Already there and unchanged: buttons (hover, press, focus states), toggles and switches, slider, stepper,
 rating, progress bars (linear, segmented, trail, gradient), radial progress and spinner, dropdown, input
@@ -81,8 +82,18 @@ field, scroll view with masking and scroll bars, list view, tabs, tooltip, modal
 crosshair, minimap, slot grid, layout groups, UI Frame (anchors, pivot), safe area and the Canvas scaler
 (Constant Pixel Size, Scale With Screen Size with Expand, Shrink or Match).
 
-**Not done:** rich text (colour tags) in ordinary text; it works in tooltips only. A real blur behind
-Glass panels is not possible with the shared draw path.
+**Rich text.** Turn on **Rich Text** on a screen-space Text (or `ui_set_rich("Label", true)`) and write tags
+in the text: `[color=#ffcc33]gold[/color]`, `[color=red]red[/color]`, `[b]bold[/b]`, `[i]italic[/i]`. Colours are
+`#rgb`, `#rrggbb`, `#rrggbbaa` or a name (white, black, red, green, blue, yellow, orange, gold, cyan, magenta,
+purple, pink, gray). Tags nest. A tag that is not one of these is shown as plain text, and `[[` shows a `[`.
+The tags take no room: wrapping, alignment, upper-casing and the typing effect all work on the plain text.
+Bold doubles the glyphs (every font); italic leans the built-in pixel font only, a font file ignores it. World
+(3D) text does not read tags. The tooltip's own `<b>` and `#rrggbb` tags are unchanged.
+
+**Readable in every look.** The themes promise a contrast of at least 3 to 1 between a button's label and
+what it sits on, for all 12 looks and all 7 roles. A Ghost or Outline button uses the accent for its label when
+that reads, else the look's text colour (so Fantasy's gold on parchment becomes dark brown). `UITheme::Contrast`
+gives the ratio; a test checks every look and role.
 
 ## Script calls (okayscript)
 

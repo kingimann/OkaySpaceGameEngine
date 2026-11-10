@@ -373,7 +373,7 @@ static void TestRegistryBasics() {
         "Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone",
         "Flashlight", "Joint2D", "Joint3D", "DayNightCycle", "Water", "Crosshair", "UIRadialProgress", "UIRating", "UIScrollView",
         "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable", "LoadingScreen",
-        "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox"};
+        "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox", "UIInventoryBind"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

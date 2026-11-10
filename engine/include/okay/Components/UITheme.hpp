@@ -36,6 +36,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/UI/UIShape.hpp"
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -394,10 +395,40 @@ private:
     static Color Mix(Color a, Color b, float t) {
         return Color(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t);
     }
+    /// A colour as seen on screen: see-through colours are laid over a mid-blue backdrop, so the contrast
+    /// checks do not call a glass card white-on-white.
+    static Color Flat(Color c) {
+        const Color backdrop(0.23f, 0.32f, 0.55f, 1.0f);
+        Color f = Mix(backdrop, c, c.a < 0.0f ? 0.0f : (c.a > 1.0f ? 1.0f : c.a));
+        f.a = 1.0f;
+        return f;
+    }
+    static float Luminance(Color c) {
+        auto lin = [](float v) { return v <= 0.03928f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); };
+        return 0.2126f * lin(c.r) + 0.7152f * lin(c.g) + 0.0722f * lin(c.b);
+    }
+public:
+    /// WCAG contrast ratio of two colours (1 = none, 21 = black on white); see-through colours are flattened first.
+    static float Contrast(Color a, Color b) {
+        const float la = Luminance(Flat(a)), lb = Luminance(Flat(b));
+        const float hi = la > lb ? la : lb, lo = la > lb ? lb : la;
+        return (hi + 0.05f) / (lo + 0.05f);
+    }
+    /// The smallest contrast the themes promise between a label and what it sits on.
+    static constexpr float kMinContrast = 3.0f;
+private:
+    /// `fg` when it reads on `bg`, else the theme's text colour, else white or near-black: whichever reads best.
+    Color Readable(Color fg, Color bg) const {
+        if (Contrast(fg, bg) >= kMinContrast) return fg;
+        Color best = text; float bestRatio = Contrast(text, bg);
+        const Color ink = Ink(Flat(bg));
+        if (Contrast(ink, bg) > bestRatio) { best = ink; bestRatio = Contrast(ink, bg); }
+        return best;
+    }
     /// White or near-black, whichever reads better on `bg`.
     static Color Ink(Color bg) {
-        const float lum = 0.299f * bg.r + 0.587f * bg.g + 0.114f * bg.b;
-        return lum > 0.58f ? Color::FromBytes(20, 22, 28) : Color::White;
+        const Color dark = Color::FromBytes(20, 22, 28);
+        return Contrast(Color::White, bg) >= Contrast(dark, bg) ? Color::White : dark;
     }
 
     void ApplyOne(GameObject* go) const {
@@ -434,8 +465,8 @@ private:
             b->hoverColor = buttonHover;
             b->pressedColor = buttonPressed;
             b->disabledColor = disabled;
-            b->textColor = buttonText;
-            b->hoverTextColor = buttonText;
+            b->textColor = Readable(buttonText, Mix(Flat(panel), Flat(button), button.a));
+            b->hoverTextColor = b->textColor;
             b->shape = UIShape::Rounded;
             b->cornerRadius = cornerRadius * 0.75f;
             b->borderWidth = borderWidth;
@@ -534,6 +565,7 @@ private:
             sg->color = Mix(panel, text, 0.12f); sg->color.a = 1.0f;
             sg->hoverColor = Mix(panel, text, 0.22f); sg->hoverColor.a = 1.0f;
             sg->selectedColor = accent;
+            sg->textColor = text;
         }
         if (auto* map = go->GetComponent<Minimap>()) {
             map->background = WithAlpha(panel, 0.92f);
@@ -582,7 +614,7 @@ inline void UITheme::ApplyVariant(GameObject* go, Variant v) const {
     // The role colour: what this variant is "about".
     Color role = accent;
     if (v == Variant::Danger) role = danger;
-    else if (v == Variant::Secondary) role = Mix(panel, text, 0.16f);
+    else if (v == Variant::Secondary) role = Mix(Flat(panel), text, 0.16f);
     role.a = 1.0f;
     if (auto* b = go->GetComponent<UIButton>()) {
         switch (v) {
@@ -599,7 +631,7 @@ inline void UITheme::ApplyVariant(GameObject* go, Variant v) const {
                 b->color = clear;
                 b->hoverColor = WithAlpha(accent, 0.16f);
                 b->pressedColor = WithAlpha(accent, 0.30f);
-                b->textColor = accent; b->hoverTextColor = accent;
+                b->textColor = Readable(accent, panel); b->hoverTextColor = b->textColor;   // gold on parchment would not read
                 b->borderWidth = v == Variant::Outline ? (borderWidth > 2.0f ? borderWidth : 2.0f) : 0.0f;
                 b->borderColor = accent;
                 b->shadow = false;

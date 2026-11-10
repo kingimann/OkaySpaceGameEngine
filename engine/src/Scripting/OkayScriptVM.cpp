@@ -4848,6 +4848,12 @@ struct OkayScriptVM::Impl {
             th->Apply();
             return Value{1.0f};
         };
+        // ui_set_rich("Label", true): read [color=...] [b] [i] tags in that screen-space text.
+        b["ui_set_rich"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tr = g->GetComponent<TextRenderer>()) tr->richText = a[1].AsBool();
+            return Value{};
+        };
         // ui_load_theme("Assets/UI/Forest.okaytheme") loads a saved theme into the scene's theme and restyles the UI.
         b["ui_load_theme"] = [sceneOf](std::vector<Value>& a) {
             if (a.empty()) return Value{0.0f};

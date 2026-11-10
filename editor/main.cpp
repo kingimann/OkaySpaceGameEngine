@@ -36170,6 +36170,10 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
+            if (tr->screenSpace) {
+                if (ImGui::Checkbox("Rich Text##txt", &tr->richText)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Colour and style tags inside the text:\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]\nThe tags take no room. Use [[ for a literal [.");
+            }
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             // Font: a drag-only slot — empty = built-in 8x8 bitmap; drop a .ttf/.otf

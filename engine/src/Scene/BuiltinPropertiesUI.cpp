@@ -28,6 +28,7 @@
 #include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
+#include "okay/Components/UIInventoryBind.hpp"
 
 namespace okay {
 namespace detail {
@@ -80,7 +81,8 @@ void RegisterUIButton() {
 
 void RegisterTextRenderer() {
     PropertyBuilder<TextRenderer> b("TextRenderer", "text", "UI");
-    b.AddString("text", &TextRenderer::text).Tooltip("The text shown")
+    b.AddBool("richText", &TextRenderer::richText).Tooltip("Read [color=#ff0000]...[/color], [b]...[/b] and [i]...[/i] in the text (screen-space text)")
+     .AddString("text", &TextRenderer::text).Tooltip("The text shown")
      .AddAssetPath("fontPath", &TextRenderer::fontPath, "font").Tooltip("TTF or OTF font file (empty = the built-in bitmap font)")
      .AddColor("color", &TextRenderer::color).Range(0, 1, 0.01).Tooltip("Main colour")
      .AddFloat("pixelSize", &TextRenderer::pixelSize).Range(0, kBig, 0.05).Tooltip("World units per font pixel (world space) or window pixels per font pixel (screen space)")
@@ -565,6 +567,14 @@ void RegisterUIDialogueBox() {
     b.Commit();
 }
 
+void RegisterUIInventoryBind() {
+    PropertyBuilder<UIInventoryBind> b("UIInventoryBind", "uiinvbind", "UI");
+    b.AddString("inventoryName", &UIInventoryBind::inventoryName).Tooltip("Object that holds the Inventory (empty = the Player, else the first Inventory in the scene)")
+     .AddBool("fitRows", &UIInventoryBind::fitRows).Tooltip("The grid gets as many rows as the bag has room for")
+     .AddFloat("slotFontScale", &UIInventoryBind::slotFontScale).Range(0, 16, 0.1).Tooltip("Label size on the slots (0 = leave the grid's own)");
+    b.Commit();
+}
+
 } // namespace
 
 void RegisterUIProperties() {
@@ -592,6 +602,7 @@ void RegisterUIProperties() {
     RegisterUIStyleVariant();
     RegisterUIDamageNumbers();
     RegisterUIDialogueBox();
+    RegisterUIInventoryBind();
 }
 
 } // namespace detail

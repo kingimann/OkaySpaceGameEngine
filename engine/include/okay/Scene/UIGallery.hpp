@@ -17,6 +17,7 @@
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIRating.hpp"
 #include "okay/Components/UISlotGrid.hpp"
+#include "okay/Components/UIInventoryBind.hpp"
 #include <string>
 
 namespace okay { namespace UIGallery {
@@ -109,6 +110,7 @@ inline GameObject* AddInventoryScreen(Scene& scene) {
     const char* names[] = {"Sword", "Shield", "Potion", "Bow", "Key", "Map", "Gem", "Rope"};
     for (int i = 0; i < 8; ++i) g->SetLabel(i, names[i]);
     g->Rebuild();
+    grid->AddComponent<UIInventoryBind>();   // shows the Player's Inventory (the names above are samples until there is one)
     Text(scene, root, "Info", "Click a slot to select it", UIAnchor::BottomLeft, {28, -24}, {320, 24}, 15.0f, slate::Dim());
     Button(scene, root, "Close", "Close", UIAnchor::BottomRight, {-24, -20}, {110, 40}, ButtonKind::Secondary);
     IntroAnim(root, UIAnimation::Intro::Pop);
@@ -127,7 +129,7 @@ inline GameObject* AddDialogueScreen(Scene& scene) {
     Avatar(scene, box, "Portrait", "Mara", UIAnchor::TopLeft, {24, 24}, 64.0f);
     Text(scene, box, "Speaker", "Speaker", UIAnchor::TopLeft, {108, 22}, {500, 26}, 19.0f, slate::Accent(), 0, true);
     auto* body = Text(scene, box, "Body", "Line of dialogue...", UIAnchor::TopLeft, {108, 52}, {730, 70}, 17.0f)->GetComponent<TextRenderer>();
-    body->wrap = true; body->vcenter = false;
+    body->wrap = true; body->vcenter = false; body->richText = true;
     for (int i = 0; i < 3; ++i) {
         const std::string nm = "Choice" + std::to_string(i + 1);
         GameObject* c = Button(scene, box, nm.c_str(), nm, UIAnchor::TopLeft, {108.0f + i * 250.0f, 140}, {238, 44}, ButtonKind::Secondary);
@@ -314,9 +316,9 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         GameObject* box = Panel(scene, dlg, "Box", UIAnchor::TopLeft, {20, 214}, {352, 150}, Color::FromBytes(255, 255, 255, 16), 12.0f);
         Avatar(scene, box, "Portrait", "Mara", UIAnchor::TopLeft, {14, 14}, 40.0f);
         Text(scene, box, "Speaker", "Mara", UIAnchor::TopLeft, {64, 12}, {200, 20}, 15.0f, slate::Accent(), 0, true);
-        auto* body = Text(scene, box, "Body", "You found the old road? Then you are braver than you look.",
+        auto* body = Text(scene, box, "Body", "You found the [color=#ffcc33]old road[/color]? Then you are [b]braver[/b] than you look.",
                           UIAnchor::TopLeft, {64, 34}, {278, 44}, 14.0f)->GetComponent<TextRenderer>();
-        body->wrap = true; body->vcenter = false;
+        body->wrap = true; body->vcenter = false; body->richText = true;
         Button(scene, box, "Choice1", "I had help", UIAnchor::TopLeft, {14, 96}, {160, 36}, ButtonKind::Secondary);
         Button(scene, box, "Choice2", "Mind your business", UIAnchor::TopLeft, {182, 96}, {158, 36}, ButtonKind::Ghost);
     }

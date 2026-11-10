@@ -289,6 +289,51 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
 }
 
 
+// Rich text: draw `disp` (already free of tags) in runs, each in the colour and weight its characters
+// carry in `styles` (one per visible character, in order). Each run is placed by measuring the text before
+// it on its line, so any font lines up; the lines advance like DrawUIText's.
+void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,
+                  float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,
+                  bool bold, float boldOff, TtfFont* ttf) {
+    TtfFont* f = FontForText(ttf ? ttf : g_uiDefaultFont, disp);
+    const float adv = (f && f->Valid()) ? f->LineHeight((float)Font8x8::Height) * px + lineSp * px
+                                        : (Font8x8::Height + 1 + lineSp) * px;
+    std::size_t glyph = 0, lineStart = 0;
+    float y = oy;
+    while (lineStart <= disp.size()) {
+        std::size_t lineEnd = disp.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = disp.size();
+        const std::string line = disp.substr(lineStart, lineEnd - lineStart);
+        std::size_t runStart = 0;
+        okay::RichStyle runStyle;
+        bool haveRun = false;
+        auto flush = [&](std::size_t end) {
+            if (!haveRun || end <= runStart) return;
+            const std::string run = line.substr(runStart, end - runStart);
+            const std::string before = line.substr(0, runStart);
+            const float x = ox + UITextW(before, px) + letterSp * px * (float)okay::utf8::Length(before);
+            RGBA col = base;
+            if (runStyle.hasColor) col = RGBA{runStyle.r, runStyle.g, runStyle.b, (std::uint8_t)(runStyle.a * base.a / 255)};
+            const bool it = italic || runStyle.italic;
+            DrawUIText(r, run, x, y, px, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf);
+            if (bold || runStyle.bold) DrawUIText(r, run, x + boldOff, y, px, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf);
+        };
+        for (std::size_t i = 0; i < line.size();) {
+            const std::size_t at = i;
+            const std::uint32_t cp = okay::utf8::Next(line, i);
+            if (cp == ' ' || cp == '\t') continue;       // a space joins the run it sits in
+            const okay::RichStyle st = glyph < styles.size() ? styles[glyph] : okay::RichStyle();
+            ++glyph;
+            if (!haveRun) { runStart = at; runStyle = st; haveRun = true; }
+            else if (!(st == runStyle)) { flush(at); runStart = at; runStyle = st; }
+        }
+        flush(line.size());
+        y += adv;
+        if (lineEnd >= disp.size()) break;
+        lineStart = lineEnd + 1;
+    }
+}
+
 namespace {
 // What the UI pass keeps between frames for one scene, so a steady frame neither
 // walks every object nor allocates: the draw items of the objects that carry UI and
@@ -1495,8 +1540,13 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             DrawUIText(p, disp, o.x, o.y - fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
             DrawUIText(p, disp, o.x, o.y + fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
         }
-        DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
-        if (tr->bold) DrawUIText(p, disp, o.x + fo, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
+        if (tr->richText && RichTextHasTags(tr->text)) {
+            const okay::RichText rt = okay::ParseRichText(tr->text);
+            DrawRichRuns(p, disp, rt.styles, o.x, o.y, ps, col, ls, lp, it, tr->bold, fo, fnt);
+        } else {
+            DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
+            if (tr->bold) DrawUIText(p, disp, o.x + fo, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
+        }
     }
         else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
         auto* wu = up->GetComponent<WorldUI>();

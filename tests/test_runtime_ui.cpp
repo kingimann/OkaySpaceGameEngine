@@ -5,6 +5,8 @@
 #include <Okay.hpp>
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Components/EventSystem.hpp"
+#include "okay/UI/UIRenderer.hpp"
+#include <cstdint>
 #include <set>
 
 using namespace okay;
@@ -35,6 +37,47 @@ static UIButton* MakeButton(Scene& s, const char* name, Vec2 pos, Vec2 size, Gam
     b->position = pos; b->size = size; b->shape = UIShape::Rectangle;
     return b;
 }
+
+// A painter that records the colour of every filled rectangle (what the 8x8 font draws its glyphs with).
+struct RecordPainter : okay::ui2d::Painter {
+    using URect = okay::ui2d::Rect;
+    using Tex = okay::ui2d::Tex;
+    struct Fill { int x, y; std::uint8_t r, g, b; };
+    std::vector<Fill> fills;
+    std::uint8_t cr = 0, cg = 0, cb = 0;
+    bool clip = false; URect clipRect{0, 0, 0, 0};
+    void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t) override { cr = r; cg = g; cb = b; }
+    void FillRect(const URect* r) override { if (r) fills.push_back({r->x, r->y, cr, cg, cb}); }
+    void DrawRect(const URect*) override {}
+    void DrawLine(int, int, int, int) override {}
+    void DrawPoint(int, int) override {}
+    void SetClipRect(const URect* r) override { clip = r != nullptr; if (r) clipRect = *r; }
+    void GetClipRect(URect* r) override { *r = clipRect; }
+    bool IsClipEnabled() override { return clip; }
+    void SetScale(float, float) override {}
+    Tex LoadTexture(const std::string&) override { return nullptr; }
+    int atlasDummy = 0;
+    bool atlas = false;
+    Tex FontAtlas(okay::TtfFont*) override { return atlas ? &atlasDummy : nullptr; }
+    void QueryTexture(Tex, int* w, int* h) override { *w = *h = 0; }
+    std::uint8_t mr = 0, mg = 0, mb = 0;
+    void SetTextureColorMod(Tex, std::uint8_t r, std::uint8_t g, std::uint8_t b) override { mr = r; mg = g; mb = b; }
+    void SetTextureAlphaMod(Tex, std::uint8_t) override {}
+    void Copy(Tex, const URect*, const URect*) override {}
+    void CopyF(Tex, const URect*, const okay::ui2d::FRect* d) override { if (d) fills.push_back({(int)d->x, (int)d->y, mr, mg, mb}); }
+    void CopyEx(Tex, const URect*, const URect*, double, const okay::ui2d::Point*, int) override {}
+    void CopyExF(Tex, const URect*, const okay::ui2d::FRect*, double, const okay::ui2d::FPoint*, int) override {}
+    void Geometry(Tex, const okay::ui2d::Vertex*, int, const int*, int) override {}
+    Tex UploadAtlas(const okay::Image&, int, Tex existing) override { return existing; }
+    int CountColor(std::uint8_t r, std::uint8_t g, std::uint8_t b) const {
+        int n = 0; for (const Fill& f : fills) if (f.r == r && f.g == g && f.b == b) ++n; return n;
+    }
+    int MinX(std::uint8_t r, std::uint8_t g, std::uint8_t b) const {
+        int m = 1 << 30; for (const Fill& f : fills) if (f.r == r && f.g == g && f.b == b && f.x < m) m = f.x; return m;
+    }
+};
+
+static float Ratio(Color a, Color b) { return UITheme::Contrast(a, b); }
 
 int main() {
     RUN_SUITE("runtime_ui");
@@ -572,6 +615,156 @@ int main() {
         CHECK(!page->WasClicked());                              // and not the button underneath
         MouseTo(0, 0, false);
         NoHooks();
+    }
+
+
+    // ---- Rich text: colour and style tags ----
+    {
+        RichText r = ParseRichText("A [color=#f00]red[/color] [b]bold [i]both[/i][/b] end");
+        CHECK(r.plain == "A red bold both end");
+        CHECK(r.styles.size() == 15);                         // every visible character: A red bold both end
+        CHECK(!r.styles[0].hasColor && !r.styles[0].bold);
+        CHECK(r.styles[1].hasColor && r.styles[1].r == 255 && r.styles[1].g == 0 && r.styles[1].b == 0);
+        CHECK(r.styles[4].bold && !r.styles[4].italic);
+        CHECK(r.styles[8].bold && r.styles[8].italic);                // the "both" part
+        CHECK(!r.styles[12].bold);                                    // "end"
+        CHECK(ParseRichText("[color=gold]x[/color]").styles[0].g == 204);
+        CHECK(ParseRichText("[color=#11223344]x[/color]").styles[0].a == 0x44);
+        // anything that is not a tag stays as it is
+        CHECK(StripRichText("[colour=red]x[/colour]") == "[colour=red]x[/colour]");
+        CHECK(StripRichText("[color=nope]x") == "[color=nope]x");
+        CHECK(StripRichText("a[/b]b") == "a[/b]b");               // a close with nothing open
+        CHECK(StripRichText("[[b]]") == "[b]]");                   // [[ shows a [
+        CHECK(StripRichText("[b]open only") == "open only");       // an unclosed tag runs to the end
+        CHECK(StripRichText("plain") == "plain");
+        CHECK(StripRichText("[b][i]x[/b]y[/i]").find('[') == std::string::npos);   // crossing tags still resolve
+        RichText u = ParseRichText("[color=red]h\xC3\xA9llo[/color]");
+        CHECK(u.styles.size() == 5);                                // the 2-byte character is one character
+        CHECK(StripRichText(std::string(30, '[')).size() == 15);   // many "[[" pairs: no loop, no tag
+        // the label lays out the plain text
+        Scene s("Rich");
+        auto* tr = s.CreateGameObject("T")->AddComponent<TextRenderer>();
+        tr->screenSpace = true; tr->text = "[color=red]ab[/color] cd"; tr->richText = true;
+        CHECK(tr->DisplayText() == "ab cd");
+        tr->richText = false;
+        CHECK(tr->DisplayText() == "[color=red]ab[/color] cd");    // off: tags are just text (old scenes)
+        tr->richText = true; tr->visibleChars = 3;                 // the typing effect counts characters, not tags
+        CHECK(tr->DisplayText() == "ab ");
+        tr->visibleChars = -1; tr->uppercase = true;
+        CHECK(tr->DisplayText() == "AB CD");
+        tr->uppercase = false;
+        CHECK(tr->PixelWidth() == (int)((5 - 1) * tr->Advance() + 8));
+        // it is drawn in the colours it names, each run where the plain text puts it
+        tr->text = "[color=#ff0000]A[/color]B"; tr->color = Color::FromBytes(0, 255, 0); tr->pixelSize = 2.0f;
+        tr->shadow = false; tr->outline = false;
+        s.uiFont = "pixel";                                        // the built-in 8x8 font: glyphs are filled rectangles
+        RecordPainter rp;
+        okay::ui2d::RenderSceneUI(s, rp, 640, 360);
+        const int red = rp.CountColor(255, 0, 0), green = rp.CountColor(0, 255, 0);
+        CHECK(red > 0 && green > 0);                               // A in red, B in the label colour
+        CHECK(rp.MinX(0, 255, 0) > rp.MinX(255, 0, 0));            // B comes after A
+        const int greenWhenPlain = green;
+        tr->richText = false;
+        RecordPainter rp2;
+        okay::ui2d::RenderSceneUI(s, rp2, 640, 360);
+        CHECK(rp2.CountColor(255, 0, 0) == 0 && rp2.CountColor(0, 255, 0) > greenWhenPlain);   // no tags read: all one colour, tags drawn
+        // the same through a smooth font (glyph quads tinted per run)
+        tr->richText = true;
+        s.uiFont = "";
+        RecordPainter rp3; rp3.atlas = true;
+        okay::ui2d::RenderSceneUI(s, rp3, 640, 360);
+        CHECK(rp3.CountColor(255, 0, 0) > 0 && rp3.CountColor(0, 255, 0) > 0);
+        CHECK(rp3.MinX(0, 255, 0) > rp3.MinX(255, 0, 0));
+        // saved with the scene
+        const std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("Rich2");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(s2, txt, &err, nullptr));
+        CHECK(s2.Find("T")->GetComponent<TextRenderer>()->richText);
+        CHECK(SceneSerializer::Serialize(s2) == txt);
+    }
+
+    // ---- Every look keeps its labels readable (minimum contrast) ----
+    {
+        Scene s("Contrast");
+        GameObject* root = s.CreateGameObject("Root");
+        UITheme th;
+        for (int p = 1; p < UITheme::kPresetCount; ++p) {
+            th.ApplyPreset(p);
+            for (int v = 0; v < UITheme::kVariantCount; ++v) {
+                GameObject* g = s.CreateGameObject("B");
+                g->transform->SetParent(root->transform, false);
+                auto* b = g->AddComponent<UIButton>();
+                b->size = {100, 40};
+                if (v > 0) g->AddComponent<UIStyleVariant>()->variant = v;
+                th.ApplyTo(g);
+                const Color bg = b->color.a < 0.2f ? th.panel : b->color;      // a see-through button shows the card
+                const Color under = bg.a < 1.0f ? bg : bg;
+                const float r = Ratio(b->textColor, under.a < 1.0f && b->color.a >= 0.2f ? under : under);
+                if (r < UITheme::kMinContrast) std::cerr << "    low contrast: " << UITheme::PresetName(p) << " / " << UITheme::VariantName(v) << " = " << r << "\n";
+                CHECK(r >= UITheme::kMinContrast);
+                if (v == (int)UITheme::Variant::Ghost || v == (int)UITheme::Variant::Outline) CHECK(b->color.a < 0.2f);
+            }
+            // plain labels on the card, and the muted caption
+            CHECK(Ratio(th.text, th.panel) >= UITheme::kMinContrast);
+            CHECK(Ratio(th.text, th.panelBottom) >= UITheme::kMinContrast);
+        }
+        // the old Fantasy problem in particular: a ghost button reads on parchment
+        th.ApplyPreset((int)UITheme::Preset::Fantasy);
+        GameObject* g = s.CreateGameObject("Ghost");
+        auto* gb = g->AddComponent<UIButton>(); g->AddComponent<UIStyleVariant>()->variant = (int)UITheme::Variant::Ghost;
+        th.ApplyTo(g);
+        CHECK(Ratio(gb->textColor, th.panel) >= UITheme::kMinContrast);
+        CHECK(Ratio(th.accent, th.panel) < UITheme::kMinContrast);   // the accent alone would not have
+        CHECK(Ratio(Color::White, Color::Black) > 20.9f && Ratio(Color::White, Color::White) < 1.01f);
+    }
+
+    // ---- The inventory template shows the real Inventory ----
+    {
+        Scene s("Bag");
+        GameObject* player = s.CreateGameObject("Player"); player->tag = "Player";
+        auto* inv = player->AddComponent<Inventory>();
+        inv->capacity = 12;
+        inv->slots.push_back({"Sword", 1, {}});
+        inv->slots.push_back({"Potion", 7, {}});
+        inv->slots.push_back({"Beautiful_Long_Name", 25, {}});
+        GameObject* other = s.CreateGameObject("Chest"); other->AddComponent<Inventory>()->slots.push_back({"Gold", 99, {}});
+        GameObject* screen = UIGallery::AddInventoryScreen(s);
+        auto* grid = s.Find("Slots")->GetComponent<UISlotGrid>();
+        auto* bind = s.Find("Slots")->GetComponent<UIInventoryBind>();
+        CHECK(screen && grid && bind);
+        CHECK(grid->Label(0) == "Sword");                              // sample names until the game runs
+        s.Start();
+        s.Update(0.016f);
+        CHECK(bind->FindInventory() == inv);                         // the Player's bag, not the chest's
+        CHECK(grid->Label(0) == "Sword" && grid->Label(1) == "Potion 7");
+        CHECK(grid->Label(2).size() <= 8 && grid->Label(2).find("25") != std::string::npos);   // cut to fit the 72 px slot
+        CHECK(grid->Label(3).empty() && grid->Label(5).empty());      // empty slots are blank
+        CHECK(s.Find("Slot4")->GetComponent<UIButton>()->label.empty());   // ... not numbered
+        UITheme lt; lt.ApplyPreset((int)UITheme::Preset::Cartoon); lt.ApplyToScene(s);
+        s.Update(0.016f);
+        CHECK(s.Find("Slot0")->GetComponent<UIButton>()->textColor.r < 0.5f);   // dark labels on the light Cartoon slots, kept by the grid
+        CHECK(grid->rows == 2 && grid->Count() == 12);                // 12 places: 6 x 2
+        grid->SetValue(1);
+        CHECK(bind->SelectedItem() == "Potion" && bind->SelectedCount() == 7);
+        grid->SetValue(4);
+        CHECK(bind->SelectedItem().empty());
+        inv->Add("Rope", 2);                                          // the bag changes, the grid follows
+        s.Update(0.016f);
+        CHECK(grid->Label(3) == "Rope 2");
+        bind->inventoryName = "Chest";
+        s.Update(0.016f);
+        CHECK(grid->Label(0) == "Gold 99" && grid->Label(1).empty());
+        bind->inventoryName = "Nobody";                              // a name with no bag: leave the grid alone
+        s.Update(0.016f);
+        CHECK(bind->FindInventory() == nullptr);
+        // saved with the scene
+        const std::string txt = SceneSerializer::Serialize(s);
+        Scene s2("Bag2"); std::string err;
+        CHECK(SceneSerializer::Deserialize(s2, txt, &err, nullptr));
+        auto* b2 = s2.Find("Slots")->GetComponent<UIInventoryBind>();
+        CHECK(b2 && b2->inventoryName == "Nobody" && b2->fitRows);
+        CHECK(UIInventoryBind::SlotText({"", 0, {}}, 8).empty());
     }
 
     // ---- Save and load: new fields, old scenes ----

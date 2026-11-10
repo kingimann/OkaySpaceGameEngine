@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <iostream>
 
 using namespace okay;
 using namespace oked;
@@ -397,6 +398,72 @@ static void TestLabelsAndKinds() {
     fs::remove_all(dir);
 }
 
+static void TestTooltipsMixedAndSlot() {
+    RUN_SUITE("tooltips, mixed names, root slot after a prefab revert");
+    // Every field of the commonly used components has a tooltip (registry or default).
+    for (const char* t : {"Transform", "Rigidbody2D", "Rigidbody3D", "BoxCollider2D", "CircleCollider2D", "CapsuleCollider2D",
+                          "BoxCollider3D", "SphereCollider3D", "CapsuleCollider3D", "CylinderCollider3D", "Light", "Camera",
+                          "AudioSource", "SpriteRenderer", "MeshRenderer"}) {
+        auto info = PropertyRegistry::FindByName(t);
+        CHECK(info != nullptr);
+        if (!info) continue;
+        int missing = 0;
+        for (const PropertyDesc& d : info->properties) {
+            if (d.IsHidden() || d.name == "enabled") continue;
+            if (TooltipFor(t, d).empty()) { ++missing; std::cerr << "  no tooltip: " << t << "." << d.name << "\n"; }
+        }
+        CHECK(missing == 0);
+    }
+    CHECK(!FieldTooltip("Light", "Intensity##light").empty());
+    CHECK(!FieldTooltip("Light", "Use Temperature##light").empty());
+    CHECK(!FieldTooltip("SpriteRenderer", "Sort Order##sprite").empty());
+    CHECK(!FieldTooltip("Rigidbody2D", "Gravity Scale").empty());
+    CHECK(FieldTooltip("Light", "No Such Field").empty());
+    CHECK(FieldTooltip("NoSuchType", "Intensity").empty());
+    // Which properties differ between selected objects.
+    Scene s("t");
+    GameObject *a = Make(s, "a"), *b = Make(s, "b");
+    a->AddComponent<Light>()->intensity = 1.0f; b->AddComponent<Light>()->intensity = 3.0f;
+    a->GetComponent<Light>()->range = 5.0f;     b->GetComponent<Light>()->range = 5.0f;
+    std::vector<std::string> mixed = MixedPropertyNames({a, b}, "Light", 0);
+    CHECK(mixed.size() == 1 && mixed[0] == "Intensity");
+    CHECK(MixedPropertyNames({a}, "Light", 0).empty());
+    b->GetComponent<Light>()->intensity = 1.0f;
+    CHECK(MixedPropertyNames({a, b}, "Light", 0).empty());
+    // A root keeps its place among the top-level objects when the instance is rebuilt.
+    const fs::path dir = fs::temp_directory_path() / "okay_inspector_model_slot";
+    fs::remove_all(dir); fs::create_directories(dir);
+    const std::string path = (dir / "lamp.okayprefab").string();
+    MakeLamp(path);
+    Scene sc("slot");
+    GameObject* r1 = Make(sc, "R1");
+    GameObject* inst = SceneSerializer::InstantiateFromFile(sc, path);
+    GameObject* r3 = Make(sc, "R3");
+    GameObject* r4 = Make(sc, "R4");
+    CHECK(inst != nullptr);
+    if (inst) {
+        inst->GetComponent<Light>()->intensity = 9.0f;
+        RootSlot slot = CaptureRootSlot(sc, *inst);
+        CHECK(slot.valid && slot.neighbourIsBefore && slot.neighbourGuid == r1->Guid());
+        std::string err;
+        GameObject* fresh = PrefabTools::RevertAll(sc, *inst, &err);
+        CHECK(fresh != nullptr);
+        if (fresh) {
+            sc.FlushDestroyed();
+            RestoreRootSlot(sc, fresh, slot);
+            std::vector<std::string> roots = RootNames(sc);
+            CHECK((roots == std::vector<std::string>{"R1", fresh->name, "R3", "R4"}));
+        }
+    }
+    // The first root uses its next neighbour; a child has no slot.
+    RootSlot first = CaptureRootSlot(sc, *sc.Objects().front());
+    CHECK(first.valid && !first.neighbourIsBefore);
+    GameObject* kid = Make(sc, "Kid", r3);
+    CHECK(!CaptureRootSlot(sc, *kid).valid);
+    (void)r4;
+    fs::remove_all(dir);
+}
+
 int main() {
     TestFilter();
     TestDrop();
@@ -406,5 +473,6 @@ int main() {
     TestPrefabChanges();
     TestEditUndo();
     TestLabelsAndKinds();
+    TestTooltipsMixedAndSlot();
     TEST_MAIN_RESULT();
 }

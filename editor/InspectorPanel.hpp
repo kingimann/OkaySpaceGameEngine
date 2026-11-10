@@ -59,6 +59,14 @@ bool PrefabChangedFor(const okay::Component* comp);
 /// (the object the Inspector shows is gone: stop drawing this frame).
 bool DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go);
 
+/// Hand-written Inspectors: tell the tooltip lookup which component is being drawn (CompHeader does it) ...
+void SetTipComponent(const okay::Component* comp);
+/// ... then call right after a field's widget: shows the field's tooltip (registry text or the plain default) on hover.
+void FieldTip(const char* label);
+/// With several objects selected: one line under a component header naming the values that differ between them
+/// ("Different on the selected objects: Intensity, Color"). No-op otherwise.
+void DrawMixedNote(const okay::Component* comp);
+
 /// Play mode: a note across the top that edits are not kept. No-op while editing.
 void DrawPlayModeNote(okay::editor::EditorState& ed);
 

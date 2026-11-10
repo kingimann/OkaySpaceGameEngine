@@ -153,6 +153,10 @@ public:
     static inline std::function<void(const std::string& oldDir, const std::string& newDir)> onProjectChanged;
     /// Called after a scene file was opened successfully (the editor clears its "last save failed" note).
     static inline std::function<void()> onSceneLoaded;
+    /// Asked before Load touches anything: return false (with the reason in `why`) to refuse the file. The editor puts
+    /// the project version gate here, so a scene of a project nobody has answered the version question for can't be
+    /// opened by a path that skipped it. Unset (tests, tools): every file may be opened.
+    static inline std::function<bool(const std::string& path, std::string* why)> beforeLoad;
 
     // ---- Project (a folder on disk holding the scenes + assets) ---------
     const std::string& projectDir() const { return m_projectDir; }

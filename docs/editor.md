@@ -406,7 +406,7 @@ A project is a folder. The editor keeps everything that belongs to the project i
 ```
 MyGame/
   project.okayproj          Project Settings (company, version, resolution, gravity, ambient, skybox, splash),
-                            the tag list and the layer names
+                            the tag list and the layer names, and engine_version (the editor version that last saved it)
   Assets/
     MyGame.okayscene        the first scene (the project's name)
     Scenes/ Scripts/ Prefabs/ Materials/ Models/ Textures/ Audio/     the standard folders (empty to start)
@@ -468,6 +468,24 @@ unsaved: New 2D / 3D Scene, Open, Open Recent, Open Project Folder, New Project,
 the Scene Manager, or by dropping it on the Hierarchy or Scene view, a project handed over by the launcher, and Exit.
 A file that can't be opened (missing, damaged) is refused with the reason and leaves the open scene exactly as it was.
 Opening a scene starts a fresh undo history, so Ctrl+Z can't carry the previous scene's objects into the new file.
+
+### Project version and upgrading
+
+`project.okayproj` records the engine version that last saved the project (`engine_version=2.855.0`; new projects have it from the start,
+every save refreshes it, and lines the editor does not know are kept). Opening a project that an older version made, that has no version
+recorded, or that a newer version saved, **asks before anything in the project is touched**:
+
+- *This project was made with v2.850.0. This editor is v2.855.0.* **Upgrade project to v2.855.0** makes a complete backup copy next to the
+  project (`<Name> (backup v2.850.0)`), checks every scene and prefab, rewrites only the files that need it and marks the project; if anything
+  fails, everything is put back. **Keep v2.850.x** opens the project, untouched, with that line's editor when the launcher has it installed
+  (otherwise it says how to get it). **Cancel** changes nothing.
+- A project with no version recorded (made before this) offers Upgrade or Cancel. A project saved by a *newer* version offers Cancel, **Open
+  anyway (a backup is made first)** and **Update OkaySpace**.
+- Another patch of the same line (`2.850.0` and `2.850.1`) never asks, and a development build never asks.
+
+**File > Project Upgrade...** shows both versions, runs the upgrade again, and lists the project's backups with **Restore...**. The status
+bar shows `v2.850.0 (kept)` for a project opened with its own version. Details, the backup layout and the launcher's side:
+[project_upgrade.md](project_upgrade.md).
 
 ### Autosave and recovery
 

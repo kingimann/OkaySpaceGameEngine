@@ -708,7 +708,7 @@ target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
 
 # The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
-add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
@@ -722,6 +722,12 @@ add_test(NAME project_save COMMAND test_project_save)
 add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)
+
+# Upgrading a project to the editor's version (editor/ProjectUpgrade.*, ImGui-free): backup, check and rewrite of scenes and prefabs, stamp, restore, failure injection at every step, and the gate that asks before anything is touched.
+add_executable(test_project_upgrade test_project_upgrade.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
+target_include_directories(test_project_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_project_upgrade PRIVATE okay::engine)
+add_test(NAME project_upgrade COMMAND test_project_upgrade)
 
 # Save coverage: every component type the engine has survives a scene save and load (and the Enabled switch with it); two colliders / audio sources on one object both do.
 add_executable(test_save_coverage test_save_coverage.cpp)
@@ -1297,6 +1303,12 @@ add_test(NAME project_delete COMMAND test_project_delete)
 add_executable(test_project_create test_project_create.cpp)
 target_link_libraries(test_project_create PRIVATE okay::engine)
 add_test(NAME project_create COMMAND test_project_create)
+
+# The project's engine version (shared/ProjectVersion.hpp): parse / compare / Decide, the engine_version line in project.okayproj, the launcher's Versions layout. Header-only: no engine link.
+add_executable(test_project_version test_project_version.cpp)
+target_compile_features(test_project_version PRIVATE cxx_std_17)
+target_include_directories(test_project_version PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME project_version COMMAND test_project_version)
 
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)

@@ -929,6 +929,17 @@ int main() {
         CHECK_NEAR(btn->color.r, a.button.r, 1e-3f);                    // the Horror button colour is on the widget
     }
 
+    // ---- The gallery's theme picker lists every look, Glass included, and picking one restyles ----
+    {
+        Scene s("Pick");
+        UIGallery::BuildGallery(s, (int)UITheme::Preset::Dark);
+        auto* dd = s.Find("ThemePick")->GetComponent<UIDropdown>();
+        CHECK(dd->maxVisible == 0 && (int)dd->options.size() == UITheme::kPresetCount - 1);
+        bool glass = false;
+        for (auto& o : dd->options) if (o == "Glass") glass = true;
+        CHECK(glass);
+    }
+
     // ---- The nameplate follows the Health Stat; its Hit / Heal buttons change the bar ----
     {
         Scene s("Plate");

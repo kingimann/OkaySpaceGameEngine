@@ -232,7 +232,7 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         dd->anchor = UIAnchor::TopLeft; dd->position = portrait ? Vec2{24, 76} : Vec2{944, 14}; dd->size = portrait ? Vec2{392, 38} : Vec2{304, 38};
         dd->options.clear();
         for (int i = 1; i < UITheme::kPresetCount; ++i) dd->options.push_back(UITheme::PresetName(i));
-        dd->maxVisible = 7;
+        // every look is listed (maxVisible would hide the last ones: the list does not scroll)
         dd->value = preset >= 1 && preset < UITheme::kPresetCount ? preset - 1 : 0;
         pick->AddComponent<ScriptComponent>()->LoadSource(
             "function on_change() { ui_theme_preset(ui_dropdown_value(\"ThemePick\") + 1); }\n");

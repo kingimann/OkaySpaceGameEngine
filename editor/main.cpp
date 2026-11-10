@@ -9745,7 +9745,12 @@ void DrawProject(EditorState& ed) {
                 ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, kAssetLabelCols[lb]);
                 ImGui::GetWindowDrawList()->AddCircle(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, IM_COL32(20, 22, 26, 200), 12, 1.2f);
             }
-            if (ImGui::IsItemClicked()) pickItem(full);
+            {   // a plain click on one of several selected tiles waits for the release, so you can drag the whole selection
+                const bool inGroup = s_multi.size() > 1 && s_multi.count(full) && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift;
+                if (ImGui::IsItemClicked() && !inGroup) pickItem(full);
+                else if (inGroup && ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+                         ImGui::GetIO().MouseDragMaxDistanceSqr[0] < 25.0f) pickItem(full);
+            }
             // Drag from the tile (which has an ID) so the payload attaches cleanly.
             if (ImGui::BeginDragDropSource()) {
                 if (!s_multi.count(full)) { s_multi.clear(); s_multi.insert(full); selected = full; }
@@ -10001,7 +10006,8 @@ void DrawProject(EditorState& ed) {
         if (ImGui::BeginPopup("##impset")) {
             ImGui::Text("%s", sp.filename().string().c_str());
             ImGui::Separator();
-            if (!oked::projectpanel::DrawImportSettings(pb, selected)) ImGui::TextDisabled("This file has no import settings.");
+            if (oked::projectpanel::HasImportSettings(pb, selected)) oked::projectpanel::DrawImportSettings(pb, selected);
+            else ImGui::TextDisabled("This file has no import settings.");
             ImGui::EndPopup();
         }
         if (!s_assetClip.empty()) {

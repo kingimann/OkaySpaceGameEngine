@@ -226,6 +226,14 @@ bool Combo(const char* label, int& value, std::initializer_list<const char*> ite
 }
 } // namespace
 
+bool HasImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
+    const std::string rel = browser.Db().ToProjectPath(assetPath);
+    if (rel.empty()) return false;
+    if (!browser.Indexed()) browser.Sync();
+    const okay::AssetRecord* rec = browser.Db().Find(rel);
+    return rec && okay::ImportSettings::HasSettings(rec->kind);
+}
+
 bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
     namespace ok = okay;
     const std::string rel = browser.Db().ToProjectPath(assetPath);

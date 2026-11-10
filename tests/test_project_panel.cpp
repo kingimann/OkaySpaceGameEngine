@@ -412,6 +412,27 @@ int main() {
         CHECK(b.DependenciesOf(p.td.at("nope.okayscene")).empty());
     }
 
+    RUN_SUITE("polling for changes made outside the editor");
+    {
+        Proj p;
+        Browser b(p.td.assets());
+        CHECK(!b.Indexed() && !b.Poll(0));                                         // nothing is scanned until something needs the database
+        CHECK(b.UsersOf(p.tex) == 3 && b.Indexed());                               // scene, prefab, material
+        CHECK(b.UsersOf(p.script) == 0 && b.UsersOf(p.td.at("nope.png")) == 0);
+        std::uint64_t t = 10000000;
+        b.Poll(t);                                                                 // settle
+        WriteFile(p.td.at("Art/new.png"), "fresh from another program");
+        CHECK(!b.Poll(t + 1));                                                     // not due yet: it waits at least 2 seconds
+        CHECK(b.Poll(t + 1000000));                                                // due: finds the new file
+        CHECK(!b.Db().PathToGuid("Art/new.png").IsNull() && Exists(p.td.at("Art/new.png.okaymeta")));
+        CHECK(!b.Poll(t + 1000001));                                               // nothing changed since
+        // moved outside the editor: the GUID is followed
+        const okay::Guid g = b.Db().PathToGuid("Art/new.png");
+        fs::rename(fs::u8path(p.td.at("Art/new.png")), fs::u8path(p.td.at("Art/renamed.png")));
+        fs::rename(fs::u8path(p.td.at("Art/new.png.okaymeta")), fs::u8path(p.td.at("Art/renamed.png.okaymeta")));
+        CHECK(b.Poll(t + 2000000) && b.Db().PathToGuid("Art/renamed.png") == g);
+    }
+
     RUN_SUITE("references rewriting on its own");
     {
         TempDir td;

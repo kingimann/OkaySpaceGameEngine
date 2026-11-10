@@ -32,8 +32,10 @@ void ShowReferences(okaypb::Browser& browser, const std::string& assetPath, std:
 /// Draw all open dialogs. Call every frame, inside the Project window, outside any child window.
 void DrawDialogs();
 
-/// The import settings of one asset (texture, model or audio), with Apply and Revert. Draws nothing and
-/// returns false for types that have none. Returns true in the frame the settings were changed. The same
+/// True when the asset has import settings to show (a texture, model or audio file that is indexed).
+bool HasImportSettings(okaypb::Browser& browser, const std::string& assetPath);
+/// The import settings of one asset (texture, model or audio), with Apply and Revert. Draws nothing for types
+/// that have none (check HasImportSettings first). Returns true in the frame the settings were applied. The same
 /// function is meant for the Inspector: call it with the selected asset's path.
 bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath);
 

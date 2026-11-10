@@ -232,6 +232,38 @@ static void TestClipboard() {
     PropertyRegistry::RemoveChangeHook(id);
 }
 
+static void TestComponentEditPropagation() {
+    RUN_SUITE("a hand-drawn component edited with several objects selected");
+    Scene s("p");
+    GameObject *a = Make(s, "a"), *b = Make(s, "b"), *c = Make(s, "c"), *d = Make(s, "d");
+    for (GameObject* g : {a, b, c}) { auto* l = g->AddComponent<Light>(); l->intensity = 2.0f; l->range = 7.0f; }
+    c->GetComponent<Light>()->range = 99.0f;                 // differs, and stays different when only intensity changes
+    std::vector<GameObject*> sel{a, b, c, d};
+    Light* la = a->GetComponent<Light>();
+    ComponentEdit e = BeginComponentEdit(sel, a, *la);
+    CHECK(e.active);
+    la->intensity = 5.0f;                                      // what the drawer does
+    la->enabled = false;
+    CHECK(PropagateComponentEdit(sel, a, *la, e) == 4);        // intensity + enabled, on b and c
+    CHECK(b->GetComponent<Light>()->intensity == 5.0f && c->GetComponent<Light>()->intensity == 5.0f);
+    CHECK(!b->GetComponent<Light>()->enabled && !c->GetComponent<Light>()->enabled);
+    CHECK(c->GetComponent<Light>()->range == 99.0f && b->GetComponent<Light>()->range == 7.0f);   // untouched properties stay
+    CHECK(d->GetComponent<Light>() == nullptr);               // an object without the component is skipped
+    // Nothing changed: nothing written.
+    e = BeginComponentEdit(sel, a, *la);
+    CHECK(PropagateComponentEdit(sel, a, *la, e) == 0);
+    // One object selected, or the object not in the selection: not active.
+    CHECK(!BeginComponentEdit({a}, a, *la).active);
+    CHECK(!BeginComponentEdit({b, c}, a, *la).active);
+    // The second component of a type goes to the second one.
+    for (GameObject* g : {a, b}) { g->AddComponent<Light>()->intensity = 1.0f; }
+    Light* la2 = a->GetComponents<Light>()[1];
+    e = BeginComponentEdit({a, b}, a, *la2);
+    la2->intensity = 8.0f;
+    CHECK(PropagateComponentEdit({a, b}, a, *la2, e) == 1);
+    CHECK(b->GetComponents<Light>()[1]->intensity == 8.0f && b->GetComponents<Light>()[0]->intensity == 5.0f);
+}
+
 static void MakeLamp(const std::string& path) {
     Scene s("l");
     GameObject* lamp = s.CreateGameObject("Lamp");
@@ -370,6 +402,7 @@ int main() {
     TestDrop();
     TestMixed();
     TestClipboard();
+    TestComponentEditPropagation();
     TestPrefabChanges();
     TestEditUndo();
     TestLabelsAndKinds();

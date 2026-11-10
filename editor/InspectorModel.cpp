@@ -310,6 +310,37 @@ int WriteFieldAxes(const std::vector<GameObject*>& objs, const std::string& type
     return n;
 }
 
+ComponentEdit BeginComponentEdit(const std::vector<GameObject*>& selection, const GameObject* primary, const Component& comp) {
+    ComponentEdit e;
+    if (selection.size() < 2 || !primary || std::find(selection.begin(), selection.end(), primary) == selection.end()) return e;
+    if (!PropertyRegistry::FindFor(comp)) return e;
+    e.before = SnapshotComponent(comp);
+    e.active = !e.before.Empty();
+    return e;
+}
+
+int PropagateComponentEdit(const std::vector<GameObject*>& selection, GameObject* primary, Component& comp,
+                           const ComponentEdit& edit) {
+    if (!edit.active || !primary) return 0;
+    auto info = PropertyRegistry::FindFor(comp);
+    if (!info) return 0;
+    const std::vector<PropertyDiff> diff = DiffProperties(edit.before, SnapshotComponent(comp));
+    if (diff.empty()) return 0;
+    const int idx = ComponentIndexOf(*primary, comp);
+    int written = 0;
+    for (GameObject* g : selection) {
+        if (!g || g == primary) continue;
+        Component* other = nullptr;
+        int n = 0;
+        for (const auto& up : g->Components())
+            if (up && PropertyRegistry::FindFor(*up) == info) { if (n++ == idx) { other = up.get(); break; } }
+        if (!other) continue;
+        for (const PropertyDiff& d : diff)
+            if (d.kind == PropertyDiffKind::Changed && PropertyRegistry::SetComponentProperty(*other, d.property, d.after)) ++written;
+    }
+    return written;
+}
+
 // ---- Copy, paste, reset ----------------------------------------------------------------------------------
 
 bool HasRegisteredProperties(const Component& c) {

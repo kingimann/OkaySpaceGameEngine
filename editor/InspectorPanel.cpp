@@ -6,6 +6,8 @@
 #include "imgui_internal.h"
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <unordered_set>
 
@@ -50,9 +52,7 @@ void DropOutline(bool compatible, bool over) {
 bool ClearButton(const char* id) {
     const float fh = ImGui::GetFrameHeight();
     ImGui::SameLine(0, 2.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
     const bool hit = ImGui::Button(id, ImVec2(fh, fh));
-    ImGui::PopStyleVar();
     const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
     const ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
     const float r = fh * 0.17f;
@@ -78,7 +78,9 @@ void WatchEditUndo(okay::editor::EditorState& ed) {
     const bool activeMine = g.ActiveId != 0 && InEditorWindow(g.ActiveIdWindow);
     if (!u.IsOpen()) {
         // The picture is taken on the press, before the widget changes anything.
-        if ((clicked && InEditorWindow(g.HoveredWindow)) || activeMine) u.Begin(ed);
+        // (In a huge scene the extra picture on every click would be felt: then only a pressed widget starts one.)
+        const bool bigScene = ed.scene().Objects().size() > 8000;
+        if ((clicked && !bigScene && InEditorWindow(g.HoveredWindow)) || activeMine) u.Begin(ed);
     } else if (!down && !activeMine) {
         u.End(ed);
     }
@@ -229,7 +231,7 @@ bool ObjectField(const char* label, std::string& guid, okay::Scene& scene, bool 
     return changed;
 }
 
-// A "..." handle on the right of the last item (a text box holding a path): click it, or right-click the box, for the file picker.
+// A drop-down arrow on the right of the last item (a text box holding a path): click it, or right-click the box, for the file picker.
 bool AssetPathPicker(std::string& value, const char* kind) {
     bool changed = false;
     const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
@@ -237,7 +239,11 @@ bool AssetPathPicker(std::string& value, const char* kind) {
     const bool over = boxHot && ImGui::IsMouseHoveringRect(ImVec2(mx.x - 22.0f, mn.y), mx, false);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImU32 col = ImGui::GetColorU32(over ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-    for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(ImVec2(mx.x - 11.0f + i * 4.0f, (mn.y + mx.y) * 0.5f), 1.4f, col, 8);
+    {   // a small drop-down arrow: "choose from a list"
+        const float cx = mx.x - 12.0f, cy = (mn.y + mx.y) * 0.5f;
+        dl->AddTriangleFilled(ImVec2(cx - 4.0f, cy - 2.0f), ImVec2(cx + 4.0f, cy - 2.0f), ImVec2(cx, cy + 3.0f), col);
+    }
+    if (over) ImGui::SetTooltip("Choose a file from the project (or right-click)");
     static bool wantPicker = false;
     ImGui::PushID("##pathpick");
     if (boxHot && (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left)))) {
@@ -428,10 +434,12 @@ void DrawFallbackInspector(okay::editor::EditorState& ed, okay::GameObject* go, 
     std::vector<const PropertyDesc*> shown;
     for (const PropertyDesc& d : info->properties) {
         if (d.IsHidden()) continue;
+        if (d.name == "enabled") continue;                    // the header's check box is this one
         if (d.IsRuntimeOnly() && !playing) continue;
         shown.push_back(&d);
     }
     if (shown.empty()) return;
+    if (std::getenv("OKAY_DBG_FALLBACK")) { static std::unordered_set<std::string> seen; if (seen.insert(info->name).second) std::fprintf(stderr, "FALLBACK %s\n", info->name.c_str()); }
     if (!header(PrettyName(info->name).c_str(), comp, &toRemove, true)) return;
     std::vector<GameObject*> targets;
     const int idx = ComponentIndexOf(*go, *comp);

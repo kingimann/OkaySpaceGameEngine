@@ -62,7 +62,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
-    InspectorPanel.cpp InspectorModel.cpp                              # Inspector / Hierarchy: reference fields, generic component card, filter, drag-drop logic
+    InspectorPanel.cpp InspectorModel.cpp DevFieldDemo.cpp                              # Inspector / Hierarchy: reference fields, generic component card, filter, drag-drop logic
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
     LocalizationWindow.cpp                                             # the Localization window (string table)
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...

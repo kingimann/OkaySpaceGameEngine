@@ -82,6 +82,19 @@ std::string ComponentPath(const std::string& typeName, int index);
 /// Which of several same-type components `c` is (0 for the first).
 int ComponentIndexOf(const okay::GameObject& go, const okay::Component& c);
 
+/// Editing a component with its own hand-written Inspector while several objects are selected: take the values
+/// before the drawer runs, and after it ran hand every value it changed to the same component (same type, same
+/// position among components of that type) of the other selected objects.
+struct ComponentEdit {
+    bool active = false;
+    okay::PropertySnapshot before;
+};
+ComponentEdit BeginComponentEdit(const std::vector<okay::GameObject*>& selection, const okay::GameObject* primary,
+                                 const okay::Component& comp);
+/// Returns how many values were written to other objects.
+int PropagateComponentEdit(const std::vector<okay::GameObject*>& selection, okay::GameObject* primary,
+                           okay::Component& comp, const ComponentEdit& edit);
+
 // ---- Copy, paste, reset a component's values ---------------------------------------------
 struct ComponentClip {
     std::string type;   ///< registry type name; empty = nothing copied

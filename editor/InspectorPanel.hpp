@@ -28,7 +28,7 @@ bool AssetField(const char* label, std::string& value, const char* kind, const s
 bool ObjectField(const char* label, std::string& guid, okay::Scene& scene, bool mixed = false,
                  const char* tooltip = nullptr);
 
-/// For the older path text boxes: call right after the InputText. Adds a "..." handle (and a right-click menu)
+/// For the older path text boxes: call right after the InputText. Adds a drop-down arrow (and a right-click menu)
 /// with "Choose from project..." and "Clear". True when the path changed.
 bool AssetPathPicker(std::string& value, const char* kind = "");
 /// A thin, hard-to-miss marker for fields that follow a drag from the Project panel: draws an outline on the

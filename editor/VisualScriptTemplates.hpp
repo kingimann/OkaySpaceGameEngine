@@ -473,7 +473,7 @@ inline std::string StateMachine() {
     const int up = g.Node("OnUpdate", nullptr, 40, 160, "OnUpdate");
     const int dist = g.Node("DistanceTo", "Player", 40, 300);
     const int range = g.Node("GetVar", "range", 40, 400);
-    const int near = g.Node("Compare", "<", 280, 320);
+    const int isNear = g.Node("Compare", "<", 280, 320);
     const int br = g.Node("Branch", nullptr, 500, 160);
     const int one = g.Node("Const", "1", 720, 40);
     const int chase = g.Node("SetVar", "state", 720, 140);
@@ -481,7 +481,7 @@ inline std::string StateMachine() {
     const int mv = g.Node("MoveTowards", "Player", 960, 140);
     const int zero = g.Node("Const", "0", 720, 400);
     const int idle = g.Node("SetVar", "state", 720, 500);
-    g.Data(near, 0, dist); g.Data(near, 1, range); g.Data(br, 0, near);
+    g.Data(isNear, 0, dist); g.Data(isNear, 1, range); g.Data(br, 0, isNear);
     g.Data(chase, 0, one); g.Data(mv, 0, sp); g.Data(idle, 0, zero);
     g.Ex(up, 0, br);
     g.Ex(br, 0, chase); g.Ex(chase, 0, mv);

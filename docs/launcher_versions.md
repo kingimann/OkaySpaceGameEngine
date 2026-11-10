@@ -108,7 +108,8 @@ same helper process the self-updater uses.
 ## launcher.cfg
 
 `update_channel=latest|lts`, `keep_previous=1` (0 to 9), `default_editor=2.850.1`, `lts_line=2.850` (the LTS line last seen, so
-pruning can protect it while offline).
+pruning can protect it while offline). Settings > Behavior > Reset preferences puts the channel back to
+Latest, Keep previous versions to 1 and the default editor to "this version" (installed versions are left alone).
 
 ## Failure cases
 

@@ -53,6 +53,10 @@ public:
     /// Shadow blur in pixels: 0 = a crisp shadow, higher = a soft penumbra (the
     /// premium card look). Stacked expanding copies fake the blur.
     float shadowSoftness = 0.0f;
+    /// When on, the panel soaks up the pointer: widgets drawn UNDER it (a lower Canvas, or a
+    /// lower draw order) cannot be hovered or clicked through it. Widgets that are children of
+    /// the panel are unaffected. Off by default so older scenes behave as before.
+    bool  blocksPointer = false;
 };
 
 } // namespace okay

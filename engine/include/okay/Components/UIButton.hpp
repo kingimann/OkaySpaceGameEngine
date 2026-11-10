@@ -136,7 +136,9 @@ public:
     /// The color the renderer should draw: smoothly eased toward CurrentColor()
     /// when a transition is set, else the state color directly.
     Color DisplayColor() const {
-        return (transitionSpeed > 0.0f || transitionDuration > 0.0f) ? m_display : CurrentColor();
+        // Until the first Update there is no eased colour yet: show the state colour (the editor's
+        // Scene view never runs Update, and a game must not fade in from a default blue on frame one).
+        return ((transitionSpeed > 0.0f || transitionDuration > 0.0f) && m_displayReady) ? m_display : CurrentColor();
     }
     /// Scale the renderer should apply. Defaults match the old instant hover grow.
     float DisplayScale() const {
@@ -232,6 +234,7 @@ private:
         float targetScale = (interactable && (m_hover || m_focused)) ? hoverScale : 1.0f;
         const bool timed = transitionDuration > 0.0f || transitionSpeed > 0.0f;
         if (!timed) { m_display = t; m_scale = targetScale; return; }
+        if (!m_displayReady) { m_display = t; m_scale = targetScale; m_displayReady = true; return; }   // start from the real colour
         float k = transitionDuration > 0.0f ? dt / transitionDuration : transitionSpeed * dt;
         if (k > 1.0f) k = 1.0f;
         if (transitionEase == 1) k = k * k * (3.0f - 2.0f * k);
@@ -251,6 +254,7 @@ private:
     bool m_focused = false;
     float m_repeat = 0.0f;
     float m_scale = 1.0f;
+    bool  m_displayReady = false;   // m_display holds an eased colour (set by the first timed Update)
     Color m_display = Color::FromBytes(60, 90, 150);
 };
 

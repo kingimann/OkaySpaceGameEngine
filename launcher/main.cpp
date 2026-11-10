@@ -51,6 +51,7 @@
 #include "stb_image.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cfloat>
 #include <chrono>
@@ -83,6 +84,9 @@
 #  include <csignal>
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait until this process exits, then relaunch once
+#include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/launcher_versions.md)
+#include "VersionsNet.hpp"
+#include "VersionsUI.hpp"
 
 #if defined(_WIN32)
 // Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
@@ -633,25 +637,9 @@ int ActiveDownloads() {
     return n;
 }
 
-// Compare dotted versions ("1.5.0"); returns -1 / 0 / 1 for a<b / a==b / a>b.
-int CompareVersions(const std::string& a, const std::string& b) {
-    auto parse = [](const std::string& s) {
-        std::vector<int> v; std::stringstream ss(s); std::string tok;
-        while (std::getline(ss, tok, '.')) {
-            int n = 0; try { n = std::stoi(tok); } catch (...) { n = 0; }
-            v.push_back(n);
-        }
-        return v;
-    };
-    std::vector<int> va = parse(a), vb = parse(b);
-    std::size_t n = std::max(va.size(), vb.size());
-    for (std::size_t i = 0; i < n; ++i) {
-        int x = i < va.size() ? va[i] : 0;
-        int y = i < vb.size() ? vb[i] : 0;
-        if (x != y) return x < y ? -1 : 1;
-    }
-    return 0;
-}
+// Compare dotted versions ("2.855.0"); returns -1 / 0 / 1 for a<b / a==b / a>b. The rules are the editor's too (shared/ProjectVersion.hpp):
+// text that is not a version ("dev", "") is older than every release.
+int CompareVersions(const std::string& a, const std::string& b) { return okayver::CompareVersions(a, b); }
 
 // The installed version: a VERSION.txt beside the launcher (written after each
 // upgrade) or, if newer, the version this launcher was compiled with.
@@ -666,6 +654,12 @@ std::string LocalVersion() {
             return CompareVersions(v, OKAY_ENGINE_VERSION) >= 0 ? v : OKAY_ENGINE_VERSION;
     }
     return OKAY_ENGINE_VERSION;
+}
+
+// The folder the launcher's exe is in (where Tools/ and Versions/ are).
+static fs::path LauncherDirPath() {
+    const fs::path self = okay::restart::CurrentExecutable();
+    return self.empty() ? fs::path(g_exeDir) : self.parent_path();
 }
 
 // Download <url> to <dest>.new, validate it, then replace <dest>. If the file
@@ -732,12 +726,25 @@ bool DownloadProgress(const std::string& url, const fs::path& out) {
     return SDL_AtomicGet(&d.ok) == 1;
 }
 
+bool g_upChecksumFailed = false;   // the last download did not match versions.json (worker thread only)
+// `check`: the size and SHA-256 versions.json lists for this file (null = the index has none, as before it existed). A file that
+// does not match is never swapped in: the live file stays as it is.
 bool ReplaceFile(const std::string& url, const fs::path& dest, bool inUse,
-                 bool progress = false) {
+                 bool progress = false, const okayversions::FileInfo* check = nullptr) {
     fs::path tmp = dest; tmp += ".new";
     bool got = progress ? DownloadProgress(url, tmp) : Download(url, tmp);
     std::error_code ec;
     if (!got) { fs::remove(tmp, ec); return false; }   // no empty .new left behind
+    if (check && (check->size != 0 || !check->sha256.empty())) {
+        const std::string why = okayversions::VerifyFile(tmp, check->size, check->sha256);
+        if (!why.empty()) {
+            okay::restart::AppendLog(dest.parent_path() / "okay_update.log",
+                                     "checksum failed for " + okay::restart::Utf8(dest) + ": " + why);
+            fs::remove(tmp, ec);
+            g_upChecksumFailed = true;
+            return false;
+        }
+    }
     fs::path old = dest; old += ".old";
     // Move the live file aside first and put it back if the staged file can't
     // take its place. Deleting it first left no program when the install failed.
@@ -854,6 +861,48 @@ static std::string ResolveLatest(std::string& base, bool& fromSupabase) {
     }
     base = kRawBase; fromSupabase = false; return vg;
 }
+// The body of a small text file at `url` (a version list, LTS.txt); false when it can't be fetched.
+static bool FetchTextFile(const std::string& url, std::string& out) {
+    static std::atomic<unsigned> counter{0};
+    std::error_code ec;
+    const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_fetch_" + std::to_string(okay::restart::CurrentPid()) + "_" + std::to_string(counter++) + ".txt");
+    if (!Download(url, tmp)) { fs::remove(tmp, ec); return false; }
+    std::ifstream f(tmp, std::ios::binary);
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    out = ss.str();
+    f.close();
+    fs::remove(tmp, ec);
+    return true;
+}
+// Where the Versions page and the updater look for the list of versions: the releases bucket, then GitHub.
+static okayversions::Sources VersionSources() {
+    okayversions::Sources s;
+    s.bucketBase = SupabaseReleasesBase();
+    s.archiveTemplate = "https://github.com/kingimann/OkaySpaceGameEngine/releases/download/v{version}/{file}";
+    s.versionTxtUrls = {std::string(kRawBase) + "VERSION.txt"};
+    return s;
+}
+// What the in-place updater installs, by channel. Latest: the newest version, as always. LTS: the LTS head from the bucket's LTS.txt, and only
+// when moving this launcher to it is an upgrade (okayversions::DecideChannel): a launcher that is newer than the LTS line is never changed here;
+// the Versions page installs the LTS editor next to it. `message` explains an empty result; `failed` says it is a problem, not "nothing to do".
+struct UpdateTarget { std::string version, message; bool failed = false; };
+static UpdateTarget ResolveTarget(const okayversions::Settings& st, std::string& base, bool& fromSupabase) {
+    UpdateTarget t;
+    if (st.channel != okayversions::Channel::Lts) { t.version = ResolveLatest(base, fromSupabase); return t; }
+    const std::string sb = SupabaseReleasesBase();
+    std::string text;
+    const std::string lts = (sb.empty() || !FetchTextFile(sb + "LTS.txt", text)) ? std::string() : okayversions::ParseVersionTxt(text);
+    const okayversions::ChannelDecision d = okayversions::DecideChannel(okayversions::Channel::Lts, LocalVersion(), "", lts, okayver::InstalledVersions(LauncherDirPath()));
+    using K = okayversions::ChannelDecision;
+    if (d.kind == K::UpdateInPlace) { base = sb + "v" + d.version + "/"; fromSupabase = true; t.version = d.version; return t; }
+    t.failed = d.kind == K::NoInfo;
+    t.message = (d.kind == K::InstallSideBySide || d.kind == K::UpdateSideBySide)
+        ? "This launcher is newer than the long-term-support version (v" + d.version + "), so it is not changed. Open Versions to install that editor next to it."
+        : d.note;
+    return t;
+}
+
 // "What's new" lines published beside a Supabase release (NOTES.txt).
 static void FetchSupabaseNews(const std::string& ver) {
     const std::string sb = SupabaseReleasesBase();
@@ -873,6 +922,7 @@ static void FetchSupabaseNews(const std::string& ver) {
     if (kept > 0) SetNews("v" + ver, lines);
 }
 
+okayversions::Settings g_upSettings;   // the channel, keep-previous and default editor as they were when this update check started (main thread writes, worker reads)
 bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
@@ -884,9 +934,17 @@ int RunUpdateCheck(void*) {
     SetState(Up_Checking);
     SetUpMsg("Checking for updates...");
     FetchReleaseNews();   // refresh the What's-new card while we're online anyway
+    g_upChecksumFailed = false;
     std::string base; bool fromSupabase = false;
-    const std::string latest = ResolveLatest(base, fromSupabase);
+    const UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase);   // by channel (Latest unless the person chose LTS)
+    const std::string latest = target.version;
     if (latest.empty()) {
+        if (!target.message.empty()) {   // the LTS channel with nothing to do in place (or no LTS information): said in its own words
+            SetUpMsg(target.message);
+            SetUpStep(target.failed ? "Couldn't find the long-term-support version" : "Nothing to update", target.failed ? 0 : 1, 1);
+            SetState(target.failed ? Up_Failed : Up_UpToDate);
+            return 0;
+        }
         SetUpMsg("Couldn't reach the update server (offline?).");
         SetUpStep("Couldn't reach the update server", 0, 1);
         SetState(Up_Failed);
@@ -927,6 +985,26 @@ int RunUpdateCheck(void*) {
     bool ok = true;
     // Three download steps: engine, player, launcher.
     const int kSteps = 3;
+    // versions.json lists the size and SHA-256 of every file: what is downloaded is checked against it before it replaces anything.
+    // No index (offline, or an older server) just means no check, as before.
+    const okayversions::Index vindex = okayversions::LoadIndex(VersionSources(), FetchTextFile);
+    const okayversions::Entry* ventry = vindex.ok ? vindex.Find(latest) : nullptr;
+    auto checkFor = [&](const char* name) -> const okayversions::FileInfo* {
+        if (!ventry) return nullptr;
+        const auto it = ventry->files.find(name);
+        return it == ventry->files.end() ? nullptr : &it->second;
+    };
+    // Keep the editor this update replaces, so projects made with it can still be opened (Versions page). Never blocks the update.
+    std::string keepNote;
+    bool keptNow = false;
+    if (newer && g_upSettings.keepPrevious > 0) {
+        SetUpMsg("Keeping v" + local + " so you can still open projects made with it...");
+        SetUpStep("Keeping the current editor (v" + local + ")", 0, kSteps);
+        const okayversions::Result kr = okayversions::KeepCurrent(dir, local, okayversions::FindCurrentInstall(dir), g_upSettings.keepPrevious, okayversions::kRequireSdl);
+        keptNow = kr.outcome == okayversions::Outcome::Installed;
+        if (!kr.ok() && kr.outcome != okayversions::Outcome::Skipped) okay::restart::AppendLog(dir / "okay_update.log", kr.message);
+        if (kr.outcome == okayversions::Outcome::Skipped || kr.outcome == okayversions::Outcome::Failed) keepNote = kr.message;
+    }
     {
         // Write each exe back to wherever it currently lives (e.g. Tools/), so an
         // update preserves the organized layout instead of scattering exes to the
@@ -939,13 +1017,13 @@ int RunUpdateCheck(void*) {
             SetUpMsg("Downloading engine v" + latest + "...");
             SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
             ok = ReplaceFile(base + "OkayEngine.exe",
-                             destOf("OkayEngine.exe"), false, /*progress=*/true) && ok;
+                             destOf("OkayEngine.exe"), false, /*progress=*/true, checkFor("OkayEngine.exe")) && ok;
         }
         if (!repair || FindExe({"OkaySpacePlayer.exe"}).empty()) {
             SetUpMsg("Downloading player runtime v" + latest + "...");
             SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
             ok = ReplaceFile(base + "OkaySpacePlayer.exe",
-                             destOf("OkaySpacePlayer.exe"), false, /*progress=*/true) && ok;
+                             destOf("OkaySpacePlayer.exe"), false, /*progress=*/true, checkFor("OkaySpacePlayer.exe")) && ok;
         }
     }
     // Only self-update the launcher on a genuine version bump.
@@ -956,22 +1034,32 @@ int RunUpdateCheck(void*) {
         fs::path selfExe = okay::restart::CurrentExecutable();
         if (selfExe.empty() && !g_selfPath.empty()) selfExe = fs::path(g_selfPath);
         launcherOk = !selfExe.empty() &&
-            ReplaceFile(base + "OkaySpace.exe", selfExe, true, /*progress=*/true);
+            ReplaceFile(base + "OkaySpace.exe", selfExe, true, /*progress=*/true, checkFor("OkaySpace.exe"));
     }
 
     if (ok) {
         std::ofstream(dir / "VERSION.txt") << latest << "\n";
         g_upRelaunchNeeded = launcherOk;
+        // The kept copies beyond "Keep previous versions: N" go (never the LTS line's newest installed patch, never the default editor).
+        if (newer) {
+            okayversions::RemoveGuards guards;
+            guards.running = latest;
+            guards.launcher = OKAY_ENGINE_VERSION;
+            if (!g_upSettings.defaultEditor.empty()) guards.keep.push_back({g_upSettings.defaultEditor, "it is your default editor."});
+            okayversions::Prune(dir, g_upSettings.keepPrevious, vindex.ok && !vindex.lts.empty() ? vindex.lts : g_upSettings.ltsLine, guards);
+        }
         SetUpStep(launcherOk ? "Update complete — restart to finish"
                              : "Update complete", kSteps, kSteps);
-        SetUpMsg(launcherOk
+        SetUpMsg((launcherOk
             ? "Updated to v" + latest + " — restart the launcher to finish."
             : (newer ? "Updated engine & player to v" + latest + "."
-                     : "Downloaded the missing runtime (v" + local + ")."));
+                     : "Downloaded the missing runtime (v" + local + ").")) + (keepNote.empty() ? std::string() : " " + keepNote));
         SetState(Up_Updated);
     } else {
-        SetUpMsg("Download failed — check your internet connection.");
-        SetUpStep("Download failed — check your connection and retry", 0, kSteps);
+        if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
+        SetUpMsg(g_upChecksumFailed ? "A downloaded file did not match its checksum, so nothing was installed. Try again later."
+                                    : "Download failed — check your internet connection.");
+        SetUpStep(g_upChecksumFailed ? "A download did not match its checksum" : "Download failed — check your connection and retry", 0, kSteps);
         SetState(Up_Failed);
     }
     return 0;
@@ -985,6 +1073,7 @@ void StartUpdateCheck(bool showDialog = true) {
     if (EditorRunning()) { g_afterEditor = 2; g_afterEditorShowDialog = showDialog; return; }
     if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
+    g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
     g_upThread = SDL_CreateThread(RunUpdateCheck, "okay-update", nullptr);
 }
 
@@ -999,9 +1088,10 @@ static SDL_mutex* g_upPollMutex = nullptr;
 static std::string g_upPollResult;         // (guarded)
 static bool g_upPollDone = false;          // (guarded)
 static volatile bool g_upPollBusy = false;
+static okayversions::Settings g_pollSettings;   // (copied when the poll starts)
 static int UpdatePollWorker(void*) {
     std::string base; bool fromSupabase = false;
-    const std::string latest = ResolveLatest(base, fromSupabase);
+    const std::string latest = ResolveTarget(g_pollSettings, base, fromSupabase).version;   // by channel; "" = nothing to offer in place
     SDL_LockMutex(g_upPollMutex);
     g_upPollResult = latest; g_upPollDone = true;
     SDL_UnlockMutex(g_upPollMutex);
@@ -1011,6 +1101,7 @@ static int UpdatePollWorker(void*) {
 static void StartUpdatePoll() {
     if (g_upPollBusy) return;
     if (!g_upPollMutex) g_upPollMutex = SDL_CreateMutex();
+    g_pollSettings = okayversions::GlobalSettings();
     g_upPollBusy = true;
     if (SDL_Thread* t = SDL_CreateThread(UpdatePollWorker, "okay-uppoll", nullptr)) SDL_DetachThread(t);
     else g_upPollBusy = false;
@@ -1093,7 +1184,7 @@ static bool SpawnTracked(const std::string& exe, const std::string& args, const 
     CloseHandle(pi.hThread);
     pp.h = pi.hProcess;
 #else
-    const std::string cmd = "exec \"" + exe + "\"" + (args.empty() ? std::string() : " " + args) + " >/dev/null 2>&1";
+    const std::string cmd = "exec " + okayversions::QuoteArgPosix(exe) + (args.empty() ? std::string() : " " + args) + " >/dev/null 2>&1";
     pid_t pid = fork();
     if (pid < 0) return false;
     if (pid == 0) { setsid(); execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr); _exit(127); }
@@ -1272,6 +1363,10 @@ static bool BeginUpdatedRestart() {
     return true;
 }
 
+// The version of the editor this launcher started last ("" = this launcher's own editor, or none). One editor runs at a time, so the
+// Versions page and "Open with" use it to know whether the editor that is open is the one a project needs.
+std::string g_editorStartedVersion;
+
 // Launch the editor with a handshake token: "--launcher <pid>". The editor refuses
 // to start unless this token is present AND that launcher process is still alive,
 // so the engine can only be opened through (and alongside) the launcher.
@@ -1280,15 +1375,17 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
                   const std::string& projectVersion = "", int gpu = -1) {
     if (exe.empty()) return;
     std::string args = "--launcher " + std::to_string(CurrentPid());
-    if (!tmpl.empty()) args += " --template \"" + tmpl + "\"";
+    // Every value is quoted for the platform's command line (spaces, quotes and `$` in a name or path stay one argument).
+    if (!tmpl.empty()) args += " --template " + okayversions::QuoteArg(tmpl);
     // Project creation lives here in the launcher: the editor receives the
     // target folder and builds <folder>/Assets + the template scene headlessly.
-    if (!newProjectDir.empty()) args += " --new-project \"" + newProjectDir + "\"";
-    if (!openScene.empty()) args += " --open \"" + openScene + "\"";   // reopen a project
+    if (!newProjectDir.empty()) args += " --new-project " + okayversions::QuoteArg(newProjectDir);
+    if (!openScene.empty()) args += " --open " + okayversions::QuoteArg(openScene);   // reopen a project
     // More options on the Create page. The version has already been checked (no spaces or quotes).
     if (!projectVersion.empty() && projectVersion.find_first_of(" \t\"") == std::string::npos)
         args += " --project-version " + projectVersion;
     if (gpu == 0 || gpu == 1) args += std::string(" --gpu ") + (gpu ? "1" : "0");
+    g_editorStartedVersion.clear();
     if (SpawnTracked(exe, args, "editor", "OkaySpace Editor")) return;   // time in the editor counts too
 #if defined(_WIN32)
     std::string cmd = "start \"\" \"" + exe + "\" " + args;
@@ -1297,6 +1394,19 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
 #endif
     RunCmd(cmd, false);
 }
+
+// Open `scene` with an installed editor of another version, the way the editor expects (docs/project_upgrade.md):
+// --launcher <pid> --open <scene> --keep-version. False when that version's editor is not there.
+bool LaunchEditorVersion(const std::string& version, const std::string& scene) {
+    const fs::path exe = okayver::InstalledEditorPath(LauncherDirPath(), version);
+    std::error_code ec;
+    if (exe.empty() || scene.empty() || !fs::is_regular_file(exe, ec)) return false;
+    if (!SpawnTracked(exe.string(), okayversions::JoinArgs(okayversions::OpenWithArgs(CurrentPid(), scene)), "editor", "OkaySpace Editor")) return false;
+    g_editorStartedVersion = okayver::NormalizeVersion(version);
+    return true;
+}
+// An "Open with" that waits for the open editor to close (the "Close the editor first" window, action 4).
+std::string g_pendingOpenScene, g_pendingOpenVersion, g_pendingOpenName;   // version "" = this launcher's editor
 
 void Toast(const std::string& m, int kind);   // defined below; used by CreateProject
 
@@ -4250,6 +4360,7 @@ void LoadPrefs() {
         else if (k == "splash_bg_top")  { std::sscanf(v.c_str(), "%f %f %f", &g_splashBgTop[0], &g_splashBgTop[1], &g_splashBgTop[2]); }
         else if (k == "splash_bg_bot")  { std::sscanf(v.c_str(), "%f %f %f", &g_splashBgBot[0], &g_splashBgBot[1], &g_splashBgBot[2]); }
         else if (k == "splash_accent")  { std::sscanf(v.c_str(), "%f %f %f", &g_splashAccent[0], &g_splashAccent[1], &g_splashAccent[2]); }
+        else okayversions::ApplySettingLine(okayversions::GlobalSettings(), k, v);   // update_channel, keep_previous, default_editor, lts_line
     }
     if (g_winW < 700)  g_winW = 700;
     if (g_winH < 500)  g_winH = 500;
@@ -4263,6 +4374,7 @@ void SavePrefs() {
     f << "theme=" << g_themeIndex << "\n";
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
+    okayversions::WriteSettings(okayversions::GlobalSettings(), f);
     f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
     if (g_antiCheatMode) f << "anticheat=" << okayac::ModeName(okayac::Mode(g_antiCheatMode)) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
@@ -16423,6 +16535,38 @@ static void DrawOfficialAdmin(okay::account::AccountService& account) {
 
 } // namespace
 
+// What the Versions page needs from the launcher: where things are, the look, and the launcher's own helpers (toast, folder opener, HTTP).
+// Rebuilt about once a second (it asks the file system and the process list); the colours follow the theme every frame.
+static const okayversionsui::Host& VersionsHost() {
+    static okayversionsui::Host h;
+    static Uint32 builtAt = 0;
+    static bool wired = false;
+    const Uint32 now = SDL_GetTicks();
+    if (!wired) {
+        wired = true;
+        h.toast = [](const std::string& m, int kind) { Toast(m, kind); };
+        h.openFolder = [](const std::string& path) { OpenExternal(path); };
+        h.savePrefs = [] { SavePrefs(); };
+        h.startUpdate = [] { StartUpdateCheck(true); };
+        h.channelChanged = [] { g_upAvailable.clear(); g_launcherRefocused = true; };   // look for updates on the new channel now
+        h.fetchText = [](const std::string& url, std::string& out) { return FetchTextFile(url, out); };
+        h.headSize = [](const std::string& url) { return (std::uint64_t)std::max<long long>(0, RemoteSize(url)); };
+    }
+    if (builtAt == 0 || now - builtAt > 1000) {
+        builtAt = now;
+        h.launcherDir = LauncherDirPath();
+        h.currentVersion = LocalVersion();
+        h.launcherVersion = OKAY_ENGINE_VERSION;
+        h.sources = VersionSources();
+        h.editorRunning = EditorRunning();
+        h.runningEditorVersion = g_editorStartedVersion;
+    }
+    h.accent = kAccent;
+    h.accentDim = kAccentDim;
+    h.cardBg = g_themeIndex == 0 ? okaytheme::kRaised : ImVec4(0.180f, 0.180f, 0.190f, 1.0f);
+    return h;
+}
+
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     okay::restart::RememberArguments(argc, argv);
@@ -16439,9 +16583,21 @@ int main(int argc, char** argv) {
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
 
+    // `--versions [<version>]` opens the Versions page (the editor's "Open launcher" button starts the launcher this way).
+    okayversions::LauncherArgs launchArgs;
+    {
+        std::vector<std::string> cmdArgs;
+        for (int i = 1; i < argc; ++i) if (argv[i]) cmdArgs.emplace_back(argv[i]);
+        launchArgs = okayversions::ParseLauncherArgs(cmdArgs);
+    }
     // One launcher at a time: a second launch asks the running one to come
     // forward (restoring it from the tray / taskbar) and then exits quietly.
-    if (!AcquireSingleInstance()) { SDL_Quit(); return 0; }
+    // With --versions it also leaves a note for the running one to open that page.
+    if (!AcquireSingleInstance()) {
+        if (launchArgs.versions) okayversions::WriteHandoff(okayversions::HandoffFile(), launchArgs, (long long)std::time(nullptr));
+        SDL_Quit();
+        return 0;
+    }
     // Only the instance that stays up removes the previous exe. A second launch
     // that loses the single-instance race used to delete it and then exit.
     {
@@ -16664,8 +16820,9 @@ int main(int argc, char** argv) {
     std::string commRemovePath;   // community item pending delete-confirmation
     std::string commRemoveName;
     // Reopen on the section the launcher was last closed on.
-    int tab = (g_lastTab >= 0 && g_lastTab <= 14 && g_lastTab != 11) ? g_lastTab : 0;
+    int tab = (g_lastTab >= 0 && g_lastTab <= 15 && g_lastTab != 11) ? g_lastTab : 0;
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
+    if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
     if (g_updateOnLaunch) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
     if (std::getenv("OKAY_CHAT_DEMO")) g_chatWinOpen = true;   // dev screenshot hook: open the chat
@@ -16827,6 +16984,7 @@ int main(int argc, char** argv) {
             static int lastUp = -1;
             int us = (int)GetState();
             if (us != lastUp) {
+                if (us == (int)Up_Updated || us == (int)Up_Failed) okayversionsui::InvalidateInstalled();   // the update kept / pruned versions
                 if (us == (int)Up_Updated) Toast(g_upRelaunchNeeded ? "Updated — restarting..."
                                                                      : "Update installed", 1);
                 else if (us == (int)Up_Failed) Toast("Update check failed", 2);
@@ -16844,6 +17002,22 @@ int main(int argc, char** argv) {
                 if (EditorRunning()) g_afterEditor = 3;
                 else if (BeginUpdatedRestart()) running = false;
             }
+        }
+
+        // `--versions` from a second launcher (the editor's "Open launcher"): bring this window forward and open the Versions page.
+        {
+            static Uint32 nextHandoff = 0;
+            if (SDL_GetTicks() >= nextHandoff) {
+                nextHandoff = SDL_GetTicks() + 400;
+                okayversions::LauncherArgs ha;
+                if (okayversions::TakeHandoff(okayversions::HandoffFile(), (long long)std::time(nullptr), &ha)) {
+                    okayversionsui::RequestPage(ha.version);
+                    SDL_RestoreWindow(window);
+                    SDL_RaiseWindow(window);
+                }
+            }
+            if (okayversionsui::TakePageRequest()) { tab = 15; ClosePublicProfile(); }
+            okayversionsui::Tick(VersionsHost());   // collects a finished download / version-list job
         }
 
         // Periodic update check — runs while open AND while minimized (this block
@@ -16969,6 +17143,7 @@ int main(int argc, char** argv) {
             if (ImGui::BeginPopupModal("Close the editor first", nullptr,
                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
                 const bool upd = g_afterEditor == 2 || g_afterEditor == 3;
+                const bool openWith = g_afterEditor == 4;   // an editor of another version has to open the project
                 const bool edOpen = EditorRunning();
                 const std::string ack = s_closing ? EditorAck() : std::string();
                 if (!edOpen) {   // closed: do what was asked
@@ -16978,18 +17153,25 @@ int main(int argc, char** argv) {
                     if (act == 1) running = false;
                     else if (act == 2) StartUpdateCheck(g_afterEditorShowDialog);
                     else if (act == 3) { if (BeginUpdatedRestart()) running = false; }   // restart to finish an update
+                    else if (act == 4) {   // the editor that was open is closed: open the project with the version asked for
+                        if (g_pendingOpenVersion.empty()) LaunchEditor(editor, "", "", g_pendingOpenScene);
+                        else if (!LaunchEditorVersion(g_pendingOpenVersion, g_pendingOpenScene)) Toast("v" + g_pendingOpenVersion + " isn't installed any more", 2);
+                        else Toast("Opening " + g_pendingOpenName + " with v" + g_pendingOpenVersion, 1);
+                        g_pendingOpenScene.clear(); g_pendingOpenVersion.clear(); g_pendingOpenName.clear();
+                    }
                 } else if (!s_closing) {
                     ImGui::TextUnformatted("The OkaySpace editor is still open.");
-                    ImGui::TextDisabled(upd ? "It has to close before the update can replace it."
-                                            : "It has to close before the launcher does.");
+                    ImGui::TextDisabled(openWith ? "Only one editor can be open at a time, so it has to close before the other version can open your project."
+                                                 : upd ? "It has to close before the update can replace it."
+                                                       : "It has to close before the launcher does.");
                     ImGui::TextDisabled("Your project is saved first - nothing is lost.");
                     ImGui::Dummy(ImVec2(0, 8));
-                    if (ImGui::Button(upd ? "Save project, close editor & update" : "Save project & close editor", ImVec2(300, 32))) {
+                    if (ImGui::Button(openWith ? "Save project, close editor & open" : upd ? "Save project, close editor & update" : "Save project & close editor", ImVec2(300, 32))) {
                         if (RequestEditorSaveQuit()) { s_closing = true; s_sentAt = SDL_GetTicks(); }
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Cancel", ImVec2(110, 32)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-                        g_afterEditor = 0; ImGui::CloseCurrentPopup();
+                        g_afterEditor = 0; g_pendingOpenScene.clear(); g_pendingOpenVersion.clear(); g_pendingOpenName.clear(); ImGui::CloseCurrentPopup();
                     }
                 } else if (ack == "save-failed") {
                     ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "The editor couldn't save everything, so it stayed open.");
@@ -17691,6 +17873,7 @@ int main(int argc, char** argv) {
         tabRow(2);
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
+        if (navRow("##navver", "Versions", kIcoRefresh, tab == 15 && !g_pfOpen, okayversionsui::InstallRunning() ? 1 : 0, navAccent)) { tab = 15; ClosePublicProfile(); }
         navSection("SOCIAL");
         tabRow(6, g_friendRequests, navRed);              // pending friend requests
         if (navSignedIn && navRow("##navchat", "Chat", kIcoChat, g_chatWinOpen, g_dmUnread, navRed)) {
@@ -17961,7 +18144,7 @@ int main(int argc, char** argv) {
                               ? (fs::path(g_exeDir) / "Projects").string().c_str() : g_projectsDir.c_str());
 
             // ---- Projects: every <Location>/<Name>/Assets folder, plus ones opened from elsewhere ----
-            struct CrProj { std::string name, scene; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; };
+            struct CrProj { std::string name, scene; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
             static std::vector<CrProj> s_projects;
             static std::string s_projScanned = "\x01";   // never equals a real path -> first scan
             auto sceneIn = [](const fs::path& root) -> std::string {
@@ -17987,6 +18170,7 @@ int main(int argc, char** argv) {
                     pr.ready = fs::exists(fs::path(scene), e);
                     pr.missing = extra && !pr.ready;   // moved or deleted outside the launcher
                     if (pr.ready) pr.mtime = (long long)fs::last_write_time(fs::path(scene), e).time_since_epoch().count();
+                    if (pr.ready) pr.ver = okayver::ReadProjectVersion(okayproj::RootOfScene(fs::path(scene)).string());   // read only: the launcher never writes into a project
                     s_projects.push_back(pr);
                 };
                 for (auto& e : fs::directory_iterator(fs::path(npLoc), pec)) {
@@ -18011,10 +18195,26 @@ int main(int argc, char** argv) {
                 if (SDL_GetTicks() - t > 1000) { t = SDL_GetTicks(); s_projScanned = "\x01"; }
             } else { s_watchUntil = 0; s_highlight.clear(); }
 
+            // Open `pr` with the editor of `version` ("" = this launcher's). One editor runs at a time, so when the open one is another
+            // version it is asked to save and close first (docs/project_upgrade.md, "One editor at a time").
+            auto openProjectWith = [&](const CrProj& pr, const std::string& version) {
+                if (!pr.ready || (version.empty() && editor.empty())) return;
+                if (okayversions::MustCloseEditorFirst(EditorRunning(), g_editorStartedVersion, LocalVersion(), version)) {
+                    g_pendingOpenScene = pr.scene; g_pendingOpenVersion = version; g_pendingOpenName = pr.name;
+                    g_afterEditor = 4;
+                    return;
+                }
+                if (version.empty()) { LaunchEditor(editor, "", "", pr.scene); Toast("Opening " + pr.name, 1); }
+                else if (LaunchEditorVersion(version, pr.scene)) Toast("Opening " + pr.name + " with v" + version, 1);
+                else { Toast("v" + version + " isn't installed any more", 2); okayversionsui::InvalidateInstalled(); }
+            };
+            // A plain Open starts this launcher's editor, which asks the upgrade question itself (no second question here); a project with no
+            // version recorded goes to the default editor when one is set (Versions page).
             auto openProject = [&](const CrProj& pr) {
                 if (editor.empty() || !pr.ready) return;
-                LaunchEditor(editor, "", "", pr.scene);
-                Toast("Opening " + pr.name, 1);
+                const okayversions::OpenTarget t = okayversions::ChooseEditorForOpen(pr.ver, LocalVersion(),
+                    okayversionsui::InstalledVersionsCached(LauncherDirPath()), okayversions::GlobalSettings().defaultEditor);
+                openProjectWith(pr, t.version);
             };
             auto playProject = [&](const CrProj& pr) {
                 if (player.empty() || !pr.ready) return;
@@ -18265,9 +18465,27 @@ int main(int argc, char** argv) {
                         const std::string ago = ModifiedAgo(fs::path(pr.scene));
                         when = ago.empty() ? "Not opened yet" : "Last changed " + ago;
                     }
+                    // The project's version, and a small badge when it is not this editor's line ("older: v2.850.x", "newer").
+                    const okayversions::ProjectBadge badge = pr.ready ? okayversions::BadgeFor(pr.ver, LocalVersion()) : okayversions::ProjectBadge();
+                    if (pr.ready) when += "  \xC2\xB7  " + (pr.ver.empty() ? std::string("version unknown") : badge.version);
+                    if (pr.extra) when += "  \xC2\xB7  elsewhere";
                     const float tx = wp.x + 16 + 64 + 14;
                     const float textRight = wp.x + cardW - 16 - (stackBtns ? 0.0f : 250.0f);
-                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.08f, ImVec2(tx, wp.y + 16), crText, FitText(pr.name, textRight - tx).c_str());
+                    {
+                        const float nameFs = ImGui::GetFontSize() * 1.08f;
+                        float pillW = 0.0f;
+                        if (!badge.text.empty()) pillW = ImGui::CalcTextSize(badge.text.c_str()).x * 0.84f + 14.0f;
+                        const std::string title = FitText(pr.name, textRight - tx - (pillW > 0 ? pillW + 8.0f : 0.0f));
+                        dl->AddText(ImGui::GetFont(), nameFs, ImVec2(tx, wp.y + 16), crText, title.c_str());
+                        if (pillW > 0.0f) {
+                            const float fs = ImGui::GetFontSize() * 0.84f;
+                            const ImVec2 pmin(tx + ImGui::CalcTextSize(title.c_str()).x * 1.08f + 8.0f, wp.y + 17.0f), pmax(pmin.x + pillW, pmin.y + fs + 5.0f);
+                            const bool older = badge.tone == okayversions::ProjectBadge::Older;
+                            dl->AddRectFilled(pmin, pmax, older ? IM_COL32(240, 200, 100, 50) : IM_COL32(240, 125, 120, 55), (pmax.y - pmin.y) * 0.5f);
+                            dl->AddText(ImGui::GetFont(), fs, ImVec2(pmin.x + 7.0f, pmin.y + 2.5f), older ? IM_COL32(244, 214, 130, 255) : IM_COL32(246, 150, 145, 255), badge.text.c_str());
+                            if (ImGui::IsMouseHoveringRect(pmin, pmax)) ImGui::SetTooltip("%s", badge.tip.c_str());
+                        }
+                    }
                     dl->AddText(ImVec2(tx, wp.y + 40), crDim, FitText(root.string(), textRight - tx).c_str());
                     dl->AddText(ImVec2(tx, wp.y + 62), crDim, FitText(when, textRight - tx).c_str());
                     if (stackBtns) ImGui::SetCursorPos(ImVec2(16, cardH - 40));
@@ -18281,6 +18499,21 @@ int main(int argc, char** argv) {
                     if (ImGui::Button("More", ImVec2(64, 34))) ImGui::OpenPopup("projctx");
                     if (ImGui::BeginPopupContextWindow("projctx", ImGuiPopupFlags_MouseButtonRight)) {
                         if (ImGui::MenuItem("Open in editor", nullptr, false, !editor.empty() && pr.ready)) { s_openedAt[pr.scene] = SDL_GetTicks(); openProject(pr); }
+                        {   // Open with an editor of another version (the Versions page installs them)
+                            const std::vector<okayversions::EditorChoice> choices = pr.ready
+                                ? okayversions::OpenWithChoices(pr.ver, okayversionsui::InstalledVersionsCached(LauncherDirPath()), LocalVersion())
+                                : std::vector<okayversions::EditorChoice>();
+                            if (ImGui::BeginMenu("Open with", pr.ready)) {
+                                if (choices.empty()) ImGui::TextDisabled("No other versions are installed.");
+                                for (const okayversions::EditorChoice& c : choices) {
+                                    const std::string label = "v" + c.version + (c.sameLine ? "   (this project's version)" : "");
+                                    if (ImGui::MenuItem(label.c_str())) { s_openedAt[pr.scene] = SDL_GetTicks(); openProjectWith(pr, c.version); }
+                                }
+                                ImGui::Separator();
+                                if (ImGui::MenuItem("Get more versions\xE2\x80\xA6")) { tab = 15; g_lastTab = 15; if (!pr.ver.empty()) okayversionsui::RequestPage(pr.ver); }
+                                ImGui::EndMenu();
+                            }
+                        }
                         if (ImGui::MenuItem("Play (no export)", nullptr, false, !player.empty() && pr.ready)) playProject(pr);
                         ImGui::Separator();
                         if (ImGui::MenuItem("Show in Explorer", nullptr, false, !pr.missing))
@@ -20996,6 +21229,14 @@ int main(int argc, char** argv) {
                     settingRow("Keep the official game up to date", "Downloads new versions of the official game in the background. They install once the game is closed.", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##offauto", &g_officialAutoUpdate)) SavePrefs();
                     });
+                    rowDivider();
+                    settingRow("Update channel", "Latest gets every release. Long-term support (LTS) only gets fixes. The launcher itself is never downgraded.", 260.0f, 30.0f, [&](float w) {
+                        okayversionsui::DrawChannelCombo(VersionsHost(), std::min(w, 260.0f));
+                    });
+                    rowDivider();
+                    settingRow("Other versions of the editor", "Keep older editors next to this one and open each project with the version it was made with.", 150.0f, 30.0f, [&](float) {
+                        if (ImGui::Button("Manage versions", ImVec2(150, 30))) { tab = 15; g_lastTab = 15; }
+                    });
                     cardEnd();
 
                     cardBegin("##sc_ac", "ANTI-CHEAT");
@@ -21320,6 +21561,7 @@ int main(int argc, char** argv) {
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
                     g_updateOnLaunch = false; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
+                    { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); }   // update settings (the versions themselves stay)
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
                     ApplyAccent(g_accentIndex);   // re-applies theme + accent
                     SavePrefs();
@@ -24855,6 +25097,9 @@ int main(int argc, char** argv) {
                 ImGui::PopID();
             }
             ImGui::EndChild();
+        } else if (tab == 15) {                           // ---- Versions ----
+            sectionHeader("Versions", "Keep other versions of the editor next to this one, so every project can open with the version it was made with.");
+            okayversionsui::DrawPage(VersionsHost());
         } else if (tab == 11) {                           // ---- Admin ----
             DrawAdminPage(account);
         }
@@ -24922,6 +25167,7 @@ int main(int argc, char** argv) {
     if (g_srvMutex) { SDL_DestroyMutex(g_srvMutex); g_srvMutex = nullptr; }
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     if (g_upMutex) { SDL_DestroyMutex(g_upMutex); g_upMutex = nullptr; }
+    okayversionsui::Shutdown();   // cancels a running version download and joins its thread
     // Stop any in-flight downloads and join their worker threads before teardown.
     if (g_dlMutex) {
         SDL_LockMutex(g_dlMutex);

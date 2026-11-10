@@ -21,6 +21,7 @@
 #include "okay/Components/AnimBackend.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/Stance.hpp"
+#include <cctype>
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
@@ -160,6 +161,45 @@ public:
     /// the forward speed blend.
     bool HasDirectionalClips() const {
         return !strafeLeftClip.empty() || !strafeRightClip.empty() || !walkBackClip.empty() || !runBackClip.empty();
+    }
+    enum class SlotUse { Plays, Empty, Missing, NoKeys };
+    /// What this slot will do. Empty and Missing both fall back; Missing means a
+    /// name is saved but the clip is not on the model.
+    SlotUse SlotUseOf(int s) const {
+        const std::string& n = SlotClip(s);
+        if (n.empty()) return SlotUse::Empty;
+        const int i = FindClip(n);
+        if (i < 0) return SlotUse::Missing;
+        if (ClipLength(i) <= 0.0f) return SlotUse::NoKeys;
+        return SlotUse::Plays;
+    }
+    /// What an empty or missing slot does. Matches the player: hips yaw and a
+    /// reversed walk only when Legs Follow Travel is on, or when some other
+    /// directional clip is already mapped.
+    static const char* SlotFallback(int s) {
+        switch (s) {
+            case SlotIdle: return "Empty: the first clip, or the built-in idle when Built-in for empty slots is on.";
+            case SlotWalk: return "Empty or missing: the run clip if it exists, otherwise the built-in walk.";
+            case SlotRun: return "Empty or missing: stays on the walk.";
+            case SlotJump: case SlotFall: case SlotLand:
+                return "Empty or missing: that air pose is skipped.";
+            case SlotStrafeLeft: case SlotStrafeRight:
+                return "Empty or missing: a strafe keeps the forward walk. Hips turn only if Legs Follow Travel is on.";
+            case SlotWalkBack: case SlotRunBack:
+                return "Empty or missing: the forward walk plays backward when Legs Follow Travel is on, or another strafe clip is set. Otherwise it plays forward.";
+            default: return "Empty or missing: that stance keeps the standing clips.";
+        }
+    }
+    /// A locomotion slot whose clip name looks like a trick. The assignment is kept.
+    const char* SlotCaution(int s) const {
+        if (s < SlotIdle || s > SlotRunBack) return "";
+        if (s >= SlotCrouch && s <= SlotGetUp) return "";
+        if (SlotUseOf(s) != SlotUse::Plays) return "";
+        std::string key;
+        for (char c : SlotClip(s)) if (std::isalnum((unsigned char)c)) key += (char)std::tolower((unsigned char)c);
+        for (const char* w : {"flip", "dodge", "roll", "attack", "kick", "punch"})
+            if (key.find(w) != std::string::npos) return "This looks like a trick, not a walk. It will still play if you leave it here.";
+        return "";
     }
     /// The clip name a slot plays ("" = empty).
     std::string& SlotClip(int s) {
@@ -682,7 +722,22 @@ public:
             }
         }
         const float wa = w[a], wb = (a == b) ? 0.0f : w[b];
-        const float blend = (wa + wb) > 1e-4f ? wb / (wa + wb) : 0.0f;
+        float blend = (wa + wb) > 1e-4f ? wb / (wa + wb) : 0.0f;
+        // The two winners trade places when their weights cross. The blend is
+        // "how much of B", so a swap turns 0.49 of the strafe into 0.51 of the
+        // walk and the pose pops. Keep last frame's clip order and flip the weight.
+        if (m_haveDirPair && a != b) {
+            const int ca = mot[a].clip, cb = mot[b].clip;
+            if (ca == m_dirB && cb == m_dirA) {
+                const int tmp = a; a = b; b = tmp;
+                blend = 1.0f - blend;
+            }
+        }
+        if (a != b) {
+            m_dirA = mot[a].clip;
+            m_dirB = mot[b].clip;
+            m_haveDirPair = true;
+        }
         const float rate = std::fmin(kStrideMaxRate, std::fmax(0.5f, spd / std::fmax(wAt, 0.2f)));
         m_appliedSign = spd > 0.2f ? 1 : 0;
         m_slot = a == b || blend < 0.5f ? SlotOfClip(mot[a].clip) : SlotOfClip(mot[b].clip);
@@ -1739,6 +1794,8 @@ private:
     int                      m_cycleSign = 1;       ///< -1: play the forward walk backward (no back clip)
     int                      m_appliedSign = 0;     ///< what LocomotionSign reports
     bool                     m_backTravel = false;  ///< travelling backward (with hysteresis)
+    int                      m_dirA = -1, m_dirB = -1; ///< last directional pair, so a weight cross doesn't swap clips
+    bool                     m_haveDirPair = false;
     bool                     m_yawOn = false;       ///< hip yaw engaged (speed hysteresis)
     float                    m_hipYaw = 0.0f;       ///< eased hip yaw, degrees
     bool                     m_yawWritten = false;  ///< the hips / spine hold last frame's yaw

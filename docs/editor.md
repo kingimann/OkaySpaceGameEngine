@@ -155,8 +155,12 @@ Recent additions (v2.12–2.14):
   cameras are easy to see and pick even with no mesh.
 - **Project Settings** (Edit ▸ Project Settings) and a larger **Build** dialog
   (Quit-on-Escape, Master Volume, Show-FPS).
-- **Crash-safe autosave** (File ▸ Autosave) writes a `<scene>.autosave` recovery
-  copy and offers to restore it after an unclean exit.
+- **Crash-safe autosave** (File ▸ Autosave) writes unsaved graphs, scripts and
+  the scene into the recovery folder (about every 30 seconds, and when the
+  window loses focus). It does not overwrite the real files unless **Also save
+  the real file** is on. A leftover `<scene>.autosave` from an older editor is
+  still offered on open when it is newer than the scene; new sessions do not
+  write that sidecar.
 - **Crash reports**: if the editor crashes, it saves a report beside the editor
   executable. The report records what the editor was doing, the error, and a
   backtrace (Windows, Linux and macOS). The launcher then notifies you and lists
@@ -406,7 +410,7 @@ A project is a folder. The editor keeps everything that belongs to the project i
 ```
 MyGame/
   project.okayproj          Project Settings (company, version, resolution, gravity, ambient, skybox, splash),
-                            the tag list and the layer names
+                            the tag list and the layer names, and engine_version (the editor version that last saved it)
   Assets/
     MyGame.okayscene        the first scene (the project's name)
     Scenes/ Scripts/ Prefabs/ Materials/ Models/ Textures/ Audio/     the standard folders (empty to start)
@@ -469,13 +473,32 @@ the Scene Manager, or by dropping it on the Hierarchy or Scene view, a project h
 A file that can't be opened (missing, damaged) is refused with the reason and leaves the open scene exactly as it was.
 Opening a scene starts a fresh undo history, so Ctrl+Z can't carry the previous scene's objects into the new file.
 
+### Project version and upgrading
+
+`project.okayproj` records the engine version that last saved the project (`engine_version=2.855.0`; new projects have it from the start,
+every save refreshes it, and lines the editor does not know are kept). Opening a project that an older version made, that has no version
+recorded, or that a newer version saved, **asks before anything in the project is touched**:
+
+- *This project was made with v2.850.0. This editor is v2.855.0.* **Upgrade project to v2.855.0** makes a complete backup copy next to the
+  project (`<Name> (backup v2.850.0)`), checks every scene and prefab, rewrites only the files that need it and marks the project; if anything
+  fails, everything is put back. **Keep v2.850.x** opens the project, untouched, with that line's editor when the launcher has it installed
+  (otherwise it says how to get it). **Cancel** changes nothing.
+- A project with no version recorded (made before this) offers Upgrade or Cancel. A project saved by a *newer* version offers Cancel, **Open
+  anyway (a backup is made first)** and **Update OkaySpace**.
+- Another patch of the same line (`2.850.0` and `2.850.1`) never asks, and a development build never asks.
+
+**File > Project Upgrade...** shows both versions, runs the upgrade again, and lists the project's backups with **Restore...**. The status
+bar shows `v2.850.0 (kept)` for a project opened with its own version. Details, the backup layout and the launcher's side:
+[project_upgrade.md](project_upgrade.md).
+
 ### Autosave and recovery
 
-With **File > Autosave** on, a `<scene>.autosave` copy is written every interval (default 120 s) when the scene
-has unsaved changes, and offered back ("Recover Autosave") the next time the scene is opened after an unclean exit.
-A scene that has never been saved has no file to put it beside, so it is not autosaved; the first Ctrl+S puts it in
-`Assets/Scenes`. The engine-side `RecoveryManager` and `BackupManager` (see [undo_recovery.md](undo_recovery.md)) are
-not used by the editor yet.
+With **File > Autosave** on, dirty graphs, scripts and the scene (including ones that have never been saved) are
+copied into `okay_recovery` about every 30 seconds and when the window loses focus. The next start offers
+**Restore**, **Compare** or **Discard**, and keeps the copy until that choice. The real files are overwritten
+only when **Also save the real file** is on. A leftover `<scene>.autosave` from an older editor is still
+offered when it is newer than the scene; new sessions do not write that sidecar. The last five saves of a
+file are kept by `BackupManager` (see [undo_recovery.md](undo_recovery.md)).
 
 ### Duplicate components
 

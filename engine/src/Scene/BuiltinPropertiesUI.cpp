@@ -1,10 +1,11 @@
 // Property registrations of the UI widgets: button, text, image, slider, toggle,
-// progress bar, input field, stepper and dropdown. (Canvas and UIPanel are in
+// progress bar, input field, stepper, dropdown, the loading screen and more. (Canvas and UIPanel are in
 // BuiltinProperties.cpp.) Each type registers every field its scene record keeps; lists
 // (the dropdown's options) and the localisation key are left out. See docs/properties.md.
 #include "BuiltinPropertiesShared.hpp"
 
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIDraggable.hpp"
@@ -23,6 +24,10 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UITheme.hpp"
+#include "okay/Components/UIStyleVariant.hpp"
+#include "okay/Components/UIDamageNumbers.hpp"
+#include "okay/Components/UIDialogueBox.hpp"
 
 namespace okay {
 namespace detail {
@@ -174,7 +179,8 @@ void RegisterUIToggle() {
      .AddColor("textColor", &UIToggle::textColor).Range(0, 1, 0.01).Tooltip("Colour of the text")
      .AddEnum("anchor", &UIToggle::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
      .AddFloat("cornerRadius", &UIToggle::cornerRadius).Range(0, kBig, 0.05).Tooltip("Rounded box corners")
-     .AddEnum("style", &UIToggle::style, {"Checkbox", "Switch"}).Tooltip("Look of the toggle: a check box or a switch")
+     .AddEnum("style", &UIToggle::style, {"Checkbox", "Switch", "Radio"}).Tooltip("Look of the toggle: a check box, a switch or a round radio button")
+     .AddString("radioGroup", &UIToggle::radioGroup).Tooltip("Radio buttons with the same group name are one choice. Empty = the radio buttons under the same parent")
      .AddColor("knobColor", &UIToggle::knobColor).Range(0, 1, 0.01).Tooltip("Switch knob")
      .AddBool("interactable", &UIToggle::interactable).Tooltip("When false: greyed out, ignores clicks")
      .AddFloat("animSpeed", &UIToggle::animSpeed).Range(0, 10000, 0.1).Tooltip("Speed of the on and off animation");
@@ -265,6 +271,61 @@ void RegisterUIDropdown() {
     b.Commit();
 }
 
+void RegisterLoadingScreen() {
+    PropertyBuilder<LoadingScreen> b("LoadingScreen", "loadingscreen", "UI");
+    b.Section("Look")
+     .AddEnum("layout", &LoadingScreen::layout, {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"})
+     .AddEnum("barStyle", &LoadingScreen::barStyle, {"Solid", "Segmented", "Shimmer", "Indeterminate"})
+     .AddEnum("spinnerStyle", &LoadingScreen::spinnerStyle, {"Dots", "Arc", "Bars", "Pulse"})
+     .AddString("subtitle", &LoadingScreen::subtitle).Tooltip("Smaller line with the title (level name, chapter...)")
+     .AddAssetPath("logoImage", &LoadingScreen::logoImage, "image").Tooltip("Optional logo (Splash shows it big)")
+     .AddFloat("logoSize", &LoadingScreen::logoSize).Range(0, kBig, 0.05).Tooltip("Logo size as a fraction of screen height")
+     .AddBool("logoPulse", &LoadingScreen::logoPulse).Tooltip("Logo gently breathes")
+     .AddBool("kenBurns", &LoadingScreen::kenBurns).Tooltip("Background image slowly zooms in")
+     .AddColor("cardColor", &LoadingScreen::cardColor).Range(0, 1, 0.01).Tooltip("Card layout's panel")
+     .AddFloat("tipInterval", &LoadingScreen::tipInterval).Range(0, 3600, 0.05).Tooltip("> 0: show the next tip every N seconds")
+     .AddColor("backgroundColor", &LoadingScreen::backgroundColor).Range(0, 1, 0.01).Tooltip("Colour of the box behind the text")
+     .AddColor("backgroundColor2", &LoadingScreen::backgroundColor2).Range(0, 1, 0.01).Tooltip("Gradient bottom colour")
+     .AddBool("gradientBackground", &LoadingScreen::gradientBackground).Tooltip("Vertical gradient backgroundColor -> backgroundColor2")
+     .AddAssetPath("backgroundImage", &LoadingScreen::backgroundImage, "image").Tooltip("Optional full-screen image (else a flat colour)")
+     .AddString("title", &LoadingScreen::title)
+     .AddColor("textColor", &LoadingScreen::textColor).Range(0, 1, 0.01).Tooltip("Colour of the text")
+     .Section("Title")
+     .AddBool("showTitle", &LoadingScreen::showTitle)
+     .AddColor("titleColor", &LoadingScreen::titleColor).Range(0, 1, 0.01)
+     .AddFloat("titleScale", &LoadingScreen::titleScale).Range(0, 1000, 0.01).Tooltip("Multiplier on the auto title size")
+     .AddFloat("titleY", &LoadingScreen::titleY).Range(-kBig, kBig, 0.1).Tooltip("Vertical position (0=top, 1=bottom)")
+     .Section("Tip line")
+     .AddColor("tipColor", &LoadingScreen::tipColor).Range(0, 1, 0.01)
+     .AddFloat("tipScale", &LoadingScreen::tipScale).Range(0, 1000, 0.01)
+     .AddFloat("tipY", &LoadingScreen::tipY).Range(-kBig, kBig, 0.1)
+     .Section("Progress bar")
+     .AddColor("barBackground", &LoadingScreen::barBackground).Range(0, 1, 0.01)
+     .AddColor("barFill", &LoadingScreen::barFill).Range(0, 1, 0.01)
+     .AddBool("showBar", &LoadingScreen::showBar)
+     .AddFloat("barWidth", &LoadingScreen::barWidth).Range(0, kBig, 0.05).Tooltip("Fraction of screen width")
+     .AddFloat("barHeight", &LoadingScreen::barHeight).Range(0, kBig, 0.05).Tooltip("Fraction of screen height")
+     .AddFloat("barY", &LoadingScreen::barY).Range(-kBig, kBig, 0.1).Tooltip("Vertical position (0..1)")
+     .AddFloat("barRadius", &LoadingScreen::barRadius).Range(0, kBig, 0.05).Tooltip("Rounded corners (px)")
+     .AddBool("barBorder", &LoadingScreen::barBorder)
+     .AddColor("barBorderColor", &LoadingScreen::barBorderColor).Range(0, 1, 0.01)
+     .AddBool("showPercent", &LoadingScreen::showPercent).Tooltip("Draw \"NN%\" next to the bar")
+     .Section("Spinner")
+     .AddBool("showSpinner", &LoadingScreen::showSpinner)
+     .AddColor("spinnerColor", &LoadingScreen::spinnerColor).Range(0, 1, 0.01)
+     .AddFloat("spinnerRadius", &LoadingScreen::spinnerRadius).Range(0, kBig, 0.05).Tooltip("Fraction of screen height")
+     .AddFloat("spinnerDotSize", &LoadingScreen::spinnerDotSize).Range(0, kBig, 0.05).Tooltip("Dot size (px, scaled by height)")
+     .AddFloat("spinnerSpeed", &LoadingScreen::spinnerSpeed).Range(0, 10000, 0.1).Tooltip("Revolutions-ish per second")
+     .AddFloat("spinnerY", &LoadingScreen::spinnerY).Range(-kBig, kBig, 0.1)
+     .Section("Loading")
+     .AddBool("asyncLoad", &LoadingScreen::asyncLoad).Tooltip("Load targetScene over several frames, so the screen keeps animating while it loads")
+     .AddInt("objectsPerFrame", &LoadingScreen::objectsPerFrame).Range(1, 100000, 1).Tooltip("Objects made per frame by a background load")
+     .AddFloat("duration", &LoadingScreen::duration).Range(0, 3600, 0.05).Tooltip("Minimum seconds the screen stays up")
+     .AddAssetPath("targetScene", &LoadingScreen::targetScene, "scene").Tooltip("Scene to load when done (empty = reveal this one)")
+     .AddBool("showOnStart", &LoadingScreen::showOnStart).Tooltip("Show automatically when the scene starts")
+     .AddFloat("fadeTime", &LoadingScreen::fadeTime).Range(0, 3600, 0.05).Tooltip("Fade-in / fade-out length (seconds)");
+    b.Commit();
+}
 void RegisterCrosshair() {
     PropertyBuilder<Crosshair> b("Crosshair", "crosshair", "UI");
     b.AddVec2("position", &Crosshair::position).Range(-kBig, kBig, 0.1).Tooltip("Offset from the anchor (px)")
@@ -398,8 +459,8 @@ void RegisterUIKeybindField() {
      .AddVec2("size", &UIKeybindField::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels")
      .AddEnum("anchor", &UIKeybindField::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
      .AddString("action", &UIKeybindField::action)
-     .AddKey("key", &UIKeybindField::key, false)
-     .AddKey("defaultKey", &UIKeybindField::defaultKey, false)
+     .AddKey("key", &UIKeybindField::key)
+     .AddKey("defaultKey", &UIKeybindField::defaultKey)
      .AddString("prefKey", &UIKeybindField::prefKey).Tooltip("Prefs name to persist the binding under (\"\" = don't)")
      .AddString("inputAction", &UIKeybindField::inputAction).Tooltip("An InputActions action to rebind (\"\" = use `key`)")
      .AddBool("gamepad", &UIKeybindField::gamepad).Tooltip("With inputAction: bind a controller button")
@@ -421,7 +482,86 @@ void RegisterUIDraggable() {
      .AddBool("snapToSlot", &UIDraggable::snapToSlot).Tooltip("Center the item in the slot it's dropped on")
      .AddEnum("axis", &UIDraggable::axis, {"Both", "Horizontal", "Vertical"})
      .AddFloat("dragThreshold", &UIDraggable::dragThreshold).Range(0, 3600, 0.05)
+     .AddBool("dragParent", &UIDraggable::dragParent).Tooltip("Drag the parent widget instead of this one (a window title bar)")
+     .AddBool("keepOnScreen", &UIDraggable::keepOnScreen).Tooltip("The dragged widget never leaves the screen")
      .AddBool("bringToFront", &UIDraggable::bringToFront).Tooltip("Draw on top of its siblings while being dragged");
+    b.Commit();
+}
+
+void RegisterUITheme() {
+    PropertyBuilder<UITheme> b("UITheme", "uitheme", "UI");
+    b.AddString("themeName", &UITheme::themeName).Tooltip("Name scripts and UI Style Variant use to find this theme")
+     .AddBool("applyOnStart", &UITheme::applyOnStart).Tooltip("Restyle the UI when Play starts")
+     .AddBool("global", &UITheme::global).Tooltip("Style every widget in the scene, not only the ones under this object")
+     .AddInt("preset", &UITheme::preset).Range(0, UITheme::kPresetCount - 1, 1).Tooltip("Which built-in look the colours came from (0 = custom)")
+     .AddColor("panel", &UITheme::panel).Range(0, 1, 0.01)
+     .AddColor("panelBottom", &UITheme::panelBottom).Range(0, 1, 0.01)
+     .AddColor("accent", &UITheme::accent).Range(0, 1, 0.01)
+     .AddColor("text", &UITheme::text).Range(0, 1, 0.01)
+     .AddColor("muted", &UITheme::muted).Range(0, 1, 0.01)
+     .AddColor("button", &UITheme::button).Range(0, 1, 0.01)
+     .AddColor("buttonHover", &UITheme::buttonHover).Range(0, 1, 0.01)
+     .AddColor("buttonPressed", &UITheme::buttonPressed).Range(0, 1, 0.01)
+     .AddColor("buttonText", &UITheme::buttonText).Range(0, 1, 0.01)
+     .AddColor("disabled", &UITheme::disabled).Range(0, 1, 0.01)
+     .AddColor("danger", &UITheme::danger).Range(0, 1, 0.01)
+     .AddColor("success", &UITheme::success).Range(0, 1, 0.01)
+     .AddColor("border", &UITheme::border).Range(0, 1, 0.01)
+     .AddColor("shadowCol", &UITheme::shadowCol).Range(0, 1, 0.01)
+     .AddColor("glowColor", &UITheme::glowColor).Range(0, 1, 0.01)
+     .AddFloat("cornerRadius", &UITheme::cornerRadius).Range(0, kBig, 0.5)
+     .AddInt("cornerMask", &UITheme::cornerMask).Range(0, 15, 1)
+     .AddFloat("borderWidth", &UITheme::borderWidth).Range(0, 100, 0.5)
+     .AddBool("gradient", &UITheme::gradient)
+     .AddInt("gradientDir", &UITheme::gradientDir).Range(0, 3, 1)
+     .AddBool("shadow", &UITheme::shadow)
+     .AddFloat("shadowSoftness", &UITheme::shadowSoftness).Range(0, 1000, 0.5)
+     .AddVec2("shadowOffset", &UITheme::shadowOffset).Range(-1000, 1000, 0.5)
+     .AddFloat("glow", &UITheme::glow).Range(0, 100, 0.5)
+     .AddBool("sheen", &UITheme::sheen)
+     .AddFloat("opacity", &UITheme::opacity).Range(0, 1, 0.01)
+     .AddFloat("padding", &UITheme::padding).Range(0, 1000, 0.5)
+     .AddFloat("fontScale", &UITheme::fontScale).Range(0, 100, 0.05)
+     .AddFloat("textPixelSize", &UITheme::textPixelSize).Range(0, 100, 0.05)
+     .AddFloat("transitionSpeed", &UITheme::transitionSpeed).Range(0, 1000, 0.5)
+     .AddFloat("hoverScale", &UITheme::hoverScale).Range(0, 10, 0.01)
+     .AddAssetPath("fontPath", &UITheme::fontPath, "font").Tooltip("A font put on every button and text the theme styles (empty = leave them)");
+    b.Commit();
+}
+
+void RegisterUIStyleVariant() {
+    PropertyBuilder<UIStyleVariant> b("UIStyleVariant", "uivariant", "UI");
+    b.AddInt("variant", &UIStyleVariant::variant).Range(0, UITheme::kVariantCount - 1, 1)
+        .Tooltip("0 Default, 1 Primary, 2 Secondary, 3 Danger, 4 Ghost, 5 Outline, 6 Pill")
+     .AddString("themeName", &UIStyleVariant::themeName).Tooltip("Theme to take colours from (empty = the scene's first theme)");
+    b.Commit();
+}
+
+void RegisterUIDamageNumbers() {
+    PropertyBuilder<UIDamageNumbers> b("UIDamageNumbers", "uidamage", "UI");
+    b.AddFloat("lifetime", &UIDamageNumbers::lifetime).Range(0.05, 60, 0.05).Tooltip("Seconds a number lives")
+     .AddFloat("riseSpeed", &UIDamageNumbers::riseSpeed).Range(-2000, 2000, 1).Tooltip("Pixels per second upward")
+     .AddFloat("gravity", &UIDamageNumbers::gravity).Range(-5000, 5000, 1).Tooltip("Pulls the number down after it rises (a lob)")
+     .AddFloat("spread", &UIDamageNumbers::spread).Range(0, 1000, 1).Tooltip("Sideways drift in pixels, different for each number")
+     .AddFloat("textSize", &UIDamageNumbers::textSize).Range(0.5, 50, 0.1)
+     .AddFloat("critScale", &UIDamageNumbers::critScale).Range(0.1, 10, 0.05)
+     .AddFloat("popScale", &UIDamageNumbers::popScale).Range(0.1, 10, 0.05)
+     .AddInt("maxActive", &UIDamageNumbers::maxActive).Range(1, 500, 1)
+     .AddVec2("spawnAt", &UIDamageNumbers::spawnAt).Range(-kBig, kBig, 1).Tooltip("Where a button's Hit, Crit and Heal actions put a number")
+     .AddColor("normalColor", &UIDamageNumbers::normalColor).Range(0, 1, 0.01)
+     .AddColor("critColor", &UIDamageNumbers::critColor).Range(0, 1, 0.01)
+     .AddColor("healColor", &UIDamageNumbers::healColor).Range(0, 1, 0.01)
+     .AddColor("missColor", &UIDamageNumbers::missColor).Range(0, 1, 0.01)
+     .AddColor("infoColor", &UIDamageNumbers::infoColor).Range(0, 1, 0.01);
+    b.Commit();
+}
+
+void RegisterUIDialogueBox() {
+    PropertyBuilder<UIDialogueBox> b("UIDialogueBox", "uidialoguebox", "UI");
+    b.AddFloat("charsPerSecond", &UIDialogueBox::charsPerSecond).Range(0, 2000, 1).Tooltip("Typewriter speed (0 = the whole line at once)")
+     .AddBool("hideWhenDone", &UIDialogueBox::hideWhenDone).Tooltip("Close the box when a line without choices is advanced")
+     .AddBool("advanceOnClick", &UIDialogueBox::advanceOnClick).Tooltip("A click on the box, Space or Enter finishes or advances the line")
+     .AddBool("startHidden", &UIDialogueBox::startHidden).Tooltip("The box is hidden until a script shows a line");
     b.Commit();
 }
 
@@ -437,6 +577,7 @@ void RegisterUIProperties() {
     RegisterUIInputField();
     RegisterUIStepper();
     RegisterUIDropdown();
+    RegisterLoadingScreen();
     RegisterCrosshair();
     RegisterUIRadialProgress();
     RegisterUIRating();
@@ -447,6 +588,10 @@ void RegisterUIProperties() {
     RegisterUIRawImage();
     RegisterUIKeybindField();
     RegisterUIDraggable();
+    RegisterUITheme();
+    RegisterUIStyleVariant();
+    RegisterUIDamageNumbers();
+    RegisterUIDialogueBox();
 }
 
 } // namespace detail

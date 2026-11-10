@@ -11,12 +11,14 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [properties.md](properties.md): the property registry: read, write, watch, snapshot and diff any component field by name (the base for per-property undo, live editing and prefab overrides).
 - [scene_diff_merge.md](scene_diff_merge.md): canonical scene text, structured diffs, three-way merge and format migration for version control.
 - [editor.md](editor.md): the editor, its panels and Build Game.
+- [project_upgrade.md](project_upgrade.md): the engine version a project was saved with, the upgrade question when an editor of another version opens it, safe upgrade with a full backup, restore, and the launcher's Versions folder.
 - [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.
 - [packaging.md](packaging.md): how a build is laid out for distribution.
 - [releasing.md](releasing.md): releasing an update to players.
 - [steam_release.md](steam_release.md): releasing on Steam.
 - [release_channels.md](release_channels.md): the latest and LTS channels, the update bucket, versions.json, how to cut an LTS.
+- [launcher_versions.md](launcher_versions.md): the launcher's Versions page: install, remove and keep other editor versions next to the running one, the Latest / LTS channel setting, project version badges and Open with, `--versions`.
 
 ## Scripting
 - [scripting.md](scripting.md): the OkayScript language guide.
@@ -61,6 +63,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Game UI
 - [game_ui.md](game_ui.md): game UI in the launcher's look.
+- [ui_runtime.md](ui_runtime.md): the twelve UI looks, widget roles, radio buttons, windows, damage numbers, dialogue box, UI Gallery and the script and C++ calls.
 - [ui_html.md](ui_html.md): menus and HUDs in an HTML and CSS subset.
 - [ui_world_space.md](ui_world_space.md): in-world (3D) UI.
 - [localization.md](localization.md): string tables, translators and fonts.

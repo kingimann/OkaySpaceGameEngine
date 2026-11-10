@@ -1,4 +1,6 @@
 #include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Debug/ConsoleModel.hpp"
+#include "okay/Testing/ObjectPath.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
@@ -12,6 +14,18 @@
 #include <sstream>
 
 namespace okay {
+
+namespace {
+ConsoleSource GraphLogSource(GameObject* go, const std::string& path) {
+    ConsoleSource s;
+    if (!go) return s;
+    s.kind = ConsoleSource::Kind::Graph;
+    s.guid = go->Guid();
+    s.component = "VisualScriptComponent";
+    s.path = path.empty() ? testing::ObjectPath(go) : path;
+    return s;
+}
+}
 
 bool VisualScriptComponent::LoadFromText(const std::string& text, std::string* error) {
     std::string err;
@@ -143,6 +157,7 @@ void VisualScriptComponent::Start() {
     if (!m_graph) return;
     ScanPolledEvents();
     m_started = true;
+    ConsoleSourceScope scope(GraphLogSource(gameObject, Path()));
     Fire("OnEnable", nullptr);   // like a script: OnEnable, then Start
     if (m_graph) m_graph->RunEntries("OnStart", m_ctx);
     CheckWatches();
@@ -152,6 +167,7 @@ void VisualScriptComponent::Update(float dt) {
     ApplyPendingGraph();
     if (!m_graph || !ScriptsRun(gameObject)) return;
     if (m_startDeferred) Start();
+    ConsoleSourceScope scope(GraphLogSource(gameObject, Path()));
     if (m_scanned != m_graph.get()) ScanPolledEvents();   // reloaded since the last frame
     m_ctx.deltaTime = dt;
     m_ctx.gameObject = gameObject;

@@ -21,6 +21,9 @@ UI documents.
   the colours they already had. To restyle existing UI in one go, open
   **View → Editors & Tools → UI Theme**, pick **OkaySpace** and click **Apply to All UI**.
 
+More looks (twelve in all), roles such as Primary and Danger, radio buttons, windows, floating numbers
+and a dialogue box are in [ui_runtime.md](ui_runtime.md).
+
 Prefer the old pixel look? Call `ui_style("classic")` in a script, or start the
 game with `OKAY_CLASSIC_UI=1`.
 

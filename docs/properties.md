@@ -258,9 +258,7 @@ More of the builder:
    caches, lists such as a dropdown's options); a registered field that is not saved fails
    the cross-check below.
 3. Key bindings (`char` fields holding a key code) use `.AddKey("sprintKey", &C::sprintKey)`: an Int
-   0..255. Pass `true` as the last argument when the scene record writes the key as one raw
-   character (`tdctrl`, `tdctrl2d`, `charctrl2d`, `ctmctrl`, `tpsctrl`): white space and `-` cannot
-   be stored there and are refused.
+   0..255.
 4. Run `property_registry`. The tests visit every registered property: get, set the same value
    (no change), set a different value, text round trip, wrong type refused, the scene file
    round trip (all together and one at a time), the edges of every range and every enum option,
@@ -270,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-1358 properties on 85 types (a number before a slash counts the authored ones; the rest are
+1469 properties on 90 types (a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -299,11 +297,17 @@ has `enabled`.
 | TopDownController, TopDownController2D, FreeRoamController, ClickToMoveController | 16, 26, 15, 30 | |
 | ThirdPersonShooterController, TopDownShooterController, Platformer25DController | 47, 49, 58 | movement, camera, aim and fire, ammo, dash, depth layers, grab |
 | VehicleController, VehicleController2D | 25, 11 | the suspension fields are saved only while `suspension` is on |
-| Projectile3D, Spawner, MusicPlayer | 9, 13, 6 | the playlist `tracks` is a list, not a property |
+| Projectile3D, Spawner, MusicPlayer | 9, 14, 6 | `Spawner.usePool` makes the copies from an object pool; the playlist `tracks` is a list, not a property |
 | NavMeshAgent, NavMeshObstacle, NavMeshSurface | 15, 3, 14 | the surface's bake settings are flat (`agentRadius`, `maxSlope`, `cellSize` ...) |
 | NetworkObject, NetworkSync, NetworkTransform, SyncVar, NetworkPlayerSpawner | 4, 6, 1, 3, 7 | `NetworkObject.netId` refuses a `/` |
 | UIButton, TextRenderer, UIImage, UISlider, UIToggle, UIProgressBar, UIInputField, UIStepper, UIDropdown | 41, 32, 22, 24, 14, 22, 14, 16, 16 | position, size, anchor, colours, shape, shadow, border, behaviour switches |
+<<<<<<< HEAD
+| Crosshair, UIRadialProgress, UIRating, UIScrollView, UILayoutGroup, UIFrame, UIFlexItem, UIRawImage, UIKeybindField, UIDraggable | 25, 14, 10, 12, 12, 6, 5, 11, 18, 9 | the other UI widgets and layout parts that save plain fields (not the tabs, whose lists are not properties) |
+| UITheme, UIStyleVariant, UIDamageNumbers, UIDialogueBox | 37, 3, 15, 5 | the UI looks (12 built in), a widget's role in the theme, floating combat text and the dialogue box. See [ui_runtime.md](ui_runtime.md). `UIPanel.blocksPointer`, `UIToggle.radioGroup` and `UIDraggable.dragParent` / `keepOnScreen` were added with them |
+=======
+| LoadingScreen | 46 | look (layout, bar and spinner styles, colours), title and tips line, bar, spinner, and `asyncLoad` / `objectsPerFrame` for a background load; the `tips` list is not a property |
 | Crosshair, UIRadialProgress, UIRating, UIScrollView, UILayoutGroup, UIFrame, UIFlexItem, UIRawImage, UIKeybindField, UIDraggable | 25, 14, 10, 12, 12, 6, 5, 11, 18, 7 | the other UI widgets and layout parts that save plain fields (not the tabs, whose lists are not properties) |
+>>>>>>> origin/main
 | Collectible, DamageOnTouch, Teleporter, JumpPad, TriggerZone, FollowTarget2D | 7, 7, 5, 6, 7, 4 | the no-code gameplay components; `TriggerZone.action` is an enum |
 | Destructible, Draggable, DropZone, Flashlight | 15, 10, 2, 7 | |
 | Joint2D, Joint3D | 16, 14 | `mode` (Distance, Spring, Pin, Hinge); the motor spins either way |
@@ -312,9 +316,8 @@ has `enabled`.
 How the new types are described, so a tool can rely on it:
 
 - **Key bindings** are Int properties 0..255 holding the key code the controller uses (`16` is
-  Shift, `17` Ctrl, `0` none; see `Input.hpp`). Five scene records (`tdctrl`, `tdctrl2d`, `charctrl2d`,
-  `ctmctrl`, `tpsctrl`) write a key as one raw character, so a code that is white space or `-`
-  is refused there (it could not be saved).
+  Shift, `17` Ctrl, `0` none; see `Input.hpp`). Every code can be bound, Space and `-` included, and
+  survives the scene file in every record.
 - **Settings in a struct** are flattened: `ThirdPersonController.dodgeKey`, `.dodgeImpulse` ...
   for `dodge.key` and `dodge.impulse`; `NavMeshSurface.agentRadius` for `settings.agentRadius`.
 - **Integer enums** (`TopDownController2D.faceMode`, `TopDownShooterController.aimMode`,
@@ -345,7 +348,7 @@ check.
 **Not registered yet:** scripts (`ScriptComponent` and `VisualScriptComponent` keep their
 source and a free-form `fields` table, not named properties), `NetworkManager` and the anti-cheat
 settings (record plus lists), the UI tabs, toast, tooltip, theme, context menu, list view, slot grid
-and colour picker, the minimap (markers are lists), `PauseMenu`, `HoldPrompt`, `LoadingScreen`, `Stats`,
+and colour picker, the minimap (markers are lists), `PauseMenu`, `HoldPrompt`, `Stats`,
 `ItemPickup`, inventory, crafting, dialogue, quest and survival components, terrain, voxel and spline
 components, ragdoll, the tilemap, and the sequence and cinematic components. Animation and IK components
 are left to the animation work. They can all register themselves with the builder.
@@ -377,12 +380,12 @@ are left to the animation work. They can all register themselves with the builde
   property is set to a non-default value through the registry, the scene is
   serialized and loaded into a fresh scene, and each property must read back the
   same. It runs twice: once with all properties of a type set together, and once
-  one property at a time. All 1349 stored properties pass. The skip list for
+  one property at a time. All 1396 stored properties pass. The skip list for
   "properties the serializer does not store" is empty: only read-only,
   runtime-only and derived properties are skipped, by their flags;
 - **the edges through the scene file:** the lowest and highest value of every range, 0 and -1 for
   every integer, every enum option, both bool values and awkward strings (quotes, backslashes, a
-  leading space, UTF-8, 3000 characters) are set, saved, loaded and read back (4246 values);
+  leading space, UTF-8, 3000 characters) are set, saved, loaded and read back (4389 values);
 - the controllers (view mode adds and removes the parts, key codes, the dodge struct), navigation,
   networking and the UI widgets;
 - a third-party component through the builder; concurrent first use of the registry; and four
@@ -410,8 +413,6 @@ rediscover it):
   writes red, green and blue and keeps alpha 1.
 - **Edge and polygon colliders** do not keep `autoFit`, so it is not registered
   for them.
-- **Raw-character keys:** the records `tdctrl`, `tdctrl2d`, `charctrl2d`, `ctmctrl` and `tpsctrl` write a
-  key as one character, so Space and `-` cannot be bound there (`AddKey(..., true)` refuses them).
 
 ## What changed
 
@@ -430,9 +431,15 @@ Audit of the registry (each with a failing test first):
 - Name lookups use hash tables instead of three scans, and a write nobody listens to builds no
   `PropertyChange`.
 - No bug was found in the clamping of ranges, the text round trips, the thread safety of the table,
-  or the scene round trip: 4246 edge values and every enum option survive the scene file.
+  or the scene round trip: 4389 edge values and every enum option survive the scene file.
 
 New: `PropertyRegistry::WriteProperty` and `WritePropertyFromText` (old and stored value),
 `PropertyBuilder::Adder`, `AddKey` and the nested-field overloads, the controllers, navigation, networking and
-UI widgets, no-code gameplay, joints and environment components listed above (59 new types, 1022 new
-properties: 336 on 26 types became 1358 on 85), and the three registration files.
+UI widgets, no-code gameplay, joints and environment components listed above (60 new types, 1069 new
+properties: 336 on 26 types became 1405 on 86), and the three registration files.
+
+Follow-up: the scene file now writes every key code in the five records that name a key as one
+token (a printable key other than `-` as itself, any other code as `#<code>`), so `AddKey` no
+longer refuses Space, `-`, Tab or Enter; the test saves and loads all 256 codes through all nine
+bindings of those records. `Spawner.usePool` and the `LoadingScreen` type (with `asyncLoad` and
+`objectsPerFrame`) are registered.

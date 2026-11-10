@@ -176,6 +176,7 @@ private:
         m_uNormalTex = -1, m_uHasNormal = -1, m_uNormalStrength = -1,
         m_uTexOffset = -1, m_uSpecTex = -1, m_uHasSpecMap = -1,
         m_uAoTex = -1, m_uHasAo = -1, m_uAoStrength = -1,
+        m_uMrTex = -1, m_uHasMR = -1, m_uEmisTex = -1, m_uHasEmis = -1,
         m_uMetallic = -1, m_uReflectivity = -1,
         m_uSkyTop = -1, m_uSkyHor = -1, m_uSkyBot = -1, m_uEnvOn = -1,
         m_uFogOn = -1, m_uFogColor = -1, m_uFogStart = -1, m_uFogEnd = -1, m_uTonemap = -1,

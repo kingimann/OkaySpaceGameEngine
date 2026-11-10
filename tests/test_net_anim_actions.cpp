@@ -28,6 +28,28 @@ int main() {
         int aseq = 0, aid = 0; float ly = 0.0f, lp = 0.0f;
         CHECK(!(ss >> aseq >> aid >> ly >> lp));
         CHECK(a == 2 && std::fabs(sp - 1.5f) < 1e-4f && std::fabs(ang - 30.0f) < 1e-4f);
+        // A cut tail keeps the gait and does not invent an action or a direction.
+        AnimSyncView cut;
+        CHECK(ParseAnimSync("2 0 1.5 30 4", cut));
+        CHECK(cut.haveGait && !cut.haveAction && !cut.haveParam);
+        AnimSyncView lookOnly;
+        CHECK(ParseAnimSync("2 0 1.5 30 7 2 -10 4", lookOnly));
+        CHECK(lookOnly.haveAction && !lookOnly.haveParam && lookOnly.actionId == 2);
+        AnimSyncView full;
+        CHECK(ParseAnimSync("2 0 1.5 30 7 2 -10 4 3", full));
+        CHECK(full.haveAction && full.haveParam && full.actionId == 2);
+        CHECK(std::fabs(full.actionParam - 3.0f) < 1e-4f);
+        // Heading 90 degrees, 2 m/s: strafe right, no forward component.
+        Scene axes("axes");
+        GameObject* body = axes.CreateGameObject("Body");
+        auto* axisSm = body->AddComponent<AnimStateMachine>();
+        GameObject* model = axes.CreateGameObject("Model");
+        model->transform->SetParent(body->transform, false);
+        auto* modelSm = model->AddComponent<AnimStateMachine>();
+        FeedProxyLocomotionAxes(body, 2.0f, 90.0f);
+        CHECK(std::fabs(axisSm->GetFloat("moveX") - 2.0f) < 1e-3f);
+        CHECK(std::fabs(axisSm->GetFloat("moveZ")) < 1e-3f);
+        CHECK(std::fabs(modelSm->GetFloat("moveX") - 2.0f) < 1e-3f);
     }
 
     Scene ss("Server");
@@ -127,16 +149,22 @@ int main() {
 
     // A roll plays once. The owner keeps reporting "rolling" after the proxy's
     // roll is over; the proxy must not start it again every frame.
-    rChar->lookYaw = 0.0f; rChar->lookPitch = 0.0f; rChar->netActionId = 2; ++rChar->netActionSeq;
-    int rollStarts = 0; bool wasRoll = false;
+    rChar->lookYaw = 0.0f; rChar->lookPitch = 0.0f;
+    rChar->netActionParam = 2.0f;   // roll left; an omitted param would stay forward
+    rChar->netActionId = 2; ++rChar->netActionSeq;
+    int rollStarts = 0; bool wasRoll = false; bool sawDir = false;
     for (int i = 0; i < 400; ++i) {
         pump(1);
         AnimStateMachine* m = rProxy->GetComponent<AnimStateMachine>();
         const bool inRoll = m && ProxyInAction(rpChar, 2);
-        if (inRoll && !wasRoll) ++rollStarts;
+        if (inRoll && !wasRoll) {
+            ++rollStarts;
+            if (m && std::fabs(m->GetFloat("dodgeDir") - 2.0f) < 0.1f) sawDir = true;
+        }
         wasRoll = inRoll;
     }
     CHECK(rollStarts == 1);
+    CHECK(sawDir);
     CHECK(!ProxyInAction(rpChar, 2));
 
     (void)sNs; (void)cNs; (void)rNs; (void)rpNs; (void)pNs; (void)phNs;

@@ -14,8 +14,8 @@
 // base-color / emissive factors and a metallic-roughness -> Blinn-Phong glint.
 // (ImportModelScene rebuilds the node graph with per-node transforms, splits
 // multi-material meshes into sub-objects, and imports skins + animation clips; the
-// merged LoadGLTF() path stays a single static Mesh.) Not yet: the packed
-// metallic-roughness *texture* and the emissive *texture*.
+// merged LoadGLTF() path stays a single static Mesh.) Packed metallic-roughness
+// and emissive textures are imported too (green = roughness, blue = metallic).
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
 #include <cmath>
@@ -514,6 +514,8 @@ struct GltfMat {
     std::string baseColorTex;                // albedo image path ("" if none)
     std::string normalTex;                   // tangent-space normal map path ("" if none)
     std::string aoTex;                       // ambient-occlusion map path ("" if none)
+    std::string metallicRoughnessTex;        // packed: G roughness, B metallic
+    std::string emissiveTex;                 // emissive colour texture
     float baseColor[4] = {1, 1, 1, 1};
     float emissive[3]  = {0, 0, 0};
     float metallic  = 1.0f, roughness = 1.0f;
@@ -552,11 +554,13 @@ inline GltfMat ResolveMaterial(const GltfDoc& doc, int matI, const std::string& 
             out.hasBaseColorFactor = true;
         }
         if (int im = texImage(pbr->Find("baseColorTexture")); im >= 0) out.baseColorTex = ImageFilePath(doc, im, modelPath);
+        if (int im = texImage(pbr->Find("metallicRoughnessTexture")); im >= 0) out.metallicRoughnessTex = ImageFilePath(doc, im, modelPath);
         if (const JVal* mf = pbr->Find("metallicFactor"))  { out.metallic  = (float)mf->Number(1.0); out.hasMetalRough = true; }
         if (const JVal* rf = pbr->Find("roughnessFactor")) { out.roughness = (float)rf->Number(1.0); out.hasMetalRough = true; }
     }
     if (int im = texImage(mat.Find("normalTexture")); im >= 0) out.normalTex = ImageFilePath(doc, im, modelPath);
     if (int im = texImage(mat.Find("occlusionTexture")); im >= 0) out.aoTex = ImageFilePath(doc, im, modelPath);
+    if (int im = texImage(mat.Find("emissiveTexture")); im >= 0) out.emissiveTex = ImageFilePath(doc, im, modelPath);
     if (const JVal* ef = mat.Find("emissiveFactor"); ef && ef->type == JVal::Arr) {
         for (int i = 0; i < 3 && i < (int)ef->arr.size(); ++i) out.emissive[i] = (float)ef->arr[i].Number(0.0);
         out.hasEmissiveFactor = true;

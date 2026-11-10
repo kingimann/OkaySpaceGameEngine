@@ -74,6 +74,7 @@ struct BuildSettings {
     float splashBg[3] = {0.05f, 0.05f, 0.06f};
     // ---- Graphics / quality (applied by the player at startup) ----
     bool  lockCursor = false;              // hide + lock the cursor on launch
+    int   cursorLockMode = 0;              // 0 none, 1 locked, 2 confined (player launch)
     bool  perPixelLighting = false;        // smooth per-pixel shading (slower)
     bool  shadows = true;                  // directional cast shadows (on = modern look)
     float shadowDistance = 80.0f;          // cascaded shadow reach (0 = legacy whole-scene)
@@ -144,7 +145,7 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "maximized=" << b.startMaximized << "\n" << "userDir=" << b.saveToUserDir << "\n";
     o << "splashTime=" << FloatText(b.splashTime) << "\n";
     o << "splashBg0=" << FloatText(b.splashBg[0]) << "\n" << "splashBg1=" << FloatText(b.splashBg[1]) << "\n" << "splashBg2=" << FloatText(b.splashBg[2]) << "\n";
-    o << "lockCursor=" << b.lockCursor << "\n" << "perPixel=" << b.perPixelLighting << "\n";
+    o << "lockCursor=" << b.lockCursor << "\n" << "cursorLockMode=" << b.cursorLockMode << "\n" << "perPixel=" << b.perPixelLighting << "\n";
     o << "shadows=" << b.shadows << "\n" << "shadowDist=" << FloatText(b.shadowDistance) << "\n";
     o << "shadowSoft=" << FloatText(b.shadowSoftness) << "\n" << "shadowCasc=" << b.shadowCascades << "\n";
     o << "shadowRes=" << b.shadowResolution << "\n" << "bloom=" << b.bloom << "\n";
@@ -206,6 +207,7 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "splashBg1") b.splashBg[1] = F();
     else if (k == "splashBg2") b.splashBg[2] = F();
     else if (k == "lockCursor") b.lockCursor = B();
+    else if (k == "cursorLockMode") b.cursorLockMode = std::max(0, std::min(2, I()));
     else if (k == "perPixel")  b.perPixelLighting = B();
     else if (k == "shadows")   b.shadows = B();
     else if (k == "shadowDist") b.shadowDistance = F();

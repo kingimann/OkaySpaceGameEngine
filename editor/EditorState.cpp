@@ -10,9 +10,11 @@
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
+#include "okay/Scene/ClearSpawn.hpp"
 #include "okay/Core/FrameOverlay.hpp"
 #include "okay/Core/TimerDebug.hpp"
 #include <filesystem>
+#include <fstream>
 #include "../shared/ProjectCreate.hpp"
 
 namespace {
@@ -235,6 +237,13 @@ void EditorState::AdoptCamera(Camera* cam) {
     dirty = true;
 }
 
+GameObject* EditorState::SettleSpawn(GameObject* go) {
+    if (!go || !go->transform) return go;
+    const Vec3 hint = (camTarget.x != 0.0f || camTarget.z != 0.0f) ? camTarget : Vec3::Zero;
+    go->transform->SetPosition(ClearFeetPosition(m_scene, go, hint));
+    return go;
+}
+
 GameObject* EditorState::CreateCube(const std::string& name) {
     PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
@@ -242,6 +251,7 @@ GameObject* EditorState::CreateCube(const std::string& name) {
     mr->mesh = Mesh::Cube();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
+    SettleSpawn(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -255,6 +265,7 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     mr->mesh = Mesh::Pyramid();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
+    SettleSpawn(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -268,6 +279,7 @@ GameObject* EditorState::CreateMesh(const std::string& meshName) {
     mr->mesh = Mesh::FromName(meshName);
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
+    SettleSpawn(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -413,7 +425,9 @@ void EditorState::NewScene3D() {
         mr->color = Color::FromBytes(150, 154, 150);   // soft neutral, not pure gray
         mr->specular = 0.05f; mr->shininess = 16.0f;
         mr->groundShadow = false;                       // it IS the ground
-        ground->AddComponent<MeshCollider3D>();         // things rest on it
+        auto* groundCol = ground->AddComponent<MeshCollider3D>();
+        groundCol->autoFit = true;
+        FitColliders(ground);                         // the plane is the floor, not a 1 m box
     }
 
     // ---- Hero shapes on the ground ----
@@ -771,7 +785,26 @@ bool EditorState::Save(const std::string& path, std::string* error) {
     return true;
 }
 
+bool EditorState::LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error) {
+    const std::string tmp = keepPath.empty() ? std::string("okay_scene_recovery.okayscene") : keepPath + ".recovery-tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary);
+        if (!f) { if (error) *error = "couldn't write the recovery file"; return false; }
+        f << text;
+    }
+    if (!Load(tmp, error)) return false;
+    m_path = keepPath;
+    dirty = true;
+    std::error_code ec;
+    std::filesystem::remove(tmp, ec);
+    return true;
+}
+
 bool EditorState::Load(const std::string& path, std::string* error) {
+    if (beforeLoad) {   // the project version gate: nothing is read, let alone changed, for a project nobody has answered for
+        std::string why;
+        if (!beforeLoad(path, &why)) { if (error) *error = why.empty() ? "This project can't be opened yet." : why; return false; }
+    }
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (m_playing) Stop();
     StopNetwork();

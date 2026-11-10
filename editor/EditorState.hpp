@@ -73,6 +73,9 @@ public:
     int DeleteChildrenOfSelected();
     /// Clone the selected object(s) (and their children); selects the clones.
     GameObject* DuplicateSelected();
+    /// Move a just-created object onto open ground near the scene-view focus.
+    /// Call it in the same undo step that created the object.
+    GameObject* SettleSpawn(GameObject* go);
     /// Wrap the current selection in a new empty parent,
     /// keeping each object's world position. Returns the new group (selected), or null
     /// if nothing is selected. Only top-level selected objects are reparented.
@@ -119,6 +122,9 @@ public:
     /// history and its saved state exactly as they were (`error` says why). A loaded scene starts a
     /// fresh undo history, so Undo can never put the old scene's objects into the new file.
     bool Load(const std::string& path, std::string* error = nullptr);
+    /// Load scene text recovered from an autosave. The scene's path stays `keepPath`
+    /// and the scene is left unsaved, so the real file is not overwritten.
+    bool LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
 
     // ---- Unsaved changes --------------------------------------------------------
@@ -153,6 +159,10 @@ public:
     static inline std::function<void(const std::string& oldDir, const std::string& newDir)> onProjectChanged;
     /// Called after a scene file was opened successfully (the editor clears its "last save failed" note).
     static inline std::function<void()> onSceneLoaded;
+    /// Asked before Load touches anything: return false (with the reason in `why`) to refuse the file. The editor puts
+    /// the project version gate here, so a scene of a project nobody has answered the version question for can't be
+    /// opened by a path that skipped it. Unset (tests, tools): every file may be opened.
+    static inline std::function<bool(const std::string& path, std::string* why)> beforeLoad;
 
     // ---- Project (a folder on disk holding the scenes + assets) ---------
     const std::string& projectDir() const { return m_projectDir; }

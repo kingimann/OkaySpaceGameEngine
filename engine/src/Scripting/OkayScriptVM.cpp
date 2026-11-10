@@ -33,6 +33,8 @@
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/UIDamageNumbers.hpp"
+#include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Script/AnimIkTools.hpp"
@@ -106,6 +108,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/DialogueRunner.hpp"   // dialogue / story / quest builtins
 #include "okay/Components/QuestLog.hpp"
@@ -4815,6 +4818,97 @@ struct OkayScriptVM::Impl {
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
         };
+        // ---- Runtime UI: roles, radio groups, floating numbers, dialogue boxes (by object name) ----
+        // ui_set_variant("Quit", "danger"): give a widget a role (primary, secondary, danger, ghost,
+        // outline, pill, default) and style it from the scene's theme now.
+        b["ui_set_variant"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            Scene* s = sceneOf();
+            GameObject* g = s ? s->Find(a[0].AsString()) : nullptr;
+            if (!g) return Value{0.0f};
+            int v = a[1].IsNumber() ? (int)a[1].AsFloat() : UITheme::VariantFromName(a[1].AsString());
+            if (v < 0 || v >= UITheme::kVariantCount) return Value{0.0f};
+            auto* sv = g->GetComponent<UIStyleVariant>();
+            if (!sv) sv = g->AddComponent<UIStyleVariant>();
+            sv->variant = v;
+            if (a.size() >= 3) sv->themeName = a[2].AsString();
+            if (UITheme* th = UITheme::Find(s, sv->themeName)) th->ApplyTo(g);
+            return Value{1.0f};
+        };
+        // ui_theme_preset("Neon") restyles the scene with a built-in look (first theme in the scene, or the one named).
+        b["ui_theme_preset"] = [sceneOf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            Scene* s = sceneOf();
+            if (!s) return Value{0.0f};
+            int p = a[0].IsNumber() ? (int)a[0].AsFloat() : UITheme::PresetFromName(a[0].AsString());
+            if (p < 0 || p >= UITheme::kPresetCount) return Value{0.0f};
+            UITheme* th = UITheme::Find(s, a.size() >= 2 ? a[1].AsString() : std::string());
+            if (!th) return Value{0.0f};
+            th->ApplyPreset(p);
+            th->Apply();
+            return Value{1.0f};
+        };
+        // ui_load_theme("Assets/UI/Forest.okaytheme") loads a saved theme into the scene's theme and restyles the UI.
+        b["ui_load_theme"] = [sceneOf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            Scene* s = sceneOf();
+            UITheme* th = s ? UITheme::Find(s, a.size() >= 2 ? a[1].AsString() : std::string()) : nullptr;
+            if (!th) return Value{0.0f};
+            if (!LoadUIThemeAsset(*th, a[0].AsString())) return Value{0.0f};
+            th->Apply();
+            return Value{1.0f};
+        };
+        // Radio buttons: ui_radio_value("Quality") is the index of the picked one in its group (-1 none);
+        // ui_set_radio("High") picks one by object name.
+        b["ui_radio_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            Scene* s = sceneOf();
+            if (a.empty() || !s) return Value{-1.0f};
+            const std::string group = a[0].AsString();
+            int idx = 0;
+            for (auto* t : s->FindObjectsOfType<UIToggle>()) {
+                if (t->style != UIToggle::Style::Radio || t->radioGroup != group) continue;
+                if (t->on) return Value{(float)idx};
+                ++idx;
+            }
+            return Value{-1.0f};
+        };
+        b["ui_set_radio"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tg = g->GetComponent<UIToggle>()) tg->Select();
+            return Value{};
+        };
+        // Floating numbers: ui_damage_number("-25", x, y [, "crit"|"heal"|"miss"|"info"]) on the first
+        // UI Damage Numbers in the scene.
+        b["ui_damage_number"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() < 3) return Value{};
+            Scene* s = sceneOf();
+            auto* dn = s ? s->FindObjectOfType<UIDamageNumbers>() : nullptr;
+            if (dn) dn->Spawn(a[0].AsString(), a.size() >= 4 ? UIDamageNumbers::KindFromName(a[3].AsString()) : UIDamageNumbers::Kind::Normal,
+                              Vec2{a[1].AsFloat(), a[2].AsFloat()});
+            return Value{};
+        };
+        // Dialogue box: ui_dialogue_show("Mara", "Hello", "Yes", "No") shows a line with up to 4 choices;
+        // ui_dialogue_choice() is the last picked choice (-1 none); ui_dialogue_open() tells if it is up.
+        b["ui_dialogue_show"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{};
+            Scene* s = sceneOf();
+            auto* db = s ? s->FindObjectOfType<UIDialogueBox>() : nullptr;
+            if (!db) return Value{};
+            std::vector<std::string> ch;
+            for (std::size_t i = 2; i < a.size() && ch.size() < 4; ++i) ch.push_back(a[i].AsString());
+            db->Show(a[0].AsString(), a[1].AsString(), ch);
+            return Value{};
+        };
+        b["ui_dialogue_choice"] = [sceneOf](std::vector<Value>&) -> Value {
+            Scene* s = sceneOf();
+            auto* db = s ? s->FindObjectOfType<UIDialogueBox>() : nullptr;
+            return Value{db ? (float)db->LastChoice() : -1.0f};
+        };
+        b["ui_dialogue_open"] = [sceneOf](std::vector<Value>&) -> Value {
+            Scene* s = sceneOf();
+            auto* db = s ? s->FindObjectOfType<UIDialogueBox>() : nullptr;
+            return Value{db ? db->IsOpen() : false};
+        };
         // grok/ui-color — pick a swatch on a named color picker (fires on_change).
         b["set_swatch"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
@@ -5396,6 +5490,28 @@ struct OkayScriptVM::Impl {
         b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
         b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
         b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
+        // Load menus: save_slots() lists every slot (newest first, damaged ones included), save_valid
+        // says whether a slot would load, and one slot's details come as text a menu can show.
+        b["save_slots"]  = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const SaveSlotInfo& i : SaveGame::List()) list.AsArray()->push_back(Value{i.slot});
+            return list;
+        };
+        b["save_valid"]     = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Check(slotArg(a)) ? 1.0f : 0.0f}; };
+        b["save_scene"]     = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).scene}; };
+        b["save_play_time"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).playTime}; };
+        b["save_play_text"] = [slotArg](std::vector<Value>& a) {   // "1h 05m"
+            const SaveSlotInfo i = SaveGame::Info(slotArg(a));
+            return Value{i.exists ? SaveMenuModel::FormatPlayTime(i.playTime) : std::string()};
+        };
+        b["save_date"] = [slotArg](std::vector<Value>& a) {   // "2026-11-08 14:03" (UTC)
+            const SaveSlotInfo i = SaveGame::Info(slotArg(a));
+            return Value{i.exists && i.savedAt > 0 ? SaveMenuModel::FormatDateTime(i.savedAt, 0) : std::string()};
+        };
+        b["save_ago"] = [slotArg](std::vector<Value>& a) {   // "5 minutes ago"
+            const SaveSlotInfo i = SaveGame::Info(slotArg(a));
+            return Value{i.exists && i.savedAt > 0 ? SaveMenuModel::FormatAgo((long long)Time::UnixSeconds() - i.savedAt) : std::string()};
+        };
         // Localization (docs/localization.md): loc("key", args...) is the key's text in
         // the player's language with {0}, {1}... filled from the arguments, or {name}
         // from a map (loc("greet", map_set(map(), "player", name))); set_language("fr") switches and
@@ -9022,6 +9138,27 @@ struct OkayScriptVM::Impl {
         b["pause_game"] = [](std::vector<Value>& a) { Game::SetPaused(a.empty() || a[0].AsBool()); return Value{}; };
         if (!b.count("quit")) b["quit"] = [](std::vector<Value>&) { Game::RequestQuit(); return Value{}; };   // Application.Quit()
         b["show_cursor"] = [](std::vector<Value>& a) { Cursor::Capture(!(a.empty() || a[0].AsBool())); return Value{}; };
+        // cursor_lock("locked" | "confined" | "none"). Locked hides the pointer,
+        // Confined keeps it inside the window, None lets it roam.
+        b["cursor_lock"] = [](std::vector<Value>& a) {
+            std::string m = a.empty() ? std::string("locked") : a[0].AsString();
+            for (char& c : m) c = (char)std::tolower((unsigned char)c);
+            if (m == "none" || m == "free" || m == "0") {
+                Cursor::SetLock(Cursor::LockMode::None);
+                Cursor::SetVisible(true);
+            } else if (m == "confined" || m == "2") {
+                Cursor::SetLock(Cursor::LockMode::Confined);
+                Cursor::SetVisible(true);
+            } else {
+                Cursor::Capture(true);
+            }
+            return Value{};
+        };
+        b["cursor_lock_mode"] = [](std::vector<Value>&) {
+            if (Cursor::IsConfined()) return Value{std::string("confined")};
+            if (Cursor::IsLocked()) return Value{std::string("locked")};
+            return Value{std::string("none")};
+        };
 
         // --- Sprite glyph/size on a sibling SpriteRenderer ---
         b["set_glyph"] = [go](std::vector<Value>& a) {

@@ -336,6 +336,10 @@ add_executable(test_debug_console test_debug_console.cpp)
 target_link_libraries(test_debug_console PRIVATE okay::engine)
 add_test(NAME debug_console COMMAND test_debug_console)
 
+add_executable(test_diagnostics test_diagnostics.cpp)
+target_link_libraries(test_diagnostics PRIVATE okay::engine)
+add_test(NAME diagnostics COMMAND test_diagnostics)
+
 add_executable(test_debug_overlay test_debug_overlay.cpp)
 target_link_libraries(test_debug_overlay PRIVATE okay::engine)
 add_test(NAME debug_overlay COMMAND test_debug_overlay)
@@ -679,6 +683,10 @@ add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
 
+add_executable(test_runtime_ui test_runtime_ui.cpp)
+target_link_libraries(test_runtime_ui PRIVATE okay::engine)
+add_test(NAME runtime_ui COMMAND test_runtime_ui)
+
 add_executable(test_ui_layering test_ui_layering.cpp)
 target_link_libraries(test_ui_layering PRIVATE okay::engine)
 add_test(NAME ui_layering COMMAND test_ui_layering)
@@ -708,7 +716,7 @@ target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
 
 # The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
-add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
@@ -722,6 +730,12 @@ add_test(NAME project_save COMMAND test_project_save)
 add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)
+
+# Upgrading a project to the editor's version (editor/ProjectUpgrade.*, ImGui-free): backup, check and rewrite of scenes and prefabs, stamp, restore, failure injection at every step, and the gate that asks before anything is touched.
+add_executable(test_project_upgrade test_project_upgrade.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
+target_include_directories(test_project_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_project_upgrade PRIVATE okay::engine)
+add_test(NAME project_upgrade COMMAND test_project_upgrade)
 
 # Save coverage: every component type the engine has survives a scene save and load (and the Enabled switch with it); two colliders / audio sources on one object both do.
 add_executable(test_save_coverage test_save_coverage.cpp)
@@ -832,6 +846,11 @@ add_test(NAME pause_menu COMMAND test_pause_menu)
 add_executable(test_ui_input_guard test_ui_input_guard.cpp)
 target_link_libraries(test_ui_input_guard PRIVATE okay::engine)
 add_test(NAME ui_input_guard COMMAND test_ui_input_guard)
+
+# Display settings model: window modes, resolutions, vsync, quality preset (no window needed)
+add_executable(test_display_settings test_display_settings.cpp)
+target_link_libraries(test_display_settings PRIVATE okay::engine)
+add_test(NAME display_settings COMMAND test_display_settings)
 
 add_executable(test_char_anim test_char_anim.cpp)
 target_link_libraries(test_char_anim PRIVATE okay::engine)
@@ -1007,6 +1026,11 @@ add_executable(test_loc_tools test_loc_tools.cpp)
 target_link_libraries(test_loc_tools PRIVATE okay::engine)
 add_test(NAME loc_tools COMMAND test_loc_tools)
 
+# Localization runtime, second pass: keys, language matching, plural rules, number/select placeholders, CSV
+add_executable(test_loc_runtime test_loc_runtime.cpp)
+target_link_libraries(test_loc_runtime PRIVATE okay::engine)
+add_test(NAME loc_runtime COMMAND test_loc_runtime)
+
 # Accessibility: colour vision, safe palette, subtitles and captions, settings
 add_executable(test_accessibility test_accessibility.cpp)
 target_link_libraries(test_accessibility PRIVATE okay::engine)
@@ -1071,6 +1095,16 @@ add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
+
+add_executable(test_vs_node_docs test_vs_node_docs.cpp)
+target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
+add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
+
+add_executable(test_doc_recovery test_doc_recovery.cpp)
+target_include_directories(test_doc_recovery PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_doc_recovery PRIVATE okay::engine)
+add_test(NAME doc_recovery COMMAND test_doc_recovery)
 
 add_executable(test_anim_clip_tools test_anim_clip_tools.cpp)
 target_link_libraries(test_anim_clip_tools PRIVATE okay::engine)
@@ -1162,6 +1196,37 @@ add_test(NAME make_playable COMMAND test_make_playable)
 add_executable(test_gait_continuity test_gait_continuity.cpp)
 target_link_libraries(test_gait_continuity PRIVATE okay::engine)
 add_test(NAME gait_continuity COMMAND test_gait_continuity)
+
+add_executable(test_player_setup test_player_setup.cpp)
+target_link_libraries(test_player_setup PRIVATE okay::engine)
+target_compile_definitions(test_player_setup PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_setup COMMAND test_player_setup)
+
+add_executable(test_destroy_unstarted test_destroy_unstarted.cpp)
+target_link_libraries(test_destroy_unstarted PRIVATE okay::engine)
+add_test(NAME destroy_unstarted COMMAND test_destroy_unstarted)
+
+add_executable(test_head_stability test_head_stability.cpp)
+target_link_libraries(test_head_stability PRIVATE okay::engine)
+target_compile_definitions(test_head_stability PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME head_stability COMMAND test_head_stability)
+
+add_executable(test_clear_spawn test_clear_spawn.cpp)
+target_link_libraries(test_clear_spawn PRIVATE okay::engine)
+add_test(NAME clear_spawn COMMAND test_clear_spawn)
+
+add_executable(test_play_look test_play_look.cpp)
+target_link_libraries(test_play_look PRIVATE okay::engine)
+add_test(NAME play_look COMMAND test_play_look)
+
+add_executable(test_gap_stuck test_gap_stuck.cpp)
+target_link_libraries(test_gap_stuck PRIVATE okay::engine)
+add_test(NAME gap_stuck COMMAND test_gap_stuck)
+
+add_executable(test_anim_jitter test_anim_jitter.cpp)
+target_link_libraries(test_anim_jitter PRIVATE okay::engine)
+target_compile_definitions(test_anim_jitter PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME anim_jitter COMMAND test_anim_jitter)
 
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
@@ -1297,6 +1362,22 @@ add_test(NAME project_delete COMMAND test_project_delete)
 add_executable(test_project_create test_project_create.cpp)
 target_link_libraries(test_project_create PRIVATE okay::engine)
 add_test(NAME project_create COMMAND test_project_create)
+
+# The project's engine version (shared/ProjectVersion.hpp): parse / compare / Decide, the engine_version line in project.okayproj, the launcher's Versions layout. Header-only: no engine link.
+add_executable(test_project_version test_project_version.cpp)
+target_compile_features(test_project_version PRIVATE cxx_std_17)
+target_include_directories(test_project_version PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME project_version COMMAND test_project_version)
+
+# The launcher's Versions page logic (launcher/VersionsManager.cpp, VersionsNet.cpp): versions.json, install / remove / prune on a temp folder with an injected downloader,
+# keeping the current editor on update, the Latest / LTS channel, project badges and "Open with" command lines, the `--versions` hand-off. No SDL, ImGui, engine link or network.
+find_package(Threads REQUIRED)
+add_executable(test_launcher_versions test_launcher_versions.cpp
+    ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsNet.cpp)
+target_compile_features(test_launcher_versions PRIVATE cxx_std_17)
+target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_launcher_versions PRIVATE Threads::Threads)
+add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)
@@ -1605,6 +1686,11 @@ add_executable(test_durable_saves test_durable_saves.cpp)
 target_link_libraries(test_durable_saves PRIVATE okay::engine)
 add_test(NAME durable_saves COMMAND test_durable_saves)
 
+# Saves and prefs hardening: the shared atomic write, SaveFile checksum and backup, Prefs recovery, SaveGame listing
+add_executable(test_save_hardening test_save_hardening.cpp)
+target_link_libraries(test_save_hardening PRIVATE okay::engine)
+add_test(NAME save_hardening COMMAND test_save_hardening)
+
 # Save game framework: typed blocks, slot files + headers, migration chain, forward
 # compatibility, sync backends, menu model (no scene needed).
 add_executable(test_save_framework test_save_framework.cpp)
@@ -1814,6 +1900,18 @@ target_link_libraries(test_optimize_streaming PRIVATE okay::engine)
 add_test(NAME optimize_streaming COMMAND test_optimize_streaming)
 
 # Optimization tools (27): scene optimization report (JSON / text)
+add_executable(test_camera_stack test_camera_stack.cpp)
+target_link_libraries(test_camera_stack PRIVATE okay::engine)
+add_test(NAME camera_stack COMMAND test_camera_stack)
+
+add_executable(test_visibility_lod test_visibility_lod.cpp)
+target_link_libraries(test_visibility_lod PRIVATE okay::engine)
+add_test(NAME visibility_lod COMMAND test_visibility_lod)
+
+add_executable(test_gltf_pbr_maps test_gltf_pbr_maps.cpp)
+target_link_libraries(test_gltf_pbr_maps PRIVATE okay::engine)
+add_test(NAME gltf_pbr_maps COMMAND test_gltf_pbr_maps)
+
 add_executable(test_optimize_report test_optimize_report.cpp)
 target_link_libraries(test_optimize_report PRIVATE okay::engine)
 add_test(NAME optimize_report COMMAND test_optimize_report)

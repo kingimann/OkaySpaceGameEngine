@@ -778,8 +778,8 @@ struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
         if (!latch.Begin(g)) return -1;
         const int body = Next(0);
         if (!g.Resuming()) {
-            first = (int)std::lround(In(0, g, ctx, VsValue{0.0f}).AsFloat());
-            last  = (int)std::lround(In(1, g, ctx, VsValue{9.0f}).AsFloat());
+            first = VsWhole(In(0, g, ctx, VsValue{0.0f}).AsFloat(), 0);
+            last  = VsWhole(In(1, g, ctx, VsValue{9.0f}).AsFloat(), 0);
             step = last >= first ? 1 : -1;
             index = first;
         }

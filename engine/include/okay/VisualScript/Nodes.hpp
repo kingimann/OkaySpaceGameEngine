@@ -496,11 +496,13 @@ struct TimerNode : VsNode {
     }
     void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { acc = r.f0; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        if (interval <= 0.0f) return 0;
+        // Zero or negative means "every time". A long frame keeps the leftover,
+        // so the next pass is not a full interval late.
+        if (!(interval > 0.0f)) return 0;
         acc += ctx.deltaTime;
         if (acc < interval) return -1;
-        acc -= interval;                         // keep the leftover, so the next tick is on time
-        if (acc > interval * 4.0f) acc = interval * 4.0f;   // a long hitch catches up a few frames, not forever
+        acc -= interval;
+        if (acc > interval * 4.0f) acc = interval * 4.0f;
         return 0;
     }
 };

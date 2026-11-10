@@ -248,7 +248,7 @@ function update(dt) {
 }
 ```
 
-Press **F1** in a built game to see the Test UI panel and a sample **Lobby**
+Press **F1** in a development build (Build Settings > Development build) to see the Test UI panel and a sample **Lobby**
 built from these blocks (`shared/OkayTestPanel.hpp` has the code).
 
 ## Theming

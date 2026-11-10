@@ -1,6 +1,11 @@
 #include "okay/Debug/ProjectDiagnostics.hpp"
 
 #include "okay/Core/AssetDatabase.hpp"
+#include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <set>
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Camera.hpp"
@@ -571,28 +576,85 @@ bool AddMissingRequirements(GameObject& go) {
     return any;
 }
 
+// References to files that are not in the project. Reads the project's text assets directly (scenes, prefabs,
+// materials, clips, ...) and never writes: an earlier version indexed the folder with the asset database, which
+// wrote a .okaymeta next to every file it looked at.
 void AppendAssetIndex(const ProjectDiagOptions& options, std::vector<Diagnostic>& items) {
     if (!options.checkAssetIndex || options.assetRoot.empty()) return;
-    AssetDatabase db;
-    ScanOptions scan;
-    scan.createMetas = true;          // a file with no meta is not indexed, so FindMissing would see nothing
-    scan.detectMoves = false;
-    scan.buildDependencies = true;
-    scan.logWarnings = false;
-    scan.deleteOrphanMetas = false;
-    scan.verifyHashes = false;
-    scan.ignoreDirs = {"build", "build-tests", "build-editor", ".git"};
-    db.Scan(options.assetRoot, scan);
-    for (const MissingRef& miss : db.FindMissing()) {
-        if (AlreadyMissingAsset(items, "", miss.reference)) continue;
-        Diagnostic d;
-        d.severity = DiagSeverity::Error;
-        d.code = "asset.db.missing";
-        d.message = miss.referrerPath + " references '" + miss.reference + "', and that file is not in the project.";
-        d.source.assetPath = miss.reference;
-        d.source.scriptPath = miss.referrerPath;
-        d.hint = HintFor(d.code);
-        items.push_back(std::move(d));
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path root = fs::u8path(options.assetRoot);
+    if (!fs::is_directory(root, ec)) return;
+    const std::string rootName = [&] {
+        std::string n = root.filename().generic_u8string();
+        if (n.empty() || n == ".") n = root.parent_path().filename().generic_u8string();
+        for (char& ch : n) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return n;
+    }();
+    static const char* kText[] = {"okayscene", "okayprefab", "okaymat", "okayanim", "okayclip", "okaydialog", "okayquest", "okaybt",
+                                  "okayvs", "okayseq", "okayloot", "okayitems", "okayrecipes", "okaydata", "okaynav", "gltf"};
+    static const char* kSkip[] = {"build", "build-tests", "build-editor", ".git"};
+    auto exists = [&](const std::string& raw, const std::string& referrerDir) {
+        std::string n = raw;
+        for (char& ch : n) if (ch == '\\') ch = '/';
+        if (n.empty()) return true;
+        std::error_code e;
+        if (n[0] == '/' || (n.size() > 1 && n[1] == ':')) return fs::exists(fs::u8path(n), e);
+        std::vector<std::string> tries{n};
+        if (!referrerDir.empty()) tries.push_back(referrerDir + "/" + n);
+        const auto s = n.find('/');
+        if (s != std::string::npos) {
+            std::string first = n.substr(0, s);
+            for (char& ch : first) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (first == rootName || first == "assets") tries.push_back(n.substr(s + 1));
+        }
+        for (const std::string& t : tries) if (fs::exists(root / fs::u8path(t), e)) return true;
+        return false;
+    };
+    int files = 0;
+    for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e1;
+        const std::string name = it->path().filename().generic_u8string();
+        if (it->is_directory(e1)) {
+            bool skip = name.empty() || name[0] == '.';
+            for (const char* k : kSkip) if (name == k) skip = true;
+            if (skip || it->is_symlink(e1)) it.disable_recursion_pending();
+            continue;
+        }
+        if (!it->is_regular_file(e1) || name.empty() || name[0] == '.') continue;
+        std::string ext = it->path().extension().generic_u8string();
+        if (!ext.empty() && ext[0] == '.') ext.erase(0, 1);
+        for (char& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        bool text = false;
+        for (const char* k : kText) if (ext == k) text = true;
+        if (!text) continue;
+        if (++files > 20000) break;
+        const auto size = fs::file_size(it->path(), e1);
+        if (e1 || size > (16u << 20)) continue;
+        std::ifstream in(it->path(), std::ios::binary);
+        if (!in) continue;
+        std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::vector<FoundRef> refs;
+        if (ext == "okayscene" || ext == "okayprefab") refs = ExtractSceneRefs(body);
+        else if (ext == "okaymat") refs = ExtractMaterialRefs(body);
+        else refs = ExtractTextRefs(body);
+        const std::string rel = it->path().lexically_relative(root).generic_u8string();
+        const std::size_t sl = rel.find_last_of('/');
+        const std::string dir = sl == std::string::npos ? std::string() : rel.substr(0, sl);
+        std::set<std::string> seen;
+        for (const FoundRef& r : refs) {
+            if (r.path.empty() || r.path.find("://") != std::string::npos || r.path.rfind("proc:", 0) == 0) continue;
+            if (!seen.insert(r.path).second || exists(r.path, dir)) continue;
+            if (AlreadyMissingAsset(items, "", r.path)) continue;
+            Diagnostic d;
+            d.severity = DiagSeverity::Error;
+            d.code = "asset.db.missing";
+            d.message = rel + " references '" + r.path + "', and that file is not in the project.";
+            d.source.assetPath = r.path;
+            d.source.scriptPath = rel;
+            d.hint = HintFor(d.code);
+            items.push_back(std::move(d));
+        }
     }
 }
 

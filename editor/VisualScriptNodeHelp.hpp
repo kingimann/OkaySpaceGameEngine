@@ -48,6 +48,15 @@ inline const char* VsStepCatBlurb(bool cond) {
 }
 
 inline const char* VsNodeHelp(const char* type) {
+    if (type && std::strncmp(type, "Fn.", 3) == 0) {
+        // The builtins that end the game or replace the scene say so, because they cannot be undone mid-play.
+        const std::string t = type;
+        if (t.find("quit") != std::string::npos || t.find("Quit") != std::string::npos)
+            return "Closes the game. Anything that is not saved is lost. Requires nothing wired.";
+        if (t.find("load_scene") != std::string::npos || t.find("LoadScene") != std::string::npos)
+            return "Switches to another scene. The scene that is playing is replaced, so anything that is not saved is lost. "
+                   "Requires the scene name (First), or its number for the index version.";
+    }
     if (type && std::strncmp(type, "Fn.", 3) == 0)
         return "Calls this text-script builtin on the current object. Requires: wire only the arguments it takes "
                "(First, Second, Third, Fourth). A failure is an error on this node. Search for the builtin name.";
@@ -395,10 +404,10 @@ inline const char* VsNodeHelp(const char* type) {
         {"CraftItem",      "Crafts the recipe that makes this item, Times (default 1) times. Crafted is true if it worked. Needs a Crafting component."},
         {"LootRoll",       "Rolls this loot table into the bag; what does not fit drops next to the object. Rolled is how many items came up."},
         {"SpawnPickup",    "Drops Count (default 1) of this item into the world at X, Y, Z. Name is the new pickup object's name."},
-        {"LoadScene",      "Switches to another scene by name."},
+        {"LoadScene",      "Switches to another scene by name. The scene that is playing is replaced, so anything that is not saved is lost."},
         {"PauseGame",      "Pauses or resumes the game (Paused true / false)."},
         {"SetTimeScale",   "Changes how fast game time runs (1 normal, 0.5 slow motion, 0 frozen)."},
-        {"QuitGame",       "Closes the game."},
+        {"QuitGame",       "Closes the game. Anything that is not saved is lost."},
         {"Action",         "A ready-made step (Move, Jump, Play Sound...). Pick it and set it up in the node."},
         {"Actions",        "A list of ready-made steps that run one after another."},
         // ---- Data ----
@@ -529,7 +538,7 @@ inline const char* VsNodeHelp(const char* type) {
         {"Countdown", "Waits Seconds (the setting, default 5), then the flow continues. The caller waits. Requires Play mode."},
         {"Win", "Records a win, freezes time, and sets a text object named WinText to \"You win\" when one exists."},
         {"Lose", "Records a loss, freezes time, and sets a text object named LoseText to \"You lose\" when one exists."},
-        {"RestartScene", "Reloads the scene that is playing. Requires a scene that was loaded from the build list."},
+        {"RestartScene", "Reloads the scene that is playing, so anything that is not saved in it is lost. Requires a scene that was loaded from the build list."},
         {"CheckpointSave", "Saves this object's position, and its health when it has a Health component, with the existing save. Requires a transform."},
         {"CheckpointLoad", "Moves back to the saved checkpoint, out Loaded, or out Missing when none was saved. Requires a transform."},
         {"SetProgress", "Sets a progress bar's fill from 0 to 1. Requires a progress bar on Target, or on this object."},

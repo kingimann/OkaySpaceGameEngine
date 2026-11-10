@@ -690,13 +690,21 @@ struct NetHostNode : VsNode {
     int port;
     explicit NetHostNode(int p) : port(p) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx, true)) n->StartServer((std::uint16_t)port); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true))
+            if (!n->StartServer((std::uint16_t)port)) g.Error(this, ctx, "could not start the server on port " + std::to_string(port) + " (is it already in use?)");
+        return 0;
+    }
 };
 struct NetJoinNode : VsNode {
     std::string host; int port;
     NetJoinNode(std::string h, int p) : host(std::move(h)), port(p) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx, true)) n->StartClient(host, (std::uint16_t)port); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true))
+            if (!n->StartClient(host, (std::uint16_t)port)) g.Error(this, ctx, "could not connect to " + host + ":" + std::to_string(port));
+        return 0;
+    }
 };
 struct NetSendNode : VsNode {
     std::string channel;

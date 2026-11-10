@@ -65,7 +65,7 @@ static const char* kKnownUnproven[] = {
 // motor, the input map, a settings file or a physics step with inertia. Everything else in the 1497 is
 // proven above. This list is a ratchet: a new silent binding fails the test, and a proven one must leave.
 static const char* kKnownSilentBindings[] = {
-    "Rigidbody.AddTorque/1", "Input.Rumble/3", "Input.DefineAction/3", "Input.DefineDirection/3", "Audio.SaveSettings/0", "Fog.SetMode/2",
+    "Rigidbody.AddTorque/1", "Input.DefineAction/3", "Input.DefineDirection/3", "Audio.SaveSettings/0",
 };
 
 static std::vector<std::string> g_errs;
@@ -148,6 +148,12 @@ static std::string Snapshot(Scene& s) {
         std::snprintf(b, sizeof b, "mix %.2f,%d,%.2f,%.2f,%.2f,%.2f|fog %d,%.2f,%.2f,%.2f|wind %.2f,%.2f,%.2f|", AudioMixer::masterVolume, (int)AudioMixer::muted, AudioMixer::groupVolume[0], AudioMixer::groupVolume[1],
                       AudioMixer::groupVolume[2], AudioMixer::groupVolume[3], (int)rs.fogMode, rs.fogColor.r, rs.fogColor.g, rs.fogColor.b, rs.weather.wind.x, rs.weather.wind.y, rs.weather.wind.z);
         out += b;
+        {
+            float lo = 0, hi = 0, sec = 0;
+            const bool rumble = Input::TakeRumble(lo, hi, sec);
+            std::snprintf(b, sizeof b, "rumble %d,%.2f,%.2f,%.2f|fogd %.2f|", (int)rumble, lo, hi, sec, rs.fogDensity);
+            out += b;
+        }
         for (const char* k : {"Other", "1", "score", "key", "vs_checkpoint_ok", "vs_checkpoint"}) if (Save::Has(k)) out += std::string("save.") + k + std::to_string(Save::GetFloat(k)) + Save::GetString(k) + ";";
     }
     std::snprintf(b, sizeof b, "|time %.3f %d|log %d", Time::BaseTimeScale(), (int)Time::HitStopActive(), g_logLines);
@@ -242,9 +248,11 @@ static std::string ArgFor(const VsDef& d, bool alt) {
 static bool OnlineWouldConnect(const std::string& t) {
     std::string l;
     for (char c : t) l += (char)std::tolower((unsigned char)c);
-    for (const char* k : {"host", "join", "login", "register", "relay", "invite", "queue_auto", "queue_accept", "browser_open", "browser_refresh", "lobby_create", "start_match", "startmatch",
-                          "steam_overlay", "launch", "pf_save", "pf_load", "pf_delete", "pf_set_stat", "pf_leaderboard", "leaderboard", "cloud_write", "cloud_read", "cloud_delete"})
-        if (l.find(k) != std::string::npos) return true;
+    // Steam runs on its in-memory simulation here, so those nodes are safe to run. What is left opens a
+    // socket (host, join, relay, browser, matchmaking queue) or calls PlayFab over HTTP.
+    for (const char* k : {"host", "join", "login", "register", "relay_ready", "invite_friends", "launch_join", "queue_auto", "queue_accept", "browser_open", "browser_refresh",
+                          "pf_save", "pf_load", "pf_delete", "pf_set_stat", "pf_leaderboard"})
+        if (l.find(k) != std::string::npos && l.find("steam") == std::string::npos && l.find("is_host") == std::string::npos) return true;
     return false;
 }
 static bool IsBinding(const std::string& t) { return t.rfind("Fn.", 0) == 0 || t.find('.') != std::string::npos; }
@@ -817,6 +825,17 @@ int main() {
     }
     for (const auto& u : unproven) if (!known.count(u)) { std::printf("  unproven, not on the known list: %s\n", u.c_str()); CHECK(false); }
     for (const auto& k : known) if (!now.count(k)) { std::printf("  on the known list but now proven: %s (remove it)\n", k.c_str()); CHECK(false); }
+    // The nodes that end the game or replace the scene say so in their help text.
+    for (const VsDef& d : Registry()) {
+        const vs::NodeSignature* dsig = vs::SignatureFor(d.type);
+        if (!dsig || !dsig->execIn || !Dangerous(d.type)) continue;   // the event nodes named ...Exit are not these
+        const char* h = VsNodeHelp(d.type);
+        const std::string help = h ? h : "";
+        const bool mild = std::string(d.type) == "ExitBuildMode";   // only leaves build mode
+        const bool ok = mild ? help.find("build mode") != std::string::npos : help.find("not saved") != std::string::npos;
+        if (!ok) std::printf("  help for %s does not warn: %s\n", d.type, help.c_str());
+        CHECK(ok);
+    }
     CheckEvents();
     CheckStaleTraversal();
     Game::CancelQuit();

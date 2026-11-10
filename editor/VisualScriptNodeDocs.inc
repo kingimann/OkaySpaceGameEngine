@@ -1998,7 +1998,7 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "LoadScene";
         d.title = "Load Scene";
-        d.description = "Switches to another scene by name.";
+        d.description = "Switches to another scene by name. The scene that is playing is replaced, so anything that is not saved is lost.";
         d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
         d.component = "";
         d.example = "Put Load Scene on the flow after an event such as On Start. The chain runs when that event fires.";
@@ -3437,7 +3437,7 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "RestartScene";
         d.title = "Restart Scene";
-        d.description = "Reloads the scene that is playing. Requires a scene that was loaded from the build list.";
+        d.description = "Reloads the scene that is playing, so anything that is not saved in it is lost. Requires a scene that was loaded from the build list.";
         d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
         d.component = "";
         d.example = "Put Restart Scene on the flow after an event such as On Start. The chain runs when that event fires.";
@@ -16155,7 +16155,7 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "QuitGame";
         d.title = "Quit Game";
-        d.description = "Quit Game — Closes the game.";
+        d.description = "Closes the game. Anything that is not saved is lost.";
         d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
         d.component = "";
         d.example = "Put Quit Game on the flow after an event such as On Start. The chain runs when that event fires.";

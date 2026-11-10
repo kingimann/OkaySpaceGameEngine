@@ -1,5 +1,38 @@
 OkaySpace Game Engine — Changelog
 
+v2.859.0
+  Runtime UI
+  - Twelve in-game UI themes (Dark, Light, Sci-fi, Fantasy, Modern Flat, Cartoon,
+    Retro Pixel, Minimal, Neon, Glass, Military, Horror), style roles (Primary,
+    Secondary, Danger, Ghost, Outline, Pill), whole-scene theming and .okaytheme
+    files. New radio buttons, draggable windows, floating damage numbers, a
+    dialogue box with choices, nameplates and an inventory screen, with script
+    calls for each. File > Examples > UI Gallery builds every widget with a live
+    theme dropdown. Typing in a text box no longer moves the menu focus, steppers
+    and star ratings work from keyboard and gamepad, widgets drawn under a panel
+    can be blocked from clicks, and text fields count whole characters (#622).
+  Project panel (editor)
+  - Create folders, scripts, scenes, prefabs, materials, data assets and visual
+    scripts through a name prompt. Renaming (F2) and moving keep every scene,
+    prefab and material pointing at the file. Copy, cut, paste and duplicate;
+    delete asks first, lists what uses the asset and moves it to a trash folder;
+    Ctrl+Z undoes all of it. Find References, Reimport, an Import Settings
+    editor, a Folder/Project search switch, a thumbnail size slider and keyboard
+    navigation. Delete and Ctrl+C/X/V/D/Z in the panel no longer also act on the
+    selected scene object (#619).
+  Inspector and Hierarchy (editor)
+  - Every edit is one undo step. Dropping on the empty Hierarchy area, dragging
+    a group, and dropping a prefab or model on a row now work. Hierarchy search
+    understands t:tag, c:component, l:layer, is:state and -word. The Inspector
+    lists what changed from a prefab with Revert and Apply, edits several
+    objects at once (differing values show Mixed), copies, pastes and resets
+    component values, and file and object fields check what you drop (#621).
+  Launcher
+  - The Create tab is a home with a + New Project wizard (template, details,
+    review) and a recent-projects grid that keeps the version badges and Open
+    with. A failed create tells you why and leaves no folders behind, and more
+    illegal names are caught (#624).
+
 v2.858.0
   Visual Script
   - The add-node panel searches name, category, keywords and description,

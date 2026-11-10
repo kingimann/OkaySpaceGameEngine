@@ -24,6 +24,7 @@
 #include "okay/Core/Time.hpp"
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -91,7 +92,10 @@ public:
         if (!(src > 0.0f) || !std::isfinite(src)) src = 0.0f;
         m_sourceDelta = src;
         const bool held = m_paused || (m_holds && gamePaused);
-        m_delta = held ? 0.0f : (m_ramp ? StepRamp(src) : src * m_scale);
+        // Formed in double and held in float range: a huge step (a clamp turned off) times a scale of 100
+        // overflowed to infinity and made Elapsed() infinite for good.
+        const double d = held ? 0.0 : (m_ramp ? StepRamp(src) : (double)src * (double)m_scale);
+        m_delta = d < (double)std::numeric_limits<float>::max() ? (float)d : std::numeric_limits<float>::max();
         m_elapsed += (double)m_delta;
         ++m_ticks;
     }
@@ -116,7 +120,7 @@ public:
 private:
     static float CleanScale(float s) { return s > 0.0f ? (s < Time::kMaxTimeScale ? s : Time::kMaxTimeScale) : 0.0f; }
     // Integrate the ramping scale over `src` seconds of source time and advance the ramp.
-    float StepRamp(float src) {
+    double StepRamp(float src) {
         const double dt = (double)src;
         const double seg = dt < m_rampDur - m_rampT ? dt : m_rampDur - m_rampT;   // the part of the frame still inside the ramp
         const double k0 = m_rampT / m_rampDur, k1 = (m_rampT + seg) / m_rampDur;
@@ -130,7 +134,7 @@ private:
             m_ramp = false;
             acc += (dt - seg) * (double)m_rampTo;
         }
-        return (float)acc;
+        return acc;
     }
     std::string m_name;
     Source m_source;

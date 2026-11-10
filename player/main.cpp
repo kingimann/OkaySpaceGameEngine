@@ -13,6 +13,7 @@
 #include "okay/Input/SdlKeys.hpp"      // F1-F12, nav keys, left / right modifiers
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "okay/Scene/EnsureCamera.hpp"
+#include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
@@ -1262,6 +1263,8 @@ int main(int argc, char** argv) {
         int  fpsCap = 0;
         float volume = 1.0f;
         bool lockCursor = false, perPixel = false, shadows = true, bloom = false, ssao = false, fxaa = true;
+        int cursorMode = 0;          // 0 none, 1 locked, 2 confined
+        bool sawCursorMode = false;
         float shadowDistance = 80.0f, shadowSoftness = 2.5f;
         int  shadowCascades = 3, shadowResolution = 2048;
         int  antialias = 1;
@@ -1318,6 +1321,12 @@ int main(int argc, char** argv) {
             else if (k == "volume")     cfg.volume = (float)std::atof(v.c_str());
             else if (k == "show_fps")   cfg.showFps = std::atoi(v.c_str()) != 0;
             else if (k == "lock_cursor") cfg.lockCursor = std::atoi(v.c_str()) != 0;
+            else if (k == "cursor_lock") {
+                cfg.sawCursorMode = true;
+                if (v == "locked" || v == "1") cfg.cursorMode = 1;
+                else if (v == "confined" || v == "2") cfg.cursorMode = 2;
+                else cfg.cursorMode = 0;
+            }
             else if (k == "perpixel")   cfg.perPixel = std::atoi(v.c_str()) != 0;
             else if (k == "shadows")    cfg.shadows = std::atoi(v.c_str()) != 0;
             else if (k == "shadow_distance")   cfg.shadowDistance = (float)std::atof(v.c_str());
@@ -1380,6 +1389,7 @@ int main(int argc, char** argv) {
     // Persistent prefs (high scores, settings) live in the save folder.
     std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
+    okay::DisplaySettings::Restore();   // the player's saved fullscreen, vsync and quality apply on the first frame (the watcher below)
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
     BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
@@ -1557,7 +1567,9 @@ int main(int argc, char** argv) {
     BloomEnabled()     = cfg.bloom;
     SSAOEnabled()      = cfg.ssao;
     FXAAEnabled()      = cfg.fxaa;
-    if (cfg.lockCursor) Cursor::Capture(true);
+    if (!cfg.sawCursorMode && cfg.lockCursor) cfg.cursorMode = 1;
+    if (cfg.cursorMode == 1) Cursor::Capture(true);
+    else if (cfg.cursorMode == 2) { Cursor::SetLock(Cursor::LockMode::Confined); Cursor::SetVisible(true); }
     SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
 
     // Optional GPU 3D renderer — the same hardware path the editor's Scene view uses,
@@ -1895,6 +1907,7 @@ int main(int argc, char** argv) {
         // Apply the game's requested cursor state.
         static Vec2 s_virtualMouse{0, 0};
         bool locked = Cursor::IsLocked() && !gameModal && !cursorReleased;
+        const bool confined = Cursor::IsConfined() && !gameModal && !cursorReleased;
         // hand-off: when a bag opens (mouselook was locked) free the pointer
         // AT SCREEN CENTRE, and when it closes warp back to centre before re-locking, so
         // the cursor always appears in the middle and the look anchor resets cleanly.
@@ -1904,7 +1917,14 @@ int main(int argc, char** argv) {
             SDL_WarpMouseInWindow(window, ww / 2, wh / 2);
         }
         s_prevInvModal = gameModal;
-        SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+        // Relative mode only on the transition. Calling it every frame re-warps,
+        // and that warp was added on top of the real delta.
+        static bool s_relLocked = false;
+        if (locked != s_relLocked) {
+            SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+            okay::NoteMouseSpaceChanged();
+            s_relLocked = locked;
+        }
         // While actively dragging a stack, hide the OS arrow: the dragged icon (drawn
         // centred on the mouse) becomes the pointer. The arrow's hotspot sits at its
         // tip — ~half a slot above where it looks like it's pointing — which biased the
@@ -1929,6 +1949,13 @@ int main(int argc, char** argv) {
             SDL_GetWindowSize(window, &ww, &wh);
             SDL_GetRendererOutputSize(renderer, &ow, &oh);
             float sx = ww > 0 ? (float)ow / ww : 1.0f, sy = wh > 0 ? (float)oh / wh : 1.0f;
+            if (confined && ww > 1 && wh > 1) {
+                if (ax < 0) ax = 0;
+                if (ay < 0) ay = 0;
+                if (ax > ww - 1) ax = ww - 1;
+                if (ay > wh - 1) ay = wh - 1;
+                SDL_WarpMouseInWindow(window, ax, ay);
+            }
             s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
         unsigned mask = 0;
@@ -1954,8 +1981,6 @@ int main(int argc, char** argv) {
         Uint64 now = SDL_GetPerformanceCounter();
         const float measuredDt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
-        // The FPS readouts below show the measured time, cut to the 0.1 s the game steps by at most.
-        const float dt = measuredDt > 0.1f ? 0.1f : measuredDt;
         // The game steps by an evened-out frame time (vsync: whole refresh
         // periods; the loop does it). The refresh rate is re-read now and then
         // (the window can move to another display).
@@ -2508,16 +2533,29 @@ int main(int argc, char** argv) {
 
         // Optional FPS overlay (top-left) when enabled in build settings.
         if (cfg.showFps) {
-            static float fpsSmooth = 0.0f;
-            float inst = dt > 0.0001f ? 1.0f / dt : 0.0f;
-            fpsSmooth = fpsSmooth <= 0.0f ? inst : fpsSmooth * 0.9f + inst * 0.1f;
-            char buf[32]; std::snprintf(buf, sizeof(buf), "FPS %d", (int)(fpsSmooth + 0.5f));
+            // The loop's own REAL frame times over the last 30 frames (okay/Core/FrameOverlay.hpp), the numbers
+            // the F3 panel shows. This used to read `dt`, the frame time cut to 0.1 s, so it never showed
+            // under 10 FPS and a stall barely moved it.
+            const std::string fpsText = okay::FrameOverlay::FpsLabel(loop);
+            const char* buf = fpsText.c_str();
             float px = 2.0f;
             float tw = UITextW(buf, px);
             SDL_Rect bg{4, 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
             SDL_RenderFillRect(renderer, &bg);
             DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
+        }
+        if (Cursor::IsLocked() || Cursor::IsConfined() || cursorReleased) {
+            const char* hint = cursorReleased ? "Click to capture the cursor" : "Esc to release the cursor";
+            float px = 2.0f;
+            float tw = UITextW(hint, px);
+            int x = (int)(w * 0.5f - tw * 0.5f);
+            int y = h - (int)(Font8x8::Height * px) - 12;
+            if (x < 8) x = 8;
+            SDL_Rect bg{x - 4, y - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 140);
+            SDL_RenderFillRect(renderer, &bg);
+            DrawText(renderer, hint, (float)x, (float)y, px, SDL_Color{230, 245, 230, 230});
         }
         UIWorld().active = false;   // end of the frame's world-space UI projection
 #ifdef OKAY_HAVE_OKAYUI
@@ -2529,31 +2567,24 @@ int main(int argc, char** argv) {
         if (!toastDemo && std::getenv("OKAY_TESTUI")) { toastDemo = true; OkayUI::Toast("Match found - joining EU 1", 1, 30.0f); OkayUI::Toast("Maya invited you to play", 0, 30.0f); }
         DrawServerBrowserWindow(scene, window);   // net_browser_open(): the in-game "Find a server" window
         DrawMatchmakingBanner(window);            // net_queue_join() / Find match: progress + Cancel
-        // F3 performance HUD — a real in-engine use of OkayUI (FPS graph, frame time,
-        // and a scrollable list of scene objects). Showcases PlotLines/LabelText/child.
+        // F3 performance HUD — a real in-engine use of OkayUI (stat lines, FPS graph, and a scrollable
+        // list of scene objects). The numbers are the loop's own (okay/Core/FrameOverlay.hpp, from
+        // GameLoop::Stats()): REAL frame times over the last 240 frames (a stall reads as the stall it was,
+        // not the 0.1 s the game stepped), plus the time scale, hit stop, debug scale and pause reasons. The
+        // editor's Game view shows the same lines.
         if (g_statsUI) {
-            static float s_fps = 0.0f;
-            float inst = dt > 0.0001f ? 1.0f / dt : 0.0f;
-            s_fps = s_fps <= 0.0f ? inst : s_fps * 0.9f + inst * 0.1f;   // smoothed FPS
-            static float s_fpsHist[90] = {0};
-            static int   s_fpsIdx = 0;
-            s_fpsHist[s_fpsIdx] = s_fps;
-            s_fpsIdx = (s_fpsIdx + 1) % 90;
-            float plot[90];
-            for (int i = 0; i < 90; ++i) plot[i] = s_fpsHist[(s_fpsIdx + i) % 90];  // chronological
+            const std::vector<std::string> overlayLines = okay::FrameOverlay::Lines(loop);
+            const std::vector<float> plot = okay::FrameOverlay::RecentFps(loop.Stats(), 90);   // chronological
 
-            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 320.0f, 320.0f);
+            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 340.0f, 556.0f);   // tall enough for the overlay lines, the graph and a short object list
+            for (const std::string& ol : overlayLines) OkayUI::Text(ol.c_str());
             char line[64];
-            std::snprintf(line, sizeof(line), "%d", (int)(s_fps + 0.5f));
-            OkayUI::LabelText("FPS", line);
-            std::snprintf(line, sizeof(line), "%.2f ms", dt * 1000.0f);
-            OkayUI::LabelText("Frame time", line);
             std::snprintf(line, sizeof(line), "%d", (int)scene.Objects().size());
             OkayUI::LabelText("Objects", line);
             OkayUI::SeparatorText("FPS (last 90 frames)");
-            OkayUI::PlotLines("##fps", plot, 90, 0.0f, 0.0f, 56.0f);
+            OkayUI::PlotLines("", plot.data(), (int)plot.size(), 0.0f, 0.0f, 56.0f);   // no label: OkayUI draws "##" ids as text
             OkayUI::SeparatorText("Scene objects");
-            if (OkayUI::BeginChild("##objs", 0.0f, 130.0f, true)) {
+            if (OkayUI::BeginChild("##objs", 0.0f, 64.0f, true)) {
                 for (const auto& up : scene.Objects())
                     if (up) OkayUI::BulletText(up->name.c_str());
             }

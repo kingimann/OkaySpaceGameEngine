@@ -8,11 +8,13 @@ add_library(okay_engine
     src/Core/Console.cpp
     src/Core/DebugOverlay.cpp
     src/Core/SaveGame.cpp
+    src/Core/SaveFile.cpp
     src/Core/SaveFramework.cpp
     src/Core/SaveFrameworkScene.cpp
     src/Core/SaveFrameworkSync.cpp
     src/Core/Scheduler.cpp
     src/Core/Tween.cpp
+    src/Core/TimerDebug.cpp
     src/Core/Prefs.cpp
     src/Core/DataAsset.cpp
     src/Core/Undo.cpp
@@ -43,6 +45,7 @@ add_library(okay_engine
     src/Scene/ComponentSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
+    src/Components/LookAtIK.cpp
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
@@ -112,6 +115,7 @@ add_library(okay_engine
     src/Components/CharacterAnimBackend.cpp
     src/Animation/HumanoidMotion.cpp
     src/Animation/HumanoidLibrary.cpp
+    src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp
@@ -458,6 +462,8 @@ target_sources(okay_engine PRIVATE
     src/Scene/Properties.cpp
     src/Scene/PropertyRegistry.cpp
     src/Scene/BuiltinProperties.cpp
+    src/Scene/BuiltinPropertiesGameplay.cpp
+    src/Scene/BuiltinPropertiesUI.cpp
 )
 
 # ---- Core runtime foundations: job system, memory arenas, handles and ids, frame pacing ----
@@ -482,6 +488,7 @@ target_sources(okay_engine PRIVATE
 target_sources(okay_engine PRIVATE
     src/Core/FrameRecord.cpp
     src/Core/FrameStats.cpp
+    src/Core/FrameOverlay.cpp
     src/Core/TimeSnapshot.cpp
     src/Core/LoopConsole.cpp
 )

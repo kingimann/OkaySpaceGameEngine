@@ -69,6 +69,10 @@ public:
     // no limb reaching for a dead object.
     void OnDisable() override { Release(); }
     void OnDestroy() override { Release(); }
+    // Edit mode can drive a limb before Start. Destroying that object must
+    // still put the pose back; OnDestroy does not run for a component that
+    // never started.
+    void ReleaseUnstarted() override { Release(); }
 
     /// Edit mode: set the goal and run the solver so the limb follows while the
     /// target object is moved. Play mode uses LateUpdate plus the solver's own tick.

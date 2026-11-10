@@ -50,23 +50,23 @@ public:
     /// Begin counting down `seconds` (also from Done, or while running: it starts over). A duration of
     /// 0 is allowed: the next Tick reports it, whatever dt it is given. Un-pauses.
     void Start(float seconds) {
-        m_duration = Clean(seconds);
+        m_duration = (double)Clean(seconds);
         m_remaining = m_duration;
-        m_overshoot = 0.0f;
+        m_overshoot = 0.0;
         m_state = State::Running;
         m_paused = false;
     }
     /// Start again with the same duration.
-    void Restart() { Start(m_duration); }
+    void Restart() { Start((float)m_duration); }
     /// Back to idle: not running, not done, remaining 0. The duration is remembered (Restart).
-    void Stop() { m_state = State::Idle; m_remaining = 0.0f; m_overshoot = 0.0f; m_paused = false; }
+    void Stop() { m_state = State::Idle; m_remaining = 0.0; m_overshoot = 0.0; m_paused = false; }
     void Pause() { m_paused = true; }
     void Resume() { m_paused = false; }
     /// Add (or, negative, take away) time while running: an effect that lengthens a stun. Cannot take
     /// it below 0 or past kMaxSeconds. Does nothing unless running.
     void Extend(float seconds) {
         if (m_state != State::Running || !std::isfinite(seconds)) return;
-        m_remaining = Clamp(m_remaining + seconds);
+        m_remaining = ClampD(m_remaining + (double)seconds);
         if (m_remaining > m_duration) m_duration = m_remaining;
     }
 
@@ -75,10 +75,10 @@ public:
     /// finished and paused timers ignore the tick.
     bool Tick(float dt) {
         if (m_state != State::Running || m_paused) return false;
-        const float step = (dt > 0.0f && std::isfinite(dt)) ? dt : 0.0f;
+        const double step = (dt > 0.0f && std::isfinite(dt)) ? (double)dt : 0.0;
         if (step < m_remaining) { m_remaining -= step; return false; }
         m_overshoot = step - m_remaining;
-        m_remaining = 0.0f;
+        m_remaining = 0.0;
         m_state = State::Done;
         return true;
     }
@@ -94,18 +94,18 @@ public:
     bool Paused() const { return m_paused; }
     State GetState() const { return m_state; }
 
-    float Duration() const { return m_duration; }
-    float Remaining() const { return m_remaining; }
-    float Elapsed() const { return m_state == State::Idle ? 0.0f : m_duration - m_remaining; }
+    float Duration() const { return (float)m_duration; }
+    float Remaining() const { return (float)m_remaining; }
+    float Elapsed() const { return m_state == State::Idle ? 0.0f : (float)(m_duration - m_remaining); }
     /// 0 when it starts, 1 when it is done; 0 while idle. A zero-length timer reads 1 once started.
     float Progress() const {
         if (m_state == State::Idle) return 0.0f;
         if (m_state == State::Done || m_duration <= 0.0f) return 1.0f;
-        const float p = 1.0f - m_remaining / m_duration;
-        return p < 0.0f ? 0.0f : (p > 1.0f ? 1.0f : p);
+        const double p = 1.0 - m_remaining / m_duration;
+        return p < 0.0 ? 0.0f : (p > 1.0 ? 1.0f : (float)p);
     }
     /// The part of the tick that finished it which was not needed (0 before then).
-    float Overshoot() const { return m_overshoot; }
+    float Overshoot() const { return (float)m_overshoot; }
 
     /// For a buffer or a grace period ("coyote time"): true, once, while the timer is active; it
     /// then goes idle so the same press cannot be used twice. False when idle or already done.
@@ -116,29 +116,33 @@ public:
     }
 
     template <class W> void Save(W&& w) const {
-        w.Float("duration", m_duration);
-        w.Float("remaining", m_remaining);
+        w.Float("duration", (float)m_duration);
+        w.Float("remaining", (float)m_remaining);
         w.Int("state", (int)m_state);
         w.Bool("paused", m_paused);
-        w.Float("overshoot", m_overshoot);
+        w.Float("overshoot", (float)m_overshoot);
     }
     template <class R> void Load(const R& r) {
-        const float duration = Clean(r.Float("duration", m_duration));
-        const float remaining = Clamp(r.Float("remaining", m_remaining));
+        const double duration = (double)Clean(r.Float("duration", (float)m_duration));
+        const double remaining = (double)Clamp(r.Float("remaining", (float)m_remaining));
         const int state = r.Int("state", (int)m_state);
         m_duration = duration;
         m_remaining = remaining > duration ? duration : remaining;
         m_state = state == 1 ? State::Running : (state == 2 ? State::Done : State::Idle);
-        if (m_state == State::Done) m_remaining = 0.0f;
-        if (m_state == State::Idle) m_remaining = 0.0f;
+        if (m_state == State::Done) m_remaining = 0.0;
+        if (m_state == State::Idle) m_remaining = 0.0;
         m_paused = r.Bool("paused", m_paused) && m_state == State::Running;
-        m_overshoot = Clamp(r.Float("overshoot", 0.0f));
+        m_overshoot = (double)Clamp(r.Float("overshoot", 0.0f));
     }
 
 private:
     static float Clamp(float v) { return v > 0.0f ? (v < kMaxSeconds ? v : kMaxSeconds) : 0.0f; }   // NaN -> 0
+    static double ClampD(double v) { return v > 0.0 ? (v < (double)kMaxSeconds ? v : (double)kMaxSeconds) : 0.0; }
     static float Clean(float v) { return std::isfinite(v) ? Clamp(v) : (v > 0.0f ? kMaxSeconds : 0.0f); }   // +inf -> the cap, -inf and NaN -> 0
-    float m_duration = 0.0f, m_remaining = 0.0f, m_overshoot = 0.0f;
+    // Kept in double: a float cannot take a frame off a long timer (at 86400 s one ULP is 0.0078 s, so 1/60 s
+    // ticks removed 0.0078 or 0.0156 of them and a day-long countdown ran 6% off; at a week a tick of 1/60 s was
+    // under half an ULP and it never counted down at all). The API reads and writes floats.
+    double m_duration = 0.0, m_remaining = 0.0, m_overshoot = 0.0;
     State m_state = State::Idle;
     bool m_paused = false;
 };
@@ -150,21 +154,22 @@ private:
 /// a use in that same frame starts the next wait that much shorter, so a 0.25 s cooldown fires four times
 /// a second at 144 fps and at 30 fps alike (without it a poll-style cooldown rounds up to a whole number
 /// of frames: 3.75 shots a second at 30 fps). The credit is for that one frame only; a weapon that sat
-/// ready and is fired later gets the full wait.
+/// ready and is fired later gets the full wait. Save writes a pending credit too (a save taken after the
+/// tick and before the use is the same save as one taken a moment earlier).
 class Cooldown {
 public:
     static constexpr float kMaxSeconds = Countdown::kMaxSeconds;
 
     Cooldown() = default;
-    explicit Cooldown(float seconds) : m_duration(Clean(seconds)) {}
+    explicit Cooldown(float seconds) : m_duration((double)Clean(seconds)) {}
 
     /// How long the wait is. Changing it does not touch a wait that is running (a stronger
     /// "haste" effect calls Reduce for that).
-    void SetDuration(float seconds) { m_duration = Clean(seconds); }
-    float Duration() const { return m_duration; }
+    void SetDuration(float seconds) { m_duration = (double)Clean(seconds); }
+    float Duration() const { return (float)m_duration; }
 
     /// Ready (not waiting)?
-    bool Ready() const { return m_remaining <= 0.0f; }
+    bool Ready() const { return m_remaining <= 0.0; }
     /// Use it if it is ready: true and the wait starts; false when it is still waiting.
     bool TryUse() {
         if (!Ready()) return false;
@@ -173,15 +178,15 @@ public:
     }
     /// Start the wait now, even if it was already running.
     void Trigger() {
-        m_remaining = m_duration > m_credit ? m_duration - m_credit : 0.0f;
-        m_credit = 0.0f;
+        m_remaining = m_duration > m_credit ? m_duration - m_credit : 0.0;
+        m_credit = 0.0;
     }
     /// Ready again at once.
-    void Reset() { m_remaining = 0.0f; m_credit = 0.0f; }
+    void Reset() { m_remaining = 0.0; m_credit = 0.0; }
     /// Take `seconds` off the wait (haste, a reset-on-kill perk); never below 0.
     void Reduce(float seconds) {
         if (!(seconds > 0.0f) || !std::isfinite(seconds)) return;
-        m_remaining = m_remaining > seconds ? m_remaining - seconds : 0.0f;
+        m_remaining = m_remaining > (double)seconds ? m_remaining - (double)seconds : 0.0;
     }
     /// A paused cooldown does not count down (a stunned player).
     void SetPaused(bool paused) { m_paused = paused; }
@@ -189,40 +194,41 @@ public:
 
     void Tick(float dt) {
         if (m_paused) return;
-        const float step = (dt > 0.0f && std::isfinite(dt)) ? dt : 0.0f;
-        if (m_remaining <= 0.0f) { m_credit = 0.0f; return; }      // it was ready already: an earlier frame's leftover is gone
+        const double step = (dt > 0.0f && std::isfinite(dt)) ? (double)dt : 0.0;
+        if (m_remaining <= 0.0) { m_credit = 0.0; return; }        // it was ready already: an earlier frame's leftover is gone
         if (m_remaining > step) { m_remaining -= step; return; }
         m_credit = step - m_remaining;                              // became ready inside this tick
-        m_remaining = 0.0f;
+        m_remaining = 0.0;
     }
     void Tick(const Clock& clock) { Tick(clock.Delta()); }
 
     /// Seconds still to wait (0 when ready).
-    float Remaining() const { return m_remaining; }
+    float Remaining() const { return (float)m_remaining; }
     /// 0 right after use, 1 when ready: the fill of an ability icon's sweep. A cooldown with no
     /// duration is always 1.
     float Progress() const {
-        if (m_remaining <= 0.0f || m_duration <= 0.0f) return 1.0f;
-        const float p = 1.0f - m_remaining / m_duration;
-        return p < 0.0f ? 0.0f : (p > 1.0f ? 1.0f : p);
+        if (m_remaining <= 0.0 || m_duration <= 0.0) return 1.0f;
+        const double p = 1.0 - m_remaining / m_duration;
+        return p < 0.0 ? 0.0f : (p > 1.0 ? 1.0f : (float)p);
     }
 
     template <class W> void Save(W&& w) const {
-        w.Float("duration", m_duration);
-        w.Float("remaining", m_remaining);
+        w.Float("duration", (float)m_duration);
+        w.Float("remaining", (float)m_remaining);
         w.Bool("paused", m_paused);
+        if (m_credit > 0.0) w.Float("credit", (float)m_credit);   // only the frame a held-fire credit is pending; older saves have none
     }
     template <class R> void Load(const R& r) {
-        m_duration = Clean(r.Float("duration", m_duration));
-        const float rem = r.Float("remaining", m_remaining);
-        m_remaining = rem > 0.0f ? (rem < kMaxSeconds ? rem : kMaxSeconds) : 0.0f;
-        m_credit = 0.0f;
+        m_duration = (double)Clean(r.Float("duration", (float)m_duration));
+        const float rem = r.Float("remaining", (float)m_remaining);
+        m_remaining = rem > 0.0f ? (double)(rem < kMaxSeconds ? rem : kMaxSeconds) : 0.0;
+        m_credit = m_remaining > 0.0 ? 0.0 : (double)Clean(r.Float("credit", 0.0f));   // a credit only exists on a ready cooldown
         m_paused = r.Bool("paused", m_paused);
     }
 
 private:
     static float Clean(float v) { return std::isfinite(v) ? (v > 0.0f ? (v < kMaxSeconds ? v : kMaxSeconds) : 0.0f) : (v > 0.0f ? kMaxSeconds : 0.0f); }
-    float m_duration = 0.0f, m_remaining = 0.0f, m_credit = 0.0f;
+    double m_duration = 0.0, m_remaining = 0.0, m_credit = 0.0;   // double for the reason Countdown's are (a long wait loses time to float rounding)
     bool m_paused = false;
 };
 

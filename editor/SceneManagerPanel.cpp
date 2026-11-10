@@ -7,6 +7,7 @@
 #include "ConsolePanel.hpp"
 
 #include <unordered_set>
+#include "../shared/ProjectCreate.hpp"
 
 namespace oked {
 
@@ -104,11 +105,7 @@ void SaveFile(EditorState& ed, const std::vector<SceneBuildEntry>& entries) {
     if (path.empty()) return;
     std::error_code ec;
     fs::create_directories(fs::path(path).parent_path(), ec);
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) {
-        ConsoleLog("Couldn't save the scene build list.", 2);
-        return;
-    }
+    std::ostringstream f;
     f << "# OkaySpace scene build list. First ticked scene is the start scene.\n";
     for (const SceneBuildEntry& e : entries) {
         std::error_code rec;
@@ -116,6 +113,9 @@ void SaveFile(EditorState& ed, const std::vector<SceneBuildEntry>& entries) {
         std::string stored = (!rec && !rel.empty()) ? rel.generic_string() : e.path;
         f << (e.on ? '1' : '0') << '|' << stored << '\n';
     }
+    std::string why;
+    if (!okayproj::WriteTextAtomic(path, f.str(), &why))   // whole or not at all
+        ConsoleLog("Couldn't save the scene build list: " + why, 2);
 }
 
 const std::vector<std::string>& DiskScenes(EditorState& ed) {
@@ -250,6 +250,8 @@ bool NameTaken(const fs::path& dest) { return ExistsFile(dest); }
 } // namespace
 
 void AddRecent(const std::string& path); // defined in main.cpp
+void RunAfterSavePrompt(okay::editor::EditorState& ed, const std::string& doing, std::function<void()> action, std::function<void()> onCancel = {});   // main.cpp: Save / Don't Save / Cancel first
+void ShowErrorPopup(const std::string& title, const std::string& text);                                           // main.cpp
 
 void SceneBuildSync(EditorState& ed) {
     const std::string proj = CanonDir(ed.projectDir());
@@ -376,9 +378,12 @@ void DrawSceneManager(EditorState& ed) {
         ImGui::SameLine();
         ImGui::BeginDisabled(!r.exists);
         if (ImGui::SmallButton("Open")) {
-            std::string err;
-            if (ed.Load(r.path, &err)) { ConsoleLog("Opened " + stem); AddRecent(r.path); }
-            else ConsoleLog("Open failed: " + err, 2);
+            const std::string openPath = r.path, openStem = stem;
+            RunAfterSavePrompt(ed, "opening another scene", [&ed, openPath, openStem] {
+                std::string err;
+                if (ed.Load(openPath, &err)) { ConsoleLog("Opened " + openStem); AddRecent(openPath); }
+                else ShowErrorPopup("Couldn't open the scene", "\"" + openPath + "\": " + err + "\n\nThe scene you had open is still open.");
+            });
         }
         ImGui::EndDisabled();
         ImGui::SameLine();

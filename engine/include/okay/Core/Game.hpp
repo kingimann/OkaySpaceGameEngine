@@ -36,7 +36,14 @@ public:
     /// This is the reason "manual": SetPaused(false) removes only that one, so it does
     /// not resume a pause somebody else holds with PushPause.
     static void SetPaused(bool paused);
-    static void TogglePause() { SetPaused(!s_paused); }
+    /// The pause button: flips the "manual" hold (SetPaused's reason) and returns whether it is now
+    /// held. It always does what the player asked, even while another system holds a pause: with a
+    /// cutscene running (Paused() already true) the first press ADDS the manual hold, so the game
+    /// stays paused after the cutscene ends, and the next press releases it. It used to flip
+    /// "is the game paused" and so did nothing in that case (SetPaused(false) cannot release
+    /// somebody else's hold). Paused() can still be true after a press that released the manual hold:
+    /// ask PauseReasons() who else holds it.
+    static bool TogglePause();
 
     /// Hold the game paused for `reason` (any short name: "menu", "cutscene", "dialogue").
     /// Pushes of the same reason count, so two PushPause("menu") need two PopPause("menu").
@@ -88,8 +95,10 @@ public:
     /// BeginSession for a clean slate). A window that is still unfocused with
     /// pause-on-focus-loss on starts paused.
     static void Reset();
-    /// Reset() plus the time scale back to 1: everything a new Play session or scene
-    /// load should start from.
+    /// Reset() plus the time scale back to 1 and Time::MarkSessionStart(): everything a new Play
+    /// session or scene load should start from. Time::ElapsedTime() and FrameCount() are NOT
+    /// rewound (stamps taken from them stay valid); Time::SessionTime() and SessionFrameCount()
+    /// start again from 0.
     static void BeginSession();
 
 private:

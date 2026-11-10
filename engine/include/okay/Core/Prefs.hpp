@@ -11,6 +11,8 @@ namespace okay {
 /// high scores, settings, and progress. Values live in memory until Save() writes
 /// them to a small text file that Load() reads back. Numbers are stored as
 /// strings, so a key can be read as int, float, or string interchangeably.
+/// Every call may be made from any thread (one lock guards the keys; listeners run
+/// outside it, on the thread that made the change).
 class Prefs {
 public:
     static void  SetInt(const std::string& key, int value);
@@ -48,13 +50,21 @@ public:
     static int  AddListener(Listener fn);   ///< Returns an id for RemoveListener.
     static void RemoveListener(int id);
 
-    /// Write all keys to `path`. The file is written aside and swapped in, so a
-    /// crash or full disk leaves the old file alone. False if it couldn't be written.
+    /// Write all keys to `path` (in key order). The file is written aside, flushed to the
+    /// disk and swapped in, so a crash or full disk leaves the old file alone; the old file,
+    /// when it was a good one, is kept as `<path>.bak`. False if it couldn't be written
+    /// (`LastError()` says why: disk full, read-only folder...).
     static bool Save(const std::string& path);
     /// Replace in-memory keys with the contents of `path`. A missing file gives an
-    /// empty store and returns false (no file was read). A file that is cut off or
-    /// unreadable returns false and leaves the current keys untouched.
+    /// empty store and returns false (no file was read). A file that is cut off, damaged or
+    /// unreadable falls back to `<path>.bak` (true; `LastLoadUsedBackup()` and `LastError()`
+    /// say so); with no good backup it returns false and leaves the current keys untouched.
+    /// Files saved on Windows with CR LF line ends load too.
     static bool Load(const std::string& path);
+    /// Why the last Save or Load failed or fell back to a backup ("" when it went fine).
+    static std::string LastError();
+    /// True when the last Load read `<path>.bak` because the main file was damaged.
+    static bool LastLoadUsedBackup();
 
 private:
     static std::unordered_map<std::string, std::string>& Store();

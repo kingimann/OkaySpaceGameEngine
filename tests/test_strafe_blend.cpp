@@ -416,5 +416,60 @@ int main() {
         CHECK(death && loco);
     }
 
+    // Updating the clip blend keeps the settings that are not the clips.
+    {
+        AnimStateMachine sm;
+        AnimStateMachine::State loco;
+        loco.name = "Locomotion";
+        loco.speed = 1.7f;
+        loco.speedParam = "pace";
+        loco.fallbackClip = "IdleStand";
+        loco.enterEvent = "step";
+        loco.exitEvent = "stop";
+        loco.ikWeight = 0.25f;
+        loco.fullBodyIkWeight = 0.4f;
+        loco.lookWeight = 0.4f;
+        loco.ikCurve.push_back({0.2f, 0.5f});
+        loco.fullBodyIkCurve.push_back({0.8f, 0.3f});
+        loco.matchSpeed = true;
+        loco.loop = false;
+        loco.interruptible = false;
+        loco.mirror = true;
+        loco.rootMotion = 1;
+        loco.nx = 40.0f; loco.ny = 70.0f;
+        AnimStateMachine::Transition keep;
+        keep.to = "Death";
+        loco.transitions.push_back(keep);
+        sm.states.push_back(loco);
+        sm.states.push_back({}); sm.states.back().name = "Death";
+        ModelAnimator ma;
+        ma.clips = {ClipNamed("Idle"), ClipNamed("Walk"), ClipNamed("Strafe Left")};
+        ma.idleClip = "Idle"; ma.walkClip = "Walk"; ma.strafeLeftClip = "Strafe Left";
+        const int n = ClipGraph::InsertLocomotion(sm, ma);
+        CHECK(n == 2);
+        const AnimStateMachine::State* got = nullptr;
+        for (const auto& st : sm.states) if (st.name == "Locomotion") got = &st;
+        CHECK(got != nullptr);
+        if (got) {
+            CHECK(got->blendDims == 2);
+            CHECK(std::fabs(got->speed - 1.7f) < 1e-4f);
+            CHECK(got->speedParam == "pace");
+            CHECK(got->fallbackClip == "IdleStand");
+            CHECK(got->enterEvent == "step" && got->exitEvent == "stop");
+            CHECK(std::fabs(got->ikWeight - 0.25f) < 1e-4f);
+            CHECK(std::fabs(got->fullBodyIkWeight - 0.4f) < 1e-4f);
+            CHECK(std::fabs(got->lookWeight - 0.4f) < 1e-4f);
+            CHECK(got->ikCurve.size() == 1 && std::fabs(got->ikCurve[0].t - 0.2f) < 1e-4f);
+            CHECK(got->fullBodyIkCurve.size() == 1);
+            CHECK(got->matchSpeed && !got->loop && !got->interruptible && got->mirror);
+            CHECK(got->rootMotion == 1);
+            CHECK(std::fabs(got->nx - 40.0f) < 1e-3f && std::fabs(got->ny - 70.0f) < 1e-3f);
+            CHECK(got->transitions.size() == 1 && got->transitions[0].to == "Death");
+            bool strafe = false;
+            for (const auto& m : got->motions) if (m.clip == "Strafe Left") strafe = true;
+            CHECK(strafe);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

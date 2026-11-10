@@ -126,8 +126,20 @@ inline float BounceInOut(float t) {
     return t < 0.5f ? 0.5f * (1.0f - BounceOut(1.0f - 2.0f * t)) : 0.5f * (1.0f + BounceOut(2.0f * t - 1.0f));
 }
 
-/// Evaluate an easing by enum (handy for serialization and editor dropdowns).
-inline float Evaluate(Ease e, float t) {
+/// A falloff for punches and shakes: 1 at t = 0, 0 at t = 1. `rate` <= 0 (or NaN) is a straight line;
+/// a larger rate drops exponentially (the motion is quiet sooner and the tail is short; the loudest part is
+/// always the very start), reaching exactly 0 at t = 1.
+inline float Decay(float t, float rate) {
+    if (!(t > 0.0f)) return 1.0f;
+    if (t >= 1.0f) return 0.0f;
+    if (!(rate > 1e-4f) || !std::isfinite(rate)) return 1.0f - t;
+    const double r = rate > 60.0f ? 60.0 : (double)rate;
+    const double e1 = std::exp(-r);
+    return (float)((std::exp(-r * (double)t) - e1) / (1.0 - e1));
+}
+
+namespace detail {
+inline float EvaluateRaw(Ease e, float t) {
     switch (e) {
         case Ease::Linear:     return Linear(t);
         case Ease::QuadIn:     return QuadIn(t);
@@ -163,6 +175,17 @@ inline float Evaluate(Ease e, float t) {
         case Ease::Count:      break;
     }
     return t;
+}
+} // namespace detail
+
+/// Evaluate an easing by enum (handy for serialization and editor dropdowns). Input outside 0..1
+/// extrapolates (Back and Elastic keep swinging); NaN counts as 0 and infinity as the nearer end,
+/// and a result that overflows (ExpoIn far past 1) stops at +-1e30, so the answer is always a number.
+inline float Evaluate(Ease e, float t) {
+    if (!std::isfinite(t)) t = t > 0.0f ? 1.0f : 0.0f;
+    const float r = detail::EvaluateRaw(e, t);
+    if (std::isfinite(r)) return r;
+    return std::isnan(r) ? (t > 0.0f ? 1.0f : 0.0f) : (r > 0.0f ? 1.0e30f : -1.0e30f);
 }
 
 /// Display names, in enum order ("Out Quad"...), for dropdowns.
@@ -214,8 +237,8 @@ inline std::string ToName(Ease e) {
 inline float CubicBezier(float x1, float y1, float x2, float y2, float t) {
     if (!(t > 0.0f)) return 0.0f;     // also NaN
     if (t >= 1.0f) return 1.0f;
-    const double ax = x1 < 0.0f ? 0.0 : x1 > 1.0f ? 1.0 : (double)x1;
-    const double bx = x2 < 0.0f ? 0.0 : x2 > 1.0f ? 1.0 : (double)x2;
+    const double ax = x1 > 0.0f ? (x1 < 1.0f ? (double)x1 : 1.0) : 0.0;   // NaN counts as 0
+    const double bx = x2 > 0.0f ? (x2 < 1.0f ? (double)x2 : 1.0) : 0.0;
     const double ay = std::isfinite(y1) ? (double)y1 : 0.0;
     const double by = std::isfinite(y2) ? (double)y2 : 1.0;
     auto X = [&](double s) { const double u = 1.0 - s; return 3.0 * u * u * s * ax + 3.0 * u * s * s * bx + s * s * s; };
@@ -374,20 +397,19 @@ struct Tween {
 
     /// Advance time and return the current value.
     /// A step that is NaN, negative or infinite counts as 0 (it must not poison the tween for good).
-    float Update(float dt) { if (dt > 0.0f && std::isfinite(dt)) m_elapsed += dt; return Value(); }
+    float Update(float dt) { if (dt > 0.0f && std::isfinite(dt)) m_elapsed += (double)dt; return Value(); }
 
     /// Current interpolated value (clamped to the [from, to] endpoints).
     float Value() const {
-        float t = duration > 0.0f ? Mathf::Clamp01(m_elapsed / duration) : 1.0f;
-        return from + (to - from) * Easing::Evaluate(ease, t);
+        return from + (to - from) * Easing::Evaluate(ease, Progress());
     }
 
-    bool  Done() const { return !(duration > 0.0f) || m_elapsed >= duration; }
-    float Progress() const { return duration > 0.0f ? Mathf::Clamp01(m_elapsed / duration) : 1.0f; }
-    void  Reset() { m_elapsed = 0.0f; }
+    bool  Done() const { return !(duration > 0.0f) || m_elapsed >= (double)duration; }
+    float Progress() const { return duration > 0.0f ? Mathf::Clamp01((float)(m_elapsed / (double)duration)) : 1.0f; }
+    void  Reset() { m_elapsed = 0.0; }
 
 private:
-    float m_elapsed = 0.0f;
+    double m_elapsed = 0.0;   // double: a long tween (an hour-long countdown) keeps its precision
 };
 
 } // namespace okay

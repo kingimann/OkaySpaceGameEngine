@@ -8,6 +8,8 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Core/Game.hpp"
+#include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -898,6 +900,49 @@ EngineApi Build() {
                 if (F(v) < 0.0f) throw RuntimeError("timeScale can't be negative", c.loc);
                 Time::SetTimeScale(F(v));
             }, "How fast time passes: 1 normal, 0.5 slow motion, 0 paused."));
+        // Since this Play began. Time.time and Time.frameCount are the process's own clocks and keep counting
+        // across Stop and Play; these start again from 0 with each Play (or scene load).
+        t.staticProps.push_back(ro("sessionTime", tFloat, [](const Value&, CallContext&) { return Value{(float)Time::SessionTime()}; },
+            "Seconds of game time since this Play began (Time.time keeps counting across Plays; this starts from 0 each time)."));
+        t.staticProps.push_back(ro("sessionUnscaledTime", tFloat, [](const Value&, CallContext&) { return Value{(float)Time::SessionUnscaledTime()}; },
+            "Real seconds since this Play began: a pause, slow motion and hit stops do not change it."));
+        t.staticProps.push_back(ro("sessionFrameCount", tInt, [](const Value&, CallContext&) {
+                const std::uint64_t n = Time::SessionFrameCount();
+                return Value{(std::int32_t)(n > 2147483647ull ? 2147483647ull : n)};
+            }, "Frames since this Play began."));
+        t.staticProps.push_back(ro("unscaledDeltaTime", tFloat, [](const Value&, CallContext&) { return Value{Time::UnscaledDeltaTime()}; },
+            "Real seconds since the last frame: not slowed by timeScale, a hit stop or a pause (animate a menu with it)."));
+        t.staticProps.push_back(ro("unscaledTime", tFloat, [](const Value&, CallContext&) { return Value{(float)Time::UnscaledTime()}; },
+            "Real seconds since the game started: a pause, slow motion and hit stops do not change it."));
+        t.staticProps.push_back(ro("fps", tFloat, [](const Value&, CallContext&) {
+                const GameLoop* loop = GameLoop::Current();
+                return Value{loop ? (float)loop->Stats().AverageFps(30) : 0.0f};
+            }, "Frames per second over the last half second of real frame times (0 before the first frame)."));
+        t.staticProps.push_back(ro("hitchCount", tInt, [](const Value&, CallContext&) {
+                const GameLoop* loop = GameLoop::Current();
+                return Value{(std::int32_t)(loop ? loop->HitchCount() : 0)};
+            }, "How many frames took over a tenth of a second since this Play began."));
+        t.staticProps.push_back(ro("paused", tBool, [](const Value&, CallContext&) { return Value{Game::Paused()}; },
+            "True while the game is paused (a menu, a cutscene or the pause button holds it)."));
+        t.staticMethods.push_back(method("PushPause", {tString}, {"reason"}, tVoid,
+            [](const Value&, std::vector<Value>& a, CallContext&) { Game::PushPause(S(a[0])); return Value{}; },
+            "Hold the game paused for a reason of your own (\"dialogue\", \"shop\"). The game stays paused until every reason is let go, so two scripts that pause never resume each other."));
+        t.staticMethods.push_back(method("PopPause", {tString}, {"reason"}, tBool,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Game::PopPause(S(a[0]))}; },
+            "Let go of one hold of that reason. False when nothing held it."));
+        t.staticMethods.push_back(method("IsPausedBy", {tString}, {"reason"}, tBool,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Game::IsPausedBy(S(a[0]))}; },
+            "True while that reason is holding the pause."));
+        t.staticMethods.back().pure = true;   // a value node in a visual script
+        t.staticMethods.push_back(method("HitStop", {tFloat, tFloat}, {"seconds", "scale"}, tVoid,
+            [](const Value&, std::vector<Value>& a, CallContext&) { Time::HitStop(F(a[0]), F(a[1])); return Value{}; },
+            "A freeze frame or a brief slow-down for an impact: for some real seconds the game runs at this scale (0 = frozen), then goes back by itself."));
+        t.staticMethods.push_back(method("SlowMotion", {tFloat, tFloat}, {"scale", "seconds"}, tVoid,
+            [](const Value&, std::vector<Value>& a, CallContext&) { Time::HitStop(F(a[1]), F(a[0])); return Value{}; },
+            "Bullet time: run at this speed (0.2 = a fifth) for some real seconds, then back to normal by itself. Composes with Time.timeScale."));
+        t.staticMethods.push_back(method("RampTimeScale", {tFloat, tFloat}, {"target", "seconds"}, tVoid,
+            [](const Value&, std::vector<Value>& a, CallContext&) { Time::RampTimeScale(F(a[0]), F(a[1])); return Value{}; },
+            "Ease Time.timeScale to a new value over some real seconds, in a straight line."));
         api.types.push_back(std::move(t));
     }
     // ---- Debug ----

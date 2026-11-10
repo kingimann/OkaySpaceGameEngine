@@ -253,6 +253,96 @@ int main() {
         Session().tabs.clear();
     }
 
+    // ---- The tween, spring and ease nodes of the fifth pass: in the node search, matching the engine's pin table, ----
+    // ---- and turned into script calls (or reported as not translated) ----------------------------------------------
+    {
+        const char* types[] = {"EaseCurve", "SpringStep", "TweenMove", "TweenMoveSpeed", "TweenKillTag", "TweenPauseTag", "TweenPlayTag"};
+        for (const char* t : types) {
+            const VsDef* def = nullptr;
+            for (const auto& d : Registry()) if (std::string(d.type) == t) def = &d;
+            CHECK(def != nullptr);
+            if (!def) continue;
+            const okay::vs::NodeSignature* sig = okay::vs::SignatureFor(t);
+            CHECK(sig != nullptr);
+            if (sig) CHECK(sig->execIn == def->execIn && sig->ins.size() == def->dataIn.size() && sig->outs.size() == def->dataOut.size());
+            CHECK(std::string(def->title).size() > 3);
+        }
+        // Tween Move's last input is the Target the engine's table asks for.
+        for (const auto& d : Registry())
+            if (std::string(d.type) == "TweenMove") CHECK(d.dataIn.size() == 6 && std::string(d.dataIn.back()) == "Target");
+        // Every node has a help text (the node palette's tooltip).
+        for (const char* t : types) CHECK(VsNodeHelp(t) && *VsNodeHelp(t));
+
+        // Tween Move: the three axes, the seconds and the ease become one tween_move3 call; a tag wraps it; an axis nobody feeds
+        // stays where it is.
+        {
+            VsEditGraph g;
+            const int start = g.add("OnStart", 0, 0), mv = g.add("TweenMove", 0, 0);
+            g.find(mv)->arg = "menu";
+            g.find(mv)->pinDefault[0] = "3"; g.find(mv)->pinDefault[3] = "2"; g.find(mv)->pinDefault[4] = "OutBack";
+            g.linkExec(start, 0, mv);
+            const std::string code = CompileToOkayScript(g);
+            CHECK(code.find("tween_tag(tween_move3(3, transform.localPosition.y, transform.localPosition.z, 2, \"OutBack\"), \"menu\")") != std::string::npos);
+            auto vm = CreateScriptVM("okayscript");
+            std::string err;
+            CHECK(vm && vm->Load(code, &err));
+        }
+        // By speed: the call is wrapped in tween_speed_based, the default speed is 5, and no tag means no tween_tag.
+        {
+            VsEditGraph g;
+            const int start = g.add("OnStart", 0, 0), mv = g.add("TweenMoveSpeed", 0, 0);
+            g.find(mv)->pinDefault[1] = "7";
+            g.linkExec(start, 0, mv);
+            const std::string code = CompileToOkayScript(g);
+            CHECK(code.find("tween_speed_based(tween_move3(transform.localPosition.x, 7, transform.localPosition.z, 5))") != std::string::npos);
+            CHECK(code.find("tween_tag(") == std::string::npos);
+            auto vm = CreateScriptVM("okayscript");
+            std::string err;
+            CHECK(vm && vm->Load(code, &err));
+        }
+        // Kill / Pause / Play with a tag: a call that keeps its count in a field the Count output reads.
+        {
+            VsEditGraph g;
+            const int start = g.add("OnStart", 0, 0), kill = g.add("TweenKillTag", 0, 0), pause = g.add("TweenPauseTag", 0, 0),
+                      play = g.add("TweenPlayTag", 0, 0), set = g.add("SetVar", 0, 0);
+            g.find(kill)->arg = "ui"; g.find(pause)->arg = "ui"; g.find(play)->arg = "fx"; g.find(set)->arg = "n";
+            g.find(kill)->pinDefault[0] = "true";
+            g.linkExec(start, 0, kill); g.linkExec(kill, 0, pause); g.linkExec(pause, 0, play); g.linkExec(play, 0, set);
+            g.linkData(set, 0, kill, 0);   // n = the kill node's Count
+            const std::string code = CompileToOkayScript(g);
+            CHECK(code.find("tween_kill_tag(\"ui\", true)") != std::string::npos);
+            CHECK(code.find("tween_pause_tag(\"ui\")") != std::string::npos);
+            CHECK(code.find("tween_play_tag(\"fx\")") != std::string::npos);
+            CHECK(code.find("n = _tw_" + std::to_string(kill)) != std::string::npos);
+            CHECK(code.find("int _tw_" + std::to_string(kill) + " = 0;") != std::string::npos);
+            CHECK(code.find("NOT TRANSLATED") == std::string::npos);
+            auto vm = CreateScriptVM("okayscript");
+            std::string err;
+            CHECK(vm && vm->Load(code, &err));
+        }
+        // Ease With Curve: ease_curve(t, "<text>"), the same value as the node (both ends take the same text).
+        {
+            VsEditGraph g;
+            const int start = g.add("OnStart", 0, 0), set = g.add("SetVar", 0, 0), ease = g.add("EaseCurve", 0, 0), k = g.add("Const", 0, 0);
+            g.find(set)->arg = "v"; g.find(ease)->arg = "cubic-bezier(0.4, 0, 0.2, 1)"; g.find(k)->arg = "0.5";
+            g.linkExec(start, 0, set); g.linkData(set, 0, ease, 0); g.linkData(ease, 0, k, 0);
+            const std::string code = CompileToOkayScript(g);
+            CHECK(code.find("ease_curve(0.5, \"cubic-bezier(0.4, 0, 0.2, 1)\")") != std::string::npos);
+            auto vm = CreateScriptVM("okayscript");
+            std::string err;
+            CHECK(vm && vm->Load(code, &err));
+            CHECK(std::atof(RunVar(g.toText(), "v").s.c_str()) > 0.5);          // cubic-bezier(0.4,0,0.2,1) is above the diagonal at 0.5
+        }
+        // Spring Step has no text-script equivalent: the generated code says so.
+        {
+            VsEditGraph g;
+            const int start = g.add("OnUpdate", 0, 0), sp = g.add("SpringStep", 0, 0);
+            g.linkExec(start, 0, sp);
+            const std::string code = CompileToOkayScript(g);
+            CHECK(code.find("NOT TRANSLATED") != std::string::npos && code.find("SpringStep #" + std::to_string(sp)) != std::string::npos);
+        }
+    }
+
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

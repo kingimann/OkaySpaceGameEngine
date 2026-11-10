@@ -304,7 +304,17 @@ Recent additions (v2.12–2.14):
   standalone, double-clickable game.
 - **Toolbar** — **Play** runs the scene's real lifecycle (Awake/Start/Update +
   scripts, physics, etc.); **Stop** restores the exact pre-play edit state;
-  **Step** advances a single frame.
+  **Step** advances a single frame. While the game runs the toolbar also shows
+  **playback speed** buttons next to Step: **slower** and **faster** step through
+  0.05x, 0.1x, 0.25x, 0.5x, 1x, 2x, 4x, 8x, 16x, 32x (slow motion and fast forward
+  for debugging; the game's own `Time.timeScale` is untouched and Stop puts the
+  speed back to 1x). Click the speed label for the whole list and for **Run N
+  frames, then pause**: it runs exactly N frames of 1/60 s each (so a bug repeats),
+  then pauses; while already paused it steps N frames and stays paused. A Step or a
+  run that has not finished shows its remaining frame count on the **Pause**
+  button. The speed group is left out when the window is too narrow for it (about
+  1250 px or less, depending on the layout name), so it never sits on top of Build
+  or the Layout menu.
 
 ### Graphics quality
 
@@ -391,6 +401,128 @@ the editor so Build Game always has a runtime to copy. Pass a scene path as the
 first argument (`OkaySpacePlayer.exe my.okayscene`) or it loads `game.okayscene`
 from beside the executable.
 
+## Projects, saving and loading
+
+### What a project is on disk
+
+A project is a folder. The editor keeps everything that belongs to the project inside it:
+
+```
+MyGame/
+  project.okayproj          Project Settings (company, version, resolution, gravity, ambient, skybox, splash),
+                            the tag list and the layer names, and engine_version (the editor version that last saved it)
+  Assets/
+    MyGame.okayscene        the first scene (the project's name)
+    Scenes/ Scripts/ Prefabs/ Materials/ Models/ Textures/ Audio/     the standard folders (empty to start)
+  .okay/
+    build_live.cfg          Build Settings as you left the dialog (with or without a profile)
+    build_profiles.cfg      the named build profiles
+    scene_build.txt         Scenes In Build, in order (Scene Manager)
+  items.okayitems           the Item Database          strings.okayloc   the string table (Localization window)
+```
+
+Each project has its own `project.okayproj` and its own build settings: opening another project loads that
+project's, and a new project starts from the defaults. (Earlier versions kept one `project.okayproj` beside the
+editor, shared by every project. A project with no file of its own takes that old file once, then keeps its own.)
+Editor preferences (theme, layouts, the recent list, the Project panel's view) are not project data: they live in
+`okay_settings.txt`, `okay_layouts.txt`, `okay_recent.txt` and `okay_projectview.txt` in the working folder, and
+`imgui.ini` holds the window layout.
+
+### New project
+
+**File > New Project...** (and the launcher's Create page, which sends the same request) asks for a name, a
+location and a template. The name is checked as you type: it can't be empty or contain `/ \ : * ? " < > |`, can't
+start or end with a dot, can't be a Windows device name (CON, NUL, COM1...), and is at most 64 characters.
+The location must exist (or be creatable), be writable and have free space; the full path may not be so long that a
+scene can't be saved into it. The form shows the exact folder that will be made. If the name is taken by a project,
+the new one is `Name-2`, `Name-3`, ... and the form says so. Every template has a one-line description.
+
+Creating is all or nothing. The folders and the project's own files are made first, then the template scene is
+saved as `Assets/<Name>.okayscene` and opened. If any step fails (no permission, disk full, a file in the way),
+everything that was made is removed again, **the scene you had open stays open**, and a window says what happened.
+With unsaved changes you are asked first (see below). Starting the editor without a project shows a chooser:
+recent projects (one that was moved or deleted is marked *missing* and can be removed from the list), Open a
+project folder, and the same New Project form.
+
+### Saving
+
+- **Save Scene** (Ctrl+S), **Save Scene As** (Ctrl+Shift+S), **Save Project** (Ctrl+Alt+S: the scene, every edited
+  script, the open visual script, project and build settings, preferences). Quitting with unsaved work, and the
+  launcher's "save and close", save everything the same way.
+- A save is whole or not at all: the new file is written beside the old one (`<name>.savetmp`), checked, and then
+  renamed over it. The previous good copy is kept as `<name>.okayscene.bak`. A read-only file, a missing folder or a
+  full disk is refused with the reason, nothing on disk changes, and the scene stays open and unsaved (the status
+  bar shows a red **Save failed**; click it for the details). The project settings, build settings, scene build list,
+  recent list, preferences and saved layouts are written the same way.
+- **Play never saves.** While the game runs, the scene in memory is the running game: Save, Save As and Build
+  refuse or stop Play first. Whatever happens in Play (moved objects, spawned objects, Inspector changes) is
+  thrown away on Stop and does not make the scene count as changed. Hosting a multiplayer session from the editor
+  no longer puts its `__Network` object into the scene file.
+- Project Settings and Build Settings save themselves as you change them (checked about once a second, and when you
+  leave the project or quit). The Build Settings you last used are still there next time, with or without a named
+  profile (they used to be kept only inside a profile).
+
+### Unsaved changes
+
+The title bar reads `OkaySpace Editor - <project> / <scene> *` and the status bar shows the project, the scene file
+and an amber **unsaved** marker; after a save a green **Saved** shows for five seconds. The editor does not trust the
+marker alone: it also compares the scene's saved text with what was last saved, so an edit that forgot to raise the
+flag is still found. Every way of replacing the open scene asks **Save / Don't Save / Cancel** first when something is
+unsaved: New 2D / 3D Scene, Open, Open Recent, Open Project Folder, New Project, opening a scene from the Project panel,
+the Scene Manager, or by dropping it on the Hierarchy or Scene view, a project handed over by the launcher, and Exit.
+A file that can't be opened (missing, damaged) is refused with the reason and leaves the open scene exactly as it was.
+Opening a scene starts a fresh undo history, so Ctrl+Z can't carry the previous scene's objects into the new file.
+
+### Project version and upgrading
+
+`project.okayproj` records the engine version that last saved the project (`engine_version=2.855.0`; new projects have it from the start,
+every save refreshes it, and lines the editor does not know are kept). Opening a project that an older version made, that has no version
+recorded, or that a newer version saved, **asks before anything in the project is touched**:
+
+- *This project was made with v2.850.0. This editor is v2.855.0.* **Upgrade project to v2.855.0** makes a complete backup copy next to the
+  project (`<Name> (backup v2.850.0)`), checks every scene and prefab, rewrites only the files that need it and marks the project; if anything
+  fails, everything is put back. **Keep v2.850.x** opens the project, untouched, with that line's editor when the launcher has it installed
+  (otherwise it says how to get it). **Cancel** changes nothing.
+- A project with no version recorded (made before this) offers Upgrade or Cancel. A project saved by a *newer* version offers Cancel, **Open
+  anyway (a backup is made first)** and **Update OkaySpace**.
+- Another patch of the same line (`2.850.0` and `2.850.1`) never asks, and a development build never asks.
+
+**File > Project Upgrade...** shows both versions, runs the upgrade again, and lists the project's backups with **Restore...**. The status
+bar shows `v2.850.0 (kept)` for a project opened with its own version. Details, the backup layout and the launcher's side:
+[project_upgrade.md](project_upgrade.md).
+
+### Autosave and recovery
+
+With **File > Autosave** on, dirty graphs, scripts and the scene (including ones that have never been saved) are
+copied into `okay_recovery` about every 30 seconds and when the window loses focus. The next start offers
+**Restore**, **Compare** or **Discard**, and keeps the copy until that choice. The real files are overwritten
+only when **Also save the real file** is on. A leftover `<scene>.autosave` from an older editor is still
+offered when it is newer than the scene; new sessions do not write that sidecar. The last five saves of a
+file are kept by `BackupManager` (see [undo_recovery.md](undo_recovery.md)).
+
+### Duplicate components
+
+Two components of one type on an object are saved and loaded back for the types the format keeps per instance:
+scripts, visual scripts, action lists, tweens, sync vars, state machines, **every 2D and 3D collider** (a compound
+collider keeps all its shapes) and **audio sources**. Other types still save their first instance only
+(see [scene_serializer.md](scene_serializer.md)).
+
+### What changed (project creation, saving, loading)
+
+- Project settings are per project (`<project>/project.okayproj`), not one file beside the editor; opening or
+  creating a project no longer leaks the previous project's settings, tags and layer names.
+- Build Settings persist without a profile, are per project, and Save Project / quit no longer erase the saved
+  build profiles when the Build dialog was not opened that session.
+- File > New Project... in the editor, with live validation, the full path, a description of every template and
+  recent locations; creating a project is all or nothing (before, a failed create left a half-made folder and had
+  already replaced the open scene).
+- Scene saves are atomic and report why they failed; the previous file is never moved or removed before the new
+  one is complete.
+- A failed Open changes nothing; Open no longer lets Undo put the old scene into the new file.
+- Unsaved-changes prompt on every path that replaces the scene (before only Exit and the launcher hand-off asked).
+- Build and Export stop Play first and ship the scene you edited.
+- Title bar and status bar show the project and scene and the save state.
+
 ## Notes
 
 This editor renders the scene with ImGui's 2D draw lists, which is perfect for
@@ -403,8 +535,17 @@ unchanged.
 
 - **View axis gizmo** (Scene view, top-right): the X/Y/Z tips track the camera
   orientation; **click a tip** to snap the view to look along that axis.
-- **Game view Stats**: toggle in the Game toolbar — overlays FPS, frame time,
-  object and mesh/triangle counts on the running game.
+- **Game view Stats**: toggle in the Game toolbar (the arrow beside it picks what
+  to show). While the game runs it overlays the Play loop's own numbers, the same
+  text as the player's F3 panel: FPS, average / min / max / p99 frame time, the 1%
+  and 0.1% lows, hitches, the time scale (Time.timeScale, a hit stop, the slow
+  motion below) and what is pausing the game, with a **frame-rate graph** of the
+  last 90 frames; then the scene's counts (objects, roots, components, the
+  commonest component types, mesh and triangle totals). In edit mode it shows the
+  editor's own FPS and the counts. **Timers and tweens** adds a second box: what
+  the scene's scheduler and tweens are running (task and tween counts, the next
+  one due, the busiest tags and owners, the oldest). The text is refreshed four
+  times a second; the choices are remembered.
 - **Console**: the tab badge shows live error/warning counts; **Error Pause**
   pauses Play the moment a new error is logged.
 - **Play tint**: the editor chrome darkens subtly while the game runs.
@@ -459,7 +600,8 @@ unchanged.
     parent, siblings, same name), **Expand / Collapse All Below**, **Transform**
     (reset position, rotation, scale or all; move to the view centre), **Order**
     (move up, down, to top or bottom), **Copy Text** (name or hierarchy path),
-    plus create, parent and prefab actions.
+    **Delete Children** (empties a container and keeps the object; one undo
+    step), plus create, parent and prefab actions.
   - On empty space: create objects, **Select All**, **Deselect**,
     **Expand / Collapse All** and **Sort A-Z**.
 - **Project right-click**:
@@ -570,3 +712,67 @@ unchanged.
 Scenes saved before these options existed load unchanged: the new settings
 are stored on an extra `particlesfx` line, and every default matches the old
 behaviour.
+
+## What changed: editor wiring of the core features (1.1 to 1.3)
+
+Features the engine already had (frame statistics, the debug time scale, run-N-frames, the timer view, scene
+statistics, the tag list and the new tween calls) now have an editor UI. The logic that does not need a window
+lives in `EditorState` (`editor/EditorState.hpp`) and is tested by `editor_hooks`; `editor/main.cpp` only draws it.
+
+| Where | What | Code behind it |
+| --- | --- | --- |
+| Game view, **Stats** (and its arrow) | performance lines, frame-rate graph, scene counts | `EditorState::PerfLines()`, `SceneLines()`, `StatsLines()`, `RecentFps()` (`FrameOverlay`, `Scene::Stats`) |
+| Game view, arrow ▸ **Timers and tweens** | the scheduler / tween view | `EditorState::TimerLines()` (`TimerDebug::BuildLines`; the process-wide `Scheduler::Global()` is added when it holds a task) |
+| Toolbar, next to Step (while playing) | slower / speed / faster | `EditorState::StepDebugTimeScale(dir)`, `ResetDebugTimeScale()`, `GameLoop::SetDebugTimeScale`; Play and Stop reset it to 1x |
+| Toolbar, speed label ▸ **Run** | run N frames, then pause | `EditorState::RunFrames(n, 1/60)` (pause reason `"editor"`), `onRunFramesDone` sets the Pause button |
+| Toolbar, Pause button | frames still to run (Step, Run N) | `EditorState::PendingFrames()` |
+| Hierarchy right-click | **Delete Children** | `EditorState::DeleteChildrenOfSelected()` (`Scene::DestroyChildren`) |
+| Project Settings ▸ **Tags and Layers** | **Strict tags**, the tag list (add, rename, remove, usage count), tags the scene uses that the list lacks, the 32 layer names | `Tags::Strict()`, `Tags::Add / Rename / Remove`, `Scene::UnlistedTags / ReplaceTag / CountWithTag`, `Layers::SetName / ClearName`, saved to `project.okayproj` through `ProjectLists` |
+| Script Editor | the ten tween calls added in 1.2 appear in the API reference, in completion and as signature hints | `tween_tag`, `tween_speed_based`, `tween_decay`, `tween_kill_tag`, `tween_pause_tag`, `tween_play_tag`, `tween_complete_tag`, `tween_rewind_id`, `seq_prepend`, `seq_join_callback` |
+
+Not wired, on purpose: Hierarchy drag-and-drop already reorders and reparents through `Scene::ReorderSibling` (the same
+result as `SetParent(parent, true, index)`), so it was left as it is; there is no engine call to reset a component order
+to its default (`GameObject::ReorderComponents` arranges one on purpose, nothing puts it back), so there is no
+button; the Console panel has no command line (it only shows the log), so the `time.*` console commands and a `timers`
+command have nowhere to be typed yet (the Stats and Timers overlays show the same text); `FindNearest` is a lookup
+for components that point at another object by name, not something a search box needs; the editor has no screen that
+replays a recording, so `GameLoop::Options::replayPauses` has nothing to be set from.
+
+Things to know when reading the numbers: the frames of a **Run N frames** are exact (1/60 s), so the loop records them
+as 1/60 s and the graph reads 60 fps for them whatever the machine does; the **PAUSED** banner in the middle of the Game
+view can sit behind the Stats box when the view is narrow; the editor allows one running instance per machine (a second
+launch hands its request to the first), which matters when you script it for screenshots.
+
+### Editor wiring, second part (the fifth core pass)
+
+- **The PLAYING / PAUSED pill no longer sits on the resolution readout.** The readout ("934 x 514 px") and the pill were
+  both drawn at the top-left corner, so the readout's trailing "x" showed through next to the pill. The pill is now on
+  the line below the readout. Beside it a one-line **FPS label** shows `EditorState::FpsLabel()`
+  (`FrameOverlay::FpsLabel`: the real frame times of the last 30 frames, so a 5 s stall reads as 2 FPS, and "FPS --"
+  before the first frame; left out when the view is too narrow for it). The Stats and Timers boxes at the top-right
+  move below anything drawn at the top-left when the view is narrow, so they never cover the pill, the FPS label or the
+  readout; a view narrower than a box keeps the start of each line readable and clips the end.
+- **Tween Animation inspector**: **Speed based** (a checkbox under Delay for the types that read it: move, scale, UI
+  move and size, fade and colour; the Duration row then reads **Speed (units/s)**), **Decay** (punch and shake types,
+  0 to 60, a straight fade at 0, lively at 4, snappy at 8) and **Tag** (a group label for `tween_kill_tag`,
+  `tween_pause_tag`, `tween_play_tag` and the tag nodes). The **Clock** combo (`ClockSet::Global().Names()` plus a
+  custom channel) and the **Curve** text field (`easeCurve`, with the small drawing of the curve) were already in the
+  Inspector.
+- **Script Editor, time**: the `Time.` member list offers `sessionTime`, `sessionUnscaledTime`, `sessionFrameCount`,
+  `unscaledDeltaTime`, `unscaledTime`, `fps`, `hitchCount`, `paused`, `HitStop`, `SlowMotion`, `RampTimeScale`,
+  `PushPause`, `PopPause` and `IsPausedBy` (and the existing `fixedDeltaTime` now has a description); each has a
+  description and an example in the completion's detail pane, and the three methods that take arguments show their
+  signature while you type the call. The builtins `session_time`, `session_unscaled_time`, `session_frame_count`,
+  `unscaled_dt`, `is_paused`, `hitch_count`, `push_pause`, `pop_pause`, `is_paused_by`, `hit_stop`, `slow_motion`,
+  `ramp_timescale` and `ease_curve` are in the Scripting Reference (Timing and Easing sections), the signature hints and
+  the hover descriptions; the completion list already took every VM builtin.
+- **Visual script**: the seven tween, spring and ease nodes are in the node search and palette: **Ease With Curve**
+  (Math), **Spring Step** (Math), **Tween Move**, **Tween Move By Speed**, **Kill / Pause / Play Tweens With Tag**
+  (Action), each with its pins, setting hint and help text. "Generate script" turns Ease With Curve into
+  `ease_curve(t, "<text>")`, Tween Move into `tween_move3(x, y, z, seconds[, "<ease>"])` (an axis nobody feeds stays at
+  the object's own value) wrapped in `tween_speed_based(...)` and `tween_tag(..., "<tag>")` as asked, and the tag nodes
+  into `tween_kill_tag("<tag>", complete)`, `tween_pause_tag`, `tween_play_tag` with the Count kept in a field.
+  **Spring Step** keeps a velocity between frames, which a text script has no call for: it is listed under "NOT
+  TRANSLATED" in the generated code (the graph itself runs it).
+- **Hierarchy search by path**: typing `Parent/Child` lists every object that path names (`Scene::FindAllByPath`, in
+  scene order, two siblings called "Door" both come back) next to the usual name and type matches.

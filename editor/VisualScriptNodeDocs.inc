@@ -2572,6 +2572,139 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "EaseCurve";
+        d.title = "Ease With Curve";
+        d.description = "Shapes a time (0 to 1) into an eased value. The setting is an ease by name (OutBack, out_quad) or a curve: cubic-bezier(0.4, 0, 0.2, 1), steps(4), ease-in-out. A curve may overshoot 0..1; text it does not know leaves the time as it is.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Ease With Curve's Value output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "ease with curve";
+        d.setting = "ease (OutBack, cubic-bezier(..), steps(4)). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Time", "Number", "The Time input of Ease With Curve. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Value", "Number", "The value that was read. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "SpringStep";
+        d.title = "Spring Step";
+        d.description = "Moves a value toward Target the way a spring would, once each time it runs, by the frame time: put it under On Update. It keeps its velocity, so a new target bends the motion. Stiffness 120 and Damping 14 when unwired; damping 2 * sqrt(stiffness) never overshoots. The setting is where it starts (blank: at the first target). Not translated to a text script.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Put Spring Step after an event such as On Start or On Update, and wire a value into Target.";
+        d.related = "";
+        d.keywords = "spring step";
+        d.setting = "start value (blank: first target). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Spring Step runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Spring Step finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Target", "Number", "The object to act on. Leave it empty to use this object (the one the graph is on). It is a Number. Unwired, this is this object.", "this object"});
+        d.pins.push_back({true, false, "Stiffness", "Number", "The Stiffness input of Spring Step. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Damping", "Number", "The Damping input of Spring Step. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Value", "Number", "The value that was read. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Velocity", "Number", "What Spring Step produces on Velocity. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "TweenMove";
+        d.title = "Tween Move";
+        d.description = "Moves this object (or the Target) to the point X, Y, Z over Seconds (default 1). An axis nothing feeds stays where it is. Ease is text (OutBack, cubic-bezier(...)); blank is Out Quad. The setting is a tag for Kill / Pause / Play Tweens With Tag.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Tween Move after an event such as On Start or On Update, and wire a value into X.";
+        d.related = "";
+        d.keywords = "tween move";
+        d.setting = "tag. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Tween Move runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Tween Move finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "X", "Number", "The X part, in world units. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Y", "Number", "The Y part, in world units. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Z", "Number", "The Z part, in world units. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Seconds", "Number", "The Seconds input of Tween Move. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Ease", "Text", "The Ease input of Tween Move. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "TweenMoveSpeed";
+        d.title = "Tween Move By Speed";
+        d.description = "Like Tween Move, but the third number is a speed in units a second: the move lasts as long as the distance needs (default speed 5). A speed of zero or less moves at once.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Tween Move By Speed after an event such as On Start or On Update, and wire a value into X.";
+        d.related = "";
+        d.keywords = "tween move by speed";
+        d.setting = "tag. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Tween Move By Speed runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Tween Move By Speed finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "X", "Number", "The X part, in world units. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Y", "Number", "The Y part, in world units. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Z", "Number", "The Z part, in world units. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Speed", "Number", "How fast to move, in units per second. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Ease", "Text", "The Ease input of Tween Move By Speed. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "TweenKillTag";
+        d.title = "Kill Tweens With Tag";
+        d.description = "Ends every tween of the scene that carries the tag in the setting (Tween Move's setting, tween_tag in a script, a Tween Animation's Tag). Complete jumps them to their end first. Count is how many it ended.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Kill Tweens With Tag after an event such as On Start or On Update, and wire a value into Complete.";
+        d.related = "";
+        d.keywords = "kill tweens with tag";
+        d.setting = "tag. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Kill Tweens With Tag runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Kill Tweens With Tag finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Complete", "Bool", "The Complete input of Kill Tweens With Tag. It is a Bool. Unwired, this is false.", "false"});
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "TweenPauseTag";
+        d.title = "Pause Tweens With Tag";
+        d.description = "Freezes every tween of the scene that carries the tag in the setting, where it is. Count is how many it paused.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Pause Tweens With Tag on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "pause tweens with tag";
+        d.setting = "tag. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Pause Tweens With Tag runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Pause Tweens With Tag finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "TweenPlayTag";
+        d.title = "Play Tweens With Tag";
+        d.description = "Resumes every tween of the scene that carries the tag in the setting. Count is how many it resumed.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Play Tweens With Tag on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "play tweens with tag";
+        d.setting = "tag. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Play Tweens With Tag runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Play Tweens With Tag finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "ForLoop";
         d.title = "For Loop";
         d.description = "Runs Body once for every number from First to Last (Index is the current number), then runs Done.";

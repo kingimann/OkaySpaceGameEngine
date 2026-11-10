@@ -648,6 +648,52 @@ mapped as idle or walk. Locomotion switches to the stance's clips (still and
 moving, blended by speed), crossfaded over the stance change times. A
 stance with no clips of its own keeps the standing clips.
 
+## Strafe and backward clips
+
+The same Model Animator has four more slots, under **Strafe / back clips**
+and on the Animator's **Build it** panel: **Strafe left**, **Strafe right**,
+**Walk back** and **Run back**. Names like *Strafe Left*, *Walk Back* and
+*Run Backward* fill the empty slots. *Back Flip* does not — a trick is not
+a walk.
+
+- With any of those clips, **Build it** turns Locomotion into a 2D blend on
+  `moveX` / `moveZ`. Forward is negative `moveZ` (the body faces local -Z)
+  and strafing right is positive `moveX`. States you already had (Death,
+  Sit, a gesture) stay, including their transitions, speed and IK weight.
+  Only the Locomotion blend is rewritten.
+- With none of them, locomotion stays the forward speed blend. While you
+  strafe, the hips yaw toward the travel (around world up, so a tilted
+  armature does not tip the pelvis) and the spine twists back so the chest
+  keeps facing the aim. The yaw eases and replaces itself each frame, so a
+  bone the clip does not key does not spin.
+- Strafe clips and no back clip: holding back plays the forward walk in
+  reverse, on the Model Animator and on the Locomotion state Build it
+  wrote. A real Walk Back / Run Back clip plays forward instead.
+
+Assign the slots on the model, in the Inspector under **Model Animator >
+Locomotion**. Idle, walk, run, jump, fall, land, strafe and back are in
+that list (crouch and prone stay in their own group). You do not have to
+open the Animator and press Build it again:
+
+- Changing a slot rewrites the **Locomotion** state only. Death, sit, and
+  any transition, speed or IK weight you set on other states stay.
+- **Fill empty slots from names** uses the clip names and does not replace
+  a slot you already chose. **Use** next to "Looks like …" fills just that
+  one empty slot.
+- **Preview** plays that clip on the model with the same preview as the
+  clip list above the slots.
+- An empty slot, or a name that is not on the model, keeps the fallback
+  in the tooltip (forward walk, reversed walk, built-in pose, or a skipped
+  air pose). A name that is not on the model is still saved. A clip with
+  no keys is skipped. A trick name (a flip, a dodge) warns and still plays
+  if you leave it.
+
+The Animator's **Locomotion setup** shows the same mapping, marks a missing
+name, and **Build it** still creates the graph the first time.
+
+Mixamo (`mixamorig:Hips`), VRoid (`J_Bip_C_Hips`), Character Creator
+(`CC_Base_Hip`) and a Daz waist/abdomen are the hips and spine that yaw.
+
 ## Built-in animations on imported rigs (retargeting)
 
 A model you drop on a player often ships with few or NO usable clips — a
@@ -1357,3 +1403,21 @@ elbows bend down and out, and the object moves with the body.
   **recent state changes** with times.
 - **Thresholds from clip speed** sets a 1D blend tree's thresholds from how fast
   each clip's root actually moves.
+
+## What a remote player sees
+
+The animation sync message stays compatible. It is still `anim`, punch count,
+then optional ground speed and facing-relative angle. After that, optional:
+action sequence, action id, look yaw, look pitch, and one action parameter.
+
+- Action id 1 death, 2 roll, 3 sit, 4 swim. The parameter is the fall or dodge
+  direction (0 forward, 1 back, 2 left, 3 right), the sit type (add 10 while
+  standing up), or the swim speed. A message without it still plays the action
+  forward / treading.
+- Dive, hit, vault and emotes are not in this message. Jump, crouch and the
+  other built-in poses still travel in the original `anim` field.
+- First-person pitch, the raised arm and hiding the local camera are not sent.
+- A proxy writes `moveX` / `moveZ` from the speed and angle already in the
+  message, so a strafe blend faces the same way. It does not add a field.
+- Look is the owner's head target. The proxy eases its own head toward it, and
+  does not also aim at the local camera.

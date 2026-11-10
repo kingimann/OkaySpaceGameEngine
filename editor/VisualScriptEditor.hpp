@@ -287,6 +287,14 @@ inline const std::vector<VsDef>& Registry() {
         {"ParticlePlay",   "Play Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ParticleStop",   "Stop Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ParticleBurst",  "Burst Particles",     CAT_ACTION, true, {""}, {"Count"}, {}, 0, nullptr},
+        // --- Tweens, springs and eases (the engine's Tween / Spring / Easing code) ---
+        {"EaseCurve",      "Ease With Curve",     CAT_MATH, false, {}, {"Time"}, {"Value"}, 1, "ease (OutBack, cubic-bezier(..), steps(4))"},
+        {"SpringStep",     "Spring Step",         CAT_MATH, true, {""}, {"Target","Stiffness","Damping"}, {"Value","Velocity"}, 1, "start value (blank: first target)"},
+        {"TweenMove",      "Tween Move",          CAT_ACTION, true, {""}, {"X","Y","Z","Seconds","Ease"}, {}, 1, "tag"},
+        {"TweenMoveSpeed", "Tween Move By Speed", CAT_ACTION, true, {""}, {"X","Y","Z","Speed","Ease"}, {}, 1, "tag"},
+        {"TweenKillTag",   "Kill Tweens With Tag",  CAT_ACTION, true, {""}, {"Complete"}, {"Count"}, 1, "tag"},
+        {"TweenPauseTag",  "Pause Tweens With Tag", CAT_ACTION, true, {""}, {}, {"Count"}, 1, "tag"},
+        {"TweenPlayTag",   "Play Tweens With Tag",  CAT_ACTION, true, {""}, {}, {"Count"}, 1, "tag"},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -1294,6 +1302,10 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "CountWithTag")   return "count_with_tag(" + q(lit("Enemy")) + ")";
     if (t == "NearestWithTag") return "nearest_with_tag(" + q(lit("Enemy")) + ")";
     if (t == "Counter")        return "_cnt_" + std::to_string(nodeId);
+    // Tweens and eases. Ease With Curve is a script call; the tag nodes keep their count in a field; Spring Step has no
+    // script equivalent (it keeps a velocity between frames), so it is reported as not translated and reads 0 here.
+    if (t == "EaseCurve")      return "ease_curve(" + VsInput(g, nodeId, 0, "0") + ", " + q(lit("")) + ")";
+    if (t == "TweenKillTag" || t == "TweenPauseTag" || t == "TweenPlayTag") return "_tw_" + std::to_string(nodeId);
     return "0";
 }
 
@@ -1379,6 +1391,20 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="ParticlePlay") out += ind + "particles_on(true)\n";
     else if (t=="ParticleStop") out += ind + "particles_on(false)\n";
     else if (t=="ParticleBurst") out += ind + "emit(" + in(0, "20") + ")\n";
+    else if (t=="TweenMove" || t=="TweenMoveSpeed") {
+        // tween_move3(x, y, z, seconds[, ease]) goes to the local position; an axis nobody feeds stays where it is.
+        auto ax = [&](int p, const char* cur) { return VsInputLinkedOrSet(g, nodeId, p) ? in(p) : std::string(cur); };
+        std::string call = "tween_move3(" + ax(0, "transform.localPosition.x") + ", " + ax(1, "transform.localPosition.y") + ", " +
+                           ax(2, "transform.localPosition.z") + ", " + in(3, t=="TweenMoveSpeed" ? "5" : "1");
+        if (VsInputLinkedOrSet(g, nodeId, 4)) call += ", " + in(4, "\"\"");
+        call += ")";
+        if (t=="TweenMoveSpeed") call = "tween_speed_based(" + call + ")";
+        if (!n->arg.empty()) call = "tween_tag(" + call + ", " + q(n->arg) + ")";
+        out += ind + call + "\n";
+    }
+    else if (t=="TweenKillTag")  out += ind + "_tw_" + std::to_string(nodeId) + " = tween_kill_tag(" + q(arg("")) + ", " + in(0, "false") + ")\n";
+    else if (t=="TweenPauseTag") out += ind + "_tw_" + std::to_string(nodeId) + " = tween_pause_tag(" + q(arg("")) + ")\n";
+    else if (t=="TweenPlayTag")  out += ind + "_tw_" + std::to_string(nodeId) + " = tween_play_tag(" + q(arg("")) + ")\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);
@@ -1590,7 +1616,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         };
         for (const auto& n : g.nodes) {
             const int tp = okay::vs::TargetPinFor(n.type);
-            bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" ||
+            bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" || n.type == "SpringStep" ||
                              IsFunctionNode(n.type) || n.type == "SetLocal" || n.type == "GetLocal" || IsApiNode(n.type) ||
                              n.type == "ForEach" || n.type.rfind("List", 0) == 0 || n.type == "NewList" || n.type == "AllWithTag" ||
                              n.type.find("SceneVar") != std::string::npos || n.type.find("GlobalVar") != std::string::npos ||
@@ -1602,7 +1628,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         }
         if (!untranslated.empty()) {
             out += "    // NOT TRANSLATED - these nodes use object references, functions, engine-API nodes,\n"
-                   "    // lists or scene / global variables, which this generated code doesn't support yet\n"
+                   "    // lists, scene / global variables or a spring, which this generated code doesn't support yet\n"
                    "    // (the graph itself runs them;\n"
                    "    // an engine-API node's tooltip shows the C#-style line it equals):\n    //  ";
             for (std::size_t i = 0; i < untranslated.size(); ++i) out += (i ? ", " : "") + untranslated[i];
@@ -1627,6 +1653,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         if (n.type=="FlipFlop") fields += "    bool _ff_"+std::to_string(n.id)+" = false;\n";
         if (n.type=="DoN")      fields += "    int _don_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="Counter")  fields += "    int _cnt_"+std::to_string(n.id)+" = 0;\n";
+        if (n.type=="TweenKillTag" || n.type=="TweenPauseTag" || n.type=="TweenPlayTag") fields += "    int _tw_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="EveryN")   fields += "    int _evn_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="OnTimer")  fields += "    float _timer_"+std::to_string(n.id)+" = 0;\n";
     }

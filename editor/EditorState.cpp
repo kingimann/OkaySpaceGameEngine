@@ -143,13 +143,23 @@ void EditorState::RestoreKeepingSelection(const std::string& snapshot) {
 
 void EditorState::PushUndo() {
     if (m_suppressUndo) return;
+    ++m_undoSerial;
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
+    if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
+    m_redo.clear();
+}
+
+void EditorState::PushUndoText(std::string before) {
+    if (m_suppressUndo) return;
+    ++m_undoSerial;
+    m_undo.push_back(std::move(before));
     if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
     m_redo.clear();
 }
 
 bool EditorState::Undo() {
     if (m_undo.empty()) return false;
+    ++m_undoSerial;
     m_redo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_undo.back(); m_undo.pop_back();
     StopNetwork();
@@ -159,6 +169,7 @@ bool EditorState::Undo() {
 
 bool EditorState::Redo() {
     if (m_redo.empty()) return false;
+    ++m_undoSerial;
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_redo.back(); m_redo.pop_back();
     StopNetwork();

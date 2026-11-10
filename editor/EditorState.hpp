@@ -199,6 +199,11 @@ public:
     // ---- Undo / Redo (snapshot based) ---------------------------------
     /// Capture the current scene as an undo checkpoint (call before a change).
     void PushUndo();
+    /// Push `before` (scene text taken earlier with SceneSerializer::Serialize) as the undo step. For an
+    /// edit that only turns out to have changed something once it is over (see EditUndo.hpp).
+    void PushUndoText(std::string before);
+    /// Goes up on every PushUndo, PushUndoText, Undo and Redo: an unchanged value means "nothing touched the undo stack".
+    std::uint64_t UndoSerial() const { return m_undoSerial; }
     bool Undo();
     bool Redo();
     /// Load a scene snapshot, keeping the same objects selected afterwards.
@@ -320,6 +325,7 @@ private:
     bool m_dirtyAtPlay = false;           // `dirty` when Play started (Play-time edits are thrown away)
     static std::uint64_t Fingerprint(const std::string& sceneText);
     bool m_suppressUndo = false;
+    std::uint64_t m_undoSerial = 0;
     static constexpr std::size_t kMaxUndo = 100;
 };
 

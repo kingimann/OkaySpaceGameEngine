@@ -49,6 +49,8 @@
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
+#include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
+#include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
@@ -17878,6 +17880,8 @@ static char g_prefabNameBuf[128] = "";
 static bool g_hierSort   = false;            // sort siblings A->Z
 static int  g_hierExpand = 0;                // 1=expand-all, 2=collapse-all (one frame)
 static GameObject* g_hierOpenNode = nullptr; // Left/Right arrow expand/collapse target
+static GameObject* g_hierDropOpen = nullptr; // a row that just took a dropped object opens (next frame)
+static bool g_hierDropOpenSeen = false;
 static GameObject* g_hierExpandRoot = nullptr; // "Expand/Collapse All Below" target (one frame)
 static int  g_hierExpandRootVal = 0;          // 1 = expand, 0 = collapse
 // Select a set of objects in the Hierarchy (the first becomes the active one).
@@ -17977,6 +17981,43 @@ static std::vector<GameObject*> HierTargets(EditorState& ed, GameObject* node) {
     return {node};
 }
 
+// A small blue mark on the corner of a row's icon: this object is (part of) a prefab instance.
+static void HierPrefabBadge(GameObject* go, ImVec2 pos, float sz, ImDrawList* dl) {
+    if (!go || !PrefabTools::IsPrefabInstance(*go)) return;
+    const bool root = !go->prefabSource.empty();
+    const ImVec2 a(pos.x + sz - 6.0f, pos.y + sz - 6.0f), b(pos.x + sz + 1.0f, pos.y + sz + 1.0f);
+    dl->AddRectFilled(a, b, root ? IM_COL32(90, 165, 255, 255) : IM_COL32(90, 165, 255, 130), 1.5f);
+    dl->AddRect(a, b, IM_COL32(20, 24, 32, 200), 1.5f);
+}
+
+// Dragging a prefab, a model or a picture from the Project panel into the Hierarchy makes an object from it.
+// Returns the new object (undo step already taken), or null when the file is not one of those.
+static GameObject* HierInstantiateAsset(EditorState& ed, const std::string& path) {
+    std::string ext;
+    if (auto d = path.find_last_of('.'); d != std::string::npos) ext = Lower(path.substr(d));
+    GameObject* placed = nullptr;
+    if (ext == ".okayprefab") {
+        ed.PushUndo();
+        std::string err;
+        placed = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
+        if (!placed) ConsoleLog("Prefab load failed: " + err, 2);
+    } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
+        ed.PushUndo();
+        bool ok = false;
+        placed = okay::ImportModelScene(ed.scene(), path, &ok);
+        if (!ok || !placed) {
+            placed = nullptr;
+            ConsoleLog("Model import failed: " + path +
+                       (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.gltf/.glb; other formats need Assimp)"), 2);
+        }
+    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
+        placed = ed.CreateSprite(std::filesystem::path(path).stem().string());   // takes its own undo step
+        if (placed) if (auto* sr = placed->GetComponent<SpriteRenderer>()) sr->texture = path;
+    }
+    if (placed) { ed.dirty = true; ConsoleLog("Added " + placed->name); }
+    return placed;
+}
+
 void DrawHierarchy(EditorState& ed) {
     // Skip the per-frame root-list build + sort + per-row component scans when the
     // Hierarchy panel is collapsed or a hidden background tab.
@@ -17987,7 +18028,7 @@ void DrawHierarchy(EditorState& ed) {
     SearchField("##hfilter", g_hierFilter, sizeof(g_hierFilter), "Search",
                 -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
     if (ImGui::IsItemHovered() && !g_hierFilter[0])
-        ImGui::SetTooltip("Search by name, or by type: camera, light, mesh, script, ui...\nOr by hierarchy path: Parent/Child lists every object that path names.");
+        ImGui::SetTooltip("Search by name, tag or type: camera, light, mesh, script, ui...\nt:enemy  finds a tag      c:rigidbody  finds a component\nl:water  finds a layer    is:off / locked / static / prefab\n-word leaves matches out. Parent/Child lists every object that path names.");
     ImGui::SameLine();
     if (IconButton("##hmore", TbIcon::More, "Hierarchy options", g_hierSort)) ImGui::OpenPopup("##hieropts");
     if (ImGui::BeginPopup("##hieropts")) {
@@ -18042,49 +18083,28 @@ void DrawHierarchy(EditorState& ed) {
     // matches TYPE words ("camera", "light", "mesh", "sprite", "script", ...), so
     // typing "light" lists every light even if none is named that.
     if (g_hierFilter[0] != '\0') {
-        std::string needle = g_hierFilter;
-        for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
-        // A hierarchy path ("Parent/Child"): every object it names, in scene order (Scene::FindAllByPath), on top of the
-        // name and type matches. Two siblings called "Door" both come back.
+        // Words (all must match), t:tag, c:component, l:layer, is:off / locked / static / prefab, -word to exclude;
+        // a "Parent/Child" path lists every object it names. The logic is in InspectorModel.cpp.
+        const oked::HierFilter filter = oked::HierFilter::Parse(g_hierFilter);
         std::unordered_set<const GameObject*> pathHits;
-        if (needle.find('/') != std::string::npos)
-            for (GameObject* g : ed.scene().FindAllByPath(g_hierFilter)) pathHits.insert(g);
+        if (!filter.PathText().empty())
+            for (GameObject* g : ed.scene().FindAllByPath(filter.PathText())) pathHits.insert(g);
         int hits = 0;
         for (const auto& up : ed.scene().Objects()) {
             GameObject* go = up.get();
-            std::string hay = go->name;
-            if (go->GetComponent<Camera>())          hay += " camera";
-            if (go->GetComponent<MeshRenderer>())    hay += " mesh 3d";
-            if (go->GetComponent<SpriteRenderer>())  hay += " sprite 2d";
-            if (go->GetComponent<Light>())           hay += " light";
-            if (go->GetComponent<TextRenderer>())    hay += " text ui";
-            if (go->GetComponent<ParticleSystem>())  hay += " particles fx";
-            if (go->GetComponent<AudioSource>())     hay += " sound audio";
-            if (!go->GetComponents<ScriptComponent>().empty()) hay += " script";
-            if (go->GetComponent<Rigidbody3D>() || go->GetComponent<Rigidbody2D>()) hay += " rigidbody physics";
-            if (go->GetComponent<Collider3D>() || go->GetComponent<Collider2D>())   hay += " collider";
-            if (go->GetComponent<NPCController>())   hay += " npc ai enemy";
-            if (go->GetComponent<Spawner>())         hay += " spawner waves";
-            if (go->GetComponent<Terrain>())         hay += " terrain ground";
-            if (go->GetComponent<Character>())       hay += " character humanoid";
-            if (go->GetComponent<FirstPersonController>() || go->GetComponent<ThirdPersonController>() ||
-                go->GetComponent<CharacterController3D>() || go->GetComponent<ClickToMoveController>())
-                hay += " player controller";
-            if (go->GetComponent<UIButton>() || go->GetComponent<UIPanel>() ||
-                go->GetComponent<UIImage>()  || go->GetComponent<UIRawImage>() || go->GetComponent<UISlider>() ||
-                go->GetComponent<UIToggle>() || go->GetComponent<UIProgressBar>())
-                hay += " ui widget canvas";
-            for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
-            if (hay.find(needle) == std::string::npos && !pathHits.count(go)) continue;
+            if (!filter.Matches(*go, &pathHits)) continue;
             ++hits;
-            bool sel = (go == ed.selected());
+            bool sel = ed.IsSelected(go);
             ImGui::PushID(go);
-            if (ImGui::Selectable(("     " + go->name).c_str(), sel))
-                ed.Select(go);
+            if (ImGui::Selectable(("     " + go->name).c_str(), sel)) {
+                if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(go);   // add to / remove from the selection
+                else ed.Select(go);
+            }
             {   // drawn type icon in the leading space
                 ImVec2 smn = ImGui::GetItemRectMin();
                 HierKindIcon(go, ImVec2(smn.x + 2.0f, smn.y), ImGui::GetFontSize(),
                              ImGui::GetWindowDrawList());
+                HierPrefabBadge(go, ImVec2(smn.x + 2.0f, smn.y), ImGui::GetFontSize(), ImGui::GetWindowDrawList());
             }
             // Dimmed parent path after the name, so same-named results (e.g.
             // several "Wheel"s) are tellable apart in the flat search list.
@@ -18190,10 +18210,13 @@ void DrawHierarchy(EditorState& ed) {
             // Left/Right arrow expand/collapse request from last frame's key press.
             if (node == g_hierOpenNode && childCount > 0)
                 ImGui::SetNextItemOpen(g_hierOpenVal == 1);
+            if (node == g_hierDropOpen && childCount > 0) { ImGui::SetNextItemOpen(true); g_hierDropOpenSeen = true; }
             // Dim inactive objects; grey the whole row (and its subtree label).
             // Isolation dims everything outside the isolated subtree the same way.
             bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
+            const bool prefabRoot = !dim && !node->prefabSource.empty();   // prefab instances read blue
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+            else if (prefabRoot) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.76f, 1.0f, 1.0f));
             visRows.push_back(node);   // for arrow-key navigation, in draw order
             // Zebra striping: a whisper-faint band on every other row keeps deep
             // hierarchies scannable (the count is per visible row, top to bottom).
@@ -18209,14 +18232,15 @@ void DrawHierarchy(EditorState& ed) {
             char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
             bool open = ImGui::TreeNodeEx(node, flags, "     %s%s%s",
                                           node->name.c_str(), cnt, node->active ? "" : "  (off)");
-            if (dim) ImGui::PopStyleColor();
+            if (dim || prefabRoot) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
+            if (revealSel == node && !ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.4f);   // selected in the Scene view: scroll to it
             {   // drawn type icon in the leading space (after the tree arrow zone)
                 float isz = ImGui::GetFontSize();
                 float ax = isz + ImGui::GetStyle().FramePadding.x * 2.0f;   // arrow width
-                HierKindIcon(node, ImVec2(rowMin.x + ax,
-                                          rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f),
-                             isz, ImGui::GetWindowDrawList());
+                const ImVec2 ip(rowMin.x + ax, rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f);
+                HierKindIcon(node, ip, isz, ImGui::GetWindowDrawList());
+                HierPrefabBadge(node, ip, isz, ImGui::GetWindowDrawList());
             }
             // Accent bar on the selected row — matches the Inspector's component cards
             // so the selection reads consistently across the editor.
@@ -18272,59 +18296,40 @@ void DrawHierarchy(EditorState& ed) {
                 }
                 if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
                     GameObject* dragged = *(GameObject**)p->Data;
-                    // Dragging a member of a multi-selection moves the WHOLE selection
-                    // (skipping any whose ancestor is also selected — the parent brings
-                    // its subtree along anyway).
-                    std::vector<GameObject*> moved;
-                    if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) {
-                        for (GameObject* g : ed.MultiSelection()) {
-                            bool covered = false;
-                            for (Transform* t = g && g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
-                                if (t->gameObject && ed.IsSelected(t->gameObject)) { covered = true; break; }
-                            if (g && !covered) moved.push_back(g);
-                        }
-                    } else if (dragged) moved.push_back(dragged);
-                    // Keep the group's visible order: sort by scene order (the
-                    // selection set is in CLICK order), and when inserting after
-                    // the target, chain each drop behind the previous one —
-                    // otherwise repeated "insert after node" reverses the group.
-                    if (moved.size() > 1) {
-                        std::unordered_map<GameObject*, int> ord;
-                        int oi = 0;
-                        for (const auto& up2 : ed.scene().Objects()) ord[up2.get()] = oi++;
-                        std::sort(moved.begin(), moved.end(),
-                                  [&](GameObject* a, GameObject* b) { return ord[a] < ord[b]; });
-                    }
-                    GameObject* afterAnchor = node;
-                    bool pushed = false;
-                    for (GameObject* mv : moved) {
-                        bool cycle = false;
-                        for (Transform* t = node->transform; t; t = t->Parent())
-                            if (t == mv->transform) { cycle = true; break; }
-                        if (mv == node || cycle) continue;
-                        if (!pushed) { ed.PushUndo(); pushed = true; }
-                        if (ty < 0.30f)      ed.scene().ReorderSibling(mv, node, /*after=*/false);
-                        else if (ty > 0.70f) { ed.scene().ReorderSibling(mv, afterAnchor, /*after=*/true); afterAnchor = mv; }
-                        else {
-                            // Re-parent. For a UI widget, its pixel offset is resolved
-                            // WITHIN its parent, so a plain re-parent makes it jump on
-                            // screen. Capture its screen rect, re-parent, then nudge its
-                            // offset so it stays exactly where it was.
-                            float cw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
-                            float ch = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
-                            Vec2 oldO, oldSz;
-                            bool wasUI = cw > 1.0f && GetUIScreenRect(mv, cw, ch, oldO, oldSz);
-                            mv->transform->SetParent(node->transform, true);
-                            if (wasUI) {
+                    // Dragging a member of a multi-selection moves the WHOLE selection, in hierarchy order
+                    // (a selected parent brings its children). Checks and ordering: InspectorModel.cpp.
+                    std::vector<GameObject*> group;
+                    if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) group = ed.MultiSelection();
+                    else if (dragged) group.push_back(dragged);
+                    const oked::DropWhere where = ty < 0.30f ? oked::DropWhere::Before
+                                                : ty > 0.70f ? oked::DropWhere::After : oked::DropWhere::Inside;
+                    if (!oked::PlanDrop(ed.scene(), group, node, where).empty()) {
+                        ed.PushUndo();
+                        // Re-parenting a UI widget: its pixel offset is resolved WITHIN its parent, so a plain
+                        // re-parent makes it jump on screen. Remember its screen rect, then nudge its offset back.
+                        const float cw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
+                        const float ch = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
+                        std::unordered_map<GameObject*, Vec2> oldOrigin;
+                        oked::DropHooks hooks;
+                        if (where == oked::DropWhere::Inside) {
+                            hooks.before = [&](GameObject* mv) {
+                                Vec2 o, sz;
+                                if (cw > 1.0f && GetUIScreenRect(mv, cw, ch, o, sz)) oldOrigin[mv] = o;
+                            };
+                            hooks.after = [&](GameObject* mv) {
+                                auto it = oldOrigin.find(mv);
+                                if (it == oldOrigin.end()) return;
                                 UIRect rr = GetUIRect(mv);
                                 Vec2 newO, newSz;
                                 if (rr.valid && rr.position && GetUIScreenRect(mv, cw, ch, newO, newSz)) {
                                     float sc = UIScaleFor(mv, cw, ch); if (sc < 1e-3f) sc = 1.0f;
-                                    rr.position->x += (oldO.x - newO.x) / sc;
-                                    rr.position->y += (oldO.y - newO.y) / sc;
+                                    rr.position->x += (it->second.x - newO.x) / sc;
+                                    rr.position->y += (it->second.y - newO.y) / sc;
                                 }
-                            }
+                            };
                         }
+                        oked::ApplyDrop(ed.scene(), group, node, where, hooks);
+                        if (where == oked::DropWhere::Inside) { g_hierDropOpen = node; g_hierDropOpenSeen = false; }   // open it next frame to show where they went
                         ed.dirty = true;
                     }
                 }
@@ -18359,12 +18364,19 @@ void DrawHierarchy(EditorState& ed) {
                         ed.dirty = true; ConsoleLog("Set font on " + node->name);
                     } else if (ext == ".okayscene") {      // MERGE the scene into this one
                         MergeSceneIntoCurrent(ed, path);
-                    } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
+                    } else if (const char* k = ImportKindLabel(ext); (k && std::strcmp(k, "model") == 0) || ext == ".okayprefab") {
                         // Drop a model onto a player/NPC: it becomes THE character —
                         // imported as a child, sized/grounded/faced, locomotion clips
                         // wired, and the blocky body hidden.
-                        if (ObjectIsCharacterTarget(node)) QueueCharacterModel(node, path);
-                        else ConsoleLog(node->name + " has no controller/Character — dropping the model into the scene instead adds it standalone (drag to the viewport).", 1);
+                        if (k && ObjectIsCharacterTarget(node)) QueueCharacterModel(node, path);
+                        else if (GameObject* made = HierInstantiateAsset(ed, path)) {
+                            // Anywhere else: a new object. Middle of the row = its child, near an edge = beside it.
+                            if (ty >= 0.30f && ty <= 0.70f) {
+                                made->transform->SetParent(node->transform, false);
+                                g_hierDropOpen = node; g_hierDropOpenSeen = false;
+                            } else oked::ApplyDrop(ed.scene(), {made}, node, ty < 0.30f ? oked::DropWhere::Before : oked::DropWhere::After);
+                            ed.Select(made);
+                        }
                     }
                 }
                 ImGui::EndDragDropTarget();
@@ -18593,6 +18605,7 @@ void DrawHierarchy(EditorState& ed) {
         drawNode(go);
     }
     g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
+    if (g_hierDropOpenSeen) { g_hierDropOpen = nullptr; g_hierDropOpenSeen = false; }
     if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
     if (deleteKidsPending) {
         const int n = ed.DeleteChildrenOfSelected();
@@ -18749,8 +18762,16 @@ void DrawHierarchy(EditorState& ed) {
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* gp = ImGui::AcceptDragDropPayload("GO_PTR")) {
             GameObject* dragged = *(GameObject**)gp->Data;
-            if (dragged && dragged->transform->Parent()) {
-                ed.PushUndo(); dragged->transform->SetParent(nullptr, true); ed.dirty = true;
+            std::vector<GameObject*> group;   // a multi-selection moves together
+            if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) group = ed.MultiSelection();
+            else if (dragged) group.push_back(dragged);
+            bool anyChild = false;
+            for (GameObject* g : group) if (g && g->transform && g->transform->Parent()) anyChild = true;
+            if (anyChild) {
+                ed.PushUndo();
+                for (GameObject* g : oked::PlanDrop(ed.scene(), group, nullptr, oked::DropWhere::Inside))
+                    if (g->transform->Parent()) g->transform->SetParent(nullptr, true);
+                ed.dirty = true;
             }
         }
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
@@ -18758,12 +18779,9 @@ void DrawHierarchy(EditorState& ed) {
             std::size_t dot = path.find_last_of('.');
             std::string ext = dot == std::string::npos ? "" : path.substr(dot);
             for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-            if (ext == ".okayprefab") {
-                ed.PushUndo();
-                std::string err;
-                if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err)) {
-                    ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + path);
-                } else ConsoleLog("Prefab load failed: " + err);
+            if (ext == ".okayprefab" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" ||
+                (ImportKindLabel(ext) && std::strcmp(ImportKindLabel(ext), "model") == 0)) {
+                if (GameObject* r = HierInstantiateAsset(ed, path)) ed.Select(r);
             } else if (ext == ".okayscene") {
                 RunAfterSavePrompt(ed, "opening another scene", [&ed, path] { RunAfterProjectCheck(ed, path, [&ed, path] {
                     std::string err;
@@ -25831,7 +25849,8 @@ static bool IKJointLimitUI(const char* label, IKJointLimit& l) {
 
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
-    bool changed = false;
+    bool changed = oked::AssetPathPicker(field);   // "..." handle + right-click: choose from project, clear
+    oked::HighlightAssetDrop();                    // outline while a file from the Project panel is dragged over
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
             field = std::string((const char*)p->Data);
@@ -26243,6 +26262,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
     {   // accent bar down the left edge: each component reads as a titled card
         ImVec4 barCol = CategoryColor(label); barCol.w = 0.95f;
+        if (oked::PrefabChangedFor(comp)) barCol = ImVec4(0.30f, 0.62f, 1.0f, 1.0f);   // changed from its prefab
         ImGui::GetWindowDrawList()->AddRectFilled(hmn, ImVec2(hmn.x + 3.0f, hmx.y),
             ImGui::GetColorU32(en ? barCol : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)), 1.5f);
     }
@@ -26303,6 +26323,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
                                 ImGui::GetColorU32(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled), 8);
         if (hov) ImGui::SetTooltip("Component options (or right-click the header)");
     }
+    if (oked::PrefabChangedFor(comp) && ImGui::IsMouseHoveringRect(hmn, hmx) && ImGui::IsWindowHovered()) ImGui::SetTooltip("Changed from the prefab");
     if (hdrRightClick) ImGui::OpenPopup("##compctx");
     if (ImGui::BeginPopup("##compctx")) {
         if (ImGui::MenuItem("Move Up"))   { sMoveComp = comp; sMoveDelta = -1; }
@@ -26310,6 +26331,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         ImGui::Separator();
         if (ImGui::MenuItem("Expand All Components"))   sCompForceRequest = 1;
         if (ImGui::MenuItem("Collapse All Components")) sCompForceRequest = 0;
+        oked::ComponentValueMenu(comp);   // Copy Values / Paste Values / Reset
         ImGui::Separator();
         if (removable && ImGui::MenuItem("Remove Component")) *toRemove = comp;
         if (!removable) ImGui::TextDisabled("(required component)");
@@ -28235,6 +28257,7 @@ void DrawInspector(EditorState& ed) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(10, 10));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(8, 8));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
+    oked::DrawPlayModeNote(ed);   // "Changes made here are not saved" while playing
 
     // Lock (pin) the inspector to the current object so it stays put while you
     // click around the scene/hierarchy — inspector lock.
@@ -28391,6 +28414,11 @@ void DrawInspector(EditorState& ed) {
     }
     if (ImGui::Button("Save as Prefab")) {
         std::string p = go->name + ".okayprefab";
+        if (!ed.projectDir().empty()) {   // into the project's Assets folder, where the Project panel shows it
+            std::error_code pe;
+            std::filesystem::create_directories(std::filesystem::path(ed.projectDir()) / "Assets", pe);
+            p = (std::filesystem::path(ed.projectDir()) / "Assets" / p).string();
+        }
         if (SceneSerializer::SaveObjectToFile(*go, p)) {
             ConsoleLog("Saved prefab " + p);
             go->prefabSource = p;   // link the live object so it becomes an instance
@@ -28502,6 +28530,12 @@ void DrawInspector(EditorState& ed) {
         }
     }
 
+    oked::RefreshPrefabChanges(go);
+    if (oked::DrawPrefabChanges(ed, go)) {   // a revert rebuilt the instance: this object is gone
+        ImGui::PopStyleVar(3); ImGui::End();
+        return;
+    }
+    oked::BeginInspectorFrame();
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
     // Fields fill the panel minus a label column that grows with it (labels sit on
     // the right): a narrow Inspector keeps labels readable instead of clipping them.
@@ -28812,6 +28846,7 @@ void DrawInspector(EditorState& ed) {
         if (go->Components().size() != compCountAtDraw) break;
         if (!curComp || curComp == go->transform) continue;
         sManagedNote = ManagedNoteFor(ed, go, curComp); sManagedFor = curComp;
+        const float fbCursorY = ImGui::GetCursorPosY();   // unchanged at the end = no hand-written Inspector drew this one
     if (auto* sr = dynamic_cast<SpriteRenderer*>(curComp)) {
         if (CompHeader("Sprite Renderer", sr, &toRemove)) {
             float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
@@ -37570,6 +37605,7 @@ void DrawInspector(EditorState& ed) {
     DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
+    oked::DrawFallbackInspector(ed, go, curComp, toRemove, fbCursorY, &CompHeader);   // anything still undrawn: from the property registry
     } // end component-order loop
     compSnap.clear();
 
@@ -37586,6 +37622,7 @@ void DrawInspector(EditorState& ed) {
         sPendingViewModeCtrl = nullptr;
         ed.dirty = true;
     }
+    oked::ApplyComponentValueRequests(ed, go);   // the component menu's Copy / Paste / Reset Values
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
 
@@ -46046,6 +46083,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
         { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); }
         { OKAY_PROFILE("UI.ProjectSettings"); DrawProjectSettings(ed); }
+        oked::WatchEditUndo(ed);   // one undo step for every Inspector / Hierarchy field edit
         { OKAY_PROFILE("UI.Hierarchy"); if (g_showHierarchy) DrawHierarchy(ed); }
         {   // Edit mode: keep skinned meshes deformed by their bones (scripts don't
             // run, so nothing else skins them). Shows imported characters in their

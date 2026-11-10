@@ -1,4 +1,12 @@
 # Gameplay library: saving. Every node below is declared here; the first chain runs in Play.
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 100
+exec 100 0 101
+exec 101 0 103
+exec 103 0 104
+exec 104 0 105
 node 100 GlSavePosition
 pos 100 40 520
 default 100 0 "spot"

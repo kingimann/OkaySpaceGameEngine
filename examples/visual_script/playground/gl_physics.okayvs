@@ -10,6 +10,24 @@ node 3 GlSetBounciness
 pos 3 560 40
 default 3 0 0.7
 exec 2 0 3
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 101
+exec 101 0 102
+exec 102 0 103
+exec 103 0 104
+exec 104 0 105
+exec 105 0 106
+exec 106 0 108
+exec 108 0 113
+exec 113 0 114
+exec 114 0 115
+exec 115 0 116
+exec 116 0 117
+exec 117 0 118
+exec 118 0 119
+exec 119 0 120
 node 100 GlGetMass
 pos 100 40 520
 node 101 GlSetMass

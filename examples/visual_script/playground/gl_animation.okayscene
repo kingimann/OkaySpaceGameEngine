@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "1284fb820fc0952e3fb7ac3c92ea95b9"
+  guid "747aad77c5f7f45df1caaa6094c42ed4"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "f4dcc94d64f529a1582e8bcf5c4bf819"
+  guid "0edccfc7ddc89291d02053949f7a2329"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. animation" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "837c2bb8adac41b5af1a68c4711a386e"
+  guid "c2644e5028582d0184c97179f0335405"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -28,7 +28,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Pulser"
-  guid "acd85e8643da4a90a06d095f18ec76ae"
+  guid "7a95cb8b0f5c111d6c482b3cb41b4e6a"
   active 1
   parent -1
   transform 0 0.7 0 0 0 0 1 1 1 1

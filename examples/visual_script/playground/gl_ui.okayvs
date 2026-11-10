@@ -8,6 +8,20 @@ default 2 0 "Score: "
 default 2 1 42
 default 2 2 0
 exec 1 0 2
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 100
+exec 100 0 104
+exec 104 0 106
+exec 106 0 107
+exec 107 0 108
+exec 108 0 109
+exec 109 0 110
+exec 110 0 111
+exec 111 0 112
+exec 112 0 113
+exec 113 0 114
 node 100 GlShowNumberInText
 pos 100 40 520
 default 100 0 "Score: "

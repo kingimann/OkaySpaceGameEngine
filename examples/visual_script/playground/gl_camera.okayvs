@@ -10,6 +10,18 @@ node 3 GlShakeCamera
 pos 3 560 40
 default 3 0 0.3
 exec 2 0 3
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 100
+exec 100 0 102
+exec 102 0 104
+exec 104 0 105
+exec 105 0 106
+exec 106 0 107
+exec 107 0 108
+exec 108 0 109
+exec 109 0 111
 node 100 GlSetCameraZoom
 pos 100 40 520
 default 100 0 2

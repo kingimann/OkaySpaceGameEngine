@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "be8b30767df7fcf75a5a59cec0e87a5a"
+  guid "400bff00a68dd98d9fbdde3004bf1304"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "b08f64a42a234fc230082d1b0d0fcd4f"
+  guid "db8f2ca225ea34c65e7b5ce06c069286"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. groups" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "32879e595f61da22da1b47c0860bc5b2"
+  guid "4dd4dc067b0debcee0111bf17c295727"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -28,7 +28,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Boss"
-  guid "66a2725b0167920ec342564ef9e8933b"
+  guid "8986cbd27cf41b562c7014e8fb6c0402"
   active 1
   parent -1
   transform 0 0.5 -3 0 0 0 1 1 1 1
@@ -38,7 +38,7 @@ gameobject 3 "Boss"
   visualscriptpath "gl_groups.okayvs"
 end
 gameobject 4 "Crate0"
-  guid "9b2e232a942ae33de25a7ee48451782d"
+  guid "863803172ce34c4ee27659b41945e593"
   active 1
   tag "crate"
   parent -1
@@ -47,7 +47,7 @@ gameobject 4 "Crate0"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 5 "Crate1"
-  guid "2358223e7274570967deaa4470002175"
+  guid "280d8f5484277065f05eda77c3a0236a"
   active 1
   tag "crate"
   parent -1
@@ -56,7 +56,7 @@ gameobject 5 "Crate1"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 6 "Crate2"
-  guid "4c9e981da7485ca94b8c8762349bc3c8"
+  guid "69abb8b4f21f745be848e70b749472ab"
   active 1
   tag "crate"
   parent -1

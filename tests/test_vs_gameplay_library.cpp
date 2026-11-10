@@ -17,7 +17,9 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/VisualScript/VsTypes.hpp"
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <set>
 #include <string>
@@ -54,7 +56,7 @@ static void BuildPlayground(Scene& sc, const std::string& name, const std::strin
     if (name == "audio") { GameObject* hero = sc.CreateGameObject("Speaker"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.5f, 0.2f, 1); hero->AddComponent<AudioSource>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "camera") { cam->AddComponent<VisualScriptComponent>()->SetPath(file); GameObject* mark = sc.CreateGameObject("Landmark"); mark->transform->SetPosition(Vec3(0, 0.5f, 0)); mark->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.8f, 0.3f, 1); }
     if (name == "groups") { GameObject* hero = sc.CreateGameObject("Boss"); hero->transform->SetPosition(Vec3(0, 0.5f, -3)); hero->AddComponent<MeshRenderer>()->color = Color(0.8f, 0.3f, 0.3f, 1);  hero->AddComponent<VisualScriptComponent>()->SetPath(file); for (int i = 0; i < 3; ++i) { GameObject* cr = sc.CreateGameObject("Crate" + std::to_string(i)); cr->tag = "crate"; cr->transform->SetPosition(Vec3(-2.0f + 2.0f * i, 0.5f, 1)); cr->AddComponent<MeshRenderer>()->color = Color(0.7f, 0.5f, 0.3f, 1); } }
-    if (name == "health") { GameObject* hero = sc.CreateGameObject("Fighter"); hero->transform->SetPosition(Vec3(0, 0.8f, 0)); hero->transform->SetScale(Vec3(0.8f, 1.6f, 0.8f)); hero->AddComponent<MeshRenderer>()->color = Color(0.3f, 0.55f, 0.95f, 1); hero->AddComponent<HealthStat>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
+    if (name == "health") { GameObject* hero = sc.CreateGameObject("Fighter"); hero->transform->SetPosition(Vec3(0, 0.8f, 0)); hero->transform->SetScale(Vec3(0.8f, 1.6f, 0.8f)); hero->AddComponent<MeshRenderer>()->color = Color(0.3f, 0.55f, 0.95f, 1); hero->AddComponent<HealthStat>()->playDeathAnim = false; hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "input") { GameObject* hero = sc.CreateGameObject("Player"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.4f, 0.9f, 0.6f, 1);  hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "inventory") { GameObject* hero = sc.CreateGameObject("Backpack"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.85f, 0.62f, 0.25f, 1); hero->AddComponent<Inventory>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "movement") { GameObject* hero = sc.CreateGameObject("Hero"); hero->transform->SetPosition(Vec3(0, 0.5f, -3)); hero->AddComponent<MeshRenderer>()->color = Color(0.92f, 0.92f, 0.96f, 1); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
@@ -94,9 +96,14 @@ static void CheckPlaygrounds() {
         if (const char* w = std::getenv("OKAY_WRITE_GL_PLAYGROUND"); w && w[0] == '1') {
             Scene writing; BuildPlayground(writing, r.name, base + ".okayvs");
             CHECK(SceneSerializer::SaveToFile(writing, dir + base + ".okayscene"));
+            std::remove((dir + base + ".okayscene.bak").c_str());   // the saver keeps a backup; it is not part of the example
         }
         const std::string graph = ReadFile(dir + base + ".okayvs");
         CHECK(!graph.empty());
+        for (const auto& is : vs::ValidateGraphText(graph, dir)) {
+            std::printf("  %s graph: %s\n", r.name, is.message.c_str());
+            CHECK(false);
+        }
         for (const char* t : r.nodes) {
             const bool listed = graph.find(std::string(" ") + t + "\n") != std::string::npos;
             if (!listed) std::printf("  playground %s is missing %s\n", r.name, t);

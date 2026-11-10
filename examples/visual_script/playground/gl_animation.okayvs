@@ -12,6 +12,12 @@ pos 3 560 40
 default 3 0 1.5
 default 3 1 25
 exec 2 0 3
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 100
+exec 100 0 101
+exec 101 0 102
 node 100 GlPulseSize
 pos 100 40 520
 default 100 0 1.5707963

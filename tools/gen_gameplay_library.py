@@ -512,7 +512,7 @@ PG_INFO = {
         "GameObject* hero = sc.CreateGameObject(\"Hero\"); hero->transform->SetPosition(Vec3(0, 0.5f, -3)); hero->AddComponent<MeshRenderer>()->color = Color(0.92f, 0.92f, 0.96f, 1); hero->AddComponent<VisualScriptComponent>()->SetPath(file);"),
     "health": ("Gameplay - Health", "Fighter",
         "The fighter loses health every second, and Get Health reads it into a variable. The other health nodes are in the graph.",
-        "GameObject* hero = sc.CreateGameObject(\"Fighter\"); hero->transform->SetPosition(Vec3(0, 0.8f, 0)); hero->transform->SetScale(Vec3(0.8f, 1.6f, 0.8f)); hero->AddComponent<MeshRenderer>()->color = Color(0.3f, 0.55f, 0.95f, 1); hero->AddComponent<HealthStat>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file);"),
+        "GameObject* hero = sc.CreateGameObject(\"Fighter\"); hero->transform->SetPosition(Vec3(0, 0.8f, 0)); hero->transform->SetScale(Vec3(0.8f, 1.6f, 0.8f)); hero->AddComponent<MeshRenderer>()->color = Color(0.3f, 0.55f, 0.95f, 1); hero->AddComponent<HealthStat>()->playDeathAnim = false; hero->AddComponent<VisualScriptComponent>()->SetPath(file);"),
     "inventory": ("Gameplay - Inventory", "Backpack",
         "The backpack is given five coins, and Count Item reads how many it holds. The other item nodes are in the graph.",
         "GameObject* hero = sc.CreateGameObject(\"Backpack\"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.85f, 0.62f, 0.25f, 1); hero->AddComponent<Inventory>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file);"),
@@ -572,6 +572,15 @@ def write_playgrounds():
         lines += PLAYGROUND_DEMO.get(name, [])
         nid = 100
         col = row = 0
+        # Specimens hang off a message nothing sends, so the graph checker has no
+        # "nothing runs this node" warnings and none of them runs by accident.
+        prev = 99
+        if any(n["exec"] for n in nodes):
+            lines += ["node 99 OnEvent specimens", "pos 99 40 440", "entry OnEvent:specimens 99"]
+        for n in nodes:
+            if n["exec"]:
+                lines.append(f"exec {prev} 0 {nid + nodes.index(n)}")
+                prev = nid + nodes.index(n)
         for n in nodes:
             x = 40 + (col % 6) * 260
             y = 520 + row * 190
@@ -664,7 +673,9 @@ def write_tests():
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/VisualScript/VsTypes.hpp"
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <set>
 #include <string>
@@ -793,9 +804,14 @@ static void CheckPlaygrounds() {{
         if (const char* w = std::getenv("OKAY_WRITE_GL_PLAYGROUND"); w && w[0] == '1') {{
             Scene writing; BuildPlayground(writing, r.name, base + ".okayvs");
             CHECK(SceneSerializer::SaveToFile(writing, dir + base + ".okayscene"));
+            std::remove((dir + base + ".okayscene.bak").c_str());   // the saver keeps a backup; it is not part of the example
         }}
         const std::string graph = ReadFile(dir + base + ".okayvs");
         CHECK(!graph.empty());
+        for (const auto& is : vs::ValidateGraphText(graph, dir)) {{
+            std::printf("  %s graph: %s\\n", r.name, is.message.c_str());
+            CHECK(false);
+        }}
         for (const char* t : r.nodes) {{
             const bool listed = graph.find(std::string(" ") + t + "\\n") != std::string::npos;
             if (!listed) std::printf("  playground %s is missing %s\\n", r.name, t);

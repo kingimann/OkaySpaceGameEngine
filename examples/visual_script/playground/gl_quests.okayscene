@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "e2e7bd9a3cd13952e2a22caefdef11f3"
+  guid "06b55017b963b1b6e6e27927bb3a75b2"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "eeab86d4846abc4fdc47e5e4773fdf65"
+  guid "451c7084eb06a4db42b901b3e1af176c"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. quests" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "d717c23ab9d9134aaeef9d2d649c4d8e"
+  guid "90bb8579e4aa21fbf4d9f4e362f20aa8"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -28,7 +28,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Guide"
-  guid "18b2b3e89531cff2d511a0669c306ef5"
+  guid "c6e32833669f957f9082d7061da2183a"
   active 1
   parent -1
   transform 0 0.5 0 0 0 0 1 1 1 1
@@ -38,7 +38,7 @@ gameobject 3 "Guide"
   visualscriptpath "gl_quests.okayvs"
 end
 gameobject 4 "Quests"
-  guid "4c55ec98fd59c57beec28eb11b66146f"
+  guid "5d71e461e5fe14138c2a0cc74d287ae9"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1

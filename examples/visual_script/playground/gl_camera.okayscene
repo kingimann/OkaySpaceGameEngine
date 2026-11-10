@@ -6,7 +6,7 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "857ff80db5b6fa61e816b2310b2b5661"
+  guid "445bab9d7059d62c5bc0b4233f2bc613"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
@@ -15,14 +15,14 @@ gameobject 0 "Main Camera"
   visualscriptpath "gl_camera.okayvs"
 end
 gameobject 1 "Instructions"
-  guid "02c863c07a83bb3774afae5f3cb6b4e3"
+  guid "067ff13207617f5c9a0d2f63f64c6908"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. camera" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "37b0666a8df77dbf6aadf198946278b6"
+  guid "72560d49646f4e218a40d1d7d18a2cfb"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -30,7 +30,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Landmark"
-  guid "7a695e45fd937d68e3fd1f84258058a9"
+  guid "918f72e1323c76ef041d1707aa3a75c3"
   active 1
   parent -1
   transform 0 0.5 0 0 0 0 1 1 1 1

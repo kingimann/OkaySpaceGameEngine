@@ -17,6 +17,39 @@ default 4 1 6
 default 4 2 -6
 default 4 3 6
 exec 3 0 4
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 102
+exec 102 0 103
+exec 103 0 104
+exec 104 0 105
+exec 105 0 106
+exec 106 0 107
+exec 107 0 108
+exec 108 0 109
+exec 109 0 110
+exec 110 0 111
+exec 111 0 112
+exec 112 0 113
+exec 113 0 116
+exec 116 0 117
+exec 117 0 118
+exec 118 0 119
+exec 119 0 120
+exec 120 0 121
+exec 121 0 122
+exec 122 0 123
+exec 123 0 124
+exec 124 0 125
+exec 125 0 126
+exec 126 0 127
+exec 127 0 128
+exec 128 0 129
+exec 129 0 130
+exec 130 0 131
+exec 131 0 133
+exec 133 0 134
 node 100 GlGetSpeed
 pos 100 40 520
 node 101 GlIsMoving

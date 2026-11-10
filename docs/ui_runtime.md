@@ -27,6 +27,9 @@ floating damage numbers, a dialogue box, the UI Gallery, and the script and C++ 
   - New **Blocks Pointer** switch on a Panel: widgets drawn underneath cannot be hovered or clicked through
     it. Off for old scenes, on for the cards and windows the templates build.
   - Dragging a widget picks the drop target by draw order too.
+  - Text inside a Scroll View, List View or Mask now scrolls and clips with it (before, labels stayed put
+    while the widgets next to them scrolled away).
+  - Slot grids keep the look's text colour and can show empty places blank.
   - Buttons showed a default blue in the editor's Scene and Game (edit mode) views once a theme was applied
     (their eased colour was never set), and faded in from that blue when the game started. They now show
     their own colour from the first frame.
@@ -162,3 +165,5 @@ write properties by name already reach every setting. See [properties.md](proper
 `UIGallery::BuildGallery(scene, preset)` (in `okay/Scene/UIGallery.hpp`) builds the gallery into any
 scene. File > Examples > UI Gallery does that in a fresh 2D scene. The same header has
 `AddInventoryScreen`, `AddDialogueScreen`, `AddWindow`, `AddNameplate` and `ApplyThemePreset`.
+`BuildGallery(scene, preset, true)` (File > Examples > UI Gallery (phone)) lays the same widgets in one scrolling
+column on a 440 x 960 canvas inside a Safe Area, for portrait phones.

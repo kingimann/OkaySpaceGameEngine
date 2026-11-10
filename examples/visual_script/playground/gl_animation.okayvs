@@ -1,0 +1,28 @@
+# Gameplay library: animation. Every node below is declared here; the first chain runs in Play.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 GlPulseSize
+pos 2 300 40
+default 2 0 2
+default 2 1 0.25
+exec 1 0 2
+node 3 GlSwayTurn
+pos 3 560 40
+default 3 0 1.5
+default 3 1 25
+exec 2 0 3
+node 100 GlPulseSize
+pos 100 40 520
+default 100 0 1.5707963
+default 100 1 0.2
+node 101 GlSwayTurn
+pos 101 300 520
+default 101 0 1.5707963
+default 101 1 30
+node 102 GlFadeSpriteTo
+pos 102 560 520
+default 102 0 0
+default 102 1 1
+node 103 GlGetSpriteOpacity
+pos 103 820 520

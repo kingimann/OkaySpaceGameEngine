@@ -1,0 +1,39 @@
+# Gameplay library: ui. Every node below is declared here; the first chain runs in Play.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 GlShowNumberInText
+pos 2 300 40
+default 2 0 "Score: "
+default 2 1 42
+default 2 2 0
+exec 1 0 2
+node 100 GlShowNumberInText
+pos 100 40 520
+default 100 0 "Score: "
+default 100 1 12.5
+default 100 2 1
+node 101 GlFormatNumber
+pos 101 300 520
+default 101 0 3.14159
+default 101 1 2
+node 102 GlFormatClock
+pos 102 560 520
+default 102 0 125
+node 103 GlFormatPercent
+pos 103 820 520
+default 103 0 0.75
+node 104 GlSetTextColor
+pos 104 1080 520
+default 104 0 0.2
+default 104 1 0.4
+default 104 2 0.6
+default 104 3 0.8
+node 105 GlGetText
+pos 105 1340 520
+node 106 GlAddLineToText
+pos 106 40 710
+default 106 0 "two"
+node 107 GlSetTextSize
+pos 107 300 710
+default 107 0 3

@@ -1,0 +1,31 @@
+# Gameplay library: quests. Every node below is declared here; the first chain runs in Play.
+node 100 GlIsQuestActive
+pos 100 40 520
+default 100 0 "q1"
+node 101 GlIsQuestCompleted
+pos 101 300 520
+default 101 0 "q1"
+node 102 GlCompleteQuest
+pos 102 560 520
+default 102 0 "q1"
+node 103 GlFailQuest
+pos 103 820 520
+default 103 0 "q1"
+node 104 GlResetQuest
+pos 104 1080 520
+default 104 0 "q1"
+node 105 GlAddQuestProgress
+pos 105 1340 520
+default 105 0 "q1"
+default 105 1 0
+default 105 2 2
+node 106 GlGetQuestProgress
+pos 106 40 710
+default 106 0 "q1"
+default 106 1 0
+node 107 GlIsObjectiveDone
+pos 107 300 710
+default 107 0 "q1"
+default 107 1 0
+node 108 GlCountActiveQuests
+pos 108 560 710

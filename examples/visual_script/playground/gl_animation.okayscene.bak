@@ -1,0 +1,41 @@
+okayscene 3
+name "Scene"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "8ca6864e2d5e67592fac4b0608e023f6"
+  active 1
+  parent -1
+  transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Instructions"
+  guid "2c2894ca7d441a2e403bca63be8c9fc4"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Press Play. animation" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 2 "Floor"
+  guid "f43a3226e992d6e6cc801dacc1258772"
+  active 1
+  parent -1
+  transform 0 -0.15 0 0 0 0 1 16 0.3 16
+  mesh "Cube" 0.18 0.2 0.24 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Pulser"
+  guid "681b1f68c72f958bf407494734e1e38c"
+  active 1
+  parent -1
+  transform 0 0.7 0 0 0 0 1 1 1 1
+  sprite 35 1 1 1 1 1 1 "" 0 0 1 1 0 0 0 0 0
+  mesh "Cube" 0.6 0.9 0.5 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  visualscript ""
+  visualscriptpath "gl_animation.okayvs"
+  comporder "MeshRenderer" "SpriteRenderer" "VisualScriptComponent"
+end

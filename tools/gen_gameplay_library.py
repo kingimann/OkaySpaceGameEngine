@@ -241,6 +241,11 @@ health()
 movement()
 inventory()
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gameplay_nodes_batch2
+gameplay_nodes_batch2.define(add, N, B, T, O, R)
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -337,11 +342,65 @@ def main():
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Components/Camera.hpp"
+#include "okay/Components/AudioSource.hpp"
+#include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Components/QuestLog.hpp"
+#include "okay/Core/Prefs.hpp"
+#include "okay/Core/Time.hpp"
+#include "okay/Input/Input.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <string>
+#include <vector>
 namespace okay::vs {{
+inline Camera* GlCamera(VsNode* n, GameObject* o, NodeGraph& g, VsContext& ctx) {{
+    if (!o) return nullptr;
+    if (auto* c = o->GetComponent<Camera>()) return c;
+    g.Error(n, ctx, "its object has no Camera");
+    return nullptr;
+}}
+inline AudioSource* GlAudio(VsNode* n, GameObject* o, NodeGraph& g, VsContext& ctx) {{
+    if (!o) return nullptr;
+    if (auto* a = o->GetComponent<AudioSource>()) return a;
+    g.Error(n, ctx, "its object has no Audio Source");
+    return nullptr;
+}}
+inline TextRenderer* GlText(VsNode* n, GameObject* o, NodeGraph& g, VsContext& ctx) {{
+    if (!o) return nullptr;
+    if (auto* t = o->GetComponent<TextRenderer>()) return t;
+    g.Error(n, ctx, "its object has no Text");
+    return nullptr;
+}}
+inline SpriteRenderer* GlSprite(VsNode* n, GameObject* o, NodeGraph& g, VsContext& ctx) {{
+    if (!o) return nullptr;
+    if (auto* sr = o->GetComponent<SpriteRenderer>()) return sr;
+    g.Error(n, ctx, "its object has no Sprite");
+    return nullptr;
+}}
+inline QuestLog* GlQuest(VsContext& ctx) {{
+    return QuestLog::Get(ctx.gameObject ? ctx.gameObject->scene() : nullptr, false);
+}}
+inline std::string GlNumberText(float v, int decimals) {{
+    char b[64];
+    std::snprintf(b, sizeof b, "%.*f", std::min(std::max(decimals, 0), 6), (double)v);
+    return b;
+}}
+/// Degrees between where `looker` faces and the direction to `target` (0 ahead, 180 behind).
+inline float GlAngleTo(GameObject* looker, GameObject* target) {{
+    if (!looker || !target || !looker->transform || !target->transform) return 0.0f;
+    Vec3 d = target->transform->Position() - looker->transform->Position();
+    const float len = d.Magnitude();
+    if (len < 1e-5f) return 0.0f;
+    d = d * (1.0f / len);
+    const Vec3 f = looker->transform->Forward();
+    float c = f.x * d.x + f.y * d.y + f.z * d.z;
+    c = std::min(std::max(c, -1.0f), 1.0f);
+    return std::acos(c) * 57.2957795f;
+}}
 inline Rigidbody3D* GlBody(VsNode* n, GameObject* o, NodeGraph& g, VsContext& ctx) {{
     if (!o) return nullptr;
     if (auto* rb = o->GetComponent<Rigidbody3D>()) return rb;
@@ -426,7 +485,13 @@ inline std::unique_ptr<VsNode> MakeGameplayLibNode(const std::string& type) {{
     print("gameplay library nodes", len(NODES))
 
 def pgname(n):
-    return n["demo"] or {"Movement": "movement", "Objects": "health" if n["sub"] == "Survival" else "inventory"}.get(n["topic"], "misc")
+    if n["demo"]: return n["demo"]
+    by_topic = {("Physics", "Queries"): "ai", ("Camera", ""): "camera", ("UI", ""): "ui", ("UI", "Fields"): "ui", ("Audio", ""): "audio",
+                ("Physics", ""): "physics", ("Animation", "Procedural"): "animation", ("Scene", "Story"): "quests",
+                ("Variables", "Saved"): "saving", ("Objects", "Groups"): "groups", ("Time", ""): "timing",
+                ("Input", "Axes"): "input", ("Input", "Keys"): "input", ("Objects", "Survival"): "health",
+                ("Objects", "Items"): "inventory", ("Movement", ""): "movement", ("Movement", "Turn"): "movement"}
+    return by_topic[(n["topic"], n["sub"])]
 
 # One playground per topic: (menu title, focus object, what you see, C++ that adds the scene's objects).
 PG_INFO = {
@@ -440,6 +505,46 @@ PG_INFO = {
         "The backpack is given five coins, and Count Item reads how many it holds. The other item nodes are in the graph.",
         "GameObject* hero = sc.CreateGameObject(\"Backpack\"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.85f, 0.62f, 0.25f, 1); hero->AddComponent<Inventory>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file);"),
 }
+
+def _hero(name, pos, color, extra=""):
+    return ("GameObject* hero = sc.CreateGameObject(\"" + name + "\"); hero->transform->SetPosition(Vec3" + pos + "); "
+            "hero->AddComponent<MeshRenderer>()->color = Color" + color + "; " + extra + " hero->AddComponent<VisualScriptComponent>()->SetPath(file);")
+
+PG_INFO.update({
+    "ai": ("Gameplay - AI and Perception", "Watcher",
+        "The watcher measures its angle to the red goal and counts tagged objects. The other perception nodes are in the graph.",
+        _hero("Watcher", "(0, 0.5f, 0)", "(0.3f, 0.7f, 0.9f, 1)") + ' GameObject* gl = sc.CreateGameObject("Goal"); gl->transform->SetPosition(Vec3(3, 0.5f, 4)); gl->tag = "enemy"; gl->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.25f, 0.25f, 1);'),
+    "camera": ("Gameplay - Camera", "Main Camera",
+        "The camera zooms in a little and gives one shake when you press Play. The other camera nodes are in the graph.",
+        "cam->AddComponent<VisualScriptComponent>()->SetPath(file); GameObject* mark = sc.CreateGameObject(\"Landmark\"); mark->transform->SetPosition(Vec3(0, 0.5f, 0)); mark->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.8f, 0.3f, 1);"),
+    "ui": ("Gameplay - UI Text", "Hud",
+        "The HUD text shows Score: 42. The other text nodes are in the graph.",
+        "GameObject* hero = sc.CreateGameObject(\"Hud\"); auto* hud = hero->AddComponent<TextRenderer>(); hud->text = \"Score\"; hud->screenSpace = true; hud->screenPos = {24, 200}; hud->pixelSize = 3.2f; hud->size = {600, 80}; hud->color = Color{0.45f, 1.0f, 0.55f, 1.0f}; hero->AddComponent<VisualScriptComponent>()->SetPath(file);"),
+    "audio": ("Gameplay - Audio", "Speaker",
+        "The speaker's volume is set to half. The other audio nodes are in the graph.",
+        _hero("Speaker", "(0, 0.5f, 0)", "(0.9f, 0.5f, 0.2f, 1)", "hero->AddComponent<AudioSource>();")),
+    "physics": ("Gameplay - Physics", "Ball",
+        "The ball falls slowly and bounces. The other physics nodes are in the graph.",
+        _hero("Ball", "(0, 4, 0)", "(0.95f, 0.85f, 0.3f, 1)", "hero->AddComponent<Rigidbody3D>();")),
+    "animation": ("Gameplay - Procedural Animation", "Pulser",
+        "The cube swells and shrinks and sways. The other animation nodes are in the graph.",
+        _hero("Pulser", "(0, 0.7f, 0)", "(0.6f, 0.9f, 0.5f, 1)", "hero->AddComponent<SpriteRenderer>();")),
+    "quests": ("Gameplay - Quests", "Guide",
+        "A quest log with one quest, and a guide whose graph holds the quest nodes.",
+        _hero("Guide", "(0, 0.5f, 0)", "(0.7f, 0.5f, 0.9f, 1)", "GameObject* qo = sc.CreateGameObject(\"Quests\"); auto* ql = qo->AddComponent<QuestLog>(); ql->drawUI = false; QuestDef qd; qd.id = \"q1\"; qd.title = \"First quest\"; ql->quests.push_back(qd);")),
+    "saving": ("Gameplay - Saving", "Courier",
+        "The courier's graph holds the save and load position nodes.",
+        _hero("Courier", "(2, 0.5f, 1)", "(0.9f, 0.9f, 0.9f, 1)")),
+    "groups": ("Gameplay - Groups of Objects", "Boss",
+        "Three crates are hidden when you press Play. The other group nodes are in the graph.",
+        _hero("Boss", "(0, 0.5f, -3)", "(0.8f, 0.3f, 0.3f, 1)") + ' for (int i = 0; i < 3; ++i) { GameObject* cr = sc.CreateGameObject("Crate" + std::to_string(i)); cr->tag = "crate"; cr->transform->SetPosition(Vec3(-2.0f + 2.0f * i, 0.5f, 1)); cr->AddComponent<MeshRenderer>()->color = Color(0.7f, 0.5f, 0.3f, 1); }'),
+    "timing": ("Gameplay - Time", "Clock",
+        "The clock's graph holds the slow motion and game speed nodes.",
+        _hero("Clock", "(0, 0.5f, 0)", "(0.5f, 0.8f, 0.9f, 1)")),
+    "input": ("Gameplay - Input", "Player",
+        "The player's graph holds the horizontal and vertical input, sprint and crouch nodes.",
+        _hero("Player", "(0, 0.5f, 0)", "(0.4f, 0.9f, 0.6f, 1)")),
+})
 
 PLAYGROUNDS = {}
 
@@ -465,6 +570,38 @@ def write_playgrounds():
         (ROOT / PG / f"gl_{name}.okayvs").write_text("\n".join(lines) + "\n")
 
 PLAYGROUND_DEMO = {
+    "animation": [
+        "node 1 OnUpdate", "pos 1 40 40", "entry OnUpdate 1",
+        "node 2 GlPulseSize", "pos 2 300 40", "default 2 0 2", "default 2 1 0.25", "exec 1 0 2",
+        "node 3 GlSwayTurn", "pos 3 560 40", "default 3 0 1.5", "default 3 1 25", "exec 2 0 3",
+    ],
+    "camera": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 GlSetCameraZoom", "pos 2 300 40", "default 2 0 1.3", "exec 1 0 2",
+        "node 3 GlShakeCamera", "pos 3 560 40", "default 3 0 0.3", "exec 2 0 3",
+    ],
+    "ui": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 GlShowNumberInText", "pos 2 300 40", "default 2 0 \"Score: \"", "default 2 1 42", "default 2 2 0", "exec 1 0 2",
+    ],
+    "audio": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 GlSetVolume", "pos 2 300 40", "default 2 0 0.5", "exec 1 0 2",
+    ],
+    "physics": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 GlSetGravityStrength", "pos 2 300 40", "default 2 0 0.3", "exec 1 0 2",
+        "node 3 GlSetBounciness", "pos 3 560 40", "default 3 0 0.7", "exec 2 0 3",
+    ],
+    "ai": [
+        "node 1 OnUpdate", "pos 1 40 40", "entry OnUpdate 1",
+        "node 2 GlGetAngleToObject", "pos 2 300 240", "default 2 0 Goal",
+        "node 3 SetVar angle", "pos 3 300 40", "exec 1 0 3", "data 3 0 2 0",
+    ],
+    "groups": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 GlHideAllWithTag", "pos 2 300 40", "default 2 0 crate", "exec 1 0 2",
+    ],
     "movement": [
         "node 1 OnUpdate", "pos 1 40 40", "entry OnUpdate 1",
         "node 2 GlMoveForward", "pos 2 300 40", "default 2 0 2", "exec 1 0 2",
@@ -497,6 +634,12 @@ def write_tests():
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/AudioSource.hpp"
+#include "okay/Components/SpriteRenderer.hpp"
+#include "okay/Components/QuestLog.hpp"
+#include "okay/Core/Prefs.hpp"
+#include "okay/Core/Time.hpp"
+#include "okay/Input/Input.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -530,7 +673,7 @@ static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + "
         else:
             lines += ["node 3 SetVar out", "exec 1 0 3", "data 3 0 2 0"]
         text = ("\\n".join(lines) + "\\n").replace('"', '\\"')
-        if n["exec"]:
+        if n["check"] is not None:
             check = n["check"]
         elif n["etype"] == "f":
             check = f'CHECK_NEAR(Var(v, "out").AsFloat(), {float(n["expect"])}f, 0.02f);'
@@ -549,6 +692,7 @@ static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + "
         for (int i = 0; i < {n["steps"]}; ++i) s.Update({n["dt"]}f);
         {check}
         if (!g_errs.empty()) {{ std::printf("  {n["type"]} reported: %s\\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }}
+        Input::FeedKeys({{}});
         g_seen.insert("{n["type"]}");
     }}''')
     move = r'''    {   // Move Item To Object: the Moved branch, then Not Enough, then Too Full.

@@ -1,0 +1,12 @@
+# Gameplay library: timing. Every node below is declared here; the first chain runs in Play.
+node 100 GlSlowMotion
+pos 100 40 520
+default 100 0 0.25
+default 100 1 2
+node 101 GlResetGameSpeed
+pos 101 300 520
+node 102 GlGetSessionTime
+pos 102 560 520
+node 103 GlIsEveryOtherInterval
+pos 103 820 520
+default 103 0 1

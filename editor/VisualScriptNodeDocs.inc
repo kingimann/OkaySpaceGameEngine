@@ -9502,6 +9502,1155 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "GlIsFacingObject";
+        d.title = "Is Facing Object";
+        d.description = "True when this object looks toward Object, within Angle degrees either side.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Facing Object's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is facing object";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Object", "Object", "An object reference, or its name. It is an Object. Unwired, this is no object.", "no object"});
+        d.pins.push_back({true, false, "Angle", "Number", "The Angle input of Is Facing Object. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Facing Object produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetAngleToObject";
+        d.title = "Get Angle to Object";
+        d.description = "How far, in degrees, this object would have to turn to look straight at Object. 0 is dead ahead, 180 is behind.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Angle to Object's Degrees output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get angle to object";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Object", "Object", "An object reference, or its name. It is an Object. Unwired, this is no object.", "no object"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Degrees", "Number", "What Get Angle to Object produces on Degrees. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsObjectBehind";
+        d.title = "Is Object Behind";
+        d.description = "True when Object is behind this object, more than 90 degrees from where it looks.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Object Behind's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is object behind";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Object", "Object", "An object reference, or its name. It is an Object. Unwired, this is no object.", "no object"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Object Behind produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsObjectHigher";
+        d.title = "Is Object Higher";
+        d.description = "True when Object is above this object by more than Margin.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Object Higher's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is object higher";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Object", "Object", "An object reference, or its name. It is an Object. Unwired, this is no object.", "no object"});
+        d.pins.push_back({true, false, "Margin", "Number", "The Margin input of Is Object Higher. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Object Higher produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetDirectionToObject";
+        d.title = "Get Direction to Object";
+        d.description = "A length-1 arrow from this object toward Object, along the world Right, Up and Forward axes.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Direction to Object's Right output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get direction to object";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Object", "Object", "An object reference, or its name. It is an Object. Unwired, this is no object.", "no object"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Right", "Number", "What Get Direction to Object produces on Right. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Up", "Number", "What Get Direction to Object produces on Up. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Forward", "Number", "What Get Direction to Object produces on Forward. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlCountObjectsWithTag";
+        d.title = "Count Objects With Tag";
+        d.description = "How many active objects carry this tag.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Count Objects With Tag's Count output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "count objects with tag";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Tag", "Text", "The Tag input of Count Objects With Tag. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsAnyTaggedInRange";
+        d.title = "Is Any Tagged Object in Range";
+        d.description = "True when an active object with this tag is within Range of this object.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Any Tagged Object in Range's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is any tagged object in range";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Tag", "Text", "The Tag input of Is Any Tagged Object in Range. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Range", "Number", "The Range input of Is Any Tagged Object in Range. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Any Tagged Object in Range produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetAlertLevel";
+        d.title = "Get Alert Level";
+        d.description = "A 0 to 1 meter that fills while Sees is true and drains while it is false. Read it once each frame.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Alert Level's Level output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get alert level";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Sees", "Bool", "The Sees input of Get Alert Level. It is a Bool. Unwired, this is false.", "false"});
+        d.pins.push_back({true, false, "Rise Per Second", "Number", "The Rise Per Second input of Get Alert Level. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Fall Per Second", "Number", "The Fall Per Second input of Get Alert Level. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Level", "Number", "What Get Alert Level produces on Level. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlPickRandomTagged";
+        d.title = "Pick Random Tagged Object";
+        d.description = "An active object chosen at random from those with this tag, or nothing when there is none.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Pick Random Tagged Object's Object output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "pick random tagged object";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Tag", "Text", "The Tag input of Pick Random Tagged Object. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({false, false, "Object", "Object", "The object that was found, or nothing. It is an Object. Wire it into an input that expects an Object.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetCameraZoom";
+        d.title = "Set Camera Zoom";
+        d.description = "2 shows things twice as close, 0.5 twice as far. Needs a Camera on the object.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Camera Zoom after an event such as On Start or On Update, and wire a value into Zoom.";
+        d.related = "";
+        d.keywords = "set camera zoom";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Camera Zoom runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Camera Zoom finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Zoom", "Number", "The Zoom input of Set Camera Zoom. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetCameraZoom";
+        d.title = "Get Camera Zoom";
+        d.description = "How zoomed in the camera is. 1 is normal.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Camera Zoom's Zoom output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get camera zoom";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Zoom", "Number", "What Get Camera Zoom produces on Zoom. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetFieldOfView";
+        d.title = "Set Field of View";
+        d.description = "How wide a perspective camera sees, in degrees from 10 to 170.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Field of View after an event such as On Start or On Update, and wire a value into Degrees.";
+        d.related = "";
+        d.keywords = "set field of view";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Field of View runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Field of View finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Degrees", "Number", "The field of view in degrees. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetFieldOfView";
+        d.title = "Get Field of View";
+        d.description = "How wide the camera sees, in degrees.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Field of View's Degrees output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get field of view";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Degrees", "Number", "What Get Field of View produces on Degrees. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlShakeCamera";
+        d.title = "Shake Camera";
+        d.description = "Rattles the camera. 0.1 is a footstep, 0.3 a hit, 0.6 an explosion.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Shake Camera after an event such as On Start or On Update, and wire a value into Strength.";
+        d.related = "";
+        d.keywords = "shake camera";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Shake Camera runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Shake Camera finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Strength", "Number", "How hard, from 0 to 1. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlTiltCamera";
+        d.title = "Tilt Camera";
+        d.description = "Rolls the camera sideways by Degrees, like a dutch angle.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Tilt Camera after an event such as On Start or On Update, and wire a value into Degrees.";
+        d.related = "";
+        d.keywords = "tilt camera";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Tilt Camera runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Tilt Camera finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Degrees", "Number", "The field of view in degrees. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlShowNumberInText";
+        d.title = "Show Number in Text";
+        d.description = "Writes a label and a number into a Text object, like Score: 12.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Show Number in Text after an event such as On Start or On Update, and wire a value into Label.";
+        d.related = "";
+        d.keywords = "show number in text";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Show Number in Text runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Show Number in Text finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Label", "Text", "The Label input of Show Number in Text. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Value", "Number", "The value being stored, sent or tested. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Decimals", "Number", "The Decimals input of Show Number in Text. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlFormatNumber";
+        d.title = "Format Number";
+        d.description = "Turns a number into text with a fixed count of decimals.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Format Number's Text output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "format number";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Value", "Number", "The value being stored, sent or tested. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Decimals", "Number", "The Decimals input of Format Number. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Text", "Text", "The text result. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlFormatClock";
+        d.title = "Format Clock";
+        d.description = "Turns seconds into a clock reading like 02:05.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Format Clock's Text output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "format clock";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Seconds", "Number", "The Seconds input of Format Clock. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Text", "Text", "The text result. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlFormatPercent";
+        d.title = "Format Percent";
+        d.description = "Turns a 0 to 1 share into text like 75%.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Format Percent's Text output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "format percent";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Portion", "Number", "The Portion input of Format Percent. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Text", "Text", "The text result. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetTextColor";
+        d.title = "Set Text Color";
+        d.description = "Colors the text. Red, Green, Blue and Opacity run from 0 to 1.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Text Color after an event such as On Start or On Update, and wire a value into Red.";
+        d.related = "";
+        d.keywords = "set text color";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Text Color runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Text Color finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Red", "Number", "The Red input of Set Text Color. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Green", "Number", "The Green input of Set Text Color. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Blue", "Number", "The Blue input of Set Text Color. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Opacity", "Number", "The Opacity input of Set Text Color. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetText";
+        d.title = "Get Text";
+        d.description = "The words a Text object is showing.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Text's Text output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get text";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Text", "Text", "The text result. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlAddLineToText";
+        d.title = "Add Line to Text";
+        d.description = "Adds a new line of words under what a Text object already shows.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Add Line to Text after an event such as On Start or On Update, and wire a value into Line.";
+        d.related = "";
+        d.keywords = "add line to text";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Add Line to Text runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Add Line to Text finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Line", "Text", "The Line input of Add Line to Text. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetTextSize";
+        d.title = "Set Text Size";
+        d.description = "Scales the text. Bigger numbers draw bigger words.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Text Size after an event such as On Start or On Update, and wire a value into Size.";
+        d.related = "";
+        d.keywords = "set text size";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Text Size runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Text Size finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Size", "Number", "The Size input of Set Text Size. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetVolume";
+        d.title = "Set Volume";
+        d.description = "How loud a sound is: 0 is silent, 1 is full.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Volume after an event such as On Start or On Update, and wire a value into Volume.";
+        d.related = "";
+        d.keywords = "set volume";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Volume runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Volume finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Volume", "Number", "The Volume input of Set Volume. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetVolume";
+        d.title = "Get Volume";
+        d.description = "Get Volume — How loud a sound is.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Volume's Volume output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get volume";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Volume", "Number", "What Get Volume produces on Volume. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetPitch";
+        d.title = "Set Pitch";
+        d.description = "Plays a sound higher (above 1) or lower (below 1), between 0.1 and 3.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Pitch after an event such as On Start or On Update, and wire a value into Pitch.";
+        d.related = "";
+        d.keywords = "set pitch";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Pitch runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Pitch finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Pitch", "Number", "The Pitch input of Set Pitch. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsSoundPlaying";
+        d.title = "Is Sound Playing";
+        d.description = "True while the object's sound is playing.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Sound Playing's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is sound playing";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Sound Playing produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlPauseSound";
+        d.title = "Pause Sound";
+        d.description = "Pauses the object's sound.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Pause Sound after an event such as On Start or On Update, and wire a value into Target.";
+        d.related = "";
+        d.keywords = "pause sound";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Pause Sound runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Pause Sound finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetSoundLooping";
+        d.title = "Set Sound Looping";
+        d.description = "A looping sound starts again each time it ends.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Sound Looping after an event such as On Start or On Update, and wire a value into Loop.";
+        d.related = "";
+        d.keywords = "set sound looping";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Sound Looping runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Sound Looping finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Loop", "Bool", "The Loop input of Set Sound Looping. It is a Bool. Unwired, this is false.", "false"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetMass";
+        d.title = "Get Mass";
+        d.description = "How heavy the Rigidbody is.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Mass's Mass output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get mass";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Mass", "Number", "What Get Mass produces on Mass. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetMass";
+        d.title = "Set Mass";
+        d.description = "How heavy the Rigidbody is. A heavy body is shoved less.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Mass after an event such as On Start or On Update, and wire a value into Mass.";
+        d.related = "";
+        d.keywords = "set mass";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Mass runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Mass finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Mass", "Number", "The Mass input of Set Mass. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetGravityStrength";
+        d.title = "Set Gravity Strength";
+        d.description = "How much gravity pulls on the Rigidbody: 1 is normal, 0 floats, below 0 rises.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Gravity Strength after an event such as On Start or On Update, and wire a value into Strength.";
+        d.related = "";
+        d.keywords = "set gravity strength";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Gravity Strength runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Gravity Strength finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Strength", "Number", "How hard, from 0 to 1. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetBounciness";
+        d.title = "Set Bounciness";
+        d.description = "How much the Rigidbody bounces back: 0 stops dead, 1 keeps all its speed.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Bounciness after an event such as On Start or On Update, and wire a value into Bounce.";
+        d.related = "";
+        d.keywords = "set bounciness";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Bounciness runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Bounciness finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Bounce", "Number", "The Bounce input of Set Bounciness. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetAirDrag";
+        d.title = "Set Air Drag";
+        d.description = "How quickly the Rigidbody loses speed on its own. 0 keeps going.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Air Drag after an event such as On Start or On Update, and wire a value into Drag.";
+        d.related = "";
+        d.keywords = "set air drag";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Air Drag runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Air Drag finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Drag", "Number", "The Drag input of Set Air Drag. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlLockRotation";
+        d.title = "Lock Rotation";
+        d.description = "On keeps the Rigidbody from tipping over or spinning. Off lets hits turn it.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Lock Rotation after an event such as On Start or On Update, and wire a value into Locked.";
+        d.related = "";
+        d.keywords = "lock rotation";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Lock Rotation runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Lock Rotation finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Locked", "Bool", "The Locked input of Lock Rotation. It is a Bool. Unwired, this is false.", "false"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSpinAtSpeed";
+        d.title = "Spin at Speed";
+        d.description = "Turns the Rigidbody around its up axis, Degrees each second. Needs Lock Rotation off.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Spin at Speed after an event such as On Start or On Update, and wire a value into Degrees.";
+        d.related = "";
+        d.keywords = "spin at speed";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Spin at Speed runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Spin at Speed finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Degrees", "Number", "The field of view in degrees. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetSpinSpeed";
+        d.title = "Get Spin Speed";
+        d.description = "How fast the Rigidbody is turning, in degrees each second.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Spin Speed's Degrees output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get spin speed";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Degrees", "Number", "What Get Spin Speed produces on Degrees. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlPulseSize";
+        d.title = "Pulse Size";
+        d.description = "Makes this object swell and shrink around the size it had. Speed is radians a second, Amount the share it grows.";
+        d.requirements = "No extra component is required. It moves this object's Transform (or Target). It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Pulse Size after an event such as On Start or On Update, and wire a value into Speed.";
+        d.related = "";
+        d.keywords = "pulse size";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Pulse Size runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Pulse Size finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Speed", "Number", "How fast to move, in units per second. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Amount", "Number", "How much to add. Negative numbers subtract. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSwayTurn";
+        d.title = "Sway Turn";
+        d.description = "Swings this object left and right around the way it faced. Speed is radians a second, Degrees how far.";
+        d.requirements = "No extra component is required. It moves this object's Transform (or Target). It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Sway Turn after an event such as On Start or On Update, and wire a value into Speed.";
+        d.related = "";
+        d.keywords = "sway turn";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Sway Turn runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Sway Turn finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Speed", "Number", "How fast to move, in units per second. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Degrees", "Number", "The field of view in degrees. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlFadeSpriteTo";
+        d.title = "Fade Sprite to";
+        d.description = "Moves a sprite's opacity toward Opacity, Per Second each second. Put it under On Every Frame.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Fade Sprite to after an event such as On Start or On Update, and wire a value into Opacity.";
+        d.related = "";
+        d.keywords = "fade sprite to";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Fade Sprite to runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Fade Sprite to finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Opacity", "Number", "The Opacity input of Fade Sprite to. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Per Second", "Number", "The Per Second input of Fade Sprite to. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetSpriteOpacity";
+        d.title = "Get Sprite Opacity";
+        d.description = "How see-through a sprite is: 1 solid, 0 gone.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Sprite Opacity's Opacity output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get sprite opacity";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Opacity", "Number", "What Get Sprite Opacity produces on Opacity. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsQuestActive";
+        d.title = "Is Quest Active";
+        d.description = "True while the quest is started and not yet finished.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Quest Active's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is quest active";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Quest", "Text", "The Quest input of Is Quest Active. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Quest Active produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsQuestCompleted";
+        d.title = "Is Quest Completed";
+        d.description = "True once the quest has been completed.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Quest Completed's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is quest completed";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Quest", "Text", "The Quest input of Is Quest Completed. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Quest Completed produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlCompleteQuest";
+        d.title = "Complete Quest";
+        d.description = "Finishes the quest and hands out its rewards.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Complete Quest after an event such as On Start or On Update, and wire a value into Quest.";
+        d.related = "";
+        d.keywords = "complete quest";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Complete Quest runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Complete Quest finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Quest", "Text", "The Quest input of Complete Quest. It is a Text. Unwired, this is empty text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlFailQuest";
+        d.title = "Fail Quest";
+        d.description = "Marks the quest as failed.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Fail Quest after an event such as On Start or On Update, and wire a value into Quest.";
+        d.related = "";
+        d.keywords = "fail quest";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Fail Quest runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Fail Quest finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Quest", "Text", "The Quest input of Fail Quest. It is a Text. Unwired, this is empty text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlResetQuest";
+        d.title = "Reset Quest";
+        d.description = "Puts the quest back to not started, with no progress.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Reset Quest after an event such as On Start or On Update, and wire a value into Quest.";
+        d.related = "";
+        d.keywords = "reset quest";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Reset Quest runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Reset Quest finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Quest", "Text", "The Quest input of Reset Quest. It is a Text. Unwired, this is empty text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlAddQuestProgress";
+        d.title = "Add Quest Progress";
+        d.description = "Counts Amount more toward a quest objective. Objectives are counted from 0.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Add Quest Progress after an event such as On Start or On Update, and wire a value into Quest.";
+        d.related = "";
+        d.keywords = "add quest progress";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Add Quest Progress runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Add Quest Progress finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Quest", "Text", "The Quest input of Add Quest Progress. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Objective", "Number", "The Objective input of Add Quest Progress. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Amount", "Number", "How much to add. Negative numbers subtract. It is a Number. Unwired, this is 0.", "0"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetQuestProgress";
+        d.title = "Get Quest Progress";
+        d.description = "How far along a quest objective is. Objectives are counted from 0.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Quest Progress's Progress output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get quest progress";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Quest", "Text", "The Quest input of Get Quest Progress. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Objective", "Number", "The Objective input of Get Quest Progress. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Progress", "Number", "What Get Quest Progress produces on Progress. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsObjectiveDone";
+        d.title = "Is Objective Done";
+        d.description = "True when that quest objective has been reached. Objectives are counted from 0.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Objective Done's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is objective done";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Quest", "Text", "The Quest input of Is Objective Done. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Objective", "Number", "The Objective input of Is Objective Done. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Objective Done produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlCountActiveQuests";
+        d.title = "Count Active Quests";
+        d.description = "How many quests are started and not finished.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Count Active Quests's Count output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "count active quests";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSavePosition";
+        d.title = "Save Position";
+        d.description = "Remembers where this object is, under a name, so Load Position can bring it back.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Save Position after an event such as On Start or On Update, and wire a value into Name.";
+        d.related = "";
+        d.keywords = "save position";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Save Position runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Save Position finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Name", "Text", "The Name input of Save Position. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlLoadPosition";
+        d.title = "Load Position";
+        d.description = "Moves this object to a position saved under that name. Runs Loaded, or Nothing Saved when there is none.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Load Position after an event such as On Start or On Update, and wire a value into Name.";
+        d.related = "";
+        d.keywords = "load position";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Load Position runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "Loaded", "Flow", "After Load Position finishes, the flow continues from here to Loaded.", ""});
+        d.pins.push_back({false, true, "Nothing Saved", "Flow", "After Load Position finishes, the flow continues from here to Nothing Saved.", ""});
+        d.pins.push_back({true, false, "Name", "Text", "The Name input of Load Position. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlHasSavedPosition";
+        d.title = "Has Saved Position";
+        d.description = "True when a position was saved under that name.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Has Saved Position's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "has saved position";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Name", "Text", "The Name input of Has Saved Position. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Has Saved Position produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlForgetSavedPosition";
+        d.title = "Forget Saved Position";
+        d.description = "Throws away the position saved under that name.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Forget Saved Position after an event such as On Start or On Update, and wire a value into Name.";
+        d.related = "";
+        d.keywords = "forget saved position";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Forget Saved Position runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Forget Saved Position finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Name", "Text", "The Name input of Forget Saved Position. It is a Text. Unwired, this is empty text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlDestroyAllWithTag";
+        d.title = "Destroy All With Tag";
+        d.description = "Removes every object that carries this tag.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Destroy All With Tag after an event such as On Start or On Update, and wire a value into Tag.";
+        d.related = "";
+        d.keywords = "destroy all with tag";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Destroy All With Tag runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Destroy All With Tag finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Tag", "Text", "The Tag input of Destroy All With Tag. It is a Text. Unwired, this is empty text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlHideAllWithTag";
+        d.title = "Hide All With Tag";
+        d.description = "Switches off every object that carries this tag.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Hide All With Tag after an event such as On Start or On Update, and wire a value into Tag.";
+        d.related = "";
+        d.keywords = "hide all with tag";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Hide All With Tag runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Hide All With Tag finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Tag", "Text", "The Tag input of Hide All With Tag. It is a Text. Unwired, this is empty text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlShowAllWithTag";
+        d.title = "Show All With Tag";
+        d.description = "Switches on every object that carries this tag.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Show All With Tag after an event such as On Start or On Update, and wire a value into Tag.";
+        d.related = "";
+        d.keywords = "show all with tag";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Show All With Tag runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Show All With Tag finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Tag", "Text", "The Tag input of Show All With Tag. It is a Text. Unwired, this is empty text.", "empty text"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSetTagOnObject";
+        d.title = "Set Tag on Object";
+        d.description = "Gives this object a tag, so other nodes can find it with Count Objects With Tag and the like.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Tag on Object after an event such as On Start or On Update, and wire a value into Tag.";
+        d.related = "";
+        d.keywords = "set tag on object";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Tag on Object runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Tag on Object finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Tag", "Text", "The Tag input of Set Tag on Object. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlSlowMotion";
+        d.title = "Slow Motion for Seconds";
+        d.description = "Holds the game at Scale speed for Seconds of real time, then returns to normal. 0 freezes it.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Slow Motion for Seconds after an event such as On Start or On Update, and wire a value into Scale.";
+        d.related = "";
+        d.keywords = "slow motion for seconds";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Slow Motion for Seconds runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Slow Motion for Seconds finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Scale", "Number", "The new size, or a multiplier. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Seconds", "Number", "The Seconds input of Slow Motion for Seconds. It is a Number. Unwired, this is 0.", "0"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlResetGameSpeed";
+        d.title = "Reset Game Speed";
+        d.description = "Puts the game back to normal speed and ends any slow motion.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Reset Game Speed on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "reset game speed";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Reset Game Speed runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Reset Game Speed finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetSessionTime";
+        d.title = "Get Session Time";
+        d.description = "Seconds of play since the game started.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Session Time's Seconds output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get session time";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Seconds", "Number", "What Get Session Time produces on Seconds. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsEveryOtherInterval";
+        d.title = "Is Every Other Interval";
+        d.description = "Flips between true and false each time Seconds pass. Handy for a blink.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Every Other Interval's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is every other interval";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Seconds", "Number", "The Seconds input of Is Every Other Interval. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Every Other Interval produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetHorizontalInput";
+        d.title = "Get Horizontal Input";
+        d.description = "-1 while left (A or the left arrow) is held, 1 while right (D) is held, 0 otherwise.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Horizontal Input's Amount output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get horizontal input";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Amount", "Number", "What Get Horizontal Input produces on Amount. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetVerticalInput";
+        d.title = "Get Vertical Input";
+        d.description = "-1 while down (S) is held, 1 while up (W) is held, 0 otherwise.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Vertical Input's Amount output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get vertical input";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Amount", "Number", "What Get Vertical Input produces on Amount. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsSprinting";
+        d.title = "Is Sprinting";
+        d.description = "True while the Shift key is held.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Sprinting's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is sprinting";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Sprinting produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsCrouching";
+        d.title = "Is Crouching";
+        d.description = "True while the Control key is held.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Crouching's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is crouching";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Crouching produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsAnyKeyHeld";
+        d.title = "Is Any Key Held";
+        d.description = "True while any key is held down.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Any Key Held's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is any key held";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Any Key Held produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "EaseCurve";
         d.title = "Ease With Curve";
         d.description = "Shapes a time (0 to 1) into an eased value. The setting is an ease by name (OutBack, out_quad) or a curve: cubic-bezier(0.4, 0, 0.2, 1), steps(4), ease-in-out. A curve may overshoot 0..1; text it does not know leaves the time as it is.";

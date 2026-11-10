@@ -1,0 +1,28 @@
+# Gameplay library: camera. Every node below is declared here; the first chain runs in Play.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 GlSetCameraZoom
+pos 2 300 40
+default 2 0 1.3
+exec 1 0 2
+node 3 GlShakeCamera
+pos 3 560 40
+default 3 0 0.3
+exec 2 0 3
+node 100 GlSetCameraZoom
+pos 100 40 520
+default 100 0 2
+node 101 GlGetCameraZoom
+pos 101 300 520
+node 102 GlSetFieldOfView
+pos 102 560 520
+default 102 0 90
+node 103 GlGetFieldOfView
+pos 103 820 520
+node 104 GlShakeCamera
+pos 104 1080 520
+default 104 0 0.4
+node 105 GlTiltCamera
+pos 105 1340 520
+default 105 0 12

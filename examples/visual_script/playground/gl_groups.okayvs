@@ -1,0 +1,20 @@
+# Gameplay library: groups. Every node below is declared here; the first chain runs in Play.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 GlHideAllWithTag
+pos 2 300 40
+default 2 0 crate
+exec 1 0 2
+node 100 GlDestroyAllWithTag
+pos 100 40 520
+default 100 0 "crate"
+node 101 GlHideAllWithTag
+pos 101 300 520
+default 101 0 "crate"
+node 102 GlShowAllWithTag
+pos 102 560 520
+default 102 0 "crate"
+node 103 GlSetTagOnObject
+pos 103 820 520
+default 103 0 "loot"

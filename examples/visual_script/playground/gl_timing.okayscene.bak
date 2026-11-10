@@ -1,0 +1,39 @@
+okayscene 3
+name "Scene"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "36e785299f3b0aa08bb9aeb0b5b50285"
+  active 1
+  parent -1
+  transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Instructions"
+  guid "0ff7ec55d431c0a9d970f25fa80e8a82"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Press Play. timing" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 2 "Floor"
+  guid "b857ac875944d39bdeb1e107fef7c58d"
+  active 1
+  parent -1
+  transform 0 -0.15 0 0 0 0 1 16 0.3 16
+  mesh "Cube" 0.18 0.2 0.24 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Clock"
+  guid "06211109a1995b81b22ec7451eff077a"
+  active 1
+  parent -1
+  transform 0 0.5 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.5 0.8 0.9 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  visualscript ""
+  visualscriptpath "gl_timing.okayvs"
+end

@@ -1,0 +1,43 @@
+# Gameplay library: ai. Every node below is declared here; the first chain runs in Play.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 GlGetAngleToObject
+pos 2 300 240
+default 2 0 Goal
+node 3 SetVar angle
+pos 3 300 40
+exec 1 0 3
+data 3 0 2 0
+node 100 GlIsFacingObject
+pos 100 40 520
+default 100 0 Goal
+default 100 1 45
+node 101 GlGetAngleToObject
+pos 101 300 520
+default 101 0 Goal
+node 102 GlIsObjectBehind
+pos 102 560 520
+default 102 0 Goal
+node 103 GlIsObjectHigher
+pos 103 820 520
+default 103 0 Goal
+default 103 1 0.5
+node 104 GlGetDirectionToObject
+pos 104 1080 520
+default 104 0 Goal
+node 105 GlCountObjectsWithTag
+pos 105 1340 520
+default 105 0 "coin"
+node 106 GlIsAnyTaggedInRange
+pos 106 40 710
+default 106 0 "enemy"
+default 106 1 4
+node 107 GlGetAlertLevel
+pos 107 300 710
+default 107 0 true
+default 107 1 1
+default 107 2 0.5
+node 108 GlPickRandomTagged
+pos 108 560 710
+default 108 0 "pick"

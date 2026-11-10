@@ -3710,6 +3710,8 @@ inline void Draw(EditorState& ed, bool* open) {
             const std::string in = join(d.dataIn), out = join(d.dataOut), ex = join(d.execOut);
             // What it does in plain words (VisualScriptNodeHelp.hpp), then how it plugs in.
             if (const char* what = VsNodeHelp(d.type)) e.desc = std::string(what) + " ";
+            if (d.level == VsLevel::Basic)
+                if (const char* ex = VsNodeExample(d.type)) e.desc += std::string("Example: ") + ex + " ";
             if (api) e.desc = api->doc + " In a script: " + api->code + ". ";
             if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc += "An event: starts a flow. ";
             else if (d.execIn) e.desc += "Runs when the flow reaches it. ";
@@ -4147,6 +4149,12 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::Spacing();
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextWrapped("%s", help);
+                ImGui::PopTextWrapPos();
+            }
+            if (const char* ex = VsNodeExample(sn->type.c_str())) {
+                ImGui::Spacing();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextWrapped("Example: %s", ex);
                 ImGui::PopTextWrapPos();
             }
             if (OpenPlayground) {

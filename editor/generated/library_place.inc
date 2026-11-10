@@ -213,3 +213,12 @@
     if (std::strcmp(type, "LbTrimEnds") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbIsSameText") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbLongerText") == 0) return VsAt("Text");
+    if (std::strcmp(type, "LbIsBlinking") == 0) return VsAt("Time");
+    if (std::strcmp(type, "LbResponseCurve") == 0) return VsAt("Math", "Curves");
+    if (std::strcmp(type, "LbWeighPick") == 0) return VsAt("Math", "Compare");
+    if (std::strcmp(type, "LbQuestStage") == 0) return VsAt("Scene", "Story");
+    if (std::strcmp(type, "LbFillBlanks") == 0) return VsAt("Text");
+    if (std::strcmp(type, "LbRunAndCheck") == 0) return VsAt("Flow");
+    if (std::strcmp(type, "LbTrySeveral") == 0) return VsAt("Flow");
+    if (std::strcmp(type, "LbRepeatUntilSuccess") == 0) return VsAt("Advanced", "Behavior");
+    if (std::strcmp(type, "LbRunInState") == 0) return VsAt("Advanced", "Behavior");

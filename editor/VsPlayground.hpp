@@ -2,6 +2,7 @@
 // Built-in Node Playground: one demo scene per high-level gameplay category.
 // The scenes live in examples/visual_script/playground. File > Examples and the
 // "Try it" button on a node's help both open one.
+#include "VisualScriptLevels.hpp"
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -52,6 +53,12 @@ inline const VsPlaygroundDemo* VsPlaygroundDemos(int* count = nullptr) {
          "A cube slides, a guide walks toward a post, and a chooser moves because that score won."},
         {"library", "Logic Library", "library.okayscene", "library.okayvs", "Marker",
          "The white cube approaches the right. The rest of the logic library is in the graph."},
+        {"logic_basics", "Logic - Basics", "logic_basics.okayscene", "logic_basics.okayvs", "Marker",
+         "The white cube moves right with Approach, then turns green once that number is positive."},
+        {"logic_mid", "Logic - Intermediate", "logic_mid.okayscene", "logic_mid.okayvs", "Marker",
+         "The white cube eases back and forth. Smooth Step shapes the move."},
+        {"logic_advanced", "Logic - Advanced", "logic_advanced.okayscene", "logic_advanced.okayvs", "Marker",
+         "The white cube springs toward the option with the highest weighted score."},
     };
     if (count) *count = (int)(sizeof(kDemos) / sizeof(kDemos[0]));
     return kDemos;
@@ -114,7 +121,12 @@ inline const char* VsPlaygroundForNode(const char* type) {
         {"AssertThis", "smart"}, {"LogOnce", "smart"}, {"DrawDebugLine", "smart"},
     };
     if (!type) return nullptr;
-    if (std::strncmp(type, "Lb", 2) == 0) return "library";
+    if (std::strncmp(type, "Lb", 2) == 0) {
+        const VsLevel lv = VsLevelForNode(type);
+        if (lv == VsLevel::Basic) return "logic_basics";
+        if (lv == VsLevel::Advanced) return "logic_advanced";
+        return "logic_mid";
+    }
     for (const Row& r : kRows) if (std::strcmp(r.type, type) == 0) return r.demo;
     return nullptr;
 }

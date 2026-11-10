@@ -21,7 +21,7 @@ static vs::VsValue Var(VisualScriptComponent* v, const char* name) { return v->G
 int main() {
     RUN_SUITE("vs_logic_library");
     Time::SetTimeScale(1);
-    const char* types[] = { "LbSmoothStep", "LbSmootherStep", "LbEaseIn", "LbEaseOut", "LbEaseInOut", "LbPowerEase", "LbBiasCurve", "LbGainCurve", "LbLogistic", "LbSampleCurve", "LbSampleBezier", "LbHermite", "LbTriangleWave", "LbSawWave", "LbSquareWave", "LbSineWave", "LbSampleNoise", "LbDeadZone", "LbSoftClamp", "LbRepeatRange", "LbFoldRange", "LbSafeReciprocal", "LbSquare", "LbCube", "LbNaturalLog", "LbRaiseE", "LbHypotenuse", "LbAngleFromPair", "LbDirectionFromAngle", "LbUpFromAngle", "LbMedianThree", "LbWeightedMean", "LbInverseSquare", "LbLinearFalloff", "LbSmoothFalloff", "LbPortionAlong", "LbRemapClamped", "LbAbsDiff", "LbPositiveRemainder", "LbNearestMultiple", "LbFloorTo", "LbCeilTo", "LbTruncZero", "LbKeepPositive", "LbKeepAtMost", "LbKeepAtLeast", "LbSpread", "LbPercentOf", "LbValueFromPercent", "LbDampToward", "LbApproach", "LbLimitRate", "LbChangeBetween", "LbSpringStep", "LbSmoothSmaller", "LbSmoothLarger", "LbExponentialDecay", "LbOneMinus", "LbSaturateNumber", "LbRoundPlaces", "LbLerpUnclamped", "LbInverseLerpUnclamped", "LbMapSigned", "LbMapBipolar", "LbStepAt", "LbIsOutside", "LbIsStrictBetween", "LbHasSameSign", "LbHasOppositeSign", "LbIsAlmostZero", "LbIsMultiple", "LbIsPositive", "LbIsNegative", "LbIsWhole", "LbSignOf", "LbFractionOf", "LbClamp11", "LbLerpClamp", "LbSmoothDampStep", "LbCircleEaseIn", "LbCircleEaseOut", "LbBounceOut", "LbExpEaseIn", "LbExpEaseOut", "LbShortestAngle", "LbApproachAngle", "LbBlendAngles", "LbWrapAngle", "LbSnapAngle", "LbFlatLength", "LbLimitFlat", "LbAheadLimited", "LbDotFlat", "LbCrossFlat", "LbIsBehindFlat", "LbIsLeftFlat", "LbIsRightFlat", "LbMidpoint", "LbMidAhead", "LbDistanceFlat", "LbIsWithinFlat", "LbClosestOnSegment", "LbDistanceToSegment", "LbIsInsideCircle", "LbIsInsideSphere", "LbVerticalGap", "LbIsAbove", "LbIsBelow", "LbOffsetAhead", "LbOffsetAcross", "LbGridCell", "LbCellCenter", "LbReflectFlat", "LbReflectAhead", "LbProjectFlat", "LbPortionFacing", "LbCountLetters", "LbCountWords", "LbHasText", "LbIsBlank", "LbReplaceText", "LbCutText", "LbFindText", "LbJoinWith", "LbRepeatText", "LbLowerText", "LbUpperText", "LbReverseText", "LbRemoveSpaces", "LbBeforeSeparator", "LbAfterSeparator", "LbIsNumberText", "LbNumberFromText", "LbTextFromNumber", "LbEqualLoose", "LbContainsLoose", "LbFirstWord", "LbLastWord", "LbEnsurePrefix", "LbEnsureSuffix", "LbClampText", "LbCountMatches", "LbPadLeft", "LbPadRight", "LbSelectLarger", "LbSelectSmaller", "LbClampRange", "LbMapRange", "LbIsNearly", "LbIsFar", "LbChooseNumber", "LbChooseText", "LbAllNumbers", "LbAnyNumber", "LbNoneNumber", "LbXorThree", "LbNorThree", "LbNandThree", "LbImplies", "LbResourcePortion", "LbIsResourceLow", "LbIsResourceFull", "LbTrySpend", "LbCouldSpend", "LbRegenStep", "LbStackMultiply", "LbDiminishing", "LbOverflow", "LbQuestPortion", "LbIsQuestDone", "LbStepsLeft", "LbScoreGap", "LbPickWorst", "LbClosestScore", "LbScoresAbove", "LbNormalizeScore", "LbHysteresis", "LbRememberPeak", "LbRememberValley", "LbRunningMean", "LbCountTrueFrames", "LbSampleHold", "LbPreviousNumber", "LbSpike", "LbPassAfter", "LbEveryCalls", "LbAccumulate", "LbSquaredDistance", "LbLerpInverse", "LbWrapPair", "LbSnapPair", "LbIsBetweenPair", "LbScaleAround", "LbPingTime", "LbLoopTime", "LbElapsedPortion", "LbTimeLeft", "LbIsTimeUp", "LbFramesToSeconds", "LbSecondsToFrames", "LbCooldownLeft", "LbIsCooldownReady", "LbPulseAt", "LbBeatNumber", "LbPhase", "LbMixThree", "LbHoldRange", "LbGreaterGap", "LbLetterAt", "LbHasPrefix", "LbHasSuffix", "LbReplaceAll", "LbTrimEnds", "LbIsSameText", "LbLongerText" };
+    const char* types[] = { "LbSmoothStep", "LbSmootherStep", "LbEaseIn", "LbEaseOut", "LbEaseInOut", "LbPowerEase", "LbBiasCurve", "LbGainCurve", "LbLogistic", "LbSampleCurve", "LbSampleBezier", "LbHermite", "LbTriangleWave", "LbSawWave", "LbSquareWave", "LbSineWave", "LbSampleNoise", "LbDeadZone", "LbSoftClamp", "LbRepeatRange", "LbFoldRange", "LbSafeReciprocal", "LbSquare", "LbCube", "LbNaturalLog", "LbRaiseE", "LbHypotenuse", "LbAngleFromPair", "LbDirectionFromAngle", "LbUpFromAngle", "LbMedianThree", "LbWeightedMean", "LbInverseSquare", "LbLinearFalloff", "LbSmoothFalloff", "LbPortionAlong", "LbRemapClamped", "LbAbsDiff", "LbPositiveRemainder", "LbNearestMultiple", "LbFloorTo", "LbCeilTo", "LbTruncZero", "LbKeepPositive", "LbKeepAtMost", "LbKeepAtLeast", "LbSpread", "LbPercentOf", "LbValueFromPercent", "LbDampToward", "LbApproach", "LbLimitRate", "LbChangeBetween", "LbSpringStep", "LbSmoothSmaller", "LbSmoothLarger", "LbExponentialDecay", "LbOneMinus", "LbSaturateNumber", "LbRoundPlaces", "LbLerpUnclamped", "LbInverseLerpUnclamped", "LbMapSigned", "LbMapBipolar", "LbStepAt", "LbIsOutside", "LbIsStrictBetween", "LbHasSameSign", "LbHasOppositeSign", "LbIsAlmostZero", "LbIsMultiple", "LbIsPositive", "LbIsNegative", "LbIsWhole", "LbSignOf", "LbFractionOf", "LbClamp11", "LbLerpClamp", "LbSmoothDampStep", "LbCircleEaseIn", "LbCircleEaseOut", "LbBounceOut", "LbExpEaseIn", "LbExpEaseOut", "LbShortestAngle", "LbApproachAngle", "LbBlendAngles", "LbWrapAngle", "LbSnapAngle", "LbFlatLength", "LbLimitFlat", "LbAheadLimited", "LbDotFlat", "LbCrossFlat", "LbIsBehindFlat", "LbIsLeftFlat", "LbIsRightFlat", "LbMidpoint", "LbMidAhead", "LbDistanceFlat", "LbIsWithinFlat", "LbClosestOnSegment", "LbDistanceToSegment", "LbIsInsideCircle", "LbIsInsideSphere", "LbVerticalGap", "LbIsAbove", "LbIsBelow", "LbOffsetAhead", "LbOffsetAcross", "LbGridCell", "LbCellCenter", "LbReflectFlat", "LbReflectAhead", "LbProjectFlat", "LbPortionFacing", "LbCountLetters", "LbCountWords", "LbHasText", "LbIsBlank", "LbReplaceText", "LbCutText", "LbFindText", "LbJoinWith", "LbRepeatText", "LbLowerText", "LbUpperText", "LbReverseText", "LbRemoveSpaces", "LbBeforeSeparator", "LbAfterSeparator", "LbIsNumberText", "LbNumberFromText", "LbTextFromNumber", "LbEqualLoose", "LbContainsLoose", "LbFirstWord", "LbLastWord", "LbEnsurePrefix", "LbEnsureSuffix", "LbClampText", "LbCountMatches", "LbPadLeft", "LbPadRight", "LbSelectLarger", "LbSelectSmaller", "LbClampRange", "LbMapRange", "LbIsNearly", "LbIsFar", "LbChooseNumber", "LbChooseText", "LbAllNumbers", "LbAnyNumber", "LbNoneNumber", "LbXorThree", "LbNorThree", "LbNandThree", "LbImplies", "LbResourcePortion", "LbIsResourceLow", "LbIsResourceFull", "LbTrySpend", "LbCouldSpend", "LbRegenStep", "LbStackMultiply", "LbDiminishing", "LbOverflow", "LbQuestPortion", "LbIsQuestDone", "LbStepsLeft", "LbScoreGap", "LbPickWorst", "LbClosestScore", "LbScoresAbove", "LbNormalizeScore", "LbHysteresis", "LbRememberPeak", "LbRememberValley", "LbRunningMean", "LbCountTrueFrames", "LbSampleHold", "LbPreviousNumber", "LbSpike", "LbPassAfter", "LbEveryCalls", "LbAccumulate", "LbSquaredDistance", "LbLerpInverse", "LbWrapPair", "LbSnapPair", "LbIsBetweenPair", "LbScaleAround", "LbPingTime", "LbLoopTime", "LbElapsedPortion", "LbTimeLeft", "LbIsTimeUp", "LbFramesToSeconds", "LbSecondsToFrames", "LbCooldownLeft", "LbIsCooldownReady", "LbPulseAt", "LbBeatNumber", "LbPhase", "LbMixThree", "LbHoldRange", "LbGreaterGap", "LbLetterAt", "LbHasPrefix", "LbHasSuffix", "LbReplaceAll", "LbTrimEnds", "LbIsSameText", "LbLongerText", "LbIsBlinking", "LbResponseCurve", "LbWeighPick", "LbQuestStage", "LbFillBlanks", "LbRunAndCheck", "LbTrySeveral", "LbRepeatUntilSuccess", "LbRunInState" };
     {
         Scene s; s.physicsEnabled = false;
         auto* v = Attach(s, "N", "node 1 OnStart\nentry OnStart 1\nnode 2 LbSmoothStep\ndefault 2 0 0.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
@@ -1450,6 +1450,41 @@ int main() {
         CHECK(Var(v, "out").AsString() == "bbb");
         g_seen.insert("LbLongerText");
     }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "N", "node 1 OnStart\nentry OnStart 1\nnode 2 LbIsBlinking\ndefault 2 0 0.2\ndefault 2 1 0.5\ndefault 2 2 0.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "out").AsBool() == true);
+        g_seen.insert("LbIsBlinking");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "N", "node 1 OnStart\nentry OnStart 1\nnode 2 LbResponseCurve\ndefault 2 0 5\ndefault 2 1 0\ndefault 2 2 10\ndefault 2 3 2\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(std::fabs(Var(v, "out").AsFloat() - 0.25f) < 0.02f);
+        g_seen.insert("LbResponseCurve");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "N", "node 1 OnStart\nentry OnStart 1\nnode 2 LbWeighPick\ndefault 2 0 1\ndefault 2 1 2\ndefault 2 2 3\ndefault 2 3 0\ndefault 2 4 1\ndefault 2 5 10\ndefault 2 6 1\ndefault 2 7 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(std::fabs(Var(v, "out").AsFloat() - 1.0f) < 0.02f);
+        g_seen.insert("LbWeighPick");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "N", "node 1 OnStart\nentry OnStart 1\nnode 2 LbQuestStage\ndefault 2 0 1\ndefault 2 1 3\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(std::fabs(Var(v, "out").AsFloat() - 0.0f) < 0.02f);
+        g_seen.insert("LbQuestStage");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "N", "node 1 OnStart\nentry OnStart 1\nnode 2 LbFillBlanks\ndefault 2 0 \"Hi {0}\"\ndefault 2 1 \"Ada\"\ndefault 2 2 \"x\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "out").AsString() == "Hi Ada");
+        g_seen.insert("LbFillBlanks");
+    }
 
     {
         Scene s; s.physicsEnabled = false;
@@ -1597,6 +1632,43 @@ int main() {
         s.Update(0.05f);
         CHECK(std::fabs(Var(v, "out").AsFloat() - 5.f) < 0.02f);
         g_seen.insert("LbAccumulate");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Check",
+            "node 1 OnStart\nentry OnStart 1\nnode 2 LbRunAndCheck\nnode 3 SucceedNow\n"
+            "node 4 SetVar hit\ndefault 4 0 true\nexec 1 0 2\nexec 2 0 3\nexec 2 1 4\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "hit").AsBool());
+        g_seen.insert("LbRunAndCheck");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Tries",
+            "node 1 OnStart\nentry OnStart 1\nnode 2 LbTrySeveral\ndefault 2 0 3\nnode 3 SucceedNow\n"
+            "node 4 SetVar hit\ndefault 4 0 true\nexec 1 0 2\nexec 2 0 3\nexec 2 1 4\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "hit").AsBool());
+        g_seen.insert("LbTrySeveral");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Until",
+            "node 1 OnStart\nentry OnStart 1\nnode 2 LbRepeatUntilSuccess\nnode 3 CheckOutcome\n"
+            "default 3 0 true\nnode 4 SetVar hit\ndefault 4 0 true\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "hit").AsBool());
+        g_seen.insert("LbRepeatUntilSuccess");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "InState",
+            "node 1 OnStart\nentry OnStart 1\nnode 2 SetState\ndefault 2 0 \"ready\"\n"
+            "node 3 LbRunInState\ndefault 3 0 \"ready\"\nnode 4 SucceedNow\n"
+            "node 5 SetVar hit\ndefault 5 0 true\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\nexec 3 1 5\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "hit").AsBool());
+        g_seen.insert("LbRunInState");
     }
 
     for (const char* t : types) {

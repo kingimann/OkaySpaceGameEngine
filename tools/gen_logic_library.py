@@ -704,6 +704,145 @@ more_logic()
 stateful()
 extra_batch()
 
+def one_node_jobs():
+    """Beginner one-step nodes, and the specialist pieces a family was missing."""
+    add("LbIsBlinking", "Is Blinking", "Time", "", "CAT_LOGIC",
+        [N("Time"), N("On Seconds"), N("Off Seconds")], [B("Result")],
+        "float on=std::fabs(n1), off=std::fabs(n2); float p=on+off;"
+        "if(p<1e-4f) out=VsValue(false); else { float x=std::fmod(n0,p); if(x<0)x+=p; out=VsValue(x<on);} ",
+        ["0.2", "0.5", "0.5"], 1, "b",
+        help_="True during On Seconds, then false during Off Seconds, then it repeats. One node for a blinking light.")
+    add("LbResponseCurve", "Response Curve", "Math", "Curves", "CAT_MATH",
+        [N("Value"), N("Low"), N("High"), N("Power")], [N("Result")],
+        "float d=n2-n1; float t=std::fabs(d)<1e-6f? 0.f : (n0-n1)/d; if(t<0)t=0; if(t>1)t=1;"
+        "float p=n3; if(p<0.01f)p=0.01f; out=VsValue(std::pow(t,p));",
+        ["5", "0", "10", "2"], 0.25,
+        help_="Maps Value from Low to High into 0 to 1, then bends it by Power. A utility score curve.")
+    add("LbWeighPick", "Weigh and Pick", "Math", "Compare", "CAT_MATH",
+        [N("First Score"), N("Second Score"), N("Third Score"), N("Fourth Score"),
+         N("First Weight"), N("Second Weight"), N("Third Weight"), N("Fourth Weight")], [N("Result")],
+        "float s[4]={n0,n1,n2,n3}; float w[4]={n4,n5,n6,n7}; int best=0; float b=s[0]*w[0];"
+        "for(int i=1;i<4;++i){ float v=s[i]*w[i]; if(v>b){ b=v; best=i; } } out=VsValue((float)best);",
+        ["1", "2", "3", "0", "1", "10", "1", "1"], 1.0,
+        help_="The index of the score times weight that wins, counting from 0. A tie keeps the earlier one.")
+    add("LbQuestStage", "Quest Stage", "Scene", "Story", "CAT_DATA",
+        [N("Done"), N("Steps")], [N("Result")],
+        "float s=std::fabs(n1); float t=s<1e-6f? 0.f : n0/s; if(t<0)t=0;"
+        "out=VsValue(t<0.34f? 0.f : (t<0.67f? 1.f : 2.f));",
+        ["1", "3"], 0.0,
+        help_="0 near the start, 1 in the middle, and 2 when the quest is almost or fully done.")
+    add("LbFillBlanks", "Fill Blanks", "Text", "", "CAT_DATA",
+        [T("Text"), T("First"), T("Second")], [T("Result")],
+        "std::string r=t0; auto rep=[&](const char* k, const std::string& v){ for(size_t p=0; (p=r.find(k,p))!=std::string::npos; ){ r.replace(p,std::strlen(k),v); p+=v.size(); } };"
+        "rep(\"{0}\", t1); rep(\"{1}\", t2); out=VsValue(r);",
+        ['"Hi {0}"', '"Ada"', '"x"'], "Hi Ada", "s",
+        help_="Replaces {0} with First and {1} with Second. One node for a sentence with two blanks.")
+    add("LbRunAndCheck", "Run and Check", "Flow", "", "CAT_FLOW", [], [],
+        "int step=Next(0); flow=-1; if(step>=0){ if(g.Run(step,ctx)==NodeGraph::RunStatus::Suspended){ g.Error(this,ctx,\"a behaviour step paused the frame\"); }"
+        "else { VsNode* n=g.Node(step); int o=n?n->outcome:0; if(o==0) flow=1; } }",
+        None, None, exec_=True, exec_outs=["Step", "Then"],
+        help_="Runs Step, then continues to Then only if that step succeeded.")
+    NODES[-1]["hand"] = True
+    add("LbTrySeveral", "Try Several Times", "Flow", "", "CAT_FLOW", [N("Tries")], [],
+        "int need=std::max(1,(int)std::lround(n0)); if(need>8) need=8; int step=Next(0); flow=-1;"
+        "for(int i=0;i<need && step>=0;++i){ if(g.Run(step,ctx)==NodeGraph::RunStatus::Suspended){ g.Error(this,ctx,\"a behaviour step paused the frame\"); break; }"
+        "VsNode* n=g.Node(step); int o=n?n->outcome:0; if(o==0){ flow=1; break; } }",
+        None, None, exec_=True, exec_outs=["Step", "Then"],
+        help_="Runs Step up to Tries times and continues to Then on the first success.")
+    NODES[-1]["hand"] = True
+    add("LbRepeatUntilSuccess", "Repeat Until Success", "Advanced", "Behavior", "CAT_FLOW", [], [],
+        "int step=Next(0); flow=-1; for(int i=0;i<8 && step>=0;++i){ if(g.Run(step,ctx)==NodeGraph::RunStatus::Suspended){ g.Error(this,ctx,\"a behaviour step paused the frame\"); break; }"
+        "VsNode* n=g.Node(step); int o=n?n->outcome:0; if(o==0){ this->outcome=0; flow=-1; break; } this->outcome=1; }",
+        None, None, exec_=True, exec_outs=["Step"],
+        help_="Runs Step up to eight times and stops when it succeeds. A wait inside the step is an error.")
+    NODES[-1]["hand"] = True
+    add("LbRunInState", "Run in State", "Advanced", "Behavior", "CAT_FLOW", [T("Name")], [],
+        "int step=Next(0); flow=-1; if(StateOf(ctx)==t0 && step>=0){ if(g.Run(step,ctx)==NodeGraph::RunStatus::Suspended){ g.Error(this,ctx,\"a behaviour step paused the frame\"); }"
+        "else flow=1; }",
+        None, None, exec_=True, exec_outs=["Step", "Then"],
+        help_="Runs Step and continues to Then only while this object is in the named state.")
+    NODES[-1]["hand"] = True
+
+one_node_jobs()
+
+# Explicit levels. Anything not listed stays Intermediate. Each family below has all three.
+BASIC_TYPES = {
+    "LbEaseIn", "LbEaseOut", "LbEaseInOut", "LbApproach", "LbLerpClamp", "LbPortionAlong",
+    "LbSquare", "LbKeepPositive", "LbKeepAtMost", "LbKeepAtLeast", "LbPercentOf", "LbValueFromPercent",
+    "LbAbsDiff", "LbSelectLarger", "LbSelectSmaller", "LbClampRange", "LbSignOf", "LbChangeBetween", "LbOneMinus",
+    "LbIsPositive", "LbIsNegative", "LbIsAlmostZero", "LbIsNearly", "LbStepAt", "LbIsBetweenPair",
+    "LbWrapAngle", "LbDirectionFromAngle", "LbUpFromAngle",
+    "LbFlatLength", "LbDistanceFlat", "LbMidpoint", "LbMidAhead",
+    "LbIsWithinFlat", "LbIsInsideCircle", "LbIsAbove", "LbIsBelow",
+    "LbHasText", "LbIsBlank", "LbJoinWith", "LbLowerText", "LbUpperText", "LbIsSameText", "LbCountLetters",
+    "LbFirstWord", "LbChooseText",
+    "LbTimeLeft", "LbIsTimeUp", "LbElapsedPortion", "LbIsBlinking",
+    "LbIsCooldownReady", "LbCooldownLeft", "LbPreviousNumber",
+    "LbIsResourceLow", "LbIsResourceFull", "LbCouldSpend", "LbResourcePortion",
+    "LbIsQuestDone", "LbStepsLeft",
+    "LbPassAfter", "LbRunAndCheck",
+}
+ADVANCED_TYPES = {
+    "LbBiasCurve", "LbGainCurve", "LbLogistic", "LbHermite", "LbSampleBezier", "LbSpringStep",
+    "LbSampleNoise", "LbBounceOut", "LbSmoothDampStep", "LbResponseCurve", "LbCircleEaseIn", "LbCircleEaseOut",
+    "LbExpEaseIn", "LbExpEaseOut",
+    "LbNaturalLog", "LbRaiseE", "LbSoftClamp", "LbWeightedMean", "LbMedianThree", "LbInverseSquare",
+    "LbSmoothSmaller", "LbSmoothLarger", "LbRememberPeak", "LbRememberValley", "LbRunningMean", "LbAccumulate",
+    "LbImplies", "LbXorThree", "LbNandThree", "LbNorThree", "LbScoreGap", "LbPickWorst", "LbWeighPick", "LbClosestScore",
+    "LbShortestAngle", "LbSnapAngle",
+    "LbClosestOnSegment", "LbDistanceToSegment", "LbReflectFlat", "LbReflectAhead", "LbProjectFlat",
+    "LbPortionFacing", "LbIsInsideSphere",
+    "LbReplaceAll", "LbPadLeft", "LbPadRight", "LbCountMatches", "LbFillBlanks", "LbEnsurePrefix", "LbEnsureSuffix",
+    "LbPhase", "LbPulseAt",
+    "LbSpike", "LbHysteresis",
+    "LbStackMultiply", "LbDiminishing",
+    "LbQuestStage",
+    "LbRepeatUntilSuccess", "LbRunInState",
+}
+EARLIER = [
+    ("WaitUntil", "Basic"), ("BecameTrue", "Basic"), ("BecameFalse", "Basic"),
+    ("HeldLong", "Basic"), ("Stopwatch", "Basic"), ("LogOnce", "Basic"),
+    ("WaitWhile", "Intermediate"), ("DoWhile", "Intermediate"), ("ForStep", "Intermediate"),
+    ("StepThrough", "Intermediate"), ("CountUntil", "Intermediate"), ("BranchInOrder", "Intermediate"),
+    ("WaitLimit", "Intermediate"), ("EveryWhile", "Intermediate"), ("HappenedNear", "Intermediate"),
+    ("BlendTime", "Intermediate"), ("InCone", "Intermediate"), ("NearestObject", "Intermediate"),
+    ("FarthestObject", "Intermediate"), ("WhenStateBecomes", "Intermediate"), ("WhenStateLeaves", "Intermediate"),
+    ("WhenChanged", "Intermediate"), ("DoUnless", "Intermediate"), ("RememberValue", "Intermediate"),
+    ("RecallValue", "Intermediate"), ("HealthEmpty", "Intermediate"), ("HealthFull", "Intermediate"),
+    ("AdvanceObjective", "Intermediate"), ("AssertThis", "Intermediate"), ("ShuffleBag", "Intermediate"),
+    ("WeightedBranch", "Advanced"), ("WaitSteady", "Advanced"), ("ChanceEachSecond", "Advanced"),
+    ("LineOfSight", "Advanced"), ("SortByDistance", "Advanced"), ("AddBuff", "Advanced"),
+    ("DrawDebugLine", "Advanced"),
+]
+
+def apply_levels():
+    for n in NODES:
+        if n["type"] in BASIC_TYPES: n["level"] = "Basic"
+        elif n["type"] in ADVANCED_TYPES: n["level"] = "Advanced"
+        else: n["level"] = "Intermediate"
+    # Family = topic, except the behaviour nodes, which are one family across Flow and Advanced.
+    behaviour = {"LbRunAndCheck", "LbTrySeveral", "LbRepeatUntilSuccess", "LbRunInState"}
+    groups = {}
+    for n in NODES:
+        fam = "Behaviour" if n["type"] in behaviour else (n["topic"] + ("/" + n["sub"] if n["sub"] else ""))
+        groups.setdefault(fam, set()).add(n["level"])
+    groups.setdefault("Behaviour", set()).add("Advanced")  # Try First and the other tree nodes
+    groups.setdefault("Flow", set()).update({"Basic", "Intermediate", "Advanced"})  # earlier flow nodes
+    groups.setdefault("Flow/Timing", set()).update({"Basic", "Intermediate"})
+    need = ["Math", "Math/Curves", "Math/Compare", "Math/Angles", "Math/Vectors",
+            "Physics/Queries", "Text", "Time", "Flow", "Flow/Timing",
+            "Objects/Survival", "Scene/Story", "Behaviour"]
+    for fam in need:
+        have = groups.get(fam, set())
+        missing = {"Basic", "Intermediate", "Advanced"} - have
+        if missing:
+            raise SystemExit(f"family {fam} missing {sorted(missing)} have {sorted(have)}")
+    # Help is one sentence.
+    for n in NODES:
+        h = n["help"]
+        if "\n" in h or len(h) > 180:
+            raise SystemExit(f"help not one line: {n['type']} ({len(h)})")
+
 def lint_title(title, kind):
     small = {"a","and","at","by","for","in","is","of","on","or","the","to","up"}
     banned = {"anim","api","bool","dt","euler","float","fov","fps","gameobject","id","idx","ik","int","max","min","nav","num","obj","pos","prefab","old","quat","rad","rigidbody","rot","rpc","string","transform","ui","var","vec","vec3"}
@@ -731,6 +870,7 @@ def lint_title(title, kind):
     return ""
 
 def main():
+    apply_levels()
     # Fix question kinds: titles starting with Is/Has are questions.
     for n in NODES:
         if n["title"].startswith("Is ") or n["title"].startswith("Has ") or n["title"].startswith("Are ") or n["title"].startswith("Does "):
@@ -766,6 +906,8 @@ def main():
     header = f'''#pragma once
 // Generated by tools/gen_logic_library.py. {len(NODES)} distinct logic nodes.
 #include "okay/VisualScript/Nodes.hpp"
+#include "okay/VisualScript/NodesLogicRound.hpp"
+#include <cstring>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -846,11 +988,14 @@ inline std::unique_ptr<VsNode> MakeLibraryNode(const std::string& type) {{
     (ROOT/"editor/generated/library_names.inc").write_text("\n".join(names)+"\n")
     (ROOT/"editor/generated/library_help.inc").write_text("\n".join(help_lines)+"\n")
     (ROOT/"editor/generated/library_place.inc").write_text("\n".join(places)+"\n")
+    level_rows = [f'    {{"{n["type"]}", VsLevel::{n["level"]}}},' for n in NODES]
+    level_rows += [f'    {{"{t}", VsLevel::{lv}}},' for t, lv in EARLIER]
+    (ROOT/"editor/generated/library_levels.inc").write_text("\n".join(level_rows)+"\n")
 
     # behaviour test
     tests=[]
     for n in NODES:
-        if n.get("state"):
+        if n.get("state") or n.get("hand"):
             continue
         if n["expect"] is None:
             continue
@@ -1024,6 +1169,43 @@ inline std::unique_ptr<VsNode> MakeLibraryNode(const std::string& type) {{
         s.Update(0.05f);
         CHECK(std::fabs(Var(v, "out").AsFloat() - 5.f) < 0.02f);
         g_seen.insert("LbAccumulate");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Check",
+            "node 1 OnStart\nentry OnStart 1\nnode 2 LbRunAndCheck\nnode 3 SucceedNow\n"
+            "node 4 SetVar hit\ndefault 4 0 true\nexec 1 0 2\nexec 2 0 3\nexec 2 1 4\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "hit").AsBool());
+        g_seen.insert("LbRunAndCheck");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Tries",
+            "node 1 OnStart\nentry OnStart 1\nnode 2 LbTrySeveral\ndefault 2 0 3\nnode 3 SucceedNow\n"
+            "node 4 SetVar hit\ndefault 4 0 true\nexec 1 0 2\nexec 2 0 3\nexec 2 1 4\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "hit").AsBool());
+        g_seen.insert("LbTrySeveral");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "Until",
+            "node 1 OnStart\nentry OnStart 1\nnode 2 LbRepeatUntilSuccess\nnode 3 CheckOutcome\n"
+            "default 3 0 true\nnode 4 SetVar hit\ndefault 4 0 true\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "hit").AsBool());
+        g_seen.insert("LbRepeatUntilSuccess");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        auto* v = Attach(s, "InState",
+            "node 1 OnStart\nentry OnStart 1\nnode 2 SetState\ndefault 2 0 \"ready\"\n"
+            "node 3 LbRunInState\ndefault 3 0 \"ready\"\nnode 4 SucceedNow\n"
+            "node 5 SetVar hit\ndefault 5 0 true\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\nexec 3 1 5\n");
+        s.Start(); s.Update(0.05f);
+        CHECK(Var(v, "hit").AsBool());
+        g_seen.insert("LbRunInState");
     }
 '''
     types = ", ".join(f'"{n["type"]}"' for n in NODES)

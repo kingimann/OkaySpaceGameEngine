@@ -126,6 +126,12 @@ public:
     /// and the scene is left unsaved, so the real file is not overwritten.
     bool LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
+    /// The open scene's file was renamed or moved: keep editing it under the new path.
+    void FollowMovedFile(const std::string& newPath) { m_path = newPath; }
+    /// An asset the scene uses was renamed or moved: pass the scene's text (live scene, undo and redo history
+    /// and the saved copy) through `rewrite`. A scene that had no unsaved changes still has none. Returns
+    /// true when the live scene changed.
+    bool RewriteAssetPaths(const std::function<std::string(const std::string&)>& rewrite);
 
     // ---- Unsaved changes --------------------------------------------------------
     /// The scene as it is now counts as saved: clears `dirty` and remembers what the scene looks like.

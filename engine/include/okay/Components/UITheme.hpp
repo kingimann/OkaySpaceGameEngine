@@ -1,7 +1,8 @@
 #pragma once
 // A saved skin for the runtime UI kit (grok/ui-theme).
 //
-// Four built-in looks (Dark, Light, Sci-fi, Fantasy) plus a custom palette.
+// Twelve built-in looks (Dark, Light, Sci-fi, Fantasy, Modern Flat, Cartoon, Retro Pixel,
+// Minimal, Neon, Glass, Military, Horror) plus a custom palette.
 // Apply() bakes colors, a gradient, per-corner radius, border, soft shadow,
 // outer glow, opacity, and text outline onto the widgets under this object.
 // It does not move them, and it does not run unless you ask (applyOnStart is
@@ -26,19 +27,31 @@
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UISlotGrid.hpp"
+#include "okay/Components/UIStepper.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/UI/UIShape.hpp"
 #include <string>
+#include <vector>
 
 namespace okay {
 
 class UITheme final : public Behaviour {
 public:
-    enum class Preset { Custom = 0, Dark = 1, Light = 2, SciFi = 3, Fantasy = 4 };
+    /// New presets are appended: the number saved in a scene never changes meaning.
+    enum class Preset { Custom = 0, Dark = 1, Light = 2, SciFi = 3, Fantasy = 4,
+                        ModernFlat = 5, Cartoon = 6, RetroPixel = 7, Minimal = 8,
+                        Neon = 9, Glass = 10, Military = 11, Horror = 12 };
+    static constexpr int kPresetCount = 13;   // including Custom
+
+    /// How a widget stands out: the same theme, a different role.
+    enum class Variant { Default = 0, Primary = 1, Secondary = 2, Danger = 3, Ghost = 4, Outline = 5, Pill = 6 };
+    static constexpr int kVariantCount = 7;
 
     std::string themeName = "Dark";
     /// Bake this skin when play starts. Off by default so a theme dropped into
@@ -78,6 +91,10 @@ public:
     float textPixelSize = 2.0f;
     float transitionSpeed = 12.0f;
     float hoverScale = 1.04f;
+    /// Optional font (a .ttf / .otf path) put on every button and text the theme touches. Empty = leave them.
+    std::string fontPath;
+    /// Apply to every widget in the scene instead of only the ones under this object.
+    bool  global = false;
 
     void Start() override {
         if (applyOnStart) Apply();
@@ -91,6 +108,40 @@ public:
         else if (which == (int)Preset::SciFi)   SciFiPalette();
         else if (which == (int)Preset::Fantasy) FantasyPalette();
         else if (which == (int)Preset::Dark)    DarkPalette();
+        else if (which == (int)Preset::ModernFlat) ModernFlatPalette();
+        else if (which == (int)Preset::Cartoon)    CartoonPalette();
+        else if (which == (int)Preset::RetroPixel) RetroPixelPalette();
+        else if (which == (int)Preset::Minimal)    MinimalPalette();
+        else if (which == (int)Preset::Neon)       NeonPalette();
+        else if (which == (int)Preset::Glass)      GlassPalette();
+        else if (which == (int)Preset::Military)   MilitaryPalette();
+        else if (which == (int)Preset::Horror)     HorrorPalette();
+    }
+
+    /// Preset by its name ("Neon", "sci-fi", "Retro Pixel"...; case and spaces do not matter).
+    /// Returns -1 when no preset has that name.
+    static int PresetFromName(const std::string& name) {
+        const std::string key = Squash(name);
+        for (int i = 0; i < kPresetCount; ++i)
+            if (Squash(PresetName(i)) == key) return i;
+        return -1;
+    }
+    static const char* VariantName(int v) {
+        switch (v) {
+            case (int)Variant::Primary:   return "Primary";
+            case (int)Variant::Secondary: return "Secondary";
+            case (int)Variant::Danger:    return "Danger";
+            case (int)Variant::Ghost:     return "Ghost";
+            case (int)Variant::Outline:   return "Outline";
+            case (int)Variant::Pill:      return "Pill";
+            default:                      return "Default";
+        }
+    }
+    static int VariantFromName(const std::string& name) {
+        const std::string key = Squash(name);
+        for (int i = 0; i < kVariantCount; ++i)
+            if (Squash(VariantName(i)) == key) return i;
+        return -1;
     }
 
     static const char* PresetName(int which) {
@@ -99,13 +150,32 @@ public:
             case (int)Preset::SciFi:   return "Sci-fi";
             case (int)Preset::Fantasy: return "Fantasy";
             case (int)Preset::Custom:  return "Custom";
+            case (int)Preset::ModernFlat: return "Modern Flat";
+            case (int)Preset::Cartoon:    return "Cartoon";
+            case (int)Preset::RetroPixel: return "Retro Pixel";
+            case (int)Preset::Minimal:    return "Minimal";
+            case (int)Preset::Neon:       return "Neon";
+            case (int)Preset::Glass:      return "Glass";
+            case (int)Preset::Military:   return "Military";
+            case (int)Preset::Horror:     return "Horror";
             default:                   return "Dark";
         }
     }
 
     void Apply() {
-        if (gameObject) ApplyTo(gameObject);
+        if (!gameObject) return;
+        if (global && gameObject->scene()) ApplyToScene(*gameObject->scene());
+        else ApplyTo(gameObject);
     }
+
+    /// Bake onto every object in the scene (UI widgets only change; nothing else is touched).
+    void ApplyToScene(Scene& scene) const {
+        for (const auto& go : scene.Objects()) ApplyOne(go.get());
+    }
+
+    /// Style one widget as `v`: a role (Primary, Danger, Ghost...) drawn from this theme's colours.
+    /// Buttons, panels, progress bars, sliders, toggles and text understand it. Default does nothing.
+    void ApplyVariant(GameObject* go, Variant v) const;
 
     /// Bake onto `root` and its descendants. Objects named "Swatch…" keep the
     /// fill they were given (the hover / pressed / disabled chips).
@@ -235,6 +305,101 @@ private:
         transitionSpeed = 10.0f; hoverScale = 1.04f; fontScale = 2.0f;
     }
 
+    // ---- Presets added with the 12-look set. Colours only; the shape of each look is in the numbers. ----
+    void SetLook(Color pn, Color pb, Color ac, Color tx, Color mu, Color bt, Color bh, Color bp, Color btx,
+                 Color dis, Color dg, Color ok, Color bd, Color sh, Color gl) {
+        panel = pn; panelBottom = pb; accent = ac; text = tx; muted = mu; button = bt; buttonHover = bh;
+        buttonPressed = bp; buttonText = btx; disabled = dis; danger = dg; success = ok; border = bd;
+        shadowCol = sh; glowColor = gl;
+    }
+    void SetShape(float radius, int mask, float borderW, bool grad, bool sh, float soft, Vec2 off, float gl,
+                  bool sheenOn, float trans, float hscale) {
+        cornerRadius = radius; cornerMask = mask; borderWidth = borderW;
+        gradient = grad; gradientDir = (int)UIPanel::GradientDir::Vertical;
+        shadow = sh; shadowSoftness = soft; shadowOffset = off; glow = gl; sheen = sheenOn; opacity = 1.0f;
+        transitionSpeed = trans; hoverScale = hscale; fontScale = 2.0f;
+    }
+    using C = Color;
+    void ModernFlatPalette() {
+        SetLook(C::FromBytes(36, 40, 52, 255), C::FromBytes(36, 40, 52, 255), C::FromBytes(79, 140, 255),
+                C::FromBytes(236, 240, 246), C::FromBytes(145, 153, 170), C::FromBytes(79, 140, 255),
+                C::FromBytes(108, 162, 255), C::FromBytes(56, 112, 224), C::White, C::FromBytes(60, 66, 82),
+                C::FromBytes(239, 83, 80), C::FromBytes(76, 201, 140), C::FromBytes(255, 255, 255, 20),
+                C::FromBytes(0, 0, 0, 0), C::FromBytes(79, 140, 255, 0));
+        SetShape(8.0f, UICornerAll, 1.0f, false, false, 0.0f, {0.0f, 0.0f}, 0.0f, false, 14.0f, 1.0f);
+    }
+    void CartoonPalette() {
+        SetLook(C::FromBytes(255, 244, 214, 255), C::FromBytes(255, 222, 150, 255), C::FromBytes(255, 107, 53),
+                C::FromBytes(60, 36, 20), C::FromBytes(140, 100, 60), C::FromBytes(255, 107, 53),
+                C::FromBytes(255, 142, 86), C::FromBytes(214, 80, 30), C::White, C::FromBytes(200, 184, 150),
+                C::FromBytes(230, 50, 70), C::FromBytes(80, 190, 70), C::FromBytes(60, 36, 20, 255),
+                C::FromBytes(60, 36, 20, 255), C::FromBytes(255, 255, 255, 0));
+        SetShape(22.0f, UICornerAll, 3.0f, true, true, 0.0f, {0.0f, 6.0f}, 0.0f, true, 16.0f, 1.08f);
+    }
+    void RetroPixelPalette() {
+        SetLook(C::FromBytes(24, 16, 40, 255), C::FromBytes(24, 16, 40, 255), C::FromBytes(255, 204, 0),
+                C::FromBytes(240, 240, 200), C::FromBytes(150, 150, 120), C::FromBytes(60, 60, 140),
+                C::FromBytes(90, 90, 200), C::FromBytes(30, 30, 90), C::White, C::FromBytes(50, 50, 50),
+                C::FromBytes(255, 60, 60), C::FromBytes(60, 255, 100), C::FromBytes(255, 255, 255, 255),
+                C::FromBytes(0, 0, 0, 255), C::FromBytes(255, 204, 0, 0));
+        SetShape(0.0f, UICornerAll, 2.0f, false, true, 0.0f, {4.0f, 4.0f}, 0.0f, false, 0.0f, 1.0f);
+    }
+    void MinimalPalette() {
+        SetLook(C::FromBytes(250, 250, 250, 255), C::FromBytes(250, 250, 250, 255), C::FromBytes(24, 24, 24),
+                C::FromBytes(24, 24, 24), C::FromBytes(130, 130, 130), C::FromBytes(24, 24, 24),
+                C::FromBytes(64, 64, 64), C::FromBytes(0, 0, 0), C::White, C::FromBytes(214, 214, 214),
+                C::FromBytes(200, 40, 40), C::FromBytes(40, 150, 80), C::FromBytes(0, 0, 0, 40),
+                C::FromBytes(0, 0, 0, 0), C::FromBytes(0, 0, 0, 0));
+        SetShape(4.0f, UICornerAll, 1.0f, false, false, 0.0f, {0.0f, 0.0f}, 0.0f, false, 14.0f, 1.0f);
+    }
+    void NeonPalette() {
+        SetLook(C::FromBytes(10, 6, 24, 240), C::FromBytes(22, 6, 42, 240), C::FromBytes(255, 40, 200),
+                C::FromBytes(240, 235, 255), C::FromBytes(150, 120, 200), C::FromBytes(20, 10, 40),
+                C::FromBytes(60, 20, 90), C::FromBytes(10, 4, 24), C::FromBytes(0, 255, 240),
+                C::FromBytes(30, 20, 50), C::FromBytes(255, 60, 90), C::FromBytes(60, 255, 160),
+                C::FromBytes(255, 40, 200, 230), C::FromBytes(255, 40, 200, 120), C::FromBytes(0, 255, 240, 200));
+        SetShape(10.0f, UICornerAll, 2.0f, true, true, 22.0f, {0.0f, 0.0f}, 2.0f, false, 16.0f, 1.04f);
+    }
+    void GlassPalette() {
+        SetLook(C::FromBytes(255, 255, 255, 46), C::FromBytes(255, 255, 255, 18), C::FromBytes(140, 200, 255),
+                C::White, C::FromBytes(225, 232, 245, 210), C::FromBytes(255, 255, 255, 56),
+                C::FromBytes(255, 255, 255, 96), C::FromBytes(255, 255, 255, 30), C::White,
+                C::FromBytes(255, 255, 255, 20), C::FromBytes(255, 120, 120), C::FromBytes(120, 240, 190),
+                C::FromBytes(255, 255, 255, 120), C::FromBytes(0, 0, 0, 70), C::FromBytes(255, 255, 255, 0));
+        SetShape(20.0f, UICornerAll, 1.0f, true, true, 24.0f, {0.0f, 12.0f}, 0.0f, true, 14.0f, 1.02f);
+    }
+    void MilitaryPalette() {
+        SetLook(C::FromBytes(52, 60, 42, 250), C::FromBytes(36, 42, 30, 250), C::FromBytes(200, 170, 60),
+                C::FromBytes(222, 224, 200), C::FromBytes(150, 158, 126), C::FromBytes(84, 96, 64),
+                C::FromBytes(110, 124, 82), C::FromBytes(60, 70, 44), C::FromBytes(236, 236, 210),
+                C::FromBytes(60, 64, 52), C::FromBytes(176, 50, 40), C::FromBytes(110, 160, 60),
+                C::FromBytes(20, 24, 16, 255), C::FromBytes(0, 0, 0, 140), C::FromBytes(200, 170, 60, 0));
+        SetShape(2.0f, UICornerAll, 2.0f, true, true, 6.0f, {0.0f, 3.0f}, 0.0f, false, 12.0f, 1.0f);
+    }
+    void HorrorPalette() {
+        SetLook(C::FromBytes(16, 8, 8, 245), C::FromBytes(6, 2, 2, 245), C::FromBytes(170, 20, 20),
+                C::FromBytes(210, 196, 184), C::FromBytes(120, 96, 88), C::FromBytes(60, 12, 12),
+                C::FromBytes(110, 20, 20), C::FromBytes(30, 6, 6), C::FromBytes(230, 210, 200),
+                C::FromBytes(34, 24, 24), C::FromBytes(200, 20, 20), C::FromBytes(90, 130, 70),
+                C::FromBytes(110, 20, 20, 220), C::FromBytes(140, 0, 0, 140), C::FromBytes(170, 20, 20, 120));
+        SetShape(3.0f, UICornerAll, 1.0f, true, true, 20.0f, {0.0f, 0.0f}, 1.0f, false, 8.0f, 1.0f);
+    }
+
+    static std::string Squash(const std::string& s) {
+        std::string out;
+        for (char c : s)
+            if (c != ' ' && c != '-' && c != '_') out.push_back((char)((c >= 'A' && c <= 'Z') ? c + 32 : c));
+        return out;
+    }
+    static Color Mix(Color a, Color b, float t) {
+        return Color(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t);
+    }
+    /// White or near-black, whichever reads better on `bg`.
+    static Color Ink(Color bg) {
+        const float lum = 0.299f * bg.r + 0.587f * bg.g + 0.114f * bg.b;
+        return lum > 0.58f ? Color::FromBytes(20, 22, 28) : Color::White;
+    }
+
     void ApplyOne(GameObject* go) const {
         if (!go || KeepFill(go)) {
             if (go) StyleText(go);
@@ -282,6 +447,16 @@ private:
             b->fontScale = fontScale;
             b->transitionSpeed = transitionSpeed;
             b->hoverScale = hoverScale;
+            // The buttons of a slot grid sit on the grid's own (themed) slot colours, not the button colour.
+            if (go->transform && go->transform->Parent() && go->transform->Parent()->gameObject &&
+                go->transform->Parent()->gameObject->GetComponent<UISlotGrid>()) {
+                b->textColor = text; b->hoverTextColor = text;
+            }
+        }
+        if (auto* stp = go->GetComponent<UIStepper>()) {
+            stp->background = Mix(panel, text, 0.10f); stp->background.a = 1.0f;
+            stp->button = accent;
+            stp->textColor = text;
         }
         if (auto* sl = go->GetComponent<UISlider>()) {
             sl->background = Mul(panel, 0.55f); sl->background.a = 1.0f;
@@ -308,7 +483,7 @@ private:
             bar->textColor = text;
             bar->shape = UIShape::Pill;
             bar->cornerRadius = cornerRadius;
-            bar->showPercent = true;
+            bar->showPercent = bar->size.y >= 14.0f;   // a thin bar has no room for text
         }
         if (auto* rad = go->GetComponent<UIRadialProgress>()) {
             rad->background = Mul(panel, 0.5f); rad->background.a = 1.0f;
@@ -338,7 +513,7 @@ private:
             tabs->background = Mul(panel, 0.78f);
             tabs->selected = accent;
             tabs->textColor = muted;
-            tabs->selectedTextColor = buttonText;
+            tabs->selectedTextColor = Ink(accent);   // readable on the accent, whatever the look
             tabs->hoverColor = Color(1.0f, 1.0f, 1.0f, 0.14f);
             tabs->cornerRadius = cornerRadius * 0.55f;
         }
@@ -355,6 +530,11 @@ private:
             tip->textColor = text;
             tip->borderColor = border;
         }
+        if (auto* sg = go->GetComponent<UISlotGrid>()) {
+            sg->color = Mix(panel, text, 0.12f); sg->color.a = 1.0f;
+            sg->hoverColor = Mix(panel, text, 0.22f); sg->hoverColor.a = 1.0f;
+            sg->selectedColor = accent;
+        }
         if (auto* map = go->GetComponent<Minimap>()) {
             map->background = WithAlpha(panel, 0.92f);
             map->border = accent;
@@ -366,6 +546,12 @@ private:
             ch->circleColor = accent;
         }
         StyleText(go);
+        if (auto* sv = go->GetComponent<UIStyleVariant>())
+            if (sv->variant > 0 && sv->variant < kVariantCount) ApplyVariant(go, (Variant)sv->variant);
+        if (!fontPath.empty()) {
+            if (auto* b2 = go->GetComponent<UIButton>()) b2->fontPath = fontPath;
+            if (auto* t2 = go->GetComponent<TextRenderer>()) if (t2->screenSpace) t2->fontPath = fontPath;
+        }
     }
 
     void StyleText(GameObject* go) const {
@@ -382,5 +568,84 @@ private:
         if (tr->pixelSize > 0.0f && tr->pixelSize < 0.5f) tr->pixelSize = textPixelSize;
     }
 };
+
+/// Theme assets (.okaytheme): one look in its own small text file, shareable between scenes and
+/// projects. Loading keeps any field the file does not mention, and skips fields it cannot read.
+std::string UIThemeToText(const UITheme& theme);
+bool UIThemeFromText(UITheme& theme, const std::string& text, std::string* error = nullptr);
+bool SaveUIThemeAsset(const UITheme& theme, const std::string& path, std::string* error = nullptr);
+bool LoadUIThemeAsset(UITheme& theme, const std::string& path, std::string* error = nullptr);
+
+inline void UITheme::ApplyVariant(GameObject* go, Variant v) const {
+    if (!go || v == Variant::Default) return;
+    const Color clear(0.0f, 0.0f, 0.0f, 0.0f);
+    // The role colour: what this variant is "about".
+    Color role = accent;
+    if (v == Variant::Danger) role = danger;
+    else if (v == Variant::Secondary) role = Mix(panel, text, 0.16f);
+    role.a = 1.0f;
+    if (auto* b = go->GetComponent<UIButton>()) {
+        switch (v) {
+            case Variant::Primary: case Variant::Danger: case Variant::Secondary: {
+                const Color ink = v == Variant::Secondary ? text : Ink(role);
+                b->color = role;
+                b->hoverColor = Mix(role, Color::White, 0.18f);
+                b->pressedColor = Mix(role, Color(0, 0, 0, 1), 0.28f);
+                b->textColor = ink; b->hoverTextColor = ink;
+                b->borderWidth = v == Variant::Secondary ? 1.0f : 0.0f;
+                break;
+            }
+            case Variant::Ghost: case Variant::Outline: {
+                b->color = clear;
+                b->hoverColor = WithAlpha(accent, 0.16f);
+                b->pressedColor = WithAlpha(accent, 0.30f);
+                b->textColor = accent; b->hoverTextColor = accent;
+                b->borderWidth = v == Variant::Outline ? (borderWidth > 2.0f ? borderWidth : 2.0f) : 0.0f;
+                b->borderColor = accent;
+                b->shadow = false;
+                break;
+            }
+            case Variant::Pill:
+                b->shape = UIShape::Pill;
+                b->cornerRadius = b->size.y * 0.5f;
+                break;
+            default: break;
+        }
+    }
+    if (auto* p = go->GetComponent<UIPanel>()) {
+        switch (v) {
+            case Variant::Primary: case Variant::Danger:
+                p->color = role; p->useGradient = false; p->borderWidth = 0.0f; break;
+            case Variant::Secondary:
+                p->color = Mix(panel, text, 0.10f); p->useGradient = false; break;
+            case Variant::Ghost:
+                p->color = clear; p->useGradient = false; p->borderWidth = 0.0f; p->shadow = false; p->topHighlight = false; break;
+            case Variant::Outline:
+                p->color = clear; p->useGradient = false; p->shadow = false; p->topHighlight = false;
+                p->borderWidth = borderWidth > 2.0f ? borderWidth : 2.0f; p->borderColor = accent; break;
+            case Variant::Pill:
+                p->shape = UIShape::Pill; p->cornerRadius = p->size.y * 0.5f; break;
+            default: break;
+        }
+    }
+    if (auto* bar = go->GetComponent<UIProgressBar>()) {
+        if (v == Variant::Primary || v == Variant::Danger || v == Variant::Secondary) {
+            bar->fill = role; bar->fillEnd = role; bar->gradientFill = false;
+        } else if (v == Variant::Pill) {
+            bar->shape = UIShape::Pill; bar->cornerRadius = bar->size.y * 0.5f;
+        }
+    }
+    if (auto* sl = go->GetComponent<UISlider>())
+        if (v == Variant::Primary || v == Variant::Danger || v == Variant::Secondary) sl->fill = role;
+    if (auto* tg = go->GetComponent<UIToggle>())
+        if (v == Variant::Primary || v == Variant::Danger || v == Variant::Secondary) tg->checkColor = role;
+    if (auto* tr = go->GetComponent<TextRenderer>()) {
+        if (tr->screenSpace) {
+            if (v == Variant::Primary) tr->color = accent;
+            else if (v == Variant::Danger) tr->color = danger;
+            else if (v == Variant::Secondary) tr->color = muted;
+        }
+    }
+}
 
 } // namespace okay

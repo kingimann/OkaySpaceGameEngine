@@ -683,6 +683,10 @@ add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
 
+add_executable(test_runtime_ui test_runtime_ui.cpp)
+target_link_libraries(test_runtime_ui PRIVATE okay::engine)
+add_test(NAME runtime_ui COMMAND test_runtime_ui)
+
 add_executable(test_ui_layering test_ui_layering.cpp)
 target_link_libraries(test_ui_layering PRIVATE okay::engine)
 add_test(NAME ui_layering COMMAND test_ui_layering)

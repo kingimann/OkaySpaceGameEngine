@@ -898,6 +898,73 @@ inline bool UIClipContains(GameObject* go, const Vec2& p, float screenW, float s
     return true;
 }
 
+/// Does `a` come before `b` in hierarchy pre-order (a parent before its children,
+/// earlier siblings first, root objects in scene order)? Used to tell which of two
+/// widgets is drawn on top when their canvas and layer tie.
+inline bool UIPreOrderBefore(GameObject* a, GameObject* b) {
+    if (!a || !b || a == b || !a->transform || !b->transform) return false;
+    std::vector<Transform*> ca, cb;
+    for (Transform* t = a->transform; t; t = t->Parent()) ca.push_back(t);
+    for (Transform* t = b->transform; t; t = t->Parent()) cb.push_back(t);
+    std::reverse(ca.begin(), ca.end());
+    std::reverse(cb.begin(), cb.end());
+    std::size_t i = 0;
+    while (i < ca.size() && i < cb.size() && ca[i] == cb[i]) ++i;
+    if (i == ca.size()) return true;             // a is an ancestor of b
+    if (i == cb.size()) return false;            // b is an ancestor of a
+    if (i == 0) {                                // different roots: scene order
+        Scene* sc = a->scene();
+        if (!sc) return false;
+        for (const auto& o : sc->Objects()) {
+            if (o->transform == ca[0]) return true;
+            if (o->transform == cb[0]) return false;
+        }
+        return false;
+    }
+    for (Transform* c : ca[i - 1]->Children()) {
+        if (c == ca[i]) return true;
+        if (c == cb[i]) return false;
+    }
+    return false;
+}
+
+/// Is `a` drawn over `b`? The same order the renderer uses: owning Canvas sort order, then
+/// the uiDrawOrder override (else the widget's type layer), then hierarchy pre-order.
+inline bool UIDrawsAbove(GameObject* a, GameObject* b) {
+    if (!a || !b || a == b) return false;
+    const int sa = CanvasSortOrder(a), sb = CanvasSortOrder(b);
+    if (sa != sb) return sa > sb;
+    const int ea = a->uiDrawOrder != 0 ? a->uiDrawOrder : UIDefaultLayer(a);
+    const int eb = b->uiDrawOrder != 0 ? b->uiDrawOrder : UIDefaultLayer(b);
+    if (ea != eb) return ea > eb;
+    return UIPreOrderBefore(b, a);
+}
+
+/// Is `go` an ancestor of (or the same object as) `child`?
+inline bool UIIsSelfOrAncestor(GameObject* go, GameObject* child) {
+    for (Transform* t = child ? child->transform : nullptr; t; t = t->Parent())
+        if (t->gameObject == go) return true;
+    return false;
+}
+
+/// Is the point `p` covered by a pointer-blocking panel drawn above `go`? (A panel with
+/// `blocksPointer` on that contains the point, is shown, and is not `go` or one of its
+/// ancestors.)
+inline bool UIPointerBlockedByPanel(GameObject* go, const Vec2& p, float screenW, float screenH) {
+    Scene* sc = go ? go->scene() : nullptr;
+    if (!sc) return false;
+    for (const auto& o : sc->Objects()) {
+        if (!o->active || o.get() == go) continue;
+        auto* pn = o->GetComponent<UIPanel>();
+        if (!pn || !pn->blocksPointer || !pn->enabled) continue;
+        if (UIIsSelfOrAncestor(o.get(), go)) continue;      // a widget on the panel is not blocked by it
+        if (UIHidden(o.get())) continue;
+        if (!UIDrawsAbove(o.get(), go)) continue;
+        if (UIScreenContains(o.get(), p, screenW, screenH)) return true;
+    }
+    return false;
+}
+
 /// The host's `UIWorld().clipContains`: clip hover, presses and releases to the
 /// visible part of a widget, but not a drag in progress (a slider or scrollbar
 /// keeps tracking when the pointer leaves its scroll view).
@@ -906,6 +973,7 @@ inline bool UIClipHitTest(GameObject* go, const Vec2& p, float screenW, float sc
     if (UIContextMenu::OpenMenuAt(go, p)) return false;   // under an open menu (the menu handles its own clicks)
     if (UIDropdown::HoldsClick(go)) return false;         // an open dropdown list is on top
     if (Input::GetMouseButton(0) && !Input::GetMouseButtonDown(0)) return true;
+    if (UIPointerBlockedByPanel(go, p, screenW, screenH)) return false;   // covered by a blocking panel
     return UIClipContains(go, p, screenW, screenH);
 }
 

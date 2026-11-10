@@ -49,6 +49,7 @@
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
+#include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
@@ -5636,6 +5637,8 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("UI Controls",          &okay::UITemplates::AddUIControls);   // grok/ui-controls
         add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
         add("UI Options",           &okay::UITemplates::AddUIOptions);   // grok/ui-options
+        ImGui::Separator();
+        oked::DrawUIAddMenuExtras(ed, UIAddParent(ed), created);   // window, radio buttons, damage numbers, nameplate, inventory, dialogue
         ImGui::EndMenu();
     }
 }
@@ -5757,6 +5760,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Import Model...")) PickAndImportModel();   // OS file explorer, then settings
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", DAE, STL, ..." : "");
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
+        oked::DrawExamplesMenu(ed, [&ed](const std::function<void()>& run) { RunAfterSavePrompt(ed, "opening an example", run); });
         if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
             for (const std::string& p : g_recent) {
                 // Tiny rendered preview beside each recent scene (cached snapshot).
@@ -34721,17 +34725,17 @@ void DrawInspector(EditorState& ed) {
             std::snprintf(nb, sizeof(nb), "%s", th->themeName.c_str());
             if (ImGui::InputText("Name##uitheme", nb, sizeof(nb))) { th->themeName = nb; th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
             {
-                const char* presets[] = {"Custom", "Dark", "Light", "Sci-fi", "Fantasy"};
-                int which = th->preset;
-                if (which < 0 || which > 4) which = 0;
-                if (ImGui::Combo("Built-in Theme##uitheme", &which, presets, 5)) {
-                    th->ApplyPreset(which);
-                    ed.dirty = true;
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dark, Light, Sci-fi and Fantasy fill the colors below. Custom keeps whatever you edit. Apply writes them onto the widgets.");
+                oked::DrawThemePresetCombo(*th, ed);   // 12 looks + Custom
             }
             if (ImGui::Checkbox("Apply On Start##uitheme", &th->applyOnStart)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake this skin onto this object and its children when play starts. Off leaves the scene as it was saved.");
+            if (ImGui::Checkbox("Style the whole scene##uitheme", &th->global)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: Apply styles every widget in the scene. Off: only the ones under this object.");
+            {
+                char fb[200]; std::snprintf(fb, sizeof fb, "%s", th->fontPath.c_str());
+                if (ImGui::InputText("Font##uitheme", fb, sizeof fb)) { th->fontPath = fb; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .ttf or .otf for buttons and text this theme styles. Empty keeps their fonts.");
+            }
             if (ImGui::Button("Apply Now##uitheme")) { th->Apply(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write the colors, radius, border, shadow and fade speed onto the widgets under this object.");
             if (ImGui::DragFloat("Corner Radius##uitheme", &th->cornerRadius, 0.1f, 0.0f, 64.0f)) { th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
@@ -36709,6 +36713,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Drag Threshold##udg", &dg->dragThreshold, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pixels before a drag starts (0 = instant)");
             if (ImGui::Checkbox("Bring to Front while dragging##udg", &dg->bringToFront)) ed.dirty = true;
+            if (ImGui::Checkbox("Drag the parent (window title bar)##udg", &dg->dragParent)) ed.dirty = true;
+            if (ImGui::Checkbox("Keep on screen##udg", &dg->keepOnScreen)) ed.dirty = true;
             ImGui::TextDisabled("Drop onto a UI Drop Target fires on_drop() here +");
             ImGui::TextDisabled("on_receive() on the target.");
             if (ImGui::SmallButton("Remove##udg")) toRemove = dg;
@@ -36837,6 +36843,7 @@ void DrawInspector(EditorState& ed) {
     }
     oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     oked::DrawUIOverlayComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
+    oked::DrawRuntimeUIComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
             UIStyleBar(ed, pb);
@@ -37532,9 +37539,14 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("click in the built game; calls script on_toggle()");
             AnchorCombo("Anchor##utg", tg->anchor, ed);
             if (ImGui::DragFloat("Corner Radius##utg", &tg->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
-            const char* styles[] = {"Checkbox", "Switch"};
+            const char* styles[] = {"Checkbox", "Switch", "Radio"};
             int st = (int)tg->style;
-            if (ImGui::Combo("Style##utg", &st, styles, 2)) { tg->style = (UIToggle::Style)st; ed.dirty = true; }
+            if (ImGui::Combo("Style##utg", &st, styles, 3)) { tg->style = (UIToggle::Style)st; ed.dirty = true; }
+            if (tg->style == UIToggle::Style::Radio) {
+                char gb[64]; std::snprintf(gb, sizeof gb, "%s", tg->radioGroup.c_str());
+                if (ImGui::InputText("Group##utg", gb, sizeof gb)) { tg->radioGroup = gb; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Radio buttons with the same group name are one choice, wherever they are. Empty: the radio buttons under the same parent.");
+            }
             if (tg->style == UIToggle::Style::Switch) {
                 float kc[4] = {tg->knobColor.r, tg->knobColor.g, tg->knobColor.b, tg->knobColor.a};
                 if (ImGui::ColorEdit4("Knob##utg", kc)) { tg->knobColor = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
@@ -38396,6 +38408,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIKeybindField>(), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIStyleVariant>(), "UI Style Variant (theme role)")) { go->AddComponent<UIStyleVariant>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDamageNumbers>(), "UI Damage Numbers (floating text)")) { go->AddComponent<UIDamageNumbers>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDialogueBox>(), "UI Dialogue Box (typing text + choices)")) { go->AddComponent<UIDialogueBox>(); ed.dirty = true; }
           } EndCat(o); }
 
         if (!acShown)
@@ -43713,66 +43728,6 @@ void DrawSpriteEditor(EditorState& ed) {
     ImGui::End();
 }
 
-// ---- UI Theme: reusable styles applied across widgets ----------------------
-// A theme is a small palette + corner/border. "Apply" bakes it into every UI widget
-// (by component type), so you define a look once and restyle the whole UI in a click.
-struct EdUITheme {
-    float panel[4], panelBottom[4], button[4], buttonText[4], accent[4], track[4], text[4];
-    float corner, border;
-};
-static EdUITheme g_uiTheme = {
-    {0.12f, 0.14f, 0.21f, 0.94f}, {0.07f, 0.09f, 0.14f, 0.94f},
-    {0.23f, 0.38f, 0.67f, 1.0f},  {0.95f, 0.96f, 1.0f, 1.0f},
-    {0.35f, 0.67f, 0.95f, 1.0f},  {0.16f, 0.16f, 0.20f, 1.0f},
-    {0.92f, 0.94f, 0.98f, 1.0f},  10.0f, 1.0f };
-
-static void UIThemePreset(EdUITheme& t, int p) {
-    auto s = [](float* d, float r, float g, float b, float a) { d[0] = r; d[1] = g; d[2] = b; d[3] = a; };
-    switch (p) {
-        case 0: s(t.panel,0.12f,0.14f,0.21f,0.94f); s(t.panelBottom,0.07f,0.09f,0.14f,0.94f); s(t.button,0.23f,0.38f,0.67f,1); s(t.buttonText,0.95f,0.96f,1,1); s(t.accent,0.35f,0.67f,0.95f,1); s(t.track,0.16f,0.16f,0.20f,1); s(t.text,0.92f,0.94f,0.98f,1); t.corner=10; t.border=1; break; // Dark
-        case 1: s(t.panel,0.95f,0.96f,0.98f,0.98f); s(t.panelBottom,0.86f,0.88f,0.92f,0.98f); s(t.button,0.30f,0.55f,0.90f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.20f,0.50f,0.90f,1); s(t.track,0.80f,0.82f,0.86f,1); s(t.text,0.10f,0.12f,0.16f,1); t.corner=8; t.border=1; break; // Light
-        case 2: s(t.panel,0.06f,0.06f,0.10f,0.96f); s(t.panelBottom,0.02f,0.02f,0.05f,0.96f); s(t.button,0.10f,0.10f,0.16f,1); s(t.buttonText,0.20f,1.0f,0.85f,1); s(t.accent,0.20f,1.0f,0.85f,1); s(t.track,0.10f,0.10f,0.16f,1); s(t.text,0.85f,0.95f,1.0f,1); t.corner=6; t.border=2; break; // Neon
-        case 3: s(t.panel,0.20f,0.12f,0.10f,0.96f); s(t.panelBottom,0.12f,0.07f,0.06f,0.96f); s(t.button,0.80f,0.45f,0.20f,1); s(t.buttonText,0.10f,0.06f,0.04f,1); s(t.accent,0.95f,0.70f,0.25f,1); s(t.track,0.30f,0.20f,0.15f,1); s(t.text,0.98f,0.92f,0.80f,1); t.corner=4; t.border=2; break; // Retro
-        case 4: s(t.panel,0.93f,0.90f,0.96f,0.97f); s(t.panelBottom,0.85f,0.82f,0.92f,0.97f); s(t.button,0.62f,0.55f,0.88f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.55f,0.78f,0.72f,1); s(t.track,0.82f,0.80f,0.88f,1); s(t.text,0.28f,0.24f,0.36f,1); t.corner=14; t.border=0; break; // Pastel
-        case 6: s(t.panel,0.118f,0.129f,0.161f,0.96f); s(t.panelBottom,0.118f,0.129f,0.161f,0.96f); s(t.button,0.26f,0.59f,0.98f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.26f,0.59f,0.98f,1); s(t.track,0.16f,0.18f,0.23f,1); s(t.text,0.90f,0.92f,0.96f,1); t.corner=10; t.border=1; break; // OkaySpace (the launcher's look)
-        case 5: s(t.panel,0.14f,0.14f,0.15f,0.96f); s(t.panelBottom,0.09f,0.09f,0.10f,0.96f); s(t.button,0.30f,0.30f,0.32f,1); s(t.buttonText,0.95f,0.95f,0.96f,1); s(t.accent,0.75f,0.75f,0.78f,1); s(t.track,0.20f,0.20f,0.22f,1); s(t.text,0.92f,0.92f,0.94f,1); t.corner=6; t.border=1; break; // Mono
-    }
-}
-
-static bool UIIsUnder(GameObject* go, GameObject* root) {
-    if (!root) return true;
-    for (GameObject* p = go; p; p = (p->transform && p->transform->Parent()) ? p->transform->Parent()->gameObject : nullptr)
-        if (p == root) return true;
-    return false;
-}
-
-// Bake the theme into every UI widget (optionally only under `root`), by component
-// type. Returns how many widgets were restyled. Saved with the scene, shows in-game.
-static int ApplyUITheme(EditorState& ed, const EdUITheme& t, GameObject* root) {
-    auto C = [](const float* f) { return okay::Color(f[0], f[1], f[2], f[3]); };
-    int n = 0;
-    for (const auto& up : ed.scene().Objects()) {
-        GameObject* g = up.get();
-        if (!g || !UIIsUnder(g, root)) continue;
-        bool touched = false;
-        if (auto* p  = g->GetComponent<UIPanel>())       { p->color=C(t.panel); p->colorBottom=C(t.panelBottom); p->useGradient=true; p->cornerRadius=t.corner; p->borderWidth=t.border; p->borderColor=okay::Color(t.accent[0],t.accent[1],t.accent[2],0.5f); touched=true; }
-        if (auto* b  = g->GetComponent<UIButton>())       { b->color=C(t.button); b->textColor=C(t.buttonText); b->cornerRadius=t.corner; b->borderWidth=t.border; touched=true; }
-        if (auto* sl = g->GetComponent<UISlider>())        { sl->background=C(t.track); sl->fill=C(t.accent); sl->cornerRadius=t.corner; sl->textColor=C(t.text); touched=true; }
-        if (auto* tg = g->GetComponent<UIToggle>())        { tg->boxColor=C(t.track); tg->checkColor=C(t.accent); tg->textColor=C(t.text); tg->cornerRadius=t.corner; touched=true; }
-        if (auto* pb = g->GetComponent<UIProgressBar>())   { pb->background=C(t.track); pb->fill=C(t.accent); pb->fillEnd=C(t.accent); pb->cornerRadius=t.corner; pb->textColor=C(t.text); touched=true; }
-        if (auto* dd = g->GetComponent<UIDropdown>())      { dd->color=C(t.track); dd->listColor=C(t.panel); dd->textColor=C(t.text); dd->cornerRadius=t.corner; touched=true; }
-        if (auto* im = g->GetComponent<UIImage>())         { im->cornerRadius=t.corner; touched=true; }
-        if (auto* tr = g->GetComponent<TextRenderer>(); tr && tr->screenSpace) {
-            GameObject* par = (g->transform && g->transform->Parent()) ? g->transform->Parent()->gameObject : nullptr;
-            tr->color = (par && par->GetComponent<UIButton>()) ? C(t.buttonText) : C(t.text);
-            touched = true;
-        }
-        if (touched) ++n;
-    }
-    if (n) ed.dirty = true;
-    return n;
-}
-
 // Item Database: the project's item definitions (<project>/items.okayitems) — a
 // searchable list, the selected definition's fields, duplicate-id warnings, Save.
 static void DrawItemDatabase(EditorState& ed) {
@@ -43883,78 +43838,7 @@ static void DrawItemDatabase(EditorState& ed) {
 
 void DrawUIThemer(EditorState& ed) {
     if (!ImGui::Begin("UI Theme", &g_showUIThemer)) { ImGui::End(); return; }
-    ImGui::TextDisabled("Define a reusable UI style, then apply it to every widget at once.");
-    ImGui::TextUnformatted("Presets:");
-    const char* names[] = {"Dark", "Light", "Neon", "Retro", "Pastel", "Mono", "OkaySpace"};
-    for (int i = 0; i < 7; ++i) {
-        if (i) ImGui::SameLine();
-        if (ImGui::Button(names[i])) UIThemePreset(g_uiTheme, i);
-        // Mini palette strip along the button's bottom edge: panel/button/accent/text.
-        EdUITheme tt; UIThemePreset(tt, i);
-        ImVec2 bmn = ImGui::GetItemRectMin(), bmx = ImGui::GetItemRectMax();
-        const float* sw[4] = {tt.panel, tt.button, tt.accent, tt.text};
-        float swW = (bmx.x - bmn.x - 8.0f) / 4.0f;
-        for (int s2 = 0; s2 < 4; ++s2) {
-            ImVec2 a(bmn.x + 4.0f + swW * s2, bmx.y - 5.0f), b(bmn.x + 4.0f + swW * (s2 + 1) - 1.0f, bmx.y - 2.0f);
-            ImGui::GetWindowDrawList()->AddRectFilled(a, b,
-                ImGui::GetColorU32(ImVec4(sw[s2][0], sw[s2][1], sw[s2][2], 1.0f)), 1.0f);
-        }
-    }
-    ImGui::Separator();
-    int cf = ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs;
-    ImGui::ColorEdit4("Panel",        g_uiTheme.panel,       cf);
-    ImGui::ColorEdit4("Panel bottom", g_uiTheme.panelBottom, cf);
-    ImGui::ColorEdit4("Button",       g_uiTheme.button,      cf);
-    ImGui::ColorEdit4("Button text",  g_uiTheme.buttonText,  ImGuiColorEditFlags_NoInputs);
-    ImGui::ColorEdit4("Accent",       g_uiTheme.accent,      ImGuiColorEditFlags_NoInputs);
-    ImGui::ColorEdit4("Track",        g_uiTheme.track,       ImGuiColorEditFlags_NoInputs);
-    ImGui::ColorEdit4("Text",         g_uiTheme.text,        ImGuiColorEditFlags_NoInputs);
-    ImGui::SliderFloat("Corner radius", &g_uiTheme.corner, 0.0f, 32.0f, "%.0f");
-    ImGui::SliderFloat("Border width",  &g_uiTheme.border, 0.0f, 6.0f, "%.0f");
-    ImGui::Separator();
-    // Live preview: a mock panel with a button, slider and text drawn from the
-    // current values, so you see the style before baking it into the scene.
-    ImGui::TextDisabled("Preview");
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 pv = ImGui::GetCursorScreenPos();
-        float pw = ImGui::GetContentRegionAvail().x, ph = 96.0f;
-        if (pw < 240.0f) pw = 240.0f;
-        auto U = [](const float* f, float amul = 1.0f) {
-            return ImGui::GetColorU32(ImVec4(f[0], f[1], f[2], f[3] * amul));
-        };
-        float cr = g_uiTheme.corner;
-        dl->AddRectFilled(pv, ImVec2(pv.x + pw, pv.y + ph), U(g_uiTheme.panel), cr);
-        dl->AddRectFilled(ImVec2(pv.x, pv.y + ph * 0.55f), ImVec2(pv.x + pw, pv.y + ph),
-                          U(g_uiTheme.panelBottom, 0.85f), cr,
-                          ImDrawFlags_RoundCornersBottom);
-        if (g_uiTheme.border > 0.0f)
-            dl->AddRect(pv, ImVec2(pv.x + pw, pv.y + ph),
-                        ImGui::GetColorU32(ImVec4(g_uiTheme.accent[0], g_uiTheme.accent[1],
-                                                  g_uiTheme.accent[2], 0.5f)),
-                        cr, 0, g_uiTheme.border);
-        float bx = pv.x + 16.0f, by = pv.y + 16.0f;
-        dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + 110.0f, by + 30.0f),
-                          U(g_uiTheme.button), cr * 0.6f);
-        ImVec2 bts = ImGui::CalcTextSize("Button");
-        dl->AddText(ImVec2(bx + (110.0f - bts.x) * 0.5f, by + (30.0f - bts.y) * 0.5f),
-                    U(g_uiTheme.buttonText), "Button");
-        float sy = by + 46.0f;
-        dl->AddRectFilled(ImVec2(bx, sy), ImVec2(bx + 180.0f, sy + 8.0f), U(g_uiTheme.track), 4.0f);
-        dl->AddRectFilled(ImVec2(bx, sy), ImVec2(bx + 122.0f, sy + 8.0f), U(g_uiTheme.accent), 4.0f);
-        dl->AddCircleFilled(ImVec2(bx + 122.0f, sy + 4.0f), 7.0f, U(g_uiTheme.text), 16);
-        dl->AddText(ImVec2(bx + 210.0f, by + 6.0f), U(g_uiTheme.text), "Sample text");
-        dl->AddText(ImVec2(bx + 210.0f, by + 6.0f + ImGui::GetTextLineHeightWithSpacing()),
-                    U(g_uiTheme.accent), "Accent");
-        ImGui::Dummy(ImVec2(0, ph + 8.0f));
-    }
-    if (ImGui::Button("Apply to All UI")) { int n = ApplyUITheme(ed, g_uiTheme, nullptr); ConsoleLog("Themed " + std::to_string(n) + " widget(s)"); }
-    ImGui::SameLine();
-    bool haveSel = ed.selected() != nullptr;
-    if (!haveSel) ImGui::BeginDisabled();
-    if (ImGui::Button("Apply to Selected + children")) { int n = ApplyUITheme(ed, g_uiTheme, ed.selected()); ConsoleLog("Themed " + std::to_string(n) + " widget(s)"); }
-    if (!haveSel) ImGui::EndDisabled();
-    ImGui::TextDisabled("Applied styles bake into the widgets and save with the scene.");
+    oked::DrawUIThemeWindowBody(ed);   // editor/UIRuntimeTools.cpp: 12 looks, roles, apply, save / load
     ImGui::End();
 }
 

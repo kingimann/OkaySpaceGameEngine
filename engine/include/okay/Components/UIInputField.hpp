@@ -9,6 +9,7 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Core/Localization.hpp"
+#include "okay/Core/Utf8.hpp"
 #include <string>
 
 namespace okay {
@@ -73,7 +74,7 @@ public:
     /// What the renderer should draw for the value (masked for Password).
     std::string DisplayText() const {
         if (contentType != ContentType::Password) return text;
-        return std::string(text.size(), passwordChar);
+        return std::string(utf8::Length(text), passwordChar);   // one mask per character, not per byte
     }
 
     /// Caret on/off for a ~1s blink (renderers check this while focused).
@@ -88,6 +89,37 @@ public:
                                             || (c == '.' && text.find('.') == std::string::npos);
             default: return true;
         }
+    }
+
+    /// Add typed text (UTF-8). Control characters and characters the content type refuses are dropped;
+    /// `maxLength` counts characters, so a limit never cuts a character in half. True when text was added.
+    bool TypeText(const std::string& typed) {
+        bool changed = false;
+        const char* p = typed.data();
+        const char* end = p + typed.size();
+        std::size_t length = utf8::Length(text);
+        while (p < end) {
+            const char* start = p;
+            const std::uint32_t cp = utf8::Next(p, end);
+            if ((int)length >= maxLength) break;
+            if (cp == utf8::kReplacement) continue;                       // a broken byte: skip it
+            if (cp < 128 ? !Accepts((char)cp) : contentType != ContentType::Standard && contentType != ContentType::Password) continue;
+            if (cp == 127) continue;
+            text.append(start, (std::size_t)(p - start));
+            ++length;
+            changed = true;
+        }
+        return changed;
+    }
+    /// Delete the last character (all of its bytes). True when something was removed.
+    bool Backspace() {
+        if (text.empty()) return false;
+        std::size_t i = text.size() - 1;
+        int back = 0;
+        while (i > 0 && ((unsigned char)text[i] & 0xC0) == 0x80 && back < 3) { --i; ++back; }
+        if (((unsigned char)text[i] & 0xC0) == 0x80 || (unsigned char)text[i] < 0x80) i = text.size() - 1;   // not a lead byte: drop the last byte only
+        text.erase(i);
+        return true;
     }
 
     void Submit() {
@@ -105,14 +137,10 @@ public:
         if (!focused) return;
 
         // Real typed characters (Shift/Caps/symbols handled by the OS).
-        bool changed = false;
-        for (char c : Input::TypedText()) {
-            if ((int)text.size() >= maxLength) break;
-            if (Accepts(c)) { text += c; changed = true; }
-        }
+        bool changed = TypeText(Input::TypedText());
         // Backspace / Delete.
         if (Input::GetKeyDown((char)8) || Input::GetKeyDown((char)127)) {
-            if (!text.empty()) { text.pop_back(); changed = true; }
+            if (Backspace()) changed = true;
         }
         if (changed) m_blink = 0.0f;                        // keep caret solid while typing
 
@@ -120,7 +148,7 @@ public:
         // A multiline field inserts a newline instead and stays focused.
         if (Input::GetKeyDown('\r') || Input::GetKeyDown('\n')) {
             if (!multiline) { focused = false; Submit(); }
-            else if ((int)text.size() < maxLength) { text.push_back('\n'); m_blink = 0.0f; }
+            else if ((int)utf8::Length(text) < maxLength) { text.push_back('\n'); m_blink = 0.0f; }
         } else if (Input::GetKeyDown((char)27)) focused = false;
 
         m_blink += dt;

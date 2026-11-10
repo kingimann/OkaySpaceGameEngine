@@ -24,6 +24,10 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIToggle.hpp"
+#include "okay/Components/UITheme.hpp"
+#include "okay/Components/UIStyleVariant.hpp"
+#include "okay/Components/UIDamageNumbers.hpp"
+#include "okay/Components/UIDialogueBox.hpp"
 
 namespace okay {
 namespace detail {
@@ -175,7 +179,8 @@ void RegisterUIToggle() {
      .AddColor("textColor", &UIToggle::textColor).Range(0, 1, 0.01).Tooltip("Colour of the text")
      .AddEnum("anchor", &UIToggle::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
      .AddFloat("cornerRadius", &UIToggle::cornerRadius).Range(0, kBig, 0.05).Tooltip("Rounded box corners")
-     .AddEnum("style", &UIToggle::style, {"Checkbox", "Switch"}).Tooltip("Look of the toggle: a check box or a switch")
+     .AddEnum("style", &UIToggle::style, {"Checkbox", "Switch", "Radio"}).Tooltip("Look of the toggle: a check box, a switch or a round radio button")
+     .AddString("radioGroup", &UIToggle::radioGroup).Tooltip("Radio buttons with the same group name are one choice. Empty = the radio buttons under the same parent")
      .AddColor("knobColor", &UIToggle::knobColor).Range(0, 1, 0.01).Tooltip("Switch knob")
      .AddBool("interactable", &UIToggle::interactable).Tooltip("When false: greyed out, ignores clicks")
      .AddFloat("animSpeed", &UIToggle::animSpeed).Range(0, 10000, 0.1).Tooltip("Speed of the on and off animation");
@@ -477,7 +482,86 @@ void RegisterUIDraggable() {
      .AddBool("snapToSlot", &UIDraggable::snapToSlot).Tooltip("Center the item in the slot it's dropped on")
      .AddEnum("axis", &UIDraggable::axis, {"Both", "Horizontal", "Vertical"})
      .AddFloat("dragThreshold", &UIDraggable::dragThreshold).Range(0, 3600, 0.05)
+     .AddBool("dragParent", &UIDraggable::dragParent).Tooltip("Drag the parent widget instead of this one (a window title bar)")
+     .AddBool("keepOnScreen", &UIDraggable::keepOnScreen).Tooltip("The dragged widget never leaves the screen")
      .AddBool("bringToFront", &UIDraggable::bringToFront).Tooltip("Draw on top of its siblings while being dragged");
+    b.Commit();
+}
+
+void RegisterUITheme() {
+    PropertyBuilder<UITheme> b("UITheme", "uitheme", "UI");
+    b.AddString("themeName", &UITheme::themeName).Tooltip("Name scripts and UI Style Variant use to find this theme")
+     .AddBool("applyOnStart", &UITheme::applyOnStart).Tooltip("Restyle the UI when Play starts")
+     .AddBool("global", &UITheme::global).Tooltip("Style every widget in the scene, not only the ones under this object")
+     .AddInt("preset", &UITheme::preset).Range(0, UITheme::kPresetCount - 1, 1).Tooltip("Which built-in look the colours came from (0 = custom)")
+     .AddColor("panel", &UITheme::panel).Range(0, 1, 0.01)
+     .AddColor("panelBottom", &UITheme::panelBottom).Range(0, 1, 0.01)
+     .AddColor("accent", &UITheme::accent).Range(0, 1, 0.01)
+     .AddColor("text", &UITheme::text).Range(0, 1, 0.01)
+     .AddColor("muted", &UITheme::muted).Range(0, 1, 0.01)
+     .AddColor("button", &UITheme::button).Range(0, 1, 0.01)
+     .AddColor("buttonHover", &UITheme::buttonHover).Range(0, 1, 0.01)
+     .AddColor("buttonPressed", &UITheme::buttonPressed).Range(0, 1, 0.01)
+     .AddColor("buttonText", &UITheme::buttonText).Range(0, 1, 0.01)
+     .AddColor("disabled", &UITheme::disabled).Range(0, 1, 0.01)
+     .AddColor("danger", &UITheme::danger).Range(0, 1, 0.01)
+     .AddColor("success", &UITheme::success).Range(0, 1, 0.01)
+     .AddColor("border", &UITheme::border).Range(0, 1, 0.01)
+     .AddColor("shadowCol", &UITheme::shadowCol).Range(0, 1, 0.01)
+     .AddColor("glowColor", &UITheme::glowColor).Range(0, 1, 0.01)
+     .AddFloat("cornerRadius", &UITheme::cornerRadius).Range(0, kBig, 0.5)
+     .AddInt("cornerMask", &UITheme::cornerMask).Range(0, 15, 1)
+     .AddFloat("borderWidth", &UITheme::borderWidth).Range(0, 100, 0.5)
+     .AddBool("gradient", &UITheme::gradient)
+     .AddInt("gradientDir", &UITheme::gradientDir).Range(0, 3, 1)
+     .AddBool("shadow", &UITheme::shadow)
+     .AddFloat("shadowSoftness", &UITheme::shadowSoftness).Range(0, 1000, 0.5)
+     .AddVec2("shadowOffset", &UITheme::shadowOffset).Range(-1000, 1000, 0.5)
+     .AddFloat("glow", &UITheme::glow).Range(0, 100, 0.5)
+     .AddBool("sheen", &UITheme::sheen)
+     .AddFloat("opacity", &UITheme::opacity).Range(0, 1, 0.01)
+     .AddFloat("padding", &UITheme::padding).Range(0, 1000, 0.5)
+     .AddFloat("fontScale", &UITheme::fontScale).Range(0, 100, 0.05)
+     .AddFloat("textPixelSize", &UITheme::textPixelSize).Range(0, 100, 0.05)
+     .AddFloat("transitionSpeed", &UITheme::transitionSpeed).Range(0, 1000, 0.5)
+     .AddFloat("hoverScale", &UITheme::hoverScale).Range(0, 10, 0.01)
+     .AddAssetPath("fontPath", &UITheme::fontPath, "font").Tooltip("A font put on every button and text the theme styles (empty = leave them)");
+    b.Commit();
+}
+
+void RegisterUIStyleVariant() {
+    PropertyBuilder<UIStyleVariant> b("UIStyleVariant", "uivariant", "UI");
+    b.AddInt("variant", &UIStyleVariant::variant).Range(0, UITheme::kVariantCount - 1, 1)
+        .Tooltip("0 Default, 1 Primary, 2 Secondary, 3 Danger, 4 Ghost, 5 Outline, 6 Pill")
+     .AddString("themeName", &UIStyleVariant::themeName).Tooltip("Theme to take colours from (empty = the scene's first theme)");
+    b.Commit();
+}
+
+void RegisterUIDamageNumbers() {
+    PropertyBuilder<UIDamageNumbers> b("UIDamageNumbers", "uidamage", "UI");
+    b.AddFloat("lifetime", &UIDamageNumbers::lifetime).Range(0.05, 60, 0.05).Tooltip("Seconds a number lives")
+     .AddFloat("riseSpeed", &UIDamageNumbers::riseSpeed).Range(-2000, 2000, 1).Tooltip("Pixels per second upward")
+     .AddFloat("gravity", &UIDamageNumbers::gravity).Range(-5000, 5000, 1).Tooltip("Pulls the number down after it rises (a lob)")
+     .AddFloat("spread", &UIDamageNumbers::spread).Range(0, 1000, 1).Tooltip("Sideways drift in pixels, different for each number")
+     .AddFloat("textSize", &UIDamageNumbers::textSize).Range(0.5, 50, 0.1)
+     .AddFloat("critScale", &UIDamageNumbers::critScale).Range(0.1, 10, 0.05)
+     .AddFloat("popScale", &UIDamageNumbers::popScale).Range(0.1, 10, 0.05)
+     .AddInt("maxActive", &UIDamageNumbers::maxActive).Range(1, 500, 1)
+     .AddVec2("spawnAt", &UIDamageNumbers::spawnAt).Range(-kBig, kBig, 1).Tooltip("Where a button's Hit, Crit and Heal actions put a number")
+     .AddColor("normalColor", &UIDamageNumbers::normalColor).Range(0, 1, 0.01)
+     .AddColor("critColor", &UIDamageNumbers::critColor).Range(0, 1, 0.01)
+     .AddColor("healColor", &UIDamageNumbers::healColor).Range(0, 1, 0.01)
+     .AddColor("missColor", &UIDamageNumbers::missColor).Range(0, 1, 0.01)
+     .AddColor("infoColor", &UIDamageNumbers::infoColor).Range(0, 1, 0.01);
+    b.Commit();
+}
+
+void RegisterUIDialogueBox() {
+    PropertyBuilder<UIDialogueBox> b("UIDialogueBox", "uidialoguebox", "UI");
+    b.AddFloat("charsPerSecond", &UIDialogueBox::charsPerSecond).Range(0, 2000, 1).Tooltip("Typewriter speed (0 = the whole line at once)")
+     .AddBool("hideWhenDone", &UIDialogueBox::hideWhenDone).Tooltip("Close the box when a line without choices is advanced")
+     .AddBool("advanceOnClick", &UIDialogueBox::advanceOnClick).Tooltip("A click on the box, Space or Enter finishes or advances the line")
+     .AddBool("startHidden", &UIDialogueBox::startHidden).Tooltip("The box is hidden until a script shows a line");
     b.Commit();
 }
 
@@ -504,6 +588,10 @@ void RegisterUIProperties() {
     RegisterUIRawImage();
     RegisterUIKeybindField();
     RegisterUIDraggable();
+    RegisterUITheme();
+    RegisterUIStyleVariant();
+    RegisterUIDamageNumbers();
+    RegisterUIDialogueBox();
 }
 
 } // namespace detail

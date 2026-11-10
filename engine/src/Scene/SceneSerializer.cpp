@@ -30,6 +30,9 @@
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/UIStyleVariant.hpp"
+#include "okay/Components/UIDamageNumbers.hpp"
+#include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
@@ -2489,6 +2492,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          .col("btext", th->buttonText)
          .col("off", th->disabled).col("danger", th->danger).col("ok", th->success)
          .col("edge", th->border).col("sh", th->shadowCol).col("glowc", th->glowColor);
+        if (!th->fontPath.empty()) k.str("fontPath", th->fontPath);   // added later: absent = no font
+        if (th->global) k.b("global", true);
         out << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
@@ -3408,6 +3413,44 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         k.str("path", sp->sequencePath).b("auto", sp->playOnStart).b("loop", sp->loop)("speed", sp->timeScale)
          .key("skip", sp->skipKey).b("lock", sp->lockPlayer);
         out << "\n";
+    }
+    // The runtime UI components added with the twelve looks: one key=value record each (older builds skip them).
+    if (auto* sv = go->GetComponent<UIStyleVariant>()) {
+        out << "  uivariant";
+        KvOut k{out};
+        k("variant", sv->variant);
+        if (!sv->themeName.empty()) k.str("vtheme", sv->themeName);
+        out << "\n";
+    }
+    if (auto* dn = go->GetComponent<UIDamageNumbers>()) {
+        out << "  uidamage";
+        KvOut k{out};
+        k("dnLife", dn->lifetime)("dnRise", dn->riseSpeed)("dnGrav", dn->gravity)("dnSpread", dn->spread)
+         ("dnSize", dn->textSize)("dnCrit", dn->critScale)("dnPop", dn->popScale)("dnMax", dn->maxActive)
+         ("dnAtX", dn->spawnAt.x)("dnAtY", dn->spawnAt.y)
+         .col("dnNormal", dn->normalColor).col("dnCritC", dn->critColor).col("dnHeal", dn->healColor)
+         .col("dnMiss", dn->missColor).col("dnInfo", dn->infoColor);
+        out << "\n";
+    }
+    if (auto* db = go->GetComponent<UIDialogueBox>()) {
+        out << "  uidialoguebox";
+        KvOut k{out};
+        k("dbCps", db->charsPerSecond).b("dbHide", db->hideWhenDone).b("dbClick", db->advanceOnClick).b("dbStartHidden", db->startHidden);
+        out << "\n";
+    }
+    // Runtime UI extras (radio groups, pointer-blocking panels, draggable windows, theme roles, floating
+    // numbers, dialogue boxes). One key=value record that is only written when something is non-default,
+    // so older scenes are byte-for-byte the same and older builds skip it.
+    {
+        std::ostringstream xs; UseRoundTripFloats(xs);
+        KvOut k{xs};
+        if (auto* pn = go->GetComponent<UIPanel>(); pn && pn->blocksPointer) k.b("pblock", true);
+        if (auto* tg = go->GetComponent<UIToggle>(); tg && !tg->radioGroup.empty()) k.str("rgroup", tg->radioGroup);
+        if (auto* dg = go->GetComponent<UIDraggable>()) {
+            if (dg->dragParent) k.b("dragParent", true);
+            if (dg->keepOnScreen) k.b("keepOnScreen", true);
+        }
+        if (!xs.str().empty()) out << "  uix" << xs.str() << "\n";
     }
     // Localization: the string-table keys of localized text and the Localized
     // switches, after the components they belong to. Its own key=value record, so
@@ -6220,6 +6263,33 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.col("edge", th->border);
                     k.col("sh", th->shadowCol);
                     k.col("glowc", th->glowColor);
+                    k.str("fontPath", th->fontPath);
+                    k.b("global", th->global);
+                } else if (field == "uix") {
+                    // Runtime UI extras: only the keys present are applied, so scenes saved before them load as they were.
+                    KvIn k(in);
+                    if (auto* pn = go->GetComponent<UIPanel>()) k.b("pblock", pn->blocksPointer);
+                    if (auto* tg = go->GetComponent<UIToggle>()) k.str("rgroup", tg->radioGroup);
+                    if (auto* dg = go->GetComponent<UIDraggable>()) { k.b("dragParent", dg->dragParent); k.b("keepOnScreen", dg->keepOnScreen); }
+                } else if (field == "uivariant") {
+                    auto* sv = go->AddComponent<UIStyleVariant>();
+                    KvIn k(in);
+                    k.i("variant", sv->variant);
+                    k.str("vtheme", sv->themeName);
+                } else if (field == "uidamage") {
+                    auto* dn = go->AddComponent<UIDamageNumbers>();
+                    KvIn k(in);
+                    k.f("dnLife", dn->lifetime); k.f("dnRise", dn->riseSpeed); k.f("dnGrav", dn->gravity);
+                    k.f("dnSpread", dn->spread); k.f("dnSize", dn->textSize); k.f("dnCrit", dn->critScale);
+                    k.f("dnPop", dn->popScale); k.i("dnMax", dn->maxActive);
+                    k.f("dnAtX", dn->spawnAt.x); k.f("dnAtY", dn->spawnAt.y);
+                    k.col("dnNormal", dn->normalColor); k.col("dnCritC", dn->critColor); k.col("dnHeal", dn->healColor);
+                    k.col("dnMiss", dn->missColor); k.col("dnInfo", dn->infoColor);
+                } else if (field == "uidialoguebox") {
+                    auto* db = go->AddComponent<UIDialogueBox>();
+                    KvIn k(in);
+                    k.f("dbCps", db->charsPerSecond); k.b("dbHide", db->hideWhenDone);
+                    k.b("dbClick", db->advanceOnClick); k.b("dbStartHidden", db->startHidden);
                 } else if (field == "fpctrl" || field == "pcfirst") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

@@ -56,7 +56,7 @@ using namespace okay;
     X(ThirdPersonShooterController) X(ThirstStat) X(Tilemap) X(TilemapCollider2D) X(TimedDestroy) \
     X(TopDownController) X(TopDownController2D) X(TopDownShooterController) X(TrailRenderer) X(TriggerZone) \
     X(TurnManager) X(TweenAnimation) X(UIAnimation) X(UIBarBind) X(UIButton) X(UIColorPicker) X(UIContextMenu) \
-    X(UIDocument) X(UIDraggable) X(UIDropTarget) X(UIDropdown) X(UIFlexItem) X(UIFrame) X(UIImage) \
+    X(UIDamageNumbers) X(UIDialogueBox) X(UIStyleVariant) X(UIDocument) X(UIDraggable) X(UIDropTarget) X(UIDropdown) X(UIFlexItem) X(UIFrame) X(UIImage) \
     X(UIInputField) X(UIKeybindField) X(UILayoutGroup) X(UIListView) X(UIMask) X(UIModal) X(UIPanel) \
     X(UIProgressBar) X(UIRadialProgress) X(UIRating) X(UIRawImage) X(UISafeArea) X(UIScrollView) X(UISlider) \
     X(UISlotGrid) X(UIStepper) X(UITabs) X(UITextBind) X(UITheme) X(UIToast) X(UIToastItem) X(UIToggle) \

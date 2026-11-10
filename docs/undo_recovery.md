@@ -300,9 +300,8 @@ The editor needs no data model change to start:
    a group. Each one stops serializing the whole scene.
 3. Use `IsDirty()` for the title-bar asterisk and the "save before closing?" prompt instead of a
    separate flag.
-4. Replace the `<scene>.autosave` sidecar with a `RecoveryManager`: `StartSession()` at launch,
-   `Tick(dt)` each frame, `EndSession()` on a clean exit, `OnSaved()` after Save, and show
-   `FindRecoverable()` in the "Recover" popup.
+4. Done for editor documents: `RecoveryManager` autosaves graphs, scripts and the scene.
+   A leftover `<scene>.autosave` is still offered on open and is not written anymore.
 5. Route `Save` through `BackupManager::SaveWithBackup`, and list `List(path)` in a
    "File > Restore from backup" window.
 
@@ -316,11 +315,10 @@ documents so the two are not confused (the user-facing description is in [editor
 | Undo | `EditorState::PushUndo` keeps up to 100 whole-scene text snapshots. Opening a scene (`Load`) clears the history: it belongs to one scene, and keeping it let Undo put the previous scene's objects into the new file. A failed `Load` changes nothing, history included. |
 | Dirty state | `EditorState::dirty` (set by edits), plus `HasUnsavedChanges()`: the scene's saved text is fingerprinted at every save, load and new scene and compared at the moments that matter (quit, opening another scene or project, autosave), so an edit that forgot to raise the flag is still found. `SyncDirty()` raises the flag when they differ. While Play runs it answers for the scene being edited, and `Stop` puts `dirty` back, so changes to the running game never count. |
 | Saving | `EditorState::Save` refuses during Play, writes through `SceneSerializer::SaveToFile` (a `.savetmp` file, checked, renamed over the target, one rolling `.bak` copy of the previous file) and reports why it failed. Project, build and preference files use `okayproj::WriteTextAtomic` (`shared/ProjectCreate.hpp`): the same write-then-rename, and a read-only target is refused. |
-| Autosave | A `<scene>.autosave` copy every `g_autosaveInterval` seconds (default 120) when the scene has unsaved changes and a file path; deleted by a successful save; offered by the "Recover Autosave" window when it is newer than the scene. A never-saved scene has no path and is not autosaved. |
+| Autosave | `RecoveryManager` writes dirty graphs, scripts and the scene into `okay_recovery` (default 30 s, and when the window loses focus). The real file is overwritten only when **Also save the real file** is on. A leftover `<scene>.autosave` from an older editor is still offered when it is newer than the scene, and new sessions do not write one. |
 | Recovery of a failed new project | `EditorState::CreateProject` makes folders and files, builds the template, saves it, and on any failure puts the previous scene, path, project and undo history back and removes what it made (`okayproj::Made` / `Undo`). |
 
-Not yet the engine's `RecoveryManager` (rotating autosaves, crash detection by lock file) or `BackupManager`
-(timestamped backups): moving the editor onto them is step 4 and 5 of "Adopting it in the editor" above.
+Scene undo is still the editor's snapshot stack. Document autosave and the last five saves per file go through `RecoveryManager` and `BackupManager` (steps 4 and 5 above).
 
 ## Tests
 

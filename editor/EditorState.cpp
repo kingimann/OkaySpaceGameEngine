@@ -14,6 +14,7 @@
 #include "okay/Core/FrameOverlay.hpp"
 #include "okay/Core/TimerDebug.hpp"
 #include <filesystem>
+#include <fstream>
 #include "../shared/ProjectCreate.hpp"
 
 namespace {
@@ -781,6 +782,21 @@ bool EditorState::Save(const std::string& path, std::string* error) {
     if (!SceneSerializer::SaveToFile(m_scene, path, error)) return false;
     m_path = path;
     MarkClean();
+    return true;
+}
+
+bool EditorState::LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error) {
+    const std::string tmp = keepPath.empty() ? std::string("okay_scene_recovery.okayscene") : keepPath + ".recovery-tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary);
+        if (!f) { if (error) *error = "couldn't write the recovery file"; return false; }
+        f << text;
+    }
+    if (!Load(tmp, error)) return false;
+    m_path = keepPath;
+    dirty = true;
+    std::error_code ec;
+    std::filesystem::remove(tmp, ec);
     return true;
 }
 

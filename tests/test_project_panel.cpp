@@ -190,7 +190,7 @@ int main() {
         CHECK(ListFolder(td.at("missing"), ListOptions()).empty());
         auto q = ParseQuery("Hero ext:PNG t:audio");
         CHECK(q.words.size() == 1 && q.words[0] == "hero" && q.ext == ".png" && q.filter == Filter::Audio);
-        CHECK(IsHiddenName(".x") && IsHiddenName("a.okaymeta") && !IsHiddenName("a.png"));
+        CHECK(IsHiddenName(".x") && IsHiddenName("a.okaymeta") && IsHiddenName("s.okayscene.autosave") && !IsHiddenName("a.png"));
     }
 
     RUN_SUITE("create");

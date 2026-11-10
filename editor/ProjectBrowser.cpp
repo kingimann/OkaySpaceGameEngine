@@ -178,7 +178,7 @@ bool NaturalLess(const std::string& a, const std::string& b) {
 bool IsHiddenName(const std::string& n) {
     if (n.empty() || n[0] == '.') return true;
     const std::string e = Lower(ExtOf(n));
-    return e == ".okaymeta" || e == ".tmp" || e == ".part" || e == ".bak" || e == ".swp" || e == ".corrupt";
+    return e == ".okaymeta" || e == ".tmp" || e == ".part" || e == ".bak" || e == ".swp" || e == ".corrupt" || e == ".autosave";
 }
 
 bool FilterMatches(Filter f, const std::string& e) {
@@ -518,7 +518,8 @@ bool Browser::Sync() {
     if (!fs::is_directory(P(m_root), ec)) return false;
     okay::ScanOptions o;
     o.logWarnings = false;
-    o.fullHashLimit = 32u << 20;   // big files are hashed from their head, tail and size
+    o.fullHashLimit = 32u << 20;
+    o.ignoreExtensions.push_back("autosave");   // the editor's own recovery copies are not assets   // big files are hashed from their head, tail and size
     m_db.Scan(m_root, o);
     m_indexed = true;
     return true;
@@ -532,6 +533,7 @@ bool Browser::Poll(std::uint64_t nowMs) {
     okay::ScanOptions o;
     o.logWarnings = false;
     o.fullHashLimit = 32u << 20;
+    o.ignoreExtensions.push_back("autosave");   // the editor's own recovery copies are not assets
     const okay::ScanReport rep = m_db.Scan(m_root, o);
     const auto ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
     m_nextPoll = nowMs + std::max<std::uint64_t>(2000, 30 * ms);

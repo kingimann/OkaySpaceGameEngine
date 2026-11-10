@@ -755,6 +755,19 @@ std::uint64_t EditorState::Fingerprint(const std::string& text) {
     return h ^ ((std::uint64_t)text.size() << 1);
 }
 
+bool EditorState::RewriteAssetPaths(const std::function<std::string(const std::string&)>& rewrite) {
+    if (m_playing || !rewrite) return false;
+    const bool wasClean = !HasUnsavedChanges();
+    for (std::string& s : m_undo) s = rewrite(s);
+    for (std::string& s : m_redo) s = rewrite(s);
+    const std::string now = SceneSerializer::Serialize(m_scene);
+    const std::string next = rewrite(now);
+    if (next == now) return false;
+    RestoreKeepingSelection(next);
+    if (wasClean) MarkClean();
+    return true;
+}
+
 void EditorState::MarkClean() {
     m_savedPrint = Fingerprint(SceneSerializer::Serialize(m_scene));
     dirty = false;

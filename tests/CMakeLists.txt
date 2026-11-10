@@ -2163,3 +2163,8 @@ add_test(NAME countdown COMMAND test_countdown)
 add_executable(test_time_snapshot test_time_snapshot.cpp)
 target_link_libraries(test_time_snapshot PRIVATE okay::engine)
 add_test(NAME time_snapshot COMMAND test_time_snapshot)
+
+add_executable(test_dev_log test_dev_log.cpp)
+target_include_directories(test_dev_log PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_link_libraries(test_dev_log PRIVATE okay::engine)
+add_test(NAME dev_log COMMAND test_dev_log)

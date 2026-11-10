@@ -1512,8 +1512,11 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             if (tk <= 0.0f) continue;   // canvas behind the camera
             ps *= tk;
         }
+        // Text inside a Scroll View / List View / Mask scrolls with it and is clipped to it, like every other widget.
+        { Vec2 clipOnly{0.0f, 0.0f}; if (!tWorld) enterScroll(up.get(), clipOnly); }
         if (tr->background) {                       // label background box
             Vec2 b = UIResolveOrigin(up.get(), (float)w, (float)h);   // parent-relative box
+            if (!tWorld) b = b - UIScrollTotal(up.get());
             Rect br{(int)b.x, (int)b.y, (int)(tr->size.x * tk), (int)(tr->size.y * tk)};
             p.SetDrawColor((std::uint8_t)(tr->backgroundColor.r * 255),
                                    (std::uint8_t)(tr->backgroundColor.g * 255), (std::uint8_t)(tr->backgroundColor.b * 255),
@@ -1522,6 +1525,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
         Vec2 o = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
                         : UITextDrawOrigin(up.get(), tr, (float)w, (float)h);   // parent-relative + align
+        if (!tWorld) o = o - UIScrollTotal(up.get());
         thread_local std::string dispScratch;
         const std::string& disp = tr->DisplayText(dispScratch);
         bool it = tr->italic;

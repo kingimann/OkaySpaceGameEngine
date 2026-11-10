@@ -372,19 +372,22 @@ void DrawUIAddMenuExtras(EditorState& ed, GameObject* parent, bool& created) {
     add("Dialogue", "Speaker, typing text and choice buttons. Scripts call ui_dialogue_show().", [&] { return UIGallery::AddDialogueScreen(sc); });
 }
 
-void OpenUIGalleryExample(EditorState& ed) {
+void OpenUIGalleryExample(EditorState& ed, bool portrait) {
     ed.NewScene2D();
     ed.PushUndo();
-    GameObject* root = UIGallery::BuildGallery(ed.scene(), (int)UITheme::Preset::ModernFlat);
+    GameObject* root = UIGallery::BuildGallery(ed.scene(), (int)UITheme::Preset::ModernFlat, portrait);
     ed.Select(root);
     ed.dirty = false;   // an example is not "unsaved work"
-    ConsoleLog("Opened the UI Gallery. Press Play to try the widgets; pick a theme at the top right.");
+    ConsoleLog(portrait ? "Opened the UI Gallery for phones. Press Play, pick a phone in the Game view, and scroll."
+                        : "Opened the UI Gallery. Press Play to try the widgets; pick a theme at the top right.");
 }
 
 void DrawExamplesMenu(EditorState& ed, const std::function<void(const std::function<void()>&)>& afterSavePrompt) {
     if (ImGui::BeginMenu("Examples")) {
-        if (ImGui::MenuItem("UI Gallery")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed); });
+        if (ImGui::MenuItem("UI Gallery")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed, false); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every in-game UI widget in one scene, in twelve looks. Press Play to try them.");
+        if (ImGui::MenuItem("UI Gallery (phone)")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed, true); });
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same widgets in one scrolling column on a portrait canvas. Pick a phone in the Game view.");
         ImGui::EndMenu();
     }
 }

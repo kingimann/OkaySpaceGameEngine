@@ -767,6 +767,61 @@ int main() {
         CHECK(UIInventoryBind::SlotText({"", 0, {}}, 8).empty());
     }
 
+
+    // ---- The phone gallery: one column in a scroll view, on a portrait canvas ----
+    {
+        Scene g("Phone");
+        GameObject* root = UIGallery::BuildGallery(g, (int)UITheme::Preset::Dark, true);
+        CHECK(root != nullptr);
+        auto* cv = g.FindObjectOfType<Canvas>();
+        CHECK(cv && cv->referenceResolution.x == 440.0f && cv->referenceResolution.y == 960.0f);
+        GameObject* sv = g.Find("SwatchScroll");
+        CHECK(sv && sv->GetComponent<UIScrollView>());
+        for (const char* n : {"Buttons", "Bars", "Game"}) {
+            GameObject* card = g.Find(n);
+            CHECK(card && card->transform->Parent()->gameObject == sv);   // all three cards scroll
+            auto* pn = card->GetComponent<UIPanel>();
+            CHECK(pn && pn->position.x >= 0.0f && pn->position.x + pn->size.x <= 440.0f);   // inside the phone's width
+        }
+        CHECK(g.Find("ThemePick") && g.Find("Window") && g.Find("Numbers"));
+        // on a 1206 x 2622 portrait phone the header and the first card are on screen, the rest scroll
+        Vec2 o, sz;
+        CHECK(GetUIScreenRect(g.Find("Buttons"), 1206, 2622, o, sz));
+        CHECK(o.x >= 0 && o.x + sz.x <= 1206.5f && sz.x > 1000.0f);        // wide enough to read (was a thumbnail)
+        CHECK(GetUIScreenRect(g.Find("ThemePick"), 1206, 2622, o, sz) && o.y + sz.y < 1000.0f);
+        const std::string txt = SceneSerializer::Serialize(g);
+        Scene h("Phone2"); std::string err;
+        CHECK(SceneSerializer::Deserialize(h, txt, &err, nullptr));
+        CHECK(SceneSerializer::Serialize(h) == txt);
+    }
+
+
+    // ---- Text inside a scroll view scrolls with it ----
+    {
+        Scene s("ScrollText");
+        s.uiFont = "pixel";
+        GameObject* sv = s.CreateGameObject("List");
+        auto* sc = sv->AddComponent<UIScrollView>();
+        sc->position = {0, 0}; sc->size = {200, 100}; sc->autoContent = false; sc->contentHeight = 400.0f;
+        GameObject* t = s.CreateGameObject("Label");
+        t->transform->SetParent(sv->transform, false);
+        auto* tr = t->AddComponent<TextRenderer>();
+        tr->screenSpace = true; tr->text = "I"; tr->pixelSize = 2.0f; tr->size = {100, 20};
+        tr->screenPos = {10, 150}; tr->vcenter = false; tr->shadow = false; tr->outline = false;
+        tr->color = Color::FromBytes(1, 2, 3);
+        auto minY = [&]() {
+            RecordPainter rp;
+            okay::ui2d::RenderSceneUI(s, rp, 640, 360);
+            int m = 1 << 30; for (const auto& f : rp.fills) if (f.r == 1 && f.g == 2 && f.b == 3 && f.y < m) m = f.y;
+            return m;
+        };
+        const int y0 = minY();
+        sc->SetScroll(60.0f);
+        const int y1 = minY();
+        CHECK(y0 < (1 << 29) && y1 < (1 << 29));
+        CHECK(y0 - y1 == 60);                                         // moved up by the scroll, like the other widgets
+    }
+
     // ---- Save and load: new fields, old scenes ----
     {
         Scene a("Save");

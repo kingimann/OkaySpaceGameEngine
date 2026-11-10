@@ -18,6 +18,7 @@
 #include "okay/Components/UIRating.hpp"
 #include "okay/Components/UISlotGrid.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
+#include "okay/Components/UISafeArea.hpp"
 #include <string>
 
 namespace okay { namespace UIGallery {
@@ -180,8 +181,11 @@ inline GameObject* AddNameplate(Scene& scene, bool inWorld) {
 }
 
 /// Pick the widgets of one preset: a dropdown in the header that restyles the scene.
-inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset::ModernFlat) {
+/// `portrait` lays the three cards out one under the other in a scroll view, on a 440 x 960 canvas, for phones.
+inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset::ModernFlat, bool portrait = false) {
     GameObject* canvas = EnsureCanvas(scene);
+    if (portrait)
+        if (auto* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {440.0f, 960.0f};
     GameObject* root = Group(scene, canvas, "UI Gallery");
     // Page background: kept as-is by the theme (the name starts with Swatch).
     Panel(scene, root, "SwatchBackdrop", UIAnchor::StretchFull, {0, 0}, {0, 0}, slate::Backdrop(), 0.0f);
@@ -189,13 +193,18 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         auto* bp = scene.Find("SwatchBackdrop")->GetComponent<UIPanel>();
         bp->borderWidth = 0.0f;
     }
-    Text(scene, root, "Title", "UI Gallery", UIAnchor::TopLeft, {32, 16}, {360, 40}, 30.0f, slate::Text(), 0, true);
-    Text(scene, root, "Subtitle", "Every widget, in any theme. Pick a look on the right.", UIAnchor::TopLeft, {34, 52}, {560, 20}, 14.0f, slate::Dim());
-    gx::Label(scene, root, "ThemeLabel", "Theme", {880, 24}, 80, slate::Dim(), 14.0f);
+    // On a phone everything but the backdrop sits in a Safe Area, clear of the notch and the home bar.
+    GameObject* content = root;
+    if (portrait) { content = Child(scene, root, "SafeArea"); content->AddComponent<UISafeArea>(); }
+    const float titleX = portrait ? 24.0f : 32.0f;
+    Text(scene, content, "Title", "UI Gallery", UIAnchor::TopLeft, {titleX, 14}, {360, 40}, 30.0f, slate::Text(), 0, true);
+    Text(scene, content, "Subtitle", portrait ? "Scroll down. Pick a look below." : "Every widget, in any theme. Pick a look on the right.",
+         UIAnchor::TopLeft, {titleX + 2, 50}, {portrait ? 400.0f : 560.0f, 20}, 14.0f, slate::Dim());
+    if (!portrait) gx::Label(scene, content, "ThemeLabel", "Theme", {880, 24}, 80, slate::Dim(), 14.0f);
     {   // theme picker
-        GameObject* pick = Child(scene, root, "ThemePick");
+        GameObject* pick = Child(scene, content, "ThemePick");
         auto* dd = pick->AddComponent<UIDropdown>();
-        dd->anchor = UIAnchor::TopLeft; dd->position = {944, 14}; dd->size = {304, 38};
+        dd->anchor = UIAnchor::TopLeft; dd->position = portrait ? Vec2{24, 76} : Vec2{944, 14}; dd->size = portrait ? Vec2{392, 38} : Vec2{304, 38};
         dd->options.clear();
         for (int i = 1; i < UITheme::kPresetCount; ++i) dd->options.push_back(UITheme::PresetName(i));
         dd->maxVisible = 7;
@@ -203,9 +212,18 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         pick->AddComponent<ScriptComponent>()->LoadSource(
             "function on_change() { ui_theme_preset(ui_dropdown_value(\"ThemePick\") + 1); }\n");
     }
+    GameObject* cardParent = content;
+    if (portrait) {   // the cards scroll: one column, one card after the other
+        GameObject* sv = Child(scene, content, "SwatchScroll");
+        auto* sc = sv->AddComponent<UIScrollView>();
+        sc->anchor = UIAnchor::TopLeft; sc->position = {0, 124}; sc->size = {440, 780};
+        sc->background = Color(0, 0, 0, 0); sc->autoContent = true; sc->contentHeight = 3 * 640.0f + 8.0f;
+        cardParent = sv;
+    }
+    auto cardAt = [&](int i) { return portrait ? Vec2{24.0f, 8.0f + 640.0f * i} : Vec2{32.0f + 416.0f * i, 86.0f}; };
 
     // ---- Column 1: buttons and inputs ----
-    GameObject* c1 = gx::Card(scene, root, "Buttons", "Buttons and inputs", {32, 86}, {392, 618});
+    GameObject* c1 = gx::Card(scene, cardParent, "Buttons", "Buttons and inputs", cardAt(0), {392, 618});
     gx::Btn(scene, c1, "Primary", "Primary", {20, 40}, {170, 40}, (int)UITheme::Variant::Primary);
     gx::Btn(scene, c1, "Secondary", "Secondary", {202, 40}, {170, 40}, (int)UITheme::Variant::Secondary);
     gx::Btn(scene, c1, "Danger", "Danger", {20, 90}, {170, 40}, (int)UITheme::Variant::Danger);
@@ -250,7 +268,7 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
     Button(scene, c1, "Play", "Play", UIAnchor::TopLeft, {20, 556}, {352, 44}, ButtonKind::Primary)->AddComponent<UIStyleVariant>()->variant = (int)UITheme::Variant::Pill;
 
     // ---- Column 2: bars and feedback ----
-    GameObject* c2 = gx::Card(scene, root, "Bars", "Bars and feedback", {448, 86}, {392, 618});
+    GameObject* c2 = gx::Card(scene, cardParent, "Bars", "Bars and feedback", cardAt(1), {392, 618});
     gx::Label(scene, c2, "HealthLabel", "Health", {20, 40}, 100, slate::Text(), 14.0f);
     gx::Label(scene, c2, "ManaLabel", "Mana", {20, 86}, 100, slate::Text(), 14.0f);
     gx::Label(scene, c2, "StaminaLabel", "Stamina", {20, 132}, 100, slate::Text(), 14.0f);
@@ -298,7 +316,7 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
     }
 
     // ---- Column 3: game pieces ----
-    GameObject* c3 = gx::Card(scene, root, "Game", "Game pieces", {864, 86}, {392, 618});
+    GameObject* c3 = gx::Card(scene, cardParent, "Game", "Game pieces", cardAt(2), {392, 618});
     gx::Label(scene, c3, "SlotLabel", "Inventory", {20, 40}, 200);
     {
         GameObject* g = Child(scene, c3, "Slots"); auto* sg = g->AddComponent<UISlotGrid>();

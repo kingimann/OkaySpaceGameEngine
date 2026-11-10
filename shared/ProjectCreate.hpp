@@ -396,4 +396,131 @@ inline std::string SettingsPath(const std::string& root) {
     return root.empty() ? std::string(SettingsFileName()) : (fs::path(root) / SettingsFileName()).string();
 }
 
+// ---- the launcher's Create page -----------------------------------------------------------------------------
+// The roomy Create tab shows the three "start simple" templates as large cards. The rest stay
+// available behind "All templates". Rarely used choices (version, renderer, git) sit in More options.
+
+/// True for the few templates the Create page shows before "All templates" is opened.
+inline bool IsStarterTemplate(const TemplateInfo& t) { return t.group == 1; }
+
+/// Three short, true points about a template, shown on its card when it is selected.
+inline void TemplateFeatureLines(const char* title, const char*& a, const char*& b, const char*& c) {
+    struct Row { const char* title; const char* a; const char* b; const char* c; };
+    static const Row rows[] = {
+        {"3D Scene", "Ground and sky", "A light", "Ready to build in 3D"},
+        {"2D Scene", "Orthographic camera", "Empty canvas", "For sprites and UI"},
+        {"Empty", "No starter objects", "You place everything", "Same project folders"},
+        {"First Person", "Mouse look", "WASD movement", "Jump"},
+        {"Third Person", "Orbit camera", "A character", "Walk and jump"},
+        {"Third Person Shooter", "Over-the-shoulder aim", "Shooting", "A character"},
+        {"Platformer", "Side view", "Jump and run", "A ground to land on"},
+        {"Top-Down", "Top-down movement", "Rooms", "A character"},
+        {"Top-Down Shooter", "Mouse aim", "Dash", "Ammo"},
+        {"2.5D Platformer", "Side view", "Depth layers", "Grab"},
+        {"Point & Click", "Click to move", "Adventure starter", "A character"},
+        {"Vehicle (3D)", "A drivable car", "Suspension", "3D road space"},
+        {"Vehicle (2D)", "Side-on car", "Hill-climb style", "2D track"},
+        {"Sandbox", "Place blocks", "Break blocks", "A voxel world"},
+        {"Multiplayer", "Host a game", "Join a game", "A networked starter"},
+        {"Coin Collector", "Playable game", "Pickup coins", "A small level"},
+        {"Snake", "Playable game", "The classic rules", "A board"},
+        {"Brick Breaker", "Paddle", "Ball", "A wall of bricks"},
+        {"Main Menu", "Title screen", "Buttons", "A place to start"},
+        {"Inventory", "Item grid", "Drag and drop", "A sample bag"},
+        {"Humanoid", "A rigged character", "Ready to animate", "A place to stand"},
+    };
+    a = b = c = "";
+    for (const Row& r : rows) if (title && std::strcmp(title, r.title) == 0) { a = r.a; b = r.b; c = r.c; return; }
+}
+
+/// A project version the editor can store in project.okayproj (its field holds 31 characters).
+/// Empty when `raw` is fine; otherwise one sentence for the form.
+inline std::string CheckProjectVersion(const std::string& raw) {
+    std::size_t b = 0, e = raw.size();
+    while (b < e && (raw[b] == ' ' || raw[b] == '\t')) ++b;
+    while (e > b && (raw[e - 1] == ' ' || raw[e - 1] == '\t')) --e;
+    const std::string v = raw.substr(b, e - b);
+    if (v.empty()) return "Give the project a version, like 1.0.0.";
+    if (v.size() > 31) return "That version is too long. Something like 1.0.0 is enough.";
+    for (unsigned char c : v) {
+        const bool ok = (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_' ||
+                        (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        if (!ok) return "Use a version like 1.0.0 (letters, numbers, dots and dashes).";
+    }
+    bool digit = false;
+    for (char c : v) if (c >= '0' && c <= '9') digit = true;
+    if (!digit) return "A version needs a number, like 1.0.0.";
+    return "";
+}
+
+/// The New Project popup. It is a three-step wizard (template, details, review). Creating is
+/// never one click from the home: Next stays disabled until the current step is valid, and
+/// Create exists only on the review step.
+enum class WizardMove { None, Opened, Closed, Next, Back, Create };
+
+struct NewProjectWizard {
+    bool open = false;
+    int step = 0;             ///< 0 template, 1 details, 2 review
+    bool creating = false;
+    bool allTemplates = false;
+    bool moreOpen = false;
+    int selected = 0;
+    bool detailsOk = false;   ///< name, location and version all passed their checks
+};
+
+inline bool WizardCanAdvance(const NewProjectWizard& w) {
+    if (!w.open || w.creating) return false;
+    if (w.step <= 0) return w.selected >= 0;
+    if (w.step == 1) return w.detailsOk;
+    return w.detailsOk && w.selected >= 0;
+}
+
+inline WizardMove WizardOpen(NewProjectWizard& w) {
+    w.open = true;
+    w.step = 0;
+    w.creating = false;
+    w.moreOpen = false;
+    return WizardMove::Opened;
+}
+
+inline WizardMove WizardClose(NewProjectWizard& w) {
+    if (!w.open || w.creating) return WizardMove::None;
+    w.open = false;
+    w.moreOpen = false;
+    return WizardMove::Closed;
+}
+
+inline WizardMove WizardNext(NewProjectWizard& w) {
+    if (!WizardCanAdvance(w) || w.step >= 2) return WizardMove::None;
+    ++w.step;
+    w.moreOpen = false;
+    return WizardMove::Next;
+}
+
+inline WizardMove WizardBack(NewProjectWizard& w) {
+    if (!w.open || w.creating || w.step <= 0) return WizardMove::None;
+    --w.step;
+    return WizardMove::Back;
+}
+
+inline WizardMove WizardBeginCreate(NewProjectWizard& w) {
+    if (w.step != 2 || !WizardCanAdvance(w)) return WizardMove::None;
+    w.creating = true;
+    return WizardMove::Create;
+}
+
+/// Enter moves forward when the step is valid (and starts creation on the review step).
+/// Esc cancels the popup. If More options is open, Esc only closes that section.
+/// Keys that belong to another text field are ignored.
+inline WizardMove ApplyWizardInput(bool enter, bool escape, bool typingElsewhere, NewProjectWizard& w) {
+    if (!w.open || w.creating) return WizardMove::None;
+    if (escape) {
+        if (w.moreOpen) { w.moreOpen = false; return WizardMove::Back; }
+        return WizardClose(w);
+    }
+    if (!enter || typingElsewhere) return WizardMove::None;
+    if (w.step < 2) return WizardNext(w);
+    return WizardBeginCreate(w);
+}
+
 }  // namespace okayproj

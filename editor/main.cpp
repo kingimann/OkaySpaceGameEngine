@@ -49,6 +49,9 @@
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
+#include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
+#include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
+#include "DevFieldDemo.hpp"
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
@@ -815,6 +818,9 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
+#include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
+#include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
+#include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings
 
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
@@ -2048,6 +2054,8 @@ bool g_autoCheckDone = false;     // consumed the async result yet?
 bool g_openAbout = false;
 std::string g_newProjectTemplate; // template title requested via --template
 std::string g_newProjectRoot;     // project folder requested via --new-project (launcher)
+std::string g_newProjectVersion;  // project.okayproj version from the launcher's More options ("" = 1.0.0)
+int g_newProjectGpu = -1;         // 1 GPU, 0 software, -1 leave the build default
 std::string g_openScenePath;      // scene to open at startup via --open (launcher)
 
 // Panel visibility (View menu).
@@ -7477,6 +7485,15 @@ static void DrawAssetIcon(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const AssetKind&
 // imported file lands in the folder you're looking at. Empty until a project opens.
 std::string g_assetImportDir;
 
+// The Project panel's file logic (okaypb): safe create / rename / move / copy / delete with undo and
+// reference rewriting. One per project; DrawProject() keeps it pointed at the open project's Assets.
+static std::unique_ptr<okaypb::Browser> g_pb;
+static std::string g_pbRoot;
+static EditorState* g_projEd = nullptr;
+static std::vector<std::string> g_dragMulti;   // all dragged items when a multi-selection is dragged (the payload carries one)
+static void ProjectApplyMoves(const okaypb::Result& r);   // after a rename / move / undo: labels, the open scene
+static std::string NativePath(const std::string& p) { return std::filesystem::path(std::filesystem::u8path(p)).make_preferred().string(); }
+
 // Favorite (pinned) folders shown at the top of the Project panel's tree pane —
 // "Favorites" for one-click jumps to folders you use a lot. Session-lived
 // (reset on restart), keyed by absolute path.
@@ -7999,8 +8016,12 @@ static std::string ImportAssetFile(const std::string& srcPath, std::filesystem::
     std::string stem = src.stem().string(), ext = src.extension().string();
     fs::path dst = destDir / (stem + ext);
     for (int n = 2; fs::exists(dst, ec); ++n) dst = destDir / (stem + " " + std::to_string(n) + ext);
-    fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
-    if (ec) { ConsoleLog("Import failed: " + ec.message(), 2); return {}; }
+    {   // copy beside it first, then rename: a failed copy never leaves half a file under the real name
+        fs::path part = dst; part += ".tmp";
+        fs::copy_file(src, part, fs::copy_options::overwrite_existing, ec);
+        if (!ec) fs::rename(part, dst, ec);
+        if (ec) { std::error_code rm; fs::remove(part, rm); ConsoleLog("Import failed: " + ec.message(), 2); return {}; }
+    }
     const char* kind = ImportKindLabel(Lower(ext));
     ConsoleLog("Imported " + (kind ? std::string(kind) + " " : std::string()) + dst.filename().string()
                + " -> " + destDir.filename().string());
@@ -8010,11 +8031,16 @@ static std::string ImportAssetFile(const std::string& srcPath, std::filesystem::
 static void MoveAssetInto(const std::string& src, const std::filesystem::path& destDir) {
     namespace fs = std::filesystem;
     std::error_code ec;
-    fs::path s(src), d = destDir / fs::path(src).filename();
-    if (s.empty() || s == d || s.parent_path() == destDir || !fs::is_directory(destDir, ec)) return;
-    fs::rename(s, d, ec);
-    ConsoleLog(ec ? ("Move failed: " + ec.message())
-                  : ("Moved " + s.filename().string() + " -> " + destDir.filename().string()));
+    fs::path s(src);
+    if (s.empty() || s.parent_path() == destDir || !fs::is_directory(destDir, ec) || !g_pb) return;
+    std::vector<std::string> items{src};   // dragging one of several selected items moves them all
+    if (std::find(g_dragMulti.begin(), g_dragMulti.end(), src) != g_dragMulti.end()) items = g_dragMulti;
+    const okaypb::Result r = g_pb->Move(items, destDir.generic_string());
+    if (!r.ok) { ConsoleLog("Move failed: " + r.error, 2); return; }
+    ProjectApplyMoves(r);
+    ConsoleLog("Moved " + (items.size() == 1 ? s.filename().string() : std::to_string(items.size()) + " items") + " -> " + destDir.filename().string() +
+               (r.referencesRewritten ? " (" + std::to_string(r.referencesRewritten) + " reference" + (r.referencesRewritten == 1 ? "" : "s") + " updated)" : std::string()));
+    if (!r.note.empty()) ConsoleLog(r.note, 1);
 }
 
 // Save a GameObject as a .okayprefab in `destDir` (drag from the
@@ -8089,13 +8115,14 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
         std::vector<fs::path> subs;
         std::error_code se;
         for (auto& e : fs::directory_iterator(dir, se))
-            if (e.is_directory(se)) subs.push_back(e.path());
+            if (e.is_directory(se) && !okaypb::IsHiddenName(e.path().filename().string())) subs.push_back(e.path());
         std::sort(subs.begin(), subs.end(), [](const fs::path& a, const fs::path& b) {
             return Lower(a.filename().string()) < Lower(b.filename().string());
         });
         for (const fs::path& s : subs) {
             TreeSub ts; ts.path = s; std::error_code e2;
             for (auto& c : fs::directory_iterator(s, e2)) {
+                if (okaypb::IsHiddenName(c.path().filename().string())) continue;   // .okaymeta files and dot-folders do not count
                 if (c.is_directory(e2)) ts.hasKids = true;
                 if (++ts.items >= 999) break;
             }
@@ -9100,6 +9127,87 @@ static void SetAssetLabel(const std::string& proj, const std::string& full, int 
     std::ofstream f(std::filesystem::path(proj) / ".okaylabels", std::ios::trunc);
     for (const auto& kv : g_assetLabels) f << kv.second << "\t" << kv.first << "\n";
 }
+// A picture for an image asset: made once per file content (the asset database's thumbnail cache, a small PNG on
+// disk under .okay/thumbs), so a folder of big textures opens fast and the next editor start reuses them. At most a
+// few new ones are made per frame (g_thumbBudget); the rest show their icon until their turn.
+static std::unique_ptr<okay::ThumbnailCache> g_thumbCache;
+static std::string g_thumbCacheDir;
+static std::map<std::string, SDL_Texture*> g_thumbTex;   // "<guid>:<hash>" -> texture
+static int g_thumbBudget = 0;
+static SDL_Texture* ProjectThumb(const std::string& abs) {
+    if (!g_pb || !g_sdlRenderer || !g_pb->Indexed()) return GetThumb(abs);
+    okay::AssetDatabase& db = g_pb->Db();
+    const okay::AssetRecord* rec = db.Find(db.ToProjectPath(abs));
+    if (!rec) return GetThumb(abs);
+    const std::string dirWanted = g_pb->ProjectDir() + "/.okay/thumbs";
+    if (!g_thumbCache || g_thumbCacheDir != dirWanted) {
+        for (auto& kv : g_thumbTex) if (kv.second) SDL_DestroyTexture(kv.second);
+        g_thumbTex.clear();
+        okay::ThumbnailCache::Options o;
+        o.size = 128; o.diskDir = dirWanted;
+        g_thumbCache = std::make_unique<okay::ThumbnailCache>(o);
+        g_thumbCacheDir = dirWanted;
+    }
+    const std::string key = rec->guid.ToString() + ":" + std::to_string(rec->hash);
+    auto it = g_thumbTex.find(key);
+    if (it != g_thumbTex.end()) return it->second;
+    if (!g_thumbCache->InMemory(rec->guid, rec->hash) && !g_thumbCache->OnDisk(rec->guid, rec->hash)) {
+        if (g_thumbBudget <= 0) return nullptr;
+        --g_thumbBudget;
+    }
+    const okay::ThumbnailCache::Thumb t = g_thumbCache->Get(db, rec->guid);
+    SDL_Texture* tex = nullptr;
+    if (!t.placeholder && t.image && t.image->Valid()) {
+        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, t.image->Width(), t.image->Height());
+        if (tex) {
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+            SDL_UpdateTexture(tex, nullptr, t.image->Pixels().data(), t.image->Width() * 4);
+        }
+    }
+    g_thumbTex[key] = tex;
+    return tex;
+}
+static void ProjectForgetThumb(const okay::Guid& g) {
+    if (g_thumbCache) g_thumbCache->Invalidate(g);
+    const std::string pre = g.ToString() + ":";
+    for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
+        if (it->first.rfind(pre, 0) == 0) { if (it->second) SDL_DestroyTexture(it->second); it = g_thumbTex.erase(it); } else ++it;
+    }
+}
+
+// After a rename / move / undo of assets: labels follow the files, the open scene follows its own file and
+// every asset path in it (and in its undo history) is rewritten.
+static void ProjectApplyMoves(const okaypb::Result& r) {
+    if (r.moved.empty() || !g_projEd || !g_pb) return;
+    EditorState& ed = *g_projEd;
+    const std::string proj = g_assetLabelsProj;
+    if (proj != "\x01" && !g_assetLabels.empty()) {
+        std::map<std::string, int> next;
+        for (const auto& kv : g_assetLabels) {
+            std::string key = kv.first;
+            for (const auto& m : r.moved) {
+                const std::string o = AssetLabelKey(proj, NativePath(m.first)), n = AssetLabelKey(proj, NativePath(m.second));
+                if (key == o) { key = n; break; }
+                if (key.size() > o.size() && key.compare(0, o.size(), o) == 0 && key[o.size()] == '/') { key = n + key.substr(o.size()); break; }
+            }
+            next[key] = kv.second;
+        }
+        if (next != g_assetLabels) {
+            g_assetLabels = next;
+            std::ofstream f(std::filesystem::path(proj) / ".okaylabels", std::ios::trunc);
+            for (const auto& kv : g_assetLabels) f << kv.second << "\t" << kv.first << "\n";
+        }
+    }
+    const std::string oldScene = ed.path().empty() ? g_pb->Root() + "/untitled.okayscene" : okaypb::Slash(ed.path());
+    std::string newScene = oldScene;
+    for (const auto& m : r.moved)
+        if (okaypb::IsInside(m.first, oldScene)) { newScene = m.second + okaypb::Slash(oldScene).substr(okaypb::Slash(m.first).size()); break; }
+    if (!ed.path().empty() && newScene != oldScene) ed.FollowMovedFile(NativePath(newScene));
+    const okaypb::PathMap map = r.moved;
+    const std::string root = g_pb->Root();
+    ed.RewriteAssetPaths([&](const std::string& text) { return okaypb::RewriteReferences(text, oldScene, newScene, map, root); });
+}
+
 // Search words "t:model", "t:folder"... -> a project filter id (-2 folder, -1 unknown).
 static int ProjectTypeWord(const std::string& w) {
     if (w == "model" || w == "models" || w == "mesh" || w == "fbx") return 8;
@@ -9165,6 +9273,18 @@ void DrawProject(EditorState& ed) {
     fs::path dir(dirBuf);
     const std::string labelProj = ed.projectDir().empty() ? root.string() : ed.projectDir();
     EnsureAssetLabels(labelProj);
+    if (!g_pb || g_pbRoot != root.generic_string()) {   // one file-operations object per project
+        g_pb = std::make_unique<okaypb::Browser>(root.generic_string());
+        g_pbRoot = root.generic_string();
+    }
+    g_projEd = &ed;
+    okaypb::Browser& pb = *g_pb;
+    g_thumbBudget = 6;
+    if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
+    {   // keep the asset index fresh without a thread: re-scan when due (cheap; waits 30x as long as the scan took)
+        static std::string s_changedSig;
+        if (pb.Poll(SDL_GetTicks())) s_changedSig.clear();
+    }
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
@@ -9234,9 +9354,12 @@ void DrawProject(EditorState& ed) {
     // needs the asset actions defined further down, so reserve its spot on this
     // row now and draw it at the end of the function.
     const float tbFh = ImGui::GetFrameHeight();
-    const float tbSearchW = 170.0f, tbFilterW = 104.0f;
+    const bool tbNarrow = ImGui::GetContentRegionAvail().x < 860.0f;   // a small dock: shorter search box, no slider (it is in "...")
+    const float tbSearchW = tbNarrow ? 130.0f : 170.0f, tbFilterW = tbNarrow ? 92.0f : 104.0f;
     const float tbImportW = ImGui::CalcTextSize("Import").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    const float tbRightW = tbFh * 3.0f + tbImportW + tbFilterW + tbSearchW + ImGui::GetStyle().ItemSpacing.x * 5.0f;
+    const float tbScopeW = 74.0f, tbSliderW = (g_projView == 0 && !tbNarrow) ? 78.0f : 0.0f;
+    const float tbRightW = tbFh * 3.0f + tbImportW + tbFilterW + tbSearchW + tbScopeW + tbSliderW +
+                           ImGui::GetStyle().ItemSpacing.x * (tbSliderW > 0.0f ? 7.0f : 6.0f);
     {
         float curX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetStyle().ItemSpacing.x;
         float wantX = ImGui::GetWindowContentRegionMax().x - tbRightW;
@@ -9403,30 +9526,24 @@ void DrawProject(EditorState& ed) {
     static std::vector<std::string> s_assetClip;  // paths on the clipboard (empty = none)
     static bool        s_assetClipCut = false;    // true = move on paste, false = copy
     static std::string deleteTarget;     // pending delete, awaiting confirm
-    // Paste the clipboard assets into `into`, copying (or moving, if cut) each
-    // with a unique name. Shared by the folder and empty-space context menus.
+    static bool undoReq = false;
+    static bool duplicateSel = false, reimportSel = false;   // set by the menu / Ctrl+D, handled once below
+    static std::string findRefsFor;                           // "Find References" asked for this asset
+    static bool s_searchAll = false;                          // search the whole project instead of this folder
+    static bool s_scrollToSel = false;                        // a key moved the selection: scroll it into view
+    static bool s_focusSearch = false;                        // Ctrl+F: put the cursor in the search box
+    // Paste the clipboard assets into `into`, copying (or moving, if cut) each with a
+    // unique name. Shared by the folder and empty-space context menus. Safe: all or nothing.
     auto pasteInto = [&](const fs::path& into) {
         if (s_assetClip.empty()) return;
-        int okN = 0;
-        for (const std::string& item : s_assetClip) {
-            std::error_code pe;
-            fs::path src(item);
-            if (!fs::exists(src, pe)) continue;
-            fs::path stem = src.stem(), x = src.extension();
-            fs::path dst = into / src.filename();
-            for (int n = 2; fs::exists(dst, pe); ++n)
-                dst = into / (stem.string() + " " + std::to_string(n) + x.string());
-            if (s_assetClipCut) {
-                fs::rename(src, dst, pe);
-                if (pe) { pe.clear(); fs::copy(src, dst, fs::copy_options::recursive, pe); if (!pe) fs::remove_all(src, pe); }
-            } else {
-                fs::copy(src, dst, fs::copy_options::recursive, pe);
-            }
-            if (!pe) { ++okN; selected = dst.string(); }
-        }
-        ConsoleLog((s_assetClipCut ? "Moved " : "Pasted ") + std::to_string(okN) +
-                   " item" + (okN == 1 ? "" : "s") + " into " + into.filename().string());
-        if (s_assetClipCut) s_assetClip.clear();   // a cut is consumed by the paste
+        okaypb::Clipboard cb;
+        cb.Set(s_assetClip, s_assetClipCut);
+        const okaypb::Result r = cb.Paste(pb, into.generic_string());
+        if (!r.ok) { ConsoleLog("Paste failed: " + r.error, 2); return; }
+        if (s_assetClipCut) { ProjectApplyMoves(r); s_assetClip.clear(); }
+        if (!r.paths.empty()) { selected = NativePath(r.paths.back()); s_multi.clear(); for (const auto& p : r.paths) s_multi.insert(NativePath(p)); }
+        ConsoleLog((s_assetClipCut ? "Moved " : "Pasted ") + std::to_string(r.paths.size()) + " item" + (r.paths.size() == 1 ? "" : "s") + " into " + into.filename().string());
+        if (!r.note.empty()) ConsoleLog(r.note, 1);
     };
     // Fill the clipboard from the current multi-selection (falling back to one path).
     auto clipFromSelection = [&](const std::string& fallback, bool cut) {
@@ -9434,38 +9551,76 @@ void DrawProject(EditorState& ed) {
         if (s_assetClip.empty() && !fallback.empty()) s_assetClip.push_back(fallback);
         s_assetClipCut = cut;
     };
-    auto uniquePath = [&](const std::string& base, const std::string& ext) {
-        std::error_code ue;
-        fs::path p = dir / (base + ext);
-        for (int n = 1; fs::exists(p, ue); ++n) p = dir / (base + std::to_string(n) + ext);
-        return p;
+    // Every "create" asks for the name first (a prompt), then makes the file under that name.
+    // The prompt's callback runs on a later frame, so it only captures values and the function statics.
+    auto askCreate = [&](const char* title, const char* hint, const std::string& base, const std::string& ext, const char* what,
+                         std::function<okaypb::Result(const std::string& dir, const std::string& fileName)> make,
+                         std::function<void(const std::string& path)> after = {}) {
+        oked::projectpanel::NameRequest rq;
+        rq.title = title; rq.hint = hint; rq.suffix = ext;
+        std::string first = okaypb::UniqueName(dir.generic_string(), base, ext);
+        rq.initial = first.substr(0, first.size() - ext.size());
+        const std::string dirS = dir.generic_string(), w = what;
+        rq.accept = [dirS, w, make, after](const std::string& full) -> std::string {
+            const okaypb::Result r = make(dirS, full);
+            if (!r.ok) return r.error;
+            selected = NativePath(r.paths[0]); s_multi.clear(); s_multi.insert(selected);
+            ConsoleLog("Created " + w + " " + fs::path(selected).filename().string());
+            if (after) after(r.paths[0]);
+            return {};
+        };
+        oked::projectpanel::AskName(std::move(rq));
     };
-    // Open the rename dialog on a freshly-created asset, so users name it on the
-    // spot ("create, then type the name").
-    auto nameOnCreate = [&](const fs::path& p) {
-        renameTarget = p.string();
-        std::string fn = p.filename().string();
-        std::strncpy(renameBuf, fn.c_str(), sizeof(renameBuf) - 1);
-        renameBuf[sizeof(renameBuf) - 1] = '\0';
-        selected = p.string();
-        s_multi.clear(); s_multi.insert(p.string());
+    auto mkFolder = [&]{
+        askCreate("New folder", "", "New Folder", "", "folder", [](const std::string& d, const std::string& n) { return g_pb->CreateFolder(d, n); });
     };
-    // The asset-creation actions, shared by the toolbar's Create menu and the
-    // empty-space right-click menu ("Create ▸ ...").
-    auto mkFolder = [&]{ std::error_code ce; fs::path p = uniquePath("New Folder", ""); if (fs::create_directory(p, ce)) nameOnCreate(p); };
-    auto mkScript = [&]{ fs::path p = uniquePath("NewScript", ".okay"); std::ofstream(p) << extide::StarterScript("okayscript"); ConsoleLog("Created " + p.string()); nameOnCreate(p); };
-    auto mkMaterial = [&]{ fs::path p = uniquePath("New Material", ".okaymat"); if (Material{}.SaveToFile(p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); } };
+    auto mkScript = [&]{
+        askCreate("New script", "A script you attach to objects.", "NewScript", ".okay", "script", [](const std::string& d, const std::string& n) {
+            std::string stem = fs::path(fs::u8path(n)).stem().string();
+            return g_pb->MakeFile(d, n, extide::RenameScriptClass(extide::StarterScript("okayscript"), extide::ClassIdent(stem)));
+        }, [](const std::string& p) { OpenScriptFileInEditor(NativePath(p)); g_showScriptEditor = true; });
+    };
+    auto mkMaterial = [&]{
+        askCreate("New material", "How a surface looks.", "New Material", ".okaymat", "material", [](const std::string& d, const std::string& n) {
+            std::error_code te;
+            fs::path tmp = fs::temp_directory_path(te) / ("okay_newmat_" + std::to_string(SDL_GetTicks()) + ".okaymat");
+            std::string text;
+            if (Material{}.SaveToFile(tmp.string())) text = extide::ReadFile(tmp.string());
+            fs::remove(tmp, te);
+            if (text.empty()) { okaypb::Result r; r.error = "Couldn't make the material."; return r; }
+            return g_pb->MakeFile(d, n, text);
+        });
+    };
     // A new scene starts usable: a Main Camera, plus a sun in 3D.
     auto mkScene = [&]{
-        fs::path p = uniquePath("New Scene", ".okayscene");
-        okay::Scene sc("New Scene");
-        okay::EnsureSceneCamera(sc, !ed.view3D);
-        if (ed.view3D) {
-            GameObject* sun = sc.CreateGameObject("Directional Light");
-            sun->AddComponent<Light>();
-            sun->transform->localRotation = Quat::Euler(50.0f, -30.0f, 0.0f);
-        }
-        if (SceneSerializer::SaveToFile(sc, p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); }
+        askCreate("New scene", "An empty level with a camera.", "New Scene", ".okayscene", "scene", [](const std::string& d, const std::string& n) {
+            okay::Scene sc(fs::path(fs::u8path(n)).stem().string());
+            const bool v3 = g_projEd && g_projEd->view3D;
+            okay::EnsureSceneCamera(sc, !v3);
+            if (v3) {
+                GameObject* sun = sc.CreateGameObject("Directional Light");
+                sun->AddComponent<Light>();
+                sun->transform->localRotation = Quat::Euler(50.0f, -30.0f, 0.0f);
+            }
+            return g_pb->MakeFile(d, n, SceneSerializer::Serialize(sc));
+        });
+    };
+    auto mkPrefab = [&]{   // the selected object (with its children) as a prefab, or an empty one
+        const bool fromSel = ed.selected() != nullptr;
+        askCreate("New prefab", fromSel ? "Saves the selected object and its children." : "An empty object you can fill in later.",
+                  fromSel ? ed.selected()->name : std::string("New Prefab"), ".okayprefab", "prefab", [](const std::string& d, const std::string& n) {
+            GameObject* sel = g_projEd ? g_projEd->selected() : nullptr;
+            okay::Scene tmp("prefab");
+            GameObject* go = sel ? sel : tmp.CreateGameObject(fs::path(fs::u8path(n)).stem().string());
+            okaypb::Result r = g_pb->MakeFile(d, n, SceneSerializer::SerializeObject(*go));
+            if (r.ok && sel) sel->prefabSource = r.paths[0];   // the object becomes an instance of it, as before
+            return r;
+        });
+    };
+    auto mkVisualScript = [&]{
+        askCreate("New visual script", "A graph of nodes. It opens in the Visual Script editor.", "New Graph", ".okayvs", "visual script", [](const std::string& d, const std::string& n) {
+            return g_pb->MakeFile(d, n, okay::editor::vsed::VsEditGraph{}.toText());
+        }, [](const std::string& p) { okay::editor::vsed::OpenFile(NativePath(p)); g_showVisualScript = true; });
     };
     auto mkStdFolders = [&]{
         int made = 0; std::error_code ce;
@@ -9483,10 +9638,32 @@ void DrawProject(EditorState& ed) {
         if (!path.empty() && okay::ItemDatabase::Get().Save(path)) ConsoleLog("Added item \"" + d.id + "\" to " + path);
         g_showItemDatabase = true;
     };
-    auto mkData = [&]{ fs::path p = uniquePath("NewData", ".okaydata");
-        std::ofstream(p) << "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n";
-        ConsoleLog("Created " + p.string()); nameOnCreate(p); };
-    bool canEdit = fs::is_directory(dir, ec);
+    auto mkData = [&]{
+        askCreate("New data asset", "Fields as key = value.", "NewData", ".okaydata", "data asset", [](const std::string& d, const std::string& n) {
+            return g_pb->MakeFile(d, n, "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n");
+        });
+    };
+    // The Create menu, grouped by what you are making. Shared by the toolbar "+" and the right-click menu.
+    auto drawCreateItems = [&]{
+        if (ImGui::MenuItem("Folder")) mkFolder();
+        ImGui::Separator();
+        ImGui::TextDisabled("Code");
+        if (ImGui::MenuItem("Script"))        mkScript();
+        if (ImGui::MenuItem("Visual Script")) mkVisualScript();
+        ImGui::Separator();
+        ImGui::TextDisabled("Scenes and objects");
+        if (ImGui::MenuItem("Scene")) mkScene();
+        if (ImGui::MenuItem(ed.selected() ? "Prefab from Selection" : "Prefab")) mkPrefab();
+        ImGui::Separator();
+        ImGui::TextDisabled("Looks and data");
+        if (ImGui::MenuItem("Material"))   mkMaterial();
+        if (ImGui::MenuItem("Data Asset")) mkData();
+        if (ImGui::MenuItem("Item"))       mkItem();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Standard Folders")) mkStdFolders();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio folders here.");
+    };
+    bool canEdit = fs::is_directory(dir, ec) && !ed.projectDir().empty();
     // View options (type filter, sort, view mode, tile size) are persisted with the
     // favorites in okay_projectview.txt; the toolbar for them is drawn at the end.
     int&   s_filter = g_projFilter;
@@ -9498,7 +9675,7 @@ void DrawProject(EditorState& ed) {
     // only the tile grid, so the "inspector" footer stays pinned in view even when
     // the folder has more assets than fit.
     const float detailsH = selected.empty() ? ImGui::GetFrameHeightWithSpacing() + 4.0f
-                                            : 112.0f;
+                                            : 136.0f;
     ImGui::BeginChild("gridscroll", ImVec2(0, -detailsH), false);
     const float gridAvailH = ImGui::GetContentRegionAvail().y;   // for fitting the tiles (below)
 
@@ -9522,10 +9699,11 @@ void DrawProject(EditorState& ed) {
     {
         Uint32 nowMs = SDL_GetTicks();
         static int s_scanSmart = -2;
+        static bool s_scanAll = false;
         bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort ||
-                       s_scanSmart != s_smart;
+                       s_scanSmart != s_smart || s_scanAll != s_searchAll;
         if (changed || nowMs >= s_scanNext) {
-            s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanSmart = s_smart;
+            s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanSmart = s_smart; s_scanAll = s_searchAll;
             s_scanNext = nowMs + (s_smart >= 0 ? 2000 : 600);
             s_scanEntries.clear();
             std::error_code sec;
@@ -9575,8 +9753,9 @@ void DrawProject(EditorState& ed) {
                 } else {
                     // A search looks through THIS FOLDER AND EVERYTHING BELOW it
                     // capped so a giant tree can't stall the scan.
+                    // (or the whole project, when the search is set to "Project")
                     for (auto& e : fs::recursive_directory_iterator(
-                             dir, fs::directory_options::skip_permission_denied, sec)) {
+                             s_searchAll ? root : dir, fs::directory_options::skip_permission_denied, sec)) {
                         s_scanEntries.push_back(e);
                         if (s_scanEntries.size() >= 4000) break;
                     }
@@ -9630,7 +9809,7 @@ void DrawProject(EditorState& ed) {
     if (cols < 1) cols = 1;
     // List-view column geometry (Type + Size + Date right-aligned), shared by the
     // header row and each entry row so they line up.
-    const float kSizeCol = 66.0f, kTypeCol = 90.0f, kDateCol = 52.0f;
+    const float kSizeCol = 78.0f, kTypeCol = 124.0f, kDateCol = 56.0f;
     const float typeOff = availW - kSizeCol - kTypeCol - kDateCol;   // x from a row's left edge
     const float sizeOff = availW - kSizeCol - kDateCol;
     const float dateOff = availW - kDateCol;
@@ -9687,9 +9866,10 @@ void DrawProject(EditorState& ed) {
             // just it; right-clicking one that's already selected keeps the group.
             if (!s_multi.count(full)) { s_multi.clear(); s_multi.insert(full); }
             selected = full;
-            if (s_multi.size() > 1)
-                ImGui::TextDisabled("%d selected", (int)s_multi.size());
-            if (ImGui::MenuItem("Open")) wantOpen = true;
+            const bool many = s_multi.size() > 1;
+            if (many) ImGui::TextDisabled("%d selected", (int)s_multi.size());
+            // -- Open --
+            if (ImGui::MenuItem(isDir ? "Open Folder" : (ext == ".okayprefab" ? "Place in Scene" : "Open"))) wantOpen = true;
             if (!isDir && IsModelExt(ext) && ImGui::MenuItem("Make Playable Character")) {
                 sPendingPlayable = true;
                 sPendingPlayablePath = full;
@@ -9700,7 +9880,6 @@ void DrawProject(EditorState& ed) {
             if (!isDir && ext == ".okayscene" && ImGui::MenuItem("Add to Open Scene")) MergeSceneIntoCurrent(ed, full);
             if (!isDir && ext == ".okayscene" && ImGui::IsItemHovered())
                 ImGui::SetTooltip("Load its objects into the scene you have open (additive), instead of switching scenes.");
-            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Place in Scene")) wantOpen = true;
             if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Place as Child of Selected", nullptr, false, ed.selected() != nullptr)) {
                 ed.PushUndo();
                 std::string err;
@@ -9709,45 +9888,34 @@ void DrawProject(EditorState& ed) {
                     ed.Select(r); ed.dirty = true;
                 } else ConsoleLog("Prefab load failed: " + err);
             }
-            if (isDir && ImGui::MenuItem(IsFavFolder(full) ? "Remove from Favorites" : "Add to Favorites"))
-                ToggleFavFolder(full);
-            // A direct "edit in Script Editor" for code files (in case a
-            // double-click was missed).
-            if (!isDir && (ext == ".okay" || ext == ".lua" || ext == ".cs")) {
-                if (ImGui::MenuItem("Edit Script")) { OpenScriptFileInEditor(full); g_showScriptEditor = true; }
-            }
-            if (ImGui::MenuItem("Rename")) {
-                renameTarget = full;
-                std::strncpy(renameBuf, name.c_str(), sizeof(renameBuf) - 1);
-                renameBuf[sizeof(renameBuf) - 1] = '\0';
-            }
-            if (!isDir && ImGui::MenuItem("Duplicate")) {
-                std::error_code ce;
-                fs::path src(full), stem = src.stem(), x = src.extension();
-                fs::path dst = src.parent_path() / (stem.string() + " copy" + x.string());
-                for (int n = 2; fs::exists(dst, ce); ++n)
-                    dst = src.parent_path() / (stem.string() + " copy" + std::to_string(n) + x.string());
-                fs::copy_file(src, dst, ce);
-                ConsoleLog((ce ? "Duplicate failed: " : "Duplicated ") + dst.string());
-            }
+            if (!isDir && (ext == ".okay" || ext == ".lua" || ext == ".cs") && ImGui::MenuItem("Edit Script")) { OpenScriptFileInEditor(full); g_showScriptEditor = true; }
             ImGui::Separator();
-            if (ImGui::MenuItem(s_multi.size() > 1 ? "Cut Selected" : "Cut"))
-                clipFromSelection(full, true);
-            if (ImGui::MenuItem(s_multi.size() > 1 ? "Copy Selected" : "Copy"))
-                clipFromSelection(full, false);
+            // -- Edit --
+            if (ImGui::MenuItem("Rename", "F2", false, !many)) renameTarget = full;
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D")) duplicateSel = true;
+            if (ImGui::MenuItem(many ? "Cut Selected" : "Cut", "Ctrl+X")) clipFromSelection(full, true);
+            if (ImGui::MenuItem(many ? "Copy Selected" : "Copy", "Ctrl+C")) clipFromSelection(full, false);
             // Paste lands inside a folder when right-clicked on one, else beside the item.
-            if (!s_assetClip.empty() && ImGui::MenuItem(isDir ? "Paste Into" : "Paste"))
-                pasteInto(isDir ? fs::path(full) : dir);
-            if (ImGui::BeginMenu("Copy Text")) {
-                if (ImGui::MenuItem("Name")) ImGui::SetClipboardText(name.c_str());
-                if (ImGui::MenuItem("Path in Project")) {
-                    std::error_code re;
-                    fs::path rel = fs::relative(fs::path(full), root.parent_path(), re);
-                    ImGui::SetClipboardText((re ? full : rel.generic_string()).c_str());
+            if (!s_assetClip.empty() && ImGui::MenuItem(isDir ? "Paste Into" : "Paste", "Ctrl+V")) pasteInto(isDir ? fs::path(full) : dir);
+            if (ImGui::MenuItem("Delete", "Del")) deleteTarget = full;   // confirm below
+            ImGui::Separator();
+            // -- Find --
+            if (!isDir && ImGui::MenuItem("Find References")) findRefsFor = full;
+            if (!isDir && ImGui::IsItemHovered()) ImGui::SetTooltip("List the assets that use this one, and what it uses.");
+            if (!isDir && ImGui::MenuItem("Find References in Scene")) {
+                std::string fn = fs::path(full).filename().string();
+                int hits = 0; GameObject* first = nullptr;
+                for (const auto& up : ed.scene().Objects()) {
+                    if (ObjectUsesAsset(up.get(), fn)) { ++hits; if (!first) first = up.get(); }
                 }
-                if (ImGui::MenuItem("Full Path")) ImGui::SetClipboardText(full.c_str());
-                ImGui::EndMenu();
+                if (first) ed.Select(first);
+                ConsoleLog(hits ? (std::to_string(hits) + " object(s) use " + fn) : ("No scene object uses " + fn));
             }
+            if (!isDir && ImGui::MenuItem("Reimport")) reimportSel = true;
+            if (!isDir && ImGui::IsItemHovered()) ImGui::SetTooltip("Read the file again (use after you changed it in another program).");
+            ImGui::Separator();
+            // -- Organise --
+            if (isDir && ImGui::MenuItem(IsFavFolder(full) ? "Remove from Favorites" : "Add to Favorites")) ToggleFavFolder(full);
             if (ImGui::BeginMenu("Label")) {
                 int cur = AssetLabelOf(labelProj, full);
                 for (int li = 0; li < kAssetLabelCount; ++li) {
@@ -9763,21 +9931,18 @@ void DrawProject(EditorState& ed) {
                 }
                 ImGui::EndMenu();
             }
-            // Find every scene object that references this asset (texture, mesh, font,
-            // script) and select the first — "Find References In Scene".
-            if (!isDir && ImGui::MenuItem("Find References in Scene")) {
-                std::string fn = fs::path(full).filename().string();
-                int hits = 0; GameObject* first = nullptr;
-                for (const auto& up : ed.scene().Objects()) {
-                    if (ObjectUsesAsset(up.get(), fn)) { ++hits; if (!first) first = up.get(); }
+            if (ImGui::BeginMenu("Copy Text")) {
+                if (ImGui::MenuItem("Name")) ImGui::SetClipboardText(name.c_str());
+                if (ImGui::MenuItem("Path in Project")) {
+                    std::error_code re;
+                    fs::path rel = fs::relative(fs::path(full), root.parent_path(), re);
+                    ImGui::SetClipboardText((re ? full : rel.generic_string()).c_str());
                 }
-                if (first) ed.Select(first);
-                ConsoleLog(hits ? (std::to_string(hits) + " object(s) use " + fn) : ("No scene object uses " + fn));
+                if (ImGui::MenuItem("Full Path")) ImGui::SetClipboardText(full.c_str());
+                ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Show in Explorer"))
-                extide::RevealInFiles(fs::path(full).parent_path().string());
-            ImGui::Separator();
-            if (ImGui::MenuItem("Delete")) deleteTarget = full;   // confirm below
+            if (ImGui::MenuItem("Show in File Manager"))
+                extide::RevealInFiles(isDir ? full : fs::path(full).parent_path().string());
             ImGui::EndPopup();
         }
         return wantOpen;
@@ -9845,6 +10010,12 @@ void DrawProject(EditorState& ed) {
         std::error_code de;
         bool isDir = e.is_directory(de);
         std::string name = e.path().filename().string();
+        if (okaypb::IsHiddenName(name)) continue;   // .okaymeta files, temp files and dot-folders are never shown
+        if (search[0] || s_smart >= 0) {            // (a search or smart view looks inside folders: skip dot-folders' contents too)
+            const std::string pth = e.path().string(), rs = root.string();
+            const std::string below = pth.size() > rs.size() && pth.compare(0, rs.size(), rs) == 0 ? pth.substr(rs.size()) : pth;
+            if (below.find("/.") != std::string::npos || below.find("\\.") != std::string::npos) continue;
+        }
         if (!qText.empty() && Lower(name).find(qText) == std::string::npos) continue;
         std::string ext = Lower(e.path().extension().string());
         if (qType > 0 && (isDir || !ProjectFilterMatches(qType, ext))) continue;
@@ -9864,7 +10035,7 @@ void DrawProject(EditorState& ed) {
             // ---- Grid tile (thumbnail / icon + wrapped name) ----
             ImGui::BeginGroup();
             ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
-            SDL_Texture* thumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
+            SDL_Texture* thumb = (std::string(k.letter) == "IMG") ? ProjectThumb(full) : nullptr;
             if (!thumb && !isDir && ext == ".okayprefab") thumb = GetPrefabThumb(full);
             if (!thumb && !isDir) {
                 if (const char* mk = ImportKindLabel(ext); mk && std::strcmp(mk, "model") == 0)
@@ -9901,11 +10072,19 @@ void DrawProject(EditorState& ed) {
                 ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, kAssetLabelCols[lb]);
                 ImGui::GetWindowDrawList()->AddCircle(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, IM_COL32(20, 22, 26, 200), 12, 1.2f);
             }
-            if (ImGui::IsItemClicked()) pickItem(full);
+            {   // a plain click on one of several selected tiles waits for the release, so you can drag the whole selection
+                const bool inGroup = s_multi.size() > 1 && s_multi.count(full) && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift;
+                if (ImGui::IsItemClicked() && !inGroup) pickItem(full);
+                else if (inGroup && ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+                         ImGui::GetIO().MouseDragMaxDistanceSqr[0] < 25.0f) pickItem(full);
+            }
             // Drag from the tile (which has an ID) so the payload attaches cleanly.
             if (ImGui::BeginDragDropSource()) {
+                if (!s_multi.count(full)) { s_multi.clear(); s_multi.insert(full); selected = full; }
+                g_dragMulti.assign(s_multi.begin(), s_multi.end());   // the payload below is one path (shared ID); folders move them all
                 ImGui::SetDragDropPayload("ASSET_PATH", full.c_str(), full.size() + 1);
-                ImGui::TextUnformatted(name.c_str());
+                if (g_dragMulti.size() > 1) ImGui::Text("%s and %d more", name.c_str(), (int)g_dragMulti.size() - 1);
+                else ImGui::TextUnformatted(name.c_str());
                 ImGui::EndDragDropSource();
             }
             if (isDir) AssetDropTarget(e.path());
@@ -9938,8 +10117,11 @@ void DrawProject(EditorState& ed) {
             hov = ImGui::IsItemHovered();
             if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) dbl = true;
             if (ImGui::BeginDragDropSource()) {
+                if (!s_multi.count(full)) { s_multi.clear(); s_multi.insert(full); selected = full; }
+                g_dragMulti.assign(s_multi.begin(), s_multi.end());   // the payload below is one path (shared ID); folders move them all
                 ImGui::SetDragDropPayload("ASSET_PATH", full.c_str(), full.size() + 1);
-                ImGui::TextUnformatted(name.c_str());
+                if (g_dragMulti.size() > 1) ImGui::Text("%s and %d more", name.c_str(), (int)g_dragMulti.size() - 1);
+                else ImGui::TextUnformatted(name.c_str());
                 ImGui::EndDragDropSource();
             }
             if (isDir) AssetDropTarget(e.path());
@@ -9949,7 +10131,7 @@ void DrawProject(EditorState& ed) {
             ImVec2 c0(mn.x + 5.0f, mn.y + 3.0f), c1(c0.x + sq, c0.y + sq);
             // Real previews where they're cheap: image files show their pixels,
             // materials their albedo ball; everything else keeps its icon chip.
-            SDL_Texture* rowThumb = (std::string(k.letter) == "IMG") ? GetThumb(full) : nullptr;
+            SDL_Texture* rowThumb = (std::string(k.letter) == "IMG") ? ProjectThumb(full) : nullptr;
             if (!rowThumb && !isDir && ext == ".okayprefab") rowThumb = GetPrefabThumb(full);
             if (!rowThumb && !isDir) {
                 if (const char* mk = ImportKindLabel(ext); mk && std::strcmp(mk, "model") == 0)
@@ -9985,6 +10167,7 @@ void DrawProject(EditorState& ed) {
             if (!ago.empty())         dl->AddText(ImVec2(dateX, ty), dcol, ago.c_str());
         }
 
+        if (s_scrollToSel && full == selected) { ImGui::SetScrollHereY(0.5f); s_scrollToSel = false; }
         if (assetContext(full, name, ext, isDir)) dbl = true;
         if (dbl) openAsset(full, ext, isDir);
 
@@ -10018,21 +10201,11 @@ void DrawProject(EditorState& ed) {
             ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         if (canEdit) {
             if (ImGui::BeginMenu("Create")) {
-                if (ImGui::MenuItem("Folder"))     mkFolder();
-                ImGui::Separator();
-                if (ImGui::MenuItem("Script"))     mkScript();
-                if (ImGui::MenuItem("Material"))   mkMaterial();
-                if (ImGui::MenuItem("Scene"))      mkScene();
-                if (ImGui::MenuItem("Data Asset")) mkData();
-                if (ImGui::MenuItem("Item")) mkItem();
-                ImGui::Separator();
-                if (ImGui::MenuItem("Prefab from Selection", nullptr, false, ed.selected() != nullptr)) SavePrefabInto(ed.selected(), dir);
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Save the selected object (and its children) here as a prefab.");
-                if (ImGui::MenuItem("Standard Folders")) mkStdFolders();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio folders here.");
+                drawCreateItems();
                 ImGui::EndMenu();
             }
-            if (!s_assetClip.empty() && ImGui::MenuItem("Paste")) pasteInto(dir);
+            if (!s_assetClip.empty() && ImGui::MenuItem("Paste", "Ctrl+V")) pasteInto(dir);
+            if (pb.CanUndo() && ImGui::MenuItem(("Undo " + pb.UndoLabel()).c_str(), "Ctrl+Z")) undoReq = true;
             ImGui::Separator();
         }
         if (ImGui::BeginMenu("View")) {
@@ -10054,7 +10227,7 @@ void DrawProject(EditorState& ed) {
         if (canEdit && ImGui::MenuItem(IsFavFolder(dir.string()) ? "Remove Folder from Favorites" : "Add Folder to Favorites"))
             ToggleFavFolder(dir.string());
         if (ImGui::MenuItem("Copy Folder Path")) ImGui::SetClipboardText(dir.string().c_str());
-        if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(dir.string());
+        if (ImGui::MenuItem("Show in File Manager")) extide::RevealInFiles(dir.string());
         ImGui::EndPopup();
     }
     ImGui::EndChild();   // gridscroll
@@ -10082,7 +10255,7 @@ void DrawProject(EditorState& ed) {
         AssetKind sk = KindOf(sext, selDir);
         // Left: a larger preview — the real image for textures, else the type icon.
         const float pv = 68.0f;
-        SDL_Texture* pthumb = (!selDir && sk.icon == AssetIcon::Image) ? GetThumb(selected) : nullptr;
+        SDL_Texture* pthumb = (!selDir && sk.icon == AssetIcon::Image) ? ProjectThumb(selected) : nullptr;
         if (!pthumb && !selDir && sext == ".okayprefab") pthumb = GetPrefabThumb(selected);
         if (!pthumb && !selDir) {
             if (const char* mk = ImportKindLabel(sext); mk && std::strcmp(mk, "model") == 0)
@@ -10113,7 +10286,7 @@ void DrawProject(EditorState& ed) {
         };
         if (selDir) {
             int nItems = 0; std::error_code ce;
-            for (auto& c : fs::directory_iterator(sp, ce)) { (void)c; ++nItems; }
+            for (auto& c : fs::directory_iterator(sp, ce)) { if (!okaypb::IsHiddenName(c.path().filename().string())) ++nItems; }
             meta += "   \xe2\x80\xa2   " + std::to_string(nItems) + (nItems == 1 ? " item" : " items");
         } else {
             std::uintmax_t sz = fs::is_regular_file(sp, se) ? fs::file_size(sp, se) : 0;
@@ -10126,22 +10299,44 @@ void DrawProject(EditorState& ed) {
         ImGui::TextDisabled("%s", (re2 || rel.empty() || rel.native()[0] == '.')
                                       ? sp.string().c_str()
                                       : ("Assets/" + rel.generic_string()).c_str());
-        // Scene usage for referenceable assets ("used in scene").
-        if (!selDir && (sk.icon == AssetIcon::Image || sk.icon == AssetIcon::Mesh ||
-                        sk.icon == AssetIcon::Script || sk.icon == AssetIcon::Material)) {
-            std::string fn = sp.filename().string(); int uses = 0;
-            for (const auto& up : ed.scene().Objects()) if (ObjectUsesAsset(up.get(), fn)) ++uses;
-            if (uses) ImGui::TextDisabled("Used by %d object%s in scene", uses, uses == 1 ? "" : "s");
+        // What uses it: other assets (the asset database) and objects in the open scene, on one line.
+        if (!selDir) {
+            int uses = 0;
+            if (sk.icon == AssetIcon::Image || sk.icon == AssetIcon::Mesh || sk.icon == AssetIcon::Script || sk.icon == AssetIcon::Material) {
+                std::string fn = sp.filename().string();
+                for (const auto& up : ed.scene().Objects()) if (ObjectUsesAsset(up.get(), fn)) ++uses;
+            }
+            const int users = pb.UsersOf(selected);
+            if (users > 0 || uses > 0) {
+                std::string line = "Used by";
+                if (users > 0) line += " " + std::to_string(users) + (users == 1 ? " asset" : " assets");
+                if (uses > 0) line += std::string(users > 0 ? " and " : " ") + std::to_string(uses) + (uses == 1 ? " object" : " objects") + " in the scene";
+                ImGui::TextDisabled("%s", line.c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Show##usedby")) findRefsFor = selected;
+            }
         }
         if (s_multi.size() > 1) {
             ImGui::PushStyleColor(ImGuiCol_Text, AccentCol(1.0f));
             ImGui::Text("%d items selected  (Delete removes all)", (int)s_multi.size());
             ImGui::PopStyleColor();
         }
-        if (ImGui::SmallButton("Show in Explorer"))
+        if (ImGui::SmallButton("Show in File Manager"))
             extide::RevealInFiles((selDir ? sp : sp.parent_path()).string());
         ImGui::SameLine();
         if (ImGui::SmallButton("Copy Path")) ImGui::SetClipboardText(selected.c_str());
+        if (!selDir && (sk.icon == AssetIcon::Image || IsModelExt(sext) || sk.icon == AssetIcon::Audio)) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Import Settings")) ImGui::OpenPopup("##impset");
+        }
+        ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopup("##impset")) {
+            ImGui::Text("%s", sp.filename().string().c_str());
+            ImGui::Separator();
+            if (oked::projectpanel::HasImportSettings(pb, selected)) oked::projectpanel::DrawImportSettings(pb, selected);
+            else ImGui::TextDisabled("This file has no import settings.");
+            ImGui::EndPopup();
+        }
         if (!s_assetClip.empty()) {
             ImGui::SameLine();
             std::string clipLbl = s_assetClip.size() == 1
@@ -10152,103 +10347,141 @@ void DrawProject(EditorState& ed) {
         ImGui::EndGroup();
     }
 
-    // F2 renames the selected asset when the Project
-    // window is focused and nothing else is being typed.
-    if (renameTarget.empty() && !selected.empty() &&
-        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-        !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
-        renameTarget = selected;
-        std::string fn = fs::path(selected).filename().string();
-        std::strncpy(renameBuf, fn.c_str(), sizeof(renameBuf) - 1);
-        renameBuf[sizeof(renameBuf) - 1] = '\0';
-    }
-
-    // Rename modal (opened from an item's context menu). Only open once — calling
-    // OpenPopup every frame resets the popup so its buttons never register.
-    if (!renameTarget.empty() && !ImGui::IsPopupOpen("Rename Asset")) ImGui::OpenPopup("Rename Asset");
-    if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        bool enter = ImGui::InputText("New name", renameBuf, sizeof(renameBuf),
-                                      ImGuiInputTextFlags_EnterReturnsTrue);
-        bool ok = ImGui::Button("Rename", ImVec2(110, 0)) || enter;
-        ImGui::SameLine();
-        bool cancel = ImGui::Button("Cancel", ImVec2(110, 0));
-        if (ok && renameBuf[0]) {
-            fs::path src(renameTarget), dst = fs::path(renameTarget).parent_path() / renameBuf;
-            std::error_code re; fs::rename(src, dst, re);
-            ConsoleLog((re ? "Rename failed: " : "Renamed to ") + dst.string());
-            // when a script asset is renamed, rename its class to match.
-            if (!re) {
-                std::string ext = Lower(dst.extension().string());
-                if (ext == ".okay" || ext == ".cs") {
-                    std::ifstream in(dst, std::ios::binary);
-                    if (in) {
-                        std::string srcTxt((std::istreambuf_iterator<char>(in)), {}); in.close();
-                        std::string out = extide::RenameScriptClass(srcTxt, extide::ClassIdent(dst.stem().string()));
-                        if (out != srcTxt) { std::ofstream(dst, std::ios::binary) << out; ConsoleLog("Renamed class to " + extide::ClassIdent(dst.stem().string())); }
-                    }
-                }
+    // ---- Actions: each one goes through okaypb (safe, undo-able, references kept) ---------
+    const bool panelFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
+                            !oked::projectpanel::NamePromptOpen();
+    // The items an action applies to: the multi-selection, or the active item.
+    auto selectionList = [&]() {
+        std::vector<std::string> v(s_multi.begin(), s_multi.end());
+        if (v.empty() && !selected.empty()) v.push_back(selected);
+        return v;
+    };
+    // Select what an operation produced.
+    auto selectPaths = [&](const std::vector<std::string>& ps) {
+        s_multi.clear();
+        for (const std::string& p : ps) s_multi.insert(NativePath(p));
+        if (!ps.empty()) { selected = NativePath(ps.back()); s_scrollToSel = true; }
+    };
+    // F2 or the menu: ask for a new name (the file type stays).
+    if (renameTarget.empty() == false || (panelFocus && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_F2, false))) {
+        const std::string target = renameTarget.empty() ? selected : renameTarget;
+        renameTarget.clear();
+        std::error_code re;
+        const bool tDir = fs::is_directory(target, re);
+        oked::projectpanel::NameRequest rq;
+        const std::string fn = fs::path(target).filename().string();
+        const std::string xt = tDir ? std::string() : fs::path(target).extension().string();
+        rq.title = "Rename " + fn; rq.okLabel = "Rename"; rq.suffix = xt;
+        rq.initial = fn.substr(0, fn.size() - xt.size());
+        rq.hint = tDir ? "" : "The file type stays " + xt + ".";
+        rq.accept = [target](const std::string& full) -> std::string {
+            const okaypb::Result r = g_pb->Rename(target, full);
+            if (!r.ok) return r.error;
+            ProjectApplyMoves(r);
+            const std::string np = r.paths.empty() ? target : NativePath(r.paths[0]);
+            const std::string e2 = Lower(fs::path(np).extension().string());
+            if (e2 == ".okay" || e2 == ".cs") {   // a renamed script: its class takes the new name
+                std::string srcTxt = extide::ReadFile(np);
+                std::string out = extide::RenameScriptClass(srcTxt, extide::ClassIdent(fs::path(np).stem().string()));
+                if (out != srcTxt && okayproj::WriteTextAtomic(np, out)) ConsoleLog("Renamed class to " + extide::ClassIdent(fs::path(np).stem().string()));
             }
-            if (selected == renameTarget) selected = dst.string();
-            renameTarget.clear(); ImGui::CloseCurrentPopup();
-        } else if (cancel) { renameTarget.clear(); ImGui::CloseCurrentPopup(); }
-        ImGui::EndPopup();
+            if (selected == target) selected = np;
+            s_multi.clear(); s_multi.insert(selected);
+            ConsoleLog("Renamed to " + fs::path(np).filename().string() +
+                       (r.referencesRewritten ? " (" + std::to_string(r.referencesRewritten) + " reference" + (r.referencesRewritten == 1 ? "" : "s") + " in " +
+                                                std::to_string(r.filesRewritten) + " file" + (r.filesRewritten == 1 ? "" : "s") + " updated)" : std::string()));
+            if (!r.note.empty()) ConsoleLog(r.note, 1);
+            return {};
+        };
+        oked::projectpanel::AskName(std::move(rq));
     }
-
-    // Delete confirmation (a delete is destructive and irreversible on disk, so
-    // never do it on a single menu click). Opened by the item menu / Delete key.
-    if (!deleteTarget.empty() && !ImGui::IsPopupOpen("Delete Asset")) ImGui::OpenPopup("Delete Asset");
-    if (ImGui::BeginPopupModal("Delete Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        // The delete set: the whole multi-selection if the target is part of it,
-        // otherwise just the target.
+    // Delete: confirm (it lists what uses the asset), then move to the project's trash.
+    if (!deleteTarget.empty()) {
         std::vector<std::string> victims;
         if (s_multi.size() > 1 && s_multi.count(deleteTarget)) victims.assign(s_multi.begin(), s_multi.end());
         else victims.push_back(deleteTarget);
-        std::error_code de2; bool isDir = fs::is_directory(deleteTarget, de2);
-        if (victims.size() > 1)
-            ImGui::Text("Delete %d selected assets", (int)victims.size());
-        else
-            ImGui::Text("Delete %s", fs::path(deleteTarget).filename().string().c_str());
-        ImGui::TextDisabled("%s", victims.size() > 1
-                                      ? "These items will be removed from disk. This cannot be undone."
-                                      : (isDir ? "This folder and everything in it will be removed from disk."
-                                               : "This file will be removed from disk. This cannot be undone."));
-        ImGui::Spacing();
-        bool del = ImGui::Button("Delete", ImVec2(110, 0));
-        ImGui::SameLine();
-        bool cancel = ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape);
-        if (del) {
-            int okCount = 0;
-            for (const std::string& v : victims) {
-                std::error_code re; fs::remove_all(v, re);
-                if (re) ConsoleLog("Delete failed: " + v, 2);
-                else {
-                    ++okCount;
-                    s_assetClip.erase(std::remove(s_assetClip.begin(), s_assetClip.end(), v),
-                                      s_assetClip.end());
-                }
-            }
-            ConsoleLog("Deleted " + std::to_string(okCount) + " item" + (okCount == 1 ? "" : "s"));
+        deleteTarget.clear();
+        oked::projectpanel::AskDelete(pb, victims, [victims]() {
+            const okaypb::Result r = g_pb->Trash(victims);
+            if (!r.ok) { ConsoleLog("Delete failed: " + r.error, 2); return; }
+            for (const std::string& v : victims) s_assetClip.erase(std::remove(s_assetClip.begin(), s_assetClip.end(), v), s_assetClip.end());
             selected.clear(); s_multi.clear();
-            deleteTarget.clear(); ImGui::CloseCurrentPopup();
-        } else if (cancel) { deleteTarget.clear(); ImGui::CloseCurrentPopup(); }
-        ImGui::EndPopup();
+            ConsoleLog("Deleted " + std::to_string(r.paths.size()) + " item" + (r.paths.size() == 1 ? "" : "s") + " (Ctrl+Z in the Project panel brings " + (r.paths.size() == 1 ? "it" : "them") + " back)");
+        });
     }
-
-    // Keyboard: when the Project window is focused and nothing's being typed —
-    // Delete asks to delete the selection, Ctrl+C/X copy/cut it, Ctrl+V pastes here.
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+    if (duplicateSel) {
+        duplicateSel = false;
+        std::vector<std::string> made;
+        for (const std::string& p : selectionList()) {
+            const okaypb::Result r = pb.Duplicate(p);
+            if (r.ok) made.push_back(r.paths[0]); else ConsoleLog("Duplicate failed: " + r.error, 2);
+        }
+        if (!made.empty()) { selectPaths(made); ConsoleLog("Duplicated " + std::to_string(made.size()) + " item" + (made.size() == 1 ? "" : "s")); }
+    }
+    if (reimportSel) {
+        reimportSel = false;
+        int n = 0;
+        for (const std::string& p : selectionList()) {
+            const std::string rel = pb.Db().ToProjectPath(p);
+            if (const okay::Guid g = pb.Db().RefreshFile(rel); !g.IsNull()) { ProjectForgetThumb(g); ++n; }
+        }
+        ConsoleLog("Reimported " + std::to_string(n) + " asset" + (n == 1 ? "" : "s"));
+    }
+    if (!findRefsFor.empty()) {
+        oked::projectpanel::ShowReferences(pb, findRefsFor, [](const std::string& p) { g_pingAsset = p; });
+        findRefsFor.clear();
+    }
+    if (panelFocus) {
         ImGuiIO& kio = ImGui::GetIO();
-        if (!selected.empty() && renameTarget.empty() && deleteTarget.empty() &&
-            ImGui::IsKeyPressed(ImGuiKey_Delete, false))
-            deleteTarget = selected;
-        if (kio.KeyCtrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_C, false)) clipFromSelection(selected, false);
-        if (kio.KeyCtrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_X, false)) clipFromSelection(selected, true);
-        if (kio.KeyCtrl && !s_assetClip.empty() && canEdit && ImGui::IsKeyPressed(ImGuiKey_V, false)) pasteInto(dir);
-        if (kio.KeyCtrl && !shownPaths.empty() && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+        const bool ctrl = kio.KeyCtrl;
+        if (!selected.empty() && deleteTarget.empty() && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) deleteTarget = selected;
+        if (ctrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_C, false)) clipFromSelection(selected, false);
+        if (ctrl && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_X, false)) clipFromSelection(selected, true);
+        if (ctrl && !s_assetClip.empty() && canEdit && ImGui::IsKeyPressed(ImGuiKey_V, false)) pasteInto(dir);
+        if (ctrl && !selected.empty() && canEdit && ImGui::IsKeyPressed(ImGuiKey_D, false)) duplicateSel = true;
+        if (ctrl && pb.CanUndo() && !kio.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) undoReq = true;
+        if (ctrl && !shownPaths.empty() && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
             s_multi.clear();
             for (const std::string& p : shownPaths) s_multi.insert(p);
             if (selected.empty()) selected = shownPaths.front();
+        }
+        // Arrow keys move the selection (Shift adds to it); Enter opens; Backspace goes up a folder.
+        if (!shownPaths.empty()) {
+            int cur = -1;
+            for (int i = 0; i < (int)shownPaths.size(); ++i) if (shownPaths[i] == selected) cur = i;
+            int step = 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) step = s_view == 0 ? 1 : 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))  step = s_view == 0 ? -1 : 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))  step = s_view == 0 ? cols : 1;
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))    step = s_view == 0 ? -cols : -1;
+            int target = -1;
+            if (step != 0) target = cur < 0 ? 0 : std::clamp(cur + step, 0, (int)shownPaths.size() - 1);
+            if (ImGui::IsKeyPressed(ImGuiKey_Home)) target = 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_End))  target = (int)shownPaths.size() - 1;
+            if (target >= 0 && target != cur) {
+                if (kio.KeyShift && cur >= 0) { for (int i = std::min(cur, target); i <= std::max(cur, target); ++i) s_multi.insert(shownPaths[i]); }
+                else { s_multi.clear(); s_multi.insert(shownPaths[target]); }
+                selected = shownPaths[target];
+                s_scrollToSel = true;
+            }
+            if (!ctrl && !selected.empty() && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
+                std::error_code oe;
+                openAsset(selected, Lower(fs::path(selected).extension().string()), fs::is_directory(selected, oe));
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) && dir != root && s_smart < 0 && search[0] == '\0') {
+            std::strncpy(dirBuf, dir.parent_path().string().c_str(), sizeof(dirBuf) - 1);
+            dirBuf[sizeof(dirBuf) - 1] = '\0';
+        }
+        if (kio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) s_focusSearch = true;
+    }
+    if (undoReq) {   // Ctrl+Z or the menu: undo the last file operation (create, rename, move, copy, delete)
+        undoReq = false;
+        if (pb.CanUndo()) {
+            const std::string what = pb.UndoLabel();
+            const okaypb::Result r = pb.Undo();
+            if (r.ok) { ProjectApplyMoves(r); if (!r.paths.empty()) selectPaths(r.paths); ConsoleLog("Undid: " + what); }
+            else ConsoleLog("Can't undo " + what + ": " + r.error, 2);
         }
     }
     // Whole-grid drop: drag a GameObject from the Hierarchy anywhere onto the asset
@@ -10292,18 +10525,7 @@ void DrawProject(EditorState& ed) {
         if (importHovered) ImGui::SetTooltip("Copy textures, fonts, audio, models... into this folder.\nTip: you can also drag files from your file explorer onto the window.");
         if (openCreate) ImGui::OpenPopup("createmenu");
         if (ImGui::BeginPopup("createmenu")) {
-            if (ImGui::MenuItem("Folder"))     mkFolder();
-            ImGui::Separator();
-            if (ImGui::MenuItem("Script"))     mkScript();
-            if (ImGui::MenuItem("Material"))   mkMaterial();
-            if (ImGui::MenuItem("Scene"))      mkScene();
-            if (ImGui::MenuItem("Data Asset")) mkData();
-            if (ImGui::MenuItem("Item")) mkItem();
-            ImGui::Separator();
-            if (ImGui::MenuItem("Prefab from Selection", nullptr, false, ed.selected() != nullptr)) SavePrefabInto(ed.selected(), dir);
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Save the selected object (and its children) here as a prefab.");
-            if (ImGui::MenuItem("Standard Folders")) mkStdFolders();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio folders here.");
+            drawCreateItems();
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -10313,6 +10535,18 @@ void DrawProject(EditorState& ed) {
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show only one type of asset in this folder");
         ImGui::SameLine();
+        if (ImGui::Button(s_searchAll ? "Project##scope" : "Folder##scope", ImVec2(tbScopeW, 0))) s_searchAll = !s_searchAll;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(s_searchAll ? "Search looks in the whole project.\nClick to search only this folder." : "Search looks in this folder and the folders in it.\nClick to search the whole project.");
+        ImGui::SameLine();
+        if (s_view == 0 && tbSliderW > 0.0f) {   // how big the tiles are
+            ImGui::SetNextItemWidth(tbSliderW);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.26f, 0.28f, 0.33f, 1.0f));   // a visible track
+            ImGui::SliderFloat("##tilesize", &s_cell, 48.0f, 128.0f, "");
+            ImGui::PopStyleColor();
+            prefsChanged |= ImGui::IsItemDeactivatedAfterEdit();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Thumbnail size");
+            ImGui::SameLine();
+        }
         if (IconButton("##pview", s_view == 0 ? TbIcon::List : TbIcon::Grid, s_view == 0 ? "List view" : "Grid view")) { s_view ^= 1; prefsChanged = true; }
         ImGui::SameLine();
         if (IconButton("##pmore", TbIcon::More, "View options")) ImGui::OpenPopup("##projopts");
@@ -10333,11 +10567,13 @@ void DrawProject(EditorState& ed) {
             ImGui::EndPopup();
         }
         ImGui::SameLine();
-        SearchField("##search", search, 96, s_smart >= 0 ? "Search all" : "Search", tbSearchW);
+        if (s_focusSearch) { ImGui::SetKeyboardFocusHere(); s_focusSearch = false; }
+        SearchField("##search", search, 96, s_smart >= 0 ? "Search all" : (s_searchAll ? "Search project" : "Search folder"), tbSearchW);
         if (prefsChanged) SaveProjectViewPrefs();
         ImGui::SetCursorScreenPos(keepCursor);
         ImGui::Dummy(ImVec2(0, 0));   // (ImGui requires an item after moving the cursor)
     }
+    oked::projectpanel::DrawDialogs();
     ImGui::PopStyleVar(2);
     ImGui::End();
 }
@@ -16321,11 +16557,14 @@ void HandleShortcuts(EditorState& ed) {
     }
     if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
-    const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused() || TimelineFocused() || DialogueWindowFocused() || BehaviorTreeWindowFocused();   // those windows own Delete, Ctrl+C/V/D and F
+    // The Project panel owns Delete, Ctrl+C/X/V/D and its own Ctrl+Z while it has focus: they act on files, never on the scene's selected object.
+    const bool projectKeys = GImGui->NavWindow && GImGui->NavWindow->RootWindow && std::strcmp(GImGui->NavWindow->RootWindow->Name, "Project") == 0;
+    const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused() || TimelineFocused() || DialogueWindowFocused() || BehaviorTreeWindowFocused() || projectKeys;   // those windows own Delete, Ctrl+C/V/D and F
     // Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo. (Guard the undo with !Shift
     // so Ctrl+Shift+Z doesn't undo and redo in the same frame.)
     if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
-        if (TimelineFocused() && TimelineUndo(false)) ConsoleLog("Undo (timeline)");
+        if (projectKeys && g_pb && g_pb->CanUndo()) {}   // the Project panel undoes its own file operation
+        else if (TimelineFocused() && TimelineUndo(false)) ConsoleLog("Undo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else if (ed.Undo()) ConsoleLog("Undo");
@@ -17865,11 +18104,19 @@ void DrawNewProjectPopup(EditorState& ed) {
     // The project's own files: default settings and build settings under its name. (Written before the scene
     // opens, so the project is complete from its first moment.)
     const std::string folder = plan.folder;
-    auto writeFiles = [&folder](const std::string& rt, std::string& err) {
-        if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(ProjectSettings{}, "")), &err)) return false;   // stamped with this version from the first moment
+    const std::string version = g_newProjectVersion;
+    const int gpu = g_newProjectGpu;
+    g_newProjectVersion.clear();
+    g_newProjectGpu = -1;
+    auto writeFiles = [&folder, version, gpu](const std::string& rt, std::string& err) {
+        ProjectSettings settings;
+        if (!version.empty() && okayproj::CheckProjectVersion(version).empty())
+            std::snprintf(settings.version, sizeof(settings.version), "%s", version.c_str());
+        if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(settings, "")), &err)) return false;   // stamped with this version from the first moment
         BuildProfile live;
         live.productName = folder;
         live.outputDir = "build/" + folder;
+        if (gpu == 0 || gpu == 1) live.settings.gpuRenderer = gpu == 1;
         return okayproj::WriteTextAtomic(BuildLiveFile(rt), WriteBuildLive(live, ""), &err);
     };
     const EditorState::NewProjectResult r = ed.CreateProject(plan.root.string(), plan.folder, fn, writeFiles);
@@ -18311,6 +18558,9 @@ static char g_prefabNameBuf[128] = "";
 static bool g_hierSort   = false;            // sort siblings A->Z
 static int  g_hierExpand = 0;                // 1=expand-all, 2=collapse-all (one frame)
 static GameObject* g_hierOpenNode = nullptr; // Left/Right arrow expand/collapse target
+static GameObject* g_hierPressedMulti = nullptr; // pressed (not yet released) on a row that is part of a multi-selection
+static GameObject* g_hierDropOpen = nullptr; // a row that just took a dropped object opens (next frame)
+static bool g_hierDropOpenSeen = false;
 static GameObject* g_hierExpandRoot = nullptr; // "Expand/Collapse All Below" target (one frame)
 static int  g_hierExpandRootVal = 0;          // 1 = expand, 0 = collapse
 // Select a set of objects in the Hierarchy (the first becomes the active one).
@@ -18330,7 +18580,7 @@ static int  g_hierOpenVal = 0;               // 1 = expand, 0 = collapse (one fr
 // Component "icon" badges at a Hierarchy row's right edge (showing
 // component icons): a quick read of what's attached. Drawn via the draw list so
 // they don't interfere with the row's own click/drag handling.
-static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
+static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax, float minX = 0.0f) {
     struct Badge { bool on; ImU32 col; const char* s; };
     bool hasRb = go->GetComponent<Rigidbody2D>() != nullptr ||
                  go->GetComponent<Rigidbody3D>() != nullptr;
@@ -18349,6 +18599,7 @@ static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
     for (const Badge& b : badges) {
         if (!b.on) continue;
         const float w = 13.0f;
+        if (x - w < minX) break;   // no room left: a long name wins over the small badges
         ImVec2 mn(x - w, cy - 7.0f), mx(x, cy + 7.0f);
         dl->AddRectFilled(mn, mx, (b.col & 0x00FFFFFF) | 0x55000000, 3.0f);
         dl->AddText(ImVec2(mn.x + 3.5f, mn.y - 1.0f), b.col, b.s);
@@ -18410,6 +18661,43 @@ static std::vector<GameObject*> HierTargets(EditorState& ed, GameObject* node) {
     return {node};
 }
 
+// A small blue mark on the corner of a row's icon: this object is (part of) a prefab instance.
+static void HierPrefabBadge(GameObject* go, ImVec2 pos, float sz, ImDrawList* dl) {
+    if (!go || !PrefabTools::IsPrefabInstance(*go)) return;
+    const bool root = !go->prefabSource.empty();
+    const ImVec2 a(pos.x + sz - 6.0f, pos.y + sz - 6.0f), b(pos.x + sz + 1.0f, pos.y + sz + 1.0f);
+    dl->AddRectFilled(a, b, root ? IM_COL32(90, 165, 255, 255) : IM_COL32(90, 165, 255, 130), 1.5f);
+    dl->AddRect(a, b, IM_COL32(20, 24, 32, 200), 1.5f);
+}
+
+// Dragging a prefab, a model or a picture from the Project panel into the Hierarchy makes an object from it.
+// Returns the new object (undo step already taken), or null when the file is not one of those.
+static GameObject* HierInstantiateAsset(EditorState& ed, const std::string& path) {
+    std::string ext;
+    if (auto d = path.find_last_of('.'); d != std::string::npos) ext = Lower(path.substr(d));
+    GameObject* placed = nullptr;
+    if (ext == ".okayprefab") {
+        ed.PushUndo();
+        std::string err;
+        placed = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
+        if (!placed) ConsoleLog("Prefab load failed: " + err, 2);
+    } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
+        ed.PushUndo();
+        bool ok = false;
+        placed = okay::ImportModelScene(ed.scene(), path, &ok);
+        if (!ok || !placed) {
+            placed = nullptr;
+            ConsoleLog("Model import failed: " + path +
+                       (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.gltf/.glb; other formats need Assimp)"), 2);
+        }
+    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
+        placed = ed.CreateSprite(std::filesystem::path(path).stem().string());   // takes its own undo step
+        if (placed) if (auto* sr = placed->GetComponent<SpriteRenderer>()) sr->texture = path;
+    }
+    if (placed) { ed.dirty = true; ConsoleLog("Added " + placed->name); }
+    return placed;
+}
+
 // Shorten `text` so it fits in `maxW` pixels, ending with an ellipsis. UTF-8 safe.
 static std::string EllipsizeToWidth(const std::string& text, float maxW) {
     if (maxW < 12.0f) return text;
@@ -18433,7 +18721,7 @@ void DrawHierarchy(EditorState& ed) {
     SearchField("##hfilter", g_hierFilter, sizeof(g_hierFilter), "Search",
                 -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
     if (ImGui::IsItemHovered() && !g_hierFilter[0])
-        ImGui::SetTooltip("Search by name, or by type: camera, light, mesh, script, ui...\nOr by hierarchy path: Parent/Child lists every object that path names.");
+        ImGui::SetTooltip("Search by name, tag or type: camera, light, mesh, script, ui...\nt:enemy  finds a tag      c:rigidbody  finds a component\nl:water  finds a layer    is:off / locked / static / prefab\n-word leaves matches out. Parent/Child lists every object that path names.");
     ImGui::SameLine();
     if (IconButton("##hmore", TbIcon::More, "Hierarchy options", g_hierSort)) ImGui::OpenPopup("##hieropts");
     if (ImGui::BeginPopup("##hieropts")) {
@@ -18487,58 +18775,39 @@ void DrawHierarchy(EditorState& ed) {
         ImGui::EndPopup();
     }
     ImGui::Separator();
+    // The search bar and scene header stay put; only the rows scroll.
+    ImGui::BeginChild("##hiertree", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
 
     // When searching, show a flat list of every matching object. The search also
     // matches TYPE words ("camera", "light", "mesh", "sprite", "script", ...), so
     // typing "light" lists every light even if none is named that.
     if (g_hierFilter[0] != '\0') {
-        std::string needle = g_hierFilter;
-        for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
-        // A hierarchy path ("Parent/Child"): every object it names, in scene order (Scene::FindAllByPath), on top of the
-        // name and type matches. Two siblings called "Door" both come back.
+        // Words (all must match), t:tag, c:component, l:layer, is:off / locked / static / prefab, -word to exclude;
+        // a "Parent/Child" path lists every object it names. The logic is in InspectorModel.cpp.
+        const oked::HierFilter filter = oked::HierFilter::Parse(g_hierFilter);
         std::unordered_set<const GameObject*> pathHits;
-        if (needle.find('/') != std::string::npos)
-            for (GameObject* g : ed.scene().FindAllByPath(g_hierFilter)) pathHits.insert(g);
+        if (!filter.PathText().empty())
+            for (GameObject* g : ed.scene().FindAllByPath(filter.PathText())) pathHits.insert(g);
         int hits = 0;
         for (const auto& up : ed.scene().Objects()) {
             GameObject* go = up.get();
-            std::string hay = go->name;
-            if (go->GetComponent<Camera>())          hay += " camera";
-            if (go->GetComponent<MeshRenderer>())    hay += " mesh 3d";
-            if (go->GetComponent<SpriteRenderer>())  hay += " sprite 2d";
-            if (go->GetComponent<Light>())           hay += " light";
-            if (go->GetComponent<TextRenderer>())    hay += " text ui";
-            if (go->GetComponent<ParticleSystem>())  hay += " particles fx";
-            if (go->GetComponent<AudioSource>())     hay += " sound audio";
-            if (!go->GetComponents<ScriptComponent>().empty()) hay += " script";
-            if (go->GetComponent<Rigidbody3D>() || go->GetComponent<Rigidbody2D>()) hay += " rigidbody physics";
-            if (go->GetComponent<Collider3D>() || go->GetComponent<Collider2D>())   hay += " collider";
-            if (go->GetComponent<NPCController>())   hay += " npc ai enemy";
-            if (go->GetComponent<Spawner>())         hay += " spawner waves";
-            if (go->GetComponent<Terrain>())         hay += " terrain ground";
-            if (go->GetComponent<Character>())       hay += " character humanoid";
-            if (go->GetComponent<FirstPersonController>() || go->GetComponent<ThirdPersonController>() ||
-                go->GetComponent<CharacterController3D>() || go->GetComponent<ClickToMoveController>())
-                hay += " player controller";
-            if (go->GetComponent<UIButton>() || go->GetComponent<UIPanel>() ||
-                go->GetComponent<UIImage>()  || go->GetComponent<UIRawImage>() || go->GetComponent<UISlider>() ||
-                go->GetComponent<UIToggle>() || go->GetComponent<UIProgressBar>())
-                hay += " ui widget canvas";
-            for (auto& ch : hay) ch = (char)std::tolower((unsigned char)ch);
-            if (hay.find(needle) == std::string::npos && !pathHits.count(go)) continue;
+            if (!filter.Matches(*go, &pathHits)) continue;
             ++hits;
-            bool sel = (go == ed.selected());
+            bool sel = ed.IsSelected(go);
             ImGui::PushID(go);
             const float searchRoom = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("     ").x -
                                      (ObjectHasDiag(go) ? 28.0f : 6.0f);
             const std::string searchName = EllipsizeToWidth(go->name, searchRoom);
-            if (ImGui::Selectable(("     " + searchName).c_str(), sel))
-                ed.Select(go);
+            if (ImGui::Selectable(("     " + searchName).c_str(), sel)) {
+                if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(go);   // add to / remove from the selection
+                else ed.Select(go);
+            }
             if (searchName != go->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", go->name.c_str());
             {   // drawn type icon in the leading space
                 ImVec2 smn = ImGui::GetItemRectMin();
                 HierKindIcon(go, ImVec2(smn.x + 2.0f, smn.y), ImGui::GetFontSize(),
                              ImGui::GetWindowDrawList());
+                HierPrefabBadge(go, ImVec2(smn.x + 2.0f, smn.y), ImGui::GetFontSize(), ImGui::GetWindowDrawList());
             }
             // Dimmed parent path after the name, so same-named results (e.g.
             // several "Wheel"s) are tellable apart in the flat search list.
@@ -18565,6 +18834,7 @@ void DrawHierarchy(EditorState& ed) {
         }
         if (hits == 0) ImGui::TextDisabled("No objects match '%s'.", g_hierFilter);
         else           ImGui::TextDisabled("%d match(es)", hits);
+        ImGui::EndChild();
         ImGui::End();
         return;
     }
@@ -18645,10 +18915,13 @@ void DrawHierarchy(EditorState& ed) {
             // Left/Right arrow expand/collapse request from last frame's key press.
             if (node == g_hierOpenNode && childCount > 0)
                 ImGui::SetNextItemOpen(g_hierOpenVal == 1);
+            if (node == g_hierDropOpen && childCount > 0) { ImGui::SetNextItemOpen(true); g_hierDropOpenSeen = true; }
             // Dim inactive objects; grey the whole row (and its subtree label).
             // Isolation dims everything outside the isolated subtree the same way.
             bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
+            const bool prefabRoot = !dim && !node->prefabSource.empty();   // prefab instances read blue
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+            else if (prefabRoot) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.76f, 1.0f, 1.0f));
             visRows.push_back(node);   // for arrow-key navigation, in draw order
             // Zebra striping: a whisper-faint band on every other row keeps deep
             // hierarchies scannable (the count is per visible row, top to bottom).
@@ -18674,21 +18947,26 @@ void DrawHierarchy(EditorState& ed) {
             const std::string shown = EllipsizeToWidth(node->name, nameRoom);
             bool open = ImGui::TreeNodeEx(node, flags, "     %s%s", shown.c_str(), tail.c_str());
             if (shown != node->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", node->name.c_str());
-            if (dim) ImGui::PopStyleColor();
+            if (dim || prefabRoot) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
+            if (revealSel == node && !ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.4f);   // selected in the Scene view: scroll to it
             {   // drawn type icon in the leading space (after the tree arrow zone)
                 float isz = ImGui::GetFontSize();
                 float ax = isz + ImGui::GetStyle().FramePadding.x * 2.0f;   // arrow width
-                HierKindIcon(node, ImVec2(rowMin.x + ax,
-                                          rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f),
-                             isz, ImGui::GetWindowDrawList());
+                const ImVec2 ip(rowMin.x + ax, rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f);
+                HierKindIcon(node, ip, isz, ImGui::GetWindowDrawList());
+                HierPrefabBadge(node, ip, isz, ImGui::GetWindowDrawList());
             }
             // Accent bar on the selected row — matches the Inspector's component cards
             // so the selection reads consistently across the editor.
             if (ed.IsSelected(node))
                 ImGui::GetWindowDrawList()->AddRectFilled(
                     rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
-            HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y));
+            {   // badges only where the name leaves room
+                const float labelEnd = rowMin.x + ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f +
+                                       ImGui::CalcTextSize(("     " + shown + tail).c_str()).x + 8.0f;
+                HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y), labelEnd);
+            }
             DrawObjectDiagMarker(node, rowMin, rowMax);
             HierEye(node, rowMin, rowMax);
             HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
@@ -18714,7 +18992,14 @@ void DrawHierarchy(EditorState& ed) {
                 } else if (ImGui::GetIO().KeyShift && ed.selected()) {
                     rangeClick = node;   // range select, resolved after the draw pass
                 } else if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set
+                else if (ed.IsSelected(node) && ed.MultiSelection().size() > 1) g_hierPressedMulti = node;   // may turn into a drag of the whole selection: decide on release
                 else ed.Select(node);                                       // single select
+            }
+            // A plain click on one of several selected rows (no drag) selects just that row, on release.
+            if (g_hierPressedMulti == node && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                const ImVec2 moved = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 4.0f);   // zero unless it went past the drag threshold
+                if (ImGui::IsItemHovered() && moved.x == 0.0f && moved.y == 0.0f) ed.Select(node);
+                g_hierPressedMulti = nullptr;
             }
             // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
             // it as a sibling (above/below), or onto the middle to RE-PARENT it.
@@ -18729,75 +19014,70 @@ void DrawHierarchy(EditorState& ed) {
                 ImGui::EndDragDropSource();
             }
             if (ImGui::BeginDragDropTarget()) {
-                // Preview line for an edge (reorder) drop.
+                // Where it would land: a line above / below the row (beside it), or the whole row outlined (inside it).
+                // Red when a row would end up inside itself.
                 float ty = (ImGui::GetIO().MousePos.y - rowMin.y) / (rowMax.y - rowMin.y);
-                if (ty < 0.30f || ty > 0.70f) {
-                    float ly = ty < 0.30f ? rowMin.y : rowMax.y;
-                    ImGui::GetWindowDrawList()->AddLine(ImVec2(rowMin.x, ly), ImVec2(rowMax.x, ly),
-                                                        IM_COL32(120, 190, 255, 255), 2.0f);
-                }
-                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
-                    GameObject* dragged = *(GameObject**)p->Data;
-                    // Dragging a member of a multi-selection moves the WHOLE selection
-                    // (skipping any whose ancestor is also selected — the parent brings
-                    // its subtree along anyway).
-                    std::vector<GameObject*> moved;
-                    if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) {
-                        for (GameObject* g : ed.MultiSelection()) {
-                            bool covered = false;
-                            for (Transform* t = g && g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
-                                if (t->gameObject && ed.IsSelected(t->gameObject)) { covered = true; break; }
-                            if (g && !covered) moved.push_back(g);
-                        }
-                    } else if (dragged) moved.push_back(dragged);
-                    // Keep the group's visible order: sort by scene order (the
-                    // selection set is in CLICK order), and when inserting after
-                    // the target, chain each drop behind the previous one —
-                    // otherwise repeated "insert after node" reverses the group.
-                    if (moved.size() > 1) {
-                        std::unordered_map<GameObject*, int> ord;
-                        int oi = 0;
-                        for (const auto& up2 : ed.scene().Objects()) ord[up2.get()] = oi++;
-                        std::sort(moved.begin(), moved.end(),
-                                  [&](GameObject* a, GameObject* b) { return ord[a] < ord[b]; });
+                {
+                    const ImGuiPayload* live = ImGui::GetDragDropPayload();
+                    bool bad = false;
+                    if (live && live->IsDataType("GO_PTR") && live->Data) {
+                        GameObject* dg = *(GameObject**)live->Data;
+                        bad = dg && (dg == node || node->IsSelfOrDescendantOf(dg));
                     }
-                    GameObject* afterAnchor = node;
-                    bool pushed = false;
-                    for (GameObject* mv : moved) {
-                        bool cycle = false;
-                        for (Transform* t = node->transform; t; t = t->Parent())
-                            if (t == mv->transform) { cycle = true; break; }
-                        if (mv == node || cycle) continue;
-                        if (!pushed) { ed.PushUndo(); pushed = true; }
-                        if (ty < 0.30f)      ed.scene().ReorderSibling(mv, node, /*after=*/false);
-                        else if (ty > 0.70f) { ed.scene().ReorderSibling(mv, afterAnchor, /*after=*/true); afterAnchor = mv; }
-                        else {
-                            // Re-parent. For a UI widget, its pixel offset is resolved
-                            // WITHIN its parent, so a plain re-parent makes it jump on
-                            // screen. Capture its screen rect, re-parent, then nudge its
-                            // offset so it stays exactly where it was.
-                            float cw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
-                            float ch = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
-                            Vec2 oldO, oldSz;
-                            bool wasUI = cw > 1.0f && GetUIScreenRect(mv, cw, ch, oldO, oldSz);
-                            mv->transform->SetParent(node->transform, true);
-                            if (wasUI) {
+                    const ImU32 col = bad ? IM_COL32(235, 90, 80, 255) : ImGui::GetColorU32(AccentCol(1.0f));
+                    ImDrawList* ddl = ImGui::GetWindowDrawList();
+                    if (ty < 0.30f || ty > 0.70f) {
+                        const float ly = ty < 0.30f ? rowMin.y : rowMax.y;
+                        ddl->AddLine(ImVec2(rowMin.x, ly), ImVec2(rowMax.x, ly), col, 2.5f);
+                        ddl->AddCircleFilled(ImVec2(rowMin.x + 4.0f, ly), 3.5f, col);
+                    } else {
+                        ddl->AddRectFilled(rowMin, rowMax, (col & 0x00FFFFFF) | 0x30000000, 3.0f);
+                        ddl->AddRect(rowMin, rowMax, col, 3.0f, 0, 2.0f);
+                    }
+                }
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                    GameObject* dragged = *(GameObject**)p->Data;
+                    // Dragging a member of a multi-selection moves the WHOLE selection, in hierarchy order
+                    // (a selected parent brings its children). Checks and ordering: InspectorModel.cpp.
+                    std::vector<GameObject*> group;
+                    if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) group = ed.MultiSelection();
+                    else if (dragged) group.push_back(dragged);
+                    const oked::DropWhere where = ty < 0.30f ? oked::DropWhere::Before
+                                                : ty > 0.70f ? oked::DropWhere::After : oked::DropWhere::Inside;
+                    if (!oked::PlanDrop(ed.scene(), group, node, where).empty()) {
+                        ed.PushUndo();
+                        // Re-parenting a UI widget: its pixel offset is resolved WITHIN its parent, so a plain
+                        // re-parent makes it jump on screen. Remember its screen rect, then nudge its offset back.
+                        const float cw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
+                        const float ch = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
+                        std::unordered_map<GameObject*, Vec2> oldOrigin;
+                        oked::DropHooks hooks;
+                        if (where == oked::DropWhere::Inside) {
+                            hooks.before = [&](GameObject* mv) {
+                                Vec2 o, sz;
+                                if (cw > 1.0f && GetUIScreenRect(mv, cw, ch, o, sz)) oldOrigin[mv] = o;
+                            };
+                            hooks.after = [&](GameObject* mv) {
+                                auto it = oldOrigin.find(mv);
+                                if (it == oldOrigin.end()) return;
                                 UIRect rr = GetUIRect(mv);
                                 Vec2 newO, newSz;
                                 if (rr.valid && rr.position && GetUIScreenRect(mv, cw, ch, newO, newSz)) {
                                     float sc = UIScaleFor(mv, cw, ch); if (sc < 1e-3f) sc = 1.0f;
-                                    rr.position->x += (oldO.x - newO.x) / sc;
-                                    rr.position->y += (oldO.y - newO.y) / sc;
+                                    rr.position->x += (it->second.x - newO.x) / sc;
+                                    rr.position->y += (it->second.y - newO.y) / sc;
                                 }
-                            }
+                            };
                         }
+                        oked::ApplyDrop(ed.scene(), group, node, where, hooks);
+                        if (where == oked::DropWhere::Inside) { g_hierDropOpen = node; g_hierDropOpenSeen = false; }   // open it next frame to show where they went
                         ed.dirty = true;
                     }
                 }
                 // Drop a Project asset onto an object: a .okaymat applies its look
                 // to the object's Mesh Renderer; an image sets the texture on a
                 // Mesh/Sprite Renderer.
-                if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+                if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
                     std::string path((const char*)ap->Data);
                     std::string ext;
                     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
@@ -18825,12 +19105,19 @@ void DrawHierarchy(EditorState& ed) {
                         ed.dirty = true; ConsoleLog("Set font on " + node->name);
                     } else if (ext == ".okayscene") {      // MERGE the scene into this one
                         MergeSceneIntoCurrent(ed, path);
-                    } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
+                    } else if (const char* k = ImportKindLabel(ext); (k && std::strcmp(k, "model") == 0) || ext == ".okayprefab") {
                         // Drop a model onto a player/NPC: it becomes THE character —
                         // imported as a child, sized/grounded/faced, locomotion clips
                         // wired, and the blocky body hidden.
-                        if (ObjectIsCharacterTarget(node)) QueueCharacterModel(node, path);
-                        else ConsoleLog(node->name + " has no controller/Character — dropping the model into the scene instead adds it standalone (drag to the viewport).", 1);
+                        if (k && ObjectIsCharacterTarget(node)) QueueCharacterModel(node, path);
+                        else if (GameObject* made = HierInstantiateAsset(ed, path)) {
+                            // Anywhere else: a new object. Middle of the row = its child, near an edge = beside it.
+                            if (ty >= 0.30f && ty <= 0.70f) {
+                                made->transform->SetParent(node->transform, false);
+                                g_hierDropOpen = node; g_hierDropOpenSeen = false;
+                            } else oked::ApplyDrop(ed.scene(), {made}, node, ty < 0.30f ? oked::DropWhere::Before : oked::DropWhere::After);
+                            ed.Select(made);
+                        }
                     }
                 }
                 ImGui::EndDragDropTarget();
@@ -18944,6 +19231,9 @@ void DrawHierarchy(EditorState& ed) {
                 if (ImGui::BeginMenu("Create Child")) {
                     auto childOf = [&](GameObject* g) { if (g) { g->transform->SetParent(node->transform, false); ed.Select(g); ed.dirty = true; } };
                     if (ImGui::MenuItem("Cube"))   childOf(ed.CreateCube("Cube"));
+                    if (ImGui::MenuItem("Sphere")) childOf(ed.CreateMesh("Sphere"));
+                    if (ImGui::MenuItem("Cylinder")) childOf(ed.CreateMesh("Cylinder"));
+                    if (ImGui::MenuItem("Plane"))  childOf(ed.CreateMesh("Plane"));
                     if (ImGui::MenuItem("Sprite")) childOf(ed.CreateSprite("Sprite"));
                     if (ImGui::MenuItem("Camera")) childOf(ed.CreateCamera("Camera"));
                     if (ImGui::MenuItem("Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); childOf(g); }
@@ -19059,6 +19349,7 @@ void DrawHierarchy(EditorState& ed) {
         drawNode(go);
     }
     g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
+    if (g_hierDropOpenSeen) { g_hierDropOpen = nullptr; g_hierDropOpenSeen = false; }
     if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
     if (deleteKidsPending) {
         const int n = ed.DeleteChildrenOfSelected();
@@ -19111,13 +19402,30 @@ void DrawHierarchy(EditorState& ed) {
     // there's always a drop target below the last row.
     {
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        ImGui::Dummy(ImVec2(-1.0f, avail.y > 24.0f ? avail.y : 24.0f));
+        ImGui::Dummy(ImVec2(std::max(1.0f, avail.x), std::max(24.0f, avail.y - ImGui::GetStyle().ItemSpacing.y * 2.0f)));   // (a negative width never counted as hovered: dropping here did nothing)
         if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(AccentCol(0.8f)), 4.0f, 0, 2.0f);   // "drop here"
+            // A row dropped here goes to the top level; a scene merges; a prefab, model or picture is added.
+            if (const ImGuiPayload* gp = ImGui::AcceptDragDropPayload("GO_PTR", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                GameObject* dragged = *(GameObject**)gp->Data;
+                std::vector<GameObject*> group;   // a multi-selection moves together
+                if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) group = ed.MultiSelection();
+                else if (dragged) group.push_back(dragged);
+                bool anyChild = false;
+                for (GameObject* g : group) if (g && g->transform && g->transform->Parent()) anyChild = true;
+                if (anyChild) {
+                    ed.PushUndo();
+                    for (GameObject* g : oked::PlanDrop(ed.scene(), group, nullptr, oked::DropWhere::Inside))
+                        if (g->transform->Parent()) g->transform->SetParent(nullptr, true);
+                    ed.dirty = true;
+                }
+            }
+            if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
                 std::string path((const char*)ap->Data);
                 std::string ext;
                 if (auto d = path.find_last_of('.'); d != std::string::npos) ext = Lower(path.substr(d));
                 if (ext == ".okayscene") MergeSceneIntoCurrent(ed, path);
+                else if (GameObject* r = HierInstantiateAsset(ed, path)) ed.Select(r);
             }
             ImGui::EndDragDropTarget();
         }
@@ -19209,34 +19517,6 @@ void DrawHierarchy(EditorState& ed) {
         ImGui::EndPopup();
     }
 
-    // Empty area: drop a prefab/scene asset to instantiate/open it, or drop a
-    // hierarchy row here to unparent it (move to the scene root).
-    ImGui::Dummy(ImGui::GetContentRegionAvail());
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* gp = ImGui::AcceptDragDropPayload("GO_PTR")) {
-            GameObject* dragged = *(GameObject**)gp->Data;
-            if (dragged && dragged->transform->Parent()) {
-                ed.PushUndo(); dragged->transform->SetParent(nullptr, true); ed.dirty = true;
-            }
-        }
-        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-            std::string path((const char*)p->Data);
-            std::size_t dot = path.find_last_of('.');
-            std::string ext = dot == std::string::npos ? "" : path.substr(dot);
-            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-            if (ext == ".okayprefab") {
-                ed.PushUndo();
-                std::string err;
-                if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err)) {
-                    ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + path);
-                } else ConsoleLog("Prefab load failed: " + err);
-            } else if (ext == ".okayscene") {
-                RequestLoad(ed, path);
-            }
-        }
-        ImGui::EndDragDropTarget();
-    }
-
     // F2 renames the selected object (the context menu has advertised this all along).
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename &&
         ImGui::IsKeyPressed(ImGuiKey_F2, false) && ed.selected()) {
@@ -19305,6 +19585,7 @@ void DrawHierarchy(EditorState& ed) {
             ImGui::EndPopup();
         }
     }
+    ImGui::EndChild();   // ##hiertree
     ImGui::End();
 }
 
@@ -26293,7 +26574,8 @@ static bool IKJointLimitUI(const char* label, IKJointLimit& l) {
 
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
-    bool changed = false;
+    bool changed = oked::AssetPathPicker(field);   // "..." handle + right-click: choose from project, clear
+    oked::HighlightAssetDrop();                    // outline while a file from the Project panel is dragged over
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
             field = std::string((const char*)p->Data);
@@ -26709,6 +26991,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
     {   // accent bar down the left edge: each component reads as a titled card
         ImVec4 barCol = CategoryColor(label); barCol.w = 0.95f;
+        if (oked::PrefabChangedFor(comp)) barCol = ImVec4(0.30f, 0.62f, 1.0f, 1.0f);   // changed from its prefab
         ImGui::GetWindowDrawList()->AddRectFilled(hmn, ImVec2(hmn.x + 3.0f, hmx.y),
             ImGui::GetColorU32(en ? barCol : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)), 1.5f);
     }
@@ -26769,6 +27052,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
                                 ImGui::GetColorU32(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled), 8);
         if (hov) ImGui::SetTooltip("Component options (or right-click the header)");
     }
+    if (oked::PrefabChangedFor(comp) && ImGui::IsMouseHoveringRect(hmn, hmx) && ImGui::IsWindowHovered()) ImGui::SetTooltip("Changed from the prefab");
     if (hdrRightClick) ImGui::OpenPopup("##compctx");
     if (ImGui::BeginPopup("##compctx")) {
         if (ImGui::MenuItem("Move Up"))   { sMoveComp = comp; sMoveDelta = -1; }
@@ -26776,6 +27060,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         ImGui::Separator();
         if (ImGui::MenuItem("Expand All Components"))   sCompForceRequest = 1;
         if (ImGui::MenuItem("Collapse All Components")) sCompForceRequest = 0;
+        oked::ComponentValueMenu(comp);   // Copy Values / Paste Values / Reset
         ImGui::Separator();
         if (removable && ImGui::MenuItem("Remove Component")) *toRemove = comp;
         if (!removable) ImGui::TextDisabled("(required component)");
@@ -28702,13 +28987,14 @@ void DrawInspector(EditorState& ed) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(10, 10));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(8, 8));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
+    oked::DrawPlayModeNote(ed);   // "Changes made here are not saved" while playing
 
     // Lock (pin) the inspector to the current object so it stays put while you
     // click around the scene/hierarchy — inspector lock.
     static bool s_locked = false;
     static GameObject* s_pinned = nullptr;
-    if (ImGui::Checkbox("Lock", &s_locked)) s_pinned = s_locked ? ed.selected() : nullptr;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep showing this object while selecting others");
+    if (ImGui::Checkbox("Lock Inspector", &s_locked)) s_pinned = s_locked ? ed.selected() : nullptr;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep showing this object while you select others");
 
     GameObject* go = ed.selected();
     if (s_locked && s_pinned) {
@@ -28772,7 +29058,7 @@ void DrawInspector(EditorState& ed) {
         bool lk = go->editorLocked;
         if (ImGui::Checkbox("Lock", &lk)) { ed.PushUndo(); SetLockedRecursive(go, lk); ed.dirty = true; }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Locked objects (and children) can't be click-selected in the Scene view");
+            ImGui::SetTooltip("Lock this object in the Scene view: it (and its children) can't be click-selected there");
     }
 
     // Row 2: Tag dropdown + Save-as-Prefab.
@@ -28858,6 +29144,11 @@ void DrawInspector(EditorState& ed) {
     }
     if (ImGui::Button("Save as Prefab")) {
         std::string p = go->name + ".okayprefab";
+        if (!ed.projectDir().empty()) {   // into the project's Assets folder, where the Project panel shows it
+            std::error_code pe;
+            std::filesystem::create_directories(std::filesystem::path(ed.projectDir()) / "Assets", pe);
+            p = (std::filesystem::path(ed.projectDir()) / "Assets" / p).string();
+        }
         if (SceneSerializer::SaveObjectToFile(*go, p)) {
             ConsoleLog("Saved prefab " + p);
             go->prefabSource = p;   // link the live object so it becomes an instance
@@ -28969,6 +29260,12 @@ void DrawInspector(EditorState& ed) {
         }
     }
 
+    oked::RefreshPrefabChanges(go);
+    if (oked::DrawPrefabChanges(ed, go)) {   // a revert rebuilt the instance: this object is gone
+        ImGui::PopStyleVar(3); ImGui::End();
+        return;
+    }
+    oked::BeginInspectorFrame();
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
     // Fields fill the panel minus a label column that grows with it (labels sit on
     // the right): a narrow Inspector keeps labels readable instead of clipping them.
@@ -29279,6 +29576,9 @@ void DrawInspector(EditorState& ed) {
         if (go->Components().size() != compCountAtDraw) break;
         if (!curComp || curComp == go->transform) continue;
         sManagedNote = ManagedNoteFor(ed, go, curComp); sManagedFor = curComp;
+        const float fbCursorY = ImGui::GetCursorPosY();   // unchanged at the end = no hand-written Inspector drew this one
+        // With several objects selected, what a drawer changes on this component goes to the others too.
+        const oked::ComponentEdit multiEdit = oked::BeginComponentEdit(ed.MultiSelection(), go, *curComp);
     if (auto* sr = dynamic_cast<SpriteRenderer*>(curComp)) {
         if (CompHeader("Sprite Renderer", sr, &toRemove)) {
             float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
@@ -38212,6 +38512,8 @@ void DrawInspector(EditorState& ed) {
     DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
+    oked::DrawFallbackInspector(ed, go, curComp, toRemove, fbCursorY, &CompHeader);   // anything still undrawn: from the property registry
+    if (multiEdit.active && oked::PropagateComponentEdit(ed.MultiSelection(), go, *curComp, multiEdit) > 0) ed.dirty = true;
     } // end component-order loop
     compSnap.clear();
 
@@ -38228,6 +38530,7 @@ void DrawInspector(EditorState& ed) {
         sPendingViewModeCtrl = nullptr;
         ed.dirty = true;
     }
+    oked::ApplyComponentValueRequests(ed, go);   // the component menu's Copy / Paste / Reset Values
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
 
@@ -45238,6 +45541,8 @@ static void WriteHandoff() {
     std::string body;
     if (!g_newProjectRoot.empty())     body += "new-project\t" + g_newProjectRoot + "\n";
     if (!g_newProjectTemplate.empty()) body += "template\t"    + g_newProjectTemplate + "\n";
+    if (!g_newProjectVersion.empty())  body += "version\t"     + g_newProjectVersion + "\n";
+    if (g_newProjectGpu == 0 || g_newProjectGpu == 1) body += std::string("gpu\t") + (g_newProjectGpu ? "1" : "0") + "\n";
     if (!g_openScenePath.empty())      body += "open\t"        + g_openScenePath + "\n";
     if (!g_openScenePath.empty() && KeepVersionRequested()) body += "keep-version\t" + RunningVersion() + "\n";   // the version this editor is: honored only by an editor of that version
     if (body.empty()) body = "focus\t1\n";   // plain "Open Editor": just bring to front
@@ -45267,6 +45572,8 @@ static bool PollHandoff(bool& raiseWindow) {
         std::string k = line.substr(0, tab), v = line.substr(tab + 1);
         if      (k == "new-project") { g_newProjectRoot = v;     request = true; }
         else if (k == "template")    { g_newProjectTemplate = v; request = true; }
+        else if (k == "version")     { g_newProjectVersion = v; }
+        else if (k == "gpu")         { g_newProjectGpu = v == "0" ? 0 : 1; }
         else if (k == "open")        { g_openScenePath = v;      request = true; }
         else if (k == "keep-version") { keepVersion = v; }
         else if (k == "focus")       { /* just raise */ }
@@ -45577,6 +45884,10 @@ int main(int argc, char** argv) {
         else if (a.rfind("--new-project=", 0) == 0) g_newProjectRoot = a.substr(14);
         else if (a == "--open" && i + 1 < argc) { g_openScenePath = argv[i + 1]; ++i; }
         else if (a.rfind("--open=", 0) == 0) g_openScenePath = a.substr(7);
+        else if (a == "--project-version" && i + 1 < argc) { g_newProjectVersion = argv[i + 1]; ++i; }
+        else if (a.rfind("--project-version=", 0) == 0) g_newProjectVersion = a.substr(18);
+        else if (a == "--gpu" && i + 1 < argc) { g_newProjectGpu = std::string(argv[i + 1]) == "0" ? 0 : 1; ++i; }
+        else if (a.rfind("--gpu=", 0) == 0) g_newProjectGpu = a.substr(6) == "0" ? 0 : 1;
     }
 
     ProjectUpgradeInit(argc, argv);   // --keep-version, and the version question that comes before any project is opened
@@ -46742,6 +47053,7 @@ int main(int argc, char** argv) {
                 ed.scene().renderSettings.weather.intensity = 1.0f;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            oked::DevFieldDemo(ed);   // OKAY_DEV_FIELD_DEMO: a component with every property kind, to show the registry-driven Inspector card
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
@@ -47221,6 +47533,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
         { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); DrawDocRecoveryPopup(ed); }
         { OKAY_PROFILE("UI.ProjectSettings"); DrawProjectSettings(ed); }
+        oked::WatchEditUndo(ed);   // one undo step for every Inspector / Hierarchy field edit
         { OKAY_PROFILE("UI.Diagnostics"); if (!ed.isPlaying()) TickProjectDiagnostics(ed); }
         { OKAY_PROFILE("UI.Hierarchy"); if (g_showHierarchy) DrawHierarchy(ed); }
         {   // Edit mode: keep skinned meshes deformed by their bones (scripts don't

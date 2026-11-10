@@ -144,13 +144,23 @@ void EditorState::RestoreKeepingSelection(const std::string& snapshot) {
 
 void EditorState::PushUndo() {
     if (m_suppressUndo) return;
+    ++m_undoSerial;
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
+    if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
+    m_redo.clear();
+}
+
+void EditorState::PushUndoText(std::string before) {
+    if (m_suppressUndo) return;
+    ++m_undoSerial;
+    m_undo.push_back(std::move(before));
     if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
     m_redo.clear();
 }
 
 bool EditorState::Undo() {
     if (m_undo.empty()) return false;
+    ++m_undoSerial;
     m_redo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_undo.back(); m_undo.pop_back();
     StopNetwork();
@@ -160,6 +170,7 @@ bool EditorState::Undo() {
 
 bool EditorState::Redo() {
     if (m_redo.empty()) return false;
+    ++m_undoSerial;
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_redo.back(); m_redo.pop_back();
     StopNetwork();
@@ -754,6 +765,19 @@ std::uint64_t EditorState::Fingerprint(const std::string& text) {
     std::uint64_t h = 1469598103934665603ull;   // FNV-1a
     for (unsigned char c : text) { h ^= c; h *= 1099511628211ull; }
     return h ^ ((std::uint64_t)text.size() << 1);
+}
+
+bool EditorState::RewriteAssetPaths(const std::function<std::string(const std::string&)>& rewrite) {
+    if (m_playing || !rewrite) return false;
+    const bool wasClean = !HasUnsavedChanges();
+    for (std::string& s : m_undo) s = rewrite(s);
+    for (std::string& s : m_redo) s = rewrite(s);
+    const std::string now = SceneSerializer::Serialize(m_scene);
+    const std::string next = rewrite(now);
+    if (next == now) return false;
+    RestoreKeepingSelection(next);
+    if (wasClean) MarkClean();
+    return true;
 }
 
 void EditorState::MarkClean() {

@@ -55,21 +55,34 @@ int main() {
         }
         CHECK(FindTemplate("3D Scene") && !FindTemplate("No Such Template") && !FindTemplate(""));
         CHECK(std::string(Templates().front().title) == "3D Scene");                // the default
-        // The launcher's Create page and the editor's New Project both name templates by these titles. A
-        // title one of them has and the other lacks would silently fall back to the default scene.
+        int starters = 0;
+        for (const TemplateInfo& t : all) if (IsStarterTemplate(t)) ++starters;
+        CHECK(starters == 3);                                                       // the few large cards
+        for (const TemplateInfo& t : all) {
+            const char *a = "", *b = "", *c = "";
+            TemplateFeatureLines(t.title, a, b, c);
+            CHECK(a && b && c && a[0] && b[0] && c[0]);
+        }
+        // The launcher's Create page uses this list (it no longer keeps a second copy). The editor's
+        // New Project names the same titles. A title one of them lacks falls back to the default scene.
         const fs::path root = fs::path(__FILE__).parent_path().parent_path();
         std::string launcher, editor;
         if (ReadText((root / "launcher" / "main.cpp").string(), launcher) && ReadText((root / "editor" / "main.cpp").string(), editor)) {
+            CHECK(launcher.find("okayproj::Templates()") != std::string::npos);
+            CHECK(launcher.find("kTpl[]") == std::string::npos);
+            CHECK(launcher.find("More options") != std::string::npos);
+            CHECK(launcher.find("BeginPopupModal(\"New Project\"") != std::string::npos);
+            CHECK(launcher.find("+  New Project") != std::string::npos);
+            CHECK(launcher.find("--project-version") != std::string::npos);
+            CHECK(editor.find("--project-version") != std::string::npos);
             auto section = [](const std::string& text, const char* start) {
                 const std::size_t a = text.find(start);
                 return a == std::string::npos ? std::string() : text.substr(a, text.find("};", a) - a);
             };
-            std::set<std::string> inLauncher, inEditor;
-            const std::string ls = section(launcher, "} kTpl[] = {"), es = section(editor, "static const Tpl tpls[] = {");
-            const std::regex lre("\\{\"([^\"]+)\",\\s+\"[^\"]+\",\\s*\\d\\}"), ere("\\{\"([^\"]+)\",\\s+&EditorState::\\w+\\}");
-            for (std::sregex_iterator it(ls.begin(), ls.end(), lre), end; it != end; ++it) inLauncher.insert((*it)[1]);
+            std::set<std::string> inEditor;
+            const std::string es = section(editor, "static const Tpl tpls[] = {");
+            const std::regex ere("\\{\"([^\"]+)\",\\s+&EditorState::\\w+\\}");
             for (std::sregex_iterator it(es.begin(), es.end(), ere), end; it != end; ++it) inEditor.insert((*it)[1]);
-            CHECK(inLauncher == titles);
             CHECK(inEditor == titles);
         } else std::cout << "  (source files not found next to the tests: template cross-check skipped)\n";
     }
@@ -288,6 +301,78 @@ int main() {
         CHECK(!WriteTextAtomic((t.path / "adir").string(), "x", &err));
         CHECK(fs::is_directory(t.path / "adir") && !fs::exists((t.path / "adir").string() + ".tmp"));
         CHECK(SettingsPath("").size() > 0 && SettingsPath((t.path).string()) == (t.path / "project.okayproj").string());
+    }
+
+    // ---- Create tab: version and keyboard ------------------------------------------------------------------
+    {
+        CHECK(CheckProjectVersion("1.0.0").empty());
+        CHECK(CheckProjectVersion("  2.1.0-beta ").empty());
+        CHECK(Has(CheckProjectVersion(""), "version"));
+        CHECK(Has(CheckProjectVersion("   "), "version"));
+        CHECK(Has(CheckProjectVersion("beta"), "number"));
+        CHECK(Has(CheckProjectVersion("1.0/2"), "1.0.0"));
+        CHECK(Has(CheckProjectVersion(std::string(32, '1')), "too long"));
+        CHECK(CheckProjectVersion(std::string(31, '1')).empty());
+
+        NewProjectWizard w;
+        CHECK(WizardOpen(w) == WizardMove::Opened && w.open && w.step == 0 && !w.creating);
+        CHECK(WizardCanAdvance(w));                                          // a template is already chosen
+        CHECK(WizardNext(w) == WizardMove::Next && w.step == 1);
+        w.detailsOk = false;
+        CHECK(!WizardCanAdvance(w));
+        CHECK(WizardNext(w) == WizardMove::None && w.step == 1);             // invalid details block Next
+        CHECK(ApplyWizardInput(true, false, false, w) == WizardMove::None);
+        w.detailsOk = true;
+        CHECK(WizardNext(w) == WizardMove::Next && w.step == 2);
+        CHECK(WizardNext(w) == WizardMove::None && w.step == 2);             // review has Create, not another Next
+        CHECK(ApplyWizardInput(true, false, true, w) == WizardMove::None);   // another field owns Enter
+        CHECK(!w.creating);
+        w.moreOpen = true;
+        CHECK(ApplyWizardInput(false, true, false, w) == WizardMove::Back);
+        CHECK(!w.moreOpen && w.open && w.step == 2);
+        CHECK(ApplyWizardInput(true, false, false, w) == WizardMove::Create && w.creating);
+        CHECK(ApplyWizardInput(false, true, false, w) == WizardMove::None);  // Esc does not cancel mid-create
+        w.creating = false;
+        CHECK(WizardBack(w) == WizardMove::Back && w.step == 1);
+        CHECK(WizardBack(w) == WizardMove::Back && w.step == 0);
+        CHECK(WizardBack(w) == WizardMove::None && w.step == 0);
+        CHECK(ApplyWizardInput(false, true, false, w) == WizardMove::Closed && !w.open);
+    }
+
+    // ---- edges the Create wizard relies on -------------------------------------------------------------------------
+    {
+        // Windows-illegal names, in every spelling the box can receive them
+        for (const char* bad : {"aux", "Nul.txt", "COM1.log", "lpt9", "CON  ", "name.", "name ..", "a|b", "a\"b", "tab\there\x01"})
+            CHECK(!CheckName(bad).ok());
+        CHECK(!CheckName("a|b").ok() && !CheckName("lpt9").ok() && !CheckName("CON  ").ok() && !CheckName("name.").ok());
+        // A failed pass through the wizard never left a half-made project: a project a person is using is not replaced
+        TempDir t;
+        Write(t.path / "Taken", "a file, not a folder");                                  // the name is a file
+        Plan pf = PlanProject(t.path.string(), "Taken");
+        CHECK(pf.ok() && pf.folder == "Taken-2" && pf.renamed);
+        fs::create_directories(t.path / "Game" / "Assets");
+        Write(t.path / "Game" / "Assets" / "x.okayscene", "x");
+        fs::create_directories(t.path / "Game-2");
+        Write(t.path / "Game-2" / "notes.txt", "mine");
+        Plan pg = PlanProject(t.path.string(), "Game");
+        CHECK(pg.ok() && pg.folder == "Game-3");                                          // skips every used folder
+        CHECK(Read(t.path / "Game-2" / "notes.txt") == "mine");                           // and touches none of them
+        // an empty shell left by the launcher is reused, not renamed around
+        fs::create_directories(t.path / "Shell" / "Assets");
+        Plan ps = PlanProject(t.path.string(), "Shell");
+        CHECK(ps.ok() && ps.folder == "Shell" && !ps.renamed);
+        // a location that is a file is refused and nothing is made
+        Plan pl = PlanProject((t.path / "Taken").string(), "Fresh");
+        CHECK(!pl.ok() && !pl.locationProblem.empty() && !fs::exists(t.path / "Taken" / "Fresh"));
+        // MakeDirs below a file fails, records nothing it did not make, and Undo leaves the file alone
+        Made m;
+        std::string err;
+        CHECK(!MakeDirs(t.path / "Taken" / "Sub" / "Deep", m, err) && !err.empty());
+        Undo(m);
+        CHECK(fs::is_regular_file(t.path / "Taken") && Read(t.path / "Taken") == "a file, not a folder");
+        // version box: empty, spaces and quotes are all refused (the launcher passes it on a command line)
+        CHECK(!CheckProjectVersion("").empty() && !CheckProjectVersion("1 0").empty() && !CheckProjectVersion("1.0\"").empty());
+        CHECK(CheckProjectVersion(" 1.0.0 ").empty());
     }
 
     TEST_MAIN_RESULT();

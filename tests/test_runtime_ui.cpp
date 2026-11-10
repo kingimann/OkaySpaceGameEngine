@@ -929,6 +929,36 @@ int main() {
         CHECK_NEAR(btn->color.r, a.button.r, 1e-3f);                    // the Horror button colour is on the widget
     }
 
+    // ---- A long dropdown list scrolls: wheel, scrollbar position, and the selection stays in view ----
+    {
+        Scene s("DD");
+        GameObject* g = s.CreateGameObject("DD");
+        auto* dd = g->AddComponent<UIDropdown>();
+        dd->position = {100, 100}; dd->size = {200, 30};
+        dd->options.clear();
+        for (int i = 0; i < 12; ++i) dd->options.push_back("Opt" + std::to_string(i));
+        dd->maxVisible = 5; dd->value = 0;
+        NoHooks(); MouseTo(0, 0, false);
+        s.Start();
+        dd->open = true;
+        CHECK(dd->Scrolls() && dd->ScrollOffset() == 0 && dd->ShownSlot(4) == 4 && dd->ShownSlot(5) == -1);
+        CHECK(dd->OptionAt({150, 100 + 30 + 5}) == 0);                       // the first row is Opt0
+        MouseTo(150, 175, false);                                              // over the list
+        Input::FeedMouseWheel(-1.0f);                                          // one notch down
+        s.Update(0.016f);
+        CHECK(dd->ScrollOffset() == 1 && dd->ShownSlot(0) == -1 && dd->ShownSlot(5) == 4);
+        CHECK(dd->OptionAt({150, 135}) == 1);                                  // the top row is now Opt1
+        for (int i = 0; i < 20; ++i) { Input::ClearTypedText(); Input::FeedMouseWheel(-1.0f); s.Update(0.016f); }
+        CHECK(dd->ScrollOffset() == 7 && dd->OptionAt({150, 135}) == 7);       // stops at the end: Opt7..Opt11
+        dd->open = false; dd->value = 0; dd->ScrollBy(-100);
+        CHECK(dd->ScrollOffset() == 0);
+        dd->SetValue(10);                                                      // keyboard / gamepad Cycle ends here: scrolls it into view
+        CHECK(dd->ShownSlot(10) >= 0 && dd->ScrollOffset() == 6);
+        dd->SetValue(2);
+        CHECK(dd->ShownSlot(2) == 0);
+        Input::ClearTypedText();
+    }
+
     // ---- The gallery's theme picker lists every look, Glass included, and picking one restyles ----
     {
         Scene s("Pick");

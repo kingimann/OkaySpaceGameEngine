@@ -1655,12 +1655,10 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                     DrawUIText(p, q.empty() ? std::string("Search...") : q, o.x + 8.0f,
                              orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, sc);
                 }
-                const int cap = dd->maxVisible > 0 ? dd->maxVisible : 1000000;
-                int shown = 0;
-                for (int i = 0; i < (int)dd->options.size() && shown < cap; ++i) {
+                const int firstRow = row;
+                for (int i = 0; i < (int)dd->options.size(); ++i) {
                     if (dd->ShownSlot(i) < 0) continue;
                     Rect orow = rowBox(row++);
-                    ++shown;
                     const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
                     p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
                                            (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
@@ -1673,6 +1671,17 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                         tx += UITextW(glyph, px) + 6.0f;
                     }
                     DrawUIText(p, dd->options[i], tx, ty, px, tc);
+                }
+                if (dd->Scrolls()) {   // a scrollbar on the right edge: the thumb shows where the visible rows sit
+                    const int matches = dd->MatchCount(), vis = dd->maxVisible;
+                    const int trackY = (int)(top + firstRow * dd->size.y), trackH = (int)(vis * dd->size.y);
+                    const int barW = 6, barX = (int)(o.x + dd->size.x) - barW - 3;
+                    Rect track{barX, trackY + 2, barW, trackH - 4};
+                    p.SetDrawColor(255, 255, 255, 38); p.FillRect(&track);
+                    const int thumbH = std::max(14, (int)((float)track.h * (float)vis / (float)matches));
+                    const int span = track.h - thumbH, steps = matches - vis;
+                    Rect thumb{barX, track.y + (steps > 0 ? span * dd->ScrollOffset() / steps : 0), barW, thumbH};
+                    p.SetDrawColor(tc.r, tc.g, tc.b, 190); p.FillRect(&thumb);
                 }
             }
         }

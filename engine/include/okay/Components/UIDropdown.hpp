@@ -58,6 +58,28 @@ public:
     }
     bool Searchable() const { return searchable; }
     int MaxVisible() const { return maxVisible; }
+    /// How many options match the filter (all of them when it is empty).
+    int MatchCount() const { int n = 0; for (int i = 0; i < (int)options.size(); ++i) if (PassesFilter(i)) ++n; return n; }
+    /// True when the open list holds more matches than it shows at once, so it scrolls.
+    bool Scrolls() const { return maxVisible > 0 && MatchCount() > maxVisible; }
+    /// First match shown (0 = the top). Always inside 0 .. matches - maxVisible.
+    int ScrollOffset() const {
+        if (maxVisible <= 0) return 0;
+        const int top = MatchCount() - maxVisible;
+        return m_scroll < 0 ? 0 : (m_scroll > top ? (top < 0 ? 0 : top) : m_scroll);
+    }
+    /// Scroll the list by `rows` (positive = down), clamped.
+    void ScrollBy(int rows) { m_scroll = ScrollOffset() + rows; m_scroll = ScrollOffset(); }
+    /// Scroll just enough that option `i` is on screen (no change if it already is or is filtered out).
+    void EnsureVisible(int i) {
+        if (maxVisible <= 0 || i < 0 || i >= (int)options.size() || !PassesFilter(i)) return;
+        int mi = 0;
+        for (int k = 0; k < i; ++k) if (PassesFilter(k)) ++mi;
+        const int first = ScrollOffset();
+        if (mi < first) m_scroll = mi;
+        else if (mi >= first + maxVisible) m_scroll = mi - maxVisible + 1;
+        m_scroll = ScrollOffset();
+    }
     const std::string& Filter() const { return m_filter; }
     const std::string& IconOf(int i) const {
         static const std::string none;
@@ -87,6 +109,7 @@ public:
     void SetValue(int v) {
         if (v < 0 || v >= (int)options.size() || v == value) return;
         value = v;
+        EnsureVisible(v);
         Fire();
     }
 
@@ -144,13 +167,10 @@ public:
             if (p.y >= top && p.y <= top + sz.y) return kSearchRow;
             top += sz.y;
         }
-        int slot = 0;
-        const int cap = maxVisible > 0 ? maxVisible : 1000000;
         for (int i = 0; i < (int)options.size(); ++i) {
-            if (!PassesFilter(i)) continue;
-            if (slot >= cap) break;
+            const int slot = ShownSlot(i);
+            if (slot < 0) continue;
             float y = top + slot * sz.y;
-            ++slot;
             if (p.y >= y && p.y <= y + sz.y) return i;
         }
         return -1;
@@ -158,13 +178,16 @@ public:
     /// On-screen option row (0 = first match, after the search row), or -1.
     int ShownSlot(int optionIndex) const {
         if (optionIndex < 0 || optionIndex >= (int)options.size() || !PassesFilter(optionIndex)) return -1;
-        int slot = 0;
         const int cap = maxVisible > 0 ? maxVisible : 1000000;
+        const int first = ScrollOffset();
+        int mi = 0;
         for (int i = 0; i < (int)options.size(); ++i) {
             if (!PassesFilter(i)) continue;
-            if (slot >= cap) return -1;
-            if (i == optionIndex) return slot;
-            ++slot;
+            if (i == optionIndex) {
+                const int slot = mi - first;
+                return (slot >= 0 && slot < cap) ? slot : -1;
+            }
+            ++mi;
         }
         return -1;
     }
@@ -231,9 +254,17 @@ public:
         Vec2 m = ToLocal(Input::MousePosition());   // header / option tests work in the widget's frame
         m_hover = HeaderContains(m);
         m_hoverOption = OptionAt(m);
+        if (open && Scrolls()) {                    // the wheel scrolls a long list while the pointer is over it or its header
+            const float wheel = Input::MouseWheel();
+            Vec2 lo, ls; HeaderBox(lo, ls);
+            const bool overList = m_hover || (m.x >= lo.x && m.x <= lo.x + ls.x && m.y >= lo.y + ls.y &&
+                                              m.y <= lo.y + ls.y * (float)(1 + OpenRowCount()));
+            if (wheel != 0.0f && overList) { ScrollBy(wheel > 0.0f ? -1 : 1); m_hoverOption = OptionAt(m); }
+        }
         if (Input::GetMouseButtonDown(0)) {
             if (m_hover) {
                 open = !open;                       // toggle the list
+                if (open) EnsureVisible(value);     // opens with the chosen option on screen
                 if (!open) m_filter.clear();
             } else if (open && m_hoverOption == kSearchRow) {
                 // The filter row stays open so the player can type.
@@ -290,6 +321,7 @@ private:
     bool m_hover = false;
     bool m_focused = false;
     int  m_hoverOption = -1;
+    int  m_scroll = 0;       // runtime only: first match shown in a capped list
     std::string m_filter;   // runtime only; cleared when the list closes
 
     static GameObject*& ClickClaim() { static GameObject* g = nullptr; return g; }

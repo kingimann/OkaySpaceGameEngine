@@ -17,6 +17,17 @@ float Hash11(unsigned n) {
     x = (x >> 22u) ^ x;
     return ((x & 0xFFFFu) / 32767.5f) - 1.0f;
 }
+
+// Is `g` still one of the numbers under `host`'s Canvas (or under host when there is none)? A number a
+// user deleted by hand is gone from the child list, so a stale pointer to it is never followed.
+bool StillThere(GameObject* host, GameObject* g) {
+    if (!host || !g) return false;
+    Canvas* cv = OwningCanvas(host);
+    Transform* home = (cv && cv->gameObject ? cv->gameObject : host)->transform;
+    if (!home) return false;
+    for (Transform* c : home->Children()) if (c && c->gameObject == g) return true;
+    return false;
+}
 } // namespace
 
 UIDamageNumbers::Kind UIDamageNumbers::KindFromName(const std::string& name) {
@@ -57,11 +68,13 @@ GameObject* UIDamageNumbers::Make(const std::string& text, Kind kind, Live& l) {
     Scene* sc = gameObject ? gameObject->scene() : nullptr;
     if (!sc) return nullptr;
     while ((int)m_live.size() >= std::max(1, maxActive)) {      // the oldest one goes
-        if (m_live.front().go) sc->Destroy(m_live.front().go);
+        if (StillThere(gameObject, m_live.front().go)) sc->Destroy(m_live.front().go);
         m_live.erase(m_live.begin());
     }
     GameObject* go = sc->CreateGameObject("DamageNumber");
-    go->transform->SetParent(gameObject->transform, false);
+    // Numbers live on the Canvas (when there is one), so a position is in canvas pixels wherever this component sits.
+    Canvas* cv = OwningCanvas(gameObject);
+    go->transform->SetParent((cv && cv->gameObject ? cv->gameObject : gameObject)->transform, false);
     auto* tr = go->AddComponent<TextRenderer>();
     tr->text = text;
     tr->screenSpace = true;
@@ -103,7 +116,7 @@ GameObject* UIDamageNumbers::SpawnAtWorld(const std::string& text, Kind kind, Ve
 
 void UIDamageNumbers::Clear() {
     Scene* sc = gameObject ? gameObject->scene() : nullptr;
-    if (sc) for (auto& l : m_live) if (l.go) sc->Destroy(l.go);
+    if (sc) for (auto& l : m_live) if (StillThere(gameObject, l.go)) sc->Destroy(l.go);
     m_live.clear();
 }
 
@@ -144,7 +157,9 @@ void UIDamageNumbers::Place(Live& l) {
 void UIDamageNumbers::Update(float dt) {
     Scene* sc = gameObject ? gameObject->scene() : nullptr;
     if (!sc) return;
+    // A number someone deleted by hand (the Hierarchy, a script) is forgotten, never touched again.
     for (std::size_t i = 0; i < m_live.size();) {
+        if (!StillThere(gameObject, m_live[i].go)) { m_live.erase(m_live.begin() + (std::ptrdiff_t)i); continue; }
         Live& l = m_live[i];
         l.age += dt;
         if (l.age >= lifetime) {

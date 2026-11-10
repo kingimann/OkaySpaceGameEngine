@@ -38,6 +38,8 @@ inline UITheme* EnsureTheme(Scene& scene, int preset) {
 inline void ApplyThemePreset(Scene& scene, int preset) {
     UITheme* th = EnsureTheme(scene, preset);
     th->Apply();
+    for (const auto& o : scene.Objects())            // slot buttons take their colours from the grid
+        if (auto* sg = o->GetComponent<UISlotGrid>()) sg->Rebuild();
     // Panels that sit ON a card (inset boxes, title bars) keep a different shade from it: the theme
     // gives every panel the same colour, so these take their own from the theme's.
     auto mix = [](Color a, Color b, float t) { return Color(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a); };
@@ -141,6 +143,16 @@ inline GameObject* AddDialogueScreen(Scene& scene) {
 inline GameObject* AddWindow(Scene& scene, GameObject* parent, const char* name, const char* title, Vec2 pos, Vec2 size) {
     GameObject* win = Panel(scene, parent, name, UIAnchor::TopLeft, pos, size, slate::Panel(), 12.0f, true);
     win->GetComponent<UIPanel>()->blocksPointer = true;
+    {   // A window is its own Canvas layer: it, and everything on it, draws above the page and clicks reach it first.
+        Canvas* page = OwningCanvas(parent);
+        auto* wc = win->AddComponent<Canvas>();
+        if (page) {
+            wc->scaleMode = page->scaleMode; wc->referenceResolution = page->referenceResolution;
+            wc->screenMatch = page->screenMatch; wc->matchWidthOrHeight = page->matchWidthOrHeight;
+            wc->scaleFactor = page->scaleFactor;
+        }
+        wc->sortOrder = (page ? page->sortOrder : 0) + 1;
+    }
     GameObject* bar = Panel(scene, win, "SwatchTitleBar", UIAnchor::TopLeft, {0, 0}, {size.x, 38}, slate::Card(), 12.0f);
     auto* bp = bar->GetComponent<UIPanel>();
     bp->cornerMask = UICornerTL | UICornerTR;
@@ -290,7 +302,8 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         GameObject* g = Child(scene, c3, "Slots"); auto* sg = g->AddComponent<UISlotGrid>();
         sg->anchor = UIAnchor::TopLeft; sg->position = {20, 64}; sg->columns = 6; sg->rows = 2; sg->cell = {50, 50}; sg->gap = 8; sg->value = 1;
         sg->color = slate::Field(); sg->hoverColor = slate::FieldHover(); sg->selectedColor = slate::Accent();
-        sg->SetLabel(0, "Axe"); sg->SetLabel(1, "Pot"); sg->SetLabel(2, "Key"); sg->SetLabel(7, "Gem");
+        const char* items[] = {"Axe", "Pot", "Key", "Bow", "Map", "Gem", "Rope", "Torch", "Ring", "Herb", "Coin", "Egg"};
+        for (int i = 0; i < 12; ++i) sg->SetLabel(i, items[i]);
         sg->Rebuild();
     }
     gx::Label(scene, c3, "DialogueLabel", "Dialogue box", {20, 190}, 200);

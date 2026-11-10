@@ -27,6 +27,8 @@
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UISlotGrid.hpp"
+#include "okay/Components/UIStepper.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/Minimap.hpp"
@@ -445,6 +447,16 @@ private:
             b->fontScale = fontScale;
             b->transitionSpeed = transitionSpeed;
             b->hoverScale = hoverScale;
+            // The buttons of a slot grid sit on the grid's own (themed) slot colours, not the button colour.
+            if (go->transform && go->transform->Parent() && go->transform->Parent()->gameObject &&
+                go->transform->Parent()->gameObject->GetComponent<UISlotGrid>()) {
+                b->textColor = text; b->hoverTextColor = text;
+            }
+        }
+        if (auto* stp = go->GetComponent<UIStepper>()) {
+            stp->background = Mix(panel, text, 0.10f); stp->background.a = 1.0f;
+            stp->button = accent;
+            stp->textColor = text;
         }
         if (auto* sl = go->GetComponent<UISlider>()) {
             sl->background = Mul(panel, 0.55f); sl->background.a = 1.0f;
@@ -471,7 +483,7 @@ private:
             bar->textColor = text;
             bar->shape = UIShape::Pill;
             bar->cornerRadius = cornerRadius;
-            bar->showPercent = true;
+            bar->showPercent = bar->size.y >= 14.0f;   // a thin bar has no room for text
         }
         if (auto* rad = go->GetComponent<UIRadialProgress>()) {
             rad->background = Mul(panel, 0.5f); rad->background.a = 1.0f;
@@ -501,7 +513,7 @@ private:
             tabs->background = Mul(panel, 0.78f);
             tabs->selected = accent;
             tabs->textColor = muted;
-            tabs->selectedTextColor = buttonText;
+            tabs->selectedTextColor = Ink(accent);   // readable on the accent, whatever the look
             tabs->hoverColor = Color(1.0f, 1.0f, 1.0f, 0.14f);
             tabs->cornerRadius = cornerRadius * 0.55f;
         }
@@ -517,6 +529,11 @@ private:
             tip->background = panel;
             tip->textColor = text;
             tip->borderColor = border;
+        }
+        if (auto* sg = go->GetComponent<UISlotGrid>()) {
+            sg->color = Mix(panel, text, 0.12f); sg->color.a = 1.0f;
+            sg->hoverColor = Mix(panel, text, 0.22f); sg->hoverColor.a = 1.0f;
+            sg->selectedColor = accent;
         }
         if (auto* map = go->GetComponent<Minimap>()) {
             map->background = WithAlpha(panel, 0.92f);

@@ -27,6 +27,13 @@ floating damage numbers, a dialogue box, the UI Gallery, and the script and C++ 
   - New **Blocks Pointer** switch on a Panel: widgets drawn underneath cannot be hovered or clicked through
     it. Off for old scenes, on for the cards and windows the templates build.
   - Dragging a widget picks the drop target by draw order too.
+  - Buttons showed a default blue in the editor's Scene and Game (edit mode) views once a theme was applied
+    (their eased colour was never set), and faded in from that blue when the game started. They now show
+    their own colour from the first frame.
+  - Text fields counted bytes: a backspace on "é" left half a character, a length limit could cut a
+    character in two, and a password box showed two stars for it. They now count whole characters.
+  - Applying a theme gave every progress bar a percent label, even thin ones with no room for it, and left
+    inventory slot grids in their old colours. Thin bars (under 14 px) stay clean and slot grids follow the look.
 - **Saving.** Everything above is saved as optional records. A scene saved by an older version loads
   as it was, and a scene using the new parts opens in an older version without them (it skips the
   records it does not know).
@@ -62,8 +69,8 @@ widgets; nothing moves.
 | Widget | Where | Notes |
 | --- | --- | --- |
 | Radio buttons | UI Toggle with Style = Radio | Same **Group** name = one choice. Empty group = the radio buttons under one parent. Picking one turns the others off; clicking the picked one keeps it. |
-| Window | GameObject > UI > Prebuilt Screens > Window | A title bar with **Drag the parent** and **Keep on screen** on a UI Draggable, and an x button that hides it (On Click: `HideObject`). |
-| Damage Numbers | UI Damage Numbers | `Spawn(text, kind, pos)` or `SpawnAtWorld(text, kind, point)`. Buttons can call `Hit`, `Crit`, `Heal`, `Miss`, `Info`. Numbers drift by a fixed pattern, so a replay looks the same. |
+| Window | GameObject > UI > Prebuilt Screens > Window | A title bar with **Drag the parent** and **Keep on screen** on a UI Draggable, and an x button that hides it (On Click: `HideObject`). The window carries its own Canvas one step above the page, so it and its contents draw above the page and take clicks first; dragging a window brings it in front of other windows. |
+| Damage Numbers | UI Damage Numbers | `Spawn(text, kind, pos)` (canvas pixels) or `SpawnAtWorld(text, kind, point)`; the numbers are made under the scene's Canvas. Buttons can call `Hit`, `Crit`, `Heal`, `Miss`, `Info`. Numbers drift by a fixed pattern, so a replay looks the same. |
 | Dialogue Box | UI Dialogue Box | Children named `Box`, `Speaker`, `Body`, `Choice1-3`, `Next`. Typing speed, skip on click or Space, up to four choices. |
 | Nameplate | Prebuilt Screens > Nameplate | A plate with name, level and health bar. The "in the world" version follows a 3D object and faces the camera. |
 | Inventory | Prebuilt Screens > Inventory | A bag with a slot grid you can click. |

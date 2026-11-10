@@ -246,7 +246,11 @@ void DrawUIThemeWindowBody(EditorState& ed) {
         ConsoleLog(status);
     }
     ImGui::EndDisabled();
-    if (widgets > 0) ImGui::TextDisabled("Every new look lives on the Canvas as a UI Theme: edit it there, or give a widget a role with UI Style Variant.");
+    if (widgets > 0) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("The look lives on the Canvas as a UI Theme: edit it there, or give a widget a role with UI Style Variant.");
+        ImGui::PopStyleColor();
+    }
     if (!status.empty()) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.6f, 1.0f), "%s", status.c_str());
 
     // ---- Theme files ----

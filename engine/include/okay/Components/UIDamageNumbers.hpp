@@ -40,7 +40,7 @@ public:
     Color missColor{0.72f, 0.74f, 0.80f, 1.0f};
     Color infoColor{0.55f, 0.80f, 1.0f, 1.0f};
 
-    /// A number at a screen point (canvas pixels, the number's centre).
+    /// A number at a point in canvas pixels (its centre). The number is a child of the scene's Canvas.
     GameObject* Spawn(const std::string& text, Kind kind, Vec2 at);
     /// A number that stays over a 3D point (needs a camera: the host fills UIWorld().project).
     /// Falls back to nothing on screen while the point is behind the camera.

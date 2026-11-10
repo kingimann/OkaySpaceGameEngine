@@ -252,6 +252,7 @@ int main() {
         CHECK(a != nullptr && dn->ActiveCount() == 1);
         auto* tr = a->GetComponent<TextRenderer>();
         CHECK(tr && tr->screenSpace && tr->text == "-25");
+        CHECK(a->transform->Parent() == host->transform);        // no Canvas in this scene: they sit under the host
         const float y0 = tr->screenPos.y;
         s.Update(0.25f);
         CHECK(tr->screenPos.y < y0 - 20.0f);              // it rises
@@ -276,6 +277,14 @@ int main() {
         CHECK(dn2->RunAction("Hit", 40.0f) && dn2->ActiveCount() == 2);
         CHECK(!dn2->RunAction("Nonsense", 1.0f));
         CHECK(UIDamageNumbers::KindFromName("CRIT") == UIDamageNumbers::Kind::Crit);
+        {   // a number deleted by hand (Hierarchy, script) is forgotten, never followed
+            GameObject* gone = dn2->Spawn("x", UIDamageNumbers::Kind::Normal, {5, 5});
+            const int before = dn2->ActiveCount();
+            s2.Destroy(gone);
+            s2.Update(0.016f);
+            s2.Update(0.016f);
+            CHECK(dn2->ActiveCount() == before - 1);
+        }
         dn2->Clear();
         CHECK(dn2->ActiveCount() == 0);
         // Clear on disable: nothing left behind after Stop
@@ -505,6 +514,66 @@ int main() {
         CHECK(in->text.empty());
     }
 
+
+    // ---- Buttons show their real colour from the first frame ----
+    {
+        Scene s("Display");
+        UIButton* b = MakeButton(s, "B", {0, 0}, {100, 40});
+        b->color = Color(0.9f, 0.1f, 0.1f, 1.0f);
+        b->hoverColor = Color(0.1f, 0.9f, 0.1f, 1.0f);
+        b->transitionSpeed = 12.0f;
+        CHECK_NEAR(b->DisplayColor().r, 0.9f, 1e-4f);        // the editor's Scene view never calls Update
+        MouseTo(500, 500, false);
+        s.Start();
+        s.Update(0.016f);
+        CHECK_NEAR(b->DisplayColor().r, 0.9f, 1e-4f);        // and a game does not fade in from a default blue
+        CHECK_NEAR(b->DisplayColor().g, 0.1f, 1e-4f);
+        MouseTo(10, 10, false);
+        s.Update(0.016f);                                    // hovered: now it eases toward the hover colour
+        CHECK(b->DisplayColor().g > 0.1f && b->DisplayColor().g < 0.9f);
+        MouseTo(0, 0, false);
+    }
+
+    // ---- Theme details: slot grids follow the look, thin bars carry no text ----
+    {
+        Scene s("ThemeBits");
+        UITheme th; th.ApplyPreset((int)UITheme::Preset::Neon);
+        GameObject* g = s.CreateGameObject("Grid");
+        auto* sg = g->AddComponent<UISlotGrid>();
+        GameObject* thin = s.CreateGameObject("Thin"); auto* tb = thin->AddComponent<UIProgressBar>(); tb->size = {100, 8}; tb->showPercent = true;
+        GameObject* thick = s.CreateGameObject("Thick"); auto* kb = thick->AddComponent<UIProgressBar>(); kb->size = {100, 20};
+        th.ApplyToScene(s);
+        CHECK_NEAR(sg->selectedColor.r, th.accent.r, 1e-4f);
+        CHECK(!tb->showPercent && kb->showPercent);
+        // tabs stay readable in every look (the selected label against the accent)
+        for (int p = 1; p < UITheme::kPresetCount; ++p) {
+            UITheme t2; t2.ApplyPreset(p);
+            GameObject* tg = s.CreateGameObject("Tabs"); auto* tabs = tg->AddComponent<UITabs>();
+            t2.ApplyTo(tg);
+            auto lum = [](Color c) { return 0.299f * c.r + 0.587f * c.g + 0.114f * c.b; };
+            CHECK(std::fabs(lum(tabs->selectedTextColor) - lum(t2.accent)) > 0.35f);
+        }
+    }
+
+    // ---- A window is a layer of its own: above the page, with its parts above it ----
+    {
+        PlayerHooks(1280, 720);
+        Scene s("WindowLayer");
+        GameObject* canvas = UITemplates::EnsureCanvas(s);
+        UIButton* page = MakeButton(s, "PageButton", {300, 300}, {100, 40}, canvas);
+        GameObject* win = UIGallery::AddWindow(s, canvas, "Win", "Title", {250, 250}, {300, 200});
+        GameObject* close = s.Find("Close");
+        CHECK(UIDrawsAbove(win, page->gameObject));              // the window covers the page button
+        CHECK(UIDrawsAbove(close, win));                         // its own close button is above its panel
+        CHECK(UIRaycast(s, {320, 320}, 1280, 720) == win);       // a click there reaches the window
+        s.Start();
+        MouseTo(0, 0, false); s.Update(0.016f);
+        Click(320, 320); s.Update(0.016f);
+        CHECK(!page->WasClicked());                              // and not the button underneath
+        MouseTo(0, 0, false);
+        NoHooks();
+    }
+
     // ---- Save and load: new fields, old scenes ----
     {
         Scene a("Save");
@@ -594,6 +663,8 @@ int main() {
         dd->SetValue(9);                                     // index 9 = Glass (the list starts at preset 1)
         g.Update(0.016f);
         CHECK(g.FindObjectOfType<UITheme>()->preset == (int)UITheme::Preset::Glass);
+        GameObject* floating = g.Find("Numbers")->GetComponent<UIDamageNumbers>()->Spawn("1", UIDamageNumbers::Kind::Normal, {100, 100});
+        CHECK(floating && floating->transform->Parent()->gameObject->GetComponent<Canvas>() != nullptr);   // numbers sit on the Canvas
         // save, load, save again: the whole gallery is stable text
         const std::string text = SceneSerializer::Serialize(g);
         Scene h("Gallery2");

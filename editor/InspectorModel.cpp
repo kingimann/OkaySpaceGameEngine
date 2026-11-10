@@ -441,6 +441,172 @@ std::vector<std::string> ListAssetsOfKind(const std::string& root, const std::st
     return out;
 }
 
+namespace {
+struct TipRow { const char* key; const char* text; };
+const TipRow kTips[] = {
+    {"Transform.position", "Where the object is, relative to its parent."},
+    {"Transform.rotation", "How the object is turned, in degrees."},
+    {"Transform.scale", "How big the object is on each axis."},
+    {"Camera.projection", "Perspective looks like the real world (things shrink with distance). Orthographic has no depth shrink, good for 2D."},
+    {"Camera.nearClip", "Closest distance the camera draws. Things nearer are cut off."},
+    {"Camera.farClip", "Farthest distance the camera draws."},
+    {"Camera.clearFlags", "What fills the screen before drawing: the sky, a flat colour, or nothing."},
+    {"Camera.backgroundColor", "The flat colour behind everything when the camera clears to a colour."},
+    {"Rigidbody2D.sleeping", "True while physics has put it to rest."},
+    {"Rigidbody3D.sleeping", "True while physics has put it to rest."},
+    {"Rigidbody3D.groundedOnTerrain", "True while it stands on terrain."},
+    {"Camera.lensShiftX", "Slides the picture sideways without turning the camera."},
+    {"Camera.lensShiftY", "Slides the picture up or down without turning the camera."},
+    {"Camera.pixelsPerUnit", "How many screen pixels make one world unit (pixel-perfect 2D)."},
+    {"Camera.shakeAmount", "Strength of the current camera shake."},
+    {"Camera.shakeAngle", "How much the shake also rolls the picture, in degrees."},
+    {"Camera.shakeFrequency", "How fast the shake wobbles."},
+    {"Camera.shakeRecovery", "How quickly the shake dies down."},
+    {"Camera.zoom", "Extra zoom on top of the field of view."},
+    {"Camera.rectY", "Where the camera's picture starts from the bottom (0 to 1). Use with Width and Height for split screen."},
+    {"Camera.rectW", "Width of the camera's picture on screen (0 to 1)."},
+    {"Camera.rectH", "Height of the camera's picture on screen (0 to 1)."},
+    {"Camera.pixelPerfect", "Snap the 2D view to whole pixels so pixel art stays sharp."},
+    {"Light.type", "Directional is the sun, Point is a bulb, Spot is a cone, Area is a soft panel."},
+    {"Light.color", "The colour of the light."},
+    {"Light.intensity", "How bright the light is."},
+    {"Light.spotAngle", "How wide the cone is, in degrees (spot lights)."},
+    {"Light.spotSoftness", "How soft the edge of the cone is."},
+    {"Light.falloff", "How fast the light fades with distance."},
+    {"Light.castShadows", "Objects in front of this light throw shadows."},
+    {"Light.shadowStrength", "How dark the shadows are."},
+    {"Light.shadowBias", "Nudges shadows to remove speckles. Raise it if you see stripes."},
+    {"Light.flickerSpeed", "How fast the flicker changes."},
+    {"SpriteRenderer.color", "Tint multiplied with the picture. White leaves it unchanged."},
+    {"SpriteRenderer.texture", "The picture to draw. Drop an image from the Project panel."},
+    {"SpriteRenderer.uvMin", "Start of the part of the picture that is used (0 to 1)."},
+    {"SpriteRenderer.uvMax", "End of the part of the picture that is used (0 to 1)."},
+    {"SpriteRenderer.flipX", "Mirror the picture left to right."},
+    {"SpriteRenderer.flipY", "Mirror the picture upside down."},
+    {"SpriteRenderer.texFilter", "Smooth blends pixels, Point keeps them sharp (pixel art)."},
+    {"MeshRenderer.wireframe", "Draw only the edges of the triangles."},
+    {"MeshRenderer.doubleSided", "Draw both sides of every face (for thin things like leaves)."},
+    {"MeshRenderer.shader", "The look: standard, toon, gradient and so on."},
+    {"MeshRenderer.emissive", "Makes the surface glow with its own light."},
+    {"MeshRenderer.specular", "How strong the shiny highlight is."},
+    {"MeshRenderer.shininess", "How tight the highlight is. Higher is smaller and sharper."},
+    {"MeshRenderer.metallic", "0 is plastic or stone, 1 is metal."},
+    {"MeshRenderer.reflectivity", "How much the surface mirrors its surroundings."},
+    {"MeshRenderer.texture", "The picture on the surface. Drop an image from the Project panel."},
+    {"MeshRenderer.tiling", "How many times the picture repeats across the surface."},
+    {"MeshRenderer.texOffset", "Slides the picture across the surface."},
+    {"MeshRenderer.texFilter", "Smooth blends pixels, Point keeps them sharp."},
+    {"MeshRenderer.normalMap", "A picture that fakes small bumps."},
+    {"MeshRenderer.normalStrength", "How strong the fake bumps are."},
+    {"MeshRenderer.specularMap", "A picture that says which parts are shiny."},
+    {"MeshRenderer.aoMap", "A picture that darkens creases."},
+    {"MeshRenderer.aoStrength", "How dark the creases are."},
+    {"MeshRenderer.triplanar", "Project the picture from three sides so it does not stretch."},
+    {"MeshRenderer.rimStrength", "Glow around the edge seen at an angle."},
+    {"MeshRenderer.rimPower", "How thin the edge glow is."},
+    {"MeshRenderer.rimColor", "Colour of the edge glow."},
+    {"MeshRenderer.outline", "Draw an outline around the object."},
+    {"MeshRenderer.outlineColor", "Colour of the outline."},
+    {"MeshRenderer.outlineWidth", "Thickness of the outline."},
+    {"MeshRenderer.castShadows", "This object throws shadows."},
+    {"MeshRenderer.receiveShadows", "Shadows fall on this object."},
+    {"MeshRenderer.groundShadowY", "Height of the ground the blob shadow sits on."},
+    {"MeshRenderer.groundShadowStrength", "How dark the blob shadow is."},
+    {"MeshRenderer.gradientTop", "Colour at the top for the gradient look."},
+    {"MeshRenderer.gradientBottom", "Colour at the bottom for the gradient look."},
+    {"Rigidbody2D.bodyType", "Dynamic moves with physics, Kinematic moves only by script, Static never moves."},
+    {"Rigidbody2D.mass", "How heavy it is. Heavier things are harder to push."},
+    {"Rigidbody2D.gravityScale", "How much gravity pulls on it. 0 floats, 1 is normal."},
+    {"Rigidbody2D.angularDrag", "How quickly spinning slows down."},
+    {"Rigidbody2D.bounciness", "How much it bounces (0 none, 1 full)."},
+    {"Rigidbody2D.friction", "How much it grips what it touches."},
+    {"Rigidbody2D.freezeRotation", "Never rotate from physics."},
+    {"Rigidbody2D.allowSleep", "Stop simulating it when it comes to rest, to save time."},
+    {"Rigidbody2D.continuousCollision", "Catch fast objects so they do not pass through thin walls."},
+    {"Rigidbody3D.bodyType", "Dynamic moves with physics, Kinematic moves only by script, Static never moves."},
+    {"Rigidbody3D.mass", "How heavy it is. Heavier things are harder to push."},
+    {"Rigidbody3D.gravityScale", "How much gravity pulls on it. 0 floats, 1 is normal."},
+    {"Rigidbody3D.angularDrag", "How quickly spinning slows down."},
+    {"Rigidbody3D.bounciness", "How much it bounces (0 none, 1 full)."},
+    {"Rigidbody3D.friction", "How much it grips what it touches."},
+    {"Rigidbody3D.freezeX", "Do not move along X."},
+    {"Rigidbody3D.freezeY", "Do not move along Y."},
+    {"Rigidbody3D.freezeZ", "Do not move along Z."},
+    {"Rigidbody3D.freezeRotation", "Never rotate from physics."},
+    {"Rigidbody3D.allowSleep", "Stop simulating it when it comes to rest, to save time."},
+    {"Rigidbody3D.continuousCollision", "Catch fast objects so they do not pass through thin walls."},
+    {"BoxCollider2D.size", "Width and height of the box."},
+    {"BoxCollider3D.size", "Width, height and depth of the box."},
+    {"MeshCollider3D.size", "Size of the collision shape."},
+    {"CircleCollider2D.radius", "How big the circle is."},
+    {"SphereCollider3D.radius", "How big the sphere is."},
+    {"CapsuleCollider2D.size", "Width and height of the capsule."},
+    {"CapsuleCollider2D.direction", "Which way the capsule stands."},
+    {"CapsuleCollider3D.radius", "How wide the capsule is."},
+    {"CylinderCollider3D.radius", "How wide the cylinder is."},
+    {"CylinderCollider3D.height", "How tall the cylinder is."},
+    {"CylinderCollider3D.axis", "Which way the cylinder stands."},
+    {"AudioSource.volume", "How loud it is (0 to 1)."},
+    {"AudioSource.loop", "Start again when it ends."},
+    {"AudioSource.playOnAwake", "Start playing when the game starts."},
+    {"AudioSource.spatial", "Sound gets quieter and pans with distance and direction (3D sound)."},
+    {"AudioSource.minDistance", "Within this distance the sound is at full volume."},
+    {"AudioSource.maxDistance", "Beyond this distance the sound is silent."},
+    {"AudioSource.rolloff", "How fast the sound fades between the two distances."},
+};
+}
+
+std::string TooltipFor(const std::string& typeName, const PropertyDesc& d) {
+    if (!d.tooltip.empty()) return d.tooltip;
+    const std::string key = typeName + "." + d.name;
+    for (const TipRow& r : kTips) if (key == r.key) return r.text;
+    return {};
+}
+
+std::string FieldTooltip(const std::string& typeName, const std::string& label) {
+    auto info = PropertyRegistry::FindByName(typeName);
+    if (!info) return {};
+    std::string l = label.substr(0, label.find("##"));
+    while (!l.empty() && l.back() == ' ') l.pop_back();
+    l = Lower(l);
+    for (const PropertyDesc& d : info->properties)
+        if (Lower(PrettyName(d.name)) == l || Lower(d.name) == l) return TooltipFor(typeName, d);
+    return {};
+}
+
+std::vector<std::string> MixedPropertyNames(const std::vector<GameObject*>& objs, const std::string& typeName, int index) {
+    std::vector<std::string> out;
+    auto info = PropertyRegistry::FindByName(typeName);
+    if (!info || objs.size() < 2) return out;
+    for (const PropertyDesc& d : info->properties) {
+        if (d.IsHidden() || d.IsRuntimeOnly() || d.name == "enabled") continue;
+        const FieldState st = ReadField(objs, typeName, index, d);
+        if (st.have > 1 && st.mixed) out.push_back(PrettyName(d.name));
+    }
+    return out;
+}
+
+RootSlot CaptureRootSlot(Scene& scene, const GameObject& go) {
+    RootSlot slot;
+    if (!go.transform || go.transform->Parent()) return slot;
+    const GameObject* before = nullptr;
+    bool found = false;
+    for (const auto& up : scene.Objects()) {
+        if (!up || up->IsDestroyed() || !up->transform || up->transform->Parent()) continue;
+        if (up.get() == &go) { found = true; if (before) { slot.valid = true; slot.neighbourGuid = before->Guid(); slot.neighbourIsBefore = true; } continue; }
+        if (!found) before = up.get();
+        else if (!slot.valid) { slot.valid = true; slot.neighbourGuid = up->Guid(); slot.neighbourIsBefore = false; }
+    }
+    return slot;
+}
+
+void RestoreRootSlot(Scene& scene, GameObject* go, const RootSlot& slot) {
+    if (!go || !slot.valid || !go->transform || go->transform->Parent()) return;
+    GameObject* n = scene.FindByGuid(slot.neighbourGuid);
+    if (!n || n == go || n->IsDestroyed() || !n->transform || n->transform->Parent()) return;
+    scene.ReorderSibling(go, n, /*after=*/slot.neighbourIsBefore);
+}
+
 // ---- Prefab overrides ----------------------------------------------------------------------------------------
 
 std::string RecordNameOf(const Component& c) {

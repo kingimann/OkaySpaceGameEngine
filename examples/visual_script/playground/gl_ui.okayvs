@@ -37,3 +37,16 @@ default 106 0 "two"
 node 107 GlSetTextSize
 pos 107 300 710
 default 107 0 3
+node 108 GlTypewriterText
+pos 108 560 710
+default 108 0 "Hello"
+default 108 1 4
+node 109 GlShowHealthInText
+pos 109 820 710
+default 109 0 "HP: "
+default 109 1 Goal
+node 110 GlShowSessionTimeInText
+pos 110 1080 710
+default 110 0 "Time: "
+node 111 GlClearText
+pos 111 1340 710

@@ -32,3 +32,21 @@ pos 106 40 710
 default 106 0 180
 node 107 GlGetSpinSpeed
 pos 107 300 710
+node 108 GlJump
+pos 108 560 710
+default 108 0 6
+node 109 GlIsFalling
+pos 109 820 710
+node 110 GlIsRising
+pos 110 1080 710
+node 111 GlGetVerticalSpeed
+pos 111 1340 710
+node 112 GlGetFlatSpeed
+pos 112 40 900
+node 113 GlLimitSpeed
+pos 113 300 900
+default 113 0 5
+node 114 GlSetFlatSpeed
+pos 114 560 900
+default 114 0 2
+default 114 1 3

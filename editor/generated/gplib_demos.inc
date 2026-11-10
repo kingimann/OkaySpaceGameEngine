@@ -18,6 +18,8 @@
          "The white cube drives forward, turns, and is kept inside a box. The rest of the movement nodes are in the graph."},
         {"gl_physics", "Gameplay - Physics", "gl_physics.okayscene", "gl_physics.okayvs", "Ball",
          "The ball falls slowly and bounces. The other physics nodes are in the graph."},
+        {"gl_progression", "Gameplay - Levels and Prices", "gl_progression.okayscene", "gl_progression.okayvs", "Scorekeeper",
+         "The scorekeeper works out a level from experience. The other progression nodes are in the graph."},
         {"gl_quests", "Gameplay - Quests", "gl_quests.okayscene", "gl_quests.okayvs", "Guide",
          "A quest log with one quest, and a guide whose graph holds the quest nodes."},
         {"gl_saving", "Gameplay - Saving", "gl_saving.okayscene", "gl_saving.okayvs", "Courier",

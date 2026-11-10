@@ -11,3 +11,9 @@ default 102 0 "known"
 node 103 GlForgetSavedPosition
 pos 103 820 520
 default 103 0 "gone"
+node 104 GlSaveHealth
+pos 104 1080 520
+default 104 0 "hero"
+node 105 GlLoadHealth
+pos 105 1340 520
+default 105 0 "back"

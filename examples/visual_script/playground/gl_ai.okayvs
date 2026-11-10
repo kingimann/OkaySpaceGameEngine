@@ -41,3 +41,10 @@ default 107 2 0.5
 node 108 GlPickRandomTagged
 pos 108 560 710
 default 108 0 "pick"
+node 109 GlFaceObject
+pos 109 820 710
+default 109 0 Goal
+node 110 GlCountTaggedInRange
+pos 110 1080 710
+default 110 0 "enemy"
+default 110 1 5

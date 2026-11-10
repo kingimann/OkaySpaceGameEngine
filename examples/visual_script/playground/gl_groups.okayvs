@@ -18,3 +18,6 @@ default 102 0 "crate"
 node 103 GlSetTagOnObject
 pos 103 820 520
 default 103 0 "loot"
+node 104 GlRenameObject
+pos 104 1080 520
+default 104 0 "Hero"

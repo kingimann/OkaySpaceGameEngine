@@ -65,3 +65,27 @@ pos 116 1080 900
 default 116 0 20
 default 116 1 5
 default 116 2 0.5
+node 117 GlHealPortion
+pos 117 1340 900
+default 117 0 0.5
+node 118 GlDamagePortion
+pos 118 40 1090
+default 118 0 0.3
+node 119 GlSetHealthPortion
+pos 119 300 1090
+default 119 0 0.4
+node 120 GlReviveWithHealth
+pos 120 560 1090
+default 120 0 0.5
+default 120 1 Goal
+node 121 GlCriticalDamage
+pos 121 820 1090
+default 121 0 10
+default 121 1 true
+default 121 2 2.5
+node 122 GlDamageFalloff
+pos 122 1080 1090
+default 122 0 100
+default 122 1 15
+default 122 2 10
+default 122 3 20

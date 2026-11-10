@@ -245,6 +245,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gameplay_nodes_batch2
 gameplay_nodes_batch2.define(add, N, B, T, O, R)
+import gameplay_nodes_batch3
+gameplay_nodes_batch3.define(add, N, B, T, O, R)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -384,6 +386,11 @@ inline SpriteRenderer* GlSprite(VsNode* n, GameObject* o, NodeGraph& g, VsContex
 inline QuestLog* GlQuest(VsContext& ctx) {{
     return QuestLog::Get(ctx.gameObject ? ctx.gameObject->scene() : nullptr, false);
 }}
+inline float GlRandom01() {{
+    static std::uint32_t seed = 2463534242u;
+    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+    return (float)(seed & 0xFFFFFF) / 16777216.0f;
+}}
 inline std::string GlNumberText(float v, int decimals) {{
     char b[64];
     std::snprintf(b, sizeof b, "%.*f", std::min(std::max(decimals, 0), 6), (double)v);
@@ -415,7 +422,7 @@ inline Inventory* GlInventory(VsNode* n, GameObject* o, NodeGraph& g, VsContext&
 }}
 struct GameplayLibNode : VsNode {{
     int op = 0;
-    float mem = 0, mem2 = 0;
+    float mem = 0, mem2 = 0, mem3 = 0;
     int count = 0;
     bool seen = false, flag = false;
     explicit GameplayLibNode(int o) : op(o) {{}}
@@ -490,7 +497,8 @@ def pgname(n):
                 ("Physics", ""): "physics", ("Animation", "Procedural"): "animation", ("Scene", "Story"): "quests",
                 ("Variables", "Saved"): "saving", ("Objects", "Groups"): "groups", ("Time", ""): "timing",
                 ("Input", "Axes"): "input", ("Input", "Keys"): "input", ("Objects", "Survival"): "health",
-                ("Objects", "Items"): "inventory", ("Movement", ""): "movement", ("Movement", "Turn"): "movement"}
+                ("Objects", "Items"): "inventory", ("Movement", ""): "movement", ("Movement", "Turn"): "movement", ("Movement", "Size"): "movement",
+                ("Math", "Progression"): "progression"}
     return by_topic[(n["topic"], n["sub"])]
 
 # One playground per topic: (menu title, focus object, what you see, C++ that adds the scene's objects).
@@ -538,6 +546,9 @@ PG_INFO.update({
     "groups": ("Gameplay - Groups of Objects", "Boss",
         "Three crates are hidden when you press Play. The other group nodes are in the graph.",
         _hero("Boss", "(0, 0.5f, -3)", "(0.8f, 0.3f, 0.3f, 1)") + ' for (int i = 0; i < 3; ++i) { GameObject* cr = sc.CreateGameObject("Crate" + std::to_string(i)); cr->tag = "crate"; cr->transform->SetPosition(Vec3(-2.0f + 2.0f * i, 0.5f, 1)); cr->AddComponent<MeshRenderer>()->color = Color(0.7f, 0.5f, 0.3f, 1); }'),
+    "progression": ("Gameplay - Levels and Prices", "Scorekeeper",
+        "The scorekeeper works out a level from experience. The other progression nodes are in the graph.",
+        _hero("Scorekeeper", "(0, 0.5f, 0)", "(0.95f, 0.8f, 0.4f, 1)")),
     "timing": ("Gameplay - Time", "Clock",
         "The clock's graph holds the slow motion and game speed nodes.",
         _hero("Clock", "(0, 0.5f, 0)", "(0.5f, 0.8f, 0.9f, 1)")),
@@ -570,6 +581,11 @@ def write_playgrounds():
         (ROOT / PG / f"gl_{name}.okayvs").write_text("\n".join(lines) + "\n")
 
 PLAYGROUND_DEMO = {
+    "progression": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 GlLevelFromExperience", "pos 2 300 240", "default 2 0 450", "default 2 1 100",
+        "node 3 SetVar level", "pos 3 300 40", "exec 1 0 3", "data 3 0 2 0",
+    ],
     "animation": [
         "node 1 OnUpdate", "pos 1 40 40", "entry OnUpdate 1",
         "node 2 GlPulseSize", "pos 2 300 40", "default 2 0 2", "default 2 1 0.25", "exec 1 0 2",

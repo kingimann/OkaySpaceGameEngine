@@ -59,6 +59,7 @@ static void BuildPlayground(Scene& sc, const std::string& name, const std::strin
     if (name == "inventory") { GameObject* hero = sc.CreateGameObject("Backpack"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.85f, 0.62f, 0.25f, 1); hero->AddComponent<Inventory>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "movement") { GameObject* hero = sc.CreateGameObject("Hero"); hero->transform->SetPosition(Vec3(0, 0.5f, -3)); hero->AddComponent<MeshRenderer>()->color = Color(0.92f, 0.92f, 0.96f, 1); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "physics") { GameObject* hero = sc.CreateGameObject("Ball"); hero->transform->SetPosition(Vec3(0, 4, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.95f, 0.85f, 0.3f, 1); hero->AddComponent<Rigidbody3D>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
+    if (name == "progression") { GameObject* hero = sc.CreateGameObject("Scorekeeper"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.95f, 0.8f, 0.4f, 1);  hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "quests") { GameObject* hero = sc.CreateGameObject("Guide"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.7f, 0.5f, 0.9f, 1); GameObject* qo = sc.CreateGameObject("Quests"); auto* ql = qo->AddComponent<QuestLog>(); ql->drawUI = false; QuestDef qd; qd.id = "q1"; qd.title = "First quest"; ql->quests.push_back(qd); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "saving") { GameObject* hero = sc.CreateGameObject("Courier"); hero->transform->SetPosition(Vec3(2, 0.5f, 1)); hero->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.9f, 0.9f, 1);  hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "timing") { GameObject* hero = sc.CreateGameObject("Clock"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.5f, 0.8f, 0.9f, 1);  hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
@@ -71,20 +72,21 @@ static std::string ReadFile(const std::string& path) {
 static void CheckPlaygrounds() {
     struct Row { const char* name; std::vector<const char*> nodes; };
     const Row rows[] = {
-        {"ai", {"GlIsFacingObject", "GlGetAngleToObject", "GlIsObjectBehind", "GlIsObjectHigher", "GlGetDirectionToObject", "GlCountObjectsWithTag", "GlIsAnyTaggedInRange", "GlGetAlertLevel", "GlPickRandomTagged"}},
+        {"ai", {"GlIsFacingObject", "GlGetAngleToObject", "GlIsObjectBehind", "GlIsObjectHigher", "GlGetDirectionToObject", "GlCountObjectsWithTag", "GlIsAnyTaggedInRange", "GlGetAlertLevel", "GlPickRandomTagged", "GlFaceObject", "GlCountTaggedInRange"}},
         {"animation", {"GlPulseSize", "GlSwayTurn", "GlFadeSpriteTo", "GlGetSpriteOpacity"}},
-        {"audio", {"GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping"}},
-        {"camera", {"GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera"}},
-        {"groups", {"GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject"}},
-        {"health", {"GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor"}},
-        {"input", {"GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld"}},
-        {"inventory", {"GlCountItem", "GlIsInventoryFull", "GlGetFreeSlots", "GlGetUsedSlots", "GlCanFitItem", "GlHasBothItems", "GlRemoveAllOfItem", "GlEmptyInventory", "GlGetCarriedWeight", "GlSetInventorySize", "GlMoveItem"}},
-        {"movement", {"GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid"}},
-        {"physics", {"GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed"}},
+        {"audio", {"GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlFadeVolumeTo", "GlRandomizePitch", "GlMuteSound"}},
+        {"camera", {"GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlCameraFollowObject", "GlCameraLookAtObject", "GlZoomSmoothlyTo"}},
+        {"groups", {"GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject", "GlRenameObject"}},
+        {"health", {"GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor", "GlHealPortion", "GlDamagePortion", "GlSetHealthPortion", "GlReviveWithHealth", "GlCriticalDamage", "GlDamageFalloff"}},
+        {"input", {"GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld", "GlIsJumpHeld"}},
+        {"inventory", {"GlCountItem", "GlIsInventoryFull", "GlGetFreeSlots", "GlGetUsedSlots", "GlCanFitItem", "GlHasBothItems", "GlRemoveAllOfItem", "GlEmptyInventory", "GlGetCarriedWeight", "GlSetInventorySize", "GlMoveItem", "GlIsInventoryEmpty", "GlStacksNeeded", "GlAddItemIfRoom", "GlTakeOneItem"}},
+        {"movement", {"GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid", "GlMoveToPosition", "GlLookAtPosition", "GlGetDistanceToPosition", "GlIsNearPosition", "GlHop", "GlMoveBackAndForth", "GlShakePosition", "GlKeepAboveHeight", "GlLimitHeight", "GlResetRotation", "GlSetSizeEvenly", "GlFlipSide", "GlCopyPositionFrom", "GlStayAtDistanceFrom", "GlTurnTowardObject"}},
+        {"physics", {"GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed", "GlJump", "GlIsFalling", "GlIsRising", "GlGetVerticalSpeed", "GlGetFlatSpeed", "GlLimitSpeed", "GlSetFlatSpeed"}},
+        {"progression", {"GlLevelFromExperience", "GlExperienceForLevel", "GlExperienceToNextLevel", "GlGrowByLevel", "GlPriceWithDiscount", "GlCooldownPortion", "GlRollChance"}},
         {"quests", {"GlIsQuestActive", "GlIsQuestCompleted", "GlCompleteQuest", "GlFailQuest", "GlResetQuest", "GlAddQuestProgress", "GlGetQuestProgress", "GlIsObjectiveDone", "GlCountActiveQuests"}},
-        {"saving", {"GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition"}},
-        {"timing", {"GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval"}},
-        {"ui", {"GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize"}},
+        {"saving", {"GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition", "GlSaveHealth", "GlLoadHealth"}},
+        {"timing", {"GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval", "GlHasTimePassed", "GlGetGameSpeed"}},
+        {"ui", {"GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize", "GlTypewriterText", "GlShowHealthInText", "GlShowSessionTimeInText", "GlClearText"}},
     };
     const std::string dir = std::string(OKAY_SOURCE_DIR) + "/" + kDir + "/";
     for (const Row& r : rows) {
@@ -121,7 +123,7 @@ static void CheckPlaygrounds() {
 int main() {
     RUN_SUITE("vs_gameplay_library");
     vs::SetRuntimeErrorHook(&OnErr);
-    const char* types[] = { "GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor", "GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid", "GlCountItem", "GlIsInventoryFull", "GlGetFreeSlots", "GlGetUsedSlots", "GlCanFitItem", "GlHasBothItems", "GlRemoveAllOfItem", "GlEmptyInventory", "GlGetCarriedWeight", "GlSetInventorySize", "GlMoveItem", "GlIsFacingObject", "GlGetAngleToObject", "GlIsObjectBehind", "GlIsObjectHigher", "GlGetDirectionToObject", "GlCountObjectsWithTag", "GlIsAnyTaggedInRange", "GlGetAlertLevel", "GlPickRandomTagged", "GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize", "GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed", "GlPulseSize", "GlSwayTurn", "GlFadeSpriteTo", "GlGetSpriteOpacity", "GlIsQuestActive", "GlIsQuestCompleted", "GlCompleteQuest", "GlFailQuest", "GlResetQuest", "GlAddQuestProgress", "GlGetQuestProgress", "GlIsObjectiveDone", "GlCountActiveQuests", "GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition", "GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject", "GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval", "GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld" };
+    const char* types[] = { "GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor", "GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid", "GlCountItem", "GlIsInventoryFull", "GlGetFreeSlots", "GlGetUsedSlots", "GlCanFitItem", "GlHasBothItems", "GlRemoveAllOfItem", "GlEmptyInventory", "GlGetCarriedWeight", "GlSetInventorySize", "GlMoveItem", "GlIsFacingObject", "GlGetAngleToObject", "GlIsObjectBehind", "GlIsObjectHigher", "GlGetDirectionToObject", "GlCountObjectsWithTag", "GlIsAnyTaggedInRange", "GlGetAlertLevel", "GlPickRandomTagged", "GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize", "GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed", "GlPulseSize", "GlSwayTurn", "GlFadeSpriteTo", "GlGetSpriteOpacity", "GlIsQuestActive", "GlIsQuestCompleted", "GlCompleteQuest", "GlFailQuest", "GlResetQuest", "GlAddQuestProgress", "GlGetQuestProgress", "GlIsObjectiveDone", "GlCountActiveQuests", "GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition", "GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject", "GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval", "GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld", "GlMoveToPosition", "GlLookAtPosition", "GlGetDistanceToPosition", "GlIsNearPosition", "GlHop", "GlMoveBackAndForth", "GlShakePosition", "GlKeepAboveHeight", "GlLimitHeight", "GlResetRotation", "GlSetSizeEvenly", "GlFlipSide", "GlCopyPositionFrom", "GlStayAtDistanceFrom", "GlFaceObject", "GlTurnTowardObject", "GlJump", "GlIsFalling", "GlIsRising", "GlGetVerticalSpeed", "GlGetFlatSpeed", "GlLimitSpeed", "GlSetFlatSpeed", "GlHealPortion", "GlDamagePortion", "GlSetHealthPortion", "GlReviveWithHealth", "GlCriticalDamage", "GlDamageFalloff", "GlIsInventoryEmpty", "GlStacksNeeded", "GlAddItemIfRoom", "GlTakeOneItem", "GlLevelFromExperience", "GlExperienceForLevel", "GlExperienceToNextLevel", "GlGrowByLevel", "GlPriceWithDiscount", "GlCooldownPortion", "GlRollChance", "GlTypewriterText", "GlShowHealthInText", "GlShowSessionTimeInText", "GlClearText", "GlFadeVolumeTo", "GlRandomizePitch", "GlMuteSound", "GlCameraFollowObject", "GlCameraLookAtObject", "GlZoomSmoothlyTo", "GlCountTaggedInRange", "GlIsJumpHeld", "GlSaveHealth", "GlLoadHealth", "GlHasTimePassed", "GlGetGameSpeed", "GlRenameObject" };
     {
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
@@ -1605,6 +1607,804 @@ int main() {
         if (!g_errs.empty()) { std::printf("  GlIsAnyKeyHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
         Input::FeedKeys({});
         g_seen.insert("GlIsAnyKeyHeld");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveToPosition\ndefault 2 0 10\ndefault 2 1 0\ndefault 2 2 0\ndefault 2 3 2\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(1.0f);
+        CHECK_NEAR(me->transform->Position().x, 2.0f, 0.01f);
+        if (!g_errs.empty()) { std::printf("  GlMoveToPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlMoveToPosition");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLookAtPosition\ndefault 2 0 10\ndefault 2 1 0\ndefault 2 2 0\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(me->transform->Forward().x > 0.95f);
+        if (!g_errs.empty()) { std::printf("  GlLookAtPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlLookAtPosition");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetDistanceToPosition\ndefault 2 0 3\ndefault 2 1 4\ndefault 2 2 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 5.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlGetDistanceToPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlGetDistanceToPosition");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsNearPosition\ndefault 2 0 1\ndefault 2 1 0\ndefault 2 2 0\ndefault 2 3 2\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Var(v, "out").AsBool() == true);
+        if (!g_errs.empty()) { std::printf("  GlIsNearPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlIsNearPosition");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->transform->SetPosition(Vec3(0, 0.5f, 0));
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHop\ndefault 2 0 1\ndefault 2 1 1.5707963\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(1.0f);
+        CHECK_NEAR(me->transform->Position().y, 1.5f, 0.01f);
+        if (!g_errs.empty()) { std::printf("  GlHop reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlHop");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveBackAndForth\ndefault 2 0 3\ndefault 2 1 1.5707963\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(1.0f);
+        CHECK_NEAR(me->transform->Position().x, 3.0f, 0.01f);
+        if (!g_errs.empty()) { std::printf("  GlMoveBackAndForth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlMoveBackAndForth");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlShakePosition\ndefault 2 0 0.5\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 3; ++i) s.Update(0.1f);
+        CHECK(std::fabs(me->transform->Position().x) <= 0.5f + 1e-4f); CHECK(std::fabs(me->transform->Position().x) + std::fabs(me->transform->Position().z) > 0.0f);
+        if (!g_errs.empty()) { std::printf("  GlShakePosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlShakePosition");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->transform->SetPosition(Vec3(1, -5, 2));
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlKeepAboveHeight\ndefault 2 0 0\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->transform->Position().y, 0.0f, 0.001f); CHECK_NEAR(me->transform->Position().x, 1.0f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlKeepAboveHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlKeepAboveHeight");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->transform->SetPosition(Vec3(0, 9, 0));
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLimitHeight\ndefault 2 0 0\ndefault 2 1 4\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->transform->Position().y, 4.0f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlLimitHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlLimitHeight");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->transform->SetEulerAngles(Vec3(20, 70, 10));
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlResetRotation\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->transform->EulerAngles().y, 0.0f, 0.01f); CHECK_NEAR(me->transform->EulerAngles().x, 0.0f, 0.01f);
+        if (!g_errs.empty()) { std::printf("  GlResetRotation reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlResetRotation");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSizeEvenly\ndefault 2 0 2.5\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->transform->localScale.y, 2.5f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlSetSizeEvenly reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlSetSizeEvenly");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFlipSide\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->transform->localScale.x, -1.0f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlFlipSide reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlFlipSide");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(1, 2, 3));
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCopyPositionFrom\ndefault 2 0 Goal\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->transform->Position().y, 2.0f, 0.001f); CHECK_NEAR(me->transform->Position().z, 3.0f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlCopyPositionFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlCopyPositionFrom");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(0, 0, 10));
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlStayAtDistanceFrom\ndefault 2 0 Goal\ndefault 2 1 3\ndefault 2 2 4\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(1.0f);
+        CHECK_NEAR(me->transform->Position().z, 4.0f, 0.05f);
+        if (!g_errs.empty()) { std::printf("  GlStayAtDistanceFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlStayAtDistanceFrom");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(6, 0, 0));
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFaceObject\ndefault 2 0 Goal\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(me->transform->Forward().x > 0.95f);
+        if (!g_errs.empty()) { std::printf("  GlFaceObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlFaceObject");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Right() * 6.0f);
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlTurnTowardObject\ndefault 2 0 Goal\ndefault 2 1 90\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.5f);
+        { Vec3 dd = goal->transform->Position() - me->transform->Position(); dd = dd * (1.0f / dd.Magnitude()); Vec3 ff = me->transform->Forward(); float c = ff.x * dd.x + ff.y * dd.y + ff.z * dd.z; CHECK_NEAR(std::acos(std::min(1.0f, std::max(-1.0f, c))) * 57.2957795f, 45.0f, 1.0f); }
+        if (!g_errs.empty()) { std::printf("  GlTurnTowardObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlTurnTowardObject");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Rigidbody3D>();
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlJump\ndefault 2 0 6\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.y, 6.0f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlJump reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlJump");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, -3, 0);
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsFalling\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Var(v, "out").AsBool() == true);
+        if (!g_errs.empty()) { std::printf("  GlIsFalling reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlIsFalling");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, 3, 0);
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRising\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Var(v, "out").AsBool() == true);
+        if (!g_errs.empty()) { std::printf("  GlIsRising reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlIsRising");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(1, -2.5f, 1);
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetVerticalSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), -2.5f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlGetVerticalSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlGetVerticalSpeed");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(3, 9, 4);
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFlatSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 5.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlGetFlatSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlGetFlatSpeed");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(6, 0, 8);
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLimitSpeed\ndefault 2 0 5\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.Magnitude(), 5.0f, 0.01f);
+        if (!g_errs.empty()) { std::printf("  GlLimitSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlLimitSpeed");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, 7, 0);
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFlatSpeed\ndefault 2 0 2\ndefault 2 1 3\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.y, 7.0f, 0.001f); CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.z, 3.0f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlSetFlatSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlSetFlatSpeed");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<HealthStat>();
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHealPortion\ndefault 2 0 0.5\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        me->GetComponent<HealthStat>()->health = 10;
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 60.0f, 0.01f);
+        if (!g_errs.empty()) { std::printf("  GlHealPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlHealPortion");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<HealthStat>();
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlDamagePortion\ndefault 2 0 0.3\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 70.0f, 0.01f);
+        if (!g_errs.empty()) { std::printf("  GlDamagePortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlDamagePortion");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<HealthStat>();
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetHealthPortion\ndefault 2 0 0.4\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 40.0f, 0.01f);
+        if (!g_errs.empty()) { std::printf("  GlSetHealthPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlSetHealthPortion");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        GameObject* goal = s.CreateGameObject("Goal"); goal->AddComponent<HealthStat>()->playDeathAnim = false;
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlReviveWithHealth\ndefault 2 0 0.5\ndefault 2 1 Goal\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        goal->GetComponent<HealthStat>()->Damage(1000.0f); CHECK(goal->GetComponent<HealthStat>()->IsDead());
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(!goal->GetComponent<HealthStat>()->IsDead()); CHECK_NEAR(goal->GetComponent<HealthStat>()->health, 50.0f, 0.01f);
+        if (!g_errs.empty()) { std::printf("  GlReviveWithHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlReviveWithHealth");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCriticalDamage\ndefault 2 0 10\ndefault 2 1 true\ndefault 2 2 2.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 25.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlCriticalDamage reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlCriticalDamage");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlDamageFalloff\ndefault 2 0 100\ndefault 2 1 15\ndefault 2 2 10\ndefault 2 3 20\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 50.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlDamageFalloff reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlDamageFalloff");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Inventory>(); 
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInventoryEmpty\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Var(v, "out").AsBool() == true);
+        if (!g_errs.empty()) { std::printf("  GlIsInventoryEmpty reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlIsInventoryEmpty");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlStacksNeeded\ndefault 2 0 25\ndefault 2 1 10\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 3.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlStacksNeeded reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlStacksNeeded");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Inventory>(); 
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlAddItemIfRoom\ndefault 2 0 \"coin\"\ndefault 2 1 2\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(me->GetComponent<Inventory>()->Count("coin") == 2);
+        if (!g_errs.empty()) { std::printf("  GlAddItemIfRoom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlAddItemIfRoom");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 3);
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlTakeOneItem\ndefault 2 0 \"coin\"\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(me->GetComponent<Inventory>()->Count("coin") == 2);
+        if (!g_errs.empty()) { std::printf("  GlTakeOneItem reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlTakeOneItem");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLevelFromExperience\ndefault 2 0 400\ndefault 2 1 100\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 3.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlLevelFromExperience reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlLevelFromExperience");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlExperienceForLevel\ndefault 2 0 3\ndefault 2 1 100\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 400.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlExperienceForLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlExperienceForLevel");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlExperienceToNextLevel\ndefault 2 0 250\ndefault 2 1 100\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 150.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlExperienceToNextLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlExperienceToNextLevel");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGrowByLevel\ndefault 2 0 10\ndefault 2 1 0.1\ndefault 2 2 3\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 12.1f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlGrowByLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlGrowByLevel");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlPriceWithDiscount\ndefault 2 0 80\ndefault 2 1 0.25\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 60.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlPriceWithDiscount reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlPriceWithDiscount");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCooldownPortion\ndefault 2 0 3\ndefault 2 1 12\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 0.75f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlCooldownPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlCooldownPortion");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlRollChance\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Var(v, "out").AsBool() == true);
+        if (!g_errs.empty()) { std::printf("  GlRollChance reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlRollChance");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<TextRenderer>();
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlTypewriterText\ndefault 2 0 \"Hello\"\ndefault 2 1 4\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.5f);
+        CHECK(me->GetComponent<TextRenderer>()->text == "He");
+        if (!g_errs.empty()) { std::printf("  GlTypewriterText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlTypewriterText");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<TextRenderer>(); GameObject* goal = s.CreateGameObject("Goal"); goal->AddComponent<HealthStat>()->maxHealth = 80;
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowHealthInText\ndefault 2 0 \"HP: \"\ndefault 2 1 Goal\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(me->GetComponent<TextRenderer>()->text == "HP: 80");
+        if (!g_errs.empty()) { std::printf("  GlShowHealthInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlShowHealthInText");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<TextRenderer>();
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowSessionTimeInText\ndefault 2 0 \"Time: \"\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(me->GetComponent<TextRenderer>()->text.rfind("Time: ", 0) == 0);
+        if (!g_errs.empty()) { std::printf("  GlShowSessionTimeInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlShowSessionTimeInText");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<TextRenderer>(); me->GetComponent<TextRenderer>()->text = "gone";
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlClearText\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(me->GetComponent<TextRenderer>()->text.empty());
+        if (!g_errs.empty()) { std::printf("  GlClearText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlClearText");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<AudioSource>();
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlFadeVolumeTo\ndefault 2 0 0\ndefault 2 1 1\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.5f);
+        CHECK_NEAR(me->GetComponent<AudioSource>()->volume, 0.5f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlFadeVolumeTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlFadeVolumeTo");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<AudioSource>();
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlRandomizePitch\ndefault 2 0 1.3\ndefault 2 1 1.3\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->GetComponent<AudioSource>()->pitch, 1.3f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlRandomizePitch reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlRandomizePitch");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<AudioSource>();
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlMuteSound\ndefault 2 0 true\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->GetComponent<AudioSource>()->volume, 0.0f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlMuteSound reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlMuteSound");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        GameObject* goal = s.CreateGameObject("Goal"); me->transform->SetPosition(Vec3(0, 5, -8));
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlCameraFollowObject\ndefault 2 0 Goal\ndefault 2 1 100\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(1.0f);
+        goal->transform->SetPosition(Vec3(10, 0, 0)); s.Update(1.0f); CHECK_NEAR(me->transform->Position().x, 10.0f, 0.05f); CHECK_NEAR(me->transform->Position().y, 5.0f, 0.05f);
+        if (!g_errs.empty()) { std::printf("  GlCameraFollowObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlCameraFollowObject");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(8, 0, 0));
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCameraLookAtObject\ndefault 2 0 Goal\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(me->transform->Forward().x > 0.95f);
+        if (!g_errs.empty()) { std::printf("  GlCameraLookAtObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlCameraLookAtObject");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<Camera>();
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlZoomSmoothlyTo\ndefault 2 0 2\ndefault 2 1 1\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.5f);
+        CHECK_NEAR(me->GetComponent<Camera>()->zoom, 1.5f, 0.001f);
+        if (!g_errs.empty()) { std::printf("  GlZoomSmoothlyTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlZoomSmoothlyTo");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        for (int i = 0; i < 3; ++i) { GameObject* e = s.CreateGameObject("E" + std::to_string(i)); e->tag = "enemy"; e->transform->SetPosition(Vec3(2.0f * i + 1.5f, 0, 0)); }
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountTaggedInRange\ndefault 2 0 \"enemy\"\ndefault 2 1 5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 2.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlCountTaggedInRange reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlCountTaggedInRange");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        Input::FeedKeys({' '});
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsJumpHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Var(v, "out").AsBool() == true);
+        if (!g_errs.empty()) { std::printf("  GlIsJumpHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlIsJumpHeld");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<HealthStat>()->maxHealth = 70;
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSaveHealth\ndefault 2 0 \"hero\"\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Prefs::GetFloat("vs.health.hero", -1.0f), 70.0f, 0.01f); Prefs::Delete("vs.health.hero");
+        if (!g_errs.empty()) { std::printf("  GlSaveHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlSaveHealth");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        me->AddComponent<HealthStat>(); Prefs::SetFloat("vs.health.back", 35.0f);
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLoadHealth\ndefault 2 0 \"back\"\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 35.0f, 0.01f); Prefs::Delete("vs.health.back");
+        if (!g_errs.empty()) { std::printf("  GlLoadHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlLoadHealth");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasTimePassed\ndefault 2 0 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Var(v, "out").AsBool() == true);
+        if (!g_errs.empty()) { std::printf("  GlHasTimePassed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlHasTimePassed");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        Time::SetTimeScale(1.0f);
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetGameSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
+        if (!g_errs.empty()) { std::printf("  GlGetGameSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlGetGameSpeed");
+    }
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlRenameObject\ndefault 2 0 \"Hero\"\nexec 1 0 2\n");
+        g_errs.clear();
+        s.Start();
+        
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(me->name == "Hero");
+        if (!g_errs.empty()) { std::printf("  GlRenameObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+        Input::FeedKeys({});
+        g_seen.insert("GlRenameObject");
     }
     {   // Move Item To Object: the Moved branch, then Not Enough, then Too Full.
         Scene s; s.physicsEnabled = false;

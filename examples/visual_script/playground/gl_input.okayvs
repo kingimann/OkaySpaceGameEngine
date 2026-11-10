@@ -9,3 +9,5 @@ node 103 GlIsCrouching
 pos 103 820 520
 node 104 GlIsAnyKeyHeld
 pos 104 1080 520
+node 105 GlIsJumpHeld
+pos 105 1340 520

@@ -10,3 +10,8 @@ pos 102 560 520
 node 103 GlIsEveryOtherInterval
 pos 103 820 520
 default 103 0 1
+node 104 GlHasTimePassed
+pos 104 1080 520
+default 104 0 0
+node 105 GlGetGameSpeed
+pos 105 1340 520

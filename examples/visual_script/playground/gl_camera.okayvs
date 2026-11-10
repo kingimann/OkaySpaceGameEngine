@@ -26,3 +26,14 @@ default 104 0 0.4
 node 105 GlTiltCamera
 pos 105 1340 520
 default 105 0 12
+node 106 GlCameraFollowObject
+pos 106 40 710
+default 106 0 Goal
+default 106 1 100
+node 107 GlCameraLookAtObject
+pos 107 300 710
+default 107 0 Goal
+node 108 GlZoomSmoothlyTo
+pos 108 560 710
+default 108 0 2
+default 108 1 1

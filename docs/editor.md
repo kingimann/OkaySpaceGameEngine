@@ -300,7 +300,17 @@ Recent additions (v2.12–2.14):
   standalone, double-clickable game.
 - **Toolbar** — **Play** runs the scene's real lifecycle (Awake/Start/Update +
   scripts, physics, etc.); **Stop** restores the exact pre-play edit state;
-  **Step** advances a single frame.
+  **Step** advances a single frame. While the game runs the toolbar also shows
+  **playback speed** buttons next to Step: **slower** and **faster** step through
+  0.05x, 0.1x, 0.25x, 0.5x, 1x, 2x, 4x, 8x, 16x, 32x (slow motion and fast forward
+  for debugging; the game's own `Time.timeScale` is untouched and Stop puts the
+  speed back to 1x). Click the speed label for the whole list and for **Run N
+  frames, then pause**: it runs exactly N frames of 1/60 s each (so a bug repeats),
+  then pauses; while already paused it steps N frames and stays paused. A Step or a
+  run that has not finished shows its remaining frame count on the **Pause**
+  button. The speed group is left out when the window is too narrow for it (about
+  1250 px or less, depending on the layout name), so it never sits on top of Build
+  or the Layout menu.
 
 ### Graphics quality
 
@@ -502,8 +512,17 @@ unchanged.
 
 - **View axis gizmo** (Scene view, top-right): the X/Y/Z tips track the camera
   orientation; **click a tip** to snap the view to look along that axis.
-- **Game view Stats**: toggle in the Game toolbar — overlays FPS, frame time,
-  object and mesh/triangle counts on the running game.
+- **Game view Stats**: toggle in the Game toolbar (the arrow beside it picks what
+  to show). While the game runs it overlays the Play loop's own numbers, the same
+  text as the player's F3 panel: FPS, average / min / max / p99 frame time, the 1%
+  and 0.1% lows, hitches, the time scale (Time.timeScale, a hit stop, the slow
+  motion below) and what is pausing the game, with a **frame-rate graph** of the
+  last 90 frames; then the scene's counts (objects, roots, components, the
+  commonest component types, mesh and triangle totals). In edit mode it shows the
+  editor's own FPS and the counts. **Timers and tweens** adds a second box: what
+  the scene's scheduler and tweens are running (task and tween counts, the next
+  one due, the busiest tags and owners, the oldest). The text is refreshed four
+  times a second; the choices are remembered.
 - **Console**: the tab badge shows live error/warning counts; **Error Pause**
   pauses Play the moment a new error is logged.
 - **Play tint**: the editor chrome darkens subtly while the game runs.
@@ -558,7 +577,8 @@ unchanged.
     parent, siblings, same name), **Expand / Collapse All Below**, **Transform**
     (reset position, rotation, scale or all; move to the view centre), **Order**
     (move up, down, to top or bottom), **Copy Text** (name or hierarchy path),
-    plus create, parent and prefab actions.
+    **Delete Children** (empties a container and keeps the object; one undo
+    step), plus create, parent and prefab actions.
   - On empty space: create objects, **Select All**, **Deselect**,
     **Expand / Collapse All** and **Sort A-Z**.
 - **Project right-click**:
@@ -669,3 +689,67 @@ unchanged.
 Scenes saved before these options existed load unchanged: the new settings
 are stored on an extra `particlesfx` line, and every default matches the old
 behaviour.
+
+## What changed: editor wiring of the core features (1.1 to 1.3)
+
+Features the engine already had (frame statistics, the debug time scale, run-N-frames, the timer view, scene
+statistics, the tag list and the new tween calls) now have an editor UI. The logic that does not need a window
+lives in `EditorState` (`editor/EditorState.hpp`) and is tested by `editor_hooks`; `editor/main.cpp` only draws it.
+
+| Where | What | Code behind it |
+| --- | --- | --- |
+| Game view, **Stats** (and its arrow) | performance lines, frame-rate graph, scene counts | `EditorState::PerfLines()`, `SceneLines()`, `StatsLines()`, `RecentFps()` (`FrameOverlay`, `Scene::Stats`) |
+| Game view, arrow ▸ **Timers and tweens** | the scheduler / tween view | `EditorState::TimerLines()` (`TimerDebug::BuildLines`; the process-wide `Scheduler::Global()` is added when it holds a task) |
+| Toolbar, next to Step (while playing) | slower / speed / faster | `EditorState::StepDebugTimeScale(dir)`, `ResetDebugTimeScale()`, `GameLoop::SetDebugTimeScale`; Play and Stop reset it to 1x |
+| Toolbar, speed label ▸ **Run** | run N frames, then pause | `EditorState::RunFrames(n, 1/60)` (pause reason `"editor"`), `onRunFramesDone` sets the Pause button |
+| Toolbar, Pause button | frames still to run (Step, Run N) | `EditorState::PendingFrames()` |
+| Hierarchy right-click | **Delete Children** | `EditorState::DeleteChildrenOfSelected()` (`Scene::DestroyChildren`) |
+| Project Settings ▸ **Tags and Layers** | **Strict tags**, the tag list (add, rename, remove, usage count), tags the scene uses that the list lacks, the 32 layer names | `Tags::Strict()`, `Tags::Add / Rename / Remove`, `Scene::UnlistedTags / ReplaceTag / CountWithTag`, `Layers::SetName / ClearName`, saved to `project.okayproj` through `ProjectLists` |
+| Script Editor | the ten tween calls added in 1.2 appear in the API reference, in completion and as signature hints | `tween_tag`, `tween_speed_based`, `tween_decay`, `tween_kill_tag`, `tween_pause_tag`, `tween_play_tag`, `tween_complete_tag`, `tween_rewind_id`, `seq_prepend`, `seq_join_callback` |
+
+Not wired, on purpose: Hierarchy drag-and-drop already reorders and reparents through `Scene::ReorderSibling` (the same
+result as `SetParent(parent, true, index)`), so it was left as it is; there is no engine call to reset a component order
+to its default (`GameObject::ReorderComponents` arranges one on purpose, nothing puts it back), so there is no
+button; the Console panel has no command line (it only shows the log), so the `time.*` console commands and a `timers`
+command have nowhere to be typed yet (the Stats and Timers overlays show the same text); `FindNearest` is a lookup
+for components that point at another object by name, not something a search box needs; the editor has no screen that
+replays a recording, so `GameLoop::Options::replayPauses` has nothing to be set from.
+
+Things to know when reading the numbers: the frames of a **Run N frames** are exact (1/60 s), so the loop records them
+as 1/60 s and the graph reads 60 fps for them whatever the machine does; the **PAUSED** banner in the middle of the Game
+view can sit behind the Stats box when the view is narrow; the editor allows one running instance per machine (a second
+launch hands its request to the first), which matters when you script it for screenshots.
+
+### Editor wiring, second part (the fifth core pass)
+
+- **The PLAYING / PAUSED pill no longer sits on the resolution readout.** The readout ("934 x 514 px") and the pill were
+  both drawn at the top-left corner, so the readout's trailing "x" showed through next to the pill. The pill is now on
+  the line below the readout. Beside it a one-line **FPS label** shows `EditorState::FpsLabel()`
+  (`FrameOverlay::FpsLabel`: the real frame times of the last 30 frames, so a 5 s stall reads as 2 FPS, and "FPS --"
+  before the first frame; left out when the view is too narrow for it). The Stats and Timers boxes at the top-right
+  move below anything drawn at the top-left when the view is narrow, so they never cover the pill, the FPS label or the
+  readout; a view narrower than a box keeps the start of each line readable and clips the end.
+- **Tween Animation inspector**: **Speed based** (a checkbox under Delay for the types that read it: move, scale, UI
+  move and size, fade and colour; the Duration row then reads **Speed (units/s)**), **Decay** (punch and shake types,
+  0 to 60, a straight fade at 0, lively at 4, snappy at 8) and **Tag** (a group label for `tween_kill_tag`,
+  `tween_pause_tag`, `tween_play_tag` and the tag nodes). The **Clock** combo (`ClockSet::Global().Names()` plus a
+  custom channel) and the **Curve** text field (`easeCurve`, with the small drawing of the curve) were already in the
+  Inspector.
+- **Script Editor, time**: the `Time.` member list offers `sessionTime`, `sessionUnscaledTime`, `sessionFrameCount`,
+  `unscaledDeltaTime`, `unscaledTime`, `fps`, `hitchCount`, `paused`, `HitStop`, `SlowMotion`, `RampTimeScale`,
+  `PushPause`, `PopPause` and `IsPausedBy` (and the existing `fixedDeltaTime` now has a description); each has a
+  description and an example in the completion's detail pane, and the three methods that take arguments show their
+  signature while you type the call. The builtins `session_time`, `session_unscaled_time`, `session_frame_count`,
+  `unscaled_dt`, `is_paused`, `hitch_count`, `push_pause`, `pop_pause`, `is_paused_by`, `hit_stop`, `slow_motion`,
+  `ramp_timescale` and `ease_curve` are in the Scripting Reference (Timing and Easing sections), the signature hints and
+  the hover descriptions; the completion list already took every VM builtin.
+- **Visual script**: the seven tween, spring and ease nodes are in the node search and palette: **Ease With Curve**
+  (Math), **Spring Step** (Math), **Tween Move**, **Tween Move By Speed**, **Kill / Pause / Play Tweens With Tag**
+  (Action), each with its pins, setting hint and help text. "Generate script" turns Ease With Curve into
+  `ease_curve(t, "<text>")`, Tween Move into `tween_move3(x, y, z, seconds[, "<ease>"])` (an axis nobody feeds stays at
+  the object's own value) wrapped in `tween_speed_based(...)` and `tween_tag(..., "<tag>")` as asked, and the tag nodes
+  into `tween_kill_tag("<tag>", complete)`, `tween_pause_tag`, `tween_play_tag` with the Count kept in a field.
+  **Spring Step** keeps a velocity between frames, which a text script has no call for: it is listed under "NOT
+  TRANSLATED" in the generated code (the graph itself runs it).
+- **Hierarchy search by path**: typing `Parent/Child` lists every object that path names (`Scene::FindAllByPath`, in
+  scene order, two siblings called "Door" both come back) next to the usual name and type matches.

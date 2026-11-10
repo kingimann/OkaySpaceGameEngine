@@ -450,6 +450,12 @@ DebugOverlay::AddLine([&] { return TimerDebug::Summary(&scene.scheduler(), &scen
 //   Timers: 12 (2 paused, next 0.25s) | Tweens: 4 (3 playing)
 ```
 
+**In the editor** the Game view's Stats overlay has a **Timers and tweens** box (the arrow beside **Stats** turns it on): it
+shows `TimerDebug::BuildLines` for the scene's scheduler and tween manager, plus `Scheduler::Global()` (marked "Global") when that
+holds a task, refreshed four times a second (`EditorState::TimerLines()`, three groups and the single oldest entry per source,
+lines cut at 78 characters). It works in edit mode too (nothing is running then, so it reads zero). A `timers` console command
+has nowhere to go yet: the editor's Console panel has no command line.
+
 `TimerDebug::Capture(...)` gives the numbers (`SchedulerStats`, `TweenStats`) if you want to draw your own.
 `TimerDebug::Options` limits the groups and oldest entries listed. Ties are broken by name and handle, so the
 text is the same every run.
@@ -623,6 +629,7 @@ Added:
   `DOTween::AlongSpline`, `Easing::Decay`.
 - Scripts: `tween_tag`, `tween_speed_based`, `tween_decay`, `tween_kill_tag`, `tween_pause_tag`,
   `tween_play_tag`, `tween_complete_tag`, `tween_rewind_id`, `seq_prepend`, `seq_join_callback`.
+  (Editor wiring pass: all ten are in the Script Editor's API reference, its completion list and the signature hint.)
 
 Checked and fine: owners destroyed from inside a callback, the scene cleared from inside a scheduler or
 tween callback, a callback that updates its own manager, zero-length and negative durations with endless
@@ -686,8 +693,10 @@ a cleared scene (dropped without running), and a scene load requested from a cal
 Springs with a NaN, zero or infinite quaternion, angle or target stay finite (`StepQuat`, `StepAngle`); a spring
 fed values near the float limit (about 3e38) can overflow its velocity to infinity.
 
-Not done: Inspector rows for the three new `TweenAnimation` fields and palette entries, help text and code generation for the
-seven new nodes are editor changes (the page lists them as node types; the editor's node list does not show them yet);
-there is no script builtin for a spring (it needs state; the node keeps it); `TweenAnimation` is not in the property
+Editor (wired in the editor wiring pass): the Tween Animation Inspector has **Speed based**, **Decay** and **Tag** rows; the seven
+visual-script nodes are in the node search with help text and code generation (Spring Step is listed as not translated: a script has no
+spring call); `ease_curve` is in the Script Editor's reference, hints and hover text.
+
+Not done: there is no script builtin for a spring (it needs state; the node keeps it); `TweenAnimation` is not in the property
 registry; `TweenManager::OfTarget` / `IsTweening` / `WithId` / `WithTag` scan every tween (fine for hundreds, slow if a
 script calls `is_tweening()` on thousands of objects every frame); a `Scheduler` still must be used from one thread.

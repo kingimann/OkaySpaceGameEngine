@@ -67,6 +67,10 @@ public:
     /// ("Cube"/"Pyramid"/"Plane"/"Sphere"/"Cylinder").
     GameObject* CreateMesh(const std::string& meshName);
     void DeleteSelected();
+    /// Hierarchy "Delete Children": destroy every child (and what is below them) of the selected object(s) and
+    /// keep the objects themselves selected; one undo step. Returns how many direct children were removed
+    /// (0, and no undo step, when nothing selected has a child).
+    int DeleteChildrenOfSelected();
     /// Clone the selected object(s) (and their children); selects the clones.
     GameObject* DuplicateSelected();
     /// Move a just-created object onto open ground near the scene-view focus.
@@ -237,7 +241,47 @@ public:
     bool StepFrame(float seconds = 1.0f / 60.0f);
     /// The loop itself (statistics, debug time scale, capture mode, frame recording).
     GameLoop& playLoop() { return m_loop; }
+    const GameLoop& playLoop() const { return m_loop; }
     static constexpr const char* kPauseReason = "editor";
+
+    // ---- Debug controls on the Play loop (the toolbar's slow-motion and "run N frames" buttons) --------
+    /// The slow-motion / fast-forward factor of the Play loop (1 = normal). It is a debugging aid, not a
+    /// game setting: only the editor's frame time is scaled, the game's own Time.timeScale is untouched.
+    float debugTimeScale() const { return m_loop.DebugTimeScale(); }
+    /// The "Slower" (`direction` < 0) and "Faster" (> 0) buttons: move to the next preset
+    /// (GameLoop::kDebugScalePresets: 0.05 ... 1 ... 32). Returns the scale now in force. Does nothing
+    /// outside Play (the buttons are greyed out then).
+    float StepDebugTimeScale(int direction);
+    /// The "1x" button.
+    void ResetDebugTimeScale();
+    /// "Run N frames, then pause": runs exactly `frames` more frames of `frameSeconds` each (the same
+    /// frame length every time, so a bug reproduces), then holds the editor's own pause. Paused already,
+    /// it steps `frames` frames and stays paused. The pause button follows through `onRunFramesDone`.
+    /// False, nothing changed, outside Play or for `frames` < 1.
+    bool RunFrames(int frames, float frameSeconds = 1.0f / 60.0f);
+    /// Called (main thread, end of the frame) when a run started by RunFrames has paused the game: the
+    /// editor sets its Pause button flag here so the button and the loop agree.
+    std::function<void()> onRunFramesDone;
+    /// Frames still queued by Step or RunFrames (0 = none): the Pause button shows the number.
+    int PendingFrames() const { return m_loop.StepsRemaining() + m_loop.RunFramesRemaining(); }
+
+    // ---- Text for the Game view's overlays (ImGui-free, so it can be tested) --------------------------
+    /// The Stats overlay: while playing, the performance lines of the Play loop (FrameOverlay::Lines: fps,
+    /// frame times, 1% low, hitches, time scale, pause reasons) followed by the scene's counts
+    /// (Scene::Stats().Lines(maxComponentTypes)); in edit mode only the counts (nothing is running).
+    std::vector<std::string> StatsLines(int maxComponentTypes = 3) const;
+    /// The two halves of StatsLines, for a UI that draws something between them (the fps graph) or leaves one
+    /// out: the loop's performance lines (empty outside Play) and the scene's counts.
+    std::vector<std::string> PerfLines() const;
+    std::vector<std::string> SceneLines(int maxComponentTypes = 3) const;
+    /// One line for the Game view's corner, beside the PLAYING pill (FrameOverlay::FpsLabel: the real frame times of
+    /// the last 30 frames, so a stall reads as a stall; "FPS --" before the first frame).
+    std::string FpsLabel() const;
+    /// The recent frame rate for the overlay's graph, `count` points, oldest first (all 0 until frames ran).
+    std::vector<float> RecentFps(std::size_t count) const;
+    /// The Timers overlay: what the scene's scheduler and tweens are doing (TimerDebug::BuildLines), plus
+    /// the process-wide scheduler when it holds anything. Long lines are shortened to `maxChars`.
+    std::vector<std::string> TimerLines(std::size_t maxChars = 78);
 
     // ---- 2D editor camera (world units) -------------------------------
     Vec2  cameraPos{0, 0};

@@ -29,6 +29,18 @@
 //   object.layer_range     a layer outside 0..31
 //   physics.rigidbody_no_collider    a Rigidbody with no Collider on the object
 //   scene.load / scene.load_warning  (ValidateText / ValidateFile) the document did not load cleanly
+//   scene.duplicate_guid   (ValidateText / ValidateFile) two objects carry the same guid (the loader renames one)
+//   scene.broken_parent    (ValidateText / ValidateFile) `parent N` names an object that is not in the file (it loads as a root)
+//
+// Two validators, two jobs (see docs/automated_testing.md):
+//   SceneValidator (this file)        the loaded scene's meaning: assets, cameras, names, scripts, transforms, physics.
+//                                     It is the one for CI and for "check before you ship"; ValidateText / ValidateFile
+//                                     also carry over the file-level findings below so one report is enough.
+//   SceneSerializer::Validate /       the scene text's integrity, without a full semantic pass: unknown records and
+//   Scene::Validate (Scene/SceneValidation.hpp)  component types, broken parent links, duplicate guids, bad layers,
+//                                     unknown tags, missing assets. It works on text, so tools that have no Scene
+//                                     (a diff, a merge, a migration) can use it. Both validators answer "does this
+//                                     file exist" with SceneValidator::AssetExists, so they agree.
 // ---------------------------------------------------------------------------
 #include <functional>
 #include <string>
@@ -100,6 +112,9 @@ struct ValidatorOptions {
     bool checkTransforms = true;
     bool checkInactive = true;
     bool checkPhysics = true;
+    /// ValidateText / ValidateFile only: duplicate guids and parent links into nowhere, which the loader repairs
+    /// and a check on the loaded scene can no longer see.
+    bool checkLinks = true;
 
     Severity missingAssetSeverity = Severity::Error;
     Severity noCameraSeverity = Severity::Warning;

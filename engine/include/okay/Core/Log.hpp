@@ -25,6 +25,11 @@ namespace okay {
 ///   Log::Configure("info,net=trace,physics=error");      // also read from $OKAY_LOG
 ///   Log::showTimestamps = true;                          // `HH:MM:SS.mmm ` prefix
 ///   Log::OpenFile("game.log");                           // rotating file sink
+///
+/// Order of configuration: $OKAY_LOG is applied once, before the first thing that touches the
+/// levels (the first message, Configure, SetCategoryLevel or ClearCategoryLevels), so a Configure call in
+/// your code always wins over the environment, whether or not anything was logged before it. Assigning
+/// `Log::minLevel` directly is not seen by that rule: do it after the first message or use Configure.
 class Log {
 public:
     enum class Level { Trace, Info, Warning, Error };
@@ -35,7 +40,9 @@ public:
 
     /// Optional extra sink for every emitted message (level + formatted text).
     /// The editor installs one so script print/debug output shows in its Console.
-    /// Called under the log lock with the bare message (no tag, category or time).
+    /// Called under the log lock with the bare message (no tag, category or time). A message
+    /// logged from inside the sink still goes to the console and the file but is not handed
+    /// to the sink again, so a sink that logs cannot recurse.
     using Sink = std::function<void(Level, const std::string&)>;
     static Sink sink;
 
@@ -70,11 +77,13 @@ public:
 
     /// Override the threshold for one category (beats minLevel, both ways).
     static void SetCategoryLevel(const std::string& category, Level level) {
+        EnsureInit();
         RecGuard lk(St().mu);
         St().cats[category] = level;
         St().anyCats = true;
     }
     static void ClearCategoryLevels() {
+        EnsureInit();
         RecGuard lk(St().mu);
         St().cats.clear();
         St().anyCats = false;
@@ -90,6 +99,12 @@ public:
     /// minLevel, name=level sets a category. Levels: trace, info, warn|warning,
     /// error (any case). Malformed entries are skipped. Returns entries applied.
     static int Configure(const std::string& spec) {
+        EnsureInit();   // the environment first, so this call overrides it
+        return ConfigureNow(spec);
+    }
+
+private:
+    static int ConfigureNow(const std::string& spec) {
         RecGuard lk(St().mu);
         int applied = 0;
         std::size_t pos = 0;
@@ -113,9 +128,14 @@ public:
         return applied;
     }
 
+public:
     /// Also write every line to `path` (appending). The file rotates when a line
     /// would push it past maxBytes: path -> path.1 -> path.2 ... keeping `keep`
-    /// old files. Flushed on Warning and above. False if it cannot be opened.
+    /// old files (so the disk use is at most (keep + 1) * maxBytes, plus one long line);
+    /// maxBytes 0 means never rotate. Flushed on Warning and above. False if it cannot
+    /// be opened. A write that fails (disk full, a removed drive) is counted in
+    /// FileWriteFailures() and does not stop later lines from being tried; the console and
+    /// the sink are not affected.
     static bool OpenFile(const std::string& path, std::size_t maxBytes = 5u * 1024u * 1024u, int keep = 3) {
         RecGuard lk(St().mu);
         CloseFileLocked();
@@ -136,6 +156,20 @@ public:
     static bool FileOpen() {
         RecGuard lk(St().mu);
         return St().file.is_open();
+    }
+    /// Write what the file sink has buffered to disk now (Info lines are otherwise only flushed
+    /// when a Warning or Error follows, or on CloseFile). Call it from a crash or quit handler.
+    static void Flush() {
+        RecGuard lk(St().mu);
+        State& s = St();
+        if (!s.file.is_open()) return;
+        s.file.flush();
+        NoteWriteResult();
+    }
+    /// How many writes to the log file failed since the program started (0 when all is well).
+    static std::size_t FileWriteFailures() {
+        RecGuard lk(St().mu);
+        return St().writeFailures;
     }
 
 private:
@@ -169,6 +203,8 @@ private:
         std::string   filePath;
         std::size_t   fileBytes = 0, maxBytes = 0;
         int           keep = 0;
+        std::size_t   writeFailures = 0;
+        bool          inSink = false;   // a message logged from inside the sink is not given to the sink again
     };
     static State& St() { static State s; return s; }
 
@@ -186,10 +222,10 @@ private:
         return true;
     }
 
-    /// Reads $OKAY_LOG exactly once, on the first message or Configure-free use.
+    /// Reads $OKAY_LOG exactly once, before the first message or the first Configure / SetCategoryLevel call.
     static void EnsureInit() {
         static const bool once = [] {
-            if (const char* env = std::getenv("OKAY_LOG")) Configure(env);
+            if (const char* env = std::getenv("OKAY_LOG")) ConfigureNow(env);
             return true;
         }();
         (void)once;
@@ -221,6 +257,12 @@ private:
         return buf;
     }
 
+    // After a write or flush: a failed stream (disk full) is counted and cleared so the next line tries again.
+    static void NoteWriteResult() {
+        State& s = St();
+        if (s.file.fail()) { ++s.writeFailures; s.file.clear(); }
+    }
+
     static void CloseFileLocked() {
         if (St().file.is_open()) St().file.close();
         St().file.clear();
@@ -246,13 +288,14 @@ private:
     static void WriteFile(Level level, const std::string& line) {
         State& s = St();
         if (!s.file.is_open()) return;
-        if (s.fileBytes > 0 && s.fileBytes + line.size() > s.maxBytes) {
+        if (s.maxBytes > 0 && s.fileBytes > 0 && s.fileBytes + line.size() > s.maxBytes) {
             Rotate();
             if (!s.file.is_open()) return;
         }
         s.file.write(line.data(), (std::streamsize)line.size());
         s.fileBytes += line.size();
         if (level >= Level::Warning) s.file.flush();
+        NoteWriteResult();
     }
 
     template <typename... Args>
@@ -275,7 +318,10 @@ private:
             out << line;
         }
         WriteFile(level, line);
-        if (sink) sink(level, msg);
+        if (sink && !St().inSink) {
+            struct InSink { bool& f; explicit InSink(bool& x) : f(x) { f = true; } ~InSink() { f = false; } } guard(St().inSink);
+            sink(level, msg);
+        }
     }
 };
 

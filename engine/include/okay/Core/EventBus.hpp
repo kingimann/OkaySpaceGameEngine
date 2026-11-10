@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <typeindex>
 #include <unordered_map>
@@ -24,28 +25,31 @@ public:
     Subscription& operator=(Subscription&& o) noexcept {
         if (this != &o) {
             Unsubscribe();
-            m_remove = std::move(o.m_remove); m_alive = std::move(o.m_alive); m_token = o.m_token;
-            o.m_remove = nullptr;
+            m_remove = std::move(o.m_remove); m_active = std::move(o.m_active);
+            m_alive = std::move(o.m_alive); m_token = o.m_token;
+            o.m_remove = nullptr; o.m_active = nullptr;
         }
         return *this;
     }
     ~Subscription() { Unsubscribe(); }
 
-    /// True while the handler is still subscribed.
-    bool Active() const { return m_remove && !m_alive.expired(); }
+    /// True while the handler is still subscribed: false once it was unsubscribed (here or by
+    /// token), once a once-only handler has run, after EventBus::Clear, and when the bus is gone.
+    bool Active() const { return m_remove && !m_alive.expired() && (!m_active || m_active()); }
     /// Remove the handler now (also done by the destructor). Safe to call twice.
     void Unsubscribe() {
         if (m_remove && !m_alive.expired()) m_remove();
-        m_remove = nullptr;
+        m_remove = nullptr; m_active = nullptr;
     }
     void Reset() { Unsubscribe(); }
     /// Give up ownership: the handler stays subscribed after this object is gone.
-    void Release() { m_remove = nullptr; }
+    void Release() { m_remove = nullptr; m_active = nullptr; }
     int Token() const { return m_token; }
 
 private:
     friend class EventBus;
     std::function<void()> m_remove;
+    std::function<bool()> m_active;
     std::weak_ptr<int> m_alive;
     int m_token = 0;
 };
@@ -69,8 +73,11 @@ private:
 ///
 /// Publish dispatches over the handlers present when it starts: a handler may
 /// Subscribe (the new one first sees the next event), Unsubscribe (a removed handler
-/// that has not run yet is skipped) and Publish again.
-/// Not thread safe: use it from one thread (or guard it yourself).
+/// that has not run yet is skipped) and Publish again. A handler that throws stops that
+/// Publish (the exception reaches the caller) but leaves the bus fully usable.
+/// Not thread safe: use it from one thread (or guard it yourself). To hand an event from
+/// a worker thread to the bus, post it to the main thread with
+/// `JobSystem::Global().RunOnMainThread([&bus, e] { bus.Publish(e); })` (see docs/core_runtime.md).
 class EventBus {
 public:
     template <typename E>
@@ -116,6 +123,7 @@ public:
         s.m_alive = m_alive;
         s.m_token = id;
         s.m_remove = [this, id]() { Unsubscribe(id); };
+        s.m_active = [this, id]() { return m_tokens.count(id) != 0; };
         return s;
     }
 
@@ -152,7 +160,7 @@ public:
         if (it == m_handlers.end()) return;
         // Snapshot: handlers may (un)subscribe, which can insert in the middle of the list.
         const std::vector<std::shared_ptr<Entry>> snapshot = it->second;
-        ++m_depth;
+        DepthGuard guard(*this);   // also leaves the "dispatching" state when a handler throws
         for (const auto& entry : snapshot) {
             if (!entry->alive) continue;
             if (entry->once) {
@@ -162,7 +170,6 @@ public:
             }
             entry->fn(&event);
         }
-        if (--m_depth == 0 && m_dirty) Sweep();
     }
 
     /// Store a copy of the event to be published at the next Flush().
@@ -172,11 +179,20 @@ public:
     }
 
     /// Publish every queued event, in the order queued; returns how many. Events queued by
-    /// handlers during the flush are kept for the next one.
+    /// handlers during the flush are kept for the next one. If a handler throws, the
+    /// exception goes on to the caller, the event it was handling counts as delivered, and the
+    /// events behind it stay queued (in front of anything queued meanwhile) for the next Flush.
     std::size_t Flush() {
         std::vector<std::function<void(EventBus&)>> batch;
         batch.swap(m_queue);
-        for (auto& fn : batch) fn(*this);
+        std::size_t i = 0;
+        try {
+            for (; i < batch.size(); ++i) batch[i](*this);
+        } catch (...) {
+            m_queue.insert(m_queue.begin(), std::make_move_iterator(batch.begin() + (i + 1)),
+                           std::make_move_iterator(batch.end()));
+            throw;
+        }
         return batch.size();
     }
     std::size_t QueuedCount() const { return m_queue.size(); }
@@ -224,6 +240,15 @@ private:
         m_tokens.emplace(id, type);
         return id;
     }
+
+    // Counts running Publish calls; the last one out sweeps removed handlers (also on an exception).
+    struct DepthGuard {
+        EventBus& b;
+        explicit DepthGuard(EventBus& bus) : b(bus) { ++b.m_depth; }
+        ~DepthGuard() { if (--b.m_depth == 0 && b.m_dirty) b.Sweep(); }
+        DepthGuard(const DepthGuard&) = delete;
+        DepthGuard& operator=(const DepthGuard&) = delete;
+    };
 
     // Erase dead entries; only called when no Publish is running.
     void Sweep() {

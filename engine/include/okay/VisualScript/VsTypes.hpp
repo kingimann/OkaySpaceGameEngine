@@ -60,10 +60,14 @@ std::string FunctionNameOf(const std::string& signatureText);
 
 /// One problem found in a graph. `node` is the node's id in the file/editor
 /// (-1 for the whole graph); `severity` 0 = error (it won't work), 1 = warning.
+/// `pin` is the data pin the problem is about (-1 = the whole node); `pinDir`
+/// 0 = an input pin, 1 = an output pin. The editor draws that pin red.
 struct VsIssue {
     int severity = 0;
     int node = -1;
     std::string message;
+    int pin = -1;
+    int pinDir = 0;
 };
 /// Check a graph (OkayVS text): wires between pins that don't fit, nodes no
 /// event ever reaches, events that do nothing, variables read but never set,

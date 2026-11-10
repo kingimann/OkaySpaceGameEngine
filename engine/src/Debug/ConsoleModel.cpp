@@ -166,8 +166,25 @@ struct ConsoleModel::Impl {
     std::size_t SizeLocked() const { return ring.size(); }
     const ConsoleEntry& At(std::size_t i) const { return ring[(head + i) % ring.size()]; }
 
-    void Push(Log::Level level, std::string message, std::string category) {
+    static void MergeSource(ConsoleSource& src, const ConsoleSource& extra) {
+        if (extra.kind != ConsoleSource::Kind::None && src.kind == ConsoleSource::Kind::None)
+            src.kind = extra.kind;
+        else if (extra.kind == ConsoleSource::Kind::Script || extra.kind == ConsoleSource::Kind::Graph ||
+                 extra.kind == ConsoleSource::Kind::Object)
+            src.kind = extra.kind;
+        if (!extra.path.empty()) src.path = extra.path;
+        if (!extra.guid.empty()) src.guid = extra.guid;
+        if (!extra.component.empty()) src.component = extra.component;
+        if (!extra.nodeId.empty()) src.nodeId = extra.nodeId;
+        if (extra.line) src.line = extra.line;
+        if (extra.column) src.column = extra.column;
+    }
+    void Push(Log::Level level, std::string message, std::string category, const ConsoleSource* explicitSrc) {
         ConsoleSource src = ParseConsoleSource(message);
+        if (explicitSrc) MergeSource(src, *explicitSrc);
+        const ConsoleSource ambient = ActiveConsoleSource();
+        if (ambient.kind != ConsoleSource::Kind::None || !ambient.guid.empty() || !ambient.nodeId.empty())
+            MergeSource(src, ambient);
         SpinGuard g(lock);
         if (paused) { ++dropped; return; }
         ConsoleEntry e;
@@ -188,8 +205,8 @@ struct ConsoleModel::Impl {
         std::string category, rest;
         bool parse;
         { SpinGuard g(lock); parse = parsePrefix; }
-        if (parse && SplitCategoryPrefix(msg, category, rest)) Push(level, std::move(rest), std::move(category));
-        else Push(level, msg, std::string());
+        if (parse && SplitCategoryPrefix(msg, category, rest)) Push(level, std::move(rest), std::move(category), nullptr);
+        else Push(level, msg, std::string(), nullptr);
     }
 
     static bool Passes(const ConsoleEntry& e, const ConsoleFilter& f) {
@@ -249,8 +266,29 @@ ConsoleModel::ConsoleModel(std::size_t capacity) : m_impl(std::make_shared<Impl>
 
 ConsoleModel::~ConsoleModel() { Detach(); }
 
+namespace {
+std::vector<ConsoleSource>& SourceStack() {
+    thread_local std::vector<ConsoleSource> stack;
+    return stack;
+}
+}
+
+ConsoleSourceScope::ConsoleSourceScope(ConsoleSource source) {
+    SourceStack().push_back(std::move(source));
+}
+ConsoleSourceScope::~ConsoleSourceScope() {
+    if (!SourceStack().empty()) SourceStack().pop_back();
+}
+ConsoleSource ActiveConsoleSource() {
+    return SourceStack().empty() ? ConsoleSource{} : SourceStack().back();
+}
+
 void ConsoleModel::Add(Log::Level level, const std::string& message, const std::string& category) {
-    m_impl->Push(level, message, category);
+    m_impl->Push(level, message, category, nullptr);
+}
+
+void ConsoleModel::Add(Log::Level level, const std::string& message, const std::string& category, const ConsoleSource& source) {
+    m_impl->Push(level, message, category, &source);
 }
 
 bool ConsoleModel::Attach() {

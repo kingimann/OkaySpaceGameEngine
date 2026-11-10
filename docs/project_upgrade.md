@@ -149,7 +149,7 @@ with its own version: `ResolveKeepTarget(projectVersion, InstalledVersions(launc
 for the session when the project is older or unversioned, and shows `v2.850.1 (kept)` in the status bar. A project that is *newer* than the
 editor is still asked about (it is the data-loss question). `--keep-version=<version>` is honored only when that is the editor's own version.
 An editor from before this feature ignores the flag and opens the project as it always did. `Decide` and `CompareVersions` replace the
-launcher's own copy of the comparison.
+launcher's own copy of the comparison (done: the launcher calls `okayver::CompareVersions`).
 
 **One editor at a time.** The editor's single-instance lock and hand-off file are shared by all versions. An editor started while another
 runs does not open: it writes its request (`open`, and `keep-version` with its own version) for the running one and exits. The running editor
@@ -159,6 +159,15 @@ and starts the other one after it has exited (the same helper process the self-u
 
 **What the editor writes.** `engine_version` in `project.okayproj` as above; `<Name> (backup ...)` folders next to a project; under a project
 `.okay/backups/restore-N/`. Nothing in `Versions/`.
+
+**The launcher's half is built** ([launcher_versions.md](launcher_versions.md)): the Versions page installs, removes and prunes those folders
+(whole or not at all, every download checked against `versions.json`), keeps the editor an update replaces, and offers the Latest / LTS
+channel. Project cards show the project's version and an **older: v2.850.x** / **newer** badge; **Open with** starts
+`InstalledEditorPath(...)` with `--launcher <pid> --open "<scene>" --keep-version`. A plain **Open** starts the current editor, which asks the
+question above (the launcher asks nothing); only a project with no version goes to the launcher's default editor, if one is set. When the open
+editor is another version, the launcher uses its save-and-close request first (one editor at a time). The "not installed" window has an
+**Open launcher** button: it starts `OkaySpace --versions <version>` (through the same helper process), which shows the Versions page with
+that version highlighted; a launcher that is already running is brought forward instead of a second one.
 
 ## Command line and environment
 
@@ -204,3 +213,6 @@ under the gate).
 
 New: `shared/ProjectVersion.hpp`, `editor/ProjectUpgrade.hpp/.cpp`, `editor/ProjectUpgradeUI.hpp/.cpp`. Edited: `editor/main.cpp` (hook calls),
 `editor/EditorState.hpp/.cpp` (`beforeLoad`), `editor/CMakeLists.txt`. The editor's own copy of `CompareVersions` now calls the shared one.
+
+Launcher side (see [launcher_versions.md](launcher_versions.md)): the launcher's own `CompareVersions` now calls the shared one too; the
+"v2.850.x is not installed" window gained **Open launcher** (`editor/ProjectUpgradeUI.cpp`).

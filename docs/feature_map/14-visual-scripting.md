@@ -35,7 +35,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **What:** Pin types (number, text, bool, vector, object...) with allowed wire conversions, a graph checker that runs before Play and before a build, values that carry object references by id, and variables at graph, object, scene and global scope.
 - **Parts:**
   - 14.2.1 Pin type table - `VisualScript/VsTypes` - `PinType`, `NodeSignature` per node type, `PinCompatible`, conversion hints; the editor colours pins and refuses wires from it
-  - 14.2.2 Graph checker - `VisualScript/VsTypes` - `ValidateGraphText`, `ValidateSceneGraphs`: wires that cannot work, nodes nothing runs, unset variables, bad key names, missing prefabs
+  - 14.2.2 Graph checker - `VisualScript/VsTypes` - `ValidateGraphText`, `ValidateSceneGraphs`: wires that cannot work, nodes nothing runs, unset variables, bad key names, missing prefabs; a bad wire sets `VsIssue::pin` so the editor paints that pin red, and the same issues are rows in Problems (15.11.8). `AddNodeRequirement` lets the node browser report a component a node needs
   - 14.2.3 Values - `VisualScript/VsValue` - one value type; `VsObject` holds an instance id, never a pointer
   - 14.2.4 Scene and global variables - `VisualScript/VsVariables` - scene variables go with the scene, globals survive loading another scene
   - 14.2.5 Function signatures - `VisualScript/VsTypes` - `FunctionSig` parsing for Function / Call / Return nodes

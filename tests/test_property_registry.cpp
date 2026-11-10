@@ -359,7 +359,7 @@ static void TestRegistryBasics() {
     const std::size_t count = PropertyRegistry::All().size();
     RegisterBuiltinProperties();   // idempotent
     CHECK(PropertyRegistry::All().size() == count);
-    CHECK(count >= 85);
+    CHECK(count >= 86);
 
     const char* expected[] = {"GameObject", "Transform", "Camera", "Light", "SpriteRenderer", "MeshRenderer", "Rigidbody2D", "Rigidbody3D",
         "BoxCollider2D", "CircleCollider2D", "CapsuleCollider2D", "EdgeCollider2D", "PolygonCollider2D",
@@ -372,7 +372,7 @@ static void TestRegistryBasics() {
         "NetworkPlayerSpawner", "UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown",
         "Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone",
         "Flashlight", "Joint2D", "Joint3D", "DayNightCycle", "Water", "Crosshair", "UIRadialProgress", "UIRating", "UIScrollView",
-        "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable"};
+        "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable", "LoadingScreen"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");
@@ -424,7 +424,7 @@ static void TestThreadSafeRegistration() {
     RUN_SUITE("registry: concurrent first use");
     PropertyRegistry::Clear();   // only the built-ins from here on
     const std::size_t count = PropertyRegistry::All().size();
-    CHECK(count >= 85);
+    CHECK(count >= 86);
 
     // A fresh table (as in a new process), four threads racing to be the first user:
     // every one of them must see the complete table, and it must hold each entry once.
@@ -1059,7 +1059,7 @@ static void TestEveryPropertyRoundTrip() {
         }
     }
     std::cout << "  covered " << comps << " component types, " << props << " properties\n";
-    CHECK(comps >= 85 && props >= 1350);
+    CHECK(comps >= 86 && props >= 1400);
 }
 
 // ---- Cross-check against the scene serializer ---------------------------------------------------------------
@@ -1118,7 +1118,7 @@ static void TestSerializerCrossCheck() {
               << " read-only/runtime/derived and " << skippedList << " listed; components:";
     for (const auto& c : coveredComponents) std::cout << " " << c;
     std::cout << "\n";
-    CHECK(checked >= 1300);
+    CHECK(checked >= 1350);
 }
 
 // Properties the scene file writes only together with another one: each rides on its
@@ -1320,9 +1320,6 @@ static void TestCustomComponent() {
     CHECK(PropertyRegistry::FindByType(typeid(void)) == nullptr);
 }
 
-// The key codes the scene records that write one raw character can hold.
-static bool KeyCodeOkForTextRecord(int code) { return !(code == '-' || code == ' ' || (code >= 9 && code <= 13)); }
-
 // ---- The controllers, navigation, networking and UI widget registrations ---------------------------------
 
 // Every property of every type, built-in or not, describes itself consistently.
@@ -1404,7 +1401,7 @@ static void TestControllerRegistrations() {
         CHECK(PropertyRegistry::GetProperty(*go, "FirstPersonController.walkSpeed") == PropertyValue::MakeFloat(FirstPersonController().walkSpeed));
     }
 
-    {   // key bindings are key codes 0..255; the records that write a raw character refuse what it cannot hold
+    {   // key bindings are key codes 0..255, any of them: Space, '-', Tab and Enter included
         Scene s("s");
         GameObject* go = s.CreateGameObject("Walker");
         go->AddComponent<FirstPersonController>();
@@ -1419,33 +1416,50 @@ static void TestControllerRegistrations() {
         CHECK(PropertyRegistry::GetProperty(*go, "FirstPersonController.sprintKey") == PropertyValue::MakeInt(150));
         CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt(0)) && go->GetComponent<FirstPersonController>()->sprintKey == 0);
         CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt(300)) && go->GetComponent<FirstPersonController>()->sprintKey == (char)255);   // clamped to the range
-        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt(32)));      // a number record holds any code, even Space
-        // TopDownController.sprintKey is written as one raw character
-        CHECK(PropertyRegistry::SetProperty(*go, "TopDownController.sprintKey", PropertyValue::MakeInt('q')));
-        for (int bad : std::vector<int>{' ', '-', 9, 10, 13}) {
-            std::string err;
-            CHECK(!PropertyRegistry::SetProperty(*go, "TopDownController.sprintKey", PropertyValue::MakeInt(bad), &err) && !err.empty());
-            CHECK(go->GetComponent<TopDownController>()->sprintKey == 'q');
+        // the records that name a key as one token take every code too (Space, '-', Tab, Enter ...)
+        for (int code : std::vector<int>{' ', '-', 9, 10, 11, 12, 13, 'q'}) {
+            CHECK(PropertyRegistry::SetProperty(*go, "TopDownController.sprintKey", PropertyValue::MakeInt(code)));
+            CHECK(go->GetComponent<TopDownController>()->sprintKey == (char)code);
         }
-        CHECK(PropertyRegistry::SetProperty(*go, "TopDownController.sprintKey", PropertyValue::MakeInt(0)));
-        // every code those records accept comes back from a saved scene unchanged
-        for (int code : std::vector<int>{0, 1, 16, 17, 33, 45 + 1, 'a', 'Z', 126, 127, 150, 200, 255}) {
-            if (!KeyCodeOkForTextRecord(code)) continue;
+    }
+
+    {   // all nine key bindings of the five records that write a key as one token: every code 0..255 survives save and load
+        static const char* kKeys[][2] = {
+            {"CharacterController2D", "sprintKey"}, {"TopDownController", "sprintKey"},
+            {"TopDownController2D", "sprintKey"}, {"TopDownController2D", "dashKey"}, {"TopDownController2D", "fireKey"},
+            {"ClickToMoveController", "runKey"}, {"ClickToMoveController", "rotateLeftKey"}, {"ClickToMoveController", "rotateRightKey"},
+            {"ThirdPersonShooterController", "sprintKey"},
+        };
+        int checked = 0;
+        for (int code = 0; code < 256; ++code) {
             Scene a("a");
-            GameObject* g = a.CreateGameObject("g");
-            g->AddComponent<TopDownController>();
-            g->AddComponent<ClickToMoveController>();
-            CHECK(PropertyRegistry::SetProperty(*g, "TopDownController.sprintKey", PropertyValue::MakeInt(code)));
-            CHECK(PropertyRegistry::SetProperty(*g, "ClickToMoveController.rotateLeftKey", PropertyValue::MakeInt(code)));
+            std::map<std::string, GameObject*> holder;
+            for (const auto& k : kKeys)
+                if (!holder.count(k[0])) holder[k[0]] = a.CreateGameObject(k[0]);
+            for (auto& kv : holder) CHECK(find(kv.first.c_str())->add(*kv.second) != nullptr);
+            // a different code in each field, so a shifted record would show
+            for (std::size_t i = 0; i < 9; ++i) {
+                const std::string path = std::string(kKeys[i][0]) + "." + kKeys[i][1];
+                CHECK(PropertyRegistry::SetProperty(*holder[kKeys[i][0]], path, PropertyValue::MakeInt((code + (int)i * 37) & 255)));
+            }
             Scene b("b");
             CHECK(SceneSerializer::Deserialize(b, SceneSerializer::Serialize(a)));
-            GameObject* back = b.FindByGuid(g->Guid());
-            CHECK(back != nullptr);
-            if (back) {
-                CHECK(PropertyRegistry::GetProperty(*back, "TopDownController.sprintKey") == PropertyValue::MakeInt(code));
-                CHECK(PropertyRegistry::GetProperty(*back, "ClickToMoveController.rotateLeftKey") == PropertyValue::MakeInt(code));
+            for (std::size_t i = 0; i < 9; ++i) {
+                GameObject* back = b.FindByGuid(holder[kKeys[i][0]]->Guid());
+                CHECK(back != nullptr);
+                if (!back) continue;
+                const std::string path = std::string(kKeys[i][0]) + "." + kKeys[i][1];
+                const int mine = (code + (int)i * 37) & 255;
+                ++checked;
+                const PropertyValue got = PropertyRegistry::GetProperty(*back, path);
+                if (got != PropertyValue::MakeInt(mine)) std::cerr << "    " << path << ": set " << mine << " read back " << got.ToString() << "\n";
+                CHECK(got == PropertyValue::MakeInt(mine));
             }
+            // the other fields of the record did not shift (the old raw-character form split the record at a space)
+            GameObject* td = b.FindByGuid(holder["TopDownController"]->Guid());
+            if (td) CHECK(PropertyRegistry::GetProperty(*td, "TopDownController.turnSpeed") == PropertyValue::MakeFloat(TopDownController().turnSpeed));
         }
+        CHECK(checked == 256 * 9);
     }
 
     {   // the dodge settings live in a struct member of the controller: flattened as dodge...
@@ -1610,6 +1624,32 @@ static void TestGameplayAndEnvironmentRegistrations() {
         CHECK(PropertyRegistry::SetProperty(*go, "UILayoutGroup.columns", PropertyValue::MakeInt(0)) && go->GetComponent<UILayoutGroup>()->columns == 1);
         CHECK(find("Crosshair")->Find("anchor")->enumOptions == find("UIPanel")->Find("anchor")->enumOptions);
     }
+    {   // object pooling and background loading (saved as trailing fields of the spawner and loading screen records)
+        go->AddComponent<Spawner>();
+        go->AddComponent<LoadingScreen>();
+        auto* sp = go->GetComponent<Spawner>();
+        auto* ls = go->GetComponent<LoadingScreen>();
+        CHECK(PropertyRegistry::GetProperty(*go, "Spawner.usePool") == PropertyValue::MakeBool(false));
+        CHECK(PropertyRegistry::SetProperty(*go, "Spawner.usePool", PropertyValue::MakeBool(true)) && sp->usePool);
+        CHECK(PropertyRegistry::GetProperty(*go, "LoadingScreen.asyncLoad") == PropertyValue::MakeBool(true));
+        CHECK(PropertyRegistry::SetProperty(*go, "LoadingScreen.asyncLoad", PropertyValue::MakeBool(false)) && !ls->asyncLoad);
+        CHECK(PropertyRegistry::SetProperty(*go, "LoadingScreen.objectsPerFrame", PropertyValue::MakeInt(0)) && ls->objectsPerFrame == 1);   // the load makes at least one a frame
+        CHECK(PropertyRegistry::SetProperty(*go, "LoadingScreen.objectsPerFrame", PropertyValue::MakeInt(5000000)) && ls->objectsPerFrame == 100000);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "LoadingScreen.layout", "ring") && ls->layout == (int)LoadingScreen::Layout::Ring);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "LoadingScreen.barStyle", "Indeterminate") && ls->barStyle == (int)LoadingScreen::BarStyle::Indeterminate);
+        CHECK(find("LoadingScreen")->Find("targetScene")->assetKind == "scene");
+        // the flags and the numbers come back from the file (a scene saved before pooling and background loading has neither)
+        CHECK(PropertyRegistry::SetProperty(*go, "LoadingScreen.objectsPerFrame", PropertyValue::MakeInt(17)));
+        Scene b("b");
+        CHECK(SceneSerializer::Deserialize(b, SceneSerializer::Serialize(s)));
+        GameObject* back = b.FindByGuid(go->Guid());
+        CHECK(back != nullptr);
+        if (back) {
+            CHECK(PropertyRegistry::GetProperty(*back, "Spawner.usePool") == PropertyValue::MakeBool(true));
+            CHECK(PropertyRegistry::GetProperty(*back, "LoadingScreen.asyncLoad") == PropertyValue::MakeBool(false));
+            CHECK(PropertyRegistry::GetProperty(*back, "LoadingScreen.objectsPerFrame") == PropertyValue::MakeInt(17));
+        }
+    }
 }
 
 // ---- Audit: hooks while firing, the type table, text coercion ---------------------------------------------
@@ -1754,7 +1794,7 @@ static void TestBuilderKeyBindings() {
     RUN_SUITE("builder: key bindings and fields of a struct member");
     PropertyBuilder<KeyWidget> b("KeyWidget", "keywidget", "Test");
     b.AddKey("jump", &KeyWidget::jump)
-     .AddKey("sprint", &KeyWidget::sprint, /*rawCharRecord=*/true)
+     .AddKey("sprint", &KeyWidget::sprint)
      .AddKey("dodgeKey", &KeyWidget::dodge, &KeyWidget::Dodge::key).Tooltip("Dodge key")
      .AddFloat("dodgePower", &KeyWidget::dodge, &KeyWidget::Dodge::power).Range(0, 10);
     b.Commit();
@@ -1773,10 +1813,10 @@ static void TestBuilderKeyBindings() {
     CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt(1000)) && (unsigned char)w->jump == 255);
     CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt(' ')) && w->jump == ' ');   // an ordinary key accepts Space
     CHECK(!PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeFloat(3.0f)));
-    // a raw-character record cannot hold white space or '-'
-    for (int bad : std::vector<int>{' ', '-', 9, 10, 11, 12, 13}) CHECK(!PropertyRegistry::SetProperty(*go, "KeyWidget.sprint", PropertyValue::MakeInt(bad)) && w->sprint == 0);
-    for (int ok : std::vector<int>{0, 1, 8, 14, 33, 45 - 1, 45 + 1, 'a', 126, 127, 128, 255}) {
-        CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.sprint", PropertyValue::MakeInt(ok)) && PropertyRegistry::GetProperty(*go, "KeyWidget.sprint") == PropertyValue::MakeInt(ok));
+    // every code is accepted: white space and '-' included
+    for (int code = 0; code < 256; ++code) {
+        CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.sprint", PropertyValue::MakeInt(code)) && (unsigned char)w->sprint == (unsigned char)code);
+        CHECK(PropertyRegistry::GetProperty(*go, "KeyWidget.sprint") == PropertyValue::MakeInt(code));
     }
     // a field of a struct member reads and writes through the member
     CHECK(PropertyRegistry::GetProperty(*go, "KeyWidget.dodgeKey") == PropertyValue::MakeInt('x'));

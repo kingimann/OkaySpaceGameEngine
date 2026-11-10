@@ -18,6 +18,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [releasing.md](releasing.md): releasing an update to players.
 - [steam_release.md](steam_release.md): releasing on Steam.
 - [release_channels.md](release_channels.md): the latest and LTS channels, the update bucket, versions.json, how to cut an LTS.
+- [launcher_versions.md](launcher_versions.md): the launcher's Versions page: install, remove and keep other editor versions next to the running one, the Latest / LTS channel setting, project version badges and Open with, `--versions`.
 
 ## Scripting
 - [scripting.md](scripting.md): the OkayScript language guide.

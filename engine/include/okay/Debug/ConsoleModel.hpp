@@ -27,15 +27,33 @@
 
 namespace okay {
 
-/// Where a message points: an object in the scene or an asset/script file.
+/// Where a message points: an object in the scene, an asset, a script or a graph node.
 struct ConsoleSource {
-    enum class Kind { None, Object, Asset };
+    enum class Kind { None, Object, Asset, Script, Graph };
     Kind kind = Kind::None;
-    std::string path;          // "World/Props/Crate" or "Assets/Level1.okayscene"
+    std::string path;          // "World/Props/Crate", "Assets/Level1.okayscene", a script or a graph
+    std::string guid;          // the object's persistent id, when the caller knows it
+    std::string component;     // component type involved, when there is one
+    std::string nodeId;        // visual-script node id, when the message is about one node
     int line = 0;              // 0 = no line given
     int column = 0;
-    bool Valid() const { return kind != Kind::None && !path.empty(); }
+    bool Valid() const {
+        return kind != Kind::None && (!path.empty() || !guid.empty() || !nodeId.empty());
+    }
 };
+
+/// While one of these is alive, log lines on this thread pick up `source`
+/// (a script error during Play names the object it ran on). Nested scopes
+/// stack; the innermost wins. The editor Console reads it when a line arrives.
+class ConsoleSourceScope {
+public:
+    explicit ConsoleSourceScope(ConsoleSource source);
+    ~ConsoleSourceScope();
+    ConsoleSourceScope(const ConsoleSourceScope&) = delete;
+    ConsoleSourceScope& operator=(const ConsoleSourceScope&) = delete;
+};
+/// The source set by the innermost ConsoleSourceScope on this thread, or an empty one.
+ConsoleSource ActiveConsoleSource();
 
 /// Find a source reference in a message. Recognised, in this order:
 ///   `[Object: World/Props/Crate]`   (also `[GameObject: ...]`)       -> Kind::Object
@@ -85,8 +103,12 @@ public:
     static unsigned LevelBit(Log::Level l) { return 1u << static_cast<unsigned>(l); }
 
     // ---- feeding ----------------------------------------------------------
-    /// Add an entry directly (when you know the category). The source is parsed from the message.
+    /// Add an entry directly (when you know the category). The source is parsed from the message,
+    /// then filled in from an active ConsoleSourceScope on this thread.
     void Add(Log::Level level, const std::string& message, const std::string& category = std::string());
+    /// Same, with a source the caller already knows (an object guid, a script line, a graph node).
+    /// Fields left empty still come from the message text and from an active ConsoleSourceScope.
+    void Add(Log::Level level, const std::string& message, const std::string& category, const ConsoleSource& source);
     /// Chain into Log::sink: the previous sink keeps being called first, then each
     /// message is added here. Call from the main thread at startup, like any Log::sink
     /// assignment. False if this model is already attached.

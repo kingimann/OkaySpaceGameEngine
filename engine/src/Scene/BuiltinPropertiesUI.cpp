@@ -1,10 +1,11 @@
 // Property registrations of the UI widgets: button, text, image, slider, toggle,
-// progress bar, input field, stepper and dropdown. (Canvas and UIPanel are in
+// progress bar, input field, stepper, dropdown, the loading screen and more. (Canvas and UIPanel are in
 // BuiltinProperties.cpp.) Each type registers every field its scene record keeps; lists
 // (the dropdown's options) and the localisation key are left out. See docs/properties.md.
 #include "BuiltinPropertiesShared.hpp"
 
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIDraggable.hpp"
@@ -270,6 +271,61 @@ void RegisterUIDropdown() {
     b.Commit();
 }
 
+void RegisterLoadingScreen() {
+    PropertyBuilder<LoadingScreen> b("LoadingScreen", "loadingscreen", "UI");
+    b.Section("Look")
+     .AddEnum("layout", &LoadingScreen::layout, {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"})
+     .AddEnum("barStyle", &LoadingScreen::barStyle, {"Solid", "Segmented", "Shimmer", "Indeterminate"})
+     .AddEnum("spinnerStyle", &LoadingScreen::spinnerStyle, {"Dots", "Arc", "Bars", "Pulse"})
+     .AddString("subtitle", &LoadingScreen::subtitle).Tooltip("Smaller line with the title (level name, chapter...)")
+     .AddAssetPath("logoImage", &LoadingScreen::logoImage, "image").Tooltip("Optional logo (Splash shows it big)")
+     .AddFloat("logoSize", &LoadingScreen::logoSize).Range(0, kBig, 0.05).Tooltip("Logo size as a fraction of screen height")
+     .AddBool("logoPulse", &LoadingScreen::logoPulse).Tooltip("Logo gently breathes")
+     .AddBool("kenBurns", &LoadingScreen::kenBurns).Tooltip("Background image slowly zooms in")
+     .AddColor("cardColor", &LoadingScreen::cardColor).Range(0, 1, 0.01).Tooltip("Card layout's panel")
+     .AddFloat("tipInterval", &LoadingScreen::tipInterval).Range(0, 3600, 0.05).Tooltip("> 0: show the next tip every N seconds")
+     .AddColor("backgroundColor", &LoadingScreen::backgroundColor).Range(0, 1, 0.01).Tooltip("Colour of the box behind the text")
+     .AddColor("backgroundColor2", &LoadingScreen::backgroundColor2).Range(0, 1, 0.01).Tooltip("Gradient bottom colour")
+     .AddBool("gradientBackground", &LoadingScreen::gradientBackground).Tooltip("Vertical gradient backgroundColor -> backgroundColor2")
+     .AddAssetPath("backgroundImage", &LoadingScreen::backgroundImage, "image").Tooltip("Optional full-screen image (else a flat colour)")
+     .AddString("title", &LoadingScreen::title)
+     .AddColor("textColor", &LoadingScreen::textColor).Range(0, 1, 0.01).Tooltip("Colour of the text")
+     .Section("Title")
+     .AddBool("showTitle", &LoadingScreen::showTitle)
+     .AddColor("titleColor", &LoadingScreen::titleColor).Range(0, 1, 0.01)
+     .AddFloat("titleScale", &LoadingScreen::titleScale).Range(0, 1000, 0.01).Tooltip("Multiplier on the auto title size")
+     .AddFloat("titleY", &LoadingScreen::titleY).Range(-kBig, kBig, 0.1).Tooltip("Vertical position (0=top, 1=bottom)")
+     .Section("Tip line")
+     .AddColor("tipColor", &LoadingScreen::tipColor).Range(0, 1, 0.01)
+     .AddFloat("tipScale", &LoadingScreen::tipScale).Range(0, 1000, 0.01)
+     .AddFloat("tipY", &LoadingScreen::tipY).Range(-kBig, kBig, 0.1)
+     .Section("Progress bar")
+     .AddColor("barBackground", &LoadingScreen::barBackground).Range(0, 1, 0.01)
+     .AddColor("barFill", &LoadingScreen::barFill).Range(0, 1, 0.01)
+     .AddBool("showBar", &LoadingScreen::showBar)
+     .AddFloat("barWidth", &LoadingScreen::barWidth).Range(0, kBig, 0.05).Tooltip("Fraction of screen width")
+     .AddFloat("barHeight", &LoadingScreen::barHeight).Range(0, kBig, 0.05).Tooltip("Fraction of screen height")
+     .AddFloat("barY", &LoadingScreen::barY).Range(-kBig, kBig, 0.1).Tooltip("Vertical position (0..1)")
+     .AddFloat("barRadius", &LoadingScreen::barRadius).Range(0, kBig, 0.05).Tooltip("Rounded corners (px)")
+     .AddBool("barBorder", &LoadingScreen::barBorder)
+     .AddColor("barBorderColor", &LoadingScreen::barBorderColor).Range(0, 1, 0.01)
+     .AddBool("showPercent", &LoadingScreen::showPercent).Tooltip("Draw \"NN%\" next to the bar")
+     .Section("Spinner")
+     .AddBool("showSpinner", &LoadingScreen::showSpinner)
+     .AddColor("spinnerColor", &LoadingScreen::spinnerColor).Range(0, 1, 0.01)
+     .AddFloat("spinnerRadius", &LoadingScreen::spinnerRadius).Range(0, kBig, 0.05).Tooltip("Fraction of screen height")
+     .AddFloat("spinnerDotSize", &LoadingScreen::spinnerDotSize).Range(0, kBig, 0.05).Tooltip("Dot size (px, scaled by height)")
+     .AddFloat("spinnerSpeed", &LoadingScreen::spinnerSpeed).Range(0, 10000, 0.1).Tooltip("Revolutions-ish per second")
+     .AddFloat("spinnerY", &LoadingScreen::spinnerY).Range(-kBig, kBig, 0.1)
+     .Section("Loading")
+     .AddBool("asyncLoad", &LoadingScreen::asyncLoad).Tooltip("Load targetScene over several frames, so the screen keeps animating while it loads")
+     .AddInt("objectsPerFrame", &LoadingScreen::objectsPerFrame).Range(1, 100000, 1).Tooltip("Objects made per frame by a background load")
+     .AddFloat("duration", &LoadingScreen::duration).Range(0, 3600, 0.05).Tooltip("Minimum seconds the screen stays up")
+     .AddAssetPath("targetScene", &LoadingScreen::targetScene, "scene").Tooltip("Scene to load when done (empty = reveal this one)")
+     .AddBool("showOnStart", &LoadingScreen::showOnStart).Tooltip("Show automatically when the scene starts")
+     .AddFloat("fadeTime", &LoadingScreen::fadeTime).Range(0, 3600, 0.05).Tooltip("Fade-in / fade-out length (seconds)");
+    b.Commit();
+}
 void RegisterCrosshair() {
     PropertyBuilder<Crosshair> b("Crosshair", "crosshair", "UI");
     b.AddVec2("position", &Crosshair::position).Range(-kBig, kBig, 0.1).Tooltip("Offset from the anchor (px)")
@@ -403,8 +459,8 @@ void RegisterUIKeybindField() {
      .AddVec2("size", &UIKeybindField::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels")
      .AddEnum("anchor", &UIKeybindField::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
      .AddString("action", &UIKeybindField::action)
-     .AddKey("key", &UIKeybindField::key, false)
-     .AddKey("defaultKey", &UIKeybindField::defaultKey, false)
+     .AddKey("key", &UIKeybindField::key)
+     .AddKey("defaultKey", &UIKeybindField::defaultKey)
      .AddString("prefKey", &UIKeybindField::prefKey).Tooltip("Prefs name to persist the binding under (\"\" = don't)")
      .AddString("inputAction", &UIKeybindField::inputAction).Tooltip("An InputActions action to rebind (\"\" = use `key`)")
      .AddBool("gamepad", &UIKeybindField::gamepad).Tooltip("With inputAction: bind a controller button")
@@ -434,8 +490,6 @@ void RegisterUIDraggable() {
 
 void RegisterUITheme() {
     PropertyBuilder<UITheme> b("UITheme", "uitheme", "UI");
-    std::vector<std::string> presets;
-    for (int i = 0; i < UITheme::kPresetCount; ++i) presets.push_back(UITheme::PresetName(i));
     b.AddString("themeName", &UITheme::themeName).Tooltip("Name scripts and UI Style Variant use to find this theme")
      .AddBool("applyOnStart", &UITheme::applyOnStart).Tooltip("Restyle the UI when Play starts")
      .AddBool("global", &UITheme::global).Tooltip("Style every widget in the scene, not only the ones under this object")
@@ -523,6 +577,7 @@ void RegisterUIProperties() {
     RegisterUIInputField();
     RegisterUIStepper();
     RegisterUIDropdown();
+    RegisterLoadingScreen();
     RegisterCrosshair();
     RegisterUIRadialProgress();
     RegisterUIRating();

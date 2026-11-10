@@ -2996,6 +2996,27 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
     }
 }
 
+// A wide illustrated preview for a template card: a small scene, not a letter tile.
+static void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2 b) {
+    const bool flat = title.find("2D") != std::string::npos || title == "Platformer" || title == "Snake"
+        || title == "Brick Breaker" || title == "Main Menu" || title == "Inventory";
+    const bool empty = title == "Empty";
+    ImU32 sky = empty ? IM_COL32(38, 40, 48, 255) : flat ? IM_COL32(36, 48, 86, 255) : IM_COL32(92, 148, 206, 255);
+    ImU32 ground = empty ? IM_COL32(28, 30, 36, 255) : flat ? IM_COL32(22, 28, 48, 255) : IM_COL32(168, 132, 96, 255);
+    const float horizon = a.y + (b.y - a.y) * (empty ? 1.0f : 0.62f);
+    d->AddRectFilled(a, ImVec2(b.x, horizon), sky);
+    d->AddRectFilled(ImVec2(a.x, horizon), b, ground);
+    if (!empty) d->AddLine(ImVec2(a.x + 8, horizon), ImVec2(b.x - 8, horizon), IM_COL32(255, 255, 255, 50), 1.5f);
+    if (flat && !empty) {
+        for (int i = 1; i < 4; ++i) {
+            float y = a.y + (b.y - a.y) * (0.25f * i);
+            d->AddLine(ImVec2(a.x, y), ImVec2(b.x, y), IM_COL32(255, 255, 255, 18), 1.0f);
+        }
+    }
+    const float s = std::min(b.x - a.x, b.y - a.y) * 0.72f;
+    TemplateGlyph(d, title, ImVec2(a.x + (b.x - a.x - s) * 0.5f, a.y + (b.y - a.y - s) * 0.36f), s, IM_COL32(248, 250, 255, 235));
+}
+
 // ---- Optional per-game cover art -----------------------------------------
 // A game can ship a cover image next to its .okayscene (cover.png/.jpg, or
 // <stem>.png/.jpg). We load it once via stb_image, upload an SDL texture, and
@@ -4021,6 +4042,9 @@ static bool RoundIconButton(const char* id, int icon, float d, ImU32 bg, ImU32 b
         break;
     case kRibMore:
         for (int k = -1; k <= 1; ++k) dl->AddCircleFilled(ImVec2(c.x + k * 5.0f, c.y), 1.8f, fg, 8);
+        break;
+    default:
+        if (icon >= kIcoBell) DrawNavIcon(dl, icon, c, fg);
         break;
     }
     if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (tip && *tip) ImGui::SetTooltip("%s", tip); }
@@ -18098,36 +18122,41 @@ int main(int argc, char** argv) {
             static int s_projSort = 0;   // 0 recent, 1 name
             static bool s_projSearchActive = false;
             {
-                const float rowStart = ImGui::GetCursorPosX();
-                auto fits = [&](float need) {
-                    if (ImGui::GetCursorPosX() <= rowStart + 1.0f) return;
-                    if (ImGui::GetContentRegionAvail().x < need) ImGui::NewLine();
-                    else ImGui::SameLine(0, 10);
-                };
                 ImGui::SetWindowFontScale(1.15f);
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted("Recent projects");
                 ImGui::SetWindowFontScale(1.0f);
                 if (!s_projects.empty()) {
-                    ImGui::SameLine(0, 10);
+                    ImGui::SameLine(0, 8);
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextDisabled("%d", (int)s_projects.size());
                 }
-                fits(220);
-                ImGui::SetNextItemWidth(std::min(240.0f, std::max(80.0f, ImGui::GetContentRegionAvail().x)));
-                ImGui::InputTextWithHint("##projq", "Search projects", projQ, sizeof(projQ));
+                const float iconD = 32.0f;
+                const float sortW = 118.0f;
+                const float toolsBeside = sortW + iconD * 2.0f + 8.0f + 8.0f + 6.0f;
+                ImGui::SameLine(0, 12);
+                float lineLeft = ImGui::GetContentRegionAvail().x;
+                float searchW = lineLeft - toolsBeside;
+                if (searchW < 88.0f) {
+                    ImGui::NewLine();
+                    lineLeft = ImGui::GetContentRegionAvail().x;
+                    searchW = std::max(64.0f, lineLeft - toolsBeside);
+                }
+                ImGui::SetNextItemWidth(searchW);
+                ImGui::InputTextWithHint("##projq", "Search", projQ, sizeof(projQ));
                 s_projSearchActive = ImGui::IsItemActive();
-                fits(160);
-                ImGui::SetNextItemWidth(std::min(160.0f, std::max(80.0f, ImGui::GetContentRegionAvail().x)));
-                ImGui::Combo("##projsort", &s_projSort, "Recent first\0Name A\xE2\x80\x93Z\0");
-                fits(110);
-                if (ImGui::Button("Refresh##projs", ImVec2(std::min(110.0f, ImGui::GetContentRegionAvail().x), 0))) s_projScanned = "\x01";
-                fits(180);
+                ImGui::SameLine(0, 8);
+                ImGui::SetNextItemWidth(sortW);
+                ImGui::Combo("##projsort", &s_projSort, "Recent\0Name\0");
+                ImGui::SameLine(0, 8);
+                if (RoundIconButton("##projrefresh", kIcoRefresh, iconD, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText, "Refresh"))
+                    s_projScanned = "\x01";
+                ImGui::SameLine(0, 6);
                 ImGui::BeginDisabled(!GitAvailable() || g_gitBusy);
-                if (ImGui::Button(g_gitBusy ? "Git working\xE2\x80\xA6" : "Clone from GitHub", ImVec2(std::min(180.0f, ImGui::GetContentRegionAvail().x), 0))) ImGui::OpenPopup("##clonegh");
+                if (RoundIconButton("##projclone", kIcoGlobe, iconD, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 32), crText,
+                                    g_gitBusy ? "Git is working" : "Clone from GitHub"))
+                    ImGui::OpenPopup("##clonegh");
                 ImGui::EndDisabled();
-                if (!GitAvailable() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Install Git to clone and sync projects");
-                (void)s_projSearchActive;
             }
             {
                 static char ghUrl[300] = "";
@@ -18207,7 +18236,8 @@ int main(int argc, char** argv) {
             }
             {
                 const float availW = ImGui::GetContentRegionAvail().x, gap = 14.0f;
-                int cols = availW >= 760.0f ? 2 : 1;
+                int maxCols = availW >= 980.0f ? 3 : availW >= 620.0f ? 2 : 1;
+                int cols = (int)projList.size() < maxCols ? std::max(1, (int)projList.size()) : maxCols;
                 const float cardW = (availW - gap * (cols - 1)) / cols;
                 const bool stackBtns = cardW < 520.0f;
                 const float cardH = stackBtns ? 148.0f : 112.0f;
@@ -18313,12 +18343,7 @@ int main(int argc, char** argv) {
                 if (ImGui::BeginPopupModal("New Project", &popOpen, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
                     const char* stepName[] = {"Template", "Details", "Review"};
                     ImDrawList* dl = ImGui::GetWindowDrawList();
-                    ImGui::SetWindowFontScale(1.2f);
-                    ImGui::TextUnformatted("New Project");
-                    ImGui::SetWindowFontScale(1.0f);
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("  %s", stepName[std::clamp(s_wiz.step, 0, 2)]);
-                    ImGui::Dummy(ImVec2(0, 8));
+                    ImGui::Dummy(ImVec2(0, 2));
                     const ImVec2 dots = ImGui::GetCursorScreenPos();
                     for (int i = 0; i < 3; ++i) {
                         const float x = dots.x + i * 118.0f;
@@ -18349,34 +18374,36 @@ int main(int argc, char** argv) {
                         }
                     } else if (s_wiz.step <= 0) {
                         ImGui::BeginChild("##wiztpl", ImVec2(0, bodyH), false);
-                        if (ImGui::Button(s_wiz.allTemplates ? "Fewer templates" : "All templates")) {
-                            s_wiz.allTemplates = !s_wiz.allTemplates;
-                            if (!s_wiz.allTemplates) s_tplQ[0] = '\0';
+                        static int s_tplCat = 1;   // Start simple, until All is chosen
+                        const auto& groups = okayproj::TemplateGroups();
+                        for (int g = 0; g < (int)groups.size(); ++g) {
+                            if (g && ImGui::GetContentRegionAvail().x > ImGui::CalcTextSize(groups[(std::size_t)g].c_str()).x + 28.0f)
+                                ImGui::SameLine(0, 6);
+                            const bool on = s_tplCat == g;
+                            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.85f));
+                            if (ImGui::Button(groups[(std::size_t)g].c_str())) { s_tplCat = g; s_wiz.allTemplates = g == 0; }
+                            if (on) ImGui::PopStyleColor();
                         }
-                        bool searchActive = false;
-                        if (s_wiz.allTemplates) {
-                            if (ImGui::GetContentRegionAvail().x >= 220) ImGui::SameLine(0, 12);
-                            ImGui::SetNextItemWidth(std::min(260.0f, ImGui::GetContentRegionAvail().x));
-                            ImGui::InputTextWithHint("##wizq", "Search templates", s_tplQ, sizeof(s_tplQ));
-                            searchActive = ImGui::IsItemActive();
-                        }
+                        if (ImGui::GetContentRegionAvail().x >= 160.0f) ImGui::SameLine(0, 10);
+                        ImGui::SetNextItemWidth(std::min(200.0f, std::max(80.0f, ImGui::GetContentRegionAvail().x)));
+                        ImGui::InputTextWithHint("##wizq", "Search", s_tplQ, sizeof(s_tplQ));
                         ImGui::Dummy(ImVec2(0, 8));
                         std::string needle;
                         for (const char* c = s_tplQ; *c; ++c) needle += (char)std::tolower((unsigned char)*c);
                         std::vector<int> ids;
                         for (int i = 0; i < (int)s_tpls.size(); ++i) {
-                            if (!s_wiz.allTemplates && !okayproj::IsStarterTemplate(s_tpls[(std::size_t)i])) continue;
-                            if (s_wiz.allTemplates && !needle.empty()) {
+                            if (s_tplCat != 0 && s_tpls[(std::size_t)i].group != s_tplCat) continue;
+                            if (!needle.empty()) {
                                 std::string hay = std::string(s_tpls[(std::size_t)i].title) + " " + s_tpls[(std::size_t)i].blurb;
                                 for (char& ch : hay) ch = (char)std::tolower((unsigned char)ch);
                                 if (hay.find(needle) == std::string::npos) continue;
                             }
                             ids.push_back(i);
                         }
-                        const float gap = 12.0f, availW = ImGui::GetContentRegionAvail().x;
-                        const int cols = availW >= 640.0f ? 2 : 1;
+                        const float gap = 14.0f, availW = ImGui::GetContentRegionAvail().x;
+                        const int cols = availW >= 560.0f ? 2 : 1;
                         const float cardW = (availW - gap * (cols - 1)) / cols;
-                        const float cardH = 118.0f;
+                        const float cardH = 228.0f;
                         const ImVec2 g0 = ImGui::GetCursorScreenPos();
                         for (int n = 0; n < (int)ids.size(); ++n) {
                             const int i = ids[(std::size_t)n];
@@ -18385,15 +18412,25 @@ int main(int argc, char** argv) {
                             ImGui::SetCursorScreenPos(cp);
                             if (ImGui::InvisibleButton("##wtpl", ImVec2(cardW, cardH))) s_tpl = i;
                             const bool on = s_tpl == i, hov = ImGui::IsItemHovered();
-                            dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(crCardBg), 14.0f);
-                            if (on || hov) dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, on ? 18 : 8), 14.0f);
-                            dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(on ? kAccent : ImVec4(1, 1, 1, 0.08f)), 14.0f, 0, on ? 2.2f : 1.0f);
-                            const ImVec2 tp(cp.x + 14, cp.y + (cardH - 72) * 0.5f);
-                            dl->AddRectFilled(tp, ImVec2(tp.x + 72, tp.y + 72), IM_COL32(255, 255, 255, 16), 12.0f);
-                            TemplateGlyph(dl, s_tpls[(std::size_t)i].title, ImVec2(tp.x + 8, tp.y + 8), 56.0f, ImGui::GetColorU32(ImVec4(0.92f, 0.94f, 0.98f, 1)));
-                            const float tx = tp.x + 86, tr = cp.x + cardW - 14;
-                            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.12f, ImVec2(tx, cp.y + 28), crText, FitText(s_tpls[(std::size_t)i].title, tr - tx).c_str());
-                            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, cp.y + 52), crDim, s_tpls[(std::size_t)i].blurb, nullptr, tr - tx);
+                            dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(crCardBg), 16.0f);
+                            const ImVec2 stage(cp.x + 8, cp.y + 8), stage2(cp.x + cardW - 8, cp.y + 118);
+                            dl->PushClipRect(stage, stage2, true);
+                            DrawTemplateStage(dl, s_tpls[(std::size_t)i].title, stage, stage2);
+                            dl->PopClipRect();
+                            dl->AddRect(stage, stage2, IM_COL32(255, 255, 255, 24), 12.0f, 0, 1.0f);
+                            const float tx = cp.x + 14, tr = cp.x + cardW - 14;
+                            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.15f, ImVec2(tx, cp.y + 128), crText,
+                                        FitText(s_tpls[(std::size_t)i].title, tr - tx).c_str());
+                            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.92f, ImVec2(tx, cp.y + 152), crDim,
+                                        s_tpls[(std::size_t)i].blurb, nullptr, tr - tx);
+                            if (on || hov) {
+                                const char *fa = "", *fb = "", *fc = "";
+                                okayproj::TemplateFeatureLines(s_tpls[(std::size_t)i].title, fa, fb, fc);
+                                const std::string line = std::string(fa) + "  ·  " + fb;
+                                dl->AddText(ImVec2(tx, cp.y + 178), ImGui::GetColorU32(kAccent), FitText(line, tr - tx).c_str());
+                                if (hov && fc && *fc) ImGui::SetTooltip("%s", fc);
+                            }
+                            dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(on ? kAccent : ImVec4(1, 1, 1, 0.08f)), 16.0f, 0, on ? 2.4f : 1.0f);
                             if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                             ImGui::PopID();
                         }
@@ -18403,7 +18440,6 @@ int main(int argc, char** argv) {
                             ImGui::Dummy(ImVec2(1, 1));
                         } else ImGui::TextDisabled("No templates match \"%s\".", s_tplQ);
                         ImGui::EndChild();
-                        (void)searchActive;
                     } else if (s_wiz.step == 1) {
                         ImGui::BeginChild("##wizdet", ImVec2(0, bodyH), false);
                         ImGui::TextUnformatted("Project name");
@@ -18465,9 +18501,11 @@ int main(int argc, char** argv) {
                     if (!s_wiz.creating) {
                         ImGui::Separator();
                         ImGui::Dummy(ImVec2(0, 4));
-                        ImGui::BeginDisabled(s_wiz.step <= 0);
-                        if (ImGui::Button("Back", ImVec2(110, 40))) okayproj::WizardBack(s_wiz);
-                        ImGui::EndDisabled();
+                        if (s_wiz.step > 0) {
+                            if (ImGui::Button("Back", ImVec2(110, 40))) okayproj::WizardBack(s_wiz);
+                        } else {
+                            ImGui::Dummy(ImVec2(110, 40));
+                        }
                         const char* go = s_wiz.step >= 2 ? "Create project" : "Next";
                         const float gw = 170.0f;
                         ImGui::SameLine(std::max(120.0f, ImGui::GetWindowWidth() - gw - 36.0f));

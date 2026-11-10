@@ -58,6 +58,11 @@ int main() {
         int starters = 0;
         for (const TemplateInfo& t : all) if (IsStarterTemplate(t)) ++starters;
         CHECK(starters == 3);                                                       // the few large cards
+        for (const TemplateInfo& t : all) {
+            const char *a = "", *b = "", *c = "";
+            TemplateFeatureLines(t.title, a, b, c);
+            CHECK(a && b && c && a[0] && b[0] && c[0]);
+        }
         // The launcher's Create page uses this list (it no longer keeps a second copy). The editor's
         // New Project names the same titles. A title one of them lacks falls back to the default scene.
         const fs::path root = fs::path(__FILE__).parent_path().parent_path();

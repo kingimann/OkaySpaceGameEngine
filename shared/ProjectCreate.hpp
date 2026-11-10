@@ -403,6 +403,36 @@ inline std::string SettingsPath(const std::string& root) {
 /// True for the few templates the Create page shows before "All templates" is opened.
 inline bool IsStarterTemplate(const TemplateInfo& t) { return t.group == 1; }
 
+/// Three short, true points about a template, shown on its card when it is selected.
+inline void TemplateFeatureLines(const char* title, const char*& a, const char*& b, const char*& c) {
+    struct Row { const char* title; const char* a; const char* b; const char* c; };
+    static const Row rows[] = {
+        {"3D Scene", "Ground and sky", "A light", "Ready to build in 3D"},
+        {"2D Scene", "Orthographic camera", "Empty canvas", "For sprites and UI"},
+        {"Empty", "No starter objects", "You place everything", "Same project folders"},
+        {"First Person", "Mouse look", "WASD movement", "Jump"},
+        {"Third Person", "Orbit camera", "A character", "Walk and jump"},
+        {"Third Person Shooter", "Over-the-shoulder aim", "Shooting", "A character"},
+        {"Platformer", "Side view", "Jump and run", "A ground to land on"},
+        {"Top-Down", "Top-down movement", "Rooms", "A character"},
+        {"Top-Down Shooter", "Mouse aim", "Dash", "Ammo"},
+        {"2.5D Platformer", "Side view", "Depth layers", "Grab"},
+        {"Point & Click", "Click to move", "Adventure starter", "A character"},
+        {"Vehicle (3D)", "A drivable car", "Suspension", "3D road space"},
+        {"Vehicle (2D)", "Side-on car", "Hill-climb style", "2D track"},
+        {"Sandbox", "Place blocks", "Break blocks", "A voxel world"},
+        {"Multiplayer", "Host a game", "Join a game", "A networked starter"},
+        {"Coin Collector", "Playable game", "Pickup coins", "A small level"},
+        {"Snake", "Playable game", "The classic rules", "A board"},
+        {"Brick Breaker", "Paddle", "Ball", "A wall of bricks"},
+        {"Main Menu", "Title screen", "Buttons", "A place to start"},
+        {"Inventory", "Item grid", "Drag and drop", "A sample bag"},
+        {"Humanoid", "A rigged character", "Ready to animate", "A place to stand"},
+    };
+    a = b = c = "";
+    for (const Row& r : rows) if (title && std::strcmp(title, r.title) == 0) { a = r.a; b = r.b; c = r.c; return; }
+}
+
 /// A project version the editor can store in project.okayproj (its field holds 31 characters).
 /// Empty when `raw` is fine; otherwise one sentence for the form.
 inline std::string CheckProjectVersion(const std::string& raw) {

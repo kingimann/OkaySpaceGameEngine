@@ -582,7 +582,7 @@ int main() {
             player->transform->localPosition = {0, 1.0f, 8.0f};   // open ground, away from the crates
             auto* fpc = player->GetComponent<FirstPersonController>();
             fpc->sprintKey = 'r';
-            fpc->bobSway = 0.05f;   // an old scene value; it must not move the camera
+            fpc->bobSway = 0.0f;    // sway off: no roll
             fpc->yaw = 0.0f;
             sc.Start();
             float maxRoll = 0.0f, maxAbsX = 0.0f, minY = 1.0e9f, maxY = -1.0e9f;
@@ -604,6 +604,50 @@ int main() {
             CHECK(maxRoll < 0.5f);
             CHECK(maxAbsX < 0.004f);
             CHECK(maxY - minY > 0.008f);   // the up/down bob is still there
+        }
+        // bobSway: a real roll sway. 0 = none; 3 degrees = about +-3 while walking;
+        // none while idle or airborne; it fades out after you stop.
+        {
+            auto run = [&](float sway, float startY, bool keys, float& idleRoll) {
+                Scene sc("sway");
+                sc.physicsEnabled = true;
+                Templates::FPS(sc);
+                GameObject* player = nullptr; Camera* cam = nullptr;
+                for (auto& o : sc.Objects()) {
+                    if (o->name == "Player") player = o.get();
+                    if (auto* c = o->GetComponent<Camera>()) cam = c;
+                }
+                player->transform->localPosition = {0, startY, 8.0f};
+                auto* fpc = player->GetComponent<FirstPersonController>();
+                fpc->bobSway = sway; fpc->yaw = 0.0f;
+                sc.Start();
+                auto rollOf = [&]() {
+                    const Quat q = cam->transform->Rotation();
+                    const Vec3 right = q * Vec3{1, 0, 0}; const Vec3 up = q * Vec3{0, 1, 0};
+                    return std::atan2(right.y, up.y) * 57.2957795f;
+                };
+                float maxRoll = 0.0f, minRoll = 0.0f;
+                for (int i = 0; i < 150; ++i) {
+                    Input::FeedKeys(keys ? std::vector<char>{'w'} : std::vector<char>{});
+                    sc.Update(1.0f / 60.0f);
+                    if (i < 40) continue;
+                    maxRoll = std::max(maxRoll, rollOf()); minRoll = std::min(minRoll, rollOf());
+                }
+                for (int i = 0; i < 90; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+                idleRoll = std::fabs(rollOf());
+                return std::max(maxRoll, -minRoll) + (maxRoll > 0.5f && minRoll < -0.5f ? 1000.0f : 0.0f);
+            };
+            float idle = 0.0f;
+            const float off = run(0.0f, 1.0f, true, idle);
+            CHECK(off < 0.5f);
+            const float on = run(3.0f, 1.0f, true, idle);
+            CHECK(on > 1000.0f + 1.5f);          // it rolls both ways, by at least 1.5 degrees
+            CHECK(on < 1000.0f + 3.3f);          // and never past the setting
+            CHECK(idle < 0.2f);                  // it has faded out after stopping
+            const float idleRun = run(3.0f, 1.0f, false, idle);
+            CHECK(idleRun < 0.3f);               // standing still: none
+            const float air = run(3.0f, 80.0f, true, idle);
+            CHECK(air < 0.3f);                   // falling through the air: none
         }
         Log::sink = std::move(prev);
     }

@@ -1330,6 +1330,11 @@ target_link_libraries(test_vs_flow_playground PRIVATE okay::engine)
 target_compile_definitions(test_vs_flow_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_flow_playground COMMAND test_vs_flow_playground)
 
+add_executable(test_vs_registry_effect test_vs_registry_effect.cpp)
+target_include_directories(test_vs_registry_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_registry_effect PRIVATE okay::engine)
+add_test(NAME vs_registry_effect COMMAND test_vs_registry_effect)
+
 add_executable(test_vs_node_effect test_vs_node_effect.cpp)
 target_include_directories(test_vs_node_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_node_effect PRIVATE okay::engine)

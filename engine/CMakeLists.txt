@@ -8,6 +8,7 @@ add_library(okay_engine
     src/Core/Console.cpp
     src/Core/DebugOverlay.cpp
     src/Core/SaveGame.cpp
+    src/Core/SaveFile.cpp
     src/Core/SaveFramework.cpp
     src/Core/SaveFrameworkScene.cpp
     src/Core/SaveFrameworkSync.cpp
@@ -44,6 +45,7 @@ add_library(okay_engine
     src/Scene/ComponentSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
+    src/Components/LookAtIK.cpp
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
@@ -103,6 +105,9 @@ add_library(okay_engine
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
     src/Components/UIBarBind.cpp
+    src/Components/UIDamageNumbers.cpp
+    src/Components/UIDialogueBox.cpp
+    src/Components/UIThemeAsset.cpp
     src/Components/UIDraggable.cpp
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
@@ -114,6 +119,7 @@ add_library(okay_engine
     src/Components/CharacterAnimBackend.cpp
     src/Animation/HumanoidMotion.cpp
     src/Animation/HumanoidLibrary.cpp
+    src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp
@@ -152,6 +158,8 @@ add_library(okay_engine
     src/Debug/MemoryTracker.cpp
     src/Debug/DrawCallRecorder.cpp
     src/Debug/ConsoleModel.cpp
+    src/Debug/Diagnostics.cpp
+    src/Debug/ProjectDiagnostics.cpp
     src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
     src/UI/UIBatcher.cpp
@@ -174,6 +182,8 @@ add_library(okay_engine
     src/Modeling/PolyOps.cpp
     src/Modeling/Modifiers.cpp
     src/Modeling/UVUnwrap.cpp
+    src/Components/LODGroup.cpp
+    src/Render/Visibility.cpp
     src/Optimize/MeshSimplify.cpp
     src/Optimize/LodGroup.cpp
     src/Optimize/OcclusionBuffer.cpp
@@ -460,6 +470,8 @@ target_sources(okay_engine PRIVATE
     src/Scene/Properties.cpp
     src/Scene/PropertyRegistry.cpp
     src/Scene/BuiltinProperties.cpp
+    src/Scene/BuiltinPropertiesGameplay.cpp
+    src/Scene/BuiltinPropertiesUI.cpp
 )
 
 # ---- Core runtime foundations: job system, memory arenas, handles and ids, frame pacing ----

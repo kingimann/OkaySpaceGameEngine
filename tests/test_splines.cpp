@@ -354,8 +354,8 @@ int main() {
         auto* mr = sp->gameObject->GetComponent<MeshRenderer>();
         CHECK(mr != nullptr);
         const Mesh& m = mr->mesh;
-        CHECK(m.vertices.size() == 11u * 4u);          // 11 cross-sections x 4 profile points
-        CHECK(m.TriangleCount() == 10 * 3 * 2);        // 10 spans x 3 faces x 2
+        CHECK(m.vertices.size() == 11u * 4u + 2u);     // 11 rings x 4, plus a centre on each end cap
+        CHECK(m.TriangleCount() == 10 * 3 * 2 + 8);    // sides, plus 4 tris on each closed end
         Vec3 lo, hi; m.Bounds(lo, hi);
         CHECK(Near(lo, {-2.0f, -0.25f, 0.0f}, 1e-4f) && Near(hi, {2.0f, 0.02f, 10.0f}, 1e-4f));   // top 2 cm up
         float vMax = 0.0f, uMax = 0.0f;
@@ -375,10 +375,10 @@ int main() {
         sm->profile = SplineMesh::Profile::Strip;
         CHECK(sm->Rebuild() && mr->mesh.vertices.size() == 22u && mr->mesh.TriangleCount() == 20);
         sm->profile = SplineMesh::Profile::Tube; sm->sides = 8;
-        CHECK(sm->Rebuild() && mr->mesh.vertices.size() == 11u * 9u && mr->mesh.TriangleCount() == 10 * 8 * 2);
+        CHECK(sm->Rebuild() && mr->mesh.vertices.size() == 11u * 9u + 2u && mr->mesh.TriangleCount() == 10 * 8 * 2 + 16);
         CHECK(mr->mesh.HasNormals());
         sm->profile = SplineMesh::Profile::Rail;
-        CHECK(sm->Rebuild() && mr->mesh.vertices.size() == 11u * 5u && mr->mesh.TriangleCount() == 10 * 4 * 2);
+        CHECK(sm->Rebuild() && mr->mesh.vertices.size() == 11u * 5u + 2u && mr->mesh.TriangleCount() == 10 * 4 * 2 + 8);
         sm->profile = SplineMesh::Profile::Custom;
         sm->customProfile = {{-1, 0}, {0, 0.5f}, {1, 0}};
         CHECK(sm->Rebuild() && mr->mesh.vertices.size() == 33u && mr->mesh.TriangleCount() == 40);

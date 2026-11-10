@@ -5,6 +5,8 @@
 
 #include "okay/Render/D3D11Renderer.hpp"
 #include "okay/Render/Culling.hpp"
+#include "okay/Render/Visibility.hpp"
+#include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
 #include "okay/Render/ShadowSetup.hpp"
@@ -72,6 +74,8 @@ const char* kHLSL =
     "Texture2D uNormalTex : register(t1);\n"        // bump/normal map (tangent-space)
     "Texture2D uSpecTex : register(t2);\n"          // gloss/specular map
     "Texture2D uAoTex : register(t3);\n"            // ambient-occlusion map
+    "Texture2D uMrTex : register(t6);\n"            // glTF metallic-roughness (G rough, B metal)
+    "Texture2D uEmisTex : register(t7);\n"          // glTF emissive
     "Texture2D uShadowTex : register(t4);\n"        // sun cascade atlas (depth)
     "Texture2D uLocalTex : register(t5);\n"         // spot/point light tile atlas (depth)
     "SamplerState uSamp : register(s0);\n"
@@ -222,7 +226,17 @@ const char* kHLSL =
     "  bool lin = uFogCol.w > 0.5;\n"
     "  if (lin) base = pow(max(base, 0.0), 2.2);\n"
     "  float3 emis = uEmissive;\n"
+    "  if (uLightCount.z > 0.5) emis *= uEmisTex.Sample(uSamp, i.uv).rgb;\n"
     "  if (lin) emis = pow(max(emis, 0.0), 2.2);\n"
+    "  float shiny = uShininess; float metalK = uPbr.x; float specK = uSpecular;\n"
+    "  if (uLightCount.y > 0.5) {\n"
+    "    float4 mr = uMrTex.Sample(uSamp, i.uv);\n"
+    "    metalK *= mr.b;\n"
+    "    float rough0 = saturate(1.0 - (uShininess - 4.0) / 124.0);\n"
+    "    float rough = saturate(rough0 * mr.g);\n"
+    "    shiny = 4.0 + (1.0 - rough) * 124.0;\n"
+    "    specK *= clamp(1.0 - rough, 0.04, 1.0);\n"
+    "  }\n"
     "  if (uUnlit > 0.5) { float3 uc = base + emis;\n"            // decode+encode cancel: unlit unchanged
     "    if (lin) uc = pow(max(uc, 0.0), 1.0/2.2);\n"
     "    return float4(uc, uAlpha); }\n"
@@ -239,7 +253,7 @@ const char* kHLSL =
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "    lit += uLightColor * ndl * sh;\n"
     "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
-    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * sh; }\n"
+    "      spec = pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * sh; }\n"
     "  } else {\n"
     "    [loop] for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"   // directional + point + spot + area
     "      float4 d0 = uLights[li*4+0]; float4 d1 = uLights[li*4+1];\n"
@@ -262,7 +276,7 @@ const char* kHLSL =
     "      else if (recv && uLShadow[li].x > -0.5) lsh = localShadow(li, d1.xyz, d0.w, i.world, Ns, ld, dist);\n"
     "      lit += d2.xyz * ndl * at * lsh;\n"
     "      if (uSpecular > 0.0) { float3 H = normalize(ld + Vv);\n"   // highlights take the light's colour + intensity
-    "        spec += d2.xyz * (pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at * lsh); }\n"
+    "        spec += d2.xyz * (pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * at * lsh); }\n"
     "    }\n"
     "  }\n"
     "  if (uShaderMode > 7.5) lit += fz * fz * lit * 0.6;\n"      // Velvet: fuzzy grazing sheen
@@ -272,7 +286,7 @@ const char* kHLSL =
     "    float ao = dot(uAoTex.Sample(uSamp, i.uv).rgb, float3(0.2126, 0.7152, 0.0722));\n"
     "    lit *= (1.0 - uPbr2.x * (1.0 - ao));\n"
     "  }\n"
-    "  float metal = saturate(uPbr.x);\n"                         // metalness
+    "  float metal = saturate(metalK);\n"                       // metalness
     "  float diffK = 1.0 - 0.9 * metal;\n"
     "  float3 f0 = lerp(float3(1,1,1), base, metal);\n"
     "  float3 diff = base * lit * diffK;\n"
@@ -1374,6 +1388,8 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
     }
 
+    visibility::Build(scene, vp, eye, w, h, visibility::RenderViewFovY(), ignore);
+
     // ---- Shadow-map depth pre-passes -------------------------------------------
     // Sun: one ortho cascade per tile of the sun atlas. Local lights: one
     // perspective tile per spot light, six per point/area light (cube faces).
@@ -1388,7 +1404,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             auto* mr = go->GetComponent<MeshRenderer>();
             if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
             if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
-            const Mesh& mesh = mr->DisplayMesh();
+            const Mesh* lodMesh = visibility::Current().ShadowMesh(go, mr);
+            if (!lodMesh) continue;
+            const Mesh& mesh = *lodMesh;
             const auto& V = mesh.vertices; const auto& T = mesh.triangles;
             if (V.empty() || T.size() < 3) continue;
             if (CulledByFrustum(lightFr, go, mr)) continue;
@@ -1657,19 +1675,15 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         EffectiveSkyColors(rs, EnvSky().top, EnvSky().horizon, EnvSky().bottom);   // gradient, or the sun's palette
     }
 
-    // Skip what the camera can't see.
-    const Frustum viewFr = Frustum::FromVP(vp);
-    int drawnN = 0, culledN = 0;
-    for (const auto& up : scene.Objects()) {
-        GameObject* go = up.get();
-        if (!go || !go->ActiveInHierarchy() || go->HiddenFromCamera(ignore)) continue;
-        if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
-        auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || mr->wireframe || !mr->enabled) continue;
-        const Mesh& mesh = mr->DisplayMesh();
+    // Skip what the camera can't see (frustum, occlusion, LOD) and merge safe batches.
+    const visibility::Frame& vis = visibility::Current();
+    int drawnN = 0;
+    for (const visibility::Item& it : vis.items) {
+        GameObject* go = it.go;
+        auto* mr = it.mr;
+        const Mesh& mesh = *it.mesh;
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
-        if (CulledByFrustum(viewFr, go, mr)) { ++culledN; continue; }
         ++drawnN;
         ID3D11ShaderResourceView* srv = p->TextureFor(mr->texture);
 
@@ -1677,8 +1691,8 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         // (expanded + uploaded once — see Impl::EnsureMeshVB); meshes deformed on
         // the CPU every frame by a Character stream through `vb`. SkinnedMesh is
         // cached too, re-uploaded only when its version moves.
-        const bool deformed = go->GetComponent<Character>() != nullptr;
-        const auto* skin = go->GetComponent<SkinnedMesh>();
+        const bool deformed = !it.batched && go->GetComponent<Character>() != nullptr;
+        const auto* skin = it.batched ? nullptr : go->GetComponent<SkinnedMesh>();
         Impl::MeshVB* mvb = nullptr;
         Impl::SkinVB* svb = nullptr;
         int vcount = 0;
@@ -1717,13 +1731,15 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             }
         }
 
-        Mat4 model = go->transform->LocalToWorldMatrix();
+        Mat4 model = it.model;
         Mat4 mvp = vp * model;
         bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
         CB cb; std::memset(&cb, 0, sizeof(cb));
         std::memcpy(cb.mvp, mvp.m, sizeof(cb.mvp));
         std::memcpy(cb.model, model.m, sizeof(cb.model));
-        cb.color[0] = mr->color.r; cb.color[1] = mr->color.g; cb.color[2] = mr->color.b;
+        float tintR = 1, tintG = 1, tintB = 1;
+        if (it.lod >= 0) if (auto* lg = go->GetComponent<LODGroup>(); lg) lg->DebugTint(it.lod, tintR, tintG, tintB);
+        cb.color[0] = mr->color.r * tintR; cb.color[1] = mr->color.g * tintG; cb.color[2] = mr->color.b * tintB;
         cb.specular = unlit ? 0.0f : mr->specular;
         cb.emissive[0] = mr->emissive.r; cb.emissive[1] = mr->emissive.g; cb.emissive[2] = mr->emissive.b;
         cb.shininess = mr->shininess;
@@ -1760,6 +1776,8 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.shadowAlpha = -1.0f;   // lit pass (>=0 would draw the flat shadow — must be off here)
         cb.alpha = mr->color.a;   // material opacity (1 = opaque); < 1 alpha-blends (water/glass)
         cb.lightCount[0] = (float)frameLightCount;
+        cb.lightCount[1] = mr->metallicRoughnessMap.empty() ? 0.0f : 1.0f;
+        cb.lightCount[2] = mr->emissiveMap.empty() ? 0.0f : 1.0f;
         std::memcpy(cb.lights, frameLights, sizeof(frameLights));
         {
             const auto& rs = scene.renderSettings;
@@ -1779,6 +1797,10 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         if (nsrv) c->PSSetShaderResources(1, 1, &nsrv);   // normal/bump map on t1
         if (ssrv) c->PSSetShaderResources(2, 1, &ssrv);   // gloss/specular map on t2
         if (aosrv) c->PSSetShaderResources(3, 1, &aosrv); // ambient-occlusion map on t3
+        ID3D11ShaderResourceView* mrsrv = mr->metallicRoughnessMap.empty() ? nullptr : p->TextureFor(mr->metallicRoughnessMap);
+        ID3D11ShaderResourceView* emsrv = mr->emissiveMap.empty() ? nullptr : p->TextureFor(mr->emissiveMap);
+        if (mrsrv) c->PSSetShaderResources(6, 1, &mrsrv);
+        if (emsrv) c->PSSetShaderResources(7, 1, &emsrv);
         // Per-material texture filter (Pixel = nearest, Smooth = aniso/linear).
         ID3D11SamplerState* useSamp = (mr->texFilter == MeshRenderer::TexFilter::Pixel && p->sampPoint) ? p->sampPoint : p->samp;
         c->PSSetSamplers(0, 1, &useSamp);
@@ -1829,7 +1851,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
         if (svb) { c->IASetInputLayout(p->layout); c->VSSetShader(p->vs, nullptr, 0); }
     }
-    LastCullCounters().drawn = drawnN; LastCullCounters().culled = culledN;
+    LastCullCounters().drawn = drawnN;
 
     const bool useChain = chain && p->EnsurePostTargets();
     PostVignetteHandled() = useChain && rsTop.vignette > 0.0f;

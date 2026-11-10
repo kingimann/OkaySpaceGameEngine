@@ -171,6 +171,42 @@ in the test when its rows are in the table. A new node in a finished group
 needs a row in the same change. A new node in any group should already follow
 this page, even before its group is finished.
 
+## Templates
+
+Graph > Templates in the visual script editor replaces the graph with a complete
+script from `editor/VisualScriptTemplates.hpp`. Each one is a working graph: a
+comment on the canvas, a level from the table above, and `var` lines. Those
+numbers and words show on the Visual Script component, and Play starts with
+them set. Picking one on a selected object attaches the graph and adds the
+parts it names (a rigidbody, a trigger, text, a sound, or particles).
+
+The old Starter Scripts list is one-step Actions recipes. It stays on an Actions
+component. It is not what this menu shows.
+
+| Category | Template | Level |
+|---|---|---|
+| Movement | Move with WASD, Spin, Float, Jump | Basic |
+| Movement | Follow a target, Patrol | Intermediate |
+| Interaction | Door, Pickup, Press E | Basic |
+| Gameplay | Moving platform, Win at score | Basic |
+| Gameplay | Health, Checkpoint, Chase | Intermediate |
+| UI | Score readout, Message | Basic |
+| UI | Countdown, Hit feedback | Intermediate |
+| Camera | Camera shake | Basic |
+| Camera | Camera follow, Camera zoom | Intermediate |
+| Logic | Cooldown ability | Intermediate |
+| Logic | State machine | Advanced |
+| Gameplay | Spawner, Shooter, Win or lose | Intermediate |
+| Gameplay | Line of sight | Advanced |
+| UI | Health bar | Intermediate |
+| Movement | Click to move | Intermediate |
+| Camera | Camera switch | Intermediate |
+
+Countdown is the on-screen timer. Win or lose writes You win or You lose on the object's text. Spawner and Shooter use `examples/node_playground/marker.okayprefab` and `shot.okayprefab`. Line of sight chases only when a ray hits the object named Player. Click to move uses Mouse Ground, the point where the cursor meets the floor.
+
+`tests/test_vs_templates.cpp` loads every template in a scene, presses Play, and
+checks the result (the object moved, the door opened, the score went up).
+
 ## Docs
 
 The palette index in `docs/visual_scripting.md` uses the title people see, with

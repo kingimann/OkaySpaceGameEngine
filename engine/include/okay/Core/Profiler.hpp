@@ -1,5 +1,7 @@
 #pragma once
+#include <atomic>
 #include <chrono>
+#include <cmath>
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -7,6 +9,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <fstream>
+#include "okay/Core/Utf8.hpp"
 
 namespace okay {
 
@@ -19,6 +22,11 @@ namespace okay {
 ///
 /// Usage:  { OKAY_PROFILE("Physics"); ...work... }   // RAII begin/end (nestable)
 /// Frame:  Prof().BeginFrame();  ...  Prof().EndFrame(frameMs);
+///
+/// Threads: the profiler records the thread that calls BeginFrame (the main thread). A scope
+/// opened on any other thread (a job, a loader) is ignored, so OKAY_PROFILE in code that
+/// also runs on workers can never corrupt the frame being built. Read the results (FrameAt,
+/// ExportChromeTrace ...) from the same thread, between frames.
 class Profiler {
 public:
     static constexpr int kHistory = 240;   // frames kept (~4s at 60fps)
@@ -48,20 +56,23 @@ public:
     void Stat3(int objects, int tris, int parts) { drawObjects = objects; drawTriangles = tris; particles = parts; }
 
     double gpuMs = 0.0;          // most recent synchronous render/read-back time (GPU proxy)
-    void Gpu(double ms) { gpuMs = ms; }
+    void Gpu(double ms) { gpuMs = std::isfinite(ms) && ms > 0.0 ? ms : 0.0; }
 
     int    histPos = 0;          // next write slot in the ring
     double lastFrameMs = 0.0, cpuMs = 0.0;
 
     // ---- frame ring access -------------------------------------------------
     int Count() const { return m_count < kHistory ? m_count : kHistory; }
+    // (The accessors below take a timeline index; one outside 0..Count()-1 gives an empty frame / 0.)
     /// Map a 0..Count()-1 timeline index (oldest..newest) to a ring slot.
     int RingSlot(int timelineIdx) const {
         int n = Count();
         int start = (histPos - n + kHistory * 2) % kHistory;
         return (start + timelineIdx) % kHistory;
     }
-    const Frame& FrameAt(int timelineIdx) const { return m_ring[RingSlot(timelineIdx)]; }
+    const Frame& FrameAt(int timelineIdx) const {
+        return timelineIdx < 0 || timelineIdx >= Count() ? m_empty : m_ring[RingSlot(timelineIdx)];
+    }
     /// The frame the window should display: the scrubbed one, else the newest.
     const Frame& Displayed() const {
         int n = Count();
@@ -71,9 +82,9 @@ public:
     }
 
     // history series for plotting (oldest -> newest), filled by the caller's loop
-    double SeriesTotal(int i) const { return m_ring[RingSlot(i)].total; }
-    double SeriesGpu(int i)   const { return m_ring[RingSlot(i)].gpu; }
-    double SeriesCpu(int i)   const { return m_ring[RingSlot(i)].cpu; }
+    double SeriesTotal(int i) const { return FrameAt(i).total; }
+    double SeriesGpu(int i)   const { return FrameAt(i).gpu; }
+    double SeriesCpu(int i)   const { return FrameAt(i).cpu; }
 
     /// Sum of self time over a category prefix (e.g. "Scripts") for a frame — used
     /// for the stacked CPU graph. "" matches everything not otherwise categorised.
@@ -101,18 +112,20 @@ public:
     // ---- collection --------------------------------------------------------
     void BeginFrame() {
         if (!enabled) return;
+        m_owner.store(ThreadTag(), std::memory_order_relaxed);   // from now on only this thread is profiled
         m_build.clear();
         m_stack.clear();
         m_frameStart = Now();
         if (!m_haveEpoch) { m_epoch = m_frameStart; m_haveEpoch = true; }
     }
     void Begin(const char* name) {
-        if (!enabled) return;
+        if (!enabled || !OnOwnerThread()) return;
+        if (!name) name = "(null)";
         Open o; o.name = name; o.start = Now(); o.childMs = 0.0; o.depth = (int)m_stack.size();
         m_stack.push_back(o);
     }
     void End() {
-        if (!enabled || m_stack.empty()) return;
+        if (!enabled || !OnOwnerThread() || m_stack.empty()) return;
         Open o = m_stack.back(); m_stack.pop_back();
         double inclusive = Ms(Now() - o.start);
         double self = inclusive - o.childMs; if (self < 0.0) self = 0.0;
@@ -124,7 +137,8 @@ public:
         b->self += self; b->inclusive += inclusive; b->calls++;
     }
     void EndFrame(double frameMs) {
-        if (!enabled) return;
+        if (!enabled || !OnOwnerThread()) return;
+        if (!std::isfinite(frameMs) || frameMs < 0.0) frameMs = 0.0;   // one bad number must not poison the averages
         lastFrameMs = frameMs;
         double cpu = 0.0;
         for (const auto& b : m_build) if (b.depth == 0) cpu += b.inclusive;
@@ -245,7 +259,11 @@ private:
     static void AppendNum(std::string& out, double v) {
         char b[48]; std::snprintf(b, sizeof(b), "%.3f", v); out += b;
     }
-    static void AppendJsonEscaped(std::string& out, const std::string& s) {
+    // A JSON string body: quotes, backslashes and control characters escaped. Text that is not valid UTF-8 (a name
+    // from a Latin-1 file) is repaired first (bad bytes become U+FFFD, see utf8::Sanitize), so the output is always
+    // valid JSON that a trace viewer will open.
+    static void AppendJsonEscaped(std::string& out, const std::string& raw) {
+        const std::string s = utf8::Sanitize(raw);
         for (unsigned char c : s) {
             switch (c) {
                 case '"':  out += "\\\""; break;
@@ -265,6 +283,14 @@ private:
         f.write(s.data(), (std::streamsize)s.size());
         return (bool)f;
     }
+
+    static const void* ThreadTag() { static thread_local char tag; return &tag; }
+    // True on the thread that started the current frame (or before any frame was started).
+    bool OnOwnerThread() const {
+        const void* o = m_owner.load(std::memory_order_relaxed);
+        return o == nullptr || o == ThreadTag();
+    }
+    std::atomic<const void*> m_owner{nullptr};
 
     struct Open { const char* name; std::chrono::steady_clock::time_point start; double childMs; int depth; };
     std::vector<Open>   m_stack;

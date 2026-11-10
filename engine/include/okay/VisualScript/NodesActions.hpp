@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/Components/ActionList.hpp"
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
@@ -76,7 +77,7 @@ struct DelayNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (!g.Resuming()) {
             if (waiting) return -1;   // already counting down
-            if (seconds <= 0.0f) return 0;
+            if (!(seconds > 0.0f)) return 0;   // zero, negative, or not a real number: don't park the chain
             waiting = true; left = seconds;
             return NodeGraph::kSuspend;
         }

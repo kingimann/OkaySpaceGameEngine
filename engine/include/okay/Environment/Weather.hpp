@@ -45,7 +45,25 @@ public:
     std::string loadedClip;
     Random rng;
     void Awake() override { rng.Seed(0x5eedu); }
-    void OnDestroy() override { if (WeatherRigCount() > 0) --WeatherRigCount(); }
+    /// The count is taken when this rig is created, not in Start, and given
+    /// back once. A second rig that was never counted must not decrement it,
+    /// including when it is destroyed before Start.
+    void AcquireCount() {
+        if (m_ownsCount) return;
+        ++WeatherRigCount();
+        m_ownsCount = true;
+    }
+    void ReleaseCount() {
+        if (!m_ownsCount) return;
+        if (WeatherRigCount() > 0) --WeatherRigCount();
+        m_ownsCount = false;
+    }
+    ~WeatherRig() override { ReleaseCount(); }
+    void OnDestroy() override { ReleaseCount(); }
+    void ReleaseUnstarted() override { ReleaseCount(); }
+
+private:
+    bool m_ownsCount = false;
 };
 
 namespace weather_detail {
@@ -114,7 +132,7 @@ inline void UpdateWeather(Scene& scene, float dt, const Vec3* follow = nullptr) 
         rig = rigObj->AddComponent<WeatherRig>();
         rig->rng.Seed(0x5eedu);
         rig->previous = W::None; rig->current = ws.preset; rig->blend = 0.0f;
-        ++WeatherRigCount();
+        rig->AcquireCount();
     }
     if (rig->current != ws.preset) { rig->previous = rig->current; rig->current = ws.preset; rig->blend = 0.0f; }
     const float fade = ws.fade > 0.01f ? ws.fade : 0.01f;

@@ -59,17 +59,25 @@ private:
 /// and loads the custom tags (and the strict flag) with the project settings. The list is
 /// process-wide and not locked: change it from the main thread.
 struct Tags {
+    /// The longest tag, counted in characters (an accented or Japanese letter is one character, not its
+    /// two or three bytes). A name is also never more than four bytes per character.
     static constexpr std::size_t kMaxLength = 64;
+    /// How many characters a name has: UTF-8 bytes that are not continuation bytes.
+    static std::size_t CharCount(const std::string& t) {
+        std::size_t n = 0;
+        for (unsigned char c : t) if ((c & 0xC0u) != 0x80u) ++n;
+        return n;
+    }
     /// The most custom tags a project can list (a damaged project file cannot make the list huge).
     static constexpr int kMaxCustom = 1000;
 
-    /// A usable tag name: 1..kMaxLength characters, no control characters, and no
+    /// A usable tag name: 1..kMaxLength characters (not bytes), no control characters, and no
     /// leading or trailing space (so "Player" and "Player " can't be two tags).
     static bool IsValidName(const std::string& t) { return WhyInvalid(t).empty(); }
     /// Why a name cannot be a tag, for an editor to show; "" when it can.
     static std::string WhyInvalid(const std::string& t) {
         if (t.empty()) return "a tag name cannot be empty";
-        if (t.size() > kMaxLength) return "a tag name is at most " + std::to_string(kMaxLength) + " characters";
+        if (CharCount(t) > kMaxLength || t.size() > kMaxLength * 4) return "a tag name is at most " + std::to_string(kMaxLength) + " characters";
         if (t.front() == ' ') return "a tag name cannot start with a space";
         if (t.back() == ' ') return "a tag name cannot end with a space";
         for (unsigned char c : t) if (c < 0x20 || c == 0x7F) return "a tag name cannot contain control characters";

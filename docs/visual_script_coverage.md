@@ -33,7 +33,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1308 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1350 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -121,6 +121,12 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `String.Format` | `Fn.String.Format` |
 | `String.IsNullOrEmpty` | `Fn.String.IsNullOrEmpty` |
 | `String.Join` | `Fn.String.Join` |
+| `Time.HitStop` | `Fn.Time.HitStop` |
+| `Time.IsPausedBy` | `Fn.Time.IsPausedBy` |
+| `Time.PopPause` | `Fn.Time.PopPause` |
+| `Time.PushPause` | `Fn.Time.PushPause` |
+| `Time.RampTimeScale` | `Fn.Time.RampTimeScale` |
+| `Time.SlowMotion` | `Fn.Time.SlowMotion` |
 | `TryGetComponent` | `Fn.TryGetComponent` |
 | `Vector2` | `Fn.Vector2` |
 | `Vector2.Angle` | `Fn.Vector2.Angle` |
@@ -309,6 +315,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `create_object` | `Fn.create_object` |
 | `create_object_3d` | `Fn.create_object_3d` |
 | `crouch` | `Fn.crouch` |
+| `cursor_lock` | `Fn.cursor_lock` |
+| `cursor_lock_mode` | `Fn.cursor_lock_mode` |
 | `data_has` | `Fn.data_has` |
 | `data_num` | `Fn.data_num` |
 | `data_save` | `Fn.data_save` |
@@ -345,6 +353,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `dt` | `Fn.dt` |
 | `ease_back` | `Fn.ease_back` |
 | `ease_bounce` | `Fn.ease_bounce` |
+| `ease_curve` | `Fn.ease_curve` |
 | `ease_elastic` | `Fn.ease_elastic` |
 | `ease_in` | `Fn.ease_in` |
 | `ease_in_cubic` | `Fn.ease_in_cubic` |
@@ -433,6 +442,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `hide` | `Fn.hide` |
 | `hide_object` | `Fn.hide_object` |
 | `hit_react` | `Fn.hit_react` |
+| `hit_stop` | `Fn.hit_stop` |
+| `hitch_count` | `Fn.hitch_count` |
 | `hold_charge` | `Fn.hold_charge` |
 | `hold_drop` | `Fn.hold_drop` |
 | `hold_nearest` | `Fn.hold_nearest` |
@@ -491,6 +502,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `is_num` | `Fn.is_num` |
 | `is_object_active` | `Fn.is_object_active` |
 | `is_overlapping` | `Fn.is_overlapping` |
+| `is_paused` | `Fn.is_paused` |
+| `is_paused_by` | `Fn.is_paused_by` |
 | `is_playing_clip` | `Fn.is_playing_clip` |
 | `is_ragdoll` | `Fn.is_ragdoll` |
 | `is_sitting` | `Fn.is_sitting` |
@@ -785,7 +798,12 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `play_time` | `Fn.play_time` |
 | `playing_clip` | `Fn.playing_clip` |
 | `point_overlaps` | `Fn.point_overlaps` |
+| `pool_get` | `Fn.pool_get` |
+| `pool_idle` | `Fn.pool_idle` |
+| `pool_prewarm` | `Fn.pool_prewarm` |
+| `pool_release` | `Fn.pool_release` |
 | `pop` | `Fn.pop` |
+| `pop_pause` | `Fn.pop_pause` |
 | `pos_x` | `Fn.pos_x` |
 | `pos_y` | `Fn.pos_y` |
 | `pos_z` | `Fn.pos_z` |
@@ -804,6 +822,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `prone` | `Fn.prone` |
 | `pulse` | `Fn.pulse` |
 | `push` | `Fn.push` |
+| `push_pause` | `Fn.push_pause` |
 | `quest_active` | `Fn.quest_active` |
 | `quest_completed` | `Fn.quest_completed` |
 | `quest_state` | `Fn.quest_state` |
@@ -812,6 +831,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ragdoll` | `Fn.ragdoll` |
 | `ragdoll_push` | `Fn.ragdoll_push` |
 | `raise` | `Fn.raise` |
+| `ramp_time_scale` | `Fn.ramp_time_scale` |
+| `ramp_timescale` | `Fn.ramp_timescale` |
 | `rand` | `Fn.rand` |
 | `randi` | `Fn.randi` |
 | `random` | `Fn.random` |
@@ -877,14 +898,21 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `run_action` | `Fn.run_action` |
 | `run_from` | `Fn.run_from` |
 | `save` | `Fn.save` |
+| `save_ago` | `Fn.save_ago` |
 | `save_audio_settings` | `Fn.save_audio_settings` |
 | `save_clear` | `Fn.save_clear` |
+| `save_date` | `Fn.save_date` |
 | `save_delete` | `Fn.save_delete` |
 | `save_delete_file` | `Fn.save_delete_file` |
 | `save_exists` | `Fn.save_exists` |
 | `save_game` | `Fn.save_game` |
 | `save_has` | `Fn.save_has` |
 | `save_label` | `Fn.save_label` |
+| `save_play_text` | `Fn.save_play_text` |
+| `save_play_time` | `Fn.save_play_time` |
+| `save_scene` | `Fn.save_scene` |
+| `save_slots` | `Fn.save_slots` |
+| `save_valid` | `Fn.save_valid` |
 | `save_value` | `Fn.save_value` |
 | `scale_x` | `Fn.scale_x` |
 | `scale_y` | `Fn.scale_y` |
@@ -913,6 +941,9 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `seq_prepend_interval` | `Fn.seq_prepend_interval` |
 | `sequence_playing` | `Fn.sequence_playing` |
 | `sequence_time` | `Fn.sequence_time` |
+| `session_frame_count` | `Fn.session_frame_count` |
+| `session_time` | `Fn.session_time` |
+| `session_unscaled_time` | `Fn.session_unscaled_time` |
 | `set` | `Fn.set` |
 | `set_active` | `Fn.set_active` |
 | `set_active_of` | `Fn.set_active_of` |
@@ -1053,6 +1084,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `slice` | `Fn.slice` |
 | `slider_value` | `Fn.slider_value` |
 | `slot_value` | `Fn.slot_value` |
+| `slow_motion` | `Fn.slow_motion` |
 | `smooth_follow` | `Fn.smooth_follow` |
 | `smoothstep` | `Fn.smoothstep` |
 | `snap` | `Fn.snap` |
@@ -1258,6 +1290,10 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_card_end` | `Fn.ui_card_end` |
 | `ui_checkbox` | `Fn.ui_checkbox` |
 | `ui_clicked` | `Fn.ui_clicked` |
+| `ui_damage_number` | `Fn.ui_damage_number` |
+| `ui_dialogue_choice` | `Fn.ui_dialogue_choice` |
+| `ui_dialogue_open` | `Fn.ui_dialogue_open` |
+| `ui_dialogue_show` | `Fn.ui_dialogue_show` |
 | `ui_drop_source` | `Fn.ui_drop_source` |
 | `ui_drop_target` | `Fn.ui_drop_target` |
 | `ui_dropdown_text` | `Fn.ui_dropdown_text` |
@@ -1271,10 +1307,12 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_is_hovered` | `Fn.ui_is_hovered` |
 | `ui_key_value` | `Fn.ui_key_value` |
 | `ui_list_item` | `Fn.ui_list_item` |
+| `ui_load_theme` | `Fn.ui_load_theme` |
 | `ui_play` | `Fn.ui_play` |
 | `ui_pointer_over` | `Fn.ui_pointer_over` |
 | `ui_primary_button` | `Fn.ui_primary_button` |
 | `ui_progress` | `Fn.ui_progress` |
+| `ui_radio_value` | `Fn.ui_radio_value` |
 | `ui_sameline` | `Fn.ui_sameline` |
 | `ui_separator` | `Fn.ui_separator` |
 | `ui_set_bar_format` | `Fn.ui_set_bar_format` |
@@ -1285,6 +1323,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_set_fill` | `Fn.ui_set_fill` |
 | `ui_set_interactable` | `Fn.ui_set_interactable` |
 | `ui_set_progress` | `Fn.ui_set_progress` |
+| `ui_set_radio` | `Fn.ui_set_radio` |
 | `ui_set_slider` | `Fn.ui_set_slider` |
 | `ui_set_slider_format` | `Fn.ui_set_slider_format` |
 | `ui_set_slider_step` | `Fn.ui_set_slider_step` |
@@ -1293,6 +1332,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_set_tab_enabled` | `Fn.ui_set_tab_enabled` |
 | `ui_set_text` | `Fn.ui_set_text` |
 | `ui_set_toggle` | `Fn.ui_set_toggle` |
+| `ui_set_variant` | `Fn.ui_set_variant` |
 | `ui_show` | `Fn.ui_show` |
 | `ui_slider` | `Fn.ui_slider` |
 | `ui_slider_value` | `Fn.ui_slider_value` |
@@ -1306,9 +1346,11 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_text` | `Fn.ui_text` |
 | `ui_text_dim` | `Fn.ui_text_dim` |
 | `ui_text_wrapped` | `Fn.ui_text_wrapped` |
+| `ui_theme_preset` | `Fn.ui_theme_preset` |
 | `ui_toast` | `Fn.ui_toast` |
 | `ui_toggle_value` | `Fn.ui_toggle_value` |
 | `unequip` | `Fn.unequip` |
+| `unscaled_dt` | `Fn.unscaled_dt` |
 | `upper` | `Fn.upper` |
 | `vault` | `Fn.vault` |
 | `vec2` | `Fn.vec2` |

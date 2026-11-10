@@ -419,6 +419,15 @@ float Scheduler::TaskStep(Task& t, float dt, float unscaledDt) {
 }
 
 void Scheduler::RunTask(std::size_t i, float dt, float unscaledDt) {
+    // A callback (or the alive predicate) of this very task called Update: the nested update must not
+    // step it again. Its callbacks are moved out of the slot while they run, so running it from here would
+    // use up its period (and a repeat) without calling anything.
+    if (m_tasks[i].running) return;
+    struct Busy {
+        Scheduler& s; std::size_t slot; Handle handle;
+        Busy(Scheduler& sch, std::size_t i) : s(sch), slot(i), handle(sch.m_tasks[i].handle) { s.m_tasks[slot].running = true; }
+        ~Busy() { if (slot < s.m_tasks.size() && s.m_tasks[slot].handle == handle) s.m_tasks[slot].running = false; }
+    } busy(*this, i);
     if (HasLiveness(m_tasks[i]) && SlotOwnerGone(i)) { Retire(i); return; }
     if (m_tasks[i].handle == InvalidHandle) return;   // the predicate cancelled its own task
     const float step = TaskStep(m_tasks[i], dt, unscaledDt);

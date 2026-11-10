@@ -185,7 +185,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Parts:**
   - 15.9.1 Editor model - `editor/EditorState.*` - scene, selection, create helpers, Play and Stop with snapshot restore, editor camera; free of ImGui so tests can use it
   - 15.9.2 Undo and redo - `editor/EditorState.*` - snapshot-based: the whole scene as text, up to 100 steps; History panel jumps to any step (`DrawHistory` ~6709)
-  - 15.9.3 Autosave and recovery - `editor/main.cpp` (~1993, recovery popup ~16841) - periodic `<scene>.autosave` copy and a prompt to restore after a crash
+  - 15.9.3 Autosave and recovery - `editor/main.cpp`, `editor/DocRecovery.hpp` - recovery-folder copies of dirty graphs, scripts and the scene; a newer leftover `<scene>.autosave` is still offered and is not written again
   - 15.9.4 Panel tabs and layouts - `editor/EditorTabs.hpp`, `editor/main.cpp` (~4337-5388) - saved named layouts, presets (Default, Tall, Wide, 2 by 3, Scripting, Animation), Ctrl+Tab switcher, tab overflow, side tabs
   - 15.9.5 Edit-mode undo for meshes - `editor/main.cpp` (~3021) - undo inside mesh edit mode
   - 15.9.6 Focus-aware undo - `editor/LocalizationWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/DialogueWindow.*`, `editor/TimelineWindow.*` - while one of these windows has focus, Ctrl+Z and Ctrl+Y act on its own file (string table, tree, dialogue, sequence), not on the scene
@@ -225,24 +225,26 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 ### 15.11 Console and diagnostics panels
 - **What:** The panels that show what the editor and game are doing: the Console log, Crash Log, Stats, Profiler, History, the Net panel and the live variable watch.
 - **Parts:**
-  - 15.11.1 Console - `editor/ConsolePanel.*` - severity filters with counts, search, collapse of repeated lines, details, Error Pause, tab badge
+  - 15.11.1 Console - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; severity filters with counts, a category dropdown, search, collapse of repeated lines, details, Error Pause, Open Script, tab badge
   - 15.11.2 Crash Log and crash diagnostics - `editor/main.cpp` (`DrawCrashLog` ~6642, crash handler ~549-788) - reads crash reports from earlier runs
   - 15.11.3 Stats - `editor/main.cpp` (`DrawStats` ~10247-10358) - object, mesh and triangle counts, FPS
   - 15.11.4 Profiler - `editor/main.cpp` (`DrawProfiler` ~42668-42844) - frame, CPU and GPU timeline you can pause and scrub, per-section self and total times, CSV copy; times only while open
   - 15.11.5 Net panel - `editor/NetSimPanel.*` - network simulator toggles and bytes and messages per object
   - 15.11.6 Variables watch - `editor/main.cpp` (`DrawVarWatch` ~2252) - live visual-script variables
-  - 15.11.7 Status bar - `editor/main.cpp` (`DrawStatusBar` ~6412) - selection, object count, tool, mode, FPS
-- **Code:** `editor/ConsolePanel.*`, `editor/NetSimPanel.*`, `editor/main.cpp`
-- **API:** `ConsoleLog(text, level)`; View > Panels > Console, Crash Log, Stats, Profiler, Net, Variables (watch)
-- **Editor:** each panel
+  - 15.11.7 Status bar - `editor/main.cpp` (`DrawStatusBar` ~6412) - selection, object count, tool, mode, FPS, and a Problems count that opens the Problems panel
+  - 15.11.8 Problems panel - `editor/ProblemsPanel.*`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - one live list of what is wrong, grouped by object, asset or script, with error / warning / info filters; a click selects the object, opens the script or frames the graph node; Fix adds a missing component, clears a broken reference, re-imports a file that is on disk, or adds a Main Camera
+  - 15.11.9 Inline markers - `editor/main.cpp` (Hierarchy rows, Inspector component headers), `editor/VisualScriptEditor.hpp` - a warning or error badge with a tooltip on the object and on the component; a long name is cut with an ellipsis before the badge; graph nodes keep an error or warning badge and a bad wire's pins are drawn red
+- **Code:** `editor/ConsolePanel.*`, `editor/ProblemsPanel.*`, `editor/NetSimPanel.*`, `editor/main.cpp`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics`
+- **API:** `ConsoleLog(text, level)`; `EditorDiagnostics`, `CollectProjectDiagnostics`, `ApplyDiagnosticFix`, `AddNodeRequirement`; View > Panels > Console, Problems, Crash Log, Stats, Profiler, Net, Variables (watch)
+- **Editor:** each panel; Problems is docked with the Console
 - **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/core_logging_profiling.md`
-- **Tests:** `profiler`, `profiler_export`, `log` (engine side), `crash_reports`
-- **Status:** Works - panels exist and read the engine log and profiler
-- **Open:** planned area 23: CPU and GPU timeline window with memory tracking, frame debugger, error console filters linking to the source object; #574 added profiling and debugging data layers (`Debug/*`, engine side), still no editor window for them per its docs
-- **Related:** 23, 1.10, 19.2
-- **Words:** Console, log, errors, warnings, Error Pause, Crash Log, Stats, Profiler, FPS, Net panel, watch, status bar
-- **Seen as:** the Console is flooded by one repeated line; errors are not shown; the profiler shows nothing; stats differ from the build
-- **Ask me like:** "work on 15.11.1, click an error to select the object"; "Console warnings should show the script line"
+- **Tests:** `profiler`, `profiler_export`, `log` (engine side), `crash_reports`, `diagnostics`, `debug_console`
+- **Status:** Works - the Console, Problems and the inline badges read one diagnostic list; the list updates in edit mode when the scene changes
+- **Open:** planned area 23 still wants a CPU and GPU timeline window, memory tracking and a frame debugger
+- **Related:** 23, 1.10, 19.2, 33.2, 14.2, 13.5
+- **Words:** Console, log, errors, warnings, Error Pause, Crash Log, Stats, Profiler, FPS, Net panel, watch, status bar, Problems, diagnostics, Fix, badge
+- **Seen as:** the Console is flooded by one repeated line; errors are not shown; the profiler shows nothing; stats differ from the build; a problem does not select its object
+- **Ask me like:** "work on 15.11.8, add a project rule to Problems"; "clicking a warning should open the script"
 
 ### 15.12 Scene Manager panel
 - **What:** The project's scene list, file actions and the build order that Build Settings uses.

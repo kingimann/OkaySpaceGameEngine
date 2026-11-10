@@ -76,6 +76,7 @@
 #include "okay/Scene/SceneLocalization.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Scene/ObjectPool.hpp"
+#include "okay/Scene/NearestLookup.hpp"
 
 // Graphics assets
 #include "okay/Graphics/Image.hpp"
@@ -84,6 +85,10 @@
 
 // Built-in components
 #include "okay/Components/Camera.hpp"
+#include "okay/Render/CameraStack.hpp"
+#include "okay/Render/Visibility.hpp"
+#include "okay/Components/LODGroup.hpp"
+#include "okay/Components/Occluder.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -183,6 +188,9 @@
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/UIBarBind.hpp"
+#include "okay/Components/UIStyleVariant.hpp"
+#include "okay/Components/UIDamageNumbers.hpp"
+#include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIDraggable.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/UIElement.hpp"

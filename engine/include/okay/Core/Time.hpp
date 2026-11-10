@@ -95,6 +95,8 @@ public:
     static void RampTimeScale(float target, float seconds);
     static bool IsRamping();
     static float RampTarget();
+    /// Real seconds the running ramp still has to go (0 when there is none).
+    static float RampSecondsLeft();
     static void CancelRamp();
 
     /// Hold DeltaTime at 0 without touching the scale: SetTimeScale calls made while
@@ -112,10 +114,17 @@ public:
     /// fixed steps (GameLoop) advances it; InFixedStep() is true while one runs.
     static double FixedTime() { return s_fixedTime; }
     static bool   InFixedStep() { return s_inFixed; }
+    /// How far the leftover time is into the next fixed step, in [0, 1): what to blend the previous and
+    /// current simulated state by when drawing. GameLoop::Alpha() is the same number for code that holds the
+    /// loop; this one is for code that does not (a camera, a renderer, a component that interpolates). A
+    /// driver publishes it once a frame with SetFixedAlpha (GameLoop does); 0 before one has, and a value that
+    /// is not in [0, 1) (NaN included) is cut to that range.
+    static float FixedAlpha() { return s_fixedAlpha; }
+    static void  SetFixedAlpha(float a) { s_fixedAlpha = (a > 0.0f && a < 1.0f) ? a : (a >= 1.0f ? std::nextafter(1.0f, 0.0f) : 0.0f); }
     /// For the driver: bracket each fixed update with these.
     static void BeginFixedStep() { s_inFixed = true; }
     static void EndFixedStep(float step) { s_inFixed = false; if (step > 0.0f && std::isfinite(step)) s_fixedTime += (double)step; }
-    static void ResetFixedTime() { s_fixedTime = 0.0; s_inFixed = false; }
+    static void ResetFixedTime() { s_fixedTime = 0.0; s_inFixed = false; s_fixedAlpha = 0.0f; }
 
     // ---- Real and wall-clock time (Time.cpp) -----------------------------------
     // The game clocks above only move when a frame is stepped. These read the machine.
@@ -196,7 +205,7 @@ public:
         s_rawDeltaTime = 0.0f; s_rawPending = -1.0f;
         for (float& h : s_hist) h = 0.0f;
         s_histAt = 0; s_histN = 0; s_carry = 0.0f;
-        s_fixedTime = 0.0; s_inFixed = false;
+        s_fixedTime = 0.0; s_inFixed = false; s_fixedAlpha = 0.0f;
         s_sessionStartTime = s_sessionStartUnscaled = 0.0; s_sessionStartFrame = 0;
         ClearEffects();
     }
@@ -267,6 +276,7 @@ private:
     static inline int          s_hitCount          = 0;
     static inline double       s_fixedTime         = 0.0;
     static inline bool         s_inFixed           = false;
+    static inline float        s_fixedAlpha        = 0.0f;
     static inline double       s_sessionStartTime  = 0.0, s_sessionStartUnscaled = 0.0;
     static inline std::uint64_t s_sessionStartFrame = 0;
 };

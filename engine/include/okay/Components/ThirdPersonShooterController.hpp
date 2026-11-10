@@ -129,14 +129,18 @@ public:
         // first/third-person controllers (yaw decreases as the mouse moves right).
         Vec2 mp = Input::MousePosition();
         bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
-        if (m_haveMouse && !uiBlocked) {
-            yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;
-            pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
+        const int mouseSpace = MouseSpaceGeneration();
+        const bool spaceChanged = mouseSpace != m_mouseSpace;
+        if (m_haveMouse && !uiBlocked && !spaceChanged) {
+            float pdx = mp.x - m_lastMouse.x, pdy = mp.y - m_lastMouse.y;
+            LookPixels(pdx, pdy);
+            yaw   -= pdx * mouseSensitivity;
+            pitch += (invertY ? -1.0f : 1.0f) * pdy * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
         // camera doesn't snap on the first frame after the panel closes.
-        m_lastMouse = mp; m_haveMouse = !uiBlocked;
+        m_lastMouse = mp; m_haveMouse = !uiBlocked; m_mouseSpace = mouseSpace;
 
         // Look already applied. The orbit is LateUpdate. Move or jump stands up.
         if (HumanoidActions::IsSitting(gameObject)) {
@@ -351,6 +355,7 @@ private:
     }
 
     Vec2 m_lastMouse{0, 0};
+    int m_mouseSpace = 0;
     bool m_haveMouse = false;
     bool m_aiming = false;
     float m_aim = 0.0f;             // 0 = hip, 1 = aiming

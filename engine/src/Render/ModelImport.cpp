@@ -403,6 +403,8 @@ static void ApplyGltfMaterial(MeshRenderer& mr, const gltf_detail::GltfMat& gm) 
     if (!gm.baseColorTex.empty()) mr.texture   = gm.baseColorTex;
     if (!gm.normalTex.empty())    mr.normalMap = gm.normalTex;
     if (!gm.aoTex.empty())        mr.aoMap     = gm.aoTex;
+    if (!gm.metallicRoughnessTex.empty()) mr.metallicRoughnessMap = gm.metallicRoughnessTex;
+    if (!gm.emissiveTex.empty())  mr.emissiveMap = gm.emissiveTex;
     if (gm.hasBaseColorFactor)    mr.color     = Color(gm.baseColor[0], gm.baseColor[1], gm.baseColor[2], gm.baseColor[3]);
     if (gm.hasEmissiveFactor)     mr.emissive  = Color(gm.emissive[0], gm.emissive[1], gm.emissive[2], 1.0f);
     if (gm.hasMetalRough) {
@@ -1641,6 +1643,17 @@ void AutoMapLocomotion(ModelAnimator* ma) {
         for (std::size_t ci = 0; ci < ma->clips.size() && dirSlot[role]->empty(); ++ci)
             if (!used[ci] && dirRoles[role](ci)) { *dirSlot[role] = ma->clips[ci].name; used[ci] = true; }
     if (!ma->HasDirectionalClips()) mapForward(false);
+}
+
+std::string SuggestUnassignedSlot(const ModelAnimator& ma, int slot) {
+    if (slot < 0 || slot >= ModelAnimator::SlotCount) return {};
+    if (!ma.SlotClip(slot).empty()) return {};
+    ModelAnimator scratch;
+    scratch.clips.resize(ma.clips.size());
+    for (std::size_t i = 0; i < ma.clips.size(); ++i) scratch.clips[i].name = ma.clips[i].name;
+    for (int s = 0; s < ModelAnimator::SlotCount; ++s) scratch.SlotClip(s) = ma.SlotClip(s);
+    AutoMapLocomotion(&scratch);
+    return scratch.SlotClip(slot);
 }
 
 // Switch a retargeted model's locomotion between its clips and the built-in

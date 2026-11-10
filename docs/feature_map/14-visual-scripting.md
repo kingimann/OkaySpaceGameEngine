@@ -10,19 +10,20 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **What:** The Visual Script window (View > Editors & Tools > Visual Script): a zoomable canvas where nodes are placed from a palette, wired, commented and run live, with the runtime graph and the OkayVS file format behind it.
 - **Parts:**
   - 14.1.1 Canvas - `editor/VisualScriptEditor.hpp` - zoom, pan, grid, box select, comment frames, minimap, Fit, drag wires
-  - 14.1.2 Node palette and registry - `editor/VisualScriptEditor.hpp` (`Registry()`) - every node type with category, pins and defaults; right-click or Space opens the palette; engine API nodes appended
-  - 14.1.3 Node help - `editor/VisualScriptNodeHelp.hpp` - one plain-language line per category and per node type in the browser
+  - 14.1.2 Node palette and registry - `editor/VisualScriptEditor.hpp` (`Registry()`), `editor/VisualScriptPalette.hpp` - every node type with category, pins and defaults; right-click, Space or Add node opens one search panel; engine API nodes appended
+  - 14.1.3 Node help - `editor/VisualScriptNodeDocs.hpp`, `editor/VisualScriptNodeDocs.inc`, `docs/visual_scripting_nodes.md` - description, every pin (type, meaning, default), requirements, example and keywords for every registered node; the same text is the search details pane, the node tooltip and the generated page
+  - 14.1.10 Graph tabs and save prompts - `editor/VisualScriptEditor.hpp` - several graphs open at once; a dirty graph asks Save / Cancel / Don't Save before a tab closes; New adds an Untitled tab; tabs restore from `okay_vs_tabs.txt` and a missing file is an error tab
   - 14.1.4 Toolbar, templates and shortcuts - `editor/VisualScriptEditor.hpp` - File/Edit/+ Add/Templates, events list (click to jump), problems list, key picker for key nodes
   - 14.1.5 Editable graph model - `editor/VisualScriptEditor.hpp` (`VsEditGraph`) - load, save, copy and paste, undo by gesture, layout coordinates, starter graph
   - 14.1.6 Runtime graph - `VisualScript/NodeGraph` - `NodeGraph::Parse`, `Run`, entries, exec and data links, suspended waits, `MakeNode` by type name
   - 14.1.7 Graph component - `Components/VisualScriptComponent` - attaches a graph to an object: OnStart, OnUpdate and event entries, LoadFromText, LoadFromFile, serialized with the scene
   - 14.1.8 Inspector hook - `editor/main.cpp` (Visual Script header ~28850) - graph file path, Open in node editor, Reload; inspector values can be dropped onto a graph
   - 14.1.9 Outline, snap and align - `editor/VisualScriptEditor.hpp`, `editor/VsCanvasTools.hpp` - (#577) a left outline lists the graph's events, variables (grouped by scope) and parameters; a moved node snaps to a 20 px grid on release (the "Snap to grid" menu item); align Left, Right, Top or Bottom for the selected nodes; a hint line on the canvas when a graph has nodes but no event ("Nothing runs yet"); the helpers (`VsSnap`, `VsAlignNodes`, `VsCollectVariables`, `VsCollectParameters`) are pure data, covered by the editor selftest, and nothing new is written into the `.okayvs` file
-- **Code:** `editor/VisualScriptEditor.hpp`, `editor/VsCanvasTools.hpp`, `editor/VisualScriptNodeHelp.hpp`, `VisualScript/NodeGraph`, `Components/VisualScriptComponent`
+- **Code:** `editor/VisualScriptEditor.hpp`, `editor/VisualScriptPalette.hpp`, `editor/VisualScriptNodeDocs.hpp`, `editor/VsCanvasTools.hpp`, `editor/VisualScriptNodeHelp.hpp`, `VisualScript/NodeGraph`, `Components/VisualScriptComponent`
 - **API:** `vs::NodeGraph::Add/ConnectExec/ConnectData/Parse`, `VisualScriptComponent::SetGraph/LoadFromText/LoadFromFile`; file directives `node`, `exec`, `data`, `entry`
 - **Editor:** View > Editors & Tools > Visual Script; Inspector header "Visual Script"; Project panel `.okayvs` files
-- **Docs:** `docs/visual_scripting.md` (OkayVS format, Flow Graph editor, working faster, palette index)
-- **Tests:** `visualscript`, `vs_editor_model` (graph model without drawing), `vs_nodes`, `vs_pin_defaults`, `editor` (selftest: snap, align, variable outline, and a saved graph reopening with the same nodes)
+- **Docs:** `docs/visual_scripting.md` (OkayVS format, Flow Graph editor, working faster, palette index); `docs/visual_scripting_nodes.md` (every node, generated from the editor's doc table)
+- **Tests:** `visualscript`, `vs_editor_model` (graph model without drawing, tab dirty state, fuzzy search), `vs_node_docs` (every registered node is documented), `vs_nodes`, `vs_pin_defaults`, `editor` (selftest: snap, align, variable outline, and a saved graph reopening with the same nodes)
 - **Status:** Works - editor model, text format and runtime are covered; `vs_editor_model` checks save then load stays identical
 - **Open:** earlier map: docs update (the doc still has a retired "Flow Graph editor" section next to "One graph editor"); possible bug area: node definitions exist in the editor registry and in the engine pin table (`VsTypes`), so a new node must be added in both
 - **Related:** 14.2, 14.4, 14.7, 15.2, 15.10
@@ -34,7 +35,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **What:** Pin types (number, text, bool, vector, object...) with allowed wire conversions, a graph checker that runs before Play and before a build, values that carry object references by id, and variables at graph, object, scene and global scope.
 - **Parts:**
   - 14.2.1 Pin type table - `VisualScript/VsTypes` - `PinType`, `NodeSignature` per node type, `PinCompatible`, conversion hints; the editor colours pins and refuses wires from it
-  - 14.2.2 Graph checker - `VisualScript/VsTypes` - `ValidateGraphText`, `ValidateSceneGraphs`: wires that cannot work, nodes nothing runs, unset variables, bad key names, missing prefabs
+  - 14.2.2 Graph checker - `VisualScript/VsTypes` - `ValidateGraphText`, `ValidateSceneGraphs`: wires that cannot work, nodes nothing runs, unset variables, bad key names, missing prefabs; a bad wire sets `VsIssue::pin` so the editor paints that pin red, and the same issues are rows in Problems (15.11.8). `AddNodeRequirement` lets the node browser report a component a node needs
   - 14.2.3 Values - `VisualScript/VsValue` - one value type; `VsObject` holds an instance id, never a pointer
   - 14.2.4 Scene and global variables - `VisualScript/VsVariables` - scene variables go with the scene, globals survive loading another scene
   - 14.2.5 Function signatures - `VisualScript/VsTypes` - `FunctionSig` parsing for Function / Call / Return nodes

@@ -2,21 +2,34 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 
 namespace okay {
 
 namespace {
 std::uint64_t g_worldStamp = 0;   // every recompute gets a new stamp (children compare it)
+thread_local std::uint64_t t_walkSteps = 0;    // Transform::WorldWalkSteps
+thread_local std::uint64_t t_rebuilds = 0;     // Transform::WorldRebuilds
+thread_local std::uint64_t t_childWork = 0;    // Transform::ChildListWork
+std::mutex g_settleMutex;                      // readers that sweep the holes out of a child list take turns
 }
 
+std::uint64_t Transform::WorldWalkSteps() { return t_walkSteps; }
+std::uint64_t Transform::WorldRebuilds() { return t_rebuilds; }
+std::uint64_t Transform::ChildListWork() { return t_childWork; }
+
 // World matrices are cached per transform. The local fields are public and get
-// written directly all over the engine, so instead of dirty flags the cache keeps
-// a copy of the inputs it was built from: same local TRS, same parent, and the
-// parent's own cache unchanged (its stamp) -> the cached matrix is still right.
-// Checking is a few compares per level; rebuilding was a TRS + matrix multiply
-// per level, for every Position()/Rotation()/LocalToWorldMatrix() call.
+// written directly all over the engine (about 2400 places, the editor's drag boxes and the
+// scripting bindings among them), so no dirty flag could see a plain `t->localPosition.x = 3`.
+// Instead the cache keeps a copy of the inputs it was built from: same local TRS, same
+// parent, and the parent's own cache unchanged (its stamp) -> the cached matrix is still right.
+// Checking an unchanged chain is one read-only loop up the parents (a few compares per level, no
+// allocation, no matrix math); only a level that really changed is rebuilt, and only from the
+// first changed level down. The world scale (LossyScale) and rotation are cached with the matrix, so
+// asking for any of them costs the same one check.
 //
 // The walk up the parent chain is a loop, not a recursion: a hierarchy 100000 deep
 // (a generated chain, a corrupt file) would overflow the stack otherwise.
@@ -33,6 +46,23 @@ struct ChainBuffer {   // the chain from a transform up to its root; no allocati
     }
     const Transform* at(std::size_t i) const { return big.empty() ? small[i] : big[i]; }
 };
+
+// The inverse of an affine matrix; false when it has none (a collapsed axis, or not finite).
+// Mat4::Inverse answers the identity then, which is not an inverse. Same relative test as Mat4::Inverse.
+bool TryInvert(const Mat4& m, Mat4& out) {
+    const float det = m.Determinant();
+    float bound = 1.0f;
+    for (int c = 0; c < 4; ++c) {
+        const float* a = &m.m[4 * c];
+        bound *= std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2] + a[3] * a[3]);
+    }
+    if (!(std::fabs(det) > 1e-9f * bound)) return false;
+    out = m.Inverse();
+    return true;
+}
+
+// Undo a scale axis by axis; an axis that is collapsed (0) has no way back and reads `whenCollapsed`.
+float Unscale(float v, float scale, float whenCollapsed) { return std::fabs(scale) > 1e-12f ? v / scale : whenCollapsed; }
 } // namespace
 
 // Bring this one transform's own cache up to date; its parent's cache must be current.
@@ -45,9 +75,14 @@ const Mat4& Transform::RefreshWorld() const {
         std::memcmp(&m_wR, &localRotation, sizeof(Quat)) == 0 &&
         std::memcmp(&m_wS, &localScale, sizeof(Vec3)) == 0)
         return m_world;
+    ++t_rebuilds;
     Mat4 local = Mat4::TRS(localPosition, localRotation, localScale);
     m_world = pw ? (*pw) * local : local;
     m_wRot = m_parent ? (m_parent->m_wRot * localRotation).Normalized() : localRotation;
+    // Root first, as the chain walk multiplied it before the scale was cached: the same products in the same order.
+    m_wScale = m_parent ? Vec3{m_parent->m_wScale.x * localScale.x, m_parent->m_wScale.y * localScale.y,
+                               m_parent->m_wScale.z * localScale.z}
+                        : localScale;
     m_wP = localPosition; m_wR = localRotation; m_wS = localScale;
     m_wParent = m_parent; m_wParentStamp = ps;
     m_wStamp = ++g_worldStamp;
@@ -55,10 +90,31 @@ const Mat4& Transform::RefreshWorld() const {
     return m_world;
 }
 
+// True when every transform from this one to the root still matches the inputs its cache was built from and
+// the stamp of the parent it was built under. Read-only, one loop, stops at the first level that differs.
+bool Transform::ChainIsCurrent() const {
+    std::uint64_t steps = 0;
+    bool current = true;
+    for (const Transform* t = this; t; t = t->m_parent) {
+        ++steps;
+        const Transform* p = t->m_parent;
+        if (!t->m_wValid || t->m_wParent != p || (p && t->m_wParentStamp != p->m_wStamp) ||
+            std::memcmp(&t->m_wP, &t->localPosition, sizeof(Vec3)) != 0 ||
+            std::memcmp(&t->m_wR, &t->localRotation, sizeof(Quat)) != 0 ||
+            std::memcmp(&t->m_wS, &t->localScale, sizeof(Vec3)) != 0) {
+            current = false;
+            break;
+        }
+    }
+    t_walkSteps += steps;
+    return current;
+}
+
 const Mat4& Transform::WorldCache() const {
-    if (!m_parent) return RefreshWorld();
+    if (ChainIsCurrent()) return m_world;
     ChainBuffer chain;
     for (const Transform* t = this; t; t = t->m_parent) chain.push(t);
+    t_walkSteps += chain.n;
     for (std::size_t i = chain.n; i-- > 1;) chain.at(i)->RefreshWorld();   // root first, down to this one's parent
     return RefreshWorld();
 }
@@ -80,27 +136,56 @@ Quat Transform::Rotation() const {
 
 Vec3 Transform::LossyScale() const {
     if (!m_parent) return localScale;
-    ChainBuffer chain;   // a loop, not a recursion: the chain can be very deep. Multiplied root first, as it always was.
-    for (const Transform* t = this; t; t = t->m_parent) chain.push(t);
-    Vec3 out = chain.at(chain.n - 1)->localScale;
-    for (std::size_t i = chain.n - 1; i-- > 0;) {
-        const Vec3& sc = chain.at(i)->localScale;
-        out = {out.x * sc.x, out.y * sc.y, out.z * sc.z};
-    }
-    return out;
+    WorldCache();
+    return m_wScale;
+}
+
+// Position, rotation and scale in the world with a single check of the parent chain (Position()
+// + Rotation() + LossyScale() would check it three times).
+void Transform::ReadWorldPose(Vec3& pos, Quat& rot, Vec3& scale) const {
+    if (!m_parent) { pos = localPosition; rot = localRotation; scale = localScale; return; }
+    pos = m_parent->WorldCache().MultiplyPoint(localPosition);
+    RefreshWorld();   // the parent's cache is current now: this is one level
+    rot = m_wRot;
+    scale = m_wScale;
+}
+
+Vec3 Transform::WorldToParentLocal(const Vec3& worldPos) const {
+    // The whole parent matrix is inverted, so a stretched grandparent above a turned parent (a shear,
+    // which "rotation then scale" cannot undo) still lands the position exactly.
+    Mat4 inv;
+    if (TryInvert(m_parent->WorldCache(), inv)) return inv.MultiplyPoint(worldPos);
+    // The parent has a collapsed axis: undo what can be undone, keep the local value on that axis.
+    const Vec3 parentPos = m_parent->Position();
+    const Quat invRotation = m_parent->Rotation().Conjugate();
+    const Vec3 parentScale = m_parent->LossyScale();
+    const Vec3 rel = invRotation * (worldPos - parentPos);
+    return {Unscale(rel.x, parentScale.x, localPosition.x),
+            Unscale(rel.y, parentScale.y, localPosition.y),
+            Unscale(rel.z, parentScale.z, localPosition.z)};
+}
+
+Vec3 Transform::InverseTransformPoint(const Vec3& world) const {
+    const Mat4& m = WorldCache();
+    Mat4 inv;
+    if (TryInvert(m, inv)) return inv.MultiplyPoint(world);
+    // No inverse: the pseudo-inverse, in position, rotation and scale. A collapsed axis reads 0.
+    const Vec3 rel = Rotation().Conjugate() * (world - Vec3{m.m[12], m.m[13], m.m[14]});
+    const Vec3 sc = LossyScale();
+    return {Unscale(rel.x, sc.x, 0.0f), Unscale(rel.y, sc.y, 0.0f), Unscale(rel.z, sc.z, 0.0f)};
+}
+
+Vec3 Transform::InverseTransformVector(const Vec3& world) const {
+    Mat4 inv;
+    if (TryInvert(WorldCache(), inv)) return inv.MultiplyVector(world);
+    const Vec3 rel = Rotation().Conjugate() * world;
+    const Vec3 sc = LossyScale();
+    return {Unscale(rel.x, sc.x, 0.0f), Unscale(rel.y, sc.y, 0.0f), Unscale(rel.z, sc.z, 0.0f)};
 }
 
 void Transform::SetPosition(const Vec3& worldPos) {
     if (!m_parent) { localPosition = worldPos; return; }
-    // Convert world position into the parent's local space.
-    Vec3 parentPos   = m_parent->Position();
-    Quat invRotation = m_parent->Rotation().Conjugate();
-    Vec3 parentScale = m_parent->LossyScale();
-    Vec3 rel = invRotation * (worldPos - parentPos);
-    localPosition = {
-        parentScale.x != 0 ? rel.x / parentScale.x : rel.x,
-        parentScale.y != 0 ? rel.y / parentScale.y : rel.y,
-        parentScale.z != 0 ? rel.z / parentScale.z : rel.z};
+    localPosition = WorldToParentLocal(worldPos);
 }
 
 void Transform::SetRotation(const Quat& worldRot) {
@@ -122,10 +207,62 @@ void Transform::LookAt(const Vec3& worldTarget, const Vec3& worldUp) {
     SetRotation(Quat::LookRotation(dir, worldUp));
 }
 
+namespace {
+bool FiniteVec(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+
+// An up hint that is not parallel to `dir`: the hint itself, or a world axis when the direction runs along it.
+Vec3 UsableUp(const Vec3& dir, const Vec3& up) {
+    const Vec3 d = dir.Normalized();
+    Vec3 u = FiniteVec(up) && up.SqrMagnitude() > 1e-12f ? up.Normalized() : Vec3::Up;
+    if (Vec3::Cross(u, d).SqrMagnitude() > 1e-8f) return u;
+    // Along the hint (or no hint): any axis that is not parallel to the direction will do; this one is fixed so
+    // the answer does not change from frame to frame.
+    const Vec3 alt = std::fabs(d.z) < 0.9f ? Vec3::Forward : Vec3::Right;
+    return alt;
+}
+} // namespace
+
+void Transform::LookDirection(const Vec3& worldDirection, const Vec3& worldUp) {
+    if (!FiniteVec(worldDirection) || worldDirection.SqrMagnitude() < 1e-12f) return;
+    SetRotation(Quat::LookRotation(worldDirection, UsableUp(worldDirection, worldUp)));
+}
+
+void Transform::LookAtYaw(const Vec3& worldTarget, const Vec3& worldUp) {
+    const Vec3 dir = worldTarget - Position();
+    if (!FiniteVec(dir) || !FiniteVec(worldUp) || worldUp.SqrMagnitude() < 1e-12f) return;
+    const Vec3 up = worldUp.Normalized();
+    const Vec3 level = dir - up * Vec3::Dot(dir, up);   // drop what runs along the up axis
+    if (level.SqrMagnitude() < 1e-12f) return;           // straight above or below: no side to face
+    SetRotation(Quat::LookRotation(level, up));
+}
+
+void Transform::LookAt2D(const Vec3& worldTarget, Facing2D facing) {
+    const Vec3 pos = Position();
+    const float dx = worldTarget.x - pos.x, dy = worldTarget.y - pos.y;
+    if (!std::isfinite(dx) || !std::isfinite(dy) || dx * dx + dy * dy < 1e-12f) return;
+    float degrees = std::atan2(dy, dx) * Mathf::Rad2Deg;
+    if (facing == Facing2D::Up) degrees -= 90.0f;   // Up() is a quarter turn ahead of Right()
+    SetRotation(Quat::AngleAxis(degrees, Vec3::Forward));
+}
+
+bool Transform::RotateTowards(const Vec3& worldTarget, float maxDegrees, const Vec3& worldUp) {
+    const Vec3 dir = worldTarget - Position();
+    if (!FiniteVec(dir) || dir.SqrMagnitude() < 1e-12f) return true;   // nothing to face: it already does
+    const Quat want = Quat::LookRotation(dir, UsableUp(dir, worldUp)).Normalized();
+    const Quat now = Rotation();
+    constexpr float kFacing = 0.1f;   // degrees: float rounding in an angle between two nearly equal rotations is about 0.04
+    if (Quat::Angle(now, want) < kFacing) return true;
+    if (!(maxDegrees > 0.0f)) return false;                              // negative, zero or NaN turns nothing
+    SetRotation(Quat::RotateTowards(now, want, maxDegrees));
+    return Quat::Angle(Rotation(), want) < kFacing;
+}
+
 int Transform::GetSiblingIndex() const {
     if (m_parent) {
-        for (std::size_t i = 0; i < m_parent->m_children.size(); ++i)
-            if (m_parent->m_children[i] == this) return static_cast<int>(i);
+        const auto& kids = m_parent->Kids();   // settled: every child's slot is its position
+        if (m_slot < kids.size() && kids[m_slot] == this) return static_cast<int>(m_slot);
+        for (std::size_t i = 0; i < kids.size(); ++i)   // the slot is not trusted (it should always be): look it up
+            if (kids[i] == this) return static_cast<int>(i);
         return -1;
     }
     Scene* sc = gameObject ? gameObject->scene() : nullptr;
@@ -142,11 +279,14 @@ void Transform::SetSiblingIndex(int index) {
     const int cur = GetSiblingIndex();
     if (cur < 0) return;
     if (m_parent) {
-        auto& kids = m_parent->m_children;
+        auto& kids = m_parent->m_children;   // settled by GetSiblingIndex
         index = std::clamp(index, 0, static_cast<int>(kids.size()) - 1);
         if (index == cur) return;
         kids.erase(kids.begin() + cur);
         kids.insert(kids.begin() + index, this);
+        const std::size_t lo = static_cast<std::size_t>(std::min(cur, index)), hi = static_cast<std::size_t>(std::max(cur, index));
+        for (std::size_t i = lo; i <= hi; ++i) kids[i]->m_slot = i;   // only the slots between the two positions moved
+        t_childWork += hi - lo + 1;
         NoteOrderChanged();
         return;
     }
@@ -157,9 +297,115 @@ void Transform::SetSiblingIndex(int index) {
     sc->ReorderSibling(gameObject, roots[index], /*after=*/index > cur);
 }
 
+// ---- The child list ---------------------------------------------------------------
+
+void Transform::ReindexChildren(std::size_t from) {
+    for (std::size_t i = from; i < m_children.size(); ++i)
+        if (m_children[i]) m_children[i]->m_slot = i;
+    if (from < m_children.size()) t_childWork += m_children.size() - from;
+}
+
+void Transform::SettleChildren() const {
+    std::lock_guard<std::mutex> lock(g_settleMutex);
+    if (m_tombs.load(std::memory_order_acquire) == 0) return;   // another reader did it while this one waited
+    auto& kids = const_cast<std::vector<Transform*>&>(m_children);
+    std::size_t w = 0;
+    for (std::size_t r = 0; r < kids.size(); ++r) {
+        Transform* c = kids[r];
+        if (!c) continue;
+        kids[w] = c;
+        c->m_slot = w;
+        ++w;
+    }
+    t_childWork += kids.size();
+    kids.resize(w);
+    m_tombs.store(0, std::memory_order_release);
+}
+
+void Transform::DropChild(Transform* child) {
+    auto& kids = m_children;
+    std::size_t i = child->m_slot;
+    if (i >= kids.size() || kids[i] != child) {   // the slot should always be right; if it is not, find it the slow way
+        const auto it = std::find(kids.begin(), kids.end(), child);
+        t_childWork += kids.size();
+        if (it == kids.end()) return;
+        i = static_cast<std::size_t>(it - kids.begin());
+    }
+    ++t_childWork;
+    const std::uint32_t holes = m_tombs.load(std::memory_order_relaxed);
+    if (i + 1 == kids.size()) {   // the last one: nothing to move (and the holes just before it go with it)
+        kids.pop_back();
+        std::uint32_t left = holes;
+        while (!kids.empty() && !kids.back()) { kids.pop_back(); --left; ++t_childWork; }
+        if (left != holes) m_tombs.store(left, std::memory_order_release);
+        return;
+    }
+    if (holes == 0 && kids.size() < kHoleMin) {   // a short list: erase, as always
+        kids.erase(kids.begin() + static_cast<std::ptrdiff_t>(i));
+        t_childWork += kids.size() - i;
+        ReindexChildren(i);
+        return;
+    }
+    kids[i] = nullptr;   // a long list: leave a hole, sweep the holes out in bulk
+    m_tombs.store(holes + 1, std::memory_order_release);
+    if (static_cast<std::size_t>(holes + 1) * 2 > kids.size()) SettleChildren();
+}
+
+void Transform::MoveChild(Transform* child, int dir) {
+    if (!child) return;
+    SettleChildren();
+    auto& kids = m_children;
+    std::size_t i = child->m_slot;
+    if (i >= kids.size() || kids[i] != child) {
+        const auto it = std::find(kids.begin(), kids.end(), child);
+        if (it == kids.end()) return;
+        i = static_cast<std::size_t>(it - kids.begin());
+    }
+    const std::size_t j = (dir < 0) ? (i == 0 ? i : i - 1) : (i + 1 >= kids.size() ? i : i + 1);
+    if (i == j) return;
+    std::swap(kids[i], kids[j]);
+    kids[i]->m_slot = i;
+    kids[j]->m_slot = j;
+    NoteOrderChanged();
+}
+
+void Transform::MoveChildToEdge(Transform* child, bool toFront) {
+    SettleChildren();
+    auto it = std::find(m_children.begin(), m_children.end(), child);
+    if (it == m_children.end()) return;
+    const std::size_t from = static_cast<std::size_t>(it - m_children.begin());
+    m_children.erase(it);
+    if (toFront) m_children.insert(m_children.begin(), child);
+    else         m_children.push_back(child);
+    ReindexChildren(toFront ? 0 : from);
+    NoteOrderChanged();
+}
+
+void Transform::ReorderChild(Transform* child, Transform* anchor, bool after) {
+    if (child == anchor) return;
+    SettleChildren();
+    auto rm = std::find(m_children.begin(), m_children.end(), child);
+    if (rm == m_children.end()) return;
+    m_children.erase(rm);
+    auto at = std::find(m_children.begin(), m_children.end(), anchor);
+    if (at == m_children.end()) m_children.push_back(child);
+    else {
+        if (after) ++at;
+        m_children.insert(at, child);
+    }
+    ReindexChildren(0);
+    NoteOrderChanged();
+}
+
 void Transform::NoteOrderChanged() {
     if (gameObject)   // UI draws in hierarchy order, so caches keyed on it re-sort
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
+}
+
+bool Transform::SetParent(Transform* parent, bool worldPositionStays, int siblingIndex) {
+    if (!SetParent(parent, worldPositionStays)) return false;
+    SetSiblingIndex(siblingIndex);
+    return true;
 }
 
 bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
@@ -173,31 +419,39 @@ bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
         if (gameObject && parent->gameObject && gameObject->scene() != parent->gameObject->scene()) return false;
         // Would the parent end up below this transform? Only a transform that has children can
         // be above anything, so a leaf (the usual case while a hierarchy is being built) skips the walk.
-        if (!m_children.empty())
+        if (ChildCount() > 0)
             for (const Transform* t = parent; t; t = t->m_parent)
                 if (t == this) return false;   // a descendant: would form a cycle
     }
     // The world pose is read before the move and put back after it, only when it is wanted:
-    // each of these walks the whole parent chain.
+    // each read walks the whole parent chain (once, not once per number).
     Vec3 world, worldScale; Quat worldRot;
-    if (worldPositionStays) { world = Position(); worldRot = Rotation(); worldScale = LossyScale(); }
-    if (m_parent) {
-        auto& sib = m_parent->m_children;
-        sib.erase(std::remove(sib.begin(), sib.end(), this), sib.end());
-    }
+    if (worldPositionStays) ReadWorldPose(world, worldRot, worldScale);
+    if (m_parent) m_parent->DropChild(this);   // no search, and no shifting of a long list (see DropChild)
     m_parent = parent;
-    if (m_parent) m_parent->m_children.push_back(this);
+    if (m_parent) { m_slot = m_parent->m_children.size(); m_parent->m_children.push_back(this); }
+    detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);   // what is above this object changed: its active state is worked out again
     if (gameObject)   // a reparent changes which bones / names a model's caches see
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
     // Preserve the world pose (position, rotation and scale) only when asked.
     if (worldPositionStays) {
-        SetPosition(world);
-        SetRotation(worldRot);
+        // The same numbers SetPosition(world), SetRotation(worldRot) and the scale division give, with one check
+        // of the new parent's chain instead of one for each of them.
+        Vec3 ps = Vec3::One;
+        if (m_parent) {
+            const Mat4& parentWorld = m_parent->WorldCache();
+            Mat4 inverse;
+            localPosition = TryInvert(parentWorld, inverse) ? inverse.MultiplyPoint(world) : WorldToParentLocal(world);
+            localRotation = (m_parent->m_wRot.Conjugate() * worldRot).Normalized();
+            ps = m_parent->m_wScale;
+        } else {
+            localPosition = world;
+            localRotation = worldRot.Normalized();
+        }
         // Scale follows LossyScale(): the world scale divided by the new parent's. Under a
         // rotated parent with non-uniform scale a child turned relative to it would need a
         // shear, which a TRS transform can't hold: position and rotation stay exact and
         // the scale is the per-axis lossy one (an axis with zero parent scale is kept).
-        const Vec3 ps = m_parent ? m_parent->LossyScale() : Vec3::One;
         if (ps.x != 0) localScale.x = worldScale.x / ps.x;
         if (ps.y != 0) localScale.y = worldScale.y / ps.y;
         if (ps.z != 0) localScale.z = worldScale.z / ps.z;
@@ -218,7 +472,7 @@ Transform* Transform::Find(const std::string& path) const {
             any = true;
             const std::string part = path.substr(start, end - start);
             const Transform* next = nullptr;
-            for (const Transform* c : cur->m_children)
+            for (const Transform* c : cur->Kids())
                 if (c && c->gameObject && c->gameObject->name == part) { next = c; break; }
             cur = next;
         }
@@ -230,12 +484,16 @@ Transform* Transform::Find(const std::string& path) const {
 
 Transform* Transform::FindDeep(const std::string& name) const {
     std::vector<const Transform*> stack;   // explicit stack: depth first, siblings in order, no recursion
-    for (std::size_t i = m_children.size(); i-- > 0;) stack.push_back(m_children[i]);
+    {
+        const auto& kids = Kids();
+        for (std::size_t i = kids.size(); i-- > 0;) stack.push_back(kids[i]);
+    }
     while (!stack.empty()) {
         const Transform* t = stack.back(); stack.pop_back();
         if (!t) continue;
         if (t->gameObject && t->gameObject->name == name) return const_cast<Transform*>(t);
-        for (std::size_t i = t->m_children.size(); i-- > 0;) stack.push_back(t->m_children[i]);
+        const auto& kids = t->Kids();
+        for (std::size_t i = kids.size(); i-- > 0;) stack.push_back(kids[i]);
     }
     return nullptr;
 }
@@ -261,6 +519,7 @@ int Transform::Depth() const {
 }
 
 void Transform::DetachChildren() {
+    SettleChildren();
     if (m_children.empty()) return;
     struct Pose { Vec3 position, scale; Quat rotation; };
     std::vector<Pose> poses;   // read while they are still attached, written once they are free: linear, not one list edit per child
@@ -275,6 +534,8 @@ void Transform::DetachChildren() {
         k->localRotation = poses[i].rotation.Normalized();
         k->localScale = poses[i].scale;
     }
+    t_childWork += kids.size();
+    detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);
     if (gameObject)
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
 }

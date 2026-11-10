@@ -4,6 +4,9 @@
 // The file token stays the raw identifier. People see a title that passes
 // LintVsTitle, and search still matches the raw name (docs/visual_scripting_naming.md).
 #include "VisualScriptNames.hpp"
+#include "VisualScriptNodeDocs.hpp"
+#include "VisualScriptNodeHelp.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include <cctype>
 #include <cstring>
@@ -329,3 +332,52 @@ inline std::string VsNodeSearchText(const char* type) {
 }
 
 } // namespace okay::editor::vsed
+
+// ---- Docs for the nodes that are not in the hand-written table ---------------
+namespace okay::editor::vsed {
+
+inline void VsFriendlyApiDocFixup(const okay::vs::VsApiEntry& e, VsNodeDoc& d) {
+    std::vector<const char*> ins, outs;
+    VsFillFriendlyPins(e, ins, outs);
+    d.title = VsFriendlyApiTitleString(e);
+    std::size_t i = 0, o = 0;
+    for (VsPinDoc& p : d.pins) {
+        if (p.exec) continue;
+        if (p.input) { if (i < ins.size()) p.name = ins[i]; ++i; }
+        else         { if (o < outs.size()) p.name = outs[o]; ++o; }
+    }
+}
+
+// One node per text-script builtin (Fn.print ...): four optional arguments, one result.
+inline const VsNodeDoc* VsBuiltinDocFor(const std::string& type) {
+    if (!okay::vs::IsBuiltinNode(type)) return nullptr;
+    static std::unordered_map<std::string, VsNodeDoc> cache;
+    auto it = cache.find(type);
+    if (it != cache.end()) return &it->second;
+    const std::string name = type.substr(3);
+    VsNodeDoc d;
+    d.type = type;
+    d.title = VsFriendlyBuiltinTitleString(name);
+    const char* help = VsNodeHelp(type.c_str());
+    d.description = help && help[0] ? std::string(help)
+        : "Calls the text-script function " + name + " with the values wired into First to Fourth, and gives back its result.";
+    d.requirements = "No component is required by the node itself. What " + name + " touches depends on the function. Runs in Play mode.";
+    d.example = "In a text script this is " + name + "(First, Second). Wire the values you would pass into First and Second.";
+    d.related = "Run Text Snippet, Call Script";
+    d.keywords = name + " " + d.title + " text script builtin";
+    d.pins.push_back({true, true, "", "Flow", "The flow arrives here. The function runs when a wire reaches this pin.", ""});
+    d.pins.push_back({false, true, "", "Flow", "After the function finishes, the flow continues from here.", ""});
+    static const char* const argNames[4] = {"First", "Second", "Third", "Fourth"};
+    for (const char* a : argNames)
+        d.pins.push_back({true, false, a, "Any", std::string("An argument for ") + name + ". Leave it empty when the function takes fewer.", "nothing"});
+    d.pins.push_back({false, false, "Result", "Any", "What " + name + " gives back, or nothing when it returns no value.", ""});
+    return &cache.emplace(type, std::move(d)).first->second;
+}
+
+inline const bool kVsDocHooks = [] {
+    VsApiDocFixup = &VsFriendlyApiDocFixup;
+    VsExtraDocFor = &VsBuiltinDocFor;
+    return true;
+}();
+
+}  // namespace okay::editor::vsed

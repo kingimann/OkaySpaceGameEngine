@@ -2,6 +2,7 @@
 // Small helpers around the frame loop: a max-delta clamp, a frame timer, and a frame
 // limiter. They sit beside Application and Time and change nothing there; call them
 // from your own loop (see docs/core_runtime.md). Header-light: only <chrono>.
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -32,6 +33,9 @@ public:
     float Tick() { return Tick(NowSeconds()); }
     /// Same, with the clock given (seconds from any fixed origin): for tests and replays.
     float Tick(double nowSeconds) {
+        // A clock reading that is not a number (a broken source) is no time passing: taking it as the new "last"
+        // would turn every later delta into NaN, a frame time of 0 for the rest of the run.
+        if (!std::isfinite(nowSeconds)) { m_raw = 0.0; m_clamped = false; return 0.0f; }
         if (!m_started) { m_started = true; m_last = nowSeconds; m_raw = 0.0; m_clamped = false; return 0.0f; }
         m_raw = nowSeconds - m_last;
         m_last = nowSeconds;
@@ -71,8 +75,10 @@ class FrameLimiter {
 public:
     explicit FrameLimiter(double targetFps = 0.0) { SetTargetFps(targetFps); }
 
-    /// Frames per second to hold; 0, a negative or a non-finite number turns the limiter off.
-    void SetTargetFps(double fps) { m_target = (std::isfinite(fps) && fps > 0.0) ? 1.0 / fps : 0.0; }
+    /// Frames per second to hold; 0, a negative or a non-finite number turns the limiter off. A frame is never
+    /// paced longer than kMaxFrameSeconds (an hour): 1e-30 fps used to ask the sleep for 1e30 seconds.
+    static constexpr double kMaxFrameSeconds = 3600.0;
+    void SetTargetFps(double fps) { m_target = (std::isfinite(fps) && fps > 0.0) ? std::min(1.0 / fps, kMaxFrameSeconds) : 0.0; }
     double TargetFps() const { return m_target > 0.0 ? 1.0 / m_target : 0.0; }
     double TargetFrameSeconds() const { return m_target; }
     bool Enabled() const { return m_target > 0.0; }

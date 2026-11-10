@@ -6,6 +6,8 @@
 // the end of Nodes.hpp; MakeNode (NodeGraph.cpp) builds them by type name.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
+#include "okay/VisualScript/VsWhole.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
@@ -18,6 +20,7 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/UIAnchor.hpp"   // UICanvas size for the mouse-to-ground ray
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -33,6 +36,9 @@
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Tween.hpp"
+#include "okay/Math/Easing.hpp"
+#include "okay/Math/Spring.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -43,10 +49,17 @@
 namespace okay::vs {
 
 inline GameObject* VsFindObject(VsContext& ctx, const std::string& name) {
-    if (!ctx.gameObject || !ctx.gameObject->scene()) return nullptr;
-    if (name.empty() || name == "self") return ctx.gameObject;
-    if (name == "other") return ctx.other;
-    return ctx.gameObject->scene()->Find(name);
+    Scene* scene = (ctx.gameObject && ctx.gameObject->scene()) ? ctx.gameObject->scene() : nullptr;
+    if (!scene) return nullptr;
+    // @guid: stays valid after the object is renamed. self / other / a plain
+    // name are the older graphs, and still work.
+    if (VsStartsWith(name, "@guid:")) return scene->FindByGuid(name.substr(6));
+    if (name.empty() || name == "self" || name == "@self") return ctx.gameObject;
+    if (name == "other" || name == "@other") return ctx.other;
+    if (GameObject* o = scene->Find(name)) return o;
+    for (const auto& up : scene->Objects())
+        if (up && up->name == name) return up.get();
+    return nullptr;
 }
 
 /// An object input: an object reference (Self, Other, Spawn's object, Find,
@@ -209,6 +222,32 @@ struct OtherTagNode : VsNode {
 };
 
 // ---- Mouse buttons ----------------------------------------------------------
+// The point where the cursor's ray crosses the floor at this object's height.
+// out0 x, out1 y, out2 z, out3 hit. Needs the scene's main camera.
+struct MouseGroundNode : VsNode {
+    VsValue Eval(int pin, NodeGraph&, VsContext& ctx) override {
+        const float y = ctx.transform ? ctx.transform->Position().y : 0.0f;
+        Vec3 point{0, y, 0};
+        bool hit = false;
+        Scene* scene = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+        Camera* cam = scene ? scene->mainCamera : nullptr;
+        const float w = UICanvas::Width(), h = UICanvas::Height();
+        if (cam && w >= 1.0f && h >= 1.0f) {
+            Vec3 origin, dir;
+            const Vec2 mp = Input::MousePosition();
+            cam->ScreenPointToRay(mp.x, mp.y, w, h, origin, dir);
+            if (std::fabs(dir.y) > 1e-5f) {
+                const float t = (y - origin.y) / dir.y;
+                if (t >= 0.0f) { point = origin + dir * t; point.y = y; hit = true; }
+            }
+        }
+        if (pin == 0) return point.x;
+        if (pin == 1) return point.y;
+        if (pin == 2) return point.z;
+        return hit;
+    }
+};
+
 struct MouseButtonNode : VsNode {   // arg 0 left, 1 right, 2 middle
     int button; bool pressedOnly;
     MouseButtonNode(int b, bool p) : button(b), pressedOnly(p) {}
@@ -264,17 +303,8 @@ struct SetActiveNode : VsNode {   // in0 = on/off, in1 = object (wins over the n
         if (HasInput(1)) {
             const VsValue t = In(1, g, ctx);
             if (t.IsObject()) o = t.AsObjectId() ? GameObject::FromInstanceId(t.AsObjectId()) : nullptr;
-            else {
-                const std::string nm = t.AsString();
-                if (nm.empty() || nm == "self") o = ctx.gameObject;
-                else if (nm == "other") o = ctx.other;
-                else if (ctx.gameObject && ctx.gameObject->scene())
-                    for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == nm) { o = up.get(); break; }
-            }
-        } else if (name.empty() || name == "self") o = ctx.gameObject;
-        else if (name == "other") o = ctx.other;
-        else if (ctx.gameObject && ctx.gameObject->scene())
-            for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == name) { o = up.get(); break; }
+            else o = VsFindObject(ctx, t.AsString());
+        } else o = VsFindObject(ctx, name);
         if (o) o->active = In(0, g, ctx, VsValue{true}).AsBool();
         return 0;
     }
@@ -295,13 +325,14 @@ struct LoadSceneNode : VsNode {   // arg = scene name (build list) or .okayscene
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
         Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
-        if (!s || scene.empty()) return 0;
-        if (!Save::IsSafeRelative(scene)) {   // graphs are game content: stay in the game's folders
-            OKAY_ERROR("[visual script] Load Scene: refusing '", scene, "' (absolute paths and '..' aren't allowed)");
+        const std::string scenePath = VsBareAsset(scene);
+        if (!s || scenePath.empty()) return 0;
+        if (!Save::IsSafeRelative(scenePath)) {   // graphs are game content: stay in the game's folders
+            OKAY_ERROR("[visual script] Load Scene: refusing '", scenePath, "' (absolute paths and '..' aren't allowed)");
             return 0;
         }
-        if (scene.find(".okayscene") != std::string::npos) s->RequestLoad(scene);
-        else if (!SceneManager::LoadSceneByName(*s, scene)) s->RequestLoad(scene + ".okayscene");
+        if (scenePath.find(".okayscene") != std::string::npos) s->RequestLoad(scenePath);
+        else if (!SceneManager::LoadSceneByName(*s, scenePath)) s->RequestLoad(scenePath + ".okayscene");
         return -1;   // the scene is being replaced: stop this chain
     }
 };
@@ -538,9 +569,10 @@ struct MusicPlayNode : VsNode {   // arg = track file or playlist number ("" = t
     int Exec(NodeGraph&, VsContext& ctx) override {
         MusicPlayer* m = VsMusicPlayer(ctx);
         if (!m) return 0;
-        if (track.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
-        else if (std::all_of(track.begin(), track.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) m->Play(std::atoi(track.c_str()));
-        else m->Play(track);
+        const std::string file = VsBareAsset(track);
+        if (file.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
+        else if (std::all_of(file.begin(), file.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) m->Play(std::atoi(file.c_str()));
+        else m->Play(file);
         return 0;
     }
 };
@@ -618,6 +650,94 @@ struct ParticleBurstNode : VsNode {   // in0 = count (unwired: 20)
         return 0;
     }
 };
+// ---- Tweens, springs and eases (Core/Tween.hpp, Math/Spring.hpp, Math/Easing.hpp) ----
+// Ease With Curve: in0 = time 0..1 (NaN is 0, the rest is clamped). The text field is an ease by name or curve
+// ("OutBack", "cubic-bezier(0.4,0,0.2,1)", "steps(4)", the CSS names); text it does not know leaves the value as it is,
+// like the script ease_curve. A curve may overshoot 0..1 (Back, Elastic and a bezier with y outside it do).
+struct EaseCurveNode : VsNode {
+    EaseCurve curve;
+    bool known = false;
+    explicit EaseCurveNode(const std::string& text) { known = EaseCurve::Parse(text, curve); }
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        const float t = In(0, g, ctx).AsFloat();
+        const float u = t == t ? Mathf::Clamp01(t) : 0.0f;
+        return known ? curve.Evaluate(u) : u;
+    }
+};
+// Spring Step: moves a value toward in0 the way a spring would (Spring::Step), once each time it runs, by the frame
+// time. in1 = stiffness (unwired: 120), in2 = damping (unwired: 14); damping = 2 * sqrt(stiffness) never overshoots.
+// Out0 = the value, out1 = its velocity. The text field is where the value starts (empty: at the first target, so it does
+// not swing in). Run it once a frame (under On Update); a step of zero or less, or NaN, changes nothing.
+struct SpringStepNode : VsNode {
+    float pos = 0.0f, vel = 0.0f;
+    bool started = false, hasStart = false;
+    float start = 0.0f;
+    explicit SpringStepNode(const std::string& startText) {
+        if (!startText.empty()) {
+            char* end = nullptr;
+            const float f = std::strtof(startText.c_str(), &end);
+            if (end != startText.c_str() && std::isfinite(f)) { hasStart = true; start = f; }
+        }
+    }
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int outPin, NodeGraph&, VsContext&) override { return outPin == 1 ? vel : pos; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const float target = In(0, g, ctx).AsFloat();
+        if (!started) {
+            started = true;
+            pos = hasStart ? start : (std::isfinite(target) ? target : 0.0f);
+            vel = 0.0f;
+        }
+        Spring::Step(pos, vel, target, In(1, g, ctx, VsValue{120.0f}).AsFloat(), In(2, g, ctx, VsValue{14.0f}).AsFloat(), ctx.deltaTime);
+        return 0;
+    }
+};
+// Tween Move / Tween Move By Speed: this object's (or the Target's) local position goes to (x, y, z). An axis nobody
+// feeds stays where it is. in3 = seconds (By Speed: units a second, so the move lasts distance / speed; zero or less
+// is at once), in4 = the ease as text ("OutBack", "cubic-bezier(0.4,0,0.2,1)"; unwired or unknown: Out Quad). The text field
+// is a tag for Kill / Pause / Play Tweens With Tag. The tween starts on the next frame, like the tween_* script calls.
+struct TweenMoveNode : VsNode {
+    bool bySpeed;
+    std::string tag;
+    TweenMoveNode(bool speed, std::string t) : bySpeed(speed), tag(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        GameObject* go = ctx.gameObject;
+        if (!go || !go->transform || !go->scene()) return 0;
+        Vec3 to = go->transform->localPosition;
+        if (HasInput(0)) to.x = In(0, g, ctx).AsFloat();
+        if (HasInput(1)) to.y = In(1, g, ctx).AsFloat();
+        if (HasInput(2)) to.z = In(2, g, ctx).AsFloat();
+        const float amount = HasInput(3) ? In(3, g, ctx).AsFloat() : (bySpeed ? 5.0f : 1.0f);
+        auto t = DOTween::LocalMove(go, to, amount);
+        if (!t) return 0;
+        if (bySpeed) t->SetSpeedBased();
+        if (HasInput(4)) { const VsValue e = In(4, g, ctx); if (e.IsString()) t->SetEaseSpec(e.AsString()); }
+        if (!tag.empty()) t->SetTag(tag);
+        return 0;
+    }
+};
+// Kill / Pause / Play Tweens With Tag: every tween of the scene with the text field's tag (Tweener::SetTag, the
+// script tween_tag). Out0 = how many it touched. Kill: in0 = jump them to their end first (unwired: no).
+struct TweenTagNode : VsNode {
+    enum class Op { Kill, Pause, Play } op;
+    std::string tag;
+    int count = 0;
+    TweenTagNode(Op o, std::string t) : op(o), tag(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)count; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        Scene* scene = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+        count = 0;
+        if (!scene || tag.empty()) return 0;
+        switch (op) {
+            case Op::Kill:  count = scene->tweens().KillByTag(tag, HasInput(0) && In(0, g, ctx).AsBool()); break;
+            case Op::Pause: count = scene->tweens().PauseByTag(tag); break;
+            case Op::Play:  count = scene->tweens().PlayByTag(tag); break;
+        }
+        return 0;
+    }
+};
 struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = weight (0 releases)
     bool left;
     explicit IkHandNode(bool l) : left(l) {}
@@ -679,7 +799,11 @@ struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
 // Only lets the flow through while Open is true.
 struct GateNode : VsNode {   // in0 = open
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { return In(0, g, ctx, VsValue{true}).AsBool() ? 0 : -1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const VsValue v = In(0, g, ctx, VsValue{true});
+        if (v.IsNumber() && !std::isfinite(v.AsFloat())) return -1;   // NaN is not "open"
+        return v.AsBool() ? 0 : -1;
+    }
 };
 // Passes the first N times only; Count reads how many times it has passed.
 struct DoNNode : VsNode {
@@ -700,7 +824,9 @@ struct DoNNode : VsNode {
 struct SwitchIntNode : VsNode {   // in0 = value
     int ExecOutCount() const override { return 4; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int v = (int)std::lround(In(0, g, ctx).AsFloat());
+        const float f = In(0, g, ctx).AsFloat();
+        if (!std::isfinite(f)) return 3;
+        const int v = VsWhole(f, 3);
         return (v >= 0 && v <= 2) ? v : 3;
     }
 };
@@ -947,7 +1073,7 @@ struct PlayClipNode : VsNode {
     explicit PlayClipNode(std::string c) : clip(std::move(c)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        PlayClipFrom(ctx.gameObject, clip, warned);
+        PlayClipFrom(ctx.gameObject, VsClipToken(clip), warned);
         return 0;
     }
 };

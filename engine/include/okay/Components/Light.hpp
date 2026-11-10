@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include <string>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Render/Color.hpp"
@@ -92,13 +93,20 @@ private:
     unsigned m_seed = 0x9E3779B9u;
 };
 
+/// Set when more than one Directional light wants to cast shadows. Only one sun
+/// gets the cascade atlas; the others still light the scene. Empty when there
+/// is nothing to warn about.
+inline std::string& DirectionalShadowWarning() { static std::string s; return s; }
+
 /// Gather every active Light in the scene into SceneLights for multi-light
 /// shading, and mirror the first directional one into the legacy global
 /// SceneLight (so set_light/set_ambient scripts and old code still work). Called
 /// by the player and editor each frame before rendering 3D.
 inline void ApplySceneLight(const Scene& scene) {
     SceneLights::Clear();
+    DirectionalShadowWarning().clear();
     bool any = false, setAmbient = false, setLegacy = false;
+    int firstDir = -1, castingSun = -1, castingCount = 0;
     const float kPi = 3.14159265358979323846f;
     for (const auto& go : scene.Objects()) {
         if (!go->active) continue;
@@ -121,8 +129,14 @@ inline void ApplySceneLight(const Scene& scene) {
         s.castShadows = l->castShadows;
         s.shadowStrength = l->shadowStrength < 0.f ? 0.f : (l->shadowStrength > 1.f ? 1.f : l->shadowStrength);
         s.shadowBias = l->shadowBias < 0.f ? 0.f : l->shadowBias;
-        if (!setLegacy && l->type == Light::Type::Directional)
-            SceneLights::SunIndex() = (int)SceneLights::List().size();   // the shadow-casting sun
+        if (l->type == Light::Type::Directional) {
+            const int idx = (int)SceneLights::List().size();
+            if (firstDir < 0) firstDir = idx;
+            if (l->castShadows && l->shadowStrength > 0.0f) {
+                if (castingSun < 0) castingSun = idx;
+                ++castingCount;
+            }
+        }
         SceneLights::Add(s);
         if (!setAmbient) {
             Vec3 ac{l->ambientColor.r * l->ambient, l->ambientColor.g * l->ambient, l->ambientColor.b * l->ambient};
@@ -132,6 +146,14 @@ inline void ApplySceneLight(const Scene& scene) {
         }
         if (!setLegacy && l->type == Light::Type::Directional) { SceneLight::SetDirection(s.dir); setLegacy = true; }
     }
+    const int sun = castingSun >= 0 ? castingSun : firstDir;
+    if (sun >= 0) {
+        SceneLights::SunIndex() = sun;
+        SceneLight::SetDirection(SceneLights::List()[sun].dir);
+    }
+    if (castingCount > 1)
+        DirectionalShadowWarning() = "Only one Directional light can cast sun shadows. "
+            + std::to_string(castingCount - 1) + " more will light the scene but not cast.";
     if (!any) {
         // No Light object: keep the script-controllable global light + the
         // scene's ambient so a built game still has the author's base lighting.

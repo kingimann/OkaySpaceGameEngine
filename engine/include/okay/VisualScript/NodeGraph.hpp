@@ -249,6 +249,11 @@ public:
     /// All registered event names (for timers / key events that need polling).
     const std::unordered_map<std::string, std::vector<int>>& AllEntries() const { return m_entries; }
 
+    /// A `var name value` line: a starting value the Inspector can edit.
+    struct ExposedVar { std::string name; VsValue value; };
+    const std::vector<ExposedVar>& ExposedVars() const { return m_exposed; }
+    void AddExposedVar(std::string name, VsValue value) { m_exposed.push_back({std::move(name), std::move(value)}); }
+
     /// Record execution counts + last data values on the nodes (editor debugging).
     static bool& Tracing() { static bool on = false; return on; }
     // ---- Runaway protection ---------------------------------------------
@@ -359,6 +364,7 @@ public:
 private:
     std::vector<std::unique_ptr<VsNode>> m_nodes;
     std::unordered_map<std::string, std::vector<int>> m_entries;
+    std::vector<ExposedVar> m_exposed;
     int m_execGuard = 0;     // current data-pull depth (cycle guard)
     int m_runDepth = 0;      // nested Run() calls (loop bodies, sequences)
     long m_steps = 0;        // node executions in the current event

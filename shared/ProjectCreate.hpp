@@ -396,4 +396,55 @@ inline std::string SettingsPath(const std::string& root) {
     return root.empty() ? std::string(SettingsFileName()) : (fs::path(root) / SettingsFileName()).string();
 }
 
+// ---- the launcher's Create page -----------------------------------------------------------------------------
+// The roomy Create tab shows the three "start simple" templates as large cards. The rest stay
+// available behind "All templates". Rarely used choices (version, renderer, git) sit in More options.
+
+/// True for the few templates the Create page shows before "All templates" is opened.
+inline bool IsStarterTemplate(const TemplateInfo& t) { return t.group == 1; }
+
+/// A project version the editor can store in project.okayproj (its field holds 31 characters).
+/// Empty when `raw` is fine; otherwise one sentence for the form.
+inline std::string CheckProjectVersion(const std::string& raw) {
+    std::size_t b = 0, e = raw.size();
+    while (b < e && (raw[b] == ' ' || raw[b] == '\t')) ++b;
+    while (e > b && (raw[e - 1] == ' ' || raw[e - 1] == '\t')) --e;
+    const std::string v = raw.substr(b, e - b);
+    if (v.empty()) return "Give the project a version, like 1.0.0.";
+    if (v.size() > 31) return "That version is too long. Something like 1.0.0 is enough.";
+    for (unsigned char c : v) {
+        const bool ok = (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_' ||
+                        (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        if (!ok) return "Use a version like 1.0.0 (letters, numbers, dots and dashes).";
+    }
+    bool digit = false;
+    for (char c : v) if (c >= '0' && c <= '9') digit = true;
+    if (!digit) return "A version needs a number, like 1.0.0.";
+    return "";
+}
+
+/// What Enter and Esc do on the Create page. Esc walks back one step: More options, then
+/// All templates, then the name field, then the selected template. Enter creates, unless the
+/// key belongs to some other text field on the page.
+enum class CreateKeyAction { None, Create, Back };
+
+struct CreatePageState {
+    bool moreOpen = false;
+    bool allTemplates = false;
+    bool fieldActive = false;
+    int selected = 0;
+};
+
+inline CreateKeyAction ApplyCreateKeys(bool enter, bool escape, bool typingElsewhere, CreatePageState& page) {
+    if (escape) {
+        if (page.moreOpen) { page.moreOpen = false; return CreateKeyAction::Back; }
+        if (page.allTemplates) { page.allTemplates = false; return CreateKeyAction::Back; }
+        if (page.fieldActive) { page.fieldActive = false; return CreateKeyAction::Back; }
+        if (page.selected != 0) { page.selected = 0; return CreateKeyAction::Back; }
+        return CreateKeyAction::None;
+    }
+    if (enter && !typingElsewhere) return CreateKeyAction::Create;
+    return CreateKeyAction::None;
+}
+
 }  // namespace okayproj

@@ -55,21 +55,27 @@ int main() {
         }
         CHECK(FindTemplate("3D Scene") && !FindTemplate("No Such Template") && !FindTemplate(""));
         CHECK(std::string(Templates().front().title) == "3D Scene");                // the default
-        // The launcher's Create page and the editor's New Project both name templates by these titles. A
-        // title one of them has and the other lacks would silently fall back to the default scene.
+        int starters = 0;
+        for (const TemplateInfo& t : all) if (IsStarterTemplate(t)) ++starters;
+        CHECK(starters == 3);                                                       // the few large cards
+        // The launcher's Create page uses this list (it no longer keeps a second copy). The editor's
+        // New Project names the same titles. A title one of them lacks falls back to the default scene.
         const fs::path root = fs::path(__FILE__).parent_path().parent_path();
         std::string launcher, editor;
         if (ReadText((root / "launcher" / "main.cpp").string(), launcher) && ReadText((root / "editor" / "main.cpp").string(), editor)) {
+            CHECK(launcher.find("okayproj::Templates()") != std::string::npos);
+            CHECK(launcher.find("kTpl[]") == std::string::npos);
+            CHECK(launcher.find("More options") != std::string::npos);
+            CHECK(launcher.find("--project-version") != std::string::npos);
+            CHECK(editor.find("--project-version") != std::string::npos);
             auto section = [](const std::string& text, const char* start) {
                 const std::size_t a = text.find(start);
                 return a == std::string::npos ? std::string() : text.substr(a, text.find("};", a) - a);
             };
-            std::set<std::string> inLauncher, inEditor;
-            const std::string ls = section(launcher, "} kTpl[] = {"), es = section(editor, "static const Tpl tpls[] = {");
-            const std::regex lre("\\{\"([^\"]+)\",\\s+\"[^\"]+\",\\s*\\d\\}"), ere("\\{\"([^\"]+)\",\\s+&EditorState::\\w+\\}");
-            for (std::sregex_iterator it(ls.begin(), ls.end(), lre), end; it != end; ++it) inLauncher.insert((*it)[1]);
+            std::set<std::string> inEditor;
+            const std::string es = section(editor, "static const Tpl tpls[] = {");
+            const std::regex ere("\\{\"([^\"]+)\",\\s+&EditorState::\\w+\\}");
             for (std::sregex_iterator it(es.begin(), es.end(), ere), end; it != end; ++it) inEditor.insert((*it)[1]);
-            CHECK(inLauncher == titles);
             CHECK(inEditor == titles);
         } else std::cout << "  (source files not found next to the tests: template cross-check skipped)\n";
     }
@@ -288,6 +294,36 @@ int main() {
         CHECK(!WriteTextAtomic((t.path / "adir").string(), "x", &err));
         CHECK(fs::is_directory(t.path / "adir") && !fs::exists((t.path / "adir").string() + ".tmp"));
         CHECK(SettingsPath("").size() > 0 && SettingsPath((t.path).string()) == (t.path / "project.okayproj").string());
+    }
+
+    // ---- Create tab: version and keyboard ------------------------------------------------------------------
+    {
+        CHECK(CheckProjectVersion("1.0.0").empty());
+        CHECK(CheckProjectVersion("  2.1.0-beta ").empty());
+        CHECK(Has(CheckProjectVersion(""), "version"));
+        CHECK(Has(CheckProjectVersion("   "), "version"));
+        CHECK(Has(CheckProjectVersion("beta"), "number"));
+        CHECK(Has(CheckProjectVersion("1.0/2"), "1.0.0"));
+        CHECK(Has(CheckProjectVersion(std::string(32, '1')), "too long"));
+        CHECK(CheckProjectVersion(std::string(31, '1')).empty());
+
+        CreatePageState page;
+        page.moreOpen = true;
+        page.allTemplates = true;
+        page.fieldActive = true;
+        page.selected = 4;
+        CHECK(ApplyCreateKeys(true, false, true, page) == CreateKeyAction::None);   // another field owns Enter
+        CHECK(page.moreOpen);
+        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::Back);
+        CHECK(!page.moreOpen && page.allTemplates && page.fieldActive && page.selected == 4);
+        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::Back);
+        CHECK(!page.allTemplates && page.fieldActive);
+        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::Back);
+        CHECK(!page.fieldActive && page.selected == 4);
+        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::Back);
+        CHECK(page.selected == 0);
+        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::None);
+        CHECK(ApplyCreateKeys(true, false, false, page) == CreateKeyAction::Create);
     }
 
     TEST_MAIN_RESULT();

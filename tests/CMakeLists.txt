@@ -1355,6 +1355,16 @@ target_compile_features(test_project_version PRIVATE cxx_std_17)
 target_include_directories(test_project_version PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME project_version COMMAND test_project_version)
 
+# The launcher's Versions page logic (launcher/VersionsManager.cpp, VersionsNet.cpp): versions.json, install / remove / prune on a temp folder with an injected downloader,
+# keeping the current editor on update, the Latest / LTS channel, project badges and "Open with" command lines, the `--versions` hand-off. No SDL, ImGui, engine link or network.
+find_package(Threads REQUIRED)
+add_executable(test_launcher_versions test_launcher_versions.cpp
+    ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsNet.cpp)
+target_compile_features(test_launcher_versions PRIVATE cxx_std_17)
+target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_launcher_versions PRIVATE Threads::Threads)
+add_test(NAME launcher_versions COMMAND test_launcher_versions)
+
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)
 target_compile_features(test_app_restart PRIVATE cxx_std_17)

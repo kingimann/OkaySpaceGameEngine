@@ -45,6 +45,7 @@ add_library(okay_engine
     src/Scene/ComponentSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
+    src/Components/LookAtIK.cpp
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
@@ -114,6 +115,7 @@ add_library(okay_engine
     src/Components/CharacterAnimBackend.cpp
     src/Animation/HumanoidMotion.cpp
     src/Animation/HumanoidLibrary.cpp
+    src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp

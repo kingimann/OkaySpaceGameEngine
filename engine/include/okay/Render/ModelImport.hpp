@@ -153,8 +153,12 @@ std::string FixCharacterAnimations(Scene& scene, GameObject* player);
 /// mapped from the clip names if not set yet. Returns how many clips were added;
 /// `outLog` gets a one-line summary (or why nothing was added).
 /// Fill a model's empty locomotion clip slots (idle, walk, run, jump, fall,
-/// land, crouch, crouch walk, prone, crawl, get up) from its clip names.
+/// land, crouch, crouch walk, prone, crawl, get up, strafe, back) from its clip
+/// names. A slot that already has a name is left alone.
 void AutoMapLocomotion(ModelAnimator* ma);
+/// The clip name AutoMap would put in an empty slot, or "" if nothing matches.
+/// Does not change `ma`. A slot that already has a name (even a missing one) returns "".
+std::string SuggestUnassignedSlot(const ModelAnimator& ma, int slot);
 int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string& path,
                           std::string* outLog = nullptr);
 

@@ -619,6 +619,9 @@ void Scene::DispatchPointer() {
         Vec3 ro, rd;
         mainCamera->ScreenPointToRay(mp.x, mp.y, w, h, ro, rd);
         Physics3D phys;
+        // The pawn's own capsule sits in the middle of the view. A cursor ray
+        // that hits it makes a look target flip between the body and the world.
+        Physics3D::IgnoreHierarchy own(mainCamera->pointerIgnore);
         RaycastHit3D rh = phys.Raycast(*this, ro, rd);
         hit = rh.gameObject;   // needs a Collider3D on the object (primitives get one by default)
     } else {
@@ -918,6 +921,19 @@ void Scene::FlushDestroyedNow() {
                 if (watch.Any() && watch.Gone(c)) continue;
                 c->OnDestroy();
             }
+        }
+    }
+    // Still queued for Start (edit mode, or added and destroyed in the same frame).
+    // OnDestroy must not run: many components assume Start already did. ReleaseUnstarted
+    // is the narrow hook for something grabbed before Start (an IK target, a weather count).
+    {
+        RemovalWatch watch(*this);
+        std::vector<Component*> waiting;
+        for (Component* c : m_pending)
+            if (c && inScene.count(c->gameObject)) waiting.push_back(c);
+        for (Component* c : waiting) {
+            if (watch.Any() && watch.Gone(c)) continue;
+            c->ReleaseUnstarted();
         }
     }
     // Drop the dying objects' components from the lists, one pass each.

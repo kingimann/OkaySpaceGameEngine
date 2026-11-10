@@ -1,4 +1,5 @@
 #include "okay/Components/Character.hpp"
+#include "okay/Components/NetworkSync.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -1122,7 +1123,14 @@ void Character::Update(float dt) {
     // Auto look-at: drive lookYaw/lookPitch so the head aims at the main camera or a
     // named target. Same sign convention the controllers use: the head Euler-Y offset
     // is (body heading − target heading), and +pitch raises the gaze.
-    if ((lookAtCamera || !lookAtTarget.empty()) && gameObject && gameObject->transform) {
+    // A remote copy already received the owner's look. Tracking the local camera
+    // would fight that and jitter the head.
+    bool remoteLook = false;
+    for (Transform* t = gameObject ? gameObject->transform : nullptr; t && !remoteLook; t = t->Parent())
+        if (t->gameObject)
+            if (auto* ns = t->gameObject->GetComponent<NetworkSync>())
+                remoteLook = ns->syncAnimation && !ns->IsLocallyOwned();
+    if ((lookAtCamera || !lookAtTarget.empty()) && !remoteLook && gameObject && gameObject->transform) {
         Scene* sc = gameObject->scene();
         Transform* tgt = nullptr;
         if (sc && !lookAtTarget.empty()) { if (GameObject* g = sc->Find(lookAtTarget)) tgt = g->transform; }

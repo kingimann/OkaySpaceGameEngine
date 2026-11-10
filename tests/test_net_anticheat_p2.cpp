@@ -141,41 +141,48 @@ int main() {
     }
 
     // ---- A server that requires encryption and tickets --------------------------------
+    // One address may spend 5 join attempts in 10 s. A key exchange costs one
+    // and a refusal costs another. good is one exchange. plain is a refused
+    // plaintext Join plus a second exchange. That is three. The two ticket
+    // refusals are a second server, so they are still the ticket result and
+    // not "too many join attempts" from the same address.
     {
+        auto makeServer = [&](Scene& ss) {
+            auto* srv = ss.CreateGameObject("Net")->AddComponent<NetworkManager>();
+            srv->maxMessagesPerSecond = 0;
+            srv->anticheat.settings.enabled = true;
+            srv->anticheat.settings.requireEncryption = true;
+            srv->anticheat.settings.ticketKey = SessionTicket::Base64UrlEncode(pk);
+            srv->anticheat.settings.ticketAudience = "arena-1";
+            return srv;
+        };
         Scene ss("Server");
-        auto* srv = ss.CreateGameObject("Net")->AddComponent<NetworkManager>();
-        srv->maxMessagesPerSecond = 0;
-        srv->anticheat.settings.enabled = true;
-        srv->anticheat.settings.requireEncryption = true;
-        srv->anticheat.settings.ticketKey = SessionTicket::Base64UrlEncode(pk);
-        srv->anticheat.settings.ticketAudience = "arena-1";
+        auto* srv = makeServer(ss);
         int heard = 0;
         srv->SetMessageHandler([&](const NetworkManager::NetMessage& m) { if (m.channel == "hi") ++heard; });
         CHECK(srv->StartServer(0));
         ss.Start();
 
         struct Cli { Scene s{"C"}; NetworkManager* nm = nullptr; };
-        auto join = [&](Cli& c, bool encrypt, const std::string& token) {
+        auto join = [&](Cli& c, NetworkManager* server, bool encrypt, const std::string& token) {
             c.nm = c.s.CreateGameObject("Net")->AddComponent<NetworkManager>();
             c.nm->encryption = encrypt;
             c.nm->SetAuthToken(token);
-            c.nm->StartClient("127.0.0.1", srv->ServerPort());
+            c.nm->StartClient("127.0.0.1", server->ServerPort());
             c.s.Start();
         };
-        Cli good, plain, forged, expired;
-        join(good, true, ticket("user-a", "arena-1", now, now + 600, sk));
-        join(plain, false, ticket("user-b", "arena-1", now, now + 600, sk));
-        join(forged, true, ticket("user-c", "arena-1", now, now + 600, otherSk));
-        join(expired, true, ticket("user-d", "arena-1", now - 900, now - 300, sk));
+        Cli good, plain;
+        join(good, srv, true, ticket("user-a", "arena-1", now, now + 600, sk));
+        join(plain, srv, false, ticket("user-b", "arena-1", now, now + 600, sk));
         auto pump = [&](int n) {
             for (int i = 0; i < n; ++i) {
                 ss.Update(0.02f);
-                for (Cli* c : {&good, &plain, &forged, &expired}) c->s.Update(0.02f);
+                good.s.Update(0.02f);
+                plain.s.Update(0.02f);
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
         };
-        for (int i = 0; i < 300 && !(good.nm->Joined() && plain.nm->Joined() && forged.nm->JoinRejected() &&
-                                     expired.nm->JoinRejected()); ++i) pump(1);
+        for (int i = 0; i < 300 && !(good.nm->Joined() && plain.nm->Joined()); ++i) pump(1);
         CHECK(good.nm->Joined());
         CHECK(good.nm->Encrypted());
         CHECK(good.nm->ReplayProtected());
@@ -183,8 +190,26 @@ int main() {
         CHECK(srv->PeerUserId(good.nm->LocalId()) == "user-a");
         // No encryption: its plaintext Join is refused, so it turns encryption on and joins sealed.
         CHECK(plain.nm->Joined() && plain.nm->Encrypted() && plain.nm->encryption);
+
+        Scene refusals("Refusals");
+        auto* srv2 = makeServer(refusals);
+        CHECK(srv2->StartServer(0));
+        refusals.Start();
+        Cli forged, expired;
+        join(forged, srv2, true, ticket("user-c", "arena-1", now, now + 600, otherSk));
+        join(expired, srv2, true, ticket("user-d", "arena-1", now - 900, now - 300, sk));
+        for (int i = 0; i < 300 && !(forged.nm->JoinRejected() && expired.nm->JoinRejected()); ++i) {
+            refusals.Update(0.02f);
+            forged.s.Update(0.02f);
+            expired.s.Update(0.02f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
         CHECK(forged.nm->JoinRejected() && !forged.nm->Joined());   // signed by someone else
+        CHECK(forged.nm->JoinRejectReason().find("signature") != std::string::npos);
+        CHECK(forged.nm->JoinRejectReason().find("too many") == std::string::npos);
         CHECK(expired.nm->JoinRejected() && !expired.nm->Joined());
+        CHECK(expired.nm->JoinRejectReason().find("expired") != std::string::npos);
+        CHECK(expired.nm->JoinRejectReason().find("too many") == std::string::npos);
         // Sequenced, encrypted traffic still flows both ways.
         pump(10);
         for (int i = 0; i < 5; ++i) { good.nm->Send("hi", "there"); pump(2); }

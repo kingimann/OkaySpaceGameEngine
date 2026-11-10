@@ -52,6 +52,7 @@
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
 #include "DevFieldDemo.hpp"
+#include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
@@ -1131,6 +1132,71 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     return g_view3DTex[slot];
 }
 
+// One camera pass, read back as ABGR. Mirrors Render3DTexture's backend choice
+// without the zero-copy path (the stack has to composite on the CPU).
+const std::uint32_t* Render3DPassPixels(const Scene& scene, const okay::CameraPass& pass) {
+    const bool prevSky = okay::SkyPassEnabled();
+    const int prevMask = okay::RenderCullingMask();
+    const float prevFov = okay::visibility::RenderViewFovY();
+    okay::SkyPassEnabled() = pass.sky && scene.renderSettings.skybox;
+    okay::RenderCullingMask() = pass.cullingMask;
+    okay::visibility::RenderViewFovY() = pass.fovY;
+    const std::uint32_t* px = nullptr;
+    const bool tryGpu = g_gpuRender;
+    const int rw = pass.w, rh = pass.h;
+#if defined(_WIN32)
+    if (tryGpu && g_d3dReady && g_d3dRenderer) {
+        g_d3dRenderer->SetReadbackStream(-1);
+        px = g_d3dRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
+                                           pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
+    }
+#endif
+    if (tryGpu && !px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
+        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
+        if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
+            px = g_glRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
+                                              pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
+        SDL_GL_MakeCurrent(prevWin, prevCtx);
+    }
+    okay::SceneOcclusionDepth().valid = false;
+    if (!px) {
+        static Raster stackRaster[4];
+        static std::vector<std::uint32_t> stackDown[4];
+        static int stackSlot = 0;
+        const int s = stackSlot++ & 3;
+        px = RenderMeshesSS(stackRaster[s], stackDown[s], scene, pass.vp, pass.eye, rw, rh, 1, pass.ignore);
+    }
+    okay::SkyPassEnabled() = prevSky;
+    okay::RenderCullingMask() = prevMask;
+    okay::visibility::RenderViewFovY() = prevFov;
+    return px;
+}
+
+// The whole camera stack into one texture, or nullptr when a single camera
+// should keep the existing Render3DTexture path (identical pixels).
+SDL_Texture* RenderCameraStackView(const Scene& scene, int w, int h, int slot, const GameObject* playIgnore) {
+    if (!g_sdlRenderer || w < 1 || h < 1) return nullptr;
+    if (slot < 0 || slot >= kView3DSlots) slot = 0;
+    w = w > 4096 ? 4096 : w; h = h > 4096 ? 4096 : h;
+    okay::ApplySceneLight(scene);
+    const okay::CameraStackPlan plan = okay::PlanCameraStack(scene, w, h, playIgnore);
+    if (plan.singleFullFrame) return nullptr;
+    std::vector<std::uint32_t> composited;
+    if (!okay::CompositeCameraStack(plan, [&](const okay::CameraPass& p) { return Render3DPassPixels(scene, p); }, composited))
+        return nullptr;
+    if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h || g_view3DIsTarget[slot]) {
+        if (g_view3DTex[slot]) DestroyViewTexture(slot);
+        g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                              SDL_TEXTUREACCESS_STREAMING, w, h);
+        SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);
+        g_view3DW[slot] = w; g_view3DH[slot] = h; g_view3DIsTarget[slot] = false;
+    }
+    SDL_UpdateTexture(g_view3DTex[slot], nullptr, composited.data(), w * 4);
+    return g_view3DTex[slot];
+}
+
 // Cached image thumbnail for the Project browser: loads the file once and
 // uploads it as an SDL texture. okay::Image is tightly-packed RGBA8, which is
 // exactly SDL_PIXELFORMAT_ABGR8888 byte order on little-endian. Returns nullptr
@@ -2136,9 +2202,9 @@ static void EmptyState(const char* glyph, const char* title, const char* hint = 
     centered(title, ImVec4(0.66f, 0.68f, 0.72f, 1.0f), 1.0f);
     if (hint) { ImGui::Spacing(); centered(hint, ImVec4(0.46f, 0.47f, 0.51f, 1.0f), 1.0f); }
 }
-bool g_autosave = true;          // periodically write a crash-recovery sidecar
-double g_lastAutosave = 0.0;     // seconds since last autosave
-float  g_autosaveInterval = 120.0f;  // seconds between autosaves
+bool g_autosave = true;          // recovery-folder autosave (File > Autosave)
+float  g_docAutosaveSec = 30.0f;     // seconds between recovery copies (graphs, scripts, scene)
+bool   g_autosaveToFile = false;     // also overwrite the real file (off unless chosen)
 double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI)
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
 Uint64 g_lastSavedAt = 0;        // SDL_GetTicks64() of the last successful scene save (0 = none this session)
@@ -2215,6 +2281,8 @@ void LoadSettings() {
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "sidetabs") g_sideTabs = (v < 0 || v > 2) ? 0 : v;
+        else if (k == "docautosave") g_docAutosaveSec = (float)(v < 5 ? 5 : (v > 600 ? 600 : v));
+        else if (k == "autosavetofile") g_autosaveToFile = (v != 0);
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
@@ -2265,7 +2333,9 @@ void SaveSettings() {
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
       << "uisubdivy " << g_uiSubdivY << "\n"
-      << "sidetabs " << g_sideTabs << "\n";
+      << "sidetabs " << g_sideTabs << "\n"
+      << "docautosave " << (int)(g_docAutosaveSec + 0.5f) << "\n"
+      << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n";
     okayproj::WriteTextAtomic("okay_settings.txt", f.str());   // whole or not at all: a crash never leaves a cut-off file
 }
 
@@ -2554,7 +2624,12 @@ void DrawVarWatch() {
 static void SaveSceneCmd(EditorState& ed);       // File > Save Scene (Ctrl+S)
 static void SaveSceneAsCmd(EditorState& ed);     // File > Save Scene As (Ctrl+Shift+S)
 static bool SaveProject(EditorState& ed, bool interactive);   // File > Save Project (Ctrl+Alt+S): everything
-static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts or the open graph
+static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts or open graphs
+static bool SaveEditorDocument(const std::string& path, const std::string& content);  // backup, then atomic write
+static void RequestPlay(EditorState& ed);
+static void RequestStop(EditorState& ed);
+static void RequestLoad(EditorState& ed, const std::string& path);
+static void DrawActionPrompt(EditorState& ed);
 static std::string DefaultScenePath(EditorState& ed);                 // where a never-saved scene goes
 static bool SaveSceneTo(EditorState& ed, std::string p);              // save under a path (reports why when it can't)
 // Run `action` now, or once the person has answered "Save changes to <scene> before <doing>?" (Save / Don't Save /
@@ -5565,6 +5640,8 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("UI Controls",          &okay::UITemplates::AddUIControls);   // grok/ui-controls
         add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
         add("UI Options",           &okay::UITemplates::AddUIOptions);   // grok/ui-options
+        ImGui::Separator();
+        oked::DrawUIAddMenuExtras(ed, UIAddParent(ed), created);   // window, radio buttons, damage numbers, nameplate, inventory, dialogue
         ImGui::EndMenu();
     }
 }
@@ -5686,6 +5763,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Import Model...")) PickAndImportModel();   // OS file explorer, then settings
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", DAE, STL, ..." : "");
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
+        oked::DrawExamplesMenu(ed, [&ed](const std::function<void()>& run) { RunAfterSavePrompt(ed, "opening an example", run); });
         if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
             for (const std::string& p : g_recent) {
                 // Tiny rendered preview beside each recent scene (cached snapshot).
@@ -5696,11 +5774,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 std::error_code fec;
                 bool exists = std::filesystem::exists(p, fec);   // moved/deleted files gray out
                 if (ImGui::MenuItem((exists ? p : p + "   (missing)").c_str(), nullptr, false, exists)) {
-                    RunAfterSavePrompt(ed, "opening another scene", [&ed, p] { RunAfterProjectCheck(ed, p, [&ed, p] {
-                        std::string err;
-                        if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
-                        else ShowErrorPopup("Couldn't open the scene", "\"" + p + "\": " + err + "\n\nThe scene you had open is still open.");
-                    }); });
+                    RequestLoad(ed, p);
                 }
                 if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     ImGui::SetTooltip("File not found (moved or deleted)");
@@ -5733,12 +5807,16 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::BeginMenu("Autosave")) {
             ImGui::MenuItem("Enabled", nullptr, &g_autosave);
             ImGui::SetNextItemWidth(150);
-            ImGui::SliderFloat("Interval (s)", &g_autosaveInterval, 30.0f, 600.0f, "%.0f");
+            if (ImGui::SliderFloat("Interval (s)", &g_docAutosaveSec, 5.0f, 300.0f, "%.0f")) SaveSettings();
             if (g_autosaveStamp > 0.0)
                 ImGui::TextDisabled("Last autosave: %.0fs ago",
                                     SDL_GetTicks64() / 1000.0 - g_autosaveStamp);
-            ImGui::TextDisabled("Writes a <scene>.autosave recovery copy;");
-            ImGui::TextDisabled("offered on next open if it's newer than the scene.");
+            ImGui::TextDisabled("Unsaved graphs, scripts and the scene go to the");
+            ImGui::TextDisabled("recovery folder. Real files stay as you saved them.");
+            ImGui::TextDisabled("A leftover <scene>.autosave is still offered on open");
+            ImGui::TextDisabled("when it is newer than the scene. New ones are not written.");
+            if (ImGui::MenuItem("Also save the real file", nullptr, &g_autosaveToFile)) SaveSettings();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: recovery copies only. On: also overwrite the file you saved.");
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Build Settings...", "Ctrl+B")) g_showBuildGame = true;
@@ -6420,12 +6498,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
             okay::editor::apreview::Stop(ed.scene());   // before the snapshot, so Play doesn't save the preview pose
             CompileOpenScriptBuffers(ed.scene());
             NavigationBeforePlay(ed);   // surfaces set to bake before Play
-            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
-            g_playTextHandoff = true; ImGui::ClearActiveID();
-            g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
+            RequestPlay(ed);
         } else {
-            okay::editor::apreview::Stop(ed.scene());   // before Stop destroys the play copy
-            ed.Stop(); g_paused = false; ConsoleLog("Stop");
+            RequestStop(ed);
         }
     }
     // Pause
@@ -9484,11 +9559,7 @@ void DrawProject(EditorState& ed) {
     auto openAsset = [&](const std::string& full, const std::string& ext, bool isDir) {
         if (isDir) std::strncpy(dirBuf, full.c_str(), sizeof(dirBuf) - 1);
         else if (ext == ".okayscene") {
-            RunAfterSavePrompt(ed, "opening another scene", [&ed, full] { RunAfterProjectCheck(ed, full, [&ed, full] {
-                std::string err;
-                if (ed.Load(full, &err)) { ConsoleLog("Opened " + full); AddRecent(full); }
-                else ShowErrorPopup("Couldn't open the scene", "\"" + full + "\": " + err + "\n\nThe scene you had open is still open.");
-            }); });
+            RequestLoad(ed, full);
         } else if (ext == ".okayprefab") {
             ed.PushUndo();
             std::string err;
@@ -10542,8 +10613,14 @@ void DrawStats(EditorState& ed) {
         {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
         {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
         {"Particles",  stParts},
-        {"Drawn",      okay::LastCullCounters().drawn},    // last GPU frame, after frustum culling
+        {"Drawn",      okay::LastCullCounters().drawn},    // last frame, after culling and batching
         {"Culled",     okay::LastCullCounters().culled},
+        {"Occluded",   okay::LastCullCounters().occluded},
+        {"LOD culled", okay::LastCullCounters().lodCulled},
+        {"LOD0",       okay::LastCullCounters().lod0},
+        {"LOD1+",      okay::LastCullCounters().lod1 + okay::LastCullCounters().lod2 + okay::LastCullCounters().lod3},
+        {"Batches",    okay::LastCullCounters().batches},
+        {"Draws saved", okay::LastCullCounters().drawsSaved},
     };
     if (ImGui::BeginTable("##statgrid", 4, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("n1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
@@ -10566,6 +10643,14 @@ void DrawStats(EditorState& ed) {
     }
     ImGui::Spacing();
     ImGui::Checkbox("Frustum culling", &okay::FrustumCullingEnabled());
+    ImGui::SameLine();
+    ImGui::Checkbox("Occlusion", &okay::visibility::OcclusionCullingEnabled());
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Skip meshes hidden behind an Occluder. Off, or with no Occluder\n"
+                          "in the scene, nothing extra is hidden.");
+    ImGui::Checkbox("Static batching", &okay::visibility::StaticBatchingEnabled());
+    ImGui::SameLine();
+    ImGui::Checkbox("Dynamic batching", &okay::visibility::DynamicBatchingEnabled());
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Skip meshes the camera (or the sun's shadow map) can't see.\n"
                           "Turn off only to check whether culling hides something it shouldn't.");
@@ -11041,6 +11126,7 @@ void SceneBuildApply(EditorState&, const std::vector<SceneBuildEntry>& entries) 
 // Prompt to save unsaved work before quitting. Routed through g_quitRequested
 // (set by Exit, the window close button, or SDL_QUIT) so closing never silently
 // discards changes.
+static bool ScriptTabDirty(okay::ScriptComponent* t);
 void DrawQuitPrompt(EditorState& ed, bool& running) {
     static bool open = false;
     if (g_quitRequested && !open) {
@@ -11052,22 +11138,31 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("You have unsaved changes. Save before quitting?");
-        ImGui::TextDisabled("Save keeps everything: the scene, edited scripts and the open visual script.");
+        ImGui::TextDisabled("Save keeps the scene, every edited script and every open graph.");
+        {
+            std::vector<std::string> names;
+            if (ed.dirty) names.push_back("Scene: " + (ed.path().empty() ? ed.scene().Name() : ed.path()));
+            for (okay::ScriptComponent* t : g_scriptTabs)
+                if (t && ScriptTabDirty(t)) names.push_back("Script: " + (t->Path().empty() ? std::string("Untitled") : t->Path()));
+            okay::editor::vsed::VsDirtyTitles(names);
+            for (const std::string& n : names) ImGui::BulletText("%s", n.c_str());
+        }
         ImGui::Separator();
-        if (ImGui::Button("Save", ImVec2(110, 0))) {
+        if (ImGui::Button("Save", ImVec2(120, 0))) {
             const bool ok = SaveProject(ed, false);
             g_quitRequested = false; open = false;
             if (ok) running = false;   // something failed: stay open so nothing is lost
             ImGui::CloseCurrentPopup();
         }
+        ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
-        if (ImGui::Button("Don't Save", ImVec2(110, 0))) {
-            running = false; g_quitRequested = false; open = false;
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            g_quitRequested = false; open = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) {
-            g_quitRequested = false; open = false;
+        if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+            running = false; g_quitRequested = false; open = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -13251,7 +13346,85 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     ImGui::EndPopup();
 }
 
+static okay::ScriptComponent* g_scriptCloseAsk = nullptr;
+static void CloseScriptTab(okay::ScriptComponent* closeTab, bool remember) {
+    if (!closeTab) return;
+    if (remember) {
+        const char* live = PeekCodeBuffer(closeTab);
+        okay::editor::docrec::ClosedDoc c;
+        c.kind = "script";
+        c.path = closeTab->Path();
+        c.key = c.path.empty() ? std::string("untitled-script") : c.path;
+        c.text = live ? live : closeTab->Source();
+        auto it = g_scriptSaved.find(closeTab);
+        c.baseline = it == g_scriptSaved.end() ? closeTab->Source() : it->second;
+        const std::string baseline = c.baseline;
+        okay::editor::docrec::RememberClosed(std::move(c));
+        if (live) SetCodeBuffer(closeTab, baseline);
+    }
+    g_scriptTabs.erase(std::remove(g_scriptTabs.begin(), g_scriptTabs.end(), closeTab), g_scriptTabs.end());
+    if (g_activeScriptTab == closeTab)
+        g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
+    g_scriptSaved.erase(closeTab);
+    g_looseScripts.erase(std::remove_if(g_looseScripts.begin(), g_looseScripts.end(),
+        [&](const std::unique_ptr<okay::ScriptComponent>& u){ return u.get() == closeTab; }),
+        g_looseScripts.end());
+}
+static void ReopenClosedScript() {
+    auto& stack = okay::editor::docrec::ClosedStack();
+    for (std::size_t i = 0; i < stack.size(); ++i) {
+        if (stack[i].kind != "script") continue;
+        okay::editor::docrec::ClosedDoc c = std::move(stack[i]);
+        stack.erase(stack.begin() + (std::ptrdiff_t)i);
+        if (!c.path.empty()) OpenScriptFileInEditor(c.path);
+        else {
+            auto sc = std::make_unique<okay::ScriptComponent>("okayscript");
+            okay::ScriptComponent* raw = sc.get();
+            g_looseScripts.push_back(std::move(sc));
+            g_scriptTabs.push_back(raw);
+            g_activeScriptTab = raw; g_focusScriptTab = raw;
+            g_showScriptEditor = true;
+        }
+        if (g_activeScriptTab) {
+            SetCodeBuffer(g_activeScriptTab, c.text);
+            g_scriptSaved[g_activeScriptTab] = c.baseline;
+        }
+        return;
+    }
+}
+static void DrawScriptClosePrompt() {
+    if (g_scriptCloseAsk && !ImGui::IsPopupOpen("Save this script?")) ImGui::OpenPopup("Save this script?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Save this script?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    okay::ScriptComponent* sc = g_scriptCloseAsk;
+    const std::string name = sc && !sc->Path().empty() ? sc->Path() : std::string("Untitled script");
+    ImGui::TextUnformatted("Save this script before closing it?");
+    ImGui::TextDisabled("%s", name.c_str());
+    ImGui::Spacing();
+    if (ImGui::Button("Save", ImVec2(120, 0)) && sc) {
+        const char* live = PeekCodeBuffer(sc);
+        std::string p = sc->Path();
+        if (p.empty()) p = "Assets/Untitled.okay";
+        if (live && SaveEditorDocument(p, live)) {
+            sc->SetPath(p); sc->SetSource(live); g_scriptSaved[sc] = live;
+        }
+        CloseScriptTab(sc, false);
+        g_scriptCloseAsk = nullptr;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0))) { g_scriptCloseAsk = nullptr; ImGui::CloseCurrentPopup(); }
+    ImGui::SameLine();
+    if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+        CloseScriptTab(sc, true);
+        g_scriptCloseAsk = nullptr;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
 void DrawScriptEditor(EditorState& ed) {
+    struct ClosePromptGuard { ~ClosePromptGuard() { DrawScriptClosePrompt(); } } closePromptGuard;
     // Float/Dock request from the toolbar (applied for one frame before Begin):
     // 1 = undock into a floating window, 2 = dock back into the main area as a tab.
     if (g_scriptDockReq == 1) {
@@ -13300,24 +13473,27 @@ void DrawScriptEditor(EditorState& ed) {
     s_lastSel = sel; s_lastSelScripts = selScripts;
 
     if (g_scriptTabs.empty()) {
-        // Nothing open: a calm, roomy start. No object needs to be selected.
-        ImGui::Dummy(ImVec2(0, 36));
-        const float colW = std::min(520.0f, ImGui::GetContentRegionAvail().x - 48.0f);
+        // A short bottom dock used to clip "New Script" under the intro text, with
+        // no scrollbar, so the button could not be reached. The button stays at
+        // the top of a scrolling area that fills whatever height the dock has.
+        const float availH = ImGui::GetContentRegionAvail().y;
+        ImGui::BeginChild("##seempty", ImVec2(0, std::max(1.0f, availH)), ImGuiChildFlags_None, ImGuiWindowFlags_None);
+        const float colW = std::min(520.0f, std::max(160.0f, ImGui::GetContentRegionAvail().x - 24.0f));
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - colW) * 0.5f));
         ImGui::BeginGroup();
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 10.0f));
-        ImGui::SetWindowFontScale(1.35f);
+        ImGui::SetWindowFontScale(1.2f);
         ImGui::TextUnformatted("No script open");
         ImGui::SetWindowFontScale(1.0f);
+        ImGui::Spacing();
+        if (ImGui::Button("New Script", ImVec2(200, 36))) g_seNewReq = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create a script and open it in a tab");
         ImGui::Spacing();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + colW);
         ImGui::TextWrapped("Start a new script, or open one from the list. Selecting an object that has a Script opens it here too.");
         ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        if (ImGui::Button("New Script", ImVec2(200, 40))) g_seNewReq = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create a script and open it in a tab");
         ImGui::PopStyleVar();
-        ImGui::Spacing(); ImGui::Spacing();
+        ImGui::Spacing();
         ImGui::TextDisabled("Scripts in this project");
         {
             namespace fs = std::filesystem;
@@ -13339,6 +13515,7 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::Spacing();
         ImGui::TextDisabled("Ctrl+F finds text. The View menu has zoom and the problems list.");
         ImGui::EndGroup();
+        ImGui::EndChild();
         ScriptEditorNewScriptPopup(ed);
         ImGui::End();
         return;
@@ -13371,15 +13548,15 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::EndTabBar();
         g_focusScriptTab = nullptr;
         if (closeTab) {
-            g_scriptTabs.erase(std::remove(g_scriptTabs.begin(), g_scriptTabs.end(), closeTab),
-                               g_scriptTabs.end());
-            if (g_activeScriptTab == closeTab)
-                g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
-            g_scriptSaved.erase(closeTab);   // drop the modified-marker baseline
-            // Free a loose (Project-opened) script when its tab is closed.
-            g_looseScripts.erase(std::remove_if(g_looseScripts.begin(), g_looseScripts.end(),
-                [&](const std::unique_ptr<ScriptComponent>& u){ return u.get() == closeTab; }),
-                g_looseScripts.end());
+            if (ScriptTabDirty(closeTab)) g_scriptCloseAsk = closeTab;
+            else CloseScriptTab(closeTab, false);
+        }
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+            if (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_T)) ReopenClosedScript();
+            else if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_W) && g_activeScriptTab) {
+                if (ScriptTabDirty(g_activeScriptTab)) g_scriptCloseAsk = g_activeScriptTab;
+                else CloseScriptTab(g_activeScriptTab, false);
+            }
         }
     }
     ImGui::PopStyleVar();
@@ -13524,7 +13701,7 @@ void DrawScriptEditor(EditorState& ed) {
                 std::filesystem::path assets = std::filesystem::path(ed.projectDir()) / "Assets";
                 if (std::filesystem::is_directory(assets, sc_ec)) p = (assets / p).string();
             }
-            if (extide::WriteFile(p, buf.data())) {
+            if (SaveEditorDocument(p, buf.data())) {
                 sc->SetPath(p);
                 sc->SetSource(buf.data());        // persist edits so a scene save keeps them
                 ConsoleLog("Saved " + p);
@@ -15902,6 +16079,9 @@ static bool OwnShortcutsWindowFocused() {
     return std::strncmp(w->Name, "Script Editor", 13) == 0 || std::strncmp(w->Name, "Visual Script", 13) == 0;
 }
 
+static void RequestPlay(EditorState& ed);
+static void RequestStop(EditorState& ed);
+
 // Global keyboard shortcuts (ignored while typing in a field).
 void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
@@ -15909,19 +16089,8 @@ void HandleShortcuts(EditorState& ed) {
     // no file open) owns every shortcut, so Ctrl+P, and a click that never
     // reaches Stop, left Play with no way out.
     if (PlayStopShortcut(io.KeyCtrl, ImGui::IsKeyPressed(ImGuiKey_P, false))) {
-        if (ed.isPlaying()) {
-            okay::editor::apreview::Stop(ed.scene());
-            ed.Stop(); g_paused = false; ConsoleLog("Stop");
-        } else {
-            if (g_clearConsoleOnPlay) ConsoleClear();
-            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
-            okay::editor::apreview::Stop(ed.scene());
-            CompileOpenScriptBuffers(ed.scene());
-            NavigationBeforePlay(ed);
-            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
-            g_playTextHandoff = true; ImGui::ClearActiveID();
-            g_showGame = true; g_focusGameOnPlay = true;
-        }
+        if (ed.isPlaying()) RequestStop(ed);
+        else RequestPlay(ed);
     }
     if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
@@ -16202,12 +16371,7 @@ void DrawFileDialogs(EditorState& ed) {
                 std::snprintf(g_pathBuf, sizeof(g_pathBuf), "%s", p);
         }
         if (ImGui::Button("Open", ImVec2(120, 0)) || openGo) {
-            const std::string openPath = g_pathBuf;
-            RunAfterSavePrompt(ed, "opening another scene", [&ed, openPath] { RunAfterProjectCheck(ed, openPath, [&ed, openPath] {
-                std::string err;
-                if (ed.Load(openPath, &err)) { ConsoleLog("Opened " + openPath); AddRecent(openPath); }
-                else ShowErrorPopup("Couldn't open the scene", "\"" + openPath + "\": " + err + "\n\nThe scene you had open is still open.");
-            }); });
+            RequestLoad(ed, g_pathBuf);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -29352,6 +29516,26 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Clear##aomap")) { mr->aoMap.clear(); ed.dirty = true; }
                 if (ImGui::SliderFloat("Occlusion##mesh", &mr->aoStrength, 0.0f, 1.0f)) ed.dirty = true;
             }
+            char mrmap[260];
+            std::strncpy(mrmap, mr->metallicRoughnessMap.c_str(), sizeof(mrmap) - 1);
+            mrmap[sizeof(mrmap) - 1] = '\0';
+            if (ImGui::InputText("Metal / Rough##mesh", mrmap, sizeof(mrmap))) { mr->metallicRoughnessMap = mrmap; ed.dirty = true; }
+            if (AcceptAssetPathField(mr->metallicRoughnessMap)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("glTF packed map: green = roughness, blue = metallic.\nMultiplied with Metallic and the highlight tightness.");
+            if (!mr->metallicRoughnessMap.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##mrmap")) { mr->metallicRoughnessMap.clear(); ed.dirty = true; }
+            }
+            char emap[260];
+            std::strncpy(emap, mr->emissiveMap.c_str(), sizeof(emap) - 1);
+            emap[sizeof(emap) - 1] = '\0';
+            if (ImGui::InputText("Emissive Map##mesh", emap, sizeof(emap))) { mr->emissiveMap = emap; ed.dirty = true; }
+            if (AcceptAssetPathField(mr->emissiveMap)) ed.dirty = true;
+            if (!mr->emissiveMap.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##emap")) { mr->emissiveMap.clear(); ed.dirty = true; }
+            }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
             if (ImGui::SmallButton("Subdivide##mesh")) {
@@ -30938,8 +31122,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Cast Shadows##light", &li->castShadows)) ed.dirty = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(li->type == Light::Type::Directional
-                    ? "Sun shadows (cascaded). Only the first Directional light casts them.\nQuality/distance: Rendering panel > Shadows."
+                    ? "Sun shadows (cascaded). One Directional light casts them — the first\nthat has Cast Shadows on. Others still light the scene.\nQuality changes the map size and distance (Low / Medium / High)."
                     : "Objects block this light (no light through walls).\nUp to 16 shadow tiles per frame: a Spot uses 1, a Point/Area uses 6;\nlights nearest the camera get them first.");
+            if (li->type == Light::Type::Directional && !okay::DirectionalShadowWarning().empty())
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "%s", okay::DirectionalShadowWarning().c_str());
             if (li->castShadows) {
                 if (ImGui::SliderFloat("Strength##lightsh", &li->shadowStrength, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = invisible, 1 = fully dark (down to the ambient light)");
@@ -31009,8 +31195,13 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Background");
             int cf = (int)cam->clearFlags;
-            const char* cfs[] = {"Skybox", "Solid Color"};
-            if (ImGui::Combo("Clear Flags", &cf, cfs, 2)) { cam->clearFlags = (Camera::ClearFlags)cf; ed.dirty = true; }
+            const char* cfs[] = {"Skybox", "Solid Color", "Depth Only", "Don't Clear"};
+            if (ImGui::Combo("Clear Flags", &cf, cfs, 4)) { cam->clearFlags = (Camera::ClearFlags)cf; ed.dirty = true; }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Skybox / Solid Color replace this camera's rectangle.\n"
+                                  "Depth Only draws over the cameras underneath (a weapon, a minimap).\n"
+                                  "Don't Clear keeps their colour and depth.\n"
+                                  "Cameras run lowest Depth first. The first one always clears.");
             if (cam->clearFlags == Camera::ClearFlags::SolidColor) {
                 float bg[4] = {cam->backgroundColor.r, cam->backgroundColor.g, cam->backgroundColor.b, cam->backgroundColor.a};
                 if (ImGui::ColorEdit4("Background", bg)) { cam->backgroundColor = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
@@ -31111,8 +31302,91 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Main", &cam->main)) ed.dirty = true;
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Depth", &cam->depth, 0.1f)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render priority; the highest-depth camera is used as main");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Draw order: lower Depth draws first, higher Depth on top.\n"
+                                  "The highest-Depth camera marked Main is the scene's main camera\n"
+                                  "(audio listener, scripts). Overlay cameras should not be Main.");
+            {
+                char rt[96];
+                std::snprintf(rt, sizeof(rt), "%s", cam->renderTarget.c_str());
+                if (ImGui::InputText("Render Target", rt, sizeof(rt))) { cam->renderTarget = rt; ed.dirty = true; }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Optional name. After this camera draws, its picture is kept\n"
+                                      "as CameraTarget(name) — a minimap texture, a mirror, a scope.");
+            }
+            if (ImGui::Button("Add overlay camera")) {
+                Camera* keep = ed.scene().mainCamera;
+                GameObject* ov = ed.scene().CreateGameObject("Overlay Camera");
+                auto* oc = ov->AddComponent<Camera>();
+                oc->main = false;
+                oc->depth = cam->depth + 1.0f;
+                oc->clearFlags = Camera::ClearFlags::DepthOnly;
+                oc->rectX = 0.68f; oc->rectY = 0.68f; oc->rectW = 0.28f; oc->rectH = 0.28f;
+                oc->projection = cam->projection;
+                if (ov->transform && cam->gameObject && cam->gameObject->transform) {
+                    ov->transform->localPosition = cam->gameObject->transform->localPosition + Vec3{0, 2.0f, -2.0f};
+                    ov->transform->localRotation = cam->gameObject->transform->localRotation;
+                }
+                if (ed.scene().mainCamera == oc) ed.scene().mainCamera = keep;
+                ed.Select(ov); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("A second camera in the corner, drawn after this one.\n"
+                                  "Move it, set its culling mask, or switch Clear Flags to Solid Color.");
             if (ImGui::SmallButton("Remove##cam")) toRemove = cam;
+        }
+    }
+    if (auto* lod = dynamic_cast<LODGroup*>(curComp)) {
+        if (CompHeader("LOD Group", lod, &toRemove)) {
+            if (ImGui::Checkbox("Screen size", &lod->useScreenSize)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Off: switch by distance (metres).\nOn: switch by how tall the object is on screen (0..1).");
+            if (ImGui::SliderFloat("Hysteresis", &lod->hysteresis, 0.0f, 0.4f, "%.2f")) ed.dirty = true;
+            if (lod->useScreenSize) {
+                if (ImGui::DragFloat("Cull screen", &lod->cullScreen, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+            } else if (ImGui::DragFloat("Cull distance", &lod->cullDistance, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = never stop drawing it, however far it is.");
+            if (ImGui::Checkbox("Tint by level", &lod->debugTint)) ed.dirty = true;
+            int force = lod->forceLevel + 1;
+            const char* forces[] = {"Auto", "LOD 0", "LOD 1", "LOD 2", "LOD 3", "Culled"};
+            if (ImGui::Combo("Force", &force, forces, 6)) { lod->forceLevel = force - 1; ed.dirty = true; }
+            ImGui::TextDisabled("Active level: %s", lod->activeLevel < 0 ? "culled" : (std::to_string(lod->activeLevel).c_str()));
+            if (lod->levels.empty()) ImGui::TextDisabled("No levels yet. Generate them from this object's mesh.");
+            for (int i = 0; i < (int)lod->levels.size(); ++i) {
+                ImGui::PushID(i);
+                auto& L = lod->levels[(std::size_t)i];
+                ImGui::Text("LOD %d", i);
+                ImGui::SameLine();
+                if (lod->useScreenSize) {
+                    if (ImGui::DragFloat("Screen", &L.screenSize, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                } else if (ImGui::DragFloat("Distance", &L.distance, 0.2f, 0.0f, 100000.0f)) ed.dirty = true;
+                if (i > 0) {
+                    ImGui::SameLine();
+                    const int tris = (i - 1 < (int)lod->lodMeshes.size()) ? lod->lodMeshes[(std::size_t)(i - 1)].TriangleCount() : 0;
+                    ImGui::TextDisabled("%d tris", tris);
+                }
+                ImGui::PopID();
+            }
+            if (ImGui::Button("Generate LODs")) {
+                if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    lod->Generate(mr->DisplayMesh());
+                    ed.dirty = true;
+                }
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Four levels: 100%%, 50%%, 25%% and 10%% of the triangles,\n"
+                                  "with distances taken from how much the shape changes.");
+            if (ImGui::SmallButton("Remove##lod")) toRemove = lod;
+        }
+    }
+    if (auto* occ = dynamic_cast<Occluder*>(curComp)) {
+        if (CompHeader("Occluder", occ, &toRemove)) {
+            if (ImGui::Checkbox("Use mesh", &occ->useMesh)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("On: the real triangles hide what's behind them.\n"
+                                  "Off: the bounding box does (only for a solid wall).");
+            ImGui::TextDisabled("Objects behind this one can be skipped when Occlusion is on (Stats).");
+            if (ImGui::SmallButton("Remove##occ")) toRemove = occ;
         }
     }
     if (auto* rb2 = dynamic_cast<Rigidbody2D*>(curComp))
@@ -32498,7 +32772,7 @@ void DrawInspector(EditorState& ed) {
     // ---- In-game build mode + logic links ----
     // One-letter key field ("" = unbound), mouse button and gamepad button pickers.
     auto bmKey = [&](const char* label, char& key) {
-        char b[2] = {key > ' ' ? key : (key == ' ' ? '_' : 0), 0};
+        char b[2] = {static_cast<char>(key > ' ' ? key : (key == ' ' ? '_' : 0)), 0};
         ImGui::SetNextItemWidth(40);
         if (ImGui::InputText(label, b, sizeof(b))) {
             char c = b[0];
@@ -34507,17 +34781,17 @@ void DrawInspector(EditorState& ed) {
             std::snprintf(nb, sizeof(nb), "%s", th->themeName.c_str());
             if (ImGui::InputText("Name##uitheme", nb, sizeof(nb))) { th->themeName = nb; th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
             {
-                const char* presets[] = {"Custom", "Dark", "Light", "Sci-fi", "Fantasy"};
-                int which = th->preset;
-                if (which < 0 || which > 4) which = 0;
-                if (ImGui::Combo("Built-in Theme##uitheme", &which, presets, 5)) {
-                    th->ApplyPreset(which);
-                    ed.dirty = true;
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dark, Light, Sci-fi and Fantasy fill the colors below. Custom keeps whatever you edit. Apply writes them onto the widgets.");
+                oked::DrawThemePresetCombo(*th, ed);   // 12 looks + Custom
             }
             if (ImGui::Checkbox("Apply On Start##uitheme", &th->applyOnStart)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake this skin onto this object and its children when play starts. Off leaves the scene as it was saved.");
+            if (ImGui::Checkbox("Style the whole scene##uitheme", &th->global)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: Apply styles every widget in the scene. Off: only the ones under this object.");
+            {
+                char fb[200]; std::snprintf(fb, sizeof fb, "%s", th->fontPath.c_str());
+                if (ImGui::InputText("Font##uitheme", fb, sizeof fb)) { th->fontPath = fb; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .ttf or .otf for buttons and text this theme styles. Empty keeps their fonts.");
+            }
             if (ImGui::Button("Apply Now##uitheme")) { th->Apply(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write the colors, radius, border, shadow and fade speed onto the widgets under this object.");
             if (ImGui::DragFloat("Corner Radius##uitheme", &th->cornerRadius, 0.1f, 0.0f, 64.0f)) { th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
@@ -36495,6 +36769,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Drag Threshold##udg", &dg->dragThreshold, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pixels before a drag starts (0 = instant)");
             if (ImGui::Checkbox("Bring to Front while dragging##udg", &dg->bringToFront)) ed.dirty = true;
+            if (ImGui::Checkbox("Drag the parent (window title bar)##udg", &dg->dragParent)) ed.dirty = true;
+            if (ImGui::Checkbox("Keep on screen##udg", &dg->keepOnScreen)) ed.dirty = true;
             ImGui::TextDisabled("Drop onto a UI Drop Target fires on_drop() here +");
             ImGui::TextDisabled("on_receive() on the target.");
             if (ImGui::SmallButton("Remove##udg")) toRemove = dg;
@@ -36623,6 +36899,7 @@ void DrawInspector(EditorState& ed) {
     }
     oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     oked::DrawUIOverlayComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
+    oked::DrawRuntimeUIComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
             UIStyleBar(ed, pb);
@@ -37318,9 +37595,14 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("click in the built game; calls script on_toggle()");
             AnchorCombo("Anchor##utg", tg->anchor, ed);
             if (ImGui::DragFloat("Corner Radius##utg", &tg->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
-            const char* styles[] = {"Checkbox", "Switch"};
+            const char* styles[] = {"Checkbox", "Switch", "Radio"};
             int st = (int)tg->style;
-            if (ImGui::Combo("Style##utg", &st, styles, 2)) { tg->style = (UIToggle::Style)st; ed.dirty = true; }
+            if (ImGui::Combo("Style##utg", &st, styles, 3)) { tg->style = (UIToggle::Style)st; ed.dirty = true; }
+            if (tg->style == UIToggle::Style::Radio) {
+                char gb[64]; std::snprintf(gb, sizeof gb, "%s", tg->radioGroup.c_str());
+                if (ImGui::InputText("Group##utg", gb, sizeof gb)) { tg->radioGroup = gb; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Radio buttons with the same group name are one choice, wherever they are. Empty: the radio buttons under the same parent.");
+            }
             if (tg->style == UIToggle::Style::Switch) {
                 float kc[4] = {tg->knobColor.r, tg->knobColor.g, tg->knobColor.b, tg->knobColor.a};
                 if (ImGui::ColorEdit4("Knob##utg", kc)) { tg->knobColor = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
@@ -37846,6 +38128,11 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<SpriteRenderer>(), "Sprite Renderer")) { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<MeshRenderer>(), "Mesh Renderer (3D)")) { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<LODGroup>(), "LOD Group")) {
+                if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>();
+                go->AddComponent<LODGroup>(); ed.view3D = true; ed.dirty = true;
+            }
+            if (item(!go->GetComponent<Occluder>(), "Occluder")) { go->AddComponent<Occluder>(); ed.dirty = true; }
             if (item(!go->GetComponent<okay::MeshModifiers>(), "Modifiers (non-destructive)")) {
                 if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
                 go->AddComponent<okay::MeshModifiers>(); ed.view3D = true; ed.dirty = true;
@@ -37987,10 +38274,11 @@ void DrawInspector(EditorState& ed) {
                 std::error_code mk; fsn::create_directories(dir, mk);
                 fsn::path p = dir / (go->name + "Graph.okayvs");
                 for (int k = 2; fsn::exists(p, mk); ++k) p = dir / (go->name + "Graph" + std::to_string(k) + ".okayvs");
+                okay::editor::vsed::NewGraph(true);
                 auto& vg = okay::editor::vsed::State().g;
-                okay::editor::vsed::SeedStarterGraph(vg);
-                okay::editor::vsed::State().frameAll = true;
-                if (vg.save(p.string())) {
+                if (SaveEditorDocument(p.string(), vg.toText())) {
+                    vg.path = p.string();
+                    okay::editor::vsed::VsMarkClean(okay::editor::vsed::State());
                     AttachScriptAsset(ed, go, p.string());
                     g_showVisualScript = true;
                 } else ConsoleLog("Couldn't create " + p.string(), 2);
@@ -38179,6 +38467,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIKeybindField>(), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIStyleVariant>(), "UI Style Variant (theme role)")) { go->AddComponent<UIStyleVariant>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDamageNumbers>(), "UI Damage Numbers (floating text)")) { go->AddComponent<UIDamageNumbers>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDialogueBox>(), "UI Dialogue Box (typing text + choices)")) { go->AddComponent<UIDialogueBox>(); ed.dirty = true; }
           } EndCat(o); }
 
         if (!acShown)
@@ -40586,6 +40877,23 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); iconLabel(sp, up->name.c_str(), col); }
             }
 
+            if (auto* lod = up->GetComponent<LODGroup>(); lod && up.get() == ed.selected() && !lod->useScreenSize) {
+                const ImU32 cols[4] = {IM_COL32(255, 90, 90, 180), IM_COL32(90, 220, 110, 160),
+                                       IM_COL32(90, 150, 255, 140), IM_COL32(255, 210, 70, 120)};
+                for (int i = 0; i < (int)lod->levels.size() && i < 4; ++i) {
+                    const float rad = lod->levels[(std::size_t)i].distance;
+                    if (rad <= 0.05f) continue;
+                    const int N = 28;
+                    Vec3 prev{0, 0, 0}; bool have = false;
+                    for (int s = 0; s <= N; ++s) {
+                        const float a = 6.2831853f * (float)s / (float)N;
+                        Vec3 q{p.x + std::cos(a) * rad, p.y, p.z + std::sin(a) * rad};
+                        if (have) line(prev, q, cols[i], 1.25f);
+                        prev = q; have = true;
+                    }
+                }
+            }
+
             if (auto* lt = up->GetComponent<Light>()) {
                 // Tint the gizmo by the light's own color (so lights are
                 // distinguishable), brightening to yellow when selected.
@@ -40789,7 +41097,22 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             g->active = false;
         }
     }
-    if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
+    if (gameView) {
+        if (Camera* fovCam = SceneCamera(ed.scene()))
+            okay::visibility::RenderViewFovY() = fovCam->projection == Camera::Projection::Perspective
+                ? fovCam->VerticalFovDegrees(v3h > 1.0f ? v3w / v3h : 1.0f) : 60.0f;
+    } else {
+        okay::visibility::RenderViewFovY() = g_editorFov;
+    }
+    SDL_Texture* stackTex = nullptr;
+    if (gameView) {
+        const int fw = std::max(1, (int)(canvasSize.x * dpi));
+        const int fh = std::max(1, (int)(canvasSize.y * dpi));
+        stackTex = RenderCameraStackView(ed.scene(), fw, fh, 1, viewIgnore);
+    }
+    if (stackTex)
+        dl->AddImage((ImTextureID)stackTex, canvasPos, canvasEnd);
+    else if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)(v3w * dpi), (int)(v3h * dpi),
                                            gameView ? 1 : 0, viewIgnore))
         dl->AddImage((ImTextureID)tex, view3dMin, view3dMax);
@@ -41065,6 +41388,20 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    // GPU frames do not read depth back. When something is drawn on top of the
+    // picture (particles, lines, trails), fill a half-resolution depth buffer the
+    // same way the player does so those ribbons hide behind solid meshes.
+    if (!okay::SceneOcclusionDepth().valid) {
+        bool overlay = false;
+        for (const auto& up : ed.scene().Objects())
+            if (up && up->active && (up->GetComponent<ParticleSystem>() || up->GetComponent<LineRenderer>() ||
+                                     up->GetComponent<TrailRenderer>())) { overlay = true; break; }
+        if (overlay && v3w > 2.0f && v3h > 2.0f) {
+            static Raster occWork; static std::vector<std::uint32_t> occDown;
+            const int hw = std::max(1, (int)(v3w * dpi) / 2), hh = std::max(1, (int)(v3h * dpi) / 2);
+            FillOcclusionDepth(occWork, occDown, ed.scene(), vp, eye, hw, hh, viewIgnore);
+        }
+    }
     // Particles: camera-facing billboards projected with the 3D camera. Collected,
     // depth-sorted back-to-front, and drawn as soft volumetric puffs (a faint outer
     // halo + bright core) so the now-3D particle motion reads as real depth. This
@@ -41086,6 +41423,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (c.w <= 0.05f) continue;
                 ImVec2 sp(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
                           center.y - (c.y / c.w) * canvasSize.y * 0.5f);
+                if (okay::SceneOcclusionDepth().valid) {
+                    const float vw = std::max(1.0f, view3dMax.x - view3dMin.x);
+                    const float vh = std::max(1.0f, view3dMax.y - view3dMin.y);
+                    if (okay::ParticleOccluded((sp.x - view3dMin.x) / vw, (sp.y - view3dMin.y) / vh, c.w)) continue;
+                }
                 float rad = p.size * 0.5f / c.w * canvasSize.x * 0.5f;   // perspective size
                 if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
                 // Long axis: spin angle for billboards, screen-projected velocity for stretch.
@@ -42979,11 +43321,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 placed = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
                 if (!placed) ConsoleLog("Prefab load failed: " + err);
             } else if (ext == ".okayscene") {
-                RunAfterSavePrompt(ed, "opening another scene", [&ed, path] { RunAfterProjectCheck(ed, path, [&ed, path] {
-                    std::string err;
-                    if (ed.Load(path, &err)) { ConsoleLog("Opened " + path); AddRecent(path); }
-                    else ShowErrorPopup("Couldn't open the scene", "\"" + path + "\": " + err + "\n\nThe scene you had open is still open.");
-                }); });
+                RequestLoad(ed, path);
             } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
                 ed.PushUndo();
                 std::filesystem::path fp(path);
@@ -43449,66 +43787,6 @@ void DrawSpriteEditor(EditorState& ed) {
     ImGui::End();
 }
 
-// ---- UI Theme: reusable styles applied across widgets ----------------------
-// A theme is a small palette + corner/border. "Apply" bakes it into every UI widget
-// (by component type), so you define a look once and restyle the whole UI in a click.
-struct EdUITheme {
-    float panel[4], panelBottom[4], button[4], buttonText[4], accent[4], track[4], text[4];
-    float corner, border;
-};
-static EdUITheme g_uiTheme = {
-    {0.12f, 0.14f, 0.21f, 0.94f}, {0.07f, 0.09f, 0.14f, 0.94f},
-    {0.23f, 0.38f, 0.67f, 1.0f},  {0.95f, 0.96f, 1.0f, 1.0f},
-    {0.35f, 0.67f, 0.95f, 1.0f},  {0.16f, 0.16f, 0.20f, 1.0f},
-    {0.92f, 0.94f, 0.98f, 1.0f},  10.0f, 1.0f };
-
-static void UIThemePreset(EdUITheme& t, int p) {
-    auto s = [](float* d, float r, float g, float b, float a) { d[0] = r; d[1] = g; d[2] = b; d[3] = a; };
-    switch (p) {
-        case 0: s(t.panel,0.12f,0.14f,0.21f,0.94f); s(t.panelBottom,0.07f,0.09f,0.14f,0.94f); s(t.button,0.23f,0.38f,0.67f,1); s(t.buttonText,0.95f,0.96f,1,1); s(t.accent,0.35f,0.67f,0.95f,1); s(t.track,0.16f,0.16f,0.20f,1); s(t.text,0.92f,0.94f,0.98f,1); t.corner=10; t.border=1; break; // Dark
-        case 1: s(t.panel,0.95f,0.96f,0.98f,0.98f); s(t.panelBottom,0.86f,0.88f,0.92f,0.98f); s(t.button,0.30f,0.55f,0.90f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.20f,0.50f,0.90f,1); s(t.track,0.80f,0.82f,0.86f,1); s(t.text,0.10f,0.12f,0.16f,1); t.corner=8; t.border=1; break; // Light
-        case 2: s(t.panel,0.06f,0.06f,0.10f,0.96f); s(t.panelBottom,0.02f,0.02f,0.05f,0.96f); s(t.button,0.10f,0.10f,0.16f,1); s(t.buttonText,0.20f,1.0f,0.85f,1); s(t.accent,0.20f,1.0f,0.85f,1); s(t.track,0.10f,0.10f,0.16f,1); s(t.text,0.85f,0.95f,1.0f,1); t.corner=6; t.border=2; break; // Neon
-        case 3: s(t.panel,0.20f,0.12f,0.10f,0.96f); s(t.panelBottom,0.12f,0.07f,0.06f,0.96f); s(t.button,0.80f,0.45f,0.20f,1); s(t.buttonText,0.10f,0.06f,0.04f,1); s(t.accent,0.95f,0.70f,0.25f,1); s(t.track,0.30f,0.20f,0.15f,1); s(t.text,0.98f,0.92f,0.80f,1); t.corner=4; t.border=2; break; // Retro
-        case 4: s(t.panel,0.93f,0.90f,0.96f,0.97f); s(t.panelBottom,0.85f,0.82f,0.92f,0.97f); s(t.button,0.62f,0.55f,0.88f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.55f,0.78f,0.72f,1); s(t.track,0.82f,0.80f,0.88f,1); s(t.text,0.28f,0.24f,0.36f,1); t.corner=14; t.border=0; break; // Pastel
-        case 6: s(t.panel,0.118f,0.129f,0.161f,0.96f); s(t.panelBottom,0.118f,0.129f,0.161f,0.96f); s(t.button,0.26f,0.59f,0.98f,1); s(t.buttonText,1,1,1,1); s(t.accent,0.26f,0.59f,0.98f,1); s(t.track,0.16f,0.18f,0.23f,1); s(t.text,0.90f,0.92f,0.96f,1); t.corner=10; t.border=1; break; // OkaySpace (the launcher's look)
-        case 5: s(t.panel,0.14f,0.14f,0.15f,0.96f); s(t.panelBottom,0.09f,0.09f,0.10f,0.96f); s(t.button,0.30f,0.30f,0.32f,1); s(t.buttonText,0.95f,0.95f,0.96f,1); s(t.accent,0.75f,0.75f,0.78f,1); s(t.track,0.20f,0.20f,0.22f,1); s(t.text,0.92f,0.92f,0.94f,1); t.corner=6; t.border=1; break; // Mono
-    }
-}
-
-static bool UIIsUnder(GameObject* go, GameObject* root) {
-    if (!root) return true;
-    for (GameObject* p = go; p; p = (p->transform && p->transform->Parent()) ? p->transform->Parent()->gameObject : nullptr)
-        if (p == root) return true;
-    return false;
-}
-
-// Bake the theme into every UI widget (optionally only under `root`), by component
-// type. Returns how many widgets were restyled. Saved with the scene, shows in-game.
-static int ApplyUITheme(EditorState& ed, const EdUITheme& t, GameObject* root) {
-    auto C = [](const float* f) { return okay::Color(f[0], f[1], f[2], f[3]); };
-    int n = 0;
-    for (const auto& up : ed.scene().Objects()) {
-        GameObject* g = up.get();
-        if (!g || !UIIsUnder(g, root)) continue;
-        bool touched = false;
-        if (auto* p  = g->GetComponent<UIPanel>())       { p->color=C(t.panel); p->colorBottom=C(t.panelBottom); p->useGradient=true; p->cornerRadius=t.corner; p->borderWidth=t.border; p->borderColor=okay::Color(t.accent[0],t.accent[1],t.accent[2],0.5f); touched=true; }
-        if (auto* b  = g->GetComponent<UIButton>())       { b->color=C(t.button); b->textColor=C(t.buttonText); b->cornerRadius=t.corner; b->borderWidth=t.border; touched=true; }
-        if (auto* sl = g->GetComponent<UISlider>())        { sl->background=C(t.track); sl->fill=C(t.accent); sl->cornerRadius=t.corner; sl->textColor=C(t.text); touched=true; }
-        if (auto* tg = g->GetComponent<UIToggle>())        { tg->boxColor=C(t.track); tg->checkColor=C(t.accent); tg->textColor=C(t.text); tg->cornerRadius=t.corner; touched=true; }
-        if (auto* pb = g->GetComponent<UIProgressBar>())   { pb->background=C(t.track); pb->fill=C(t.accent); pb->fillEnd=C(t.accent); pb->cornerRadius=t.corner; pb->textColor=C(t.text); touched=true; }
-        if (auto* dd = g->GetComponent<UIDropdown>())      { dd->color=C(t.track); dd->listColor=C(t.panel); dd->textColor=C(t.text); dd->cornerRadius=t.corner; touched=true; }
-        if (auto* im = g->GetComponent<UIImage>())         { im->cornerRadius=t.corner; touched=true; }
-        if (auto* tr = g->GetComponent<TextRenderer>(); tr && tr->screenSpace) {
-            GameObject* par = (g->transform && g->transform->Parent()) ? g->transform->Parent()->gameObject : nullptr;
-            tr->color = (par && par->GetComponent<UIButton>()) ? C(t.buttonText) : C(t.text);
-            touched = true;
-        }
-        if (touched) ++n;
-    }
-    if (n) ed.dirty = true;
-    return n;
-}
-
 // Item Database: the project's item definitions (<project>/items.okayitems) — a
 // searchable list, the selected definition's fields, duplicate-id warnings, Save.
 static void DrawItemDatabase(EditorState& ed) {
@@ -43619,78 +43897,7 @@ static void DrawItemDatabase(EditorState& ed) {
 
 void DrawUIThemer(EditorState& ed) {
     if (!ImGui::Begin("UI Theme", &g_showUIThemer)) { ImGui::End(); return; }
-    ImGui::TextDisabled("Define a reusable UI style, then apply it to every widget at once.");
-    ImGui::TextUnformatted("Presets:");
-    const char* names[] = {"Dark", "Light", "Neon", "Retro", "Pastel", "Mono", "OkaySpace"};
-    for (int i = 0; i < 7; ++i) {
-        if (i) ImGui::SameLine();
-        if (ImGui::Button(names[i])) UIThemePreset(g_uiTheme, i);
-        // Mini palette strip along the button's bottom edge: panel/button/accent/text.
-        EdUITheme tt; UIThemePreset(tt, i);
-        ImVec2 bmn = ImGui::GetItemRectMin(), bmx = ImGui::GetItemRectMax();
-        const float* sw[4] = {tt.panel, tt.button, tt.accent, tt.text};
-        float swW = (bmx.x - bmn.x - 8.0f) / 4.0f;
-        for (int s2 = 0; s2 < 4; ++s2) {
-            ImVec2 a(bmn.x + 4.0f + swW * s2, bmx.y - 5.0f), b(bmn.x + 4.0f + swW * (s2 + 1) - 1.0f, bmx.y - 2.0f);
-            ImGui::GetWindowDrawList()->AddRectFilled(a, b,
-                ImGui::GetColorU32(ImVec4(sw[s2][0], sw[s2][1], sw[s2][2], 1.0f)), 1.0f);
-        }
-    }
-    ImGui::Separator();
-    int cf = ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs;
-    ImGui::ColorEdit4("Panel",        g_uiTheme.panel,       cf);
-    ImGui::ColorEdit4("Panel bottom", g_uiTheme.panelBottom, cf);
-    ImGui::ColorEdit4("Button",       g_uiTheme.button,      cf);
-    ImGui::ColorEdit4("Button text",  g_uiTheme.buttonText,  ImGuiColorEditFlags_NoInputs);
-    ImGui::ColorEdit4("Accent",       g_uiTheme.accent,      ImGuiColorEditFlags_NoInputs);
-    ImGui::ColorEdit4("Track",        g_uiTheme.track,       ImGuiColorEditFlags_NoInputs);
-    ImGui::ColorEdit4("Text",         g_uiTheme.text,        ImGuiColorEditFlags_NoInputs);
-    ImGui::SliderFloat("Corner radius", &g_uiTheme.corner, 0.0f, 32.0f, "%.0f");
-    ImGui::SliderFloat("Border width",  &g_uiTheme.border, 0.0f, 6.0f, "%.0f");
-    ImGui::Separator();
-    // Live preview: a mock panel with a button, slider and text drawn from the
-    // current values, so you see the style before baking it into the scene.
-    ImGui::TextDisabled("Preview");
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 pv = ImGui::GetCursorScreenPos();
-        float pw = ImGui::GetContentRegionAvail().x, ph = 96.0f;
-        if (pw < 240.0f) pw = 240.0f;
-        auto U = [](const float* f, float amul = 1.0f) {
-            return ImGui::GetColorU32(ImVec4(f[0], f[1], f[2], f[3] * amul));
-        };
-        float cr = g_uiTheme.corner;
-        dl->AddRectFilled(pv, ImVec2(pv.x + pw, pv.y + ph), U(g_uiTheme.panel), cr);
-        dl->AddRectFilled(ImVec2(pv.x, pv.y + ph * 0.55f), ImVec2(pv.x + pw, pv.y + ph),
-                          U(g_uiTheme.panelBottom, 0.85f), cr,
-                          ImDrawFlags_RoundCornersBottom);
-        if (g_uiTheme.border > 0.0f)
-            dl->AddRect(pv, ImVec2(pv.x + pw, pv.y + ph),
-                        ImGui::GetColorU32(ImVec4(g_uiTheme.accent[0], g_uiTheme.accent[1],
-                                                  g_uiTheme.accent[2], 0.5f)),
-                        cr, 0, g_uiTheme.border);
-        float bx = pv.x + 16.0f, by = pv.y + 16.0f;
-        dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + 110.0f, by + 30.0f),
-                          U(g_uiTheme.button), cr * 0.6f);
-        ImVec2 bts = ImGui::CalcTextSize("Button");
-        dl->AddText(ImVec2(bx + (110.0f - bts.x) * 0.5f, by + (30.0f - bts.y) * 0.5f),
-                    U(g_uiTheme.buttonText), "Button");
-        float sy = by + 46.0f;
-        dl->AddRectFilled(ImVec2(bx, sy), ImVec2(bx + 180.0f, sy + 8.0f), U(g_uiTheme.track), 4.0f);
-        dl->AddRectFilled(ImVec2(bx, sy), ImVec2(bx + 122.0f, sy + 8.0f), U(g_uiTheme.accent), 4.0f);
-        dl->AddCircleFilled(ImVec2(bx + 122.0f, sy + 4.0f), 7.0f, U(g_uiTheme.text), 16);
-        dl->AddText(ImVec2(bx + 210.0f, by + 6.0f), U(g_uiTheme.text), "Sample text");
-        dl->AddText(ImVec2(bx + 210.0f, by + 6.0f + ImGui::GetTextLineHeightWithSpacing()),
-                    U(g_uiTheme.accent), "Accent");
-        ImGui::Dummy(ImVec2(0, ph + 8.0f));
-    }
-    if (ImGui::Button("Apply to All UI")) { int n = ApplyUITheme(ed, g_uiTheme, nullptr); ConsoleLog("Themed " + std::to_string(n) + " widget(s)"); }
-    ImGui::SameLine();
-    bool haveSel = ed.selected() != nullptr;
-    if (!haveSel) ImGui::BeginDisabled();
-    if (ImGui::Button("Apply to Selected + children")) { int n = ApplyUITheme(ed, g_uiTheme, ed.selected()); ConsoleLog("Themed " + std::to_string(n) + " widget(s)"); }
-    if (!haveSel) ImGui::EndDisabled();
-    ImGui::TextDisabled("Applied styles bake into the widgets and save with the scene.");
+    oked::DrawUIThemeWindowBody(ed);   // editor/UIRuntimeTools.cpp: 12 looks, roles, apply, save / load
     ImGui::End();
 }
 
@@ -44257,6 +44464,14 @@ void DrawGameView(EditorState& ed) {
                 else              std::snprintf(ml, sizeof(ml), "%d meshes  %dk tris", active3d, tris / 1000);
                 ov.scene.push_back(ml);
             }
+            {
+                const okay::CullCounters& cc = okay::LastCullCounters();
+                char cl[96];
+                std::snprintf(cl, sizeof(cl), "Drawn %d  Culled %d  Occluded %d", cc.drawn, cc.culled, cc.occluded);
+                ov.scene.push_back(cl);
+                std::snprintf(cl, sizeof(cl), "LOD %d/%d/%d/%d  Saved %d", cc.lod0, cc.lod1, cc.lod2, cc.lod3, cc.drawsSaved);
+                ov.scene.push_back(cl);
+            }
             ov.timers = g_gameStatsTimers ? ed.TimerLines(64) : std::vector<std::string>();
         }
         const float lh = ImGui::GetTextLineHeight();
@@ -44363,12 +44578,194 @@ static void SaveSceneCmd(EditorState& ed) {
     if (ed.path().empty()) { SaveSceneAsCmd(ed); return; }   // first save: choose where
     if (!SaveSceneTo(ed, ed.path())) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor. Fix the problem (or use Save Scene As) and try again.");
 }
+static okay::RecoveryManager& DocRecovery() {
+    static okay::RecoveryManager* r = nullptr;
+    if (!r) {
+        okay::RecoveryManager::Config cfg;
+        cfg.directory = "okay_recovery";
+        cfg.baseName = "editor";
+        cfg.intervalSeconds = 30.0f;
+        cfg.slots = 3;
+        r = new okay::RecoveryManager(cfg);
+    }
+    return *r;
+}
+static std::vector<okay::RecoveryManager::Candidate> g_docRecover;
+static int g_docCompare = -1;
+static okay::BackupManager& EditorBackups() {
+    static okay::BackupManager* m = nullptr;
+    if (!m) {
+        okay::BackupManager::Config cfg;
+        cfg.directory = "okay_backups";
+        cfg.policy = okay::editor::docrec::LastSavesPolicy(5);
+        m = new okay::BackupManager(cfg);
+    }
+    return *m;
+}
+static bool SaveEditorDocument(const std::string& path, const std::string& content) {
+    return EditorBackups().SaveWithBackup(path, content);
+}
 static bool AnyUnsavedWork(EditorState& ed) {
     if (ed.HasUnsavedChanges()) return true;   // the flag, or the scene text differing from what was saved
     for (okay::ScriptComponent* t : g_scriptTabs)
-        if (t && !t->Path().empty() && ScriptTabDirty(t)) return true;
-    const auto& vg = okay::editor::vsed::State().g;
-    return vg.dirty && !vg.path.empty();
+        if (t && ScriptTabDirty(t)) return true;
+    return okay::editor::vsed::VsAnyUnsaved();
+}
+static int g_pendingAction = 0;          // 1 play, 2 stop, 3 load scene
+static std::string g_pendingPath;
+static void StartPlayNow(EditorState& ed) {
+    if (g_clearConsoleOnPlay) ConsoleClear();
+    StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
+    okay::editor::apreview::Stop(ed.scene());
+    CompileOpenScriptBuffers(ed.scene());
+    NavigationBeforePlay(ed);
+    ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+    g_playTextHandoff = true; ImGui::ClearActiveID();
+    g_showGame = true; g_focusGameOnPlay = true;
+}
+static void StopPlayNow(EditorState& ed) {
+    okay::editor::apreview::Stop(ed.scene());
+    ed.Stop(); g_paused = false; ConsoleLog("Stop");
+}
+static void LoadSceneNow(EditorState& ed, const std::string& path) {
+    RunAfterProjectCheck(ed, path, [&ed, path] {
+        std::string err;
+        if (ed.Load(path, &err)) { ConsoleLog("Opened " + path); AddRecent(path); }
+        else ShowErrorPopup("Couldn't open the scene", "\"" + path + "\": " + err + "\n\nThe scene you had open is still open.");
+    });
+}
+static void RunPendingAction(EditorState& ed) {
+    const int a = g_pendingAction; g_pendingAction = 0;
+    const std::string path = std::move(g_pendingPath); g_pendingPath.clear();
+    if (a == 1) StartPlayNow(ed);
+    else if (a == 2) StopPlayNow(ed);
+    else if (a == 3) LoadSceneNow(ed, path);
+}
+static void RequestPlay(EditorState& ed) {
+    if (AnyUnsavedWork(ed)) { g_pendingAction = 1; return; }
+    StartPlayNow(ed);
+}
+static void RequestStop(EditorState& ed) {
+    if (AnyUnsavedWork(ed)) { g_pendingAction = 2; return; }
+    StopPlayNow(ed);
+}
+static void RequestLoad(EditorState& ed, const std::string& path) {
+    if (AnyUnsavedWork(ed)) { g_pendingAction = 3; g_pendingPath = path; return; }
+    LoadSceneNow(ed, path);
+}
+static void DrawActionPrompt(EditorState& ed) {
+    if (!g_pendingAction) return;
+    if (!ImGui::IsPopupOpen("Save before continuing?")) ImGui::OpenPopup("Save before continuing?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Save before continuing?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const char* what = g_pendingAction == 1 ? "playing" : g_pendingAction == 2 ? "stopping" : "opening another scene";
+    ImGui::Text("Save your work before %s?", what);
+    std::vector<std::string> names;
+    if (ed.dirty) names.push_back("Scene");
+    for (okay::ScriptComponent* t : g_scriptTabs)
+        if (t && ScriptTabDirty(t)) names.push_back("Script: " + (t->Path().empty() ? std::string("Untitled") : t->Path()));
+    okay::editor::vsed::VsDirtyTitles(names);
+    for (const std::string& n : names) ImGui::BulletText("%s", n.c_str());
+    ImGui::Spacing();
+    if (ImGui::Button("Save", ImVec2(120, 0))) {
+        if (SaveProject(ed, true)) RunPendingAction(ed);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        g_pendingAction = 0; g_pendingPath.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+        RunPendingAction(ed);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor::docrec::Buffer>& docs) {
+    for (const auto& b : docs) {
+        if (b.kind == "graph" || b.kind == "closed") okay::editor::vsed::VsRestoreBuffer(b);
+        else if (b.kind == "script") {
+            if (b.key.rfind("untitled", 0) == 0) {
+                auto sc = std::make_unique<okay::ScriptComponent>("okayscript");
+                okay::ScriptComponent* raw = sc.get();
+                g_looseScripts.push_back(std::move(sc));
+                g_scriptTabs.push_back(raw);
+                g_activeScriptTab = raw; g_focusScriptTab = raw;
+                SetCodeBuffer(raw, b.text);
+                g_scriptSaved[raw] = "";
+            } else {
+                OpenScriptFileInEditor(b.key);
+                if (g_activeScriptTab) {
+                    SetCodeBuffer(g_activeScriptTab, b.text);
+                    std::ifstream f(b.key, std::ios::binary);
+                    std::stringstream ss; if (f) ss << f.rdbuf();
+                    g_scriptSaved[g_activeScriptTab] = ss.str();
+                }
+            }
+            g_showScriptEditor = true;
+        } else if (b.kind == "scene") {
+            const std::string keep = (b.key == "untitled-scene") ? std::string() : b.key;
+            std::string err;
+            if (!ed.LoadRecoveredText(b.text, keep, &err)) ConsoleLog("Couldn't restore the scene: " + err, 2);
+        }
+    }
+    g_showVisualScript = true;
+}
+static void DrawDocRecoveryPopup(EditorState& ed) {
+    if (g_docRecover.empty()) return;
+    if (!ImGui::IsPopupOpen("Restore recovered work?")) ImGui::OpenPopup("Restore recovered work?");
+    ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Restore recovered work?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const auto& c = g_docRecover.front();
+    ImGui::TextWrapped("The editor closed without a clean exit. A recovery copy from that session is still here.");
+    ImGui::TextDisabled("%s", c.label.c_str());
+    ImGui::Spacing();
+    std::string payload, err;
+    std::vector<okay::editor::docrec::Buffer> docs;
+    const bool ok = DocRecovery().Restore(c, payload, &err) && okay::editor::docrec::DecodeBundle(payload, docs, &err);
+    if (!ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "The copy could not be read: %s", err.c_str());
+    else for (const auto& b : docs) ImGui::BulletText("%s  %s", b.kind.c_str(), b.key.c_str());
+    ImGui::Spacing();
+    if (ImGui::Button("Restore", ImVec2(120, 0)) && ok) {
+        ApplyRecoveredBundle(ed, docs);
+        DocRecovery().Discard(c);
+        g_docRecover.erase(g_docRecover.begin());
+        g_docCompare = -1;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine();
+    if (ImGui::Button("Compare", ImVec2(120, 0))) g_docCompare = g_docCompare < 0 ? 0 : -1;
+    ImGui::SameLine();
+    if (ImGui::Button("Discard", ImVec2(120, 0))) {
+        DocRecovery().Discard(c);
+        g_docRecover.erase(g_docRecover.begin());
+        g_docCompare = -1;
+        ImGui::CloseCurrentPopup();
+    }
+    if (g_docCompare >= 0 && ok) {
+        ImGui::Separator();
+        ImGui::BeginChild("##reccompare", ImVec2(600, 220), ImGuiChildFlags_Borders);
+        for (const auto& b : docs) {
+            std::string disk;
+            bool exists = false;
+            if (!b.key.empty() && b.key.rfind("untitled", 0) != 0) {
+                std::ifstream f(b.key, std::ios::binary);
+                exists = (bool)f;
+                if (f) { std::stringstream ss; ss << f.rdbuf(); disk = ss.str(); }
+            }
+            if (!okay::editor::docrec::BufferWorthRestoring(b.text, disk, exists)) continue;
+            ImGui::Text("%s  %s", b.kind.c_str(), b.key.c_str());
+            ImGui::TextDisabled("Recovered (%d characters). On disk: %s.", (int)b.text.size(), exists ? "different" : "no file yet");
+            ImGui::Spacing();
+        }
+        ImGui::EndChild();
+    }
+    ImGui::EndPopup();
 }
 // Save everything: the scene (an unsaved one goes to Assets/Scenes), every edited
 // script file, the open visual-script graph, project + build settings and the
@@ -44390,17 +44787,28 @@ static bool SaveProject(EditorState& ed, bool interactive) {
     }
     int scripts = 0;
     for (okay::ScriptComponent* t : g_scriptTabs) {
-        if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
+        if (!t || !ScriptTabDirty(t)) continue;
         const char* live = PeekCodeBuffer(t);
-        std::string why;
-        if (live && okayproj::WriteTextAtomic(t->Path(), live, &why)) { g_scriptSaved[t] = live; ++scripts; }
-        else { ok = false; if (!why.empty()) g_lastSaveError = why; ConsoleLog("Couldn't save " + t->Path() + (why.empty() ? std::string() : ": " + why), 2); }
+        if (!live) continue;
+        if (t->Path().empty()) {
+            namespace fs = std::filesystem;
+            const fs::path dir = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            std::error_code ec; fs::create_directories(dir, ec);
+            std::string p = (dir / "Untitled.okay").string();
+            for (int k = 2; fs::exists(p, ec); ++k) p = (dir / ("Untitled" + std::to_string(k) + ".okay")).string();
+            t->SetPath(p);
+        }
+        if (SaveEditorDocument(t->Path(), live)) { g_scriptSaved[t] = live; ++scripts; }
+        else { ok = false; g_lastSaveError = "Couldn't write " + t->Path(); ConsoleLog("Couldn't save " + t->Path(), 2); }
     }
     if (scripts) saved.push_back(std::to_string(scripts) + (scripts == 1 ? " script" : " scripts"));
-    auto& vg = okay::editor::vsed::State().g;
-    if (vg.dirty && !vg.path.empty()) {
-        if (vg.save(vg.path)) saved.push_back("visual script"); else { ok = false; ConsoleLog("Couldn't save " + vg.path, 2); }
-    }
+    const int graphs = okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
+    if (graphs) saved.push_back(graphs == 1 ? "visual script" : std::to_string(graphs) + " visual scripts");
+    for (const auto& tp : okay::editor::vsed::Session().tabs)
+        if (tp && tp->g.dirty && !tp->missing) {
+            ok = false;
+            ConsoleLog("Couldn't save " + (tp->g.path.empty() ? std::string("a visual script") : tp->g.path), 2);
+        }
     if (!SaveProjectSettingsTo(g_settingsProjectDir)) { ok = false; ConsoleLog("Couldn't save the project settings: " + g_lastSaveError, 2); }
     if (!SaveBuildProfiles(ed) || !SaveBuildLive(ed))  { ok = false; ConsoleLog("Couldn't save the build settings: " + g_lastSaveError, 2); }
     NoteProjectFilesSaved();
@@ -44882,6 +45290,11 @@ int main(int argc, char** argv) {
     }
 
     if (!PassesLauncherGate(argc, argv)) return 0;
+    // Headless screenshots have no usable GPU. The software rasterizer is the
+    // picture we can trust, and it is the same path a machine without GL uses.
+    // Headless shots default to the software rasterizer. OKAY_UI_GPU=1 keeps the
+    // GPU backend so a screenshot can show per-pixel material maps.
+    if (std::getenv("OKAY_UI_SHOT") && !std::getenv("OKAY_UI_GPU")) g_gpuRender = false;
 
     // Project creation is driven by the launcher's Create tab:
     //   --new-project "<folder>"  create <folder>/Assets + the starting scene there
@@ -45075,6 +45488,84 @@ int main(int argc, char** argv) {
     // the loading screen could use the project's custom splash.)
     // Route the node editor's log messages to the editor console.
     okay::editor::vsed::LogFn = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+    okay::editor::vsed::SaveTextFile = [](const std::string& path, const std::string& content) {
+        return SaveEditorDocument(path, content);
+    };
+    okay::editor::vsed::VsBackupMenu = [](const std::string& path) {
+        const auto list = EditorBackups().List(path);
+        if (list.empty()) { ImGui::TextDisabled("No earlier saves of this file."); return; }
+        int shown = 0;
+        for (const auto& b : list) {
+            if (shown++ >= 5) break;
+            const std::string label = okay::BackupManager::FormatStamp(b.timestamp);
+            if (ImGui::MenuItem(label.c_str())) {
+                std::string text;
+                if (!EditorBackups().Read(b, text)) { ConsoleLog("Couldn't read that backup", 2); continue; }
+                auto& st = okay::editor::vsed::State();
+                st.undo.push_back(st.g.toText());
+                st.g.fromText(text);
+                okay::editor::vsed::VsRefreshDirty(st);
+                ConsoleLog("Restored a previous version. Save if you want to keep it.");
+            }
+        }
+    };
+    okay::editor::vsed::VsHasComponent = [](GameObject* go, const char* id) -> bool {
+        if (!go || !id) return false;
+        const std::string n = id;
+        if (n == "Rigidbody3D") return go->GetComponent<Rigidbody3D>() != nullptr;
+        if (n == "Rigidbody2D") return go->GetComponent<Rigidbody2D>() != nullptr;
+        if (n == "Rigidbody") return go->GetComponent<Rigidbody3D>() || go->GetComponent<Rigidbody2D>();
+        if (n == "AnimStateMachine") return go->GetComponent<AnimStateMachine>() != nullptr;
+        if (n == "Animator") return go->GetComponent<Animator>() != nullptr;
+        if (n == "NavMeshAgent") return go->GetComponent<NavMeshAgent>() != nullptr;
+        if (n == "Inventory") return go->GetComponent<Inventory>() != nullptr;
+        if (n == "Equipment") return go->GetComponent<Equipment>() != nullptr;
+        if (n == "Crafting") return go->GetComponent<Crafting>() != nullptr;
+        if (n == "AudioSource") return go->GetComponent<AudioSource>() != nullptr;
+        if (n == "ParticleSystem") return go->GetComponent<ParticleSystem>() != nullptr;
+        if (n == "Spline") return go->GetComponent<Spline>() != nullptr;
+        if (n == "LineRenderer") return go->GetComponent<LineRenderer>() != nullptr;
+        if (n == "TrailRenderer") return go->GetComponent<TrailRenderer>() != nullptr;
+        if (n == "BehaviorTreeRunner") return go->GetComponent<BehaviorTreeRunner>() != nullptr;
+        if (n == "NetworkObject") return go->GetComponent<NetworkObject>() != nullptr;
+        if (n == "FullBodyIK") return go->GetComponent<FullBodyIK>() != nullptr;
+        if (n == "TextRenderer") return go->GetComponent<TextRenderer>() != nullptr;
+        if (n == "DialogueRunner") return go->GetComponent<DialogueRunner>() != nullptr;
+        if (n == "MusicPlayer") return go->GetComponent<MusicPlayer>() != nullptr;
+        if (n == "BuildMode") return go->GetComponent<BuildMode>() != nullptr;
+        if (n == "SequencePlayer") return go->GetComponent<SequencePlayer>() != nullptr;
+        if (n == "HealthStat") return go->GetComponent<HealthStat>() != nullptr;
+        return false;
+    };
+    okay::editor::vsed::VsAddComponentById = [](GameObject* go, const char* id) -> bool {
+        if (!go || !id) return false;
+        const std::string n = id;
+        auto add = [&](auto* p) { if (p) { ConsoleLog(std::string("Added ") + id); return true; } return false; };
+        if (n == "Rigidbody3D" || n == "Rigidbody") return add(go->AddComponent<Rigidbody3D>());
+        if (n == "Rigidbody2D") return add(go->AddComponent<Rigidbody2D>());
+        if (n == "AnimStateMachine") return add(go->AddComponent<AnimStateMachine>());
+        if (n == "Animator") return add(go->AddComponent<Animator>());
+        if (n == "NavMeshAgent") return add(go->AddComponent<NavMeshAgent>());
+        if (n == "Inventory") return add(go->AddComponent<Inventory>());
+        if (n == "Equipment") return add(go->AddComponent<Equipment>());
+        if (n == "Crafting") return add(go->AddComponent<Crafting>());
+        if (n == "AudioSource") return add(go->AddComponent<AudioSource>());
+        if (n == "ParticleSystem") return add(go->AddComponent<ParticleSystem>());
+        if (n == "Spline") return add(go->AddComponent<Spline>());
+        if (n == "LineRenderer") return add(go->AddComponent<LineRenderer>());
+        if (n == "TrailRenderer") return add(go->AddComponent<TrailRenderer>());
+        if (n == "BehaviorTreeRunner") return add(go->AddComponent<BehaviorTreeRunner>());
+        if (n == "NetworkObject") return add(go->AddComponent<NetworkObject>());
+        if (n == "FullBodyIK") return add(go->AddComponent<FullBodyIK>());
+        if (n == "TextRenderer") return add(go->AddComponent<TextRenderer>());
+        if (n == "DialogueRunner") return add(go->AddComponent<DialogueRunner>());
+        if (n == "MusicPlayer") return add(go->AddComponent<MusicPlayer>());
+        if (n == "BuildMode") return add(go->AddComponent<BuildMode>());
+        if (n == "SequencePlayer") return add(go->AddComponent<SequencePlayer>());
+        if (n == "HealthStat") return add(go->AddComponent<HealthStat>());
+        ConsoleLog(std::string("Can't add ") + id + " from here.", 1);
+        return false;
+    };
     // Visual-script debugger: a breakpoint (or step) freezes the game here, shows
     // where in the Visual Script window, and waits for Continue / Step.
     okay::vs::VsDebugger::Get().onStop = [](okay::vs::NodeGraph& g, okay::vs::VsNode& n, okay::vs::VsContext& ctx) {
@@ -45099,7 +45590,7 @@ int main(int argc, char** argv) {
         v.sceneVars = sorted(okay::vs::SceneVariables(ctx.gameObject ? ctx.gameObject->scene() : nullptr));
         v.globalVars = sorted(okay::vs::GlobalVariables());
         auto& vst = okay::editor::vsed::State();
-        if (!v.key.empty() && vst.g.path != v.key && !vst.g.dirty) okay::editor::vsed::OpenFile(v.key);
+        if (!v.key.empty() && vst.g.path != v.key) okay::editor::vsed::OpenFile(v.key);
         g_showVisualScript = true;
         ConsoleLog("Visual Script paused before node #" + std::to_string(v.node) + " (" + v.nodeType + ") on '" + v.object +
                    "'. F5 continue, F10 step, F11 step into.");
@@ -45254,6 +45745,38 @@ int main(int argc, char** argv) {
     bool running = true;
     std::string lastTitle;
     Uint64 last = SDL_GetPerformanceCounter();
+    DocRecovery().SetInterval(g_docAutosaveSec);
+    DocRecovery().SetEnabled(true);
+    DocRecovery().SetProvider([&](std::string& payload, std::string& label) {
+        std::vector<okay::editor::docrec::Buffer> docs;
+        okay::editor::vsed::VsCollectUnsaved(docs);
+        for (okay::ScriptComponent* t : g_scriptTabs) {
+            if (!t || !ScriptTabDirty(t)) continue;
+            const char* live = PeekCodeBuffer(t);
+            if (!live) continue;
+            okay::editor::docrec::Buffer b;
+            b.kind = "script";
+            b.key = t->Path().empty() ? "untitled-script" : t->Path();
+            b.text = live;
+            docs.push_back(std::move(b));
+        }
+        for (const auto& c : okay::editor::docrec::ClosedStack()) {
+            if (c.kind != "script") continue;
+            docs.push_back({"closed", c.key, c.text});
+        }
+        if (ed.dirty && !ed.isPlaying()) {
+            okay::editor::docrec::Buffer b;
+            b.kind = "scene";
+            b.key = ed.path().empty() ? "untitled-scene" : ed.path();
+            b.text = SceneSerializer::Serialize(ed.scene());
+            docs.push_back(std::move(b));
+        }
+        if (docs.empty()) return false;
+        payload = okay::editor::docrec::EncodeBundle(docs);
+        label = std::to_string(docs.size()) + " unsaved";
+        return true;
+    });
+    if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
     while (running) {
         Uint64 g_frameT0 = SDL_GetPerformanceCounter();
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
@@ -45304,8 +45827,10 @@ int main(int argc, char** argv) {
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
                 e.window.windowID == SDL_GetWindowID(window))
                 g_quitRequested = true;
-            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST && ed.isPlaying())
-                g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
+            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                if (ed.isPlaying()) g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
+                if (g_autosave) DocRecovery().Autosave();
+            }
             // Route typed characters to the playing game's UI input fields (but not
             // while an ImGui field — inspector/markup box — is capturing text).
             if (e.type == SDL_TEXTINPUT && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
@@ -45743,44 +46268,33 @@ int main(int argc, char** argv) {
         }
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
-        // When the open scene changes, reset the autosave timer and look for a
-        // newer "<scene>.autosave" (a recovery copy from a crash/unclean exit).
+        // A leftover "<scene>.autosave" from an older editor is still offered
+        // when it is newer than the scene. New sessions do not write one.
         {
             static std::string s_watchedScene = "\x01";  // force first check
             if (ed.path() != s_watchedScene) {
                 s_watchedScene = ed.path();
-                g_lastAutosave = SDL_GetTicks64() / 1000.0;
-                g_recoverPath.clear();
-                if (!ed.path().empty()) {
-                    std::error_code rc;
-                    std::string side = ed.path() + ".autosave";
-                    if (std::filesystem::exists(side, rc)) {
-                        auto ts = std::filesystem::last_write_time(side, rc);
-                        auto os = std::filesystem::exists(ed.path(), rc)
-                                  ? std::filesystem::last_write_time(ed.path(), rc)
-                                  : std::filesystem::file_time_type::min();
-                        if (!rc && ts > os) g_recoverPath = side;
-                    }
-                }
+                g_recoverPath = okay::editor::docrec::NewerLegacySceneAutosave(ed.path());
             }
         }
 
-        // Autosave a crash-recovery sidecar ("<scene>.autosave") while editing —
-        // never mid-Play, and without touching the real file or the dirty flag.
-        if (g_autosave && !ed.isPlaying() && !ed.path().empty()) {
-            double t = SDL_GetTicks64() / 1000.0;
-            if (t - g_lastAutosave > (double)g_autosaveInterval) {
-                g_lastAutosave = t;
-                // SyncDirty also finds an edit that forgot to raise the dirty flag (one serialization per interval).
-                if (ed.SyncDirty()) {
-                    std::string why;
-                    if (SceneSerializer::SaveToFile(ed.scene(), ed.path() + ".autosave", &why)) {
-                        g_autosaveStamp = t;
-                        ConsoleLog("Autosaved recovery copy: " + ed.path() + ".autosave");
-                    } else ConsoleLog("Autosave failed: " + why, 1);
+        // Recovery copies of dirty graphs, scripts and the scene. The real files
+        // are overwritten only when "Also save the real file" is on.
+        DocRecovery().SetInterval(g_docAutosaveSec);
+        DocRecovery().SetEnabled(g_autosave);
+        if (g_autosave && DocRecovery().Tick(dt)) {
+            g_autosaveStamp = SDL_GetTicks64() / 1000.0;
+            if (g_autosaveToFile) {
+                okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
+                for (okay::ScriptComponent* t : g_scriptTabs) {
+                    if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
+                    const char* live = PeekCodeBuffer(t);
+                    if (live && SaveEditorDocument(t->Path(), live)) g_scriptSaved[t] = live;
                 }
+                if (ed.dirty && !ed.isPlaying() && !ed.path().empty()) SaveSceneTo(ed, ed.path());
             }
         }
+        if (!AnyUnsavedWork(ed)) DocRecovery().OnSaved();
         SyncProjectFiles(ed);   // project + build settings follow their edits to disk
 
         // Pump audio while playing (stereo float, queued). Top the queue up to a
@@ -46041,6 +46555,142 @@ int main(int argc, char** argv) {
                 for (GameObject* c : cams) ed.scene().Destroy(c);
                 ed.scene().FlushDestroyed();
             }
+            // OKAY_UI_DEMO=stack|lod : a scene the Game view can screenshot.
+            if (const char* demo = std::getenv("OKAY_UI_DEMO"); demo && s_focusFrames == 36) {
+                const std::string which = demo;
+                ed.view3D = true;
+                // The untitled editor scene's placeholder camera is orthographic, so
+                // the Game view would take the sprite path and never draw meshes.
+                for (const auto& up : ed.scene().Objects()) {
+                    if (auto* c = up->GetComponent<Camera>(); c && c->main && up->transform) {
+                        c->projection = Camera::Projection::Perspective;
+                        up->transform->localPosition = {0, 2, 10};
+                        up->transform->localRotation = Quat::Identity;
+                    }
+                }
+                if (which == "stack") {
+                    // The default Main Camera sits at (0, 2, 10) and looks down -Z.
+                    // Keep that aim and put the props in front of it.
+                    GameObject* red = ed.scene().CreateGameObject("Red");
+                    red->transform->localPosition = {-1.2f, 0.6f, 4};
+                    auto* mr = red->AddComponent<MeshRenderer>();
+                    mr->mesh = Mesh::Cube(); mr->color = Color(0.9f, 0.15f, 0.12f, 1);
+                    red->layer = 1;
+                    GameObject* blue = ed.scene().CreateGameObject("Blue");
+                    blue->transform->localPosition = {1.6f, 0.7f, 2};
+                    auto* mb = blue->AddComponent<MeshRenderer>();
+                    mb->mesh = Mesh::Sphere(0.7f); mb->color = Color(0.15f, 0.4f, 0.95f, 1);
+                    blue->layer = 2;
+                    GameObject* floor = ed.scene().CreateGameObject("Floor");
+                    floor->transform->localPosition = {0, 0, 3};
+                    floor->transform->localScale = {8, 0.1f, 8};
+                    floor->AddComponent<MeshRenderer>()->color = Color(0.45f, 0.48f, 0.4f, 1);
+                    Camera* mainCam = nullptr;
+                    for (const auto& up : ed.scene().Objects())
+                        if (auto* c = up->GetComponent<Camera>(); c && c->main) mainCam = c;
+                    if (mainCam) {
+                        // A fresh editor scene's placeholder camera is orthographic
+                        // (the Game view then takes the 2D path and never draws meshes).
+                        // This demo is a 3D stack, so force the perspective pose.
+                        mainCam->projection = Camera::Projection::Perspective;
+                        mainCam->cullingMask = ~(1 << 2);   // the blue sphere is only in the overlay
+                        mainCam->depth = 0;
+                        mainCam->clearFlags = Camera::ClearFlags::Skybox;
+                        if (mainCam->gameObject && mainCam->gameObject->transform) {
+                            mainCam->gameObject->transform->localPosition = {0, 2, 10};
+                            mainCam->gameObject->transform->localRotation = Quat::Identity;
+                        }
+                    }
+                    GameObject* pip = ed.scene().CreateGameObject("Overlay Camera");
+                    auto* oc = pip->AddComponent<Camera>();
+                    oc->main = false; oc->depth = 5;
+                    oc->rectX = 0.62f; oc->rectY = 0.55f; oc->rectW = 0.34f; oc->rectH = 0.38f;
+                    oc->clearFlags = Camera::ClearFlags::SolidColor;
+                    oc->backgroundColor = Color(0.08f, 0.1f, 0.16f, 1);
+                    oc->cullingMask = (1 << 2);
+                    if (pip->transform) {
+                        pip->transform->localPosition = {1.6f, 1.4f, 6.5f};
+                        pip->transform->localRotation = Quat::Identity;   // looks down -Z, at the blue sphere
+                    }
+                    if (ed.scene().mainCamera == oc && mainCam) ed.scene().mainCamera = mainCam;
+                } else if (which == "lod") {
+                    GameObject* prop = ed.scene().CreateGameObject("LOD Near");
+                    prop->transform->localPosition = {-1.2f, 1.0f, 6};
+                    auto* mr = prop->AddComponent<MeshRenderer>();
+                    mr->mesh = Mesh::Sphere(0.8f, 10, 16);
+                    mr->color = Color::White;
+                    auto* lod = prop->AddComponent<LODGroup>();
+                    lod->Generate(mr->mesh);
+                    lod->debugTint = true;
+                    lod->cullDistance = 0;
+                    lod->useScreenSize = false;
+                    if (lod->levels.size() >= 2) {
+                        lod->levels[0].distance = 6.0f;
+                        if (lod->levels.size() >= 3) lod->levels[1].distance = 14.0f;
+                    }
+                    GameObject* lodFar = ed.scene().CreateGameObject("LOD Far");
+                    lodFar->transform->localPosition = {1.4f, 1.0f, -8};
+                    auto* mr2 = lodFar->AddComponent<MeshRenderer>();
+                    mr2->mesh = mr->mesh;
+                    mr2->color = Color::White;
+                    auto* lod2 = lodFar->AddComponent<LODGroup>();
+                    lod2->levels = lod->levels;
+                    lod2->lodMeshes = lod->lodMeshes;
+                    lod2->debugTint = true;
+                    lod2->cullDistance = 0;
+                    lod2->useScreenSize = false;
+                    g_gameStatsOverlay = true;
+                    g_showStats = true;
+                    ed.Select(lodFar);
+                    ImGui::SetWindowFocus("Stats");
+                }
+                if (const char* shot = std::getenv("OKAY_UI_SHOT")) {
+                    if (Camera* cam = SceneCamera(ed.scene())) {
+                        const int W = 640, H = 360;
+                        ApplySceneLight(ed.scene());
+                        ed.scene().Update(0.0f);   // cameras join the stack
+                        const okay::CameraStackPlan plan = okay::PlanCameraStack(ed.scene(), W, H, nullptr);
+                        std::vector<std::uint32_t> hold;
+                        auto one = [&](const okay::CameraPass& p) -> const std::uint32_t* {
+                            static Raster rr[4]; static std::vector<std::uint32_t> dd[4]; static int n = 0;
+                            okay::RenderCullingMask() = p.cullingMask;
+                            const int s = n++ & 3;
+                            return RenderMeshesSS(rr[s], dd[s], ed.scene(), p.vp, p.eye, p.w, p.h, 1, p.ignore);
+                        };
+                        const std::uint32_t* px = nullptr;
+                        int iw = W, ih = H;
+                        if (!plan.singleFullFrame && okay::CompositeCameraStack(plan, one, hold)) {
+                            px = hold.data(); iw = plan.width; ih = plan.height;
+                        } else if (!plan.passes.empty()) {
+                            static Raster rr; static std::vector<std::uint32_t> dd;
+                            okay::RenderCullingMask() = plan.passes[0].cullingMask;
+                            px = RenderMeshesSS(rr, dd, ed.scene(), plan.passes[0].vp, plan.passes[0].eye, W, H, 1, nullptr);
+                            hold.assign(px, px + (std::size_t)W * H);
+                            px = hold.data();
+                        }
+                        if (px) {
+                            std::vector<std::uint8_t> rgba((std::size_t)iw * ih * 4);
+                            for (int i = 0; i < iw * ih; ++i) {
+                                const std::uint32_t p = px[i];
+                                rgba[(std::size_t)i * 4] = (std::uint8_t)(p & 255);
+                                rgba[(std::size_t)i * 4 + 1] = (std::uint8_t)((p >> 8) & 255);
+                                rgba[(std::size_t)i * 4 + 2] = (std::uint8_t)((p >> 16) & 255);
+                                rgba[(std::size_t)i * 4 + 3] = 255;
+                            }
+                            okay::Image img(iw, ih);
+                            img.Set(iw, ih, std::move(rgba));
+                            std::string raw(shot);
+                            const auto dot = raw.rfind('.');
+                            if (dot != std::string::npos) raw.insert(dot, "_render");
+                            else raw += "_render.png";
+                            img.SavePNG(raw);
+                            std::printf("saved raw %s passes %d\n", raw.c_str(), (int)plan.passes.size());
+                            std::fflush(stdout);
+                        }
+                    }
+                }
+                ImGui::SetWindowFocus("Game");
+            }
             if (std::getenv("OKAY_UI_CAMTEST") && s_focusFrames == 85) {
                 ed.camYaw = -30.0f; ed.camPitch = 30.0f; ed.camDist = 9.0f;
                 ed.Select(ed.CreateCamera());
@@ -46055,7 +46705,7 @@ int main(int argc, char** argv) {
             }
             // OKAY_UI_VSFILE=graph.okayvs: open that graph file in the Visual Script editor.
             if (const char* vf = std::getenv("OKAY_UI_VSFILE"); vf && s_focusFrames == 42) {
-                okay::editor::vsed::State().g.load(vf);
+                okay::editor::vsed::OpenFile(vf);
                 okay::editor::vsed::State().frameAll = true;
                 g_showVisualScript = true;
             }
@@ -46119,6 +46769,18 @@ int main(int argc, char** argv) {
                 bool okm = false;
                 if (GameObject* r = okay::ImportModelScene(ed.scene(), imp, &okm); r && okm) {
                     r->transform->SetPosition(ed.camTarget);
+                    if (std::getenv("OKAY_UI_SHOT")) {
+                        ed.view3D = true;
+                        r->transform->SetPosition({0, 0.55f, 0});
+                        r->transform->localScale = {1.15f, 1.15f, 1.15f};
+                        for (const auto& up : ed.scene().Objects()) {
+                            if (auto* c = up->GetComponent<Camera>(); c && c->main && up->transform) {
+                                c->projection = Camera::Projection::Perspective;
+                                up->transform->localPosition = {0.4f, 1.15f, 3.1f};
+                                up->transform->localRotation = Quat::LookRotation(Vec3{0.4f, 1.15f, 3.1f} - Vec3{0, 0.4f, 0});
+                            }
+                        }
+                    }
                     ed.Select(r); ed.dirty = true;
                     LogModelReport(ed, r);
                     if (std::getenv("OKAY_UI_ANIMGRAPH")) {
@@ -46174,11 +46836,11 @@ int main(int argc, char** argv) {
             }
         }
         { OKAY_PROFILE("UI.FileDialogs"); DrawFileDialogs(ed); }
-        { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); if (ProjectUpgradeExitRequested()) running = false; }
+        { OKAY_PROFILE("UI.QuitPrompt"); DrawQuitPrompt(ed, running); DrawActionPrompt(ed); if (ProjectUpgradeExitRequested()) running = false; }
         PollLauncherRequest(ed, running);   // the launcher asked us to save and close
         { OKAY_PROFILE("UI.UpdatePopup"); DrawUpdatePopup(ed); }
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
-        { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); }
+        { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); DrawDocRecoveryPopup(ed); }
         { OKAY_PROFILE("UI.ProjectSettings"); DrawProjectSettings(ed); }
         oked::WatchEditUndo(ed);   // one undo step for every Inspector / Hierarchy field edit
         { OKAY_PROFILE("UI.Diagnostics"); if (!ed.isPlaying()) TickProjectDiagnostics(ed); }
@@ -46356,6 +47018,24 @@ int main(int argc, char** argv) {
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
         if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
 #endif
+        if (const char* shot = std::getenv("OKAY_UI_SHOT")) {
+            static int shotFrames = 0;
+            if (++shotFrames == 160 && shot[0]) {
+                int sw = 0, sh = 0;
+                SDL_GetRendererOutputSize(renderer, &sw, &sh);
+                if (sw > 0 && sh > 0) {
+                    std::vector<std::uint8_t> px((std::size_t)sw * sh * 4);
+                    if (SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), sw * 4) == 0) {
+                        okay::Image img;
+                        img.Set(sw, sh, std::move(px));
+                        img.SavePNG(shot);
+                        ConsoleLog(std::string("Saved screenshot ") + shot);
+                        std::fflush(stdout);
+                    }
+                }
+                if (std::getenv("OKAY_UI_QUIT")) std::exit(0);
+            }
+        }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
             int sw = 0, sh = 0;
             SDL_GetRendererOutputSize(renderer, &sw, &sh);
@@ -46410,6 +47090,7 @@ int main(int argc, char** argv) {
 
         if (updater::pendingQuit) running = false; // auto-update relaunched
     }
+    DocRecovery().EndSession(true);   // clean exit: the user saved or chose not to
     FinishFrozenTick();   // quitting while frozen at a breakpoint: let that frame end first
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone

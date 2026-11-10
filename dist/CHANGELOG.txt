@@ -1,5 +1,29 @@
 OkaySpace Game Engine — Changelog
 
+v2.858.0
+  Visual Script
+  - The add-node panel searches name, category, keywords and description,
+    including a short typo, and documents every registered node. Graphs stay
+    open in tabs, and New, Open, Play, Stop and quit ask before throwing away
+    an unsaved graph (#597).
+  Rendering
+  - The Game view, Play mode and the player draw every camera, lowest depth
+    first, each in its own rectangle. An LOD Group switches to a cheaper mesh
+    with distance, and an imported glTF model keeps its metallic-roughness
+    and emissive textures (#599).
+
+v2.857.0
+  Properties
+  - A key binding in the property registry can be any key, including Space,
+    Tab and Enter. Spawner pooling is registered, and the Loading Screen is
+    registered as its own type. The registry now covers 1405 properties on
+    86 types (#615).
+  Launcher
+  - The Versions page installs and removes editor versions, with checksums
+    checked before a version is moved into place. Latest or LTS is a channel
+    choice. An update keeps the previous editor, and a project can be opened
+    with the editor version it was saved with (#617).
+
 v2.856.0
   Projects: upgrade or keep your version (editor)
   - Every project now records the editor version that last saved it

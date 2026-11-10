@@ -155,8 +155,12 @@ Recent additions (v2.12–2.14):
   cameras are easy to see and pick even with no mesh.
 - **Project Settings** (Edit ▸ Project Settings) and a larger **Build** dialog
   (Quit-on-Escape, Master Volume, Show-FPS).
-- **Crash-safe autosave** (File ▸ Autosave) writes a `<scene>.autosave` recovery
-  copy and offers to restore it after an unclean exit.
+- **Crash-safe autosave** (File ▸ Autosave) writes unsaved graphs, scripts and
+  the scene into the recovery folder (about every 30 seconds, and when the
+  window loses focus). It does not overwrite the real files unless **Also save
+  the real file** is on. A leftover `<scene>.autosave` from an older editor is
+  still offered on open when it is newer than the scene; new sessions do not
+  write that sidecar.
 - **Crash reports**: if the editor crashes, it saves a report beside the editor
   executable. The report records what the editor was doing, the error, and a
   backtrace (Windows, Linux and macOS). The launcher then notifies you and lists
@@ -489,11 +493,12 @@ bar shows `v2.850.0 (kept)` for a project opened with its own version. Details, 
 
 ### Autosave and recovery
 
-With **File > Autosave** on, a `<scene>.autosave` copy is written every interval (default 120 s) when the scene
-has unsaved changes, and offered back ("Recover Autosave") the next time the scene is opened after an unclean exit.
-A scene that has never been saved has no file to put it beside, so it is not autosaved; the first Ctrl+S puts it in
-`Assets/Scenes`. The engine-side `RecoveryManager` and `BackupManager` (see [undo_recovery.md](undo_recovery.md)) are
-not used by the editor yet.
+With **File > Autosave** on, dirty graphs, scripts and the scene (including ones that have never been saved) are
+copied into `okay_recovery` about every 30 seconds and when the window loses focus. The next start offers
+**Restore**, **Compare** or **Discard**, and keeps the copy until that choice. The real files are overwritten
+only when **Also save the real file** is on. A leftover `<scene>.autosave` from an older editor is still
+offered when it is newer than the scene; new sessions do not write that sidecar. The last five saves of a
+file are kept by `BackupManager` (see [undo_recovery.md](undo_recovery.md)).
 
 ### Duplicate components
 

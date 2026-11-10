@@ -26,7 +26,16 @@ namespace okay {
 inline bool& FrustumCullingEnabled() { static bool on = true; return on; }
 
 /// Last main-pass counts from whichever renderer drew most recently (Stats panel).
-struct CullCounters { int drawn = 0, culled = 0; };
+/// `culled` is frustum rejects. Occlusion, LOD and batching are counted beside it
+/// so an old reader of drawn/culled still sees those two fields first.
+struct CullCounters {
+    int drawn = 0, culled = 0;
+    int occluded = 0;
+    int lodCulled = 0;
+    int lod0 = 0, lod1 = 0, lod2 = 0, lod3 = 0;
+    int batches = 0;
+    int drawsSaved = 0;
+};
 inline CullCounters& LastCullCounters() { static CullCounters c; return c; }
 
 /// Six planes from a view-projection matrix (column-major, clip = vp * p).

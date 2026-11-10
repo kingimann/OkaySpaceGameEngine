@@ -1291,6 +1291,20 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             Rect knob{kx, box.y + 2, kd, kd};
             FillUIShape(p, knob, UIShape::Circle, 0.0f,
                         tg->knobColor, tg->knobColor, false, false, op);
+        } else if (tg->style == UIToggle::Style::Radio) {   // round button, dot when picked
+            const int d = std::min(box.w, box.h);
+            Rect rb{box.x, box.y, d, d};
+            FillUIShape(p, rb, UIShape::Circle, 0.0f, tg->boxColor, tg->boxColor, false, false, op);
+            Color ring = tg->checkColor; ring.a *= (0.35f + 0.65f * t);
+            const int rw = std::max(2, d / 12);
+            Rect inner{rb.x + rw, rb.y + rw, d - 2 * rw, d - 2 * rw};
+            FillUIShape(p, rb, UIShape::Circle, 0.0f, ring, ring, false, false, op);
+            FillUIShape(p, inner, UIShape::Circle, 0.0f, tg->boxColor, tg->boxColor, false, false, op);
+            if (t > 0.01f) {
+                const int dd = std::max(2, (int)(d * 0.5f * t));
+                Rect dot{rb.x + (d - dd) / 2, rb.y + (d - dd) / 2, dd, dd};
+                FillUIShape(p, dot, UIShape::Circle, 0.0f, tg->checkColor, tg->checkColor, false, false, op);
+            }
         } else {
             FillUIShape(p, box, UIShape::Rounded, tg->cornerRadius,
                         tg->boxColor, tg->boxColor, false, false, op);

@@ -594,7 +594,7 @@ Result Browser::CreateFolder(const std::string& dir, const std::string& name) {
     return r;
 }
 
-Result Browser::CreateFile(const std::string& dir, const std::string& fileName, const std::string& content) {
+Result Browser::MakeFile(const std::string& dir, const std::string& fileName, const std::string& content) {
     Result r;
     if (std::string e = ValidateName(fileName); !e.empty()) { r.error = e; return r; }
     if (std::string e = CheckInside(dir, true); !e.empty()) { r.error = e; return r; }

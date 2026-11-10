@@ -139,7 +139,7 @@ public:
 
     Result CreateFolder(const std::string& dir, const std::string& name);
     /// A new file with `content`, written atomically. Fails if it already exists.
-    Result CreateFile(const std::string& dir, const std::string& fileName, const std::string& content);
+    Result MakeFile(const std::string& dir, const std::string& fileName, const std::string& content);
     /// Rename in place. Files keep their extension: if `newName` has none, the old one is added; a different
     /// extension is refused (it would change what the asset is).
     Result Rename(const std::string& path, const std::string& newName);

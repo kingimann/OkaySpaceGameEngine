@@ -203,12 +203,12 @@ int main() {
         CHECK(!b.CreateFolder(p.td.assets(), "bad/name").ok);
         CHECK(!b.CreateFolder(p.td.assets() + "/..", "Escape").ok);
         CHECK(!Exists(p.td.path.generic_string() + "/Escape"));
-        r = b.CreateFile(p.td.at("Models"), "My Graph.okayvs", "okayvs\n");
+        r = b.MakeFile(p.td.at("Models"), "My Graph.okayvs", "okayvs\n");
         CHECK(r.ok && ReadFile(p.td.at("Models/My Graph.okayvs")) == "okayvs\n");
         CHECK(!Exists(p.td.at("Models/My Graph.okayvs.tmp")));                     // atomic: no temp file left behind
-        CHECK(!b.CreateFile(p.td.at("Models"), "My Graph.okayvs", "other").ok);
+        CHECK(!b.MakeFile(p.td.at("Models"), "My Graph.okayvs", "other").ok);
         CHECK(ReadFile(p.td.at("Models/My Graph.okayvs")) == "okayvs\n");          // never overwritten
-        r = b.CreateFile(p.td.at("Models"), "\xC3\x9C" "ber Skript.okay", "x");
+        r = b.MakeFile(p.td.at("Models"), "\xC3\x9C" "ber Skript.okay", "x");
         CHECK(r.ok);
         CHECK(b.CanUndo() && b.Undo().ok && !Exists(p.td.at("Models/\xC3\x9C" "ber Skript.okay")));   // undo of a create
         CHECK(b.Undo().ok && !Exists(p.td.at("Models/My Graph.okayvs")));
@@ -469,14 +469,14 @@ int main() {
         CHECK(!b.Move({p.tex}, outside).ok && Exists(p.tex));
         CHECK(!b.Copy({outside + "/secret.txt"}, p.td.at("Art")).ok);
         CHECK(!b.Rename(outside + "/secret.txt", "renamed").ok && Exists(outside + "/secret.txt"));
-        CHECK(!b.CreateFile(outside, "new.txt", "x").ok && !Exists(outside + "/new.txt"));
+        CHECK(!b.MakeFile(outside, "new.txt", "x").ok && !Exists(outside + "/new.txt"));
         CHECK(!b.Move({p.td.assets() + "/../Elsewhere/secret.txt"}, p.td.at("Art")).ok);
         // a link inside Assets that points out of the project is not a way out
         std::error_code ec;
         fs::create_directory_symlink(fs::u8path(outside), fs::u8path(p.td.at("Link")), ec);
         if (!ec) {
             CHECK(!b.Move({p.tex}, p.td.at("Link")).ok && Exists(p.tex));
-            CHECK(!b.CreateFile(p.td.at("Link"), "leak.txt", "x").ok && !Exists(outside + "/leak.txt"));
+            CHECK(!b.MakeFile(p.td.at("Link"), "leak.txt", "x").ok && !Exists(outside + "/leak.txt"));
             CHECK(!b.Trash({p.td.at("Link/secret.txt")}).ok && Exists(outside + "/secret.txt"));
         }
     }
@@ -496,7 +496,7 @@ int main() {
             {"copy a folder", [](Browser& b, Proj& p) { return b.Copy({p.td.at("Art")}, p.td.at("Scenes")); }},
             {"duplicate a file", [](Browser& b, Proj& p) { return b.Duplicate(p.tex); }},
             {"delete two", [](Browser& b, Proj& p) { return b.Trash({p.tex, p.td.at("Scenes")}); }},
-            {"create a file", [](Browser& b, Proj& p) { return b.CreateFile(p.td.at("Art"), "new.okayvs", "okayvs\n"); }},
+            {"create a file", [](Browser& b, Proj& p) { return b.MakeFile(p.td.at("Art"), "new.okayvs", "okayvs\n"); }},
             {"create a folder", [](Browser& b, Proj& p) { return b.CreateFolder(p.td.at("Art"), "More"); }},
         };
         for (const Case& c : cases) {

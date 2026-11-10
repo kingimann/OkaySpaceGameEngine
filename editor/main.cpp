@@ -9267,7 +9267,7 @@ void DrawProject(EditorState& ed) {
     auto mkScript = [&]{
         askCreate("New script", "A script you attach to objects.", "NewScript", ".okay", "script", [](const std::string& d, const std::string& n) {
             std::string stem = fs::path(fs::u8path(n)).stem().string();
-            return g_pb->CreateFile(d, n, extide::RenameScriptClass(extide::StarterScript("okayscript"), extide::ClassIdent(stem)));
+            return g_pb->MakeFile(d, n, extide::RenameScriptClass(extide::StarterScript("okayscript"), extide::ClassIdent(stem)));
         }, [](const std::string& p) { OpenScriptFileInEditor(NativePath(p)); g_showScriptEditor = true; });
     };
     auto mkMaterial = [&]{
@@ -9278,7 +9278,7 @@ void DrawProject(EditorState& ed) {
             if (Material{}.SaveToFile(tmp.string())) text = extide::ReadFile(tmp.string());
             fs::remove(tmp, te);
             if (text.empty()) { okaypb::Result r; r.error = "Couldn't make the material."; return r; }
-            return g_pb->CreateFile(d, n, text);
+            return g_pb->MakeFile(d, n, text);
         });
     };
     // A new scene starts usable: a Main Camera, plus a sun in 3D.
@@ -9292,7 +9292,7 @@ void DrawProject(EditorState& ed) {
                 sun->AddComponent<Light>();
                 sun->transform->localRotation = Quat::Euler(50.0f, -30.0f, 0.0f);
             }
-            return g_pb->CreateFile(d, n, SceneSerializer::Serialize(sc));
+            return g_pb->MakeFile(d, n, SceneSerializer::Serialize(sc));
         });
     };
     auto mkPrefab = [&]{   // the selected object (with its children) as a prefab, or an empty one
@@ -9302,14 +9302,14 @@ void DrawProject(EditorState& ed) {
             GameObject* sel = g_projEd ? g_projEd->selected() : nullptr;
             okay::Scene tmp("prefab");
             GameObject* go = sel ? sel : tmp.CreateGameObject(fs::path(fs::u8path(n)).stem().string());
-            okaypb::Result r = g_pb->CreateFile(d, n, SceneSerializer::SerializeObject(*go));
+            okaypb::Result r = g_pb->MakeFile(d, n, SceneSerializer::SerializeObject(*go));
             if (r.ok && sel) sel->prefabSource = r.paths[0];   // the object becomes an instance of it, as before
             return r;
         });
     };
     auto mkVisualScript = [&]{
         askCreate("New visual script", "A graph of nodes. It opens in the Visual Script editor.", "New Graph", ".okayvs", "visual script", [](const std::string& d, const std::string& n) {
-            return g_pb->CreateFile(d, n, okay::editor::vsed::VsEditGraph{}.toText());
+            return g_pb->MakeFile(d, n, okay::editor::vsed::VsEditGraph{}.toText());
         }, [](const std::string& p) { okay::editor::vsed::OpenFile(NativePath(p)); g_showVisualScript = true; });
     };
     auto mkStdFolders = [&]{
@@ -9330,7 +9330,7 @@ void DrawProject(EditorState& ed) {
     };
     auto mkData = [&]{
         askCreate("New data asset", "Fields as key = value.", "NewData", ".okaydata", "data asset", [](const std::string& d, const std::string& n) {
-            return g_pb->CreateFile(d, n, "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n");
+            return g_pb->MakeFile(d, n, "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n");
         });
     };
     // The Create menu, grouped by what you are making. Shared by the toolbar "+" and the right-click menu.

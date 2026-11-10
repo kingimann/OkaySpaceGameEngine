@@ -214,3 +214,35 @@ the file token in backticks. Update that group when you rename it.
 
 `docs/visual_scripting_nodes.md` (generated on the node-docs branch) must use
 these same titles the next time it is generated. Do not invent a second wording.
+
+## The gameplay library
+
+`tools/gen_gameplay_library.py` writes the gameplay library: nodes that act on an
+object and its components (health, items, a Rigidbody, a Camera, text, sound,
+quests, saved positions, groups of objects, time and input). Each node is one
+entry in the generator with its plain-English title, a level, a one-line help
+sentence, its topic, its behaviour, and the scene test that proves it. The same
+run writes `engine/include/okay/VisualScript/NodesGameplayLib.hpp`,
+`editor/generated/gplib_*.inc`, `tests/test_vs_gameplay_library.cpp`, and one
+playground graph per topic (`examples/visual_script/playground/gl_*.okayvs`, with
+a matching scene). Node ids start with `Gl`. Do not edit the generated files.
+
+| Topic | Subcategory | What is there |
+|---|---|---|
+| Movement | (none), Turn, Size | Move forward or sideways, move to a position, hop, circle, turn toward an object, snap to a grid, keep inside a box |
+| Physics | (none), Queries | Speed, jump, push, mass, gravity, drag, bounce; facing, behind, nearby counts, alert level |
+| Objects | Survival | Health, armor, resistance, lives, respawn, damage and heal over time, critical hits and falloff |
+| Objects | Items | Count, fit, move and take items, carry limit and weight |
+| Objects | Groups | Hide, show and destroy everything with a tag |
+| Camera | | Zoom, field of view, shake, tilt, follow and look at an object |
+| UI | | Show a number, a clock, health or time in text; color, size, opacity, typing out |
+| Audio | | Volume, pitch, looping, muting, fading |
+| Animation | Procedural | Pulse, sway, fade a sprite |
+| Scene | Story | Start, complete, fail and count quests, and their objectives |
+| Variables | Saved | Save and load a position or health under a name |
+| Math | Progression | Level from experience, stat growth, prices, cooldown share, roll a chance |
+| Time | | Slow motion, game speed, session time |
+| Input | Axes, Keys, Mouse | Horizontal and vertical input, sprint, crouch, jump, fire, aim |
+
+The count is in `tools/gameplay_library_count.txt`. A new node needs a test in
+the generator, or the run fails the check that every node is covered.

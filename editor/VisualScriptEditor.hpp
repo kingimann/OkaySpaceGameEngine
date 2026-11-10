@@ -13,9 +13,16 @@
 #include "okay/VisualScript/VsRefs.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/AnimControl.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/Character.hpp"
+#include "okay/Components/ModelAnimator.hpp"
+#include "okay/Scene/Layers.hpp"
+#include "okay/Scene/SceneManager.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
+#include "VisualScriptChoices.hpp"
 #include "VisualScriptNames.hpp"
 #include "VisualScriptCategories.hpp"
 #include "VisualScriptLevels.hpp"
@@ -1902,6 +1909,10 @@ struct VsEditState {
     std::string publishedText;
     // A drop the slot refused, shown on the canvas until the next good drop.
     std::string refHint;
+    // A refused wire that has a safe converter: the button inserts that node.
+    bool   offerOn = false;
+    int    offerCons = -1, offerIn = -1, offerProd = -1, offerOut = -1;
+    std::string offerType, offerWhy;
     bool   frameSel = false;     // fit the selected nodes (F)
     bool   needsEvent = false;   // nodes but no event node: hint on the canvas
     // The graph checker's findings for the graph on screen (recomputed when it changes).
@@ -1931,7 +1942,12 @@ inline bool VsWireOk(const VsEditGraph& g, int consumer, int inPin, int producer
     const okay::vs::PinType from = VsOutPinType(g, producer, outPin), to = VsInPinType(g, consumer, inPin);
     if (okay::vs::PinCompatible(from, to)) return true;
     if (why) {
-        *why = std::string("A ") + okay::vs::PinTypeName(from) + " can't go into a " + okay::vs::PinTypeName(to) + " input";
+        auto article = [](const char* w) {
+            const char c = w && w[0] ? (char)std::tolower((unsigned char)w[0]) : 'x';
+            return (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') ? "an " : "a ";
+        };
+        *why = std::string(article(okay::vs::PinTypeName(from))) + okay::vs::PinTypeName(from)
+             + " can't go into " + article(okay::vs::PinTypeName(to)) + okay::vs::PinTypeName(to) + " input";
         const std::string h = okay::vs::ConversionHint(from, to);
         if (!h.empty()) *why += " - " + h;
     }
@@ -2226,7 +2242,6 @@ inline okay::vs::VsRefKind VsArgKind(const std::string& type) {
     if (type == "Spawn" || type == "NetSpawnOwned") return okay::vs::VsRefKind::Prefab;
     if (type == "LoadScene") return okay::vs::VsRefKind::Scene;
     if (type == "MusicPlay") return okay::vs::VsRefKind::Audio;
-    if (type == "PlayClip") return okay::vs::VsRefKind::Animation;
     if (type == "BtRun") return okay::vs::VsRefKind::Graph;
     return okay::vs::VsRefKind::None;
 }
@@ -2391,6 +2406,133 @@ inline bool VsDrawRefSlot(EditorState& ed, VsEditState& st, std::string& value, 
     return changed;
 }
 
+// Clips, tags, scenes and the rest of the named lists a dropdown shows.
+inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsChoiceKind kind) {
+    VsChoiceLists lists;
+    okay::GameObject* target = ed.selected();
+    if (!target)
+        for (const auto& id : State().boundGuids)
+            if (okay::GameObject* o = ed.scene().FindByGuid(id)) { target = o; break; }
+    auto addTarget = [&](const std::string& s) { VsPushUnique(lists.onTarget, s); };
+    auto addFall = [&](const std::string& s) { VsPushUnique(lists.fallback, s); };
+    namespace fs = std::filesystem;
+    fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+    auto scanExt = [&](const char* ext) {
+        std::error_code ec;
+        if (!fs::exists(assets, ec)) return;
+        for (auto it = fs::recursive_directory_iterator(assets, ec); it != fs::recursive_directory_iterator() && !ec; it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            std::string e = it->path().extension().string();
+            for (char& c : e) c = (char)std::tolower((unsigned char)c);
+            if (e == ext) addFall(it->path().stem().string());
+        }
+    };
+    switch (kind) {
+        case VsChoiceKind::Clip:
+            if (target) {
+                if (auto* ch = okay::FindAnimComponent<okay::Character>(target))
+                    for (const auto& n : ch->ClipNames()) addTarget(n);
+                if (auto* ma = okay::FindAnimComponent<okay::ModelAnimator>(target))
+                    for (const auto& n : ma->ClipNames()) addTarget(n);
+                if (auto* sm = okay::FindAnimComponent<okay::AnimStateMachine>(target))
+                    for (const auto& stt : sm->states) if (!stt.clip.empty()) addTarget(stt.clip);
+            }
+            for (const char* c : {"idle", "walk", "run", "jump", "attack", "hit", "die", "Wave", "Point"}) addFall(c);
+            scanExt(".okayanim");
+            break;
+        case VsChoiceKind::AnimState:
+            if (target) if (auto* sm = okay::FindAnimComponent<okay::AnimStateMachine>(target))
+                for (const auto& stt : sm->states) addTarget(stt.name);
+            break;
+        case VsChoiceKind::AnimParam:
+            if (target) if (auto* sm = okay::FindAnimComponent<okay::AnimStateMachine>(target))
+                for (const auto& p : sm->params) addTarget(p.name);
+            for (const auto& n : g.nodes)
+                if (n.type == "AnimTrigger" || n.type == "AnimSetFloat" || n.type == "AnimSetBool") addFall(n.arg);
+            break;
+        case VsChoiceKind::Tag:
+            for (const auto& up : ed.scene().Objects())
+                if (up && !up->tag.empty()) addTarget(up->tag);
+            break;
+        case VsChoiceKind::Layer:
+            for (int i = 0; i < okay::Layers::kCount; ++i) {
+                const std::string nm = okay::Layers::Name(i);
+                if (!nm.empty() && nm.rfind("Layer ", 0) != 0) addTarget(nm);
+            }
+            break;
+        case VsChoiceKind::Scene:
+            for (int i = 0; i < okay::SceneManager::SceneCount(); ++i) addTarget(okay::SceneManager::SceneName(i));
+            scanExt(".okayscene");
+            break;
+        case VsChoiceKind::Variable:
+            for (const auto& v : g.vars) addTarget(v.name);
+            for (const auto& n : g.nodes)
+                if (VsArgChoice(n.type) == VsChoiceKind::Variable) addFall(n.arg);
+            break;
+        case VsChoiceKind::Event:
+            for (const auto& n : g.nodes)
+                if (n.type == "OnEvent" || n.type == "SendEvent" || n.type == "BroadcastEvent") addTarget(n.arg);
+            break;
+        case VsChoiceKind::Sound:
+            scanExt(".wav"); scanExt(".ogg"); scanExt(".mp3");
+            break;
+        default: break;
+    }
+    return lists;
+}
+
+inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& value, VsChoiceKind kind, float width) {
+    const VsChoiceLists lists = VsGatherChoices(ed, g, kind);
+    const std::vector<std::string> rows = VsChoiceRows(kind, lists);
+    const bool missing = VsChoiceMissing(value, rows);
+    bool changed = false;
+    const std::string preview = value.empty() ? std::string("(choose a ") + VsChoiceKindName(kind) + ")" : value;
+    ImGui::SetNextItemWidth(width);
+    if (missing) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
+    if (ImGui::BeginCombo("##choice", preview.c_str())) {
+        auto section = [&](const char* title, const std::vector<std::string>& items) {
+            if (items.empty()) return;
+            ImGui::TextDisabled("%s", title);
+            for (const auto& c : items)
+                if (ImGui::Selectable(c.c_str(), c == value)) { value = c; changed = true; }
+        };
+        if (kind == VsChoiceKind::Clip && !lists.onTarget.empty()) {
+            section("On this object", lists.onTarget);
+            section("Other clips", lists.fallback);
+        } else {
+            section(kind == VsChoiceKind::Clip ? "Clips" : "Choices", rows);
+        }
+        if (rows.empty()) ImGui::TextDisabled("Nothing to pick yet. You can still drop a file.");
+        ImGui::EndCombo();
+    }
+    if (missing) ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) {
+        if (missing) ImGui::SetTooltip("\"%s\" is not in the list any more. Pick another, or drop a file.", value.c_str());
+        else ImGui::SetTooltip("Pick a %s, or drop one from the Project window.", VsChoiceKindName(kind));
+    }
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            const std::string path = p->Data ? (const char*)p->Data : "";
+            const bool clip = kind == VsChoiceKind::Clip && (okay::vs::VsExtOk(okay::vs::VsRefKind::Animation, path));
+            const bool sound = kind == VsChoiceKind::Sound && okay::vs::VsExtOk(okay::vs::VsRefKind::Audio, path);
+            const bool scene = kind == VsChoiceKind::Scene && okay::vs::VsExtOk(okay::vs::VsRefKind::Scene, path);
+            if (clip || sound || scene) {
+                value = std::filesystem::path(path).stem().string();
+                changed = true;
+            } else {
+                State().refHint = std::string("That file is not a ") + VsChoiceKindName(kind) + ".";
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (missing) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
+        ImGui::TextUnformatted("Not in the list");
+        ImGui::PopStyleColor();
+    }
+    return changed;
+}
+
 // ---- The editor window -----------------------------------------------------
 // Returns nothing; manages its own state. `ed` is used for "Attach to selected".
 inline void Draw(EditorState& ed, bool* open) {
@@ -2434,6 +2576,7 @@ inline void Draw(EditorState& ed, bool* open) {
         // Saving writes the file and reloads every object that runs this graph,
         // including ones whose path was stored differently and embedded copies.
         if (!PublishOpenGraph(ed, false)) { Log("Save failed", 2); return; }
+        if (!st.issues.empty()) st.showIssues = true;
         int n = 0;
         for (const auto& up : ed.scene().Objects())
             for (auto* vc : up->GetComponents<VisualScriptComponent>())
@@ -3034,7 +3177,7 @@ inline void Draw(EditorState& ed, bool* open) {
     };
 
     // Roomy layout (world units, scaled by the zoom).
-    const float NODE_W_BASE = 292.0f * z, HEADER_H = 46.0f * z, ROW_H = 40.0f * z, PIN_R = 9.0f * z;
+    const float NODE_W_BASE = 292.0f * z, HEADER_H = 64.0f * z, ROW_H = 40.0f * z, PIN_R = 9.0f * z;
     const float BOX_W = 136.0f * z;   // inline value box on an unconnected data input
     const float PAD = 16.0f * z, ROUND = 12.0f * z;
     auto inputLinked = [&](int node, int pin) {
@@ -3233,7 +3376,34 @@ inline void Draw(EditorState& ed, bool* open) {
         } else {
             dl->AddRect(p0, p1, hovered ? IM_COL32(150, 154, 166, 200) : IM_COL32(0, 0, 0, 170), ROUND, 0, hovered ? 1.5f : 1.0f);
         }
-        text(ImVec2(p0.x + PAD, p0.y + (HEADER_H - fs) * 0.5f), IM_COL32(244, 246, 250, 255), title.c_str());
+        text(ImVec2(p0.x + PAD, p0.y + 6.0f * z), IM_COL32(244, 246, 250, 255), title.c_str());
+        {
+            const char* help = VsNodeHelp(d->type);
+            std::string hint = help ? help : (d->paramHint ? std::string("Needs: ") + d->paramHint : std::string());
+            const float maxW = NODE_W - PAD * 2.0f - 78.0f * z;
+            while (hint.size() > 8 && ImGui::CalcTextSize(hint.c_str()).x > maxW) hint.pop_back();
+            if (help && hint.size() < std::strlen(help)) hint += "...";
+            if (!hint.empty())
+                text(ImVec2(p0.x + PAD, p0.y + 8.0f * z + fs), IM_COL32(230, 236, 244, 210), hint.c_str());
+            bool hasErr = false;
+            std::string miss;
+            for (const auto& is : st.issues) if (is.node == n.id && is.severity == 0) hasErr = true;
+            const VsReady ready = VsNodeReadiness(n.type, !n.arg.empty(), [&](int pin) {
+                if (inputLinked(n.id, pin)) return true;
+                auto it = n.pinDefault.find(pin);
+                return it != n.pinDefault.end() && !it->second.empty();
+            }, hasErr, &miss);
+            const char* badge = VsReadyName(ready);
+            const ImVec2 bts = ImGui::CalcTextSize(badge);
+            const ImVec2 br(p1.x - PAD - bts.x - 10.0f * z, p0.y + 5.0f * z);
+            const ImU32 bg = ready == VsReady::Error ? IM_COL32(150, 48, 44, 255)
+                           : ready == VsReady::Missing ? IM_COL32(140, 96, 32, 255)
+                           : IM_COL32(36, 110, 72, 255);
+            dl->AddRectFilled(br, ImVec2(br.x + bts.x + 10.0f * z, br.y + bts.y + 4.0f * z), bg, 4.0f * z);
+            text(ImVec2(br.x + 5.0f * z, br.y + 2.0f * z), IM_COL32(255, 248, 240, 255), badge);
+            if (ready == VsReady::Missing && !miss.empty())
+                text(ImVec2(p0.x + PAD, p0.y + HEADER_H - fs - 2.0f * z), IM_COL32(255, 196, 140, 255), miss.c_str());
+        }
         if (!g.path.empty() && dbg.HasBreakpoint(g.path, n.id)) {   // breakpoint: a red dot left of the header
             const ImVec2 bc(p0.x - 11.0f * z, p0.y + HEADER_H * 0.5f);
             dl->AddCircleFilled(bc, 6.5f * z, IM_COL32(225, 60, 55, 255));
@@ -3306,8 +3476,13 @@ inline void Draw(EditorState& ed, bool* open) {
             const bool linked = inputLinked(n.id, i);
             const okay::vs::PinType pt = VsInPinType(g, n.id, i);
             dataDot(pp, linked, VsPinColor(pt));
-            if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
-                ImGui::SetTooltip("%s  (%s)", d->dataIn[i], okay::vs::PinTypeName(pt));
+            const bool req = VsRequiredWhat(n.type, i) && !linked && n.pinDefault.count(i) == 0;
+            if (req) dl->AddCircle(pp, PIN_R + 3.0f * z, IM_COL32(255, 80, 70, 255), 16, 2.0f * z);
+            if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f) {
+                std::string tip = VsPinExplain(n.type, d->dataIn[i], okay::vs::PinTypeName(pt), true, false);
+                if (req) tip += std::string("\nRequired: ") + VsRequiredWhat(n.type, i);
+                ImGui::SetTooltip("%s", tip.c_str());
+            }
             text(ImVec2(p0.x + PAD, pp.y - fs * 0.5f), labelCol, d->dataIn[i]);
             pinPos[pk(n.id, 1, 0, i)] = pp;
             // Nothing wired in: type the value right here (text, number, true/false).
@@ -3483,6 +3658,8 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (n.arg == "right") b = 1; else if (n.arg == "middle") b = 2;
                 if (b < 0 || b > 2) b = 0;
                 if (ImGui::Combo("##mbtn", &b, btns, 3)) { n.arg = std::to_string(b); g.dirty = true; }
+            } else if (VsChoiceKind ck = VsArgChoice(n.type); ck != VsChoiceKind::None) {
+                if (VsDrawChoice(ed, g, n.arg, ck, NODE_W - PAD * 2)) g.dirty = true;
             } else if (okay::vs::VsRefKind ak = VsArgKind(n.type); ak != okay::vs::VsRefKind::None) {
                 if (VsDrawRefSlot(ed, st, n.arg, ak, VsArgDefaultsSelf(n.type), NODE_W - PAD * 2, "argref"))
                     g.dirty = true;
@@ -3502,6 +3679,35 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SetCursorScreenPos(ImVec2(pp.x - hit * 0.5f, pp.y - hit * 0.5f));
             char id[24]; std::snprintf(id, sizeof(id), "p%d%d%d", kind, side, idx);
             ImGui::InvisibleButton(id, ImVec2(hit, hit));
+            if (st.dragging && n.id != st.dragNode) {
+                const bool kindOk = kind == (st.dragExec ? 0 : 1);
+                const bool sideOk = side == (st.dragFromOutput ? 0 : 1);
+                bool fit = false;
+                std::string why;
+                if (kindOk && sideOk) {
+                    if (st.dragExec) {
+                        fit = !(side == 0 && d && !d->execIn);
+                        if (!fit) why = "Events start a chain. Wire this into a step, not into another event.";
+                    } else {
+                        const int cons = st.dragFromOutput ? n.id : st.dragNode;
+                        const int inP = st.dragFromOutput ? idx : st.dragPin;
+                        const int prod = st.dragFromOutput ? st.dragNode : n.id;
+                        const int outP = st.dragFromOutput ? st.dragPin : idx;
+                        fit = VsWireOk(g, cons, inP, prod, outP, &why);
+                        if (fit) {
+                            std::vector<std::pair<int, int>> edges;
+                            for (const auto& l : g.dataLinks) edges.push_back({l.producer, l.consumer});
+                            if (VsDataWouldCycle(edges, prod, cons)) { fit = false; why = "That would loop: this value already depends on the node you are wiring into."; }
+                        }
+                    }
+                } else if (!kindOk) {
+                    why = st.dragExec ? "This wire carries flow (the triangle), not a value. Drop it on a white triangle."
+                                      : "This wire carries a value. Drop it on a coloured circle, not a flow triangle.";
+                }
+                if (fit) dl->AddCircle(pp, PIN_R + 5.0f * z, IM_COL32(140, 230, 160, 240), 18, 2.5f * z);
+                else dl->AddCircleFilled(pp, PIN_R + 2.0f * z, IM_COL32(10, 10, 14, 160), 16);
+                if (!fit && !why.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", why.c_str());
+            }
             if (kind == 1 && side == 0 && ImGui::BeginDragDropTarget()) {
                 const char* label = (idx >= 0 && idx < (int)d->dataIn.size()) ? d->dataIn[(std::size_t)idx] : "";
                 const okay::vs::VsRefKind rk = VsPinKind(n.type, idx, VsInPinType(g, n.id, idx), label);
@@ -3658,17 +3864,55 @@ inline void Draw(EditorState& ed, bool* open) {
             }
             if (bestNode >= 0) {
                 if (st.dragExec) {
-                    if (st.dragFromOutput) g.linkExec(st.dragNode, st.dragPin, bestNode);
-                    else                   g.linkExec(bestNode, bestIdx, st.dragNode);
+                    const int dest = st.dragFromOutput ? bestNode : st.dragNode;
+                    const VsDef* dd = nullptr;
+                    if (const VsEditNode* dn = g.find(dest)) dd = FindDef(dn->type);
+                    if (dd && !dd->execIn) {
+                        st.refuseMsg = "Events start a chain. Wire this into a step, not into another event.";
+                        st.refuseTime = 5.0f; st.offerOn = false;
+                    } else if (st.dragFromOutput) g.linkExec(st.dragNode, st.dragPin, bestNode);
+                    else g.linkExec(bestNode, bestIdx, st.dragNode);
                 } else {
                     // Refuse a wire whose value can't work in that input (and say why).
                     const int cons = st.dragFromOutput ? bestNode : st.dragNode, inP = st.dragFromOutput ? bestIdx : st.dragPin;
                     const int prod = st.dragFromOutput ? st.dragNode : bestNode, outP = st.dragFromOutput ? st.dragPin : bestIdx;
                     std::string why;
-                    if (VsWireOk(g, cons, inP, prod, outP, &why)) g.linkData(cons, inP, prod, outP);
-                    else { st.refuseMsg = why; st.refuseTime = 4.0f; }
+                    std::vector<std::pair<int, int>> edges;
+                    for (const auto& l : g.dataLinks) edges.push_back({l.producer, l.consumer});
+                    if (VsDataWouldCycle(edges, prod, cons)) {
+                        st.refuseMsg = "That would loop: this value already depends on the node you are wiring into.";
+                        st.refuseTime = 5.0f; st.offerOn = false;
+                    } else if (VsWireOk(g, cons, inP, prod, outP, &why)) {
+                        g.linkData(cons, inP, prod, outP); st.offerOn = false;
+                    } else {
+                        const auto offer = VsOfferConvert((char)VsOutPinType(g, prod, outP), (char)VsInPinType(g, cons, inP));
+                        st.refuseMsg = why.empty() ? offer.why : why;
+                        if (!offer.why.empty() && st.refuseMsg.find(offer.why) == std::string::npos && offer.type.empty())
+                            st.refuseMsg += " " + offer.why;
+                        st.refuseTime = 6.0f;
+                        st.offerOn = !offer.type.empty();
+                        st.offerCons = cons; st.offerIn = inP; st.offerProd = prod; st.offerOut = outP;
+                        st.offerType = offer.type; st.offerWhy = offer.label;
+                    }
                 }
             } else {
+                // Dropped on the other kind of pin: say so instead of doing nothing.
+                float near = std::max(26.0f, 30.0f * z); near *= near;
+                int nk = -1, ns = -1;
+                for (auto& kvp : pinPos) {
+                    int node = (int)(kvp.first >> 20);
+                    int kind = (int)((kvp.first >> 18) & 3);
+                    int side = (int)((kvp.first >> 16) & 3);
+                    if (node == st.dragNode) continue;
+                    float dx = kvp.second.x - m.x, dy = kvp.second.y - m.y;
+                    if (dx * dx + dy * dy < near) { nk = kind; ns = side; break; }
+                }
+                if (nk >= 0 && nk != (st.dragExec ? 0 : 1)) {
+                    st.refuseMsg = st.dragExec
+                        ? "This wire carries the flow (the white triangle). Drop it on another triangle, not on a value circle."
+                        : "This wire carries a value. Drop it on a coloured circle, not on a flow triangle.";
+                    st.refuseTime = 5.0f; st.offerOn = false; (void)ns;
+                } else {
                 // Dropped in empty space: offer the palette and wire up what's picked.
                 bool overNode = false;
                 for (const auto& kv : nodeRect)
@@ -3677,6 +3921,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     st.linkPending = true; st.linkExec = st.dragExec; st.linkFromOutput = st.dragFromOutput;
                     st.linkNode = st.dragNode; st.linkPin = st.dragPin;
                     openPaletteNow = true;
+                }
                 }
             }
             st.dragging = false;
@@ -4275,14 +4520,29 @@ inline void Draw(EditorState& ed, bool* open) {
         const char* msg = "Right-click or press Space to add a node    ·    Scroll to zoom    ·    Drag empty space to select";
         dl->AddText(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 28.0f), IM_COL32(168, 178, 194, 180), msg);
     }
-    // Why the last wire was refused (fades after a few seconds).
+    // Why the last wire was refused. Wrapped, so the suggestion is not cut off.
     if (st.refuseTime > 0.0f && !st.refuseMsg.empty()) {
         st.refuseTime -= io.DeltaTime;
-        const float a = std::min(1.0f, st.refuseTime);
-        const ImVec2 ts = ImGui::CalcTextSize(st.refuseMsg.c_str());
-        const ImVec2 bp(canvasMin.x + 18, canvasMin.y + 40);
-        dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + 16, bp.y + ts.y + 10), IM_COL32(70, 24, 24, (int)(230 * a)), 6);
-        dl->AddText(ImVec2(bp.x + 8, bp.y + 5), IM_COL32(255, 170, 160, (int)(255 * a)), st.refuseMsg.c_str());
+        const float boxW = std::min(560.0f, canvasMax.x - canvasMin.x - 32.0f);
+        ImGui::SetCursorScreenPos(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 120.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(64, 22, 22, 245));
+        ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(220, 90, 80, 255));
+        ImGui::BeginChild("##vsrefuse", ImVec2(boxW, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+        ImGui::PushTextWrapPos(boxW - 16.0f);
+        ImGui::TextUnformatted(st.refuseMsg.c_str());
+        ImGui::PopTextWrapPos();
+        if (st.offerOn && !st.offerType.empty() && ImGui::Button(st.offerWhy.empty() ? "Insert conversion" : st.offerWhy.c_str())) {
+            const VsEditNode* prod = g.find(st.offerProd);
+            const VsEditNode* cons = g.find(st.offerCons);
+            const float x = prod && cons ? (prod->x + cons->x) * 0.5f : 80.0f;
+            const float y = prod && cons ? (prod->y + cons->y) * 0.5f + 40.0f : 80.0f;
+            const int id = g.add(st.offerType, x, y);
+            g.linkData(id, 0, st.offerProd, st.offerOut);
+            g.linkData(st.offerCons, st.offerIn, id, 0);
+            st.offerOn = false; st.refuseMsg.clear(); st.refuseTime = 0;
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
     }
     // The checker's list (toolbar button): click a row to jump to its node.
     if (st.showIssues && !st.issues.empty()) {

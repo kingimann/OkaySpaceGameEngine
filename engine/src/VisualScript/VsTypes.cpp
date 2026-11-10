@@ -861,6 +861,23 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         }
     }
 
+    // 4c) Required inputs left empty (the node says so in the editor too).
+    auto wired = [&](int id, int pin) {
+        for (const Data& d : datas) if (d.consumer == id && d.inPin == pin) return true;
+        return typed.count({id, pin}) != 0;
+    };
+    for (const auto& kv : nodes) {
+        const std::string& t = kv.second.type;
+        if (t == "PlayClip" && kv.second.arg.empty())
+            issues.push_back({1, kv.first, "Required: clip name. Pick one from the list, or drop a clip file."});
+        if (t == "Branch" && !wired(kv.first, 0))
+            issues.push_back({1, kv.first, "Required: condition. Wire a true/false value into Condition."});
+        if (t == "MoveTowards" && kv.second.arg.empty() && !wired(kv.first, 1))
+            issues.push_back({1, kv.first, "Required: object to move toward. Drop an object on the slot or wire one in."});
+        if ((t == "LoadScene" || t == "GetVar" || t == "SetVar") && kv.second.arg.empty())
+            issues.push_back({1, kv.first, "Required: " + std::string(t == "LoadScene" ? "scene" : "variable name") + "."});
+    }
+
     // 5) Prefabs that aren't there.
     if (!baseDir.empty())
         for (const auto& kv : nodes)

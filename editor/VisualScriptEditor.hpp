@@ -4622,7 +4622,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 }
             } else {
                 // Dropped on the other kind of pin: say so instead of doing nothing.
-                float near = std::max(26.0f, 30.0f * z); near *= near;
+                float hitDist2 = std::max(26.0f, 30.0f * z); hitDist2 *= hitDist2;
                 int nk = -1, ns = -1;
                 for (auto& kvp : pinPos) {
                     int node = (int)(kvp.first >> 20);
@@ -4630,7 +4630,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     int side = (int)((kvp.first >> 16) & 3);
                     if (node == st.dragNode) continue;
                     float dx = kvp.second.x - m.x, dy = kvp.second.y - m.y;
-                    if (dx * dx + dy * dy < near) { nk = kind; ns = side; break; }
+                    if (dx * dx + dy * dy < hitDist2) { nk = kind; ns = side; break; }
                 }
                 if (nk >= 0 && nk != (st.dragExec ? 0 : 1)) {
                     st.refuseMsg = st.dragExec

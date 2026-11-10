@@ -231,7 +231,9 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
 - References are found by text scanning, not by loading. A path built at runtime, or stored in a binary file, is not
   seen; a name that happens to end in a known extension inside a quoted string can be taken for a path.
 - Binary formats are not parsed: a `.fbx` that points at external textures has no edges (a `.gltf` does).
-- Import settings are stored and signalled but no importer consumes them yet.
+- Import settings are stored and signalled. Two are read: a texture's `maxSize` (the software renderer's texture
+  cache, through `okay/Core/ImportSidecar.hpp`) and a model's `scale` (the editor, when it adds a model to a scene).
+  The other keys are stored but no importer reads them yet.
 - GUID references inside scene files do not exist yet (scenes store paths); `FixStaleReferences` is the bridge.
 - Meta files are matched by content hash, which is not a cryptographic hash.
 

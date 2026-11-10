@@ -312,6 +312,9 @@ int main() {
         CHECK(miss != nullptr);
         CHECK(miss && miss->source.assetPath.find("ghost.png") != std::string::npos);
         CHECK(miss && miss->message.find("Level.okayscene") != std::string::npos);
+        int metas = 0;                       // checking a project must not write a meta file next to anything
+        for (auto& e : fs::recursive_directory_iterator(dir, ec)) if (e.path().extension() == ".okaymeta") ++metas;
+        CHECK(metas == 0);
         fs::remove_all(dir, ec);
     }
 

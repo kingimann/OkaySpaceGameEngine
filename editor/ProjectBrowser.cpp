@@ -513,14 +513,104 @@ Browser::~Browser() = default;
 
 std::string Browser::ProjectDir() const { return ParentOf(m_root); }
 
+namespace {
+// Text assets that can point at other assets (the same kinds the asset database reads).
+bool IsTextAssetExt(const std::string& e) {
+    static const char* k[] = {".okayscene", ".okayprefab", ".okaymat", ".okayanim", ".okayclip", ".okaydialog", ".okayquest", ".okaybt",
+                              ".okayvs", ".okayseq", ".okayloot", ".okayitems", ".okayrecipes", ".okaydata", ".okaynav", ".gltf"};
+    for (const char* x : k) if (e == x) return true;
+    return false;
+}
+
+// The asset file a written reference names, as an absolute path; "" when it names no existing file.
+std::string ResolveRefTarget(const std::string& raw, const std::string& referrerDir, const std::string& root, const std::string& project) {
+    if (raw.empty() || raw.find("://") != std::string::npos || raw.rfind("proc:", 0) == 0) return {};
+    const std::string n = Slash(raw);
+    const bool abs = n[0] == '/' || (n.size() > 1 && n[1] == ':');
+    std::vector<std::string> cands;
+    if (abs) cands.push_back(Norm(n));
+    else {
+        cands.push_back(Norm(root + "/" + n));
+        if (!project.empty()) cands.push_back(Norm(project + "/" + n));
+        if (!referrerDir.empty()) cands.push_back(Norm(referrerDir + "/" + n));
+    }
+    std::error_code ec;
+    for (const std::string& c : cands)
+        if (UnderOrEqual(root, c) && fs::is_regular_file(P(c), ec)) return c;
+    return {};
+}
+
+std::int64_t StampOf(const fs::path& p, std::uint64_t* size) {
+    std::error_code ec;
+    const auto t = fs::last_write_time(p, ec);
+    const auto s = fs::file_size(p, ec);
+    if (size) *size = ec ? 0 : static_cast<std::uint64_t>(s);
+    return std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count();
+}
+} // namespace
+
+// Re-read the text assets that changed since the last look and keep "who uses what" up to date. Only the
+// project's own text files are read: no meta files are needed and nothing is written.
+bool Browser::RefreshRefs() {
+    bool changed = false;
+    std::set<std::string> seen;
+    std::error_code ec;
+    int count = 0;
+    const std::string project = ProjectDir();
+    for (fs::recursive_directory_iterator it(P(m_root), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e1;
+        const std::string name = it->path().filename().generic_u8string();
+        if (IsHiddenName(name)) { if (it->is_directory(e1)) it.disable_recursion_pending(); continue; }
+        if (it->is_symlink(e1) && it->is_directory(e1)) { it.disable_recursion_pending(); continue; }
+        if (!it->is_regular_file(e1)) continue;
+        if (!IsTextAssetExt(Lower(ExtOf(name)))) continue;
+        if (++count > 50000) break;
+        const std::string abs = U(it->path());
+        seen.insert(abs);
+        std::uint64_t size = 0;
+        const std::int64_t stamp = StampOf(it->path(), &size);
+        auto f = m_refs.find(abs);
+        if (f != m_refs.end() && f->second.stamp == stamp && f->second.size == size) continue;
+        RefEntry e;
+        e.stamp = stamp; e.size = size;
+        std::string text;
+        if (size <= (32u << 20) && ReadText(abs, text, 32u << 20)) {
+            const std::string dir = ParentOf(abs);
+            std::set<std::string> uniq;
+            for (const okay::FoundRef& r : ExtractFor(name, text)) {
+                const std::string t = ResolveRefTarget(r.path, dir, m_root, project);
+                if (!t.empty() && t != abs && uniq.insert(t).second) e.targets.push_back(t);
+            }
+        }
+        m_refs[abs] = std::move(e);
+        changed = true;
+    }
+    for (auto i = m_refs.begin(); i != m_refs.end();) {
+        if (!seen.count(i->first)) { i = m_refs.erase(i); changed = true; } else ++i;
+    }
+    if (changed) m_usersValid = false;
+    return changed;
+}
+
+void Browser::BuildUsers() {
+    if (m_usersValid) return;
+    m_users.clear();
+    for (const auto& kv : m_refs) for (const std::string& t : kv.second.targets) m_users[t].push_back(kv.first);
+    m_usersValid = true;
+}
+
 bool Browser::Sync() {
     std::error_code ec;
     if (!fs::is_directory(P(m_root), ec)) return false;
     okay::ScanOptions o;
     o.logWarnings = false;
+    o.createMetas = false;        // opening a project writes nothing: a meta is made only when an asset is given settings
+    o.verifyHashes = false;
+    o.buildDependencies = false;  // references come from RefreshRefs, which needs no metas
     o.fullHashLimit = 32u << 20;
-    o.ignoreExtensions.push_back("autosave");   // the editor's own recovery copies are not assets   // big files are hashed from their head, tail and size
+    o.ignoreExtensions.push_back("autosave");   // the editor's own recovery copies are not assets
     m_db.Scan(m_root, o);
+    RefreshRefs();
     m_indexed = true;
     return true;
 }
@@ -532,18 +622,104 @@ bool Browser::Poll(std::uint64_t nowMs) {
     if (!fs::is_directory(P(m_root), ec)) { m_nextPoll = nowMs + 2000; return false; }
     okay::ScanOptions o;
     o.logWarnings = false;
+    o.createMetas = false;
+    o.verifyHashes = false;
+    o.buildDependencies = false;
     o.fullHashLimit = 32u << 20;
-    o.ignoreExtensions.push_back("autosave");   // the editor's own recovery copies are not assets
+    o.ignoreExtensions.push_back("autosave");
     const okay::ScanReport rep = m_db.Scan(m_root, o);
+    const bool refs = RefreshRefs();
     const auto ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
     m_nextPoll = nowMs + std::max<std::uint64_t>(2000, 30 * ms);
-    return rep.created > 0 || !rep.moved.empty() || !rep.removed.empty() || !rep.reimports.empty();
+    return refs || rep.created > 0 || !rep.moved.empty() || !rep.removed.empty() || !rep.reimports.empty();
 }
 
 int Browser::UsersOf(const std::string& path) {
     if (!m_indexed && !Sync()) return 0;
-    const okay::Guid g = m_db.PathToGuid(m_db.ToProjectPath(Norm(path)));
-    return g ? static_cast<int>(m_db.UsedBy(g).size()) : 0;
+    BuildUsers();
+    auto it = m_users.find(Norm(path));
+    return it == m_users.end() ? 0 : static_cast<int>(it->second.size());
+}
+
+okay::Guid Browser::EnsureMeta(const std::string& path) {
+    if (!CheckInside(path, false).empty()) return {};
+    const std::string p = Norm(path);
+    std::error_code ec;
+    if (!fs::is_regular_file(P(p), ec)) return {};
+    if (!Exists(p + ".okaymeta")) {
+        Tx tx(*this);
+        const std::string text = "okaymeta 1\nguid " + okay::Guid::Generate().ToString() + "\ntype " + okay::AssetTypeName(okay::AssetTypeFromPath(p)) + "\n";
+        if (!tx.Write(p + ".okaymeta", text)) return {};
+    }
+    Sync();
+    return m_db.PathToGuid(m_db.ToProjectPath(p));
+}
+
+bool Browser::GetImportSettings(const std::string& path, okay::ImportSettings& out) {
+    const okay::AssetType kind = okay::AssetTypeFromPath(path);
+    if (!okay::ImportSettings::HasSettings(kind)) return false;
+    if (!m_indexed) Sync();
+    if (const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(Norm(path)))) out = rec->settings;
+    else out = okay::ImportSettings::Defaults(kind);
+    return true;
+}
+
+bool Browser::SetImportSettings(const std::string& path, const okay::ImportSettings& s, std::string* error) {
+    const okay::AssetType kind = okay::AssetTypeFromPath(path);
+    if (!okay::ImportSettings::HasSettings(kind)) { if (error) *error = "This file has no import settings."; return false; }
+    if (!Exists(Norm(path) + ".okaymeta") && s.SameAs(okay::ImportSettings::Defaults(kind))) return true;   // nothing to remember
+    const okay::Guid g = EnsureMeta(path);
+    if (g.IsNull()) { if (error) *error = "The settings could not be saved."; return false; }
+    return m_db.SetSettings(g, s, error);
+}
+
+bool Browser::Reimport(const std::string& path) {
+    if (!m_indexed) Sync();
+    const std::string p = Norm(path);
+    m_refs.erase(p);
+    m_usersValid = false;
+    if (const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(p))) m_db.RefreshFile(rec->path);
+    RefreshRefs();
+    return true;
+}
+
+void Browser::ThumbKey(const std::string& path, okay::Guid& guid, std::uint64_t& hash) const {
+    // A key from the path and the file's size and time: no meta file and no reading of the file.
+    auto fnv = [](const std::string& s, std::uint64_t h) { for (unsigned char ch : s) { h ^= ch; h *= 1099511628211ull; } return h; };
+    const std::string p = Norm(path);
+    std::string rel = p.size() > m_root.size() ? p.substr(m_root.size() + 1) : p;
+    guid.hi = fnv(rel, 1469598103934665603ull) | 1;
+    guid.lo = fnv(rel, 88172645463325252ull);
+    std::uint64_t size = 0;
+    const std::int64_t stamp = StampOf(P(p), &size);
+    hash = (size * 1000003ull) ^ static_cast<std::uint64_t>(stamp) ^ 0x9E3779B97F4A7C15ull;
+}
+
+Result Browser::ImportFile(const std::string& source, const std::string& destDir) {
+    Result r;
+    if (std::string e = CheckInside(destDir, true); !e.empty()) { r.error = e; return r; }
+    std::error_code ec;
+    if (!fs::is_directory(P(destDir), ec)) { r.error = "The destination is not a folder."; return r; }
+    const std::string src = Norm(source);
+    const bool isDir = fs::is_directory(P(src), ec);
+    if (!isDir && !fs::is_regular_file(P(src), ec)) { r.error = "\"" + FileNameOf(src) + "\" is not a file."; return r; }
+    const std::string name = FileNameOf(src);
+    if (IsHiddenName(name)) { r.error = "\"" + name + "\" is not an asset file."; return r; }
+    if (isDir && UnderOrEqual(src, Norm(destDir))) { r.error = "A folder cannot be imported into itself."; return r; }
+    std::string stem = name, ext;
+    if (!isDir) { ext = ExtOf(name); stem = name.substr(0, name.size() - ext.size()); }
+    const std::string cand = UniqueName(Norm(destDir), stem, ext);
+    const std::string dst = Norm(destDir) + "/" + cand;
+    Tx tx(*this);
+    const std::string tmp = dst + ".tmp";
+    bool ok = isDir ? tx.CopyTree(src, tmp) : tx.CopyFileTo(src, tmp);
+    if (ok) ok = tx.Rename(tmp, dst, "import");
+    if (!ok) { tx.Rollback(); r.error = tx.error + " Nothing was imported."; return r; }
+    Sync();
+    r.ok = true;
+    r.paths.push_back(dst);
+    PushUndo("Import " + cand, [this, dst]() { return TrashCore({dst}, false); });
+    return r;
 }
 
 void Browser::PushUndo(const std::string& label, std::function<Result()> run) {
@@ -652,21 +828,12 @@ Result Browser::MoveCore(const std::vector<std::pair<std::string, std::string>>&
 
     // Who uses the things that move: gather before anything changes.
     std::set<std::string> referrers;
-    for (const auto& kv : map) {
-        const std::string rel = m_db.ToProjectPath(kv.first);
-        if (rel.empty()) continue;
-        std::vector<okay::Guid> guids;
-        std::error_code ec;
-        if (fs::is_directory(P(kv.first), ec)) {
-            for (const okay::AssetRecord* rec : m_db.All())
-                if (rec->path.size() > rel.size() && rec->path.compare(0, rel.size(), rel) == 0 && rec->path[rel.size()] == '/') guids.push_back(rec->guid);
-        } else if (okay::Guid g = m_db.PathToGuid(rel)) guids.push_back(g);
-        for (const okay::Guid& g : guids)
-            for (const okay::Guid& u : m_db.UsedBy(g)) {
-                const std::string ap = m_db.AbsolutePath(u);
-                if (!ap.empty()) referrers.insert(Norm(ap));
-            }
-    }
+    for (const auto& kv : m_refs)
+        for (const std::string& t : kv.second.targets) {
+            bool hit = false;
+            for (const auto& mv : map) if (UnderOrEqual(mv.first, t)) { hit = true; break; }
+            if (hit) { referrers.insert(kv.first); break; }
+        }
     struct Staged { std::string newPath, text; int n; };
     std::vector<Staged> staged;
     std::string skipped;
@@ -937,25 +1104,13 @@ std::vector<Referrer> Browser::ReferencesTo(const std::vector<std::string>& path
     if (!Sync()) return out;
     const std::vector<std::string> paths = Outermost(pathsIn);
     std::set<std::pair<std::string, std::string>> seen;
-    for (const std::string& p : paths) {
-        const std::string rel = m_db.ToProjectPath(p);
-        if (rel.empty()) continue;
-        std::vector<const okay::AssetRecord*> targets;
-        std::error_code ec;
-        if (fs::is_directory(P(p), ec)) {
-            for (const okay::AssetRecord* rec : m_db.All())
-                if (rec->path.size() > rel.size() && rec->path.compare(0, rel.size(), rel) == 0 && rec->path[rel.size()] == '/') targets.push_back(rec);
-        } else if (const okay::AssetRecord* rec = m_db.Find(rel)) targets.push_back(rec);
-        for (const okay::AssetRecord* t : targets)
-            for (const okay::Guid& u : m_db.UsedBy(t->guid)) {
-                const std::string ap = Norm(m_db.AbsolutePath(u));
-                if (ap.empty()) continue;
-                bool inside = false;
-                for (const std::string& q : paths) if (UnderOrEqual(q, ap)) { inside = true; break; }
-                if (inside) continue;
-                const std::string tp = Norm(m_db.AbsolutePath(t->guid));
-                if (seen.insert({ap, tp}).second) out.push_back({ap, tp});
-            }
+    for (const auto& kv : m_refs) {
+        bool inside = false;
+        for (const std::string& q : paths) if (UnderOrEqual(q, kv.first)) { inside = true; break; }
+        if (inside) continue;
+        for (const std::string& t : kv.second.targets)
+            for (const std::string& p : paths)
+                if (UnderOrEqual(p, t) && seen.insert({kv.first, t}).second) out.push_back({kv.first, t});
     }
     std::sort(out.begin(), out.end(), [](const Referrer& a, const Referrer& b) { return a.path != b.path ? a.path < b.path : a.target < b.target; });
     return out;
@@ -964,13 +1119,85 @@ std::vector<Referrer> Browser::ReferencesTo(const std::vector<std::string>& path
 std::vector<std::string> Browser::DependenciesOf(const std::string& path) {
     std::vector<std::string> out;
     if (!Sync()) return out;
-    const okay::Guid g = m_db.PathToGuid(m_db.ToProjectPath(Norm(path)));
-    if (!g) return out;
-    for (const okay::Guid& d : m_db.DependenciesOf(g)) {
-        const std::string ap = m_db.AbsolutePath(d);
-        if (!ap.empty()) out.push_back(Norm(ap));
-    }
+    auto it = m_refs.find(Norm(path));
+    if (it != m_refs.end()) out = it->second.targets;
     return out;
+}
+
+// ---- favourites ----------------------------------------------------------------------------------
+
+std::string RemapPath(const PathMap& map, const std::string& abs) {
+    PathMap m;
+    for (const auto& kv : map) m.emplace_back(Norm(kv.first), Norm(kv.second));
+    return MapPath(Norm(abs), m);
+}
+
+namespace {
+std::string FavFile(const std::string& root) { return ParentOf(root) + "/.okay/favourites.txt"; }
+}
+
+void Favourites::Load(const std::string& assetsRoot) {
+    m_root = Norm(assetsRoot);
+    m_items.clear();
+    std::string text;
+    if (!ReadText(FavFile(m_root), text, 1u << 20)) return;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        line = Slash(line);
+        if (line.find("..") != std::string::npos || line[0] == '/') continue;   // never anything outside Assets
+        if (std::find(m_items.begin(), m_items.end(), line) == m_items.end()) m_items.push_back(line);
+    }
+}
+
+bool Favourites::Has(const std::string& abs) const {
+    const std::string p = Norm(abs);
+    if (!UnderOrEqual(m_root, p) || Fold(p) == Fold(m_root)) return false;
+    const std::string rel = p.substr(m_root.size() + 1);
+    for (const std::string& i : m_items) if (Fold(i) == Fold(rel)) return true;
+    return false;
+}
+
+bool Favourites::Toggle(const std::string& abs, std::string* error) {
+    const std::string p = Norm(abs);
+    if (!UnderOrEqual(m_root, p) || Fold(p) == Fold(m_root)) { if (error) *error = "That is outside the project's Assets folder."; return false; }
+    const std::string rel = p.substr(m_root.size() + 1);
+    const std::vector<std::string> before = m_items;
+    auto it = std::find_if(m_items.begin(), m_items.end(), [&](const std::string& i) { return Fold(i) == Fold(rel); });
+    if (it != m_items.end()) m_items.erase(it); else m_items.push_back(rel);
+    if (!Save(error)) { m_items = before; return false; }
+    return true;
+}
+
+std::vector<std::string> Favourites::List() const {
+    std::vector<std::string> out;
+    for (const std::string& i : m_items)
+        if (Exists(m_root + "/" + i)) out.push_back(m_root + "/" + i);
+    return out;
+}
+
+void Favourites::Remap(const PathMap& map) {
+    bool changed = false;
+    for (std::string& i : m_items) {
+        const std::string to = RemapPath(map, m_root + "/" + i);
+        if (!to.empty() && UnderOrEqual(m_root, to) && Fold(to) != Fold(m_root)) { i = to.substr(m_root.size() + 1); changed = true; }
+    }
+    if (changed) Save(nullptr);
+}
+
+bool Favourites::Save(std::string* error) {
+    if (m_fail && m_fail()) { if (error) *error = "The favourites could not be saved."; return false; }
+    std::string text = "# Favourites of the Project panel (paths inside Assets)\n";
+    for (const std::string& i : m_items) text += i + "\n";
+    std::error_code ec;
+    fs::create_directories(P(ParentOf(FavFile(m_root))), ec);
+    const std::string path = FavFile(m_root), tmp = path + ".tmp";
+    if (!WriteRaw(tmp, text)) { std::error_code e; fs::remove(P(tmp), e); if (error) *error = "The favourites could not be saved."; return false; }
+    fs::rename(P(tmp), P(path), ec);
+    if (ec) { std::error_code e; fs::remove(P(tmp), e); if (error) *error = "The favourites could not be saved."; return false; }
+    return true;
 }
 
 // ---- clipboard -----------------------------------------------------------------------------------

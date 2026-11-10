@@ -2,12 +2,14 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/ObjectPool.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Components/ActionList.hpp"   // Broadcast to ActionLists
 #include <string>
 #include <cstdint>
 #include <cmath>
+#include <memory>
 
 namespace okay {
 
@@ -24,6 +26,11 @@ namespace okay {
 /// `spawner_spawn` / `spawner_wave` / `spawner_done` for ActionLists; scripts
 /// drive it with `spawner_start(name)` / `spawner_stop(name)` /
 /// `spawner_alive(name)`, and `autoStart` off arms it for a scripted start.
+///
+/// `usePool` makes the copies from an ObjectPool this spawner keeps instead of creating a new object each time: a
+/// copy that ends with Lifetime, Projectile3D or `Scene::Despawn` goes back to the pool and the next spawn reuses it
+/// (reset to a fresh copy of the template, see ObjectPool). A copy destroyed any other way is simply gone, as without
+/// the pool. Waves of bullets, sparks and pickups do not make garbage or hitch.
 class Spawner : public Behaviour {
 public:
     std::string templateName;       // object to clone (takes priority)
@@ -38,6 +45,7 @@ public:
     int   waves = 0;                // waves to run (0 = endless)
     float waveDelay = 0.0f;         // pause between waves (0 = just `interval`)
     bool  autoStart = true;         // begin at scene start (off = spawner_start / StartWaves)
+    bool  usePool = false;          // make the copies from an ObjectPool (reused, see Scene::Despawn)
 
     int  Spawned() const { return m_total; }
     void StartWaves() { m_running = true; }
@@ -84,7 +92,9 @@ public:
         Scene* s = gameObject ? gameObject->scene() : nullptr;
         if (!s) return nullptr;
         GameObject* clone = nullptr;
-        if (!templateName.empty()) {
+        if (usePool) {
+            clone = PoolSpawn(*s);
+        } else if (!templateName.empty()) {
             GameObject* t = Template();
             if (t && t != gameObject) clone = SceneSerializer::Instantiate(*s, *t);
         } else if (!prefabPath.empty()) {
@@ -111,7 +121,20 @@ public:
         return n;
     }
 
+    /// The pool this spawner makes its copies from (null until the first spawn with `usePool`).
+    ObjectPool* Pool() const { return m_pool.get(); }
+
 private:
+    GameObject* PoolSpawn(Scene& s) {
+        if (!m_pool) m_pool = std::make_unique<ObjectPool>(s);
+        if (!templateName.empty()) {   // the named object is the source (captured once; it may be hidden or destroyed later)
+            GameObject* t = Template();
+            if (t && t != gameObject && m_poolSource != "t:" + templateName) { m_pool->SetTemplate(*t); m_poolSource = "t:" + templateName; }
+        } else if (!prefabPath.empty() && m_poolSource != "f:" + prefabPath) {
+            if (m_pool->SetPrefabFile(prefabPath)) m_poolSource = "f:" + prefabPath;
+        }
+        return m_pool->Get();
+    }
     GameObject* Template() const {
         Scene* s = gameObject ? gameObject->scene() : nullptr;
         return (s && !templateName.empty()) ? s->Find(templateName) : nullptr;
@@ -129,6 +152,8 @@ private:
     bool  m_running = true;
     int   m_left = 1, m_wavesDone = 0;
     std::string m_tag;
+    std::unique_ptr<ObjectPool> m_pool;   // made on the first pooled spawn
+    std::string m_poolSource;             // what the pool was last given ("t:name" or "f:path")
     uint32_t m_seed = 7u;
 };
 

@@ -28,6 +28,12 @@ class GameObject;
 /// Scene::Destroy(go, seconds) that was waiting for the object is cancelled when it is released, so the
 /// next use is not cut short by the old request.
 ///
+/// An idle object is marked `transient` (a runtime-only object), so a saved scene, a save game and an undo snapshot
+/// do not carry the pool's spare objects; it is a normal object again once `Get` hands it out.
+/// Components that end an object's life should call `Scene::Despawn(go)` instead of `Scene::Destroy(go)`: a pooled
+/// object then goes back to its pool (Lifetime and Projectile3D do). A Spawner with `usePool` and the script calls
+/// `pool_get` / `pool_release` are built on that.
+///
 /// Main thread only, like the scene it serves (a pool does not lock anything), and it must not outlive its Scene.
 ///
 ///   ObjectPool bullets(scene);
@@ -36,7 +42,8 @@ class GameObject;
 ///   GameObject* b = bullets.Get(muzzle);   ...   bullets.Release(b);
 class ObjectPool {
 public:
-    explicit ObjectPool(Scene& scene) : m_scene(&scene) {}
+    explicit ObjectPool(Scene& scene);
+    ~ObjectPool();
     ObjectPool(const ObjectPool&) = delete;
     ObjectPool& operator=(const ObjectPool&) = delete;
 
@@ -59,6 +66,19 @@ public:
     bool Release(GameObject* go);
     /// Destroy every idle object.
     void Clear();
+    /// Destroy idle objects until at most `keep` are left (the ones idle longest go first) and say how many went.
+    /// Lowering `maxSize` only stops the pool from keeping more; call this to give back what it already holds.
+    int Shrink(int keep);
+
+    /// The pool this scene keeps for the prefab file `path`, made (and its file read) on the first call and shared
+    /// by everyone who asks: the script calls `pool_get` / `pool_release` use it. nullptr when the file cannot be
+    /// read. It lives as long as the scene.
+    static ObjectPool* ForPrefab(Scene& scene, const std::string& path);
+    /// Put `go` back into the pool it came from. False when it did not come from a pool of `scene` that is still
+    /// there (the caller then destroys it: Scene::Despawn does both).
+    static bool ReleaseToOwner(Scene& scene, GameObject* go);
+    /// Drop the pools ForPrefab made for the scene with this Scene::Uid() (the scene calls it as it goes away).
+    static void ForgetScene(std::uint64_t sceneUid);
 
     int IdleCount() const;
     /// Objects handed out and not released.
@@ -91,6 +111,7 @@ private:
     GameObject* Lookup(std::uint64_t id) const;   // the live object of this scene with that id, or nullptr
 
     Scene* m_scene;
+    std::uint64_t m_sceneUid;
     std::string m_text;
     std::string m_prefabPath;
     std::vector<NodeState> m_nodes;      // the template's objects, root first

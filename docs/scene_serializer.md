@@ -50,17 +50,41 @@ page covers what an object round trip keeps.
   [<decay> <speedBased> "<tag>"]]`: the clock and the ease as text are written when either is set, and the three after them
   (decay of a punch or shake, duration is a speed, group label) only when one of them is set, with `"" ""` standing in for
   an empty clock and curve; a Tween Animation that sets none writes the line it always did. A decay that is not a
-  positive number is written as 0.
+  positive number is written as 0. `spawner ... "<prefab>" [1]` (a trailing `1` only when `usePool` is on) and
+  `loadingscreen ... "<subtitle>" "<logo>" <asyncLoad> <objectsPerFrame>` (a record without the two numbers loads with
+  background loading off, so a scene saved before it keeps loading in one go).
 - **Duplicate components:** `AddComponent` twice is allowed at runtime and
   `GetComponent` returns the first. Scripts, visual scripts, action lists, tweens, sync vars,
   validators, state machines, every 2D and 3D collider (a compound collider is several shapes on one
-  object) and audio sources are saved per instance, in order, with their own values and their own
-  `compoff` switch. Every other type saves only its first instance. A text with two records of one of those
+  object), audio sources, joints (`Joint2D`, `Joint3D`: one per neighbour), spawners, lights, particle systems
+  (each with its own `particlesfx` / `particleswind` lines, which belong to the `particles` line before them),
+  trigger zones, UI animations, sequence players and quest triggers are saved per instance, in order, with their
+  own values and their own `compoff` switch. Every other type (for example `SpriteRenderer`, `TextRenderer`,
+  `Camera`, `Mover`) saves only its first instance. A text with two records of one of those
   other types loads both and adds a warning (`object N has two 'X' components; only the first is saved`).
   The per-instance types are exactly those `AllowsMultiple` lists in `SceneSerializer.cpp`; to add one, make
   its writer loop over `GetComponents<T>()` (the reader already adds one component per record) and add it
   there. The trigger filter record (`trigfilter2d` / `trigfilter3d`) is still one per object and applies to
   every collider on it.
+- **Key bindings in one-token records:** the records `tdctrl`, `tdctrl2d`, `charctrl2d`, `ctmctrl` and `tpsctrl` name a key
+  (sprint, run, dash, fire, camera turn) as one token. Older builds wrote the raw character, which broke the record for
+  space, tab and Enter (the later fields shifted by one) and read `-` ("no key") back as no key. Now a printable character
+  other than `-` is written as itself, as before (so a file of letters is unchanged and older builds read it), no key is
+  `-`, and every other code is written by number, `#<0..255>`: space is `#32`, `-` is `#45`, Shift is `#16`, F1 is `#128`.
+  The reader takes every old file as it did (a one-byte token is the character, raw control and high bytes included) and
+  the new form besides. `frctrl`, `charctrl3d` and the key=value records always wrote numbers.
+- **Text that spans lines:** a quoted value may contain line breaks (the quote and the backslash are the only characters
+  escaped). The key=value records read a line that ends inside a quote on to the next one until the quote closes, and so
+  does the skipping of an unknown record, so a quest description typed over several lines no longer cuts its record in two.
+  A quote that never closes (a damaged file) takes only its own line, as before.
+- **Records this build does not know:** a field of an object (a component or a setting a newer build wrote) and a record at
+  the top of the file are still skipped with a warning, and now also kept as text (`GameObject::unknownRecords`,
+  `Scene::unknownRecords`) and written back by the next save, so opening a file with an older build and saving it does not
+  lose them. A copy of the object (`Instantiate`, `Duplicate`, an undo snapshot) carries them. A top-level record is kept
+  only by a full load and only when it starts with a record-like name; at most 256 records (65536 bytes each) are kept per
+  object and per scene. The warning, and `SceneSerializer::Validate`, still name them.
+- **Asset paths:** `CollectAssetPaths` lists the files of every instance of a component that can hold several (all the audio
+  sources, particle systems and sequence players of an object) and the prefab of each Spawner, so Build Game copies them.
 - **Saving a file:** `SaveToFile(scene, path, &error)` writes `<path>.savetmp`, checks it, and renames it over the
   target; the target is never moved or removed first. It keeps one rolling `<path>.bak` (a copy of the previous
   file), refuses a read-only target or a missing folder with a message, and leaves the old file untouched when
@@ -103,3 +127,26 @@ unchanged.
 * Not changed: components that are not saved at all (a plain C++ `Behaviour` nobody registered) and the second instance of a
   single-instance type are still dropped, so their place in the order cannot be saved either.
 
+## What changed: scene serializer, wave 7 (1.5)
+
+Test: `scene_serializer_audit` (key codes, per-instance types, asset paths, floats, names, line breaks, unknown records,
+merge collisions). Touched: `SceneSerializer.cpp` in the writers and readers of the five key records, of the types listed
+above, of `spawner` and `loadingscreen`, `KvIn`, the unknown-record branches, `CollectAssetPaths` and the places named
+below; not the validators at the end of the file.
+
+* **Key bindings** are written so every code reads back (see "Key bindings in one-token records"). Fixed: Space, Tab, Enter
+  and `-` as a sprint, run, dash, fire or camera key shifted every later field of the record or came back as no key.
+* **More types are saved per instance** (joints, spawners, lights, particle systems, trigger zones, UI animations, sequence
+  players, quest triggers). Older builds read a file with two records of such a type as before: both load, with the warning
+  "has two ... components; only the first is saved". A second particle system written for an older build overwrites the
+  first one's gradient and curves, because those lines attach to the first system there.
+* **A line break inside a quoted value of a key=value record** no longer cuts the record in two: a quest description with a
+  second line used to lose its objectives and rewards and left a stray line behind.
+* **Unknown records are kept** (see above).
+* **Asset paths** of every audio source, particle system, sequence player and the Spawner prefabs are collected (only the
+  first instance counted; the Spawner prefab was missed).
+* Checked and fine: every finite float (denormals, `-0`, the largest and smallest) reads back bit for bit; names, tags and
+  strings with quotes, backslashes, UTF-8, tabs and line breaks; merging a scene into itself keeps every id unique and each
+  child under its own parent; two objects with one `guid` load with a warning and a new id for the second.
+* Not changed: a second `SpriteRenderer`, `TextRenderer` or `Camera` on one object still saves only the first; the scene text
+  is still parsed twice by a full load (a throwaway pass first, so a bad file leaves the scene alone).

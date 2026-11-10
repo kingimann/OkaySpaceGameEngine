@@ -422,6 +422,9 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `move_toward3(name, speed)` | move toward a named object in 3D by speed*dt (chase/homing) |
 | `look_at3(name)` | rotate forward (+Z) to face a named object in 3D |
 | `spawn3(prefab, x, y, z)` | instantiate a prefab at a 3D position |
+| `pool_get(prefab, x, y [, z])` | like `spawn` / `spawn3`, from the scene's pool for that prefab: an idle object is reused (reset, its scripts start again), else one is made. Returns true on success |
+| `pool_release()` | give this script's object back to its pool (it is destroyed when it did not come from one); a bullet's own script ends with it |
+| `pool_prewarm(prefab, n)` / `pool_idle(prefab)` | make `n` idle objects ahead of time (returns how many are idle) / how many are idle |
 | `set_scale3(x, y, z)` / `set_scale(s)` | set per-axis or uniform scale |
 | `scale_x()` / `scale_y()` / `scale_z()` | read this object's scale |
 | `set_rot3(x, y, z)` | set absolute 3D euler rotation (degrees) |

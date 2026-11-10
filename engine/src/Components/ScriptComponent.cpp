@@ -119,6 +119,16 @@ void ScriptComponent::OnEnable() {
     if (m_vm && m_started && ScriptsRun(gameObject)) m_vm->CallEvent("on_enable");
 }
 
+void ScriptComponent::OnPoolReuse() {
+    if (!m_vm || !m_started) return;
+    const std::string source = m_source;   // LoadSource replaces m_source with its argument
+    std::string error;
+    if (!LoadSource(source, &error)) return;   // it compiled before, so this does not fail
+    m_started = false;
+    m_startDeferred = true;   // start() runs before the next update()
+    m_fixedAcc = 0.0f;
+}
+
 void ScriptComponent::OnDisable() {
     if (m_vm && m_started && ScriptsRun(gameObject)) m_vm->CallEvent("on_disable");
 }

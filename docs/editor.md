@@ -824,5 +824,19 @@ step, a press that changes nothing is none, and a field that already made its ow
 - **Save as Prefab** in the Inspector header now saves into the project's `Assets` folder (it used to write into the
   editor's working folder).
 
-Developer hook: `OKAY_DEV_FIELD_DEMO=1` (with `OKAY_DEV=1`) adds a demo component with one property of every kind
-and two objects that use it, to see the registry-driven card.
+
+### Inspector and Hierarchy, finishing pass
+
+- **Different values are shown.** With several objects selected, every component header (hand-written or generated)
+  shows a line "Different on the selected objects: Intensity, Color" naming the values that differ. Changing one of
+  them sets it on all selected objects. The generated card also shows `-` / "Mixed" inside the field itself.
+- **Tooltips on the fields.** Hover any field of the commonly used components (Transform, Rigidbody 2D/3D, colliders,
+  Light, Camera, Audio Source, Sprite and Mesh Renderer) for a short plain explanation. Every property of those
+  components has one (tested in `tests/test_inspector_model.cpp`).
+- **Revert keeps the place.** Reverting a top-level prefab instance (Revert, Revert All, or the banner's Revert) no
+  longer moves it to the end of the Hierarchy list.
+- **Wider Inspector.** The default layout (and Reset Layout) gives the Inspector about 40% of the width beside the
+  Scene view, so rows are not cramped. Layouts you saved are not changed.
+- **Assets in the Inspector.** Click a texture, model or sound in the Project panel and the Inspector shows its name,
+  size and import settings (with Apply and Revert). Click an object to go back.
+- The developer-only demo component was removed.

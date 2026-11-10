@@ -301,7 +301,8 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
     const FieldState st = ReadField(targets, typeName, idx, d);
     if (st.have == 0) return false;
     const std::string label = PrettyName(d.name);
-    const char* tip = d.tooltip.c_str();
+    const std::string tipText = TooltipFor(typeName, d);
+    const char* tip = tipText.c_str();
     const bool mixed = st.mixed;
     bool wrote = false;
     ImGui::PushID(d.name.c_str());
@@ -459,6 +460,40 @@ void DrawFallbackInspector(okay::editor::EditorState& ed, okay::GameObject* go, 
     ImGui::Spacing();
 }
 
+// ---- Tooltips and mixed values for hand-written Inspectors ------------------------------------------------------------------
+
+namespace { std::string s_tipType; }
+
+void SetTipComponent(const okay::Component* comp) {
+    s_tipType.clear();
+    if (!comp) return;
+    if (auto info = PropertyRegistry::FindFor(*comp)) s_tipType = info->name;
+}
+
+void FieldTip(const char* label) {
+    if (s_tipType.empty() || !ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) return;
+    const std::string tip = FieldTooltip(s_tipType, label);
+    if (!tip.empty()) ImGui::SetTooltip("%s", tip.c_str());
+}
+
+void DrawMixedNote(const okay::Component* comp) {
+    if (!comp || !s_ed || !comp->gameObject) return;
+    const std::vector<GameObject*>& sel = s_ed->MultiSelection();
+    if (sel.size() < 2 || std::find(sel.begin(), sel.end(), comp->gameObject) == sel.end()) return;
+    auto info = PropertyRegistry::FindFor(*comp);
+    if (!info) return;
+    const std::vector<std::string> names = MixedPropertyNames(sel, info->name, ComponentIndexOf(*comp->gameObject, *comp));
+    if (names.empty()) return;
+    std::string text = "Different on the selected objects: ";
+    for (std::size_t i = 0; i < names.size(); ++i) text += (i ? ", " : "") + names[i];
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.78f, 0.40f, 1.0f));
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("What you change here is set on every selected object.");
+}
+
 // ---- Component menu: copy / paste / reset values --------------------------------------------------------------------------
 
 namespace {
@@ -564,7 +599,9 @@ bool DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go) {
         std::string err;
         if (ImGui::SmallButton("Revert")) {
             ed.PushUndo();
+            const RootSlot slot = CaptureRootSlot(ed.scene(), *root);
             if (GameObject* fresh = PrefabTools::RevertOverride(ed.scene(), *root, c->prefabObject, c->record, "", c->occurrence, &err)) {
+                RestoreRootSlot(ed.scene(), fresh, slot);
                 ed.Select(fresh); ed.dirty = true; rebuilt = true;
             } else ConsoleLog("Revert failed: " + err, 2);
         }
@@ -585,7 +622,8 @@ bool DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go) {
         if (ImGui::SmallButton("Revert All")) {
             std::string err;
             ed.PushUndo();
-            if (GameObject* fresh = PrefabTools::RevertAll(ed.scene(), *root, &err)) { ed.Select(fresh); ed.dirty = true; rebuilt = true; }
+            const RootSlot slot = CaptureRootSlot(ed.scene(), *root);
+            if (GameObject* fresh = PrefabTools::RevertAll(ed.scene(), *root, &err)) { RestoreRootSlot(ed.scene(), fresh, slot); ed.Select(fresh); ed.dirty = true; rebuilt = true; }
             else ConsoleLog("Revert failed: " + err, 2);
         }
         ImGui::SameLine();

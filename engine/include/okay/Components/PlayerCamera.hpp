@@ -68,10 +68,25 @@ inline OrbitPose PlaceThirdPersonOrbit(
         }
     }
 
-    // Keep the lens off the ground under the feet. Clamping to the feet
-    // themselves parks a low orbit on the slab, and the near plane fills with it.
-    float minY = transform->Position().y + 0.4f;
-    if (camPos.y < minY) camPos.y = minY;
+    // A flat floor is easy for a sphere cast to miss, and a low pitch at full
+    // distance puts the lens under that floor, looking up at its underside.
+    // Slide back along the arm until the lens is above the feet. Lifting it
+    // straight up would leave the look aimed through the slab.
+    {
+        const float clearance = std::max(0.40f, skin);
+        const float minY = transform->Position().y + clearance;
+        Vec3 armV = camPos - target;
+        const float dist = armV.Magnitude();
+        if (dist > 1e-3f && camPos.y < minY) {
+            const Vec3 dn = armV * (1.0f / dist);
+            if (dn.y < -1e-4f) {
+                float allow = (minY - target.y) / dn.y;
+                if (allow < 0.25f) allow = 0.25f;
+                if (allow < dist) camPos = target + dn * allow;
+            }
+            if (camPos.y < minY) camPos.y = minY;
+        }
+    }
     if (applyShake) camPos.y -= shake;
 
     OrbitPose pose;

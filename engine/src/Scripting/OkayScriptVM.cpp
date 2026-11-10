@@ -9045,6 +9045,27 @@ struct OkayScriptVM::Impl {
         b["pause_game"] = [](std::vector<Value>& a) { Game::SetPaused(a.empty() || a[0].AsBool()); return Value{}; };
         if (!b.count("quit")) b["quit"] = [](std::vector<Value>&) { Game::RequestQuit(); return Value{}; };   // Application.Quit()
         b["show_cursor"] = [](std::vector<Value>& a) { Cursor::Capture(!(a.empty() || a[0].AsBool())); return Value{}; };
+        // cursor_lock("locked" | "confined" | "none"). Locked hides the pointer,
+        // Confined keeps it inside the window, None lets it roam.
+        b["cursor_lock"] = [](std::vector<Value>& a) {
+            std::string m = a.empty() ? std::string("locked") : a[0].AsString();
+            for (char& c : m) c = (char)std::tolower((unsigned char)c);
+            if (m == "none" || m == "free" || m == "0") {
+                Cursor::SetLock(Cursor::LockMode::None);
+                Cursor::SetVisible(true);
+            } else if (m == "confined" || m == "2") {
+                Cursor::SetLock(Cursor::LockMode::Confined);
+                Cursor::SetVisible(true);
+            } else {
+                Cursor::Capture(true);
+            }
+            return Value{};
+        };
+        b["cursor_lock_mode"] = [](std::vector<Value>&) {
+            if (Cursor::IsConfined()) return Value{std::string("confined")};
+            if (Cursor::IsLocked()) return Value{std::string("locked")};
+            return Value{std::string("none")};
+        };
 
         // --- Sprite glyph/size on a sibling SpriteRenderer ---
         b["set_glyph"] = [go](std::vector<Value>& a) {

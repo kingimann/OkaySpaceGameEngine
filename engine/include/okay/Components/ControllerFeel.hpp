@@ -206,7 +206,7 @@ struct SpringArm {
             if (hit.hit) allow = std::max(0.0f, hit.distance - skin);
         }
         if (m_len < 0.0f) m_len = allow;                                  // first frame: the right length at once
-        else if (allow < m_len - skin * 0.25f) m_len = allow;             // blocked: in at once
+        else if (allow < m_len - skin * 0.25f) m_len = allow;             // blocked: in at once, never left inside
         else if (allow < m_len) m_len += (allow - m_len) * EaseFactor(pullIn, dt);    // a hair closer: ease
         else m_len += (allow - m_len) * EaseFactor(recover, dt);         // clear: glide back out
         return m_len;
@@ -215,6 +215,15 @@ struct SpringArm {
 private:
     float m_len = -1.0f;
 };
+
+/// The Game view (and the player) switch the pointer between canvas pixels and
+/// a relative-mode virtual cursor. Call this on that switch, before the mouse
+/// position is fed: the next look sample adopts the new position and does not
+/// treat the jump as a turn. A warp under the 700 px drop in LookPixels (a short
+/// look, then Esc, then a click back on the Game view) used to snap the orbit.
+inline int& MouseSpaceGenerationSlot() { static int g = 0; return g; }
+inline void NoteMouseSpaceChanged() { ++MouseSpaceGenerationSlot(); }
+inline int MouseSpaceGeneration() { return MouseSpaceGenerationSlot(); }
 
 /// Mouse pixels this frame, before sensitivity. A warp (capture starting, or a
 /// tool injecting a jump) is dropped. A large flick is capped. Never scale this
@@ -227,6 +236,24 @@ inline void LookPixels(float& dx, float& dy) {
     else if (dx < -220.0f) dx = -220.0f;
     if (dy > 220.0f) dy = 220.0f;
     else if (dy < -220.0f) dy = -220.0f;
+}
+
+/// A cursor grab, or a warp back to the Game view, is not a look. The frame
+/// that switches mouse space often carries no delta: the warp shows up on the
+/// next poll. That first nonzero sample is dropped. A jump that arrives on the
+/// switch frame itself is that sample, so the look after it still counts.
+/// Returns true when this sample must not turn the view.
+inline bool DropLookHandoff(bool spaceChanged, bool& dropArmed, float dx, float dy) {
+    const bool moved = std::fabs(dx) + std::fabs(dy) > 0.5f;
+    if (spaceChanged) {
+        dropArmed = !moved;
+        return true;
+    }
+    if (dropArmed) {
+        if (moved) dropArmed = false;
+        return true;
+    }
+    return false;
 }
 
 /// Pitch stays short of straight up or straight down. A wider window (a blend,

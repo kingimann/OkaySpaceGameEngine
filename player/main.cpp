@@ -1263,6 +1263,8 @@ int main(int argc, char** argv) {
         int  fpsCap = 0;
         float volume = 1.0f;
         bool lockCursor = false, perPixel = false, shadows = true, bloom = false, ssao = false, fxaa = true;
+        int cursorMode = 0;          // 0 none, 1 locked, 2 confined
+        bool sawCursorMode = false;
         float shadowDistance = 80.0f, shadowSoftness = 2.5f;
         int  shadowCascades = 3, shadowResolution = 2048;
         int  antialias = 1;
@@ -1319,6 +1321,12 @@ int main(int argc, char** argv) {
             else if (k == "volume")     cfg.volume = (float)std::atof(v.c_str());
             else if (k == "show_fps")   cfg.showFps = std::atoi(v.c_str()) != 0;
             else if (k == "lock_cursor") cfg.lockCursor = std::atoi(v.c_str()) != 0;
+            else if (k == "cursor_lock") {
+                cfg.sawCursorMode = true;
+                if (v == "locked" || v == "1") cfg.cursorMode = 1;
+                else if (v == "confined" || v == "2") cfg.cursorMode = 2;
+                else cfg.cursorMode = 0;
+            }
             else if (k == "perpixel")   cfg.perPixel = std::atoi(v.c_str()) != 0;
             else if (k == "shadows")    cfg.shadows = std::atoi(v.c_str()) != 0;
             else if (k == "shadow_distance")   cfg.shadowDistance = (float)std::atof(v.c_str());
@@ -1559,7 +1567,9 @@ int main(int argc, char** argv) {
     BloomEnabled()     = cfg.bloom;
     SSAOEnabled()      = cfg.ssao;
     FXAAEnabled()      = cfg.fxaa;
-    if (cfg.lockCursor) Cursor::Capture(true);
+    if (!cfg.sawCursorMode && cfg.lockCursor) cfg.cursorMode = 1;
+    if (cfg.cursorMode == 1) Cursor::Capture(true);
+    else if (cfg.cursorMode == 2) { Cursor::SetLock(Cursor::LockMode::Confined); Cursor::SetVisible(true); }
     SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
 
     // Optional GPU 3D renderer — the same hardware path the editor's Scene view uses,
@@ -1897,6 +1907,7 @@ int main(int argc, char** argv) {
         // Apply the game's requested cursor state.
         static Vec2 s_virtualMouse{0, 0};
         bool locked = Cursor::IsLocked() && !gameModal && !cursorReleased;
+        const bool confined = Cursor::IsConfined() && !gameModal && !cursorReleased;
         // hand-off: when a bag opens (mouselook was locked) free the pointer
         // AT SCREEN CENTRE, and when it closes warp back to centre before re-locking, so
         // the cursor always appears in the middle and the look anchor resets cleanly.
@@ -1906,7 +1917,14 @@ int main(int argc, char** argv) {
             SDL_WarpMouseInWindow(window, ww / 2, wh / 2);
         }
         s_prevInvModal = gameModal;
-        SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+        // Relative mode only on the transition. Calling it every frame re-warps,
+        // and that warp was added on top of the real delta.
+        static bool s_relLocked = false;
+        if (locked != s_relLocked) {
+            SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+            okay::NoteMouseSpaceChanged();
+            s_relLocked = locked;
+        }
         // While actively dragging a stack, hide the OS arrow: the dragged icon (drawn
         // centred on the mouse) becomes the pointer. The arrow's hotspot sits at its
         // tip — ~half a slot above where it looks like it's pointing — which biased the
@@ -1931,6 +1949,13 @@ int main(int argc, char** argv) {
             SDL_GetWindowSize(window, &ww, &wh);
             SDL_GetRendererOutputSize(renderer, &ow, &oh);
             float sx = ww > 0 ? (float)ow / ww : 1.0f, sy = wh > 0 ? (float)oh / wh : 1.0f;
+            if (confined && ww > 1 && wh > 1) {
+                if (ax < 0) ax = 0;
+                if (ay < 0) ay = 0;
+                if (ax > ww - 1) ax = ww - 1;
+                if (ay > wh - 1) ay = wh - 1;
+                SDL_WarpMouseInWindow(window, ax, ay);
+            }
             s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
         unsigned mask = 0;
@@ -2519,6 +2544,18 @@ int main(int argc, char** argv) {
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
             SDL_RenderFillRect(renderer, &bg);
             DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
+        }
+        if (Cursor::IsLocked() || Cursor::IsConfined() || cursorReleased) {
+            const char* hint = cursorReleased ? "Click to capture the cursor" : "Esc to release the cursor";
+            float px = 2.0f;
+            float tw = UITextW(hint, px);
+            int x = (int)(w * 0.5f - tw * 0.5f);
+            int y = h - (int)(Font8x8::Height * px) - 12;
+            if (x < 8) x = 8;
+            SDL_Rect bg{x - 4, y - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 140);
+            SDL_RenderFillRect(renderer, &bg);
+            DrawText(renderer, hint, (float)x, (float)y, px, SDL_Color{230, 245, 230, 230});
         }
         UIWorld().active = false;   // end of the frame's world-space UI projection
 #ifdef OKAY_HAVE_OKAYUI

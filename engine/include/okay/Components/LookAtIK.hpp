@@ -132,13 +132,42 @@ public:
         const Vec3 tgt = targetObject ? targetObject->Position() : target;
         if (w > 0.0f && maxDistance > 0.0f && Finite(tgt)) w *= RangeWeight(tgt);
         if (w <= 0.0f || (chain.empty() && eyes.empty())) { ForgetAim(); return; }
-        if (!targetObject && !aimAtPoint) { ForgetAim(); return; }
+        // No world target: an imported clip has replaced the built-in pose, which
+        // is the only place HeadYaw normally lands. Turn the neck and head here,
+        // after that clip, or the skull stays locked to the chest.
+        if (!targetObject && !aimAtPoint) { ApplyCharacterGaze(w); return; }
 
         if (m_smooth.size() != chain.size()) { m_smooth.assign(chain.size(), {}); m_haveTgt = false; }
 
         if (!Finite(tgt)) return;
-        const Vec3 tgtChar = InCharacter(tgt);
-        const bool tgtJump = m_haveTgt && Jumped(tgtChar, m_tgtChar);
+        // A target that leaps in world space AND swings the look by more than
+        // 45° is a teleport: snap. A far aim point moves several metres when
+        // the view turns a few degrees; that stays on the ease. Character
+        // space is the wrong measure — yawing the body moves every world
+        // point by metres there.
+        bool tgtJump = false;
+        if (m_haveTgt && Jumped(tgt, m_tgtWorld)) {
+            const Vec3 from = (!chain.empty() && chain.back()) ? chain.back()->Position()
+                              : (transform ? transform->Position() : Vec3::Zero);
+            const Vec3 a = m_tgtWorld - from, b = tgt - from;
+            const float as = a.SqrMagnitude(), bs = b.SqrMagnitude();
+            if (as < 1e-6f || bs < 1e-6f) tgtJump = true;
+            else tgtJump = Vec3::Dot(a * (1.0f / std::sqrt(as)), b * (1.0f / std::sqrt(bs))) < 0.70710678f;
+            // A cursor ray that hits the body, then the world, jumps from a
+            // point on the capsule to a point many metres away. That is not a
+            // teleport of the thing being looked at. Ease through it. A real
+            // far-to-far teleport (the stretch test) still snaps.
+            if (tgtJump && transform) {
+                const Vec3 nearD = tgt - transform->Position();
+                const Vec3 farD = m_tgtWorld - transform->Position();
+                const bool onBody = nearD.x * nearD.x + nearD.z * nearD.z < 2.25f;
+                const bool wasFar = farD.SqrMagnitude() > 9.0f;
+                const Vec3 nearOld = m_tgtWorld - transform->Position();
+                const bool oldOnBody = nearOld.x * nearOld.x + nearOld.z * nearOld.z < 2.25f;
+                const bool nowFar = (tgt - transform->Position()).SqrMagnitude() > 9.0f;
+                if ((onBody && wasFar) || (oldOnBody && nowFar)) tgtJump = false;
+            }
+        }
         const float ease = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
 
         // The cone the look stays in: around where the animation points the
@@ -197,7 +226,7 @@ public:
             m_restore.Touch(e);
             BlendWorldRotation(e, animated, desired, w * eyeWeight);
         }
-        m_tgtChar = tgtChar;
+        m_tgtWorld = tgt;
         m_haveTgt = true;
         m_restore.Commit();
     }
@@ -214,14 +243,21 @@ public:
 
     /// `dir` pulled back to within `maxDeg` of `ref` (both unit). A direction
     /// straight behind `ref` has no nearest side: it comes round via `side`.
+    /// Within 12° of that rear plane the previous side is kept, so a target
+    /// that drifts across the back does not flip the head from one cheek to
+    /// the other in a single frame.
     static Vec3 ClampDir(const Vec3& dir, const Vec3& ref, float maxDeg, const Vec3& side) {
         if (maxDeg >= 180.0f) return dir;
         if (maxDeg <= 0.0f) return ref;
         const float ang = std::acos(Mathf::Clamp(Vec3::Dot(dir, ref), -1.0f, 1.0f)) * Mathf::Rad2Deg;
         if (ang <= maxDeg) return dir;
-        // Within ~5 degrees of straight behind there is no nearer side: come
-        // round the way the look already points, else level about the up axis.
-        Vec3 axis = Vec3::Dot(dir, ref) < -0.996f ? Vec3::Cross(ref, side) : Vec3::Cross(ref, dir);
+        Vec3 axis = Vec3::Cross(ref, dir);
+        const Vec3 kept = Vec3::Cross(ref, side);
+        // cos(180° − 12°) ≈ −0.978. Inside that rear wedge the shortest side
+        // flips under tiny changes; stay on the side the look already chose.
+        if (kept.SqrMagnitude() > 1e-8f && Vec3::Dot(dir, ref) < -0.978f) {
+            if (axis.SqrMagnitude() < 1e-6f || Vec3::Dot(axis, kept) < 0.0f) axis = kept;
+        }
         if (axis.SqrMagnitude() < 1e-8f) axis = std::fabs(Vec3::Dot(ref, Vec3::Up)) < 0.9f ? Vec3::Up : Vec3::Right;
         return SafeNormalize(Quat::AngleAxis(maxDeg, axis.Normalized()) * ref, ref);
     }
@@ -246,6 +282,8 @@ private:
         return !Finite(d) || d.SqrMagnitude() > kSnapDist2;
     }
     void ForgetAim() { m_smooth.clear(); m_haveTgt = false; }
+    /// Head yaw / pitch from the Character, on a clip-driven imported rig.
+    void ApplyCharacterGaze(float weightNow);
 
     IKFade m_fade;
     IKRestore m_restore;
@@ -270,7 +308,7 @@ private:
         return id == FullBodyIK::Neck || id == FullBodyIK::Head;
     }
     std::vector<Smooth> m_smooth;
-    Vec3 m_tgtChar = Vec3::Zero;
+    Vec3 m_tgtWorld = Vec3::Zero;
     bool m_haveTgt = false;
 };
 

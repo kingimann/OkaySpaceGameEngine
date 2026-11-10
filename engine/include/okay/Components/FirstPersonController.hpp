@@ -18,6 +18,7 @@
 #include "okay/Input/Cursor.hpp"
 #include "okay/Components/StepUp.hpp"
 #include "okay/Components/ControllerFeel.hpp"
+#include "okay/Scene/ClearSpawn.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/DeathLock.hpp"
 #include "okay/Components/Water.hpp"
@@ -64,6 +65,10 @@ public:
     float jumpBufferTime = 0.12f;
     int   maxJumps = 1;                 // 1 = single jump, 2 = double jump, etc.
     float mouseSensitivity = 0.15f;     // degrees per pixel of mouse movement
+    /// Degrees per pixel while the cursor is locked or confined.
+    float capturedSensitivity = 0.15f;
+    /// One captured frame cannot spend more than this many pixels.
+    float capturedPixelCap = 220.0f;
     float minPitch = -89.0f, maxPitch = 89.0f;
     bool  invertY = false;              // invert vertical mouse look
     // View bob: up and down only, in step with walking. No sideways sway and no
@@ -284,6 +289,7 @@ public:
         // Keep the cursor hidden + locked while playing (re-assert if something freed
         // it). Turn lockCursor off to author with a normal pointer / click screen UI.
         if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
+        else if (!lockCursor && (Cursor::IsLocked() || Cursor::IsConfined())) Cursor::Capture(false);
         Simulate(ReadLocalInput(), dt);
     }
 
@@ -298,12 +304,26 @@ public:
         bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
         bool zoom = !uiBlocked && Input::GetMouseButton(1);
         in.yaw = yaw; in.pitch = pitch;
-        if (m_haveMouse && !uiBlocked) {
-            float sens = mouseSensitivity * (zoomWithRightMouse && zoom ? zoomSensitivity : 1.0f);
+        const int mouseSpace = MouseSpaceGeneration();
+        const bool spaceChanged = mouseSpace != m_mouseSpace;
+        float pdx = 0.0f, pdy = 0.0f;
+        if (m_haveMouse) { pdx = mp.x - m_lastMouse.x; pdy = mp.y - m_lastMouse.y; }
+        const bool captured = Cursor::IsLocked() || Cursor::IsConfined();
+        const bool handoff = !m_haveMouse || uiBlocked
+            ? false
+            : DropLookHandoff(spaceChanged, m_dropLook, pdx, pdy);
+        if (!m_haveMouse && spaceChanged) m_dropLook = true;
+        if (m_haveMouse && !uiBlocked && !handoff) {
+            float sens = (captured ? capturedSensitivity : mouseSensitivity)
+                * (zoomWithRightMouse && zoom ? zoomSensitivity : 1.0f);
             // Pixels, then degrees. Frame time is not part of this: a long frame
             // must not turn a small move into a flip.
-            float pdx = mp.x - m_lastMouse.x, pdy = mp.y - m_lastMouse.y;
             LookPixels(pdx, pdy);
+            if (captured) {
+                const float cap = capturedPixelCap > 1.0f ? capturedPixelCap : 1.0f;
+                if (pdx > cap) pdx = cap; else if (pdx < -cap) pdx = -cap;
+                if (pdy > cap) pdy = cap; else if (pdy < -cap) pdy = -cap;
+            }
             float dx = pdx * sens, dy = pdy * sens;
             in.yaw   -= dx;
             in.pitch += (invertY ? 1.0f : -1.0f) * dy;
@@ -320,7 +340,7 @@ public:
         // Drop the baseline while a bag is open: the fed mouse switches between locked
         // (accumulated relative) and free (absolute) space, so without this the first
         // frame after closing computes one huge delta and snaps the camera.
-        m_lastMouse = mp; m_haveMouse = !uiBlocked;
+        m_lastMouse = mp; m_haveMouse = !uiBlocked; m_mouseSpace = mouseSpace;
         if (zoom) in.held |= PlayerInput::AltFire;
 
         in.move = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
@@ -346,6 +366,7 @@ public:
     /// Look, stance, lean and move by `in` for `dt` seconds (local play and a
     /// server running this player's inputs). Reads no Input:: globals.
     void Simulate(const PlayerInput& in, float dt) override {
+        m_wish = Vec3::Zero;
         if (!transform) return;
         yaw   = in.yaw;
         // Clamped when it changes (a script may park the view past the limits, as before).
@@ -405,6 +426,7 @@ public:
         float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
+        m_wish = moving ? dir : Vec3::Zero;
         // Running only stands up: you can't sprint while crouched or prone, or swim.
         bool running = !m_swimming && m_stance == Stance::Stand && moving && IsRunHeld(in);
         // The speed cap follows the body from one stance's to the next. Swimming is slower.
@@ -673,6 +695,7 @@ public:
     /// angles; movement and the input sent to a server keep the exact ones.
     /// Camera only: Simulate never reads any of it.
     void LateUpdate(float dt) override {
+        if (SimActive()) EaseOutOfSolids(gameObject, dt, m_separate, m_wish);
         if (!transform || !m_haveEyeBase) return;   // the eye starts once this peer has simulated the player
         // Settled third person leaves the orbit on the camera. During a blend the
         // eye is written so Player View can read it, then the blend overwrites.
@@ -739,6 +762,14 @@ public:
         {
             const float shownPitch = lookSmoothing > 0.0f ? m_smooth.Pitch() : pitch;
             cam->localRotation = Quat::Euler(shownPitch, 0.0f, -m_lean * leanAngle);
+        }
+        {
+            Vec3 eye = cam->Position();
+            const float minY = transform->Position().y + 0.35f;
+            if (eye.y < minY) {
+                eye.y = minY;
+                cam->SetPosition(eye);
+            }
         }
         if (Character* ch = FindCharacter()) ch->RefreshOwnerArm();
     }
@@ -886,7 +917,9 @@ private:
     }
 
     Vec2 m_lastMouse{0, 0};
+    int m_mouseSpace = 0;
     bool m_haveMouse = false;
+    bool m_dropLook = false;         // the next nonzero sample after a warp is not a look
     float m_lookDt = 0.0f;           // this frame's dt, for the look smoothing in ReadLocalInput
     bool m_runToggled = false;
     Stance m_stance = Stance::Stand;
@@ -909,6 +942,8 @@ private:
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     LookSmoother m_smooth;
+    Vec3 m_wish{0.0f, 0.0f, 0.0f};
+    SeparationMemory m_separate;
     FovKick m_fov;
     Landing m_landing;
     AnimLink m_anim;

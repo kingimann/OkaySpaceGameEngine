@@ -678,8 +678,12 @@ void PlayerView::KeepLensClear(Camera* cam) const {
             p.y = std::max(hit.point.y + 0.45f, feet.y + 0.45f);
             cam->transform->SetPosition(p);
         }
-    } else if (p.y < feet.y + 0.25f) {
-        p.y = feet.y + 0.45f;
+    }
+    // A flat plane is easy to miss. The lens still may not sit under the feet,
+    // or the near plane fills with the underside of the pad.
+    p = cam->transform->Position();
+    if (p.y < feet.y + 0.40f) {
+        p.y = feet.y + 0.40f;
         cam->transform->SetPosition(p);
     }
 }

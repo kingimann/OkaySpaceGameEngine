@@ -34,7 +34,9 @@
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
+#include "okay/Animation/PlayerSetup.hpp"      // controller: wire missing animation and IK
 #include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
+#include "okay/Render/ModelImport.hpp"        // AutoMapLocomotion / slot suggestions
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/UI/TooltipPlace.hpp"
@@ -272,6 +274,62 @@ static void CompileOpenScriptBuffers(okay::Scene& scene) {
     }
 }
 
+// Play grabs the mouse when a controller locks the cursor. Esc, or a focused
+// text field, gives it back so the Hierarchy and Inspector can be clicked
+// without leaving Play. `released` sticks until the caller clears it.
+static bool ReleasePlayCursor(bool playing, bool wantText, bool escapeDown, bool& released) {
+    if (!playing) { released = false; return false; }
+    if (escapeDown || wantText) released = true;
+    return released;
+}
+
+// One frame of that grab. `escapeEdge` is a KEYDOWN in this poll. Reading
+// SDL_GetKeyboardState afterwards misses the tap when the key is already up
+// again, which is normal below 60 Hz: both events sit in one poll, and the
+// toolbar keeps saying "Esc to release". `grabbed` is the previous frame's
+// relative-mouse grab. SDL does not move the absolute cursor while grabbed,
+// so ImGui keeps hitting whatever was under the pointer when Play started
+// (the Play button) and the next click stops the game.
+struct PlayPointerFrame {
+    bool released = false;
+    bool editorSeesMouse = true;
+    bool feedEscapeToGame = false;
+    /// This frame entered Play, or the user clicked the Game view, while a
+    /// text field still owned the keyboard. Clear it and feed the game.
+    bool clearTextFocus = false;
+    /// Keys and mouse go to the game. False while the user is typing in a
+    /// field they clicked during Play.
+    bool feedGame = false;
+};
+
+static PlayPointerFrame DecidePlayPointer(bool playing, bool wantText, bool escapeEdge,
+                                         bool escapeHeld, bool wasReleased, bool grabbed,
+                                         bool gameClicked = false, bool playStarted = false) {
+    PlayPointerFrame d;
+    if (!playing) return d;
+    const bool esc = escapeEdge || escapeHeld;
+    // Play, or a click on the Game view, takes the keyboard away from a field
+    // that was focused in edit mode (an Inspector number, the script editor).
+    // A field the user clicks during Play is neither of those, so it keeps
+    // the keys and the cursor stays free.
+    const bool takeGame = (gameClicked || playStarted) && !esc;
+    d.clearTextFocus = wantText && takeGame;
+    const bool textHolds = wantText && !d.clearTextFocus;
+    d.released = wasReleased || esc || textHolds;
+    if (takeGame) d.released = false;
+    // The press that frees the cursor is the editor's. A new tap once the
+    // cursor is already free can still open a pause menu. A hold that began
+    // during the grab must not become that tap on the next frame.
+    d.feedEscapeToGame = escapeEdge && wasReleased && !wantText;
+    d.editorSeesMouse = !grabbed || escapeEdge || textHolds;
+    d.feedGame = !textHolds;
+    return d;
+}
+
+// Ctrl+P stops Play even when the Script Editor tab is focused. That window
+// swallows every other shortcut, including with no file open.
+static bool PlayStopShortcut(bool ctrl, bool keyPressed) { return ctrl && keyPressed; }
+
 // ----------------------------------------------------------------------------
 // Headless self-test: verifies the editor's model logic with no GUI.
 // ----------------------------------------------------------------------------
@@ -320,6 +378,52 @@ static int RunSelfTest() {
     // Play / stop restores edit state (move during play is reverted).
     ed.Play();
     check(ed.isPlaying(), "is playing");
+    check(ed.selected() == nullptr, "play clears the edit selection");
+    {
+        bool released = false;
+        check(!ReleasePlayCursor(true, false, false, released) && !released, "play keeps the cursor until Esc");
+        check(ReleasePlayCursor(true, false, true, released) && released, "Esc releases the play cursor");
+        check(ReleasePlayCursor(true, false, false, released) && released, "Esc release sticks");
+        released = false;
+        check(ReleasePlayCursor(true, true, false, released) && released, "a text field releases the play cursor");
+        check(!ReleasePlayCursor(false, true, true, released) && !released, "leaving play clears the release");
+        // A tap whose key-up is already in the same poll: keyboard state is up,
+        // the edge is the only signal. The editor gets the mouse back and the
+        // game does not also pause.
+        PlayPointerFrame tap = DecidePlayPointer(true, false, true, false, false, true);
+        check(tap.released && tap.editorSeesMouse && !tap.feedEscapeToGame,
+              "an Esc tap releases the cursor without pausing");
+        PlayPointerFrame held = DecidePlayPointer(true, false, false, false, false, true);
+        check(!held.released && !held.editorSeesMouse && !held.feedEscapeToGame,
+              "a grabbed cursor does not click editor widgets");
+        PlayPointerFrame again = DecidePlayPointer(true, false, true, false, true, false);
+        check(again.released && again.feedEscapeToGame && again.editorSeesMouse,
+              "Esc after release can reach the game");
+        PlayPointerFrame typed = DecidePlayPointer(true, true, false, false, false, false, false);
+        check(typed.released, "a text field keeps the cursor released");
+        PlayPointerFrame clicked = DecidePlayPointer(true, true, false, false, true, false, true);
+        check(!clicked.released && clicked.editorSeesMouse && clicked.clearTextFocus && clicked.feedGame,
+              "a click on the Game view locks the cursor even while a text field wanted input");
+        PlayPointerFrame started = DecidePlayPointer(true, true, false, false, false, false, false, true);
+        check(started.clearTextFocus && started.feedGame && !started.released,
+              "Play clears a focused field and gives keys to the game");
+        PlayPointerFrame typing = DecidePlayPointer(true, true, false, false, false, false, false, false);
+        check(!typing.clearTextFocus && !typing.feedGame && typing.released,
+              "a field clicked during Play still takes the keyboard");
+        check(PlayStopShortcut(true, true), "Ctrl+P works while the script editor is focused");
+        {
+            EditorState spawn;
+            spawn.NewScene3D();
+            spawn.PushUndo();
+            GameObject* p = Templates::AddThirdPersonPlayer(spawn.scene());
+            spawn.SettleSpawn(p);
+            const Vec3 at = p->transform->Position();
+            check(at.x * at.x + at.z * at.z > 0.64f, "third person spawn is clear of the cube and sphere");
+            check(spawn.Undo(), "placing the spawn is the same undo step as creating it");
+            check(spawn.scene().Find("Player") == nullptr, "one undo removes the settled player");
+        }
+        check(!PlayStopShortcut(false, true), "P alone does not stop play");
+    }
     ed.Tick(0.1f);
     ed.Stop();
     check(!ed.isPlaying(), "stopped");
@@ -3181,6 +3285,14 @@ bool   g_gameMouseCapture = false;
 // keeps asking for a locked one (FPS/TPS controllers re-lock every frame); clicking
 // in the Game view gives it to the game again.
 bool   g_gameCursorReleased = false;
+// Set on the frame Play is entered from the editor. The input poll may run
+// before or after that click; it consumes the flag and clears text focus.
+static bool g_playTextHandoff = false;
+// Previous frame locked the play cursor. The poll uses this so a click cannot
+// land on the Play button at the frozen absolute position.
+static bool g_playPointerGrabbed = false;
+// KEYDOWN Escape this poll. Cleared once the frame has read it.
+static bool g_escapeEdge = false;
 bool   g_gameCanvasHovered = false;   // mouse over the Game view's picture (last frame)
 int    g_gameCanvasHoveredFrame = -10; // ImGui frame g_gameCanvasHovered was last set (the Game view may be hidden)
 
@@ -3409,6 +3521,7 @@ struct Options {
     bool includeAllProjectScenes = false, developmentBuild = false;
     bool lockCursor = false, perPixelLighting = false, shadows = true,
          bloom = false, ssao = false, fxaa = true;
+    int cursorLockMode = 0;
     float shadowDistance = 80.0f, shadowSoftness = 2.5f;
     int  shadowCascades = 3, shadowResolution = 2048;
     int  antialias = 1;
@@ -3595,6 +3708,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
         cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
+        cf << "cursor_lock=" << (opt.cursorLockMode == 2 ? "confined" : opt.cursorLockMode == 1 ? "locked" : "none") << "\n";
         cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
         cf << "shadows=" << (opt.shadows ? 1 : 0) << "\n";
         cf << "shadow_distance=" << opt.shadowDistance << "\n";
@@ -5874,39 +5988,39 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::BeginMenu("Player")) {           // ready-to-play premade players
             if (ImGui::MenuItem("Third Person")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddThirdPersonPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene())));
                 ConsoleLog("Added Third-Person player"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Humanoid (foot IK)")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddHumanoidPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddHumanoidPlayer(ed.scene())));
                 ConsoleLog("Added Humanoid player (rig + capsule + foot IK)"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("First Person")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddFirstPersonPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddFirstPersonPlayer(ed.scene())));
                 ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Mixamo Soldier")) { spawnMixamo("Soldier.glb", "Soldier"); created = true; }
             if (ImGui::MenuItem("Mixamo Xbot")) { spawnMixamo("Xbot.glb", "Xbot"); created = true; }
             if (ImGui::MenuItem("Third Person Shooter")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddThirdPersonShooterPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonShooterPlayer(ed.scene())));
                 ConsoleLog("Added Third-Person Shooter player"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Top Down (3D)")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddTopDownPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddTopDownPlayer(ed.scene())));
                 ConsoleLog("Added Top-Down player"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Top Down Shooter (3D)")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddTopDownShooterPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddTopDownShooterPlayer(ed.scene())));
                 ConsoleLog("Added Top-Down Shooter player (WASD, mouse aim, LMB fire, Space dash)"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("2.5D Platformer (LittleBigPlanet)")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddPlatformer25DPlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddPlatformer25DPlayer(ed.scene())));
                 ConsoleLog("Added 2.5D player (A/D run, Space jump, W/S change layer, E grab, Ctrl crouch, Z prone)"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Top Down (2D)")) {
@@ -5916,7 +6030,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
             if (ImGui::MenuItem("Click To Move")) {
                 ed.PushUndo();
-                ed.Select(okay::Templates::AddClickToMovePlayer(ed.scene()));
+                ed.Select(ed.SettleSpawn(okay::Templates::AddClickToMovePlayer(ed.scene())));
                 ConsoleLog("Added Click-To-Move player"); ed.dirty = true; created = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops a fully set-up player (Character + controller + physics) into this scene.");
@@ -5997,6 +6111,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 GameObject* g = ed.CreateEmpty("Character");
                 g->AddComponent<Character>()->Apply();
                 HumanoidLibrary::EnsureAnimator(g);
+                ed.SettleSpawn(g);
                 ed.Select(g); ed.view3D = true; ed.dirty = true; created = true;
                 ConsoleLog("Created Character");
             }
@@ -6294,6 +6409,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             CompileOpenScriptBuffers(ed.scene());
             NavigationBeforePlay(ed);   // surfaces set to bake before Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+            g_playTextHandoff = true; ImGui::ClearActiveID();
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         } else {
             okay::editor::apreview::Stop(ed.scene());   // before Stop destroys the play copy
@@ -6966,6 +7082,7 @@ static AssetKind KindOf(const std::string& extLower, bool isDir) {
     if (extLower == ".okaydialog") return {IM_COL32(220, 170, 110, 255), "DLG", AssetIcon::Visual};
     if (extLower == ".okayquest")  return {IM_COL32(170, 190, 110, 255), "QST", AssetIcon::Data};
     if (extLower == ".okaybt")     return {IM_COL32(120, 190, 150, 255), "BT",  AssetIcon::Visual};
+    if (extLower == ".okayclip")   return {IM_COL32(190, 160, 240, 255), "CLIP", AssetIcon::Visual};
     return {IM_COL32(150, 152, 162, 255), "FILE", AssetIcon::Generic};
 }
 
@@ -7243,8 +7360,44 @@ static void CharacterModelTools(EditorState& ed, GameObject* go, const char* id)
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this player's body: auto-sized,\nfeet grounded, turned to face forward, collider fitted and its\nidle/walk/run clips wired. Or drop a model asset onto this object.");
     GameObject* model = okay::FindCharacterModelRoot(ed.scene(), go);
+    // The Player Controller panel is the one place for this on a switchable
+    // player. The Character header still has Set Character Model, and would
+    // otherwise repeat the same checklist.
+    const bool showSetup = std::strcmp(id, "char") != 0 || !okay::PlayerController::Of(go);
+    const okay::PlayerAnimStatus setup = showSetup ? okay::InspectPlayerAnimation(ed.scene(), go) : okay::PlayerAnimStatus{};
+    if (showSetup && !setup.hasModel) {
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "No character model.");
+        ImGui::TextWrapped("Set Character Model, or right-click a model file and choose Make Playable Character. A new player starts in third person. V switches to the eyes. Player Controller, View, changes that.");
+    } else if (showSetup) {
+        const ImVec4 good(0.45f, 0.85f, 0.55f, 1.0f), warn(0.95f, 0.75f, 0.35f, 1.0f);
+        ImGui::TextUnformatted("Rig:");
+        ImGui::SameLine();
+        ImGui::TextColored(setup.bones >= 8 ? good : warn, "%d/15 humanoid bones", setup.bones);
+        if (setup.bones < 8)
+            ImGui::TextWrapped("Built-in walk, foot planting and look-at need 8 bones. Right-click the model and choose Map Humanoid Bones or Rig Model (Humanoid).");
+        ImGui::Text("Foot IK: %s    Look-at: %s    Animator: %s",
+                    setup.footIk ? "on" : "not added",
+                    setup.lookAt ? "on" : "not added",
+                    setup.animator ? "on" : "not added");
+    }
+    if (showSetup) {
+        char wire[64];
+        std::snprintf(wire, sizeof(wire), "Wire animation and IK##%s", id);
+        if (ImGui::Button(wire)) {
+            ed.PushUndo();
+            ConsoleLog(okay::WirePlayerAnimation(ed.scene(), go));
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Adds Foot IK, Look-At and the default Animator only when they are missing,\nand matches empty animation slots. A graph, a clip choice, or an IK weight\nyou already set is left as it is. Safe to press again.");
+        ImGui::SameLine();
+        char openA[48];
+        std::snprintf(openA, sizeof(openA), "Open Animator##%s", id);
+        if (ImGui::Button(openA)) g_showAnimatorGraph = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Opens the Animator window. Edit the state graph there. Clip slots stay in the Character Model panel.");
+    }
     if (!model) return;
-    ImGui::SameLine();
     std::snprintf(lbl, sizeof(lbl), "Fix Facing##%s", id);
     if (ImGui::SmallButton(lbl)) {
         ed.PushUndo();
@@ -9334,6 +9487,23 @@ void DrawProject(EditorState& ed) {
             g_showDialogue = true;
         } else if (ext == ".okaybt") {
             OpenBehaviorTreeFile(ed, full);   // open in the Behavior Tree window
+        } else if (ext == ".okayclip") {
+            GameObject* sel = ed.selected();
+            ModelAnimator* ma = nullptr;
+            for (Transform* t = sel ? sel->transform : nullptr; t && !ma; t = t->Parent())
+                if (t->gameObject) ma = t->gameObject->GetComponent<ModelAnimator>();
+            if (!ma && sel)
+                for (const auto& up : ed.scene().Objects())
+                    if (up && up->IsSelfOrDescendantOf(sel) && (ma = up->GetComponent<ModelAnimator>())) break;
+            if (!ma) ConsoleLog("Select the model this pose belongs to, then open the clip.", 1);
+            else {
+                const int n = PoseCapture::ImportFile(*ma, full, true);
+                if (n > 0) {
+                    ed.dirty = true;
+                    ConsoleLog("Imported pose clip onto '" + ma->gameObject->name + "'");
+                } else if (n == 0) ConsoleLog("This rig is missing a bone that clip poses.", 1);
+                else ConsoleLog("Couldn't read pose clip " + full, 1);
+            }
         } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
             // Double-click a model: import it into the scene (hierarchy, textures,
             // rig + clips, size normalization — same path as drag-drop).
@@ -15711,6 +15881,24 @@ static bool OwnShortcutsWindowFocused() {
 // Global keyboard shortcuts (ignored while typing in a field).
 void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
+    // Play/Stop before the text-field return. The Script Editor tab (even with
+    // no file open) owns every shortcut, so Ctrl+P, and a click that never
+    // reaches Stop, left Play with no way out.
+    if (PlayStopShortcut(io.KeyCtrl, ImGui::IsKeyPressed(ImGuiKey_P, false))) {
+        if (ed.isPlaying()) {
+            okay::editor::apreview::Stop(ed.scene());
+            ed.Stop(); g_paused = false; ConsoleLog("Stop");
+        } else {
+            if (g_clearConsoleOnPlay) ConsoleClear();
+            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
+            okay::editor::apreview::Stop(ed.scene());
+            CompileOpenScriptBuffers(ed.scene());
+            NavigationBeforePlay(ed);
+            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+            g_playTextHandoff = true; ImGui::ClearActiveID();
+            g_showGame = true; g_focusGameOnPlay = true;
+        }
+    }
     if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
     const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused() || TimelineFocused() || DialogueWindowFocused() || BehaviorTreeWindowFocused();   // those windows own Delete, Ctrl+C/V/D and F
@@ -15805,23 +15993,6 @@ void HandleShortcuts(EditorState& ed) {
     if (!animKeys && ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
         if (SplineDeletePickedPoint(ed)) ConsoleLog("Deleted spline point");   // a picked spline point goes first
         else { ed.DeleteSelected(); ConsoleLog("Deleted selection"); }
-    }
-    // Play/Stop toggle is Ctrl+P. It used to be plain Space, which
-    // clashed with the in-game jump — pressing Space in play mode stopped the game.
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
-        if (ed.isPlaying()) {
-            okay::editor::apreview::Stop(ed.scene());
-            ed.Stop(); g_paused = false; ConsoleLog("Stop");
-        }
-        else {
-            if (g_clearConsoleOnPlay) ConsoleClear();
-            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();   // previews must not override Play
-            okay::editor::apreview::Stop(ed.scene());
-            CompileOpenScriptBuffers(ed.scene());
-            NavigationBeforePlay(ed);   // surfaces set to bake before Play
-            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
-            g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
-        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) {
         Vec3 pp = ed.selected()->transform->Position();
@@ -16514,8 +16685,15 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(240); ImGui::SliderFloat("Master volume", &g_build.masterVolume, 0.0f, 1.0f);
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                 ImGui::Checkbox("Quit on Escape", &g_build.quitOnEscape);
-                ImGui::Checkbox("Lock cursor on launch", &g_build.lockCursor);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor on launch (FPS/TPS games)");
+                {
+                    const char* modes[] = {"None", "Locked", "Confined"};
+                    if (g_build.cursorLockMode < 0 || g_build.cursorLockMode > 2)
+                        g_build.cursorLockMode = g_build.lockCursor ? 1 : 0;
+                    if (ImGui::Combo("Cursor on launch", &g_build.cursorLockMode, modes, 3))
+                        g_build.lockCursor = g_build.cursorLockMode != 0;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Locked hides the cursor. Confined keeps it inside the window.\nEsc releases it; a click captures it again.");
+                }
                 ImGui::Checkbox("Hide cursor", &g_build.hideCursor);
             }
             if (s_buildSec == 5) {
@@ -16681,7 +16859,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.quitOnEscape = g_build.quitOnEscape; o.masterVolume = g_build.masterVolume; o.showFps = g_build.showFps;
             o.includeAllProjectScenes = g_build.includeAllProjectScenes;
             o.developmentBuild = g_build.developmentBuild;
-            o.lockCursor = g_build.lockCursor; o.perPixelLighting = g_build.perPixelLighting;
+            o.lockCursor = g_build.lockCursor; o.cursorLockMode = g_build.cursorLockMode; o.perPixelLighting = g_build.perPixelLighting;
             o.shadows = g_build.shadows; o.bloom = g_build.bloom; o.ssao = g_build.ssao;
             o.shadowDistance = g_build.shadowDistance; o.shadowSoftness = g_build.shadowSoftness;
             o.shadowCascades = g_build.shadowCascades; o.shadowResolution = g_build.shadowResolution;
@@ -29651,46 +29829,97 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Locomotion (auto idle/walk/run)");
             if (ImGui::Checkbox("Drive by movement##ma", &ma->driveByMovement)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-switch clips based on how fast this object moves.");
-            if (ma->driveByMovement && ma->gameObject)
-                if (auto* sm = ma->gameObject->GetComponent<AnimStateMachine>(); sm && sm->enabled)
-                    ImGui::TextDisabled("The Animation State Machine here picks the clips, so this waits while it's enabled.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-switch clips based on how fast this object moves.\nWith an Animator on this object, the graph plays these slots instead.");
+            AnimStateMachine* locoSm = nullptr;
+            if (ma->gameObject)
+                for (AnimStateMachine* sm : ma->gameObject->GetComponents<AnimStateMachine>())
+                    if (sm->layer == 0) { locoSm = sm; break; }
+            const bool haveLoco = locoSm && std::any_of(locoSm->states.begin(), locoSm->states.end(),
+                                                        [](const AnimStateMachine::State& st) { return st.name == "Locomotion"; });
+            auto pushSlots = [&]() {
+                if (haveLoco) ClipGraph::InsertLocomotion(*locoSm, *ma);
+                ed.dirty = true;
+            };
             if (ma->driveByMovement) {
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Smooth blend##ma", &ma->smoothLocomotion)) ed.dirty = true;
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Blend the two clips around the current speed every frame (1D blend\ntree) instead of switching discretely — half-walking half-running looks\nlike a jog, and foot cycles stay aligned through the blend.");
             }
-            if (ma->driveByMovement) {
-                auto clipCombo = [&](const char* label, std::string& target) {
+            if (!ma->clips.empty()) {
+                if (haveLoco)
+                    ImGui::TextDisabled("Changing a slot updates Locomotion. Your other states, transitions and IK weights stay.");
+                else
+                    ImGui::TextDisabled("These slots are what the player plays. Locomotion setup in the Animator builds a graph from them without removing states you add later.");
+                if (ImGui::SmallButton("Fill empty slots from names##ma")) {
+                    ed.PushUndo();
+                    okay::AutoMapLocomotion(ma);
+                    pushSlots();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Fills only slots that are still (none), from the clip names.\nA slot you already set is left alone. Does not replace your other states.");
+                auto clipCombo = [&](const char* label, std::string& target, int slot) {
                     std::vector<std::string> nm = ma->ClipNames();
                     int cur = 0; for (int i = 0; i < (int)nm.size(); ++i) if (nm[i] == target) cur = i + 1;
+                    const bool missing = !target.empty() && cur == 0;
                     std::vector<const char*> items; items.push_back("(none)");
                     for (auto& n : nm) items.push_back(n.c_str());
+                    ImGui::PushID(slot);
                     if (ImGui::Combo(label, &cur, items.data(), (int)items.size())) {
-                        target = (cur == 0) ? std::string{} : nm[cur - 1]; ed.dirty = true;
+                        ed.PushUndo();
+                        target = (cur == 0) ? std::string{} : nm[cur - 1];
+                        pushSlots();
                     }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ModelAnimator::SlotFallback(slot));
+                    if (ma->SlotUseOf(slot) == ModelAnimator::SlotUse::Plays) {
+                        ImGui::SameLine();
+                        const bool prevOn = okay::editor::apreview::ToggleModelClip(
+                            ed.scene(), ma, target, ma->speed, true, ed.isPlaying());
+                        if (prevOn) okay::editor::apreview::DrawTransport(label);
+                    }
+                    if (missing)
+                        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "'%s' is not on this model. %s",
+                                           target.c_str(), ModelAnimator::SlotFallback(slot));
+                    else if (ma->SlotUseOf(slot) == ModelAnimator::SlotUse::NoKeys)
+                        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "'%s' has no keys, so this slot is skipped.", target.c_str());
+                    else if (const char* caution = ma->SlotCaution(slot); caution && caution[0])
+                        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "%s", caution);
+                    else if (target.empty()) {
+                        const std::string guess = okay::SuggestUnassignedSlot(*ma, slot);
+                        if (!guess.empty()) {
+                            ImGui::TextDisabled("Looks like %s", guess.c_str());
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Use##slot")) { ed.PushUndo(); target = guess; pushSlots(); }
+                        }
+                    }
+                    ImGui::PopID();
                 };
-                clipCombo("Idle clip##ma", ma->idleClip);
-                clipCombo("Walk clip##ma", ma->walkClip);
-                clipCombo("Run clip##ma",  ma->runClip);
+                clipCombo("Idle clip##ma", ma->idleClip, ModelAnimator::SlotIdle);
+                clipCombo("Walk clip##ma", ma->walkClip, ModelAnimator::SlotWalk);
+                clipCombo("Run clip##ma",  ma->runClip, ModelAnimator::SlotRun);
                 if (ImGui::Checkbox("Stride match##ma", &ma->strideMatch)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play walk / run clips at the pace the body really moves and pick walk or run by it.\nSet the clips' own speeds in the Character Model panel on the player.");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Built-in for empty slots##ma", &ma->builtinFallback)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("On a retargeted player (Humanoid Retarget), a slot with no clip plays the\nbuilt-in animation instead of freezing the pose.");
-                if (ImGui::DragFloat("Walk threshold##ma", &ma->walkThreshold, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
-                if (ImGui::DragFloat("Run threshold##ma",  &ma->runThreshold,  0.1f,  0.0f, 50.0f)) ed.dirty = true;
-                clipCombo("Jump clip##ma", ma->jumpClip);
-                clipCombo("Fall clip##ma", ma->fallClip);
-                clipCombo("Land clip##ma", ma->landClip);
+                if (ImGui::DragFloat("Walk threshold##ma", &ma->walkThreshold, 0.05f, 0.0f, 20.0f)) { pushSlots(); }
+                if (ImGui::IsItemDeactivatedAfterEdit()) ed.PushUndo();
+                if (ImGui::DragFloat("Run threshold##ma",  &ma->runThreshold,  0.1f,  0.0f, 50.0f)) { pushSlots(); }
+                if (ImGui::IsItemDeactivatedAfterEdit()) ed.PushUndo();
+                clipCombo("Jump clip##ma", ma->jumpClip, ModelAnimator::SlotJump);
+                clipCombo("Fall clip##ma", ma->fallClip, ModelAnimator::SlotFall);
+                clipCombo("Land clip##ma", ma->landClip, ModelAnimator::SlotLand);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Air states from the capsule's vertical motion: launching plays Jump,\npast the apex Fall loops, touchdown plays Land once. Works with any\ncontroller; leave a slot on (none) to skip that state.");
+                clipCombo("Strafe left##ma", ma->strafeLeftClip, ModelAnimator::SlotStrafeLeft);
+                clipCombo("Strafe right##ma", ma->strafeRightClip, ModelAnimator::SlotStrafeRight);
+                clipCombo("Walk back##ma", ma->walkBackClip, ModelAnimator::SlotWalkBack);
+                clipCombo("Run back##ma", ma->runBackClip, ModelAnimator::SlotRunBack);
                 if (ImGui::TreeNode("Crouch / prone clips##ma")) {
-                    clipCombo("Crouch clip##ma", ma->crouchClip);
-                    clipCombo("Crouch walk clip##ma", ma->crouchWalkClip);
-                    clipCombo("Prone clip##ma", ma->proneClip);
-                    clipCombo("Crawl clip##ma", ma->crawlClip);
-                    clipCombo("Get up clip##ma", ma->getUpClip);
+                    clipCombo("Crouch clip##ma", ma->crouchClip, ModelAnimator::SlotCrouch);
+                    clipCombo("Crouch walk clip##ma", ma->crouchWalkClip, ModelAnimator::SlotCrouchWalk);
+                    clipCombo("Prone clip##ma", ma->proneClip, ModelAnimator::SlotProne);
+                    clipCombo("Crawl clip##ma", ma->crawlClip, ModelAnimator::SlotCrawl);
+                    clipCombo("Get up clip##ma", ma->getUpClip, ModelAnimator::SlotGetUp);
                     ImGui::TextDisabled("Follow the player controller's crouch / prone. Getting up\nfrom prone plays Get up once; (none) keeps the standing clips.");
                     ImGui::TreePop();
                 }
@@ -33723,6 +33952,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Coyote Time##fp", &fp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::DragFloat("Jump Buffer##fp", &fp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::DragFloat("Mouse Sensitivity##fp", &fp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Captured Sensitivity##fp", &fp->capturedSensitivity, 0.005f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Degrees per pixel while the cursor is locked or confined.");
+            if (ImGui::DragFloat("Captured Pixel Cap##fp", &fp->capturedPixelCap, 1.0f, 4.0f, 120.0f, "%.0f px")) ed.dirty = true;
             if (ImGui::Checkbox("Invert Y##fp", &fp->invertY)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##fp", &fp->canJump)) ed.dirty = true;
             if (fp->canJump) { ImGui::SameLine(); ImGui::SetNextItemWidth(90);
@@ -33905,7 +34137,19 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Foot IK##tp", &tp->footIK)) ed.dirty = true;
             if (ImGui::DragFloat("Step Offset##tp", &tp->stepOffset, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
-            if (ImGui::Checkbox("Lock + Hide Cursor##tp", &tp->lockCursor)) ed.dirty = true;
+            {
+                const char* modes[] = {"None", "Locked", "Confined"};
+                int mode = tp->cursorMode;
+                if (mode < 0 || mode > 2) mode = tp->lockCursor ? 1 : 0;
+                if (ImGui::Combo("Cursor##tp", &mode, modes, 3)) {
+                    tp->cursorMode = mode;
+                    tp->lockCursor = mode != 0;
+                    if (mode == 0) Cursor::Capture(false);
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Locked hides the cursor (Esc releases, click the Game view to recapture).\nConfined keeps it visible inside the Game view.\nNone leaves it free.");
+            }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing. Off keeps a normal pointer for clicking UI.");
             if (tp->canJump) { ImGui::SetNextItemWidth(90);
                 if (ImGui::DragInt("Max Jumps##tp", &tp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
@@ -33917,6 +34161,10 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Camera");
             if (ImGui::DragFloat("Mouse Sensitivity##tp", &tp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Captured Sensitivity##tp", &tp->capturedSensitivity, 0.005f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Degrees per pixel while the cursor is locked or confined.\nA captured delta is raw device motion, so this stays gentler than a free cursor.");
+            if (ImGui::DragFloat("Captured Pixel Cap##tp", &tp->capturedPixelCap, 1.0f, 4.0f, 120.0f, "%.0f px")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One captured frame cannot turn more than this many pixels.\nStops a warp, or one injected move, from pitching the camera through the ground.");
             if (ImGui::Checkbox("Invert X##tp", &tp->invertX)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Invert Y##tp", &tp->invertY)) ed.dirty = true;
@@ -43675,7 +43923,7 @@ void DrawGameView(EditorState& ed) {
     ImGui::SameLine();
     if (ImGui::Checkbox("Physics", &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Physics debug view: colliders (green), triggers (blue), contact points\nand normals (red), and rays cast from scripts, in the Scene and Game views.\nMore options in View > Scene Overlays > Physics Debug.");
-    if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked())) {
+    if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked() || Cursor::IsConfined())) {
         ImGui::SameLine();
         if (g_gameCursorReleased) ImGui::TextDisabled("(click the view to capture)");
         else ImGui::TextColored(ImVec4(0.5f,1,0.6f,1), "(Esc to release)");
@@ -43737,6 +43985,15 @@ void DrawGameView(EditorState& ed) {
     }
     okay::UIResolutionScale() = 1.0f;   // never leak the preview scale outside the Game view
     if (device) DrawDeviceScreenOverlay(dl, canvasPos, canvasEnd, *device, g_gameDeviceLandscape, g_gameSafeArea);
+    // After the scene image, so the picture does not cover the hint.
+    if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked() || Cursor::IsConfined())) {
+        const char* hint = g_gameCursorReleased ? "Click to capture the cursor" : "Esc to release the cursor";
+        ImVec2 ts = ImGui::CalcTextSize(hint);
+        ImVec2 hp(canvasPos.x + (canvasSize.x - ts.x) * 0.5f, canvasEnd.y - ts.y - 10.0f);
+        dl->AddRectFilled(ImVec2(hp.x - 6.0f, hp.y - 3.0f), ImVec2(hp.x + ts.x + 6.0f, hp.y + ts.y + 3.0f),
+                          IM_COL32(0, 0, 0, 160), 3.0f);
+        dl->AddText(hp, IM_COL32(230, 245, 230, 255), hint);
+    }
 
     // Screen-space vignette preview (RenderSettings.vignette) — mirrors what the
     // shipped player draws, using four edge gradient bands that fade inward.
@@ -44894,7 +45151,16 @@ int main(int argc, char** argv) {
         g_okayUITyped[0] = '\0'; g_okayUIBack = false;   // OkayUI demo's per-frame keys
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            ImGui_ImplSDL2_ProcessEvent(&e);
+            if (e.type == SDL_KEYDOWN && !e.key.repeat &&
+                e.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
+                g_escapeEdge = true;
+            // While the play cursor is grabbed, absolute motion is frozen where
+            // the grab began. Feeding those events to ImGui clicks the Play
+            // button and stops the game. The game still reads relative motion.
+            const bool mouseEv = e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN
+                || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL;
+            if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
+                ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
             if (e.type == SDL_CONTROLLERDEVICEADDED && !g_pad) g_pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_CONTROLLERDEVICEREMOVED && g_pad &&
@@ -45039,7 +45305,27 @@ int main(int argc, char** argv) {
         // cursor; the lock's warp is not a look, or Play opens pitched at the sky.
         static bool s_playLookLocked = false;
         static Vec2 s_playLookAnchor{0, 0};
-        if (ed.isPlaying() && !io.WantTextInput) {
+        // Esc frees the cursor even when a text field has focus. The Script
+        // Editor sets WantTextInput whenever its window is focused, and that
+        // used to skip this whole block: the mouse stayed grabbed and Esc did
+        // nothing, so Hierarchy, Pause and Pose Capture could not be clicked.
+        const bool escapeEdge = g_escapeEdge;
+        g_escapeEdge = false;
+        const bool escapeHeld = SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_ESCAPE] != 0;
+        const bool wasReleased = g_gameCursorReleased;
+        const bool gameClicked = ed.isPlaying() && g_gameCanvasHovered &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !escapeEdge && !escapeHeld;
+        const bool playStarted = g_playTextHandoff;
+        g_playTextHandoff = false;
+        // Play, a click on the Game view, or the capture those start, drops a
+        // field that was focused in edit mode. io.WantTextInput stays true until
+        // the next frame, so the decision feeds the game on this frame too.
+        if ((playStarted || gameClicked) && io.WantTextInput) ImGui::ClearActiveID();
+        const PlayPointerFrame pointer = DecidePlayPointer(
+            ed.isPlaying(), io.WantTextInput, escapeEdge, escapeHeld, wasReleased, g_playPointerGrabbed,
+            gameClicked, playStarted);
+        g_gameCursorReleased = pointer.released;
+        if (ed.isPlaying() && pointer.feedGame) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
             for (char c = 'a'; c <= 'z'; ++c)
@@ -45051,7 +45337,7 @@ int main(int argc, char** argv) {
             if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
             if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
             if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
-            if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
+            if (pointer.feedEscapeToGame) down.push_back((char)27);
             if (ks[SDL_SCANCODE_UP])    { down.push_back('w'); down.push_back(Input::KeyUp); }
             if (ks[SDL_SCANCODE_LEFT])  { down.push_back('a'); down.push_back(Input::KeyLeft); }
             if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
@@ -45070,12 +45356,8 @@ int main(int argc, char** argv) {
                 if (auto* ce = up->GetComponent<ChestInventory>()) if (ce->open) gameModal = true;
                 if (auto* mm = up->GetComponent<Minimap>()) if (mm->fullscreen) gameModal = true;
             }
-            // Esc frees the cursor, even when the game itself locked it; a click on the
-            // Game view takes it back.
-            const Uint8* ks2 = SDL_GetKeyboardState(nullptr);
-            if (ks2[SDL_SCANCODE_ESCAPE]) g_gameCursorReleased = true;
-            else if (g_gameCursorReleased && g_gameCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-                g_gameCursorReleased = false;
+            // DecidePlayPointer already took a click on the Game view. This is the
+            // frame after a release that the click itself cleared.
             // hand-off (mirrors the player): when a bag/chest opens or closes
             // while the game wants a locked cursor, warp the pointer to the Game-view
             // centre so it appears in the middle on open and the look anchor resets on
@@ -45093,8 +45375,10 @@ int main(int argc, char** argv) {
             s_prevGameModal = gameModal;
             // Capture when the user asked OR the game requested a locked cursor, unless a
             // modal panel is open (then we need a visible cursor to click it).
-            bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal && !g_gameCursorReleased;
+            const bool confined = Cursor::IsConfined() && !gameModal && !g_gameCursorReleased;
+            bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal && !g_gameCursorReleased && !confined;
             static Vec2 s_gameVMouse{0, 0};
+            SDL_ShowCursor(capture ? SDL_DISABLE : SDL_ENABLE);
             if (capture) {
                 // Relative mode only on the transition. Calling it every frame
                 // re-warps, and that warp was added on top of the real delta.
@@ -45107,6 +45391,7 @@ int main(int argc, char** argv) {
                     // canvas sample the controller already took as its baseline.
                     s_gameVMouse = s_playLookAnchor;
                     s_playLookLocked = true;
+                    NoteMouseSpaceChanged();
                 } else if (std::abs(dxp) + std::abs(dyp) <= 600) {
                     s_gameVMouse.x += (float)dxp;
                     s_gameVMouse.y += (float)dyp;
@@ -45117,8 +45402,23 @@ int main(int argc, char** argv) {
                 if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
-                if (s_playLookLocked)
+                if (s_playLookLocked) {
                     SDL_SetRelativeMouseMode(SDL_FALSE);
+                    // The virtual cursor and the canvas cursor are not the same
+                    // point. Without this the orbit treats that jump as a look.
+                    NoteMouseSpaceChanged();
+                    // Disabling relative mode puts the cursor back on the Play
+                    // button. Park it in the game view so that restore is not a
+                    // click on Stop. A click there grabs the mouse again.
+                    int ww = 0, wh = 0, ow = 0, oh = 0;
+                    SDL_GetWindowSize(window, &ww, &wh);
+                    SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                    float sx = ow > 0 ? (float)ww / (float)ow : 1.0f;
+                    float sy = oh > 0 ? (float)wh / (float)oh : 1.0f;
+                    int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
+                    int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
+                    SDL_WarpMouseInWindow(window, cx, cy);
+                }
                 s_playLookLocked = false;
                 // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
                 // against the same coordinates the preview draws with.
@@ -45142,12 +45442,27 @@ int main(int argc, char** argv) {
                     if (ImGui::IsMouseClicked(kButtons[b])) s_heldFromGame[b] = overGame;
                     if (s_heldFromGame[b]) mask |= 1u << b;
                 }
+                if (confined) {
+                    if (rx < 0.0f) rx = 0.0f;
+                    if (ry < 0.0f) ry = 0.0f;
+                    if (rx > g_playCanvasSize.x) rx = g_playCanvasSize.x;
+                    if (ry > g_playCanvasSize.y) ry = g_playCanvasSize.y;
+                }
                 s_playLookAnchor = {rx, ry};
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
+            g_playPointerGrabbed = capture;
             InputActions::Tick();
+        } else if (ed.isPlaying()) {
+            // Playing, but a text field has the keyboard. Do not feed the game,
+            // and do not leave the pointer in relative mode from the frame that
+            // grabbed it before the field took focus.
+            s_playLookLocked = false;
+            g_playPointerGrabbed = false;
+            if (SDL_GetRelativeMouseMode()) SDL_SetRelativeMouseMode(SDL_FALSE);
         } else if (!ed.isPlaying()) {
             s_playLookLocked = false;
+            g_playPointerGrabbed = false;
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and
             // forget the last run's cursor lock.
@@ -45522,6 +45837,7 @@ int main(int argc, char** argv) {
                 okay::editor::apreview::Stop(ed.scene());
                 CompileOpenScriptBuffers(ed.scene());
                 ed.Play(); g_paused = false; ConsoleLog("Play");
+                g_playTextHandoff = true; ImGui::ClearActiveID();
             }
             // OKAY_UI_UIADD=Lobby: the UI editing view with that prebuilt screen added
             // (screenshots of the UI editor and its "+ Add" menu).

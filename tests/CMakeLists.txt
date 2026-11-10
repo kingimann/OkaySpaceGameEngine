@@ -1179,6 +1179,37 @@ add_executable(test_gait_continuity test_gait_continuity.cpp)
 target_link_libraries(test_gait_continuity PRIVATE okay::engine)
 add_test(NAME gait_continuity COMMAND test_gait_continuity)
 
+add_executable(test_player_setup test_player_setup.cpp)
+target_link_libraries(test_player_setup PRIVATE okay::engine)
+target_compile_definitions(test_player_setup PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_setup COMMAND test_player_setup)
+
+add_executable(test_destroy_unstarted test_destroy_unstarted.cpp)
+target_link_libraries(test_destroy_unstarted PRIVATE okay::engine)
+add_test(NAME destroy_unstarted COMMAND test_destroy_unstarted)
+
+add_executable(test_head_stability test_head_stability.cpp)
+target_link_libraries(test_head_stability PRIVATE okay::engine)
+target_compile_definitions(test_head_stability PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME head_stability COMMAND test_head_stability)
+
+add_executable(test_clear_spawn test_clear_spawn.cpp)
+target_link_libraries(test_clear_spawn PRIVATE okay::engine)
+add_test(NAME clear_spawn COMMAND test_clear_spawn)
+
+add_executable(test_play_look test_play_look.cpp)
+target_link_libraries(test_play_look PRIVATE okay::engine)
+add_test(NAME play_look COMMAND test_play_look)
+
+add_executable(test_gap_stuck test_gap_stuck.cpp)
+target_link_libraries(test_gap_stuck PRIVATE okay::engine)
+add_test(NAME gap_stuck COMMAND test_gap_stuck)
+
+add_executable(test_anim_jitter test_anim_jitter.cpp)
+target_link_libraries(test_anim_jitter PRIVATE okay::engine)
+target_compile_definitions(test_anim_jitter PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME anim_jitter COMMAND test_anim_jitter)
+
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
 target_compile_definitions(test_rig_sweep PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

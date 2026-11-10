@@ -121,6 +121,33 @@ void QueueLaunch(const std::string& exe, const std::vector<std::string>& args, c
     g_exitLaunch = std::move(req);
 }
 
+// The launcher's exe when this editor sits in a launcher's folder (Tools/, or a kept copy under Versions/<v>/Tools); "" when there is none.
+fs::path LauncherExe() {
+    const fs::path self = okay::restart::CurrentExecutable();
+    if (self.empty()) return {};
+#if defined(_WIN32)
+    const fs::path p = okayver::LauncherDirOf(self.parent_path()) / "OkaySpace.exe";
+#else
+    const fs::path p = okayver::LauncherDirOf(self.parent_path()) / "OkaySpace";
+#endif
+    std::error_code ec;
+    return fs::is_regular_file(p, ec) ? p : fs::path();
+}
+// Show the launcher's Versions page with `version` highlighted (a launcher that is already running comes forward instead of a second one).
+void OpenLauncherVersions(const std::string& version) {
+    const fs::path exe = LauncherExe();
+    if (exe.empty()) return;
+    okay::restart::Request req;
+    req.executable = exe;
+    req.arguments = {"--versions"};
+    if (!okayver::NormalizeVersion(version).empty()) req.arguments.push_back(okayver::NormalizeVersion(version));
+    req.workingDirectory = exe.parent_path();
+    std::error_code ec;
+    req.logFile = fs::temp_directory_path(ec) / "okayspace_editor_launch.log";
+    std::string err;
+    if (!okay::restart::StartHelper(req, err)) std::fprintf(stderr, "Couldn't open the launcher: %s\n", err.c_str());
+}
+
 std::string FirstSceneOf(const std::string& projectDir) {
     std::error_code ec;
     for (fs::recursive_directory_iterator it(fs::path(projectDir) / "Assets", ec), end; !ec && it != end; it.increment(ec))
@@ -202,6 +229,7 @@ void DrawGatePrompt() {
             ImGui::TextWrapped("Nothing was changed. The launcher keeps earlier versions side by side, so a project can be opened with the editor it was made with.");
             ImGui::Dummy(ImVec2(0, 8));
             if (Btn("Back", first, true)) g_gate.Answer(Choice::Back);
+            if (!LauncherExe().empty() && Btn("Open launcher", first)) OpenLauncherVersions(pr.projectVersion);   // the launcher's Versions page, that version highlighted
             if (Btn("Cancel", first) || esc) g_gate.Answer(Choice::Cancel);
             break;
         }

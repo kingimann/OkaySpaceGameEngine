@@ -621,6 +621,8 @@ int main(int argc, char** argv) {
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
+#include "ProblemsPanel.hpp"       // Problems panel: one list of what is wrong
+#include "okay/Graphics/Image.hpp"
 #include "SceneManagerPanel.hpp"   // Scene Manager window + build-list bridge
 #include "NetSimPanel.hpp"         // net simulator + per-object traffic
 #include "UIPreviewPainter.hpp"    // the engine UI renderer drawn into ImGui (UI preview)
@@ -1884,7 +1886,8 @@ std::string g_openScenePath;      // scene to open at startup via --open (launch
 
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
-     g_showProject = true, g_showServices = false, g_showScriptEditor = true;   // Services: View menu
+     g_showProject = true, g_showServices = false, g_showScriptEditor = true,   // Services: View menu
+     g_showProblems = true;
 bool g_showGame = true;   // Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
 bool g_showAssetManager = false;   // Asset Manager: marketplace downloads -> project
@@ -1981,6 +1984,7 @@ std::string g_layoutPendingIni;  // a saved layout's ini text, loaded before the
 std::string g_layoutName;        // the layout last applied this session (Layout dropdown label)
 int  g_sideTabs = 0;             // vertical side tabs: 0 off, 1 down the left edge, 2 down the right (persisted)
 ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into it)
+ImGuiID g_sceneDockId = 0;        // the Scene dock node (the demo opens the graph here)
 bool g_scriptAutoPair = true;      // Script Editor: auto-close ( [ { " '
 int  g_scriptDockReq = 0;        // 0 none, 1 float (undock), 2 dock into center as a tab
 bool g_paused = false;           // pause the simulation while staying in Play
@@ -2724,7 +2728,8 @@ char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
 bool  g_openBuildResult = false;
 bool  g_vsBuildWantedRun = false;         // "Build & Run" was pressed when visual-script errors stopped the build
-std::vector<std::string> g_vsBuildErrors;  // visual-script errors that stopped the last Build
+std::vector<std::string> g_vsBuildErrors;  // errors that stopped the last Build (see Problems)
+std::vector<std::string> g_buildWarnings;  // warnings shown with that build, which still runs
 constexpr float kVsErrListH = 96.0f;       // their list's height in the Build window (scrolls)
 int   g_vsBuildRetry = 0;                  // 1 = build, 2 = build & run, after "Build anyway"
 int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 = Android
@@ -4433,6 +4438,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Inspector",     "Inspector",                 &g_showInspector,     "Panels", PI_Inspector},
         {"Project",       "Project",                   &g_showProject,       "Panels", PI_Project},
         {"Console",       "Console###Console",         &g_showConsole,       "Panels", PI_Console},
+        {"Problems",      "Problems###Problems",       &g_showProblems,      "Panels", PI_Warning},
         {"Game",          "Game",                      &g_showGame,          "Panels", PI_Game},
         {"Services",      "Services",                  &g_showServices,      "Panels", PI_Services},
         {"Scene Manager", "Scene Manager###Scenes",    &g_showScenes,        "Panels", PI_Scenes},
@@ -4765,7 +4771,7 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
         ImGuiID game  = split(center, ImGuiDir_Down, 0.45f);
         dock("Scene", center); dock("Game", game);
         dock("Hierarchy", right);
-        dock("Project", proj); dock("Console###Console", proj);
+        dock("Project", proj); dock("Console###Console", proj); dock("Problems###Problems", proj);
         dock("Inspector", insp); dock("Lighting", insp);
         spare = proj;
         break;
@@ -4777,7 +4783,7 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
         ImGuiID dCon  = split(dProj, ImGuiDir_Right, 0.50f);
         dock("Scene", center); dock("Game", center);
         dock("Inspector", right); dock("Lighting", right);
-        dock("Hierarchy", down); dock("Project", dProj); dock("Console###Console", dCon);
+        dock("Hierarchy", down); dock("Project", dProj); dock("Console###Console", dCon); dock("Problems###Problems", dCon);
         spare = dCon;
         break;
     }
@@ -4788,7 +4794,7 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
         ImGuiID game = split(center, ImGuiDir_Down, 0.50f);
         dock("Scene", center); dock("Game", game);
         dock("Hierarchy", hier);
-        dock("Project", proj); dock("Console###Console", proj);
+        dock("Project", proj); dock("Console###Console", proj); dock("Problems###Problems", proj);
         dock("Inspector", insp);
         spare = proj;
         break;
@@ -4800,7 +4806,7 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
         ImGuiID leftD = split(left, ImGuiDir_Down, 0.55f);
         dock("Hierarchy", left); dock("Project", leftD);
         dock("Scene", center); dock("Game", center); dock("Script Editor", center);
-        dock("Console###Console", down);
+        dock("Console###Console", down); dock("Problems###Problems", down);
         dock("Inspector", right);
         spare = down;
         g_focusQueue.push_back("Script Editor");
@@ -4813,7 +4819,7 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
         ImGuiID downR = split(down, ImGuiDir_Right, 0.36f);
         dock("Hierarchy", left); dock("Inspector", right);
         dock("Scene", center); dock("Game", center);
-        dock("Animation###AnimationDock", down); dock("Project", down); dock("Console###Console", down);
+        dock("Animation###AnimationDock", down); dock("Project", down); dock("Console###Console", down); dock("Problems###Problems", down);
         dock("Animator", downR);
         spare = downR;   // extras go beside the Animator, keeping the timeline's group short
         g_focusQueue.push_back("Animation###AnimationDock");
@@ -4823,10 +4829,12 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
     default: {   // Default: the original layout
         ImGuiID left  = split(center, ImGuiDir_Left, 0.20f);
         ImGuiID right = split(center, ImGuiDir_Right, 0.27f);
-        ImGuiID down  = split(center, ImGuiDir_Down, 0.22f);
+        ImGuiID down  = split(center, ImGuiDir_Down, std::getenv("OKAY_UI_DIAG") ? 0.36f : 0.22f);
+        g_sceneDockId = center;
         dock("Hierarchy", left);
         dock("Inspector", right);
         dock("Console###Console", down);
+        dock("Problems###Problems", down);
         dock("Project", down);
         dock("Services", down);   // Services, Stats and Lighting start closed; opening one docks it here
         dock("Script Editor", down);
@@ -5814,6 +5822,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
             ImGui::MenuItem("Project", nullptr, &g_showProject);
             ImGui::MenuItem("Console", nullptr, &g_showConsole);
+            ImGui::MenuItem("Problems", nullptr, &g_showProblems);
             ImGui::MenuItem("Game", nullptr, &g_showGame);
             ImGui::Separator();
             ImGui::MenuItem("Services", nullptr, &g_showServices);
@@ -6693,11 +6702,14 @@ void DrawStatusBar(EditorState& ed) {
     // Right cluster: warnings/errors · object count · tool (click to cycle) · mode ·
     // FPS · version, right-aligned. Console badges only appear when there's something.
     ImGuiStyle& st = ImGui::GetStyle();
-    char c1[32], c3[24], cw[16] = "", ce[16] = "";
+    char c1[32], c3[24], cw[16] = "", ce[16] = "", cp[24] = "";
     std::snprintf(c1, sizeof(c1), "%d objects", (int)ed.scene().Objects().size());
     std::snprintf(c3, sizeof(c3), "%.0f FPS", ImGui::GetIO().Framerate);
     if (g_consoleCounts[1] > 0) std::snprintf(cw, sizeof(cw), "! %d", g_consoleCounts[1]);
     if (g_consoleCounts[2] > 0) std::snprintf(ce, sizeof(ce), "x %d", g_consoleCounts[2]);
+    const DiagTotals prob = ProjectDiagTotals();
+    if (prob.error > 0) std::snprintf(cp, sizeof(cp), "Problems %d", prob.error);
+    else if (prob.warning > 0) std::snprintf(cp, sizeof(cp), "Problems %d", prob.warning);
     const char* toolName = g_tool == Tool::Move ? "Move" : g_tool == Tool::Rotate ? "Rotate" : "Scale";
     const char* mode = ed.isPlaying() ? "PLAY" : "EDIT";
     const std::string verLabel = EditorVersionLabel(ed.projectDir());   // "v2.850.0 (kept)" for a project kept at its version
@@ -6709,7 +6721,16 @@ void DrawStatusBar(EditorState& ed) {
                   gap + ImGui::CalcTextSize(ver).x;
     if (cw[0]) total += ImGui::CalcTextSize(cw).x + st.FramePadding.x * 2.0f + gap;
     if (ce[0]) total += ImGui::CalcTextSize(ce).x + st.FramePadding.x * 2.0f + gap;
+    if (cp[0]) total += ImGui::CalcTextSize(cp).x + st.FramePadding.x * 2.0f + gap;
     ImGui::SameLine(ImGui::GetWindowWidth() - total - 14.0f);
+    if (cp[0]) {
+        const bool bad = prob.error > 0;
+        ImGui::PushStyleColor(ImGuiCol_Text, bad ? ImVec4(0.96f, 0.45f, 0.42f, 1.0f) : ImVec4(0.95f, 0.80f, 0.35f, 1.0f));
+        if (flatBtn(cp)) { g_showProblems = true; ImGui::SetWindowFocus("Problems###Problems"); }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Problems in this project — click to open");
+        ImGui::SameLine(0, gap);
+    }
     if (cw[0]) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1.0f));
         if (flatBtn(cw)) { g_showConsole = true; ImGui::SetWindowFocus("Console###Console"); }
@@ -6773,7 +6794,7 @@ void DrawDockSpace(EditorState& ed) {
             // Reopen every core panel so a reset always restores the full workspace;
             // Services, Stats and Lighting aren't part of it (View menu opens them).
             g_showHierarchy = g_showInspector = g_showConsole = g_showProject =
-                g_showScriptEditor = g_showGame = true;
+                g_showScriptEditor = g_showGame = g_showProblems = true;
             g_showServices = g_showStats = g_showSceneSettings = false;
         }
         first = false; g_resetLayout = false; g_layoutRequest = -1;
@@ -16483,7 +16504,7 @@ void DrawFileDialogs(EditorState& ed) {
             "Volume, cursor and keyboard behaviour.",
             "Output folder layout, encryption and what happens after the build."};
         float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f;
-        if (!g_vsBuildErrors.empty())   // room for the "Build stopped" block above the buttons
+        if (!g_vsBuildErrors.empty() || !g_buildWarnings.empty())   // room for the Problems block above the buttons
             buildFooterH += kVsErrListH + ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * 3.0f + 16.0f;
         ImGui::BeginChild("##bnav", ImVec2(170, -buildFooterH), ImGuiChildFlags_Borders);
         if (g_buildPlatform == 3) {   // a server has no window/graphics/audio: Scenes, Server, Output
@@ -16819,20 +16840,34 @@ void DrawFileDialogs(EditorState& ed) {
                 g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
         }
         ImGui::Spacing();
-        // Visual-script errors found when Build was pressed: they stop the build
-        // (the graphs would ship broken) until fixed, or "Build anyway".
-        if (!g_vsBuildErrors.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.45f, 1));
-            ImGui::TextWrapped("Build stopped: %d visual script error%s. Those graphs won't work in the game as they are.",
-                               (int)g_vsBuildErrors.size(), g_vsBuildErrors.size() == 1 ? "" : "s");
-            ImGui::PopStyleColor();
+        // Errors stop the build. Warnings are listed and the build still runs.
+        if (!g_vsBuildErrors.empty() || !g_buildWarnings.empty()) {
+            if (!g_vsBuildErrors.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.45f, 1));
+                ImGui::TextWrapped("Build stopped: %d error%s. Fix them in Problems, or build anyway.",
+                                   (int)g_vsBuildErrors.size(), g_vsBuildErrors.size() == 1 ? "" : "s");
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1));
+                ImGui::TextWrapped("%d warning%s. The build can still run. Problems lists them.",
+                                   (int)g_buildWarnings.size(), g_buildWarnings.size() == 1 ? "" : "s");
+                ImGui::PopStyleColor();
+            }
             ImGui::BeginChild("##vsbuilderrs", ImVec2(0, kVsErrListH), ImGuiChildFlags_Borders);
             for (const std::string& e : g_vsBuildErrors) ImGui::TextWrapped("%s", e.c_str());
+            for (const std::string& e : g_buildWarnings) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1));
+                ImGui::TextWrapped("%s", e.c_str());
+                ImGui::PopStyleColor();
+            }
             ImGui::EndChild();
-            if (ImGui::Button("Build anyway")) { g_vsBuildRetry = g_buildPlatform == 0 && g_vsBuildWantedRun ? 2 : 1; g_vsBuildErrors.clear(); }
+            if (ImGui::Button("Open Problems")) { g_showProblems = true; ImGui::SetWindowFocus("Problems###Problems"); }
             ImGui::SameLine();
-            if (ImGui::Button("Dismiss")) g_vsBuildErrors.clear();
-            ImGui::TextDisabled("Open each graph in the Visual Script editor: problem nodes are outlined, and its toolbar lists them.");
+            if (!g_vsBuildErrors.empty()) {
+                if (ImGui::Button("Build anyway")) { g_vsBuildRetry = g_buildPlatform == 0 && g_vsBuildWantedRun ? 2 : 1; g_vsBuildErrors.clear(); g_buildWarnings.clear(); }
+                ImGui::SameLine();
+            }
+            if (ImGui::Button("Dismiss")) { g_vsBuildErrors.clear(); g_buildWarnings.clear(); }
             ImGui::Spacing();
         }
         // Left side: reset the window/graphics/audio options to defaults (keeps
@@ -16874,12 +16909,14 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PopStyleColor(3);
         if (g_vsBuildRetry) { doBuild = true; doRun = g_vsBuildRetry == 2; g_vsBuildRetry = 0; }
         else if (doBuild) {
-            // Check every visual script in the scenes going into the build.
+            // Errors in the scenes going into the build stop it. Warnings are shown and do not.
             g_vsBuildWantedRun = doRun;
             g_vsBuildErrors.clear();
+            g_buildWarnings.clear();
             auto collect = [&](const Scene& sc, const std::string& label) {
-                for (const auto& si : vs::ValidateSceneGraphs(sc, ed.projectDir()))
-                    if (si.issue.severity == 0) g_vsBuildErrors.push_back(label + si.Describe());
+                BuildDiagGate gate = DiagnoseSceneForBuild(sc, ed.projectDir(), label);
+                g_vsBuildErrors.insert(g_vsBuildErrors.end(), gate.errorLines.begin(), gate.errorLines.end());
+                g_buildWarnings.insert(g_buildWarnings.end(), gate.warningLines.begin(), gate.warningLines.end());
             };
             collect(ed.scene(), "");
             for (const BuildScene& bs : g_build.scenes) {
@@ -16892,7 +16929,9 @@ void DrawFileDialogs(EditorState& ed) {
             }
             if (!g_vsBuildErrors.empty()) {
                 doBuild = false;
-                ConsoleLog("Build stopped: " + std::to_string(g_vsBuildErrors.size()) + " visual script error(s) - see Build Settings.");
+                ConsoleLog("Build stopped: " + std::to_string(g_vsBuildErrors.size()) + " error(s). Open Problems to fix them.", 2);
+            } else if (!g_buildWarnings.empty()) {
+                ConsoleLog("Build: " + std::to_string(g_buildWarnings.size()) + " warning(s). See Problems.", 1);
             }
         }
         if (doBuild) {
@@ -18056,6 +18095,19 @@ static std::vector<GameObject*> HierTargets(EditorState& ed, GameObject* node) {
     return {node};
 }
 
+// Shorten `text` so it fits in `maxW` pixels, ending with an ellipsis. UTF-8 safe.
+static std::string EllipsizeToWidth(const std::string& text, float maxW) {
+    if (maxW < 12.0f) return text;
+    if (ImGui::CalcTextSize(text.c_str()).x <= maxW) return text;
+    const char* ell = "\xE2\x80\xA6";
+    std::string s = text;
+    while (!s.empty() && ImGui::CalcTextSize((s + ell).c_str()).x > maxW) {
+        s.pop_back();
+        while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80) s.pop_back();
+    }
+    return s.empty() ? std::string(ell) : s + ell;
+}
+
 void DrawHierarchy(EditorState& ed) {
     // Skip the per-frame root-list build + sort + per-row component scans when the
     // Hierarchy panel is collapsed or a hidden background tab.
@@ -18082,6 +18134,10 @@ void DrawHierarchy(EditorState& ed) {
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d", (int)ed.scene().Objects().size());
         std::string sname = ed.scene().Name().empty() ? std::string("Untitled") : ed.scene().Name();
         ImGui::TextUnformatted((sname + (ed.dirty ? "  ·  unsaved" : "")).c_str());
+        {
+            const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            DrawSceneDiagMarker(mn, ImVec2(mx.x + 16.0f, mx.y));
+        }
         SameLineRight(ImGui::CalcTextSize(cnt).x);
         ImGui::TextDisabled("%s", cnt);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Objects in the scene");
@@ -18158,8 +18214,12 @@ void DrawHierarchy(EditorState& ed) {
             ++hits;
             bool sel = (go == ed.selected());
             ImGui::PushID(go);
-            if (ImGui::Selectable(("     " + go->name).c_str(), sel))
+            const float searchRoom = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("     ").x -
+                                     (ObjectHasDiag(go) ? 28.0f : 6.0f);
+            const std::string searchName = EllipsizeToWidth(go->name, searchRoom);
+            if (ImGui::Selectable(("     " + searchName).c_str(), sel))
                 ed.Select(go);
+            if (searchName != go->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", go->name.c_str());
             {   // drawn type icon in the leading space
                 ImVec2 smn = ImGui::GetItemRectMin();
                 HierKindIcon(go, ImVec2(smn.x + 2.0f, smn.y), ImGui::GetFontSize(),
@@ -18173,7 +18233,7 @@ void DrawHierarchy(EditorState& ed) {
                     if (t->gameObject) ppath = t->gameObject->name + (ppath.empty() ? "" : " / ") + ppath;
                 if (!ppath.empty()) {
                     ImVec2 smn = ImGui::GetItemRectMin();
-                    float nx = smn.x + ImGui::CalcTextSize(("     " + go->name).c_str()).x + 12.0f;
+                    float nx = smn.x + ImGui::CalcTextSize(("     " + searchName).c_str()).x + 12.0f;
                     ImGui::GetWindowDrawList()->AddText(ImVec2(nx, smn.y + 1.0f),
                         ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.75f),
                         ("in " + ppath).c_str());
@@ -18185,6 +18245,7 @@ void DrawHierarchy(EditorState& ed) {
                 ed.camTarget = p; ed.cameraPos = {p.x, p.y};
             }
             HierComponentBadges(go, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            DrawObjectDiagMarker(go, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             ImGui::PopID();
         }
         if (hits == 0) ImGui::TextDisabled("No objects match '%s'.", g_hierFilter);
@@ -18285,9 +18346,19 @@ void DrawHierarchy(EditorState& ed) {
                         IM_COL32(255, 255, 255, 5));
             }
             // Show a child count on parents, plus an (off) marker.
+            // The name stops before the eye, the lock and the error badge.
             char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
-            bool open = ImGui::TreeNodeEx(node, flags, "     %s%s%s",
-                                          node->name.c_str(), cnt, node->active ? "" : "  (off)");
+            const std::string tail = std::string(cnt) + (node->active ? "" : "  (off)");
+            const bool diag = ObjectHasDiag(node);
+            const float nameRoom = ImGui::GetContentRegionAvail().x
+                - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f)
+                - ImGui::CalcTextSize("     ").x
+                - ImGui::CalcTextSize(tail.c_str()).x
+                - kHierEyeW * 2.0f - 8.0f
+                - (diag ? 22.0f : 0.0f);
+            const std::string shown = EllipsizeToWidth(node->name, nameRoom);
+            bool open = ImGui::TreeNodeEx(node, flags, "     %s%s", shown.c_str(), tail.c_str());
+            if (shown != node->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", node->name.c_str());
             if (dim) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
             {   // drawn type icon in the leading space (after the tree arrow zone)
@@ -18303,6 +18374,7 @@ void DrawHierarchy(EditorState& ed) {
                 ImGui::GetWindowDrawList()->AddRectFilled(
                     rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
             HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y));
+            DrawObjectDiagMarker(node, rowMin, rowMax);
             HierEye(node, rowMin, rowMax);
             HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
             float mx = ImGui::GetIO().MousePos.x;
@@ -26287,9 +26359,13 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     std::string title = std::string((std::size_t)std::ceil(lead / spaceW), ' ');
     {   // fit the name between the glyph and the "..." button
         std::string nm = label;
-        const float room = barW - arrowW - lead - fh - 10.0f;
+        const float badgeW = ComponentHasDiag(comp->gameObject, label) ? 22.0f : 0.0f;
+        const float room = barW - arrowW - lead - fh - 10.0f - badgeW;
         if (room > 20.0f && ImGui::CalcTextSize(nm.c_str()).x > room) {
-            while (nm.size() > 1 && ImGui::CalcTextSize((nm + "\xE2\x80\xA6").c_str()).x > room) nm.pop_back();
+            while (nm.size() > 1 && ImGui::CalcTextSize((nm + "\xE2\x80\xA6").c_str()).x > room) {
+                nm.pop_back();
+                while (!nm.empty() && (static_cast<unsigned char>(nm.back()) & 0xC0) == 0x80) nm.pop_back();
+            }
             nm += "\xE2\x80\xA6";
         }
         title += nm;
@@ -26394,6 +26470,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         if (!removable) ImGui::TextDisabled("(required component)");
         ImGui::EndPopup();
     }
+    DrawComponentDiagMarker(comp->gameObject, label, hmn, hmx);
     ImGui::PopID();
     if (open && managed) {
         ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "Managed by Character Model - you normally don't edit this.");
@@ -46431,6 +46508,7 @@ int main(int argc, char** argv) {
                 }
             }
             if (std::getenv("OKAY_UI_PLUGIN") && s_focusFrames == 33) { NewPluginFromTemplate(ed); }
+            if (std::getenv("OKAY_UI_DIAG") && s_focusFrames == 36) DiagnosticsDemoPrepare(ed);
             if (std::getenv("OKAY_UI_DEMO_ANIM") && s_focusFrames == 32 && ed.selected()) {
                 auto* an = ed.selected()->GetComponent<Animator>();
                 if (!an) an = ed.selected()->AddComponent<Animator>();
@@ -46452,6 +46530,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.AboutPopup"); DrawAboutPopup(); }
         { OKAY_PROFILE("UI.RecoveryPopup"); DrawRecoveryPopup(ed); }
         { OKAY_PROFILE("UI.ProjectSettings"); DrawProjectSettings(ed); }
+        { OKAY_PROFILE("UI.Diagnostics"); if (!ed.isPlaying()) TickProjectDiagnostics(ed); }
         { OKAY_PROFILE("UI.Hierarchy"); if (g_showHierarchy) DrawHierarchy(ed); }
         {   // Edit mode: keep skinned meshes deformed by their bones (scripts don't
             // run, so nothing else skins them). Shows imported characters in their
@@ -46481,7 +46560,7 @@ int main(int argc, char** argv) {
         {   // Every scene needs a camera (the Game view and builds render through it):
             // put one back if the scene has none. Checked a few times a second.
             static int s_camCheck = 0;
-            if (!ed.isPlaying() && ++s_camCheck >= 20) {
+            if (!std::getenv("OKAY_UI_DIAG") && !ed.isPlaying() && ++s_camCheck >= 20) {
                 s_camCheck = 0;
                 bool made = false, restored = false;
                 Camera* ensured = okay::EnsureSceneCamera(ed.scene(), !ed.view3D, &made, &restored);
@@ -46507,6 +46586,9 @@ int main(int argc, char** argv) {
         ApplyPendingInspectorAdds(ed);
         { OKAY_PROFILE("UI.Services"); if (g_showServices)  DrawServices(ed); }
         { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); }
+        { OKAY_PROFILE("UI.Problems"); if (g_showProblems || std::getenv("OKAY_UI_DIAG")) DrawProblems(ed); }
+        if (std::getenv("OKAY_UI_DIAG") && g_showVisualScript && g_sceneDockId)
+            ImGui::SetNextWindowDockID(g_sceneDockId, ImGuiCond_Always);
         { OKAY_PROFILE("UI.VisualScript"); if (g_showVisualScript) okay::editor::vsed::Draw(ed, &g_showVisualScript); }
         { OKAY_PROFILE("UI.Modeling"); if (g_showModeling)  DrawModeling(ed); }
         { OKAY_PROFILE("UI.UVEditor"); if (g_showUVEditor)  DrawUVEditor(ed); }
@@ -46640,6 +46722,23 @@ int main(int argc, char** argv) {
                 }
                 if (std::getenv("OKAY_UI_QUIT")) std::exit(0);
             }
+        }
+        if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
+            int sw = 0, sh = 0;
+            SDL_GetRendererOutputSize(renderer, &sw, &sh);
+            SDL_Surface* surface = (sw > 0 && sh > 0)
+                ? SDL_CreateRGBSurfaceWithFormat(0, sw, sh, 32, SDL_PIXELFORMAT_RGBA32) : nullptr;
+            if (surface && SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_RGBA32, surface->pixels, surface->pitch) == 0) {
+                okay::Image img(sw, sh);
+                for (int y = 0; y < sh; ++y)
+                    std::memcpy(img.Data() + (std::size_t)y * sw * 4,
+                                static_cast<unsigned char*>(surface->pixels) + y * surface->pitch,
+                                (std::size_t)sw * 4);
+                img.SavePNG(shot);
+                std::printf("[diag-shot] %s (%dx%d)\n", shot.c_str(), sw, sh);
+                std::fflush(stdout);
+            }
+            if (surface) SDL_FreeSurface(surface);
         }
         { OKAY_PROFILE("Present"); SDL_RenderPresent(renderer); }
 

@@ -306,6 +306,22 @@ The editor needs no data model change to start:
 5. Route `Save` through `BackupManager::SaveWithBackup`, and list `List(path)` in a
    "File > Restore from backup" window.
 
+## What the editor does today
+
+The editor has not adopted the three classes above yet. It uses its own simpler pieces, which this page
+documents so the two are not confused (the user-facing description is in [editor.md](editor.md#projects-saving-and-loading)):
+
+| Need | What the editor does |
+| --- | --- |
+| Undo | `EditorState::PushUndo` keeps up to 100 whole-scene text snapshots. Opening a scene (`Load`) clears the history: it belongs to one scene, and keeping it let Undo put the previous scene's objects into the new file. A failed `Load` changes nothing, history included. |
+| Dirty state | `EditorState::dirty` (set by edits), plus `HasUnsavedChanges()`: the scene's saved text is fingerprinted at every save, load and new scene and compared at the moments that matter (quit, opening another scene or project, autosave), so an edit that forgot to raise the flag is still found. `SyncDirty()` raises the flag when they differ. While Play runs it answers for the scene being edited, and `Stop` puts `dirty` back, so changes to the running game never count. |
+| Saving | `EditorState::Save` refuses during Play, writes through `SceneSerializer::SaveToFile` (a `.savetmp` file, checked, renamed over the target, one rolling `.bak` copy of the previous file) and reports why it failed. Project, build and preference files use `okayproj::WriteTextAtomic` (`shared/ProjectCreate.hpp`): the same write-then-rename, and a read-only target is refused. |
+| Autosave | A `<scene>.autosave` copy every `g_autosaveInterval` seconds (default 120) when the scene has unsaved changes and a file path; deleted by a successful save; offered by the "Recover Autosave" window when it is newer than the scene. A never-saved scene has no path and is not autosaved. |
+| Recovery of a failed new project | `EditorState::CreateProject` makes folders and files, builds the template, saves it, and on any failure puts the previous scene, path, project and undo history back and removes what it made (`okayproj::Made` / `Undo`). |
+
+Not yet the engine's `RecoveryManager` (rotating autosaves, crash detection by lock file) or `BackupManager`
+(timestamped backups): moving the editor onto them is step 4 and 5 of "Adopting it in the editor" above.
+
 ## Tests
 
 `test_undo`, `test_recovery` and `test_backup` (suites `undo`, `recovery`, `backup`) use temporary

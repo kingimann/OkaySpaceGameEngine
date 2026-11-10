@@ -1,8 +1,10 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include "okay/Math/Quat.hpp"
 #include <cstdint>
 #include <string>
-#include <unordered_set>
+#include <typeinfo>
+#include <unordered_map>
 #include <vector>
 
 namespace okay {
@@ -18,19 +20,36 @@ class GameObject;
 /// meanwhile). The pool tolerates objects destroyed behind its back and a scene that
 /// was cleared.
 ///
+/// A reused object is put back to what a fresh copy of the template has, as far as the pool can tell:
+/// the local pose, `active`, layer and tag of the root and of every object below it (when the hierarchy
+/// still has the template's shape), the `enabled` flag of each component (when the object's components are
+/// still the template's), and each component's own runtime state through Component::OnPoolReuse
+/// (Rigidbody2D / Rigidbody3D velocities and forces, Lifetime's elapsed time). A delayed
+/// Scene::Destroy(go, seconds) that was waiting for the object is cancelled when it is released, so the
+/// next use is not cut short by the old request.
+///
+/// An idle object is marked `transient` (a runtime-only object), so a saved scene, a save game and an undo snapshot
+/// do not carry the pool's spare objects; it is a normal object again once `Get` hands it out.
+/// Components that end an object's life should call `Scene::Despawn(go)` instead of `Scene::Destroy(go)`: a pooled
+/// object then goes back to its pool (Lifetime and Projectile3D do). A Spawner with `usePool` and the script calls
+/// `pool_get` / `pool_release` are built on that.
+///
+/// Main thread only, like the scene it serves (a pool does not lock anything), and it must not outlive its Scene.
+///
 ///   ObjectPool bullets(scene);
 ///   bullets.SetPrefabFile("Assets/Bullet.okayprefab");
 ///   bullets.Prewarm(32);
 ///   GameObject* b = bullets.Get(muzzle);   ...   bullets.Release(b);
 class ObjectPool {
 public:
-    explicit ObjectPool(Scene& scene) : m_scene(&scene) {}
+    explicit ObjectPool(Scene& scene);
+    ~ObjectPool();
     ObjectPool(const ObjectPool&) = delete;
     ObjectPool& operator=(const ObjectPool&) = delete;
 
     /// What the pool makes. The source is captured now (a prefab file is read once; a
     /// template object is serialized once and may be destroyed afterwards). False if the
-    /// file cannot be read.
+    /// file cannot be read. A destroyed template object is ignored (the source stays as it was).
     bool SetPrefabFile(const std::string& path);
     void SetTemplate(const GameObject& templateObject);
     bool HasSource() const { return !m_text.empty(); }
@@ -47,6 +66,19 @@ public:
     bool Release(GameObject* go);
     /// Destroy every idle object.
     void Clear();
+    /// Destroy idle objects until at most `keep` are left (the ones idle longest go first) and say how many went.
+    /// Lowering `maxSize` only stops the pool from keeping more; call this to give back what it already holds.
+    int Shrink(int keep);
+
+    /// The pool this scene keeps for the prefab file `path`, made (and its file read) on the first call and shared
+    /// by everyone who asks: the script calls `pool_get` / `pool_release` use it. nullptr when the file cannot be
+    /// read. It lives as long as the scene.
+    static ObjectPool* ForPrefab(Scene& scene, const std::string& path);
+    /// Put `go` back into the pool it came from. False when it did not come from a pool of `scene` that is still
+    /// there (the caller then destroys it: Scene::Despawn does both).
+    static bool ReleaseToOwner(Scene& scene, GameObject* go);
+    /// Drop the pools ForPrefab made for the scene with this Scene::Uid() (the scene calls it as it goes away).
+    static void ForgetScene(std::uint64_t sceneUid);
 
     int IdleCount() const;
     /// Objects handed out and not released.
@@ -55,18 +87,40 @@ public:
     int CreatedCount() const { return m_created; }
     int ReuseCount() const { return m_reused; }
     bool Owns(const GameObject* go) const;
+    /// Diagnostic: how many objects the pool has looked up to answer Get, Release and the counts since it
+    /// was made. Get and Release look at a few; IdleCount and ActiveCount look at every object the pool
+    /// holds, so ask for those rarely (an overlay once a frame is fine).
+    std::uint64_t LookupCount() const { return m_lookups; }
 
 private:
+    struct NodeState {   // what one object of the template looked like, in depth-first order
+        Vec3 position, scale{1, 1, 1};
+        Quat rotation = Quat::Identity;
+        bool active = true;
+        int layer = 0;
+        std::string tag;
+        std::vector<const std::type_info*> types;   // its components, in order, the Transform first
+        std::vector<bool> enabled;                  // ... and whether each one is switched on
+    };
+    enum : unsigned char { kActive = 0, kIdle = 1, kCooling = 2 };   // where an object of the pool is
     GameObject* Make();
-    void Prune() const;
+    void Prune() const;                  // forget every object that is gone (O(everything held): for the counts)
+    void Settle() const;                 // objects released before the last Update become reusable
+    void Capture(const GameObject& root);
+    void ResetForReuse(GameObject& root);
+    GameObject* Lookup(std::uint64_t id) const;   // the live object of this scene with that id, or nullptr
 
     Scene* m_scene;
+    std::uint64_t m_sceneUid;
     std::string m_text;
     std::string m_prefabPath;
-    Vec3 m_pos, m_scale{1, 1, 1};
-    float m_rotX = 0, m_rotY = 0, m_rotZ = 0, m_rotW = 1;
-    mutable std::vector<std::uint64_t> m_idle;
-    mutable std::unordered_set<std::uint64_t> m_owned;
+    std::vector<NodeState> m_nodes;      // the template's objects, root first
+    mutable std::vector<std::uint64_t> m_idle;      // reusable now, the most recently released last
+    mutable std::vector<std::uint64_t> m_cooling;   // released since the scene's last Update: their OnDisable is still owed
+    mutable std::uint64_t m_coolStamp = 0;          // Scene::UpdateCount() when m_cooling was started
+    mutable std::unordered_map<std::uint64_t, unsigned char> m_owned;   // every object the pool made and still holds, and where it is
+    mutable std::uint64_t m_pruneStructure = 0;     // Scene::StructureVersion() at the last full prune
+    mutable std::uint64_t m_lookups = 0;
     int m_created = 0, m_reused = 0;
 };
 

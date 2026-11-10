@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 namespace okay {
@@ -22,6 +23,26 @@ public:
     static double UnscaledTime() { return s_unscaledTime; }
     /// Number of frames rendered since startup.
     static std::uint64_t FrameCount() { return s_frameCount; }
+
+    // ---- This session (since the last Game::BeginSession) -----------------------------------
+    // ElapsedTime(), UnscaledTime() and FrameCount() are the PROCESS's clocks: they only move
+    // forward and a new Play session (the editor's Stop and Play, a scene load) does not rewind
+    // them, because much code keeps a stamp taken from them (a cooldown's "ready at", a save
+    // game's play-time base, a scheduler's frame number) and a clock that jumped back would make
+    // every such stamp read as the future. A script that wants "since this Play began" (an intro
+    // that shows for the first five seconds of each Play) reads these instead. Game::BeginSession()
+    // (and so GameLoop::BeginSession(), which the editor calls in Play and Stop) marks the start;
+    // before the first mark they equal the process clocks.
+    /// Scaled game seconds since the session began.
+    static double SessionTime() { return s_time > s_sessionStartTime ? s_time - s_sessionStartTime : 0.0; }
+    /// Real (unscaled) seconds since the session began.
+    static double SessionUnscaledTime() { return s_unscaledTime > s_sessionStartUnscaled ? s_unscaledTime - s_sessionStartUnscaled : 0.0; }
+    /// Frames stepped since the session began.
+    static std::uint64_t SessionFrameCount() { return s_frameCount > s_sessionStartFrame ? s_frameCount - s_sessionStartFrame : 0; }
+    /// Start a session now (Game::BeginSession calls it). Does not touch the process clocks.
+    static void MarkSessionStart() {
+        s_sessionStartTime = s_time; s_sessionStartUnscaled = s_unscaledTime; s_sessionStartFrame = s_frameCount;
+    }
     /// Multiplier applied to DeltaTime (1 = normal, 0 = paused).
     /// Reads 0 while Game has the time frozen (paused), whatever scale is remembered.
     static float TimeScale()   { return s_frozen ? 0.0f : s_timeScale; }
@@ -74,6 +95,8 @@ public:
     static void RampTimeScale(float target, float seconds);
     static bool IsRamping();
     static float RampTarget();
+    /// Real seconds the running ramp still has to go (0 when there is none).
+    static float RampSecondsLeft();
     static void CancelRamp();
 
     /// Hold DeltaTime at 0 without touching the scale: SetTimeScale calls made while
@@ -91,10 +114,17 @@ public:
     /// fixed steps (GameLoop) advances it; InFixedStep() is true while one runs.
     static double FixedTime() { return s_fixedTime; }
     static bool   InFixedStep() { return s_inFixed; }
+    /// How far the leftover time is into the next fixed step, in [0, 1): what to blend the previous and
+    /// current simulated state by when drawing. GameLoop::Alpha() is the same number for code that holds the
+    /// loop; this one is for code that does not (a camera, a renderer, a component that interpolates). A
+    /// driver publishes it once a frame with SetFixedAlpha (GameLoop does); 0 before one has, and a value that
+    /// is not in [0, 1) (NaN included) is cut to that range.
+    static float FixedAlpha() { return s_fixedAlpha; }
+    static void  SetFixedAlpha(float a) { s_fixedAlpha = (a > 0.0f && a < 1.0f) ? a : (a >= 1.0f ? std::nextafter(1.0f, 0.0f) : 0.0f); }
     /// For the driver: bracket each fixed update with these.
     static void BeginFixedStep() { s_inFixed = true; }
     static void EndFixedStep(float step) { s_inFixed = false; if (step > 0.0f && std::isfinite(step)) s_fixedTime += (double)step; }
-    static void ResetFixedTime() { s_fixedTime = 0.0; s_inFixed = false; }
+    static void ResetFixedTime() { s_fixedTime = 0.0; s_inFixed = false; s_fixedAlpha = 0.0f; }
 
     // ---- Real and wall-clock time (Time.cpp) -----------------------------------
     // The game clocks above only move when a frame is stepped. These read the machine.
@@ -114,8 +144,9 @@ public:
     /// ".mmm" ("01:02.500"). Rounded down; negative gets a leading "-".
     static std::string FormatClock(double seconds, bool millis = false);
 
-    /// Frames per second, smoothed, from the measured frame times.
+    /// Frames per second, smoothed, from the measured frame times. A single frame is read as at most kMaxFps.
     static float SmoothedFPS() { return s_fps; }
+    static constexpr float kMaxFps = 1.0e6f;
     /// The last frame's time as measured (before SmoothDelta), for FPS readouts
     /// and profiling. The game itself steps by DeltaTime.
     static float RawDeltaTime() { return s_rawDeltaTime; }
@@ -150,7 +181,9 @@ public:
         float sum = 0.0f;
         for (int i = 0; i < s_histN; ++i) sum += s_hist[i];
         const float avg = sum / (float)s_histN;
-        return avg < raw * 0.5f ? raw * 0.5f : (avg > raw * 2.0f ? raw * 2.0f : avg);
+        const float v = avg < raw * 0.5f ? raw * 0.5f : (avg > raw * 2.0f ? raw * 2.0f : avg);
+        // For a frame time near the top of the float range the sum, or twice the frame, overflows to infinity.
+        return std::isfinite(v) ? v : std::numeric_limits<float>::max();
     }
 
     /// Advance global time by one frame of `unscaledDt` seconds. The Application
@@ -172,7 +205,8 @@ public:
         s_rawDeltaTime = 0.0f; s_rawPending = -1.0f;
         for (float& h : s_hist) h = 0.0f;
         s_histAt = 0; s_histN = 0; s_carry = 0.0f;
-        s_fixedTime = 0.0; s_inFixed = false;
+        s_fixedTime = 0.0; s_inFixed = false; s_fixedAlpha = 0.0f;
+        s_sessionStartTime = s_sessionStartUnscaled = 0.0; s_sessionStartFrame = 0;
         ClearEffects();
     }
     /// Forget SmoothDelta's history and vsync carry: a new session or scene starts its
@@ -192,8 +226,11 @@ private:
     static void Advance(float unscaledDt) {
         if (!(unscaledDt > 0.0f) || !std::isfinite(unscaledDt)) unscaledDt = 0.0f;
         s_unscaledDeltaTime = unscaledDt;
-        // With a hit stop or ramp running the scale changes inside the frame: integrate it.
-        s_deltaTime = s_fxActive ? (float)StepEffects(unscaledDt) : unscaledDt * TimeScale();
+        // With a hit stop or ramp running the scale changes inside the frame: integrate it. The product
+        // is formed in double and held in float range: a huge frame at a scale above 1 (the clamp turned
+        // off, a broken timer) used to overflow to infinity and poison ElapsedTime for good.
+        const double scaled = s_fxActive ? StepEffects(unscaledDt) : (double)unscaledDt * (double)TimeScale();
+        s_deltaTime = scaled < (double)std::numeric_limits<float>::max() ? (float)scaled : std::numeric_limits<float>::max();
         s_time += (double)s_deltaTime;
         s_unscaledTime += (double)unscaledDt;
         ++s_frameCount;
@@ -205,7 +242,9 @@ private:
             // start-up: 1e-5 s read as 100000 FPS for the next hundred frames), so it is
             // skipped; after that a running average (1/n while warming up, then 0.9/0.1).
             if (s_fpsSamples++ > 0) {
-                const float instant = 1.0f / s_rawDeltaTime;
+                // A denormal frame time (1e-40 s) would make 1 / dt infinity, and the average then turned NaN
+                // (inf - inf) for the rest of the run: an instant reading is held at kMaxFps.
+                const float instant = std::fmin(1.0f / s_rawDeltaTime, kMaxFps);
                 const float a = s_fpsSamples <= 10 ? 1.0f / (float)(s_fpsSamples - 1) : 0.1f;
                 s_fps = s_fps <= 0.0f ? instant : s_fps + (instant - s_fps) * a;
             }
@@ -237,6 +276,9 @@ private:
     static inline int          s_hitCount          = 0;
     static inline double       s_fixedTime         = 0.0;
     static inline bool         s_inFixed           = false;
+    static inline float        s_fixedAlpha        = 0.0f;
+    static inline double       s_sessionStartTime  = 0.0, s_sessionStartUnscaled = 0.0;
+    static inline std::uint64_t s_sessionStartFrame = 0;
 };
 
 /// A fixed-timestep accumulator for gameplay code outside physics: feed it each
@@ -268,8 +310,10 @@ public:
         Clamp();
     }
     int   MaxSteps() const { return m_maxSteps; }
-    /// At least 1.
-    void  SetMaxSteps(int n) { m_maxSteps = n < 1 ? 1 : n; Clamp(); }
+    /// At least 1, at most kMaxStepsCap: a limit of INT_MAX with a long frame kept one Advance busy for
+    /// billions of steps.
+    void  SetMaxSteps(int n) { m_maxSteps = n < 1 ? 1 : (n > kMaxStepsCap ? kMaxStepsCap : n); Clamp(); }
+    static constexpr int kMaxStepsCap = 100000;
 
     /// Add `dt` seconds (negative, NaN and infinite times add nothing) and return how
     /// many fixed steps are now due, at most MaxSteps(); they are taken off the

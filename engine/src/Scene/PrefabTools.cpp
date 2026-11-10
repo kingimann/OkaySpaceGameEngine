@@ -127,10 +127,12 @@ std::string ResolveRef(const std::string& ref, const std::string& fromFile) {
 }
 
 // Records that describe an object's link to a prefab or its place in a document, not
-// its content: never compared and never overridden (same rule as wave 1).
+// its content: never compared and never overridden (same rule as wave 1). `comporder` is the order the
+// components were added in (a plain AddComponent is recorded too): an instance that gained a component would
+// otherwise list a second difference for it.
 bool IsBookkeepingRecord(const std::string& tok) {
     return tok == "prefab" || tok == "override" || tok == "guid" || tok == "sibling" || tok == "parent" ||
-           tok == "srcscene" || tok == "locked" || tok.empty();
+           tok == "srcscene" || tok == "locked" || tok == "comporder" || tok.empty();
 }
 
 // Lines that make up the file structure itself; an override may never be one of these.
@@ -1731,7 +1733,7 @@ std::vector<std::string> ContentLines(const LiveObj& o) {
     std::vector<std::string> out;
     for (const auto& l : o.lines) {
         const std::string tok = FirstToken(l);
-        if (tok == "prefab" || tok == "override" || tok == "guid" || tok == "sibling" || tok.empty()) continue;
+        if (tok == "prefab" || tok == "override" || tok == "guid" || tok == "sibling" || tok == "comporder" || tok.empty()) continue;
         out.push_back(l);
     }
     return out;

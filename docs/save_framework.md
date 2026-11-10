@@ -206,7 +206,9 @@ Same rules as SaveGame: files are written aside and swapped in, the previous
 good file becomes `<slot>.okayslot.bak`, and a damaged main file falls back to
 its `.bak` on load (the load succeeds, `SaveLoadReport::usedBackup` is set and
 the error text says what happened). A damaged file never replaces a good `.bak`.
-`SetMaxBytes` caps the file size.
+`SetMaxBytes` caps the file size. The write is the one every save writer shares
+(`savefmt::AtomicWriteChecked`: temp file, flush to the disk, rename); a failed write says why
+("the disk is full", "permission denied...") and leaves the slot as it was.
 
 ## Quick save, autosaves, continue
 
@@ -338,7 +340,8 @@ static and can be used on their own.
 ## Notes
 
 - Use the framework from the game's main thread.
-- Slot names use letters, digits, `-` and `_` (up to 64), like SaveGame's.
+- Slot names use letters, digits, `-` and `_` (up to 64), like SaveGame's, and are not Windows
+  device names (`con`, `nul`, `com1`...).
 - Framework slots and SaveGame slots are separate files and separate lists. A
   game picks one for a given slot name; nothing converts between them.
 - Loading a framework slot doesn't touch the default Save file (`save("gold", 1)`

@@ -47,6 +47,12 @@ void Game::SetPaused(bool paused) {
     Refresh();
 }
 
+bool Game::TogglePause() {
+    const bool on = !IsPausedBy(kManualPause);
+    SetPaused(on);
+    return on;
+}
+
 void Game::PushPause(const std::string& reason) {
     const std::string n = Name(reason);
     auto it = Find(n);
@@ -159,6 +165,7 @@ void Game::Reset() {
 void Game::BeginSession() {
     Reset();
     Time::SetTimeScale(1.0f);
+    Time::MarkSessionStart();
 }
 
 }  // namespace okay

@@ -38,7 +38,10 @@ std::vector<std::string> DebugOverlay::BuildLines(const Stats& s, bool detailed,
         lines.push_back(s.paused ? std::string("Paused") : Fmt("Time scale: %.2f", s.timeScale));
         lines.push_back(BuildInfo::Summary());
     }
-    for (const Provider& p : Providers()) { std::string t = p.fn(); if (!t.empty()) lines.push_back(std::move(t)); }
+    // Work on a copy: a provider may add or remove lines (a one-shot line removes itself) while it runs, which
+    // would invalidate the list being walked. Lines added meanwhile first show in the next call.
+    const std::vector<Provider> providers = Providers();
+    for (const Provider& p : providers) { std::string t = p.fn(); if (!t.empty()) lines.push_back(std::move(t)); }
     return lines;
 }
 

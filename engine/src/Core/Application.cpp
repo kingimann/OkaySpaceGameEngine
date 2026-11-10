@@ -7,6 +7,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Render/ConsoleRenderer.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <thread>
@@ -33,6 +34,10 @@ void Application::Run(Scene& scene) {
     m_lastError.clear();
     m_exitCode = 0;
     Game::Reset();   // a quit/pause left over from an earlier run must not leak in
+    // This run is a session: a script's Time.sessionTime and Time.sessionFrameCount start from 0 in it (a
+    // second Run in one process, a test, used to read on from the first). No process clock moves, and the
+    // time scale is left alone (a host may have set one before Run).
+    Time::MarkSessionStart();
 
     // The terminal goes raw for the run and is handed back however we leave, an
     // exception from a script included (it used to stay raw, and the shell misbehaved).
@@ -44,8 +49,7 @@ void Application::Run(Scene& scene) {
     };
     InputSession session;
 
-    const float targetFrameTime =
-        m_config.targetFps > 0.0f ? 1.0f / m_config.targetFps : 0.0f;
+    const float targetFrameTime = TargetFrameSeconds(m_config.targetFps);   // at most one second (see there)
 
     // The shared driver: clamp a stall, step Time (evened out when smoothDt), run the
     // fixed steps and OnUpdate. Config defaults reproduce the loop this used to be. The Config
@@ -66,7 +70,7 @@ void Application::Run(Scene& scene) {
         ~DropHook() { loop.OnUpdate = nullptr; }
     } dropHook{m_loop};
 
-    FrameLimiter limiter(m_config.pacing == Config::Pacing::Limiter ? (double)m_config.targetFps : 0.0);
+    FrameLimiter limiter(m_config.pacing == Config::Pacing::Limiter && targetFrameTime > 0.0f ? std::max(1.0, (double)m_config.targetFps) : 0.0);
 
     int frame = 0;
     try {

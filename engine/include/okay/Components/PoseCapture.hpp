@@ -58,6 +58,25 @@ public:
         return added;
     }
 
+    /// Load one clip file onto `ma`. 1 = added or replaced, 0 = this rig is
+    /// missing a node the clip poses, -1 = the file is not a clip, -2 = that
+    /// name is already on the animator and `replace` is false.
+    static int ImportFile(ModelAnimator& ma, const std::string& path, bool replace) {
+        ModelAnimator::Clip clip;
+        if (!LoadClip(path, clip) || clip.name.empty()) return -1;
+        if (!RigHasClipNodes(ma, clip)) return 0;
+        for (int i = 0; i < (int)ma.clips.size(); ++i) {
+            if (ma.clips[i].name != clip.name) continue;
+            if (!replace) return -2;
+            ma.clips[i] = std::move(clip);
+            ma.InvalidateBindings();
+            return 1;
+        }
+        ma.clips.push_back(std::move(clip));
+        ma.InvalidateBindings();
+        return 1;
+    }
+
     /// Read a clip file written by CaptureFrame. False if it is missing or not a clip.
     static bool LoadClip(const std::string& path, ModelAnimator::Clip& clip) {
         std::ifstream in(path);

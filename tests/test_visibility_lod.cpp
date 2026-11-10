@@ -162,18 +162,19 @@ int main() {
     {
         const int prev = DisplaySettings::Quality();
         DisplaySettings::SetQuality(0);
-        CHECK(ShadowMapResolution() == 512);
+        CHECK(ShadowMapResolution() == 1024);
         CHECK_NEAR(ShadowDistance(), 40.0f, 0.01f);
         CHECK(ShadowCascades() == 1);
         CHECK(!ShadowsEnabled());
         DisplaySettings::SetQuality(1);
-        CHECK(ShadowMapResolution() == 1024);
-        CHECK(ShadowCascades() == 2);
-        CHECK(ShadowsEnabled());
-        DisplaySettings::SetQuality(2);
         CHECK(ShadowMapResolution() == 2048);
         CHECK_NEAR(ShadowDistance(), 80.0f, 0.01f);
         CHECK(ShadowCascades() == 3);
+        CHECK(ShadowsEnabled());
+        DisplaySettings::SetQuality(2);
+        CHECK(ShadowMapResolution() == 4096);
+        CHECK_NEAR(ShadowDistance(), 120.0f, 0.01f);
+        CHECK(ShadowCascades() == 4);
         DisplaySettings::SetQuality(prev);
     }
 

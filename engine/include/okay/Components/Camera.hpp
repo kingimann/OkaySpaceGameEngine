@@ -115,6 +115,9 @@ public:
     /// Scene view, and it still casts shadows — this camera just skips drawing it.
     /// Transient (set at runtime by controllers; not serialized).
     GameObject* ignoreObject = nullptr;
+    /// Cursor and aim rays skip this object's hierarchy. Unlike `ignoreObject`
+    /// this does not hide the mesh from the camera.
+    GameObject* pointerIgnore = nullptr;
 
     /// Build a world-space picking ray through a screen pixel (origin top-left,
     /// +Y down) — Camera.ScreenPointToRay, for click-to-select / shooting.

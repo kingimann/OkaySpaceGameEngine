@@ -32,6 +32,7 @@
 //
 // Header only, plain C++17, no threads, no allocation.
 #include <cstdint>
+#include <limits>
 
 namespace okay {
 
@@ -71,15 +72,18 @@ public:
     std::int64_t FinishTick(std::int64_t nowNs) {
         if (!m_started) Start(nowNs);
         ++m_ticks;
-        m_next += m_tickNs;
-        if (m_next < nowNs - m_tickNs * (std::int64_t)m_maxLag) {         // far behind: forget the backlog
+        // Saturating arithmetic: a clock source at the ends of the 64-bit range (a corrupt or hostile one)
+        // must not overflow, which is undefined behaviour and, wrapped, would read as a huge jump.
+        const std::int64_t lag = m_tickNs * (std::int64_t)m_maxLag;   // at most ~2e18: cannot overflow
+        m_next = Add(m_next, m_tickNs);
+        if (m_next < Add(nowNs, -lag)) {         // far behind: forget the backlog
             m_next = nowNs;
             ++m_resyncs;
-        } else if (m_next > nowNs + m_tickNs * (std::int64_t)m_maxLag) {   // the clock went backwards
-            m_next = nowNs + m_tickNs;
+        } else if (m_next > Add(nowNs, lag)) {   // the clock went backwards
+            m_next = Add(nowNs, m_tickNs);
             ++m_backJumps;
         }
-        const std::int64_t wait = m_next - nowNs;
+        const std::int64_t wait = Sub(m_next, nowNs);
         return wait > 0 ? wait : 0;
     }
 
@@ -90,10 +94,20 @@ public:
     std::uint64_t BackJumps() const { return m_backJumps; }
     /// How far behind schedule the last FinishTick left the loop, in ticks (0 when on time).
     double LagTicks(std::int64_t nowNs) const {
-        return nowNs > m_next && m_tickNs > 0 ? (double)(nowNs - m_next) / (double)m_tickNs : 0.0;
+        return nowNs > m_next && m_tickNs > 0 ? (double)Sub(nowNs, m_next) / (double)m_tickNs : 0.0;
     }
 
 private:
+    static std::int64_t Add(std::int64_t a, std::int64_t b) {
+        if (b > 0 && a > std::numeric_limits<std::int64_t>::max() - b) return std::numeric_limits<std::int64_t>::max();
+        if (b < 0 && a < std::numeric_limits<std::int64_t>::min() - b) return std::numeric_limits<std::int64_t>::min();
+        return a + b;
+    }
+    static std::int64_t Sub(std::int64_t a, std::int64_t b) {
+        if (b < 0 && a > std::numeric_limits<std::int64_t>::max() + b) return std::numeric_limits<std::int64_t>::max();
+        if (b > 0 && a < std::numeric_limits<std::int64_t>::min() + b) return std::numeric_limits<std::int64_t>::min();
+        return a - b;
+    }
     double m_hz = 30.0;
     std::int64_t m_tickNs = 33333333;
     std::int64_t m_next = 0;

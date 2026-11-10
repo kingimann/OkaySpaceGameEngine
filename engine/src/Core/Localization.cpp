@@ -1,6 +1,8 @@
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/LocTable.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SaveData.hpp"
 #include "okay/Core/Utf8.hpp"
 
 #include <algorithm>
@@ -112,61 +114,6 @@ std::string CsvField(const std::string& v) {
     return out + "\"";
 }
 
-// The delimiter the header row uses most (outside quotes): comma, semicolon or tab.
-char DetectDelimiter(const std::string& s, std::size_t start) {
-    int comma = 0, semi = 0, tab = 0;
-    bool quoted = false;
-    for (std::size_t i = start; i < s.size(); ++i) {
-        const char c = s[i];
-        if (c == '"') quoted = !quoted;
-        else if (!quoted && (c == '\n' || c == '\r')) break;
-        else if (!quoted && c == ',') ++comma;
-        else if (!quoted && c == ';') ++semi;
-        else if (!quoted && c == '\t') ++tab;
-    }
-    if (semi > comma && semi >= tab) return ';';
-    if (tab > comma && tab > semi) return '\t';
-    return ',';
-}
-
-// RFC 4180 rows: quoted fields may hold the delimiter, doubled quotes and newlines.
-std::vector<std::vector<std::string>> CsvRows(const std::string& s, std::size_t start, char delim, bool* tooBig = nullptr) {
-    std::vector<std::vector<std::string>> rows;
-    std::vector<std::string> row;
-    std::string field;
-    bool quoted = false, any = false;
-    bool big = false;
-    auto endField = [&] { if (row.size() < kMaxCsvCols) row.push_back(field); else big = true; field.clear(); };
-    auto endRow = [&] {
-        endField();
-        if (rows.size() < kMaxCsvRows) rows.push_back(std::move(row)); else big = true;
-        row.clear();
-        any = false;
-    };
-    for (std::size_t i = start; i < s.size() && !big; ++i) {
-        const char c = s[i];
-        if (quoted) {
-            if (c == '"') {
-                if (i + 1 < s.size() && s[i + 1] == '"') { field += '"'; ++i; }
-                else quoted = false;
-            } else if (c == '\r' && i + 1 < s.size() && s[i + 1] == '\n') {
-                continue;   // CRLF inside a cell: keep a plain newline
-            } else {
-                field += c;
-            }
-            continue;
-        }
-        if (c == '"' && field.empty()) { quoted = true; any = true; }
-        else if (c == delim) { endField(); any = true; }
-        else if (c == '\n') endRow();
-        else if (c == '\r') { if (i + 1 >= s.size() || s[i + 1] != '\n') endRow(); }
-        else { field += c; any = true; }
-    }
-    if (!big && (any || !field.empty() || !row.empty())) endRow();
-    if (tooBig) *tooBig = big;
-    return rows;
-}
-
 // ---- Numbers and placeholders ----------------------------------------------------
 std::string NumberText(double v) {
     if (std::isnan(v)) return "NaN";
@@ -260,6 +207,69 @@ std::string NormalizeLocale(std::string s) {
     return Trim(s);
 }
 
+// A language code split into its tags: "zh-Hant-TW" is zh + hant + tw.
+struct LocaleParts {
+    std::string lang, script, region;
+};
+LocaleParts PartsOf(const std::string& code) {
+    LocaleParts p;
+    const std::string n = NormalizeLocale(code);
+    std::size_t from = 0;
+    bool first = true;
+    while (from <= n.size()) {
+        std::size_t d = n.find('-', from);
+        if (d == std::string::npos) d = n.size();
+        const std::string tag = n.substr(from, d - from);
+        from = d + 1;
+        if (tag.empty()) continue;
+        const bool alpha = std::all_of(tag.begin(), tag.end(), [](char c) { return std::isalpha((unsigned char)c) != 0; });
+        const bool digits = std::all_of(tag.begin(), tag.end(), [](char c) { return std::isdigit((unsigned char)c) != 0; });
+        if (first) { p.lang = tag; first = false; }
+        else if (tag.size() == 4 && alpha && p.script.empty()) p.script = tag;
+        else if (((tag.size() == 2 && alpha) || (tag.size() == 3 && digits)) && p.region.empty()) p.region = tag;
+    }
+    // Chinese regions say which script it is: zh-TW and zh-HK are Traditional, zh-CN Simplified.
+    if (p.lang == "zh" && p.script.empty() && !p.region.empty())
+        p.script = (p.region == "tw" || p.region == "hk" || p.region == "mo") ? "hant" : "hans";
+    return p;
+}
+
+// The table language that best fits `wanted` ("fr-CA", "zh_TW.UTF-8"), or "" when none shares its
+// language: the exact code, then the same script and region, then the language without a region,
+// then any region of it. Two scripts of one language are never swapped (zh-TW never gets zh-Hans).
+std::string BestLanguage(const std::vector<LocLanguage>& langs, const std::string& wanted) {
+    const LocaleParts w = PartsOf(wanted);
+    if (w.lang.empty()) return {};
+    const std::string wn = NormalizeLocale(wanted);
+    int bestScore = -1;
+    std::string best;
+    for (const LocLanguage& l : langs) {
+        const LocaleParts c = PartsOf(l.code);
+        if (c.lang != w.lang) continue;
+        if (!c.script.empty() && !w.script.empty() && c.script != w.script) continue;
+        int score = 1;
+        if (NormalizeLocale(l.code) == wn) score += 100;
+        if (!c.script.empty() && c.script == w.script) score += 8;
+        if (!c.region.empty() && c.region == w.region) score += 4;
+        else if (c.region.empty()) score += 2;   // plain "fr" beats another region's "fr-FR" for fr-CA
+        if (score > bestScore) { bestScore = score; best = l.code; }
+    }
+    return best;
+}
+
+// "zh-Hant-TW" -> "zh-Hant", "zh" (the parents a language falls back to, nearest first).
+std::vector<std::string> Ancestors(const std::string& code) {
+    std::vector<std::string> out;
+    std::string c = code;
+    for (;;) {
+        const std::size_t d = c.find_last_of("-_");
+        if (d == std::string::npos || d == 0) break;
+        c.resize(d);
+        out.push_back(c);
+    }
+    return out;
+}
+
 void Report(const std::string& lang, const std::string& key, const std::string& shown) {
     const std::string id = (lang.empty() ? std::string("?") : lang) + ": " + key;
     if (!S().reportedSet.insert(id).second) return;
@@ -277,13 +287,15 @@ std::string Lookup(const std::string& key, bool report, bool* found = nullptr) {
     if (lang == Localization::kPseudo) lang = def;
     if (found) *found = true;
     if (const std::string* v = t.Text(key, lang)) return *v;
-    // pt-BR falls back to pt (when the table has it) before the default language.
-    const std::string base = BaseOf(lang);
-    if (base != lang && base != def && t.FindLanguage(base))
-        if (const std::string* v = t.Text(key, base)) {
-            if (report) Report(lang, key, base);
+    // pt-BR falls back to pt, zh-Hant-TW to zh-Hant and then zh (each when the table has it)
+    // before the default language.
+    for (const std::string& parent : Ancestors(lang)) {
+        if (parent == def || !t.FindLanguage(parent)) continue;
+        if (const std::string* v = t.Text(key, parent)) {
+            if (report) Report(lang, key, parent);
             return *v;
         }
+    }
     if (def != lang)
         if (const std::string* v = t.Text(key, def)) {
             if (report) Report(lang, key, def);
@@ -488,10 +500,11 @@ bool StringTable::Load(const std::string& path, std::string* err) {
 }
 
 bool StringTable::Save(const std::string& path) const {
-    std::ofstream f(std::filesystem::u8path(path), std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f << Write();
-    return (bool)f;
+    // Written aside and swapped in: a crash or a full disk leaves the old table.
+    savefmt::WriteOptions opt;
+    opt.sync = true;
+    opt.utf8Path = true;
+    return savefmt::AtomicWriteChecked(path, Write(), nullptr, opt);
 }
 
 std::string StringTable::ExportCsv(const std::vector<std::string>& langs) const {
@@ -514,10 +527,14 @@ std::string StringTable::ExportCsv(const std::vector<std::string>& langs) const 
 
 bool StringTable::ImportCsv(const std::string& csv, std::string* err, int* rowsRead) {
     if (rowsRead) *rowsRead = 0;
-    const std::size_t start = csv.compare(0, 3, "\xEF\xBB\xBF") == 0 ? 3 : 0;
     if (csv.size() > kMaxFileBytes) { if (err) *err = "the file is too large"; return false; }
-    bool tooBig = false;
-    const auto rows = CsvRows(csv, start, DetectDelimiter(csv, start), &tooBig);
+    // LocParseCsv reads UTF-8 (with or without a mark) and UTF-16 ("Unicode text" from a
+    // spreadsheet), with any of the three delimiters.
+    std::vector<std::vector<std::string>> rows;
+    std::string perr;
+    if (!LocParseCsv(csv, rows, &perr)) { if (err) *err = perr; return false; }
+    bool tooBig = rows.size() > kMaxCsvRows;
+    for (const auto& row : rows) if (row.size() > kMaxCsvCols) tooBig = true;
     if (tooBig) {
         if (err) *err = "too many rows or columns (at most " + std::to_string(kMaxCsvRows) + " rows and " + std::to_string(kMaxCsvCols) + " columns)";
         return false;
@@ -529,7 +546,13 @@ bool StringTable::ImportCsv(const std::string& csv, std::string* err, int* rowsR
         const std::string cell = Trim(rows[0][(std::size_t)i]), low = Lower(cell);
         if (low == "key" && keyCol < 0) keyCol = i;
         else if (low == "note" || low == "notes" || low == "comment" || low == "comments" || low == "context") noteCol = i;
-        else if (!cell.empty()) langCols.push_back({i, cell});
+        else if (!cell.empty()) {
+            // A header "FR" or "pt_br" is the table's "fr" or "pt-BR", not a second language.
+            std::string code = cell;
+            const std::string want = NormalizeLocale(cell);
+            for (const auto& l : languages) if (NormalizeLocale(l.code) == want) { code = l.code; break; }
+            langCols.push_back({i, code});
+        }
     }
     if (keyCol < 0) { if (err) *err = "no \"key\" column in the header row"; return false; }
     for (const auto& lc : langCols) AddLanguage(lc.second);
@@ -641,10 +664,8 @@ std::string Localization::PickLanguage(const std::vector<std::string>& preferred
     for (const std::string& raw : preferred) {
         const std::string want = NormalizeLocale(raw);
         if (want.empty() || want == "c" || want == "posix") continue;
-        for (const auto& l : langs) if (NormalizeLocale(l.code) == want) return l.code;
-        const std::string base = BaseOf(want);
-        for (const auto& l : langs) if (NormalizeLocale(l.code) == base) return l.code;
-        for (const auto& l : langs) if (BaseOf(l.code) == base) return l.code;
+        const std::string best = BestLanguage(langs, raw);
+        if (!best.empty()) return best;
     }
     return S().table.DefaultLanguage();
 }
@@ -681,9 +702,22 @@ std::string Localization::GetOr(const std::string& key, const std::string& fallb
 
 std::string Localization::KeyPart(const std::string& name) {
     std::string out;
-    for (char c : Trim(name)) {
-        const unsigned char u = (unsigned char)c;
-        out += (std::isalnum(u) && u < 0x80) || c == '_' || c == '-' ? (char)std::tolower(u) : '_';
+    const std::string t = Trim(name);
+    for (std::size_t i = 0; i < t.size();) {
+        const unsigned char u = (unsigned char)t[i];
+        if (u < 0x80) {
+            out += (std::isalnum(u) || u == '_' || u == '-') ? (char)std::tolower(u) : '_';
+            ++i;
+            continue;
+        }
+        // A letter of another script stays (UTF-8 bytes unchanged), so "Alice" and "Bob" written in
+        // Cyrillic or Chinese are different keys; only spaces and invisible marks become '_'.
+        const std::size_t start = i;
+        const std::uint32_t cp = utf8::Next(t, i);
+        const bool blank = cp == 0xA0 || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200F) || (cp >= 0x2028 && cp <= 0x202F) ||
+                           (cp >= 0x205F && cp <= 0x206F) || cp == 0x3000 || cp == 0xFEFF;
+        if (blank || cp == 0xFFFD) out += '_';   // spaces, invisible marks and broken UTF-8
+        else out.append(t, start, i - start);
     }
     return out;
 }
@@ -693,6 +727,35 @@ std::string Localization::LocalizeArgs(const std::string& key, const std::vector
     if (S().language == kPseudo) return Pseudo(Format(text, args, S().table.DefaultLanguage()));
     return Format(text, args);
 }
+
+namespace {
+double ArgNumber(const LocArg& a) { return a.isNumber ? a.number : std::strtod(a.text.c_str(), nullptr); }
+
+// {0, number}, {0, number, integer}, {0, number, percent}, {0, number, #,##0.00}: the number in the
+// language's own way. Without a style: up to three decimals, trailing zeros dropped.
+std::string NumberWithStyle(const LocArg& a, const std::string& style, const std::string& lang) {
+    const double n = ArgNumber(a);
+    if (style == "percent") return Localization::FormatPercent(n, 0, lang);
+    if (style == "integer") return Localization::FormatNumber(n, 0, lang);
+    if (!style.empty() && style.find_first_not_of("#,0.") == std::string::npos) {
+        const std::size_t dot = style.find('.');
+        return Localization::FormatNumber(n, dot == std::string::npos ? 0 : (int)(style.size() - dot - 1), lang);
+    }
+    int decimals = 0;
+    if (std::isfinite(n)) {
+        char buf[512];
+        std::snprintf(buf, sizeof(buf), "%.3f", std::fabs(n));
+        std::string t = buf;
+        const std::size_t dot = t.find('.');
+        if (dot != std::string::npos) {
+            std::size_t end = t.size();
+            while (end > dot + 1 && t[end - 1] == '0') --end;
+            decimals = (int)(end - dot - 1);
+        }
+    }
+    return Localization::FormatNumber(n, decimals, lang);
+}
+} // namespace
 
 std::string Localization::Format(const std::string& pattern, const std::vector<LocArg>& args, const std::string& langIn) {
     // Plural forms call Format again; a pattern nested deeper than the limit is left as text.
@@ -713,12 +776,22 @@ std::string Localization::Format(const std::string& pattern, const std::vector<L
         i = close + 1;
         const std::size_t c1 = TopLevelComma(inner);
         const LocArg* a = FindArg(args, Trim(inner.substr(0, c1)));
-        if (!a) { out += "{" + inner + "}"; continue; }
-        const std::size_t c2 = c1 == std::string::npos ? std::string::npos : TopLevelComma(inner, c1 + 1);
-        if (c2 == std::string::npos || Trim(inner.substr(c1 + 1, c2 - c1 - 1)) != "plural") { out += a->text; continue; }
-        // {n, plural, =0 {...} one {...} other {...}}
-        const double n = a->isNumber ? a->number : std::strtod(a->text.c_str(), nullptr);
-        const std::string body = inner.substr(c2 + 1);
+        if (!a) { out += "{" + inner + "}"; continue; }   // no such argument: stays as written
+        if (c1 == std::string::npos) { out += a->text; continue; }
+        const std::size_t c2 = TopLevelComma(inner, c1 + 1);
+        const std::string type = Trim(inner.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1));
+        const std::string rest = c2 == std::string::npos ? std::string() : inner.substr(c2 + 1);
+        if (type == "number") { out += NumberWithStyle(*a, Trim(rest), lang); continue; }
+        if (type == "currency") {   // {0, currency, USD}
+            const std::string code = Trim(rest);
+            out += code.empty() ? NumberWithStyle(*a, "", lang) : FormatCurrency(ArgNumber(*a), code, lang);
+            continue;
+        }
+        if ((type != "plural" && type != "select") || c2 == std::string::npos) { out += a->text; continue; }
+        // {n, plural, =0 {...} one {...} other {...}}  and  {who, select, male {...} female {...} other {...}}
+        const bool isPlural = type == "plural";
+        const double n = isPlural ? ArgNumber(*a) : 0.0;
+        const std::string& body = rest;
         std::map<std::string, std::string> forms;
         for (std::size_t p = 0; p < body.size();) {
             while (p < body.size() && std::isspace((unsigned char)body[p])) ++p;
@@ -730,10 +803,16 @@ std::string Localization::Format(const std::string& pattern, const std::vector<L
             forms[sel] = body.substr(open + 1, end - open - 1);
             p = end + 1;
         }
-        auto pick = forms.find("=" + NumberText(n));
-        if (pick == forms.end()) pick = forms.find(PluralName(Plural(lang, n)));
+        auto pick = forms.end();
+        if (isPlural) {
+            pick = forms.find("=" + NumberText(n));
+            if (pick == forms.end()) pick = forms.find(PluralName(Plural(lang, n)));
+        } else {
+            pick = forms.find(Trim(a->text));
+        }
         if (pick == forms.end()) pick = forms.find("other");
         if (pick == forms.end()) { out += a->text; continue; }
+        if (!isPlural) { out += Format(pick->second, args, lang); continue; }
         std::string msg;   // # (outside nested placeholders) is the number
         int depth = 0;
         for (char m : pick->second) {
@@ -773,7 +852,8 @@ Localization::PluralForm Localization::Plural(const std::string& lang, double n)
     const double ip = std::floor(n);   // the integer part (CLDR "i")
     auto mod = [](double v, double m) { return std::fmod(v, m); };
     if (base == "ja" || base == "zh" || base == "ko" || base == "vi" || base == "th" ||
-        base == "id" || base == "ms") return F::Other;
+        base == "id" || base == "ms" || base == "lo" || base == "my" || base == "km" || base == "jv" ||
+        base == "yue" || base == "bo") return F::Other;
     if (base == "fr" || base == "pt") {
         if (base == "pt" && norm == "pt-pt") {   // European Portuguese: only exactly 1
             if (isInt && n == 1.0) return F::One;
@@ -816,6 +896,85 @@ Localization::PluralForm Localization::Plural(const std::string& lang, double n)
         if (n == 2.0) return F::Two;
         if (m100 >= 3.0 && m100 <= 10.0) return F::Few;
         if (m100 >= 11.0 && m100 <= 99.0) return F::Many;
+        return F::Other;
+    }
+    // The Balkan languages follow Russian's endings, with no "many" for integers.
+    if (base == "hr" || base == "sr" || base == "bs" || base == "sh") {
+        if (!isInt) return F::Other;
+        const double m10 = mod(n, 10.0), m100 = mod(n, 100.0);
+        if (m10 == 1.0 && m100 != 11.0) return F::One;
+        if (m10 >= 2.0 && m10 <= 4.0 && !(m100 >= 12.0 && m100 <= 14.0)) return F::Few;
+        return F::Other;
+    }
+    if (base == "sl") {   // Slovenian: one / two / few (3, 4 and fractions) by the last two digits
+        if (!isInt) return F::Few;
+        const double m100 = mod(n, 100.0);
+        if (m100 == 1.0) return F::One;
+        if (m100 == 2.0) return F::Two;
+        if (m100 == 3.0 || m100 == 4.0) return F::Few;
+        return F::Other;
+    }
+    if (base == "lt") {   // Lithuanian
+        if (!isInt) return F::Many;
+        const double m10 = mod(n, 10.0), m100 = mod(n, 100.0);
+        const bool teen = m100 >= 11.0 && m100 <= 19.0;
+        if (m10 == 1.0 && !teen) return F::One;
+        if (m10 >= 2.0 && m10 <= 9.0 && !teen) return F::Few;
+        return F::Other;
+    }
+    if (base == "lv") {   // Latvian: zero for 0, 10, 20... and the teens
+        if (!isInt) return F::Other;
+        const double m10 = mod(n, 10.0), m100 = mod(n, 100.0);
+        if (m10 == 0.0 || (m100 >= 11.0 && m100 <= 19.0)) return F::Zero;
+        if (m10 == 1.0 && m100 != 11.0) return F::One;
+        return F::Other;
+    }
+    if (base == "ro" || base == "mo") {   // Romanian: one, then few for 0 and 2..19 (and the same after 100)
+        if (!isInt) return F::Few;
+        const double m100 = mod(n, 100.0);
+        if (n == 1.0) return F::One;
+        if (n == 0.0 || (m100 >= 1.0 && m100 <= 19.0)) return F::Few;
+        return F::Other;
+    }
+    if (base == "he" || base == "iw") {   // Hebrew
+        if (isInt && n == 1.0) return F::One;
+        if (isInt && n == 2.0) return F::Two;
+        if (!isInt && ip == 0.0) return F::One;
+        return F::Other;
+    }
+    if (base == "hi" || base == "bn" || base == "fa" || base == "gu" || base == "kn" || base == "zu" || base == "am" || base == "as") {
+        return (ip == 0.0 || (isInt && n == 1.0)) ? F::One : F::Other;   // 0 reads as "one"
+    }
+    if (base == "hy" || base == "ff" || base == "kab") return (ip == 0.0 || ip == 1.0) ? F::One : F::Other;
+    if (base == "da") return (isInt && n == 1.0) || (!isInt && (ip == 0.0 || ip == 1.0)) ? F::One : F::Other;
+    if (base == "is" || base == "mk") {   // one for 1, 21, 31... (not 11)
+        if (!isInt) return base == "is" ? F::One : F::Other;
+        return (mod(n, 10.0) == 1.0 && mod(n, 100.0) != 11.0) ? F::One : F::Other;
+    }
+    if (base == "cy") {   // Welsh
+        if (!isInt) return F::Other;
+        if (n == 0.0) return F::Zero;
+        if (n == 1.0) return F::One;
+        if (n == 2.0) return F::Two;
+        if (n == 3.0) return F::Few;
+        if (n == 6.0) return F::Many;
+        return F::Other;
+    }
+    if (base == "ga") {   // Irish
+        if (!isInt) return F::Other;
+        if (n == 1.0) return F::One;
+        if (n == 2.0) return F::Two;
+        if (n >= 3.0 && n <= 6.0) return F::Few;
+        if (n >= 7.0 && n <= 10.0) return F::Many;
+        return F::Other;
+    }
+    if (base == "mt") {   // Maltese
+        if (!isInt) return F::Other;
+        const double m100 = mod(n, 100.0);
+        if (n == 1.0) return F::One;
+        if (n == 2.0) return F::Two;
+        if (n == 0.0 || (m100 >= 3.0 && m100 <= 10.0)) return F::Few;
+        if (m100 >= 11.0 && m100 <= 19.0) return F::Many;
         return F::Other;
     }
     return (isInt && n == 1.0) ? F::One : F::Other;

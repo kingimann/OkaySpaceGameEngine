@@ -40,6 +40,15 @@ public:
     /// Who fired it (never hit). Transient: set by the shooter, not saved.
     GameObject* owner = nullptr;
 
+    /// A pooled bullet that is reused flies again from the start: no hits, bounces or age left over, the velocity it
+    /// was made with (gravity and ricochets change it in flight), and nobody it must not hit.
+    void OnPoolReuse() override {
+        if (!m_seen) return;
+        m_age = 0.0f; m_hits = 0; m_bounces = 0; m_dead = false; m_pierced = false; m_lastHit = nullptr;
+        velocity = m_velocityOnReuse; owner = nullptr;
+    }
+    void Awake() override { m_seen = true; m_velocityOnReuse = velocity; }
+
     int Hits() const { return m_hits; }
     bool Alive() const { return !m_dead; }
 
@@ -80,6 +89,8 @@ private:
     int   m_hits = 0, m_bounces = 0;
     bool  m_dead = false, m_pierced = false;
     GameObject* m_lastHit = nullptr;
+    bool  m_seen = false;       // Awake ran: there is a velocity to put back
+    Vec3  m_velocityOnReuse{0.0f, 0.0f, 20.0f};
 
     void OnHit(Scene& sc, const RaycastHit3D& hit, const Vec3& dir) {
         ++m_hits;
@@ -97,7 +108,7 @@ private:
     }
     void Kill(Scene* sc) {
         m_dead = true;
-        if (sc && gameObject) sc->Destroy(gameObject);
+        if (sc && gameObject) sc->Despawn(gameObject);   // back into its ObjectPool when it came from one
     }
 };
 

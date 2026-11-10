@@ -1,11 +1,13 @@
 #include "okay/Core/LoopConsole.hpp"
 #include "okay/Core/Console.hpp"
+#include "okay/Core/FrameOverlay.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Time.hpp"
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <locale>
 #include <sstream>
 
@@ -33,6 +35,22 @@ bool ParseNumber(const std::string& text, double& out) {
     is >> std::ws;
     if (!is.eof() || !std::isfinite(v)) return false;
     out = v;
+    return true;
+}
+
+// A double that has passed ParseNumber as a float, held inside the float range: (float)1e300 is not
+// defined (it is infinity on most machines), and the loop's own limits (the scale cap, the debug cap) should
+// be the ones that decide what a huge number means.
+float ToFloat(double v) {
+    constexpr double kMax = (double)std::numeric_limits<float>::max();
+    return (float)(v > kMax ? kMax : (v < -kMax ? -kMax : v));
+}
+
+// A whole number of frames in [1, kMaxStepRequest]: "2.5" is refused, not rounded down.
+bool ParseFrames(const std::string& text, double& out) {
+    double n = 0.0;
+    if (!ParseNumber(text, n) || n < 1.0 || n > (double)GameLoop::kMaxStepRequest || n != std::floor(n)) return false;
+    out = n;
     return true;
 }
 
@@ -64,14 +82,14 @@ LoopConsole::LoopConsole(GameLoop& loop, const std::string& prefix) : m_prefix(p
         if (a.empty()) return "time.scale = " + Num(Time::BaseTimeScale());
         double v = 0.0;
         if (!ParseNumber(a[0], v) || v < 0.0) return "error: expected a number >= 0, got '" + a[0] + "'";
-        Time::SetTimeScale((float)v);
+        Time::SetTimeScale(ToFloat(v));
         return "time.scale = " + Num(Time::BaseTimeScale());
     }, "show or set the gameplay time scale", "scale [x]");
 
     add("debug_scale", [l](const Args& a) -> std::string {
         if (a.empty()) return "debug scale = " + Num(l->DebugTimeScale());
         double v = 0.0;
-        if (!ParseNumber(a[0], v) || !l->SetDebugTimeScale((float)v)) return "error: expected a number >= 0, got '" + a[0] + "'";
+        if (!ParseNumber(a[0], v) || !l->SetDebugTimeScale(ToFloat(v))) return "error: expected a number >= 0, got '" + a[0] + "'";
         return "debug scale = " + Num(l->DebugTimeScale());
     }, "show or set the loop's debug time scale (slow motion or fast forward for debugging)", "debug_scale [x]");
 
@@ -88,10 +106,25 @@ LoopConsole::LoopConsole(GameLoop& loop, const std::string& prefix) : m_prefix(p
 
     add("step", [l](const Args& a) -> std::string {
         double n = 1.0;
-        if (!a.empty() && (!ParseNumber(a[0], n) || n < 1.0 || n > (double)GameLoop::kMaxStepRequest)) return "error: expected a whole number of frames >= 1";
+        if (!a.empty() && !ParseFrames(a[0], n)) return "error: expected a whole number of frames >= 1";
         if (!l->RequestStep((int)n)) return "error: the game is not paused (time.pause on)";
         return "stepping " + std::to_string(l->StepsRemaining()) + " frame(s)";
     }, "while paused, run n frames of simulation", "step [n]");
+
+    add("run", [l](const Args& a) -> std::string {
+        double n = 1.0, fps = 0.0;
+        if (!a.empty() && !ParseFrames(a[0], n)) return "error: expected a whole number of frames >= 1";
+        // A frame is at most kMaxStepDelta long, so a rate below 1 fps could not be honoured: refuse it rather than
+        // silently run one second frames (and 1 / 1e-300 does not fit a float).
+        if (a.size() > 1 && (!ParseNumber(a[1], fps) || !(fps >= 1.0 / (double)GameLoop::kMaxStepDelta) || fps > (double)GameLoop::kMaxCaptureFps))
+            return "error: expected a frame rate from 1 to 1000";
+        const bool wasPaused = Game::Paused();
+        if (!l->RunFrames((int)n, fps > 0.0 ? (float)(1.0 / fps) : 0.0f)) return "error: could not start the run";
+        return wasPaused ? "stepping " + std::to_string((int)n) + " frame(s), the game stays paused"
+                         : "running " + std::to_string((int)n) + " frame(s), then pausing";
+    }, "run n frames of the running game, then pause (a frame rate makes every frame exactly that long)", "run [n] [fps]");
+
+    add("overlay", [l](const Args&) { return FrameOverlay::Text(*l); }, "the performance overlay text: frame times, hitches, time scale, pause reasons", "overlay");
 }
 
 LoopConsole::~LoopConsole() {

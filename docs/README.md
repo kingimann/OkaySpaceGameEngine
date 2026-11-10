@@ -11,11 +11,13 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [properties.md](properties.md): the property registry: read, write, watch, snapshot and diff any component field by name (the base for per-property undo, live editing and prefab overrides).
 - [scene_diff_merge.md](scene_diff_merge.md): canonical scene text, structured diffs, three-way merge and format migration for version control.
 - [editor.md](editor.md): the editor, its panels and Build Game.
+- [project_upgrade.md](project_upgrade.md): the engine version a project was saved with, the upgrade question when an editor of another version opens it, safe upgrade with a full backup, restore, and the launcher's Versions folder.
 - [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.
 - [packaging.md](packaging.md): how a build is laid out for distribution.
 - [releasing.md](releasing.md): releasing an update to players.
 - [steam_release.md](steam_release.md): releasing on Steam.
+- [release_channels.md](release_channels.md): the latest and LTS channels, the update bucket, versions.json, how to cut an LTS.
 
 ## Scripting
 - [scripting.md](scripting.md): the OkayScript language guide.
@@ -76,7 +78,20 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [anticheat.md](anticheat.md): anti-cheat.
 - [supabase-backend.md](supabase-backend.md): the Supabase backend.
 
+## Core and scene
+- [scene_hierarchy_search.md](scene_hierarchy_search.md): active state that follows the hierarchy, find and search helpers, scene validation.
+- [scene_management.md](scene_management.md): loading scenes, spawning objects, pools and declaring what a component needs.
+- [layers_tags_cameras.md](layers_tags_cameras.md): layers and the collision matrix, tags, project tag and layer lists, the camera stack.
+- [ecs.md](ecs.md): the opt-in ECS: safe iteration, the command buffer, delta snapshots and the scene bridge.
+- [core_tools.md](core_tools.md): small dependency-free helpers in `okay/Core/`.
+- [math_geometry.md](math_geometry.md): math, geometry, noise and random numbers.
+- [localization_prefs_time.md](localization_prefs_time.md): localization formats, typed prefs and the fixed timestep.
+- [asset_manager.md](asset_manager.md): the opt-in registry for files loaded from disk.
+- [asset_database.md](asset_database.md): persistent asset GUIDs, move tracking, the dependency graph and import settings.
+- [core_audit_notes.md](core_audit_notes.md): what a bug hunt over the core found and fixed.
+
 ## Working on the engine
+- [FEATURE_MAP.md](FEATURE_MAP.md): every system in the engine, where its code, tests and docs are, and what is still open (the pages live in [feature_map/](feature_map/)).
 - [qa_workflow.md](qa_workflow.md): a developer and a QA session working together.
 - [../ROADMAP.md](../ROADMAP.md): releases and plans.
 - [archive/](archive/): old reports kept for history.

@@ -67,10 +67,22 @@ Placeholders are filled from the arguments a text is asked for with:
   `two`, `few`, `many` and `other`.
 - `{{` and `}}` are literal braces. A placeholder without an argument stays as
   written, so a missing argument is easy to spot.
+- `{0, number}` writes a number the language's way: `1,234,567` in English,
+  `1.234.567` in German, `1 234 567` (narrow no-break spaces) in French, with up to
+  three decimals (`{0, number, integer}`, `{0, number, percent}` and a pattern such as
+  `{0, number, #,##0.00}` choose another style). `{0, currency, USD}` writes money
+  (`$1,234.50`, `1.234,50 €`).
+- `{who, select, male {He} female {She} other {They}}` picks a form by the argument's
+  text (the `other` form when nothing matches), for words that change with a name or a
+  gender. Forms may hold other placeholders.
 
 Built-in plural rules: English and most languages use `one` for exactly 1;
-French uses `one` for 0 and 1; Japanese, Chinese and Korean always use `other`.
-A game sets the rule of any other language in C++:
+French uses `one` for 0 and 1; Japanese, Chinese and Korean always use `other`;
+Russian, Ukrainian, Polish, Czech, Slovak, Arabic, Croatian, Serbian, Bosnian,
+Slovenian, Lithuanian, Latvian, Romanian, Hebrew, Hindi, Welsh, Irish, Maltese
+and more have their own (the table is in
+[localization_prefs_time.md](localization_prefs_time.md)). A game sets the rule of any
+other language in C++:
 
 ```cpp
 okay::Localization::SetPluralRule("ru", [](double n) {
@@ -121,7 +133,9 @@ spreadsheet programs keep accents. **Import CSV...** reads one back: the header
 row names the columns (`key`, `note` and language codes, in any order),
 separated by commas, semicolons or tabs. Fields with separators, quotes or line
 breaks are quoted, with `""` for a quote. Importing adds new keys and languages
-and replaces the texts it has; an empty cell keeps the text the table has.
+and replaces the texts it has; an empty cell keeps the text the table has. A column
+headed `FR` or `pt_br` fills the table's `fr` or `pt-BR` instead of adding a second
+language, and the spreadsheet's "Unicode text" (UTF-16, tab separated) imports too.
 
 ## Localized texts in the scene
 
@@ -220,8 +234,10 @@ Build Game copies `strings.okayloc` (and the fonts its languages name) into the
 game's data folder. At start the player loads it and picks the language: the
 one saved in the player's preferences (key `loc.language`, written by
 `set_language` / `Localization.SetLanguage`), else the first of the operating
-system's preferred languages the table has (`fr-CA` matches `fr-CA`, then `fr`),
-else the default language.
+system's preferred languages the table has (`fr-CA` matches `fr-CA`, then `fr`, then
+`fr-FR`), else the default language. Chinese keeps its script: `zh-TW`, `zh-HK`, `zh-MO`
+and `zh-Hant-TW` pick `zh-Hant`, `zh-CN`, `zh-SG` and `zh-Hans-CN` pick `zh-Hans`
+(a table with one plain `zh` serves both).
 
 ## Fonts
 
@@ -248,7 +264,9 @@ inside the project is copied by Build Game).
 - The dialogue box, quest tracker, journal and toasts draw with an atlas of the
   built-in UI font that has ASCII and Latin-1; a text with other characters is
   drawn with the fallback font instead.
-- Right-to-left scripts (Arabic, Hebrew) draw left to right, unshaped.
+- Right-to-left scripts (Arabic, Hebrew) draw left to right, unshaped. The engine has no text
+  shaping or reordering; `LocMirrorText` (`okay/Core/LocPreview.hpp`) only previews how a
+  layout would look.
 
 ## More
 
@@ -256,3 +274,32 @@ inside the project is copied by Build Game).
 the translation grid model, CSV and JSON import and export, the table checker
 (placeholders, plurals, whitespace, length), the unused and undefined key scanner,
 language previews with pseudo-localization, and the font coverage report.
+
+## What changed (second pass)
+
+- **Keys for names in other scripts.** `Localization::KeyPart` turned every byte of a non-ASCII
+  letter into `_`, so all Cyrillic or Chinese names of one length gave the same key
+  (`speaker.______`) and a dialogue showed another character's name. Letters of other
+  scripts now stay (UTF-8 unchanged); ASCII names give the same keys as before. A table that
+  already holds keys made from such names needs them renamed (**Add Dialogue & Quest Text**
+  adds the new ones).
+- **Language matching.** `PickLanguage` gave a `zh-TW` player the first Chinese table
+  language, usually Simplified. It now reads script and region: Traditional and Simplified are
+  never swapped, a plain `fr` beats another region's `fr-FR` for `fr-CA`, and `Get` walks the
+  parents of a language (`zh-Hant-TW` -> `zh-Hant` -> `zh`) before the default.
+- **Plural rules** for Croatian, Serbian, Bosnian, Slovenian, Lithuanian, Latvian, Romanian,
+  Hebrew, Hindi and the languages that count 0 as one, Welsh, Irish, Maltese, Icelandic,
+  Macedonian, Danish, and no plural for Lao, Burmese, Khmer, Javanese. They fell back to
+  one/other, which is wrong for "21 coins" in Croatian.
+- **Placeholders.** `{0, number}`, `{0, number, integer|percent|#,##0.00}`,
+  `{0, currency, CODE}` and `{x, select, ...}` (see above). `{0, number}` used to print the
+  raw digits.
+- **CSV.** String-table import reads UTF-16 ("Unicode text") and matches language headers that
+  differ in case or separator (`FR`, `pt_br`); it uses the same reader as the tools'
+  `LocTable` (one parser instead of two).
+- **Files.** `StringTable::Save` and the `LocTable` CSV and JSON writers use the shared
+  crash-safe write: a crash or full disk leaves the old file.
+
+Not changed: right-to-left shaping and reordering (needs a shaping library and glyphs from a font
+that has them) and the Latin-1-only atlas of the dialogue and journal drawing in the player and
+editor hosts, which falls back to a TrueType font for other characters as described above.

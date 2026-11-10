@@ -33,6 +33,17 @@ struct SaveSlotInfo {
     std::string error;             ///< why it is flagged (empty when it is fine)
 };
 
+/// What a game attaches to a slot beyond the scene, for a load menu to show.
+struct SaveOptions {
+    std::string label;         ///< what the game calls it ("Chapter 2: The Mine")
+    /// An image for the slot. A bare file name ("slot1.png") is a file in the saves folder
+    /// that `SaveGame::Delete` removes with the slot (`SaveGame::ThumbnailPath(slot)` is where
+    /// a screenshot for it goes); a path with folders is yours and is never touched.
+    std::string thumbnail;
+    std::string gameVersion;   ///< the game's own version text when it was saved
+    std::map<std::string, std::string> fields;   ///< custom text a menu shows ("difficulty" = "hard")
+};
+
 /// Whole-game saves in named slots. A save holds the scene as it is right now
 /// (every object, where it is, what it carries: the player, inventories, chests,
 /// placed builds, objects spawned or destroyed), plus what the scene file
@@ -40,10 +51,14 @@ struct SaveSlotInfo {
 /// game's Save keys (the default save file). Loading puts all of it back.
 ///
 /// Slots are files under Save::BaseDir()/saves/<slot>.okaygame (per user, per
-/// game in the player). Slot names are letters, digits, '-' and '_'. Each file
+/// game in the player). Slot names are letters, digits, '-' and '_' (up to 64, and not a
+/// Windows device name such as "con" or "nul2"). Each file
 /// carries a format version and ends with a checksum; the previous good save is
 /// kept beside it as <slot>.okaygame.bak and used if the main file is damaged.
 /// Loading a slot replaces the default Save file's keys with the slot's copy.
+/// A slot saved by a newer build is listed (flagged `incompatible`), never loaded, and is
+/// kept as `<slot>.okaygame.newer.bak` if an older build saves over it.
+/// Use from the game's main thread (the play-time counter and migrations are not guarded).
 class SaveGame {
 public:
     /// The save format this build writes. Files from a newer one are refused.
@@ -66,8 +81,13 @@ public:
     static bool LastLoadUsedBackup();
 
     /// Save the scene to `slot`. False (with a reason in `error`) on a bad slot
-    /// name or a file that can't be written.
+    /// name or a file that can't be written (a full disk, a read-only folder: the old
+    /// slot is untouched, the reason says which).
     static bool Save(Scene& scene, const std::string& slot, const std::string& label = "",
+                     std::string* error = nullptr);
+    /// Save with a thumbnail, a game version and custom fields a load menu shows (they come
+    /// back in `Info` and `List`).
+    static bool Save(Scene& scene, const std::string& slot, const SaveOptions& options,
                      std::string* error = nullptr);
     /// Load `slot` into the scene at the end of this frame (safe from scripts
     /// and menus). False if the slot doesn't exist or can't be read.
@@ -76,10 +96,25 @@ public:
     static bool LoadNow(Scene& scene, const std::string& slot, std::string* error = nullptr);
 
     static bool Exists(const std::string& slot);
+    /// Remove the slot with its backups (and a thumbnail kept in the saves folder).
     static bool Delete(const std::string& slot);
-    static SaveSlotInfo Info(const std::string& slot);
-    /// Every slot on disk, newest first. Reads only each file's header lines.
-    static std::vector<SaveSlotInfo> List();
+    /// What a load menu shows for the slot: label, scene, time, play time, thumbnail path,
+    /// game version, custom fields, file size and the flags `incompatible` (saved by a
+    /// newer build), `fromBackup` and `corrupt`. Reads only the header lines, so a file cut
+    /// short after its header isn't noticed; `verify` reads the whole file and checks its
+    /// checksum (use it for one slot, not a long list of big saves). A slot that doesn't
+    /// exist has `exists` false.
+    static SaveSlotInfo Info(const std::string& slot, bool verify = false);
+    /// Every slot on disk, newest first (slots with no known time last), damaged and
+    /// newer-version slots included and flagged. Reads only each file's header lines
+    /// unless `verify`.
+    static std::vector<SaveSlotInfo> List(bool verify = false);
+    /// True when the slot would load: its file passes its checks, or its backup does. Reads
+    /// the whole file but doesn't build the scene. `error` says what is wrong otherwise.
+    static bool Check(const std::string& slot, std::string* error = nullptr);
+    /// Where a screenshot for the slot goes: `saves/<slot>.png` in the save folder. Pass the
+    /// bare name (`<slot>.png`) as `SaveOptions::thumbnail` so Delete removes it with the slot.
+    static std::string ThumbnailPath(const std::string& slot);
 
     static bool ValidSlot(const std::string& slot);
     static std::string SlotPath(const std::string& slot);

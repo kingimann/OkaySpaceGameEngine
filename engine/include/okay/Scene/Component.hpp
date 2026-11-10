@@ -47,8 +47,18 @@ public:
     virtual void FixedUpdate(float /*fixedDeltaTime*/) {}
     /// Called every frame during the render pass.
     virtual void OnRender(IRenderer& /*renderer*/) {}
-    /// Called when the component or its GameObject is destroyed.
+    /// Called when the component or its GameObject is destroyed, after Start
+    /// has run. Implementations may assume the running life happened: a
+    /// network manager stops its socket, a script fires on_destroy, a weather
+    /// rig drops a count it took while it was alive. It is not called for a
+    /// component that is still waiting to start.
     virtual void OnDestroy() {}
+    /// Called instead of OnDestroy when the object is destroyed before Start.
+    /// Only components that grabbed something earlier (an IK target previewed
+    /// in edit mode, a weather rig whose count was taken at creation) override
+    /// this. The default does nothing, so a never-started component cannot
+    /// tear down another instance's state.
+    virtual void ReleaseUnstarted() {}
     /// The component became live (enabled, on an active GameObject) / stopped being
     /// live: its `enabled` flag or its GameObject's `active` flag flipped. Called by
     /// the Scene at the start of the next frame, once per change. OnEnable also runs
@@ -56,6 +66,12 @@ public:
     /// for a component that is live then. They only ever alternate.
     virtual void OnEnable() {}
     virtual void OnDisable() {}
+    /// An ObjectPool is about to hand this component's object out again after it was released: put the
+    /// runtime state of the previous use back to what a fresh copy of the template has (velocities,
+    /// elapsed timers, accumulated forces). Called once per reuse, after the object's pose was reset
+    /// and before it is switched on, so OnEnable follows with the clean state. Not called for a
+    /// new object, which starts clean anyway. Rigidbody2D, Rigidbody3D and Lifetime reset themselves.
+    virtual void OnPoolReuse() {}
     /// Objects in `dying` are about to be destroyed (this component survives):
     /// drop any pointers to them or their transforms.
     virtual void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& /*dying*/) {}

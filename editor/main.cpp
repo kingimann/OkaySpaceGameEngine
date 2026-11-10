@@ -1889,6 +1889,8 @@ bool g_autoCheckDone = false;     // consumed the async result yet?
 bool g_openAbout = false;
 std::string g_newProjectTemplate; // template title requested via --template
 std::string g_newProjectRoot;     // project folder requested via --new-project (launcher)
+std::string g_newProjectVersion;  // project.okayproj version from the launcher's More options ("" = 1.0.0)
+int g_newProjectGpu = -1;         // 1 GPU, 0 software, -1 leave the build default
 std::string g_openScenePath;      // scene to open at startup via --open (launcher)
 
 // Panel visibility (View menu).
@@ -17872,11 +17874,19 @@ void DrawNewProjectPopup(EditorState& ed) {
     // The project's own files: default settings and build settings under its name. (Written before the scene
     // opens, so the project is complete from its first moment.)
     const std::string folder = plan.folder;
-    auto writeFiles = [&folder](const std::string& rt, std::string& err) {
-        if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(ProjectSettings{}, "")), &err)) return false;   // stamped with this version from the first moment
+    const std::string version = g_newProjectVersion;
+    const int gpu = g_newProjectGpu;
+    g_newProjectVersion.clear();
+    g_newProjectGpu = -1;
+    auto writeFiles = [&folder, version, gpu](const std::string& rt, std::string& err) {
+        ProjectSettings settings;
+        if (!version.empty() && okayproj::CheckProjectVersion(version).empty())
+            std::snprintf(settings.version, sizeof(settings.version), "%s", version.c_str());
+        if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(settings, "")), &err)) return false;   // stamped with this version from the first moment
         BuildProfile live;
         live.productName = folder;
         live.outputDir = "build/" + folder;
+        if (gpu == 0 || gpu == 1) live.settings.gpuRenderer = gpu == 1;
         return okayproj::WriteTextAtomic(BuildLiveFile(rt), WriteBuildLive(live, ""), &err);
     };
     const EditorState::NewProjectResult r = ed.CreateProject(plan.root.string(), plan.folder, fn, writeFiles);
@@ -45206,6 +45216,8 @@ static void WriteHandoff() {
     std::string body;
     if (!g_newProjectRoot.empty())     body += "new-project\t" + g_newProjectRoot + "\n";
     if (!g_newProjectTemplate.empty()) body += "template\t"    + g_newProjectTemplate + "\n";
+    if (!g_newProjectVersion.empty())  body += "version\t"     + g_newProjectVersion + "\n";
+    if (g_newProjectGpu == 0 || g_newProjectGpu == 1) body += std::string("gpu\t") + (g_newProjectGpu ? "1" : "0") + "\n";
     if (!g_openScenePath.empty())      body += "open\t"        + g_openScenePath + "\n";
     if (!g_openScenePath.empty() && KeepVersionRequested()) body += "keep-version\t" + RunningVersion() + "\n";   // the version this editor is: honored only by an editor of that version
     if (body.empty()) body = "focus\t1\n";   // plain "Open Editor": just bring to front
@@ -45235,6 +45247,8 @@ static bool PollHandoff(bool& raiseWindow) {
         std::string k = line.substr(0, tab), v = line.substr(tab + 1);
         if      (k == "new-project") { g_newProjectRoot = v;     request = true; }
         else if (k == "template")    { g_newProjectTemplate = v; request = true; }
+        else if (k == "version")     { g_newProjectVersion = v; }
+        else if (k == "gpu")         { g_newProjectGpu = v == "0" ? 0 : 1; }
         else if (k == "open")        { g_openScenePath = v;      request = true; }
         else if (k == "keep-version") { keepVersion = v; }
         else if (k == "focus")       { /* just raise */ }
@@ -45542,6 +45556,10 @@ int main(int argc, char** argv) {
         else if (a.rfind("--new-project=", 0) == 0) g_newProjectRoot = a.substr(14);
         else if (a == "--open" && i + 1 < argc) { g_openScenePath = argv[i + 1]; ++i; }
         else if (a.rfind("--open=", 0) == 0) g_openScenePath = a.substr(7);
+        else if (a == "--project-version" && i + 1 < argc) { g_newProjectVersion = argv[i + 1]; ++i; }
+        else if (a.rfind("--project-version=", 0) == 0) g_newProjectVersion = a.substr(18);
+        else if (a == "--gpu" && i + 1 < argc) { g_newProjectGpu = std::string(argv[i + 1]) == "0" ? 0 : 1; ++i; }
+        else if (a.rfind("--gpu=", 0) == 0) g_newProjectGpu = a.substr(6) == "0" ? 0 : 1;
     }
 
     ProjectUpgradeInit(argc, argv);   // --keep-version, and the version question that comes before any project is opened

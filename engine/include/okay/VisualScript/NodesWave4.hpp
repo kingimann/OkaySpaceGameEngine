@@ -6,6 +6,7 @@
 // plain EventNodes; VisualScriptComponent fires them.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodesExtra.hpp"
+#include "okay/VisualScript/VsWhole.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
@@ -335,7 +336,8 @@ struct EveryNNode : VsNode {
     int calls = 0;
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        int n = std::max(1, (int)std::lround(In(0, g, ctx, VsValue{2.0f}).AsFloat()));
+        int n = VsWhole(In(0, g, ctx, VsValue{2.0f}).AsFloat(), 1);
+        if (n < 1) n = 1;   // zero, negative, or not a real number: every time
         return (++calls % n) == 0 ? 0 : -1;
     }
 };

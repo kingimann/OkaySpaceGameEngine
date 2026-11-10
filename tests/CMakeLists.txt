@@ -1108,6 +1108,34 @@ target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/edit
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
+add_executable(test_vs_names test_vs_names.cpp)
+target_include_directories(test_vs_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_names PRIVATE okay::engine)
+add_test(NAME vs_names COMMAND test_vs_names)
+
+add_executable(test_vs_palette_categories test_vs_palette_categories.cpp)
+target_include_directories(test_vs_palette_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_palette_categories PRIVATE okay::engine)
+target_compile_definitions(test_vs_palette_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_palette_categories COMMAND test_vs_palette_categories)
+
+add_executable(test_vs_palette_levels test_vs_palette_levels.cpp)
+target_include_directories(test_vs_palette_levels PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_palette_levels PRIVATE okay::engine)
+add_test(NAME vs_palette_levels COMMAND test_vs_palette_levels)
+
+add_executable(test_vs_templates test_vs_templates.cpp)
+target_include_directories(test_vs_templates PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_templates PRIVATE okay::engine)
+target_compile_definitions(test_vs_templates PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_templates COMMAND test_vs_templates)
+
+add_executable(test_vs_flow_behaviour test_vs_flow_behaviour.cpp)
+target_include_directories(test_vs_flow_behaviour PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_flow_behaviour PRIVATE okay::engine)
+target_compile_definitions(test_vs_flow_behaviour PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_flow_behaviour COMMAND test_vs_flow_behaviour)
+
 add_executable(test_vs_node_docs test_vs_node_docs.cpp)
 target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
@@ -1164,6 +1192,15 @@ add_test(NAME frustum_culling COMMAND test_frustum_culling)
 add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
 target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
 add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
+
+add_executable(test_vs_refs test_vs_refs.cpp)
+target_link_libraries(test_vs_refs PRIVATE okay::engine)
+add_test(NAME vs_refs COMMAND test_vs_refs)
+
+add_executable(test_vs_choices test_vs_choices.cpp)
+target_include_directories(test_vs_choices PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_choices PRIVATE okay::engine)
+add_test(NAME vs_choices COMMAND test_vs_choices)
 
 # C# / OkayScript: classes, generics, lambdas, coroutines, components.
 add_executable(test_okayscript_csharp test_okayscript_csharp.cpp)

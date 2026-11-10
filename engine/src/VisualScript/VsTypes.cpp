@@ -144,6 +144,7 @@ const Row kRows[] = {
         {"LoadScene", true, "", ""},
         {"MouseButton", false, "", "B"},
         {"MouseButtonDown", false, "", "B"},
+        {"MouseGround", false, "", "NNNB"},
         {"Cooldown", true, "", ""},
         {"AnimTrigger", true, "", ""},
         {"AnimSetFloat", true, "N", ""},
@@ -611,6 +612,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     struct Exec { int from, pin, to; };
     std::vector<Exec> execList;
     std::set<int> entries, hasExecOut;
+    std::set<std::string> exposed;   // `var name value` lines: a default the Inspector can edit
     std::map<std::pair<int, int>, std::string> typed;   // (node, pin) -> value typed into the pin
     std::istringstream in(text);
     std::string line;
@@ -635,6 +637,8 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                 std::string v;
                 for (std::size_t i = 3; i < t.size(); ++i) v += (i > 3 ? " " : "") + t[i];
                 typed[{std::stoi(t[1]), std::stoi(t[2])}] = Unquote(v);
+            } else if (t[0] == "var" && t.size() >= 2) {
+                exposed.insert(Unquote(t[1]));
             }
         } catch (...) {}
     }
@@ -815,8 +819,9 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         }
     }
 
-    // 3) Variables read but never written by this graph.
-    std::set<std::string> written;
+    // 3) Variables read but never written by this graph. A `var` line is a
+    // default (shown in the Inspector), so reading it is not a missing write.
+    std::set<std::string> written = exposed;
     for (const auto& kv : nodes)
         if (kv.second.type == "SetVar" || kv.second.type == "AddVar" || kv.second.type == "Toggle")
             written.insert(kv.second.arg.empty() ? "x" : kv.second.arg);
@@ -862,6 +867,23 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             const std::string why = VsApiCheckLiteral(kv.second.type, pin, lit);
             if (!why.empty()) issues.push_back({0, kv.first, "input '" + e->ins[(std::size_t)pin].name + "': " + why});
         }
+    }
+
+    // 4c) Required inputs left empty (the node says so in the editor too).
+    auto wired = [&](int id, int pin) {
+        for (const Data& d : datas) if (d.consumer == id && d.inPin == pin) return true;
+        return typed.count({id, pin}) != 0;
+    };
+    for (const auto& kv : nodes) {
+        const std::string& t = kv.second.type;
+        if (t == "PlayClip" && kv.second.arg.empty())
+            issues.push_back({1, kv.first, "Required: clip name. Pick one from the list, or drop a clip file."});
+        if (t == "Branch" && !wired(kv.first, 0))
+            issues.push_back({1, kv.first, "Required: condition. Wire a true/false value into Condition."});
+        if (t == "MoveTowards" && kv.second.arg.empty() && !wired(kv.first, 1))
+            issues.push_back({1, kv.first, "Required: object to move toward. Drop an object on the slot or wire one in."});
+        if ((t == "LoadScene" || t == "GetVar" || t == "SetVar") && kv.second.arg.empty())
+            issues.push_back({1, kv.first, "Required: " + std::string(t == "LoadScene" ? "scene" : "variable name") + "."});
     }
 
     // 5) Prefabs that aren't there.

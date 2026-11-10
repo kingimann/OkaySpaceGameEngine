@@ -269,7 +269,7 @@ data node to read one back.
 **Input & engine:** Raycast 2D (origin, direction, max distance; outputs Hit),
 Mouse Wheel, Time Scale, Frame Count.
 
-**Multiplayer & Steam** (its own palette category): Host Game, Join Game
+**Online:** Host Game, Join Game
 (`host port` or `host:port`), Disconnect, Is Connected / Is Server / Is Client,
 Peer Count, My Net Id, Send Message, Set / Get Net Var, Send Chat, Call RPC, Net
 Spawn / Despawn, Set Ready, Start Match, Match Started, All Ready, Steam Name,
@@ -280,9 +280,11 @@ Submit Score.
 - **Search** is forgiving: `ply snd` finds Play Sound. Close matches come first,
   and the matched letters are highlighted.
 - **Keys:** **Up / Down** pick a result and **Enter** adds it.
-- **Sidebar:** browse by category, by **Do something** / **Check something**
-  (the Actions library), by **Recent**, or by **Favourites**. Click a node's star
-  to make it a favourite.
+- **Sidebar:** browse by topic (Events, Flow, Variables, Math, and the rest in
+  [visual_scripting_naming.md](visual_scripting_naming.md)), by **Recent**, or by
+  **Favourites**. A large topic opens into subcategories. Click a node's star
+  to make it a favourite. Searching for an old group name ("Do something",
+  "Check something", "Engine API", "Transform") still finds those nodes.
 - **Details:** the strip at the bottom says what the highlighted node takes and
   gives.
 - **Dragging from a pin:** only the nodes that fit that pin are listed.
@@ -370,10 +372,11 @@ Every N Times.
 The Flow Graph window and the Actions list are gone as separate editors: everything
 is built in the **Visual Script** graph.
 
-- **+ Add > Do something / Check something** lists every step the Actions component
-  had (Move, Play Sound, Set Variable, Has Tag, ...). They become `Action` and
-  `Condition` (Check, True/False) nodes; click a node's grey line to edit its
-  arguments with the same friendly fields.
+- The Add Node menu lists every step the Actions component had (Move, Play Sound,
+  Set Variable, Has Tag, ...) in the topic it belongs to. A step that does the
+  same job as a hand-written node is not a second browse row; search still finds
+  it by its old label. They become `Action` and `Condition` (Check, True/False)
+  nodes; click a node's grey line to edit its arguments with the same friendly fields.
 - **Action Steps** (`Actions`) keeps a whole list together: Wait, If / Repeat /
   While blocks, jumps. The chain continues once the list finishes.
 - **Delay (s)** really pauses the chain and continues it later (once). The older
@@ -647,9 +650,11 @@ entry OnStart 0
 
 ## Engine API nodes
 
-The **Engine API** group in the node search holds one node for every property and
-method of the typed script language: GameObject, Transform, Rigidbody, Vector3, Input,
-Time, Mathf and Debug. That language is `okayscript-next` in the Script Editor's
+Every property and method of the typed script language is a node in the topic it
+belongs to (Movement, Math, Physics, Input, and the rest). There is no separate
+Engine API group. Search for "engine api" still lists them. A binding that does
+the same job as a hand-written node (Mathf.Abs, Transform.Translate) is hidden
+while browsing and still appears in search. That language is `okayscript-next` in the Script Editor's
 language list, with scripts written as `class Name : Behaviour { ... }`. These nodes
 are generated from the same binding table that language uses, and they call the same
 code. Anything added to that table appears as a
@@ -686,7 +691,7 @@ it equals:
   parameters it takes).
 
 The older hand-made nodes (Translate, Get Position, Add Force...) still work and stay
-in their groups. The **Engine API** nodes are the ones that match the scripts exactly.
+in the same topic. The script-binding nodes are the ones that match the scripts exactly.
 The generated-code preview doesn't translate Engine API nodes yet. It lists them as
 not translated, and each node's tooltip gives the line of script.
 
@@ -868,79 +873,88 @@ The keys work while the Visual Script window has focus.
 
 ## Palette index
 
-Every hand-written node in the editor's node list (`Registry()` in `editor/VisualScriptEditor.hpp`), under the same group names as the sidebar.
-The word in backticks is the type stored in a `.okayvs` file.
-The **Engine API** group is the generated list in [engine_api.md](engine_api.md): one node for each script property and method. It is not copied here.
+Every hand-written node in the editor's node list (`Registry()` in `editor/VisualScriptEditor.hpp`).
+The Add Node menu uses the topics in [visual_scripting_naming.md](visual_scripting_naming.md), not the older group headings below.
+The words in bold are the name on the node. The word in backticks is the type stored in a `.okayvs` file.
+Names follow [visual_scripting_naming.md](visual_scripting_naming.md). Searching for an older name (for example "On Collision" or "On Var Changed") still finds the node.
+Script-binding nodes are the generated list in [engine_api.md](engine_api.md): one node for each script property and method. They are not copied here.
 
 ### Events
 
 - **On Start** (`OnStart`)
-- **On Update** (`OnUpdate`)
-- **On Collision** (`OnCollision`)
-- **On Trigger** (`OnTrigger`)
-- **On Click** (`OnClick`)
-- **On Anim Event** (`OnAnimEvent`) — setting: event (blank = any)
+- **On Every Frame** (`OnUpdate`) — was On Update
+- **On Late Update** (`OnLateUpdate`)
+- **On Physics Update** (`OnFixedUpdate`) — was On Fixed Update. Runs 50 times a second, before On Every Frame, so a long frame does not speed it up
+- **On Enabled** (`OnEnable`) — was On Enable
+- **On Disabled** (`OnDisable`) — was On Disable
+- **On Destroyed** (`OnDestroy`) — was On Destroy
+- **On Every Few Seconds** (`OnTimer`) — was On Timer
 - **On Key Pressed** (`OnKey`) — setting: key
 - **On Key Released** (`OnKeyUp`) — setting: key
-- **On Timer** (`OnTimer`) — setting: every N seconds
-- **On Custom Event** (`OnEvent`) — out Value; setting: event name
-- **On Collision Exit** (`OnCollisionExit`)
-- **On Trigger Exit** (`OnTriggerExit`)
-- **On Mouse Enter** (`OnMouseEnter`)
-- **On Mouse Down** (`OnMouseDown`)
-- **On Mouse Up** (`OnMouseUp`)
-- **On Mouse Over** (`OnMouseOver`)
+- **On Click** (`OnClick`)
+- **On Mouse Pressed** (`OnMouseDown`) — was On Mouse Down
+- **On Mouse Released** (`OnMouseUp`) — was On Mouse Up
+- **On Mouse Entered** (`OnMouseEnter`) — was On Mouse Enter
+- **On Mouse Left** (`OnMouseExit`) — was On Mouse Exit
+- **On Mouse Hover** (`OnMouseOver`) — was On Mouse Over
+- **On Collision Start** (`OnCollision`) — was On Collision
 - **On Collision Stay** (`OnCollisionStay`)
-- **On Late Update** (`OnLateUpdate`)
-- **On Fixed Update** (`OnFixedUpdate`)
-- **On Enable** (`OnEnable`)
-- **On Disable** (`OnDisable`)
-- **On Destroy** (`OnDestroy`)
-- **On Mouse Exit** (`OnMouseExit`)
+- **On Collision End** (`OnCollisionExit`) — was On Collision Exit
+- **On Trigger Enter** (`OnTrigger`) — was On Trigger
+- **On Trigger Stay** (`OnTriggerStay`)
+- **On Trigger Exit** (`OnTriggerExit`)
+- **On Animation Marker** (`OnAnimEvent`) — was On Anim Event; setting: event (blank = any)
+- **On Message** (`OnEvent`) — was On Custom Event; out Value; setting: event name
 - **On Object Placed** (`OnObjectPlaced`)
 - **On Object Removed** (`OnObjectRemoved`)
-- **On Logic Signal** (`OnLogicSignal`)
+- **On Signal** (`OnLogicSignal`) — was On Logic Signal
 - **On Item Added** (`OnItemAdded`)
 - **On Item Removed** (`OnItemRemoved`)
 - **On Inventory Full** (`OnInventoryFull`)
 - **On Item Used** (`OnItemUsed`)
-- **On Equip** (`OnEquip`)
-- **On Craft** (`OnCraft`)
-- **On Sequence Event** (`OnSequenceEvent`, optional name)
-- **On Language Changed** (`OnLanguageChanged`) — Event Name is the new language's code
+- **On Item Equipped** (`OnEquip`) — was On Equip
+- **On Item Crafted** (`OnCraft`) — was On Craft
+- **On Cutscene Marker** (`OnSequenceEvent`) — was On Sequence Event
+- **On Conversation Line** (`OnDialogueEvent`) — was On Dialogue Event
+- **On Conversation Ended** (`OnDialogueEnd`) — was On Dialogue End
+- **On Quest Started** (`OnQuestStarted`)
+- **On Quest Completed** (`OnQuestCompleted`)
+- **On Quest Failed** (`OnQuestFailed`)
+- **On Objective Completed** (`OnObjectiveCompleted`)
+- **On Quest Message** (`OnQuestEvent`) — was On Quest Event
 - **On Cheat Detected** (`OnCheatDetected`)
-- **On Validate Rpc** (`OnValidateRpc`)
-- **On Validate Hit** (`OnValidateHit`)
-- **On Trigger Stay** (`OnTriggerStay`)
-- **On Var Changed** (`OnVarChanged`) — out Value, Old; setting: variable
-- **On Scene Var Changed** (`OnSceneVarChanged`) — out Value, Old; setting: variable
-- **On Global Var Changed** (`OnGlobalVarChanged`) — out Value, Old; setting: variable
+- **On Network Action** (`OnValidateRpc`) — was On Validate Rpc
+- **On Hit Check** (`OnValidateHit`) — was On Validate Hit
+- **On Language Changed** (`OnLanguageChanged`) — the message name is the new language's code
+- **On Value Changed** (`OnVarChanged`) — was On Var Changed; out Value, Previous
+- **On Scene Value Changed** (`OnSceneVarChanged`) — was On Scene Var Changed; out Value, Previous
+- **On Game Value Changed** (`OnGlobalVarChanged`) — was On Global Var Changed; out Value, Previous
 
 ### Flow
 
-- **Branch** (`Branch`) — in Cond
-- **Sequence** (`Sequence`)
-- **Once** (`Once`)
-- **Every (s)** (`Timer`) — setting: seconds
-- **Wait (s)** (`Wait`) — setting: seconds
-- **Cooldown (s)** (`Cooldown`) — setting: seconds
+- **Branch** (`Branch`) — in Condition
+- **Sequence** (`Sequence`) — continues to First, then Second
+- **Run Once** (`Once`) — was Once
+- **Every Seconds** (`Timer`) — was Every (s); setting: seconds
+- **Wait Once** (`Wait`) — was Wait (s). Waits the first time, then stays open
+- **Wait Seconds** (`Delay`) — was Delay (s). Pauses, then continues, and waits again next time
+- **Cooldown** (`Cooldown`) — was Cooldown (s)
 - **For Loop** (`ForLoop`) — in First, Last; out Index
-- **Repeat N** (`Repeat`) — setting: count
-- **Flip-Flop** (`FlipFlop`)
+- **Repeat** (`Repeat`) — was Repeat N
+- **Flip Flop** (`FlipFlop`) — was Flip-Flop; First, then Second
 - **Gate** (`Gate`) — in Open
-- **Do N Times** (`DoN`) — out Count; setting: N
-- **Switch (int)** (`SwitchInt`) — in Value
-- **Delay (s)** (`Delay`) — setting: seconds
+- **Run a Number of Times** (`DoN`) — was Do N Times; out Count
+- **Switch Number** (`SwitchInt`) — was Switch (int); Zero, One, Two, or Default
 - **Random Branch** (`ChanceBranch`) — in Chance
 - **Counter** (`Counter`) — in Reset; out Count
-- **Every N Times** (`EveryN`) — in N
-- **Function** (`FunctionStart`) — setting: Name(a: Number) -> out: Number
+- **Every Number of Times** (`EveryN`) — was Every N Times; in Times
+- **Define Function** (`FunctionStart`) — was Function
 - **Return** (`Return`)
 - **Call Function** (`CallFunction`)
-- **While** (`While`) — in Cond
+- **While** (`While`) — in Condition
 - **For Each** (`ForEach`) — in List; out Item, Index
-- **Break** (`Break`)
-- **Continue** (`Continue`)
+- **Break Loop** (`Break`) — was Break
+- **Continue Loop** (`Continue`) — was Continue
 
 ### Variables
 

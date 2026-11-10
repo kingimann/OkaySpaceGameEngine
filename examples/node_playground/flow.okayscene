@@ -1,0 +1,318 @@
+okayscene 3
+name "Scene"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "5c4aeccb907f36df25c08d0bb551284c"
+  active 1
+  parent -1
+  transform 0 0 12 0 0 0 1 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Instructions"
+  guid "82705bde0436890e96a2c9639eb2827d"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Flow playground. Press Play.
+Every half second, Ticks goes up by 1 and the square steps right.
+Loop stays 3. After about 2 seconds, Ticks should read 4." 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 760 150 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 2 "Readout"
+  guid "5c4a8b0e37708bf8d16a01f5229baa75"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Press Play" 0.45 1 0.55 1 3.2 1 24 200 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 760 80 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 3 "Runner"
+  guid "26eccf568dcab1f94ba5bdb3cf68356a"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  sprite 79 0.3 0.95 0.45 1 1.2 1.2 "" 0 0 1 1 0 0 0 0 0
+  visualscript "node 1 ForLoop
+node 2 AddVar loop
+node 3 Const 1
+data 1 0 3 0
+node 4 Const 3
+data 1 1 4 0
+node 5 Const 1
+data 2 0 5 0
+exec 1 0 2
+node 6 OnStart
+exec 6 0 1
+entry OnStart 6
+node 7 SetVar items
+node 8 ListAdd
+node 9 ListAdd
+node 10 ForEach
+node 11 AddVar each
+node 12 NewList
+data 7 0 12 0
+node 13 GetVar items
+data 8 0 13 0
+node 14 Const 10
+data 8 1 14 0
+node 15 GetVar items
+data 9 0 15 0
+node 16 Const 20
+data 9 1 16 0
+node 17 GetVar items
+data 10 0 17 0
+data 11 0 10 0
+exec 7 0 8
+exec 8 0 9
+exec 9 0 10
+exec 10 0 11
+node 18 OnStart
+exec 18 0 7
+entry OnStart 18
+node 19 While
+node 20 Compare <
+node 21 AddVar c
+node 22 GetVar c
+data 20 0 22 0
+node 23 Const 3
+data 20 1 23 0
+data 19 0 20 0
+node 24 Const 1
+data 21 0 24 0
+exec 19 0 21
+node 25 OnStart
+exec 25 0 19
+entry OnStart 25
+node 26 Repeat 4
+node 27 AddVar reps
+node 28 Const 1
+data 27 0 28 0
+exec 26 0 27
+node 29 OnStart
+exec 29 0 26
+entry OnStart 29
+node 30 Repeat 2
+node 31 FlipFlop
+node 32 AddVar patha
+node 33 AddVar pathb
+node 34 Const 1
+data 32 0 34 0
+node 35 Const 10
+data 33 0 35 0
+exec 30 0 31
+exec 31 0 32
+exec 31 1 33
+node 36 OnStart
+exec 36 0 30
+entry OnStart 36
+node 37 Gate
+node 38 AddVar gatev
+node 39 Const true
+data 37 0 39 0
+node 40 Const 5
+data 38 0 40 0
+exec 37 0 38
+node 41 OnStart
+exec 41 0 37
+entry OnStart 41
+node 42 Repeat 5
+node 43 DoN 2
+node 44 AddVar don
+node 45 Const 1
+data 44 0 45 0
+exec 42 0 43
+exec 43 0 44
+node 46 OnStart
+exec 46 0 42
+entry OnStart 46
+node 47 Repeat 3
+node 48 Once
+node 49 AddVar oncev
+node 50 Const 1
+data 49 0 50 0
+exec 47 0 48
+exec 48 0 49
+node 51 OnStart
+exec 51 0 47
+entry OnStart 51
+node 52 ChanceBranch
+node 53 AddVar ch
+node 54 Const 1
+data 52 0 54 0
+node 55 Const 4
+data 53 0 55 0
+exec 52 0 53
+node 56 OnStart
+exec 56 0 52
+entry OnStart 56
+node 57 Repeat 4
+node 58 EveryN
+node 59 AddVar en
+node 60 Const 2
+data 58 0 60 0
+node 61 Const 1
+data 59 0 61 0
+exec 57 0 58
+exec 58 0 59
+node 62 OnStart
+exec 62 0 57
+entry OnStart 62
+node 63 SwitchInt
+node 64 AddVar sw
+node 65 Const 1
+data 63 0 65 0
+node 66 Const 7
+data 64 0 66 0
+exec 63 1 64
+node 67 OnStart
+exec 67 0 63
+entry OnStart 67
+node 68 Repeat 3
+node 69 Counter
+node 70 SetVar ctr
+data 70 0 69 0
+exec 68 0 69
+exec 69 0 70
+node 71 OnStart
+exec 71 0 68
+entry OnStart 71
+node 72 OnStart
+node 73 Cooldown 1
+node 74 AddVar cd
+node 75 Const 1
+data 74 0 75 0
+exec 72 0 73
+exec 73 0 74
+entry OnStart 72
+node 76 OnStart
+node 77 Delay 0.25
+node 78 AddVar delayed
+node 79 Const 1
+data 78 0 79 0
+exec 76 0 77
+exec 77 0 78
+entry OnStart 76
+node 80 OnStart
+node 81 Wait 0.25
+node 82 AddVar waited
+node 83 Const 1
+data 82 0 83 0
+exec 80 0 81
+exec 81 0 82
+entry OnStart 80
+node 84 ForLoop
+node 85 Sequence 2
+node 86 AddVar brk
+node 87 Branch
+node 88 Compare >=
+node 89 Break
+node 90 Const 1
+data 84 0 90 0
+node 91 Const 8
+data 84 1 91 0
+node 92 Const 1
+data 86 0 92 0
+node 93 GetVar brk
+data 88 0 93 0
+node 94 Const 3
+data 88 1 94 0
+data 87 0 88 0
+exec 84 0 85
+exec 85 0 86
+exec 85 1 87
+exec 87 0 89
+node 95 OnStart
+exec 95 0 84
+entry OnStart 95
+node 96 ForLoop
+node 97 Branch
+node 98 Compare ==
+node 99 Continue
+node 100 AddVar cont
+node 101 Const 1
+data 96 0 101 0
+node 102 Const 4
+data 96 1 102 0
+data 98 0 96 0
+node 103 Const 2
+data 98 1 103 0
+data 97 0 98 0
+data 100 0 96 0
+exec 96 0 97
+exec 97 0 99
+exec 97 1 100
+node 104 OnStart
+exec 104 0 96
+entry OnStart 104
+node 105 FunctionStart \"Double(n: Number) -> out: Number\"
+node 106 Mul
+node 107 Return Double
+data 106 0 105 0
+node 108 Const 2
+data 106 1 108 0
+data 107 0 106 0
+exec 105 0 107
+node 109 CallFunction Double
+node 110 SetVar fun
+node 111 Const 4
+data 109 0 111 0
+data 110 0 109 0
+exec 109 0 110
+node 112 OnStart
+exec 112 0 109
+entry OnStart 112
+node 113 Branch
+node 114 AddVar branched
+node 115 Const true
+data 113 0 115 0
+node 116 Const 1
+data 114 0 116 0
+exec 113 0 114
+node 117 OnStart
+exec 117 0 113
+entry OnStart 117
+node 118 Sequence 2
+node 119 AddVar seqa
+node 120 AddVar seqb
+node 121 Const 1
+data 119 0 121 0
+node 122 Const 10
+data 120 0 122 0
+exec 118 0 119
+exec 118 1 120
+node 123 OnStart
+exec 123 0 118
+entry OnStart 123
+node 124 OnUpdate
+node 125 Timer 0.5
+node 126 AddVar ticks
+node 127 Translate
+node 128 SetText Readout
+node 129 Format \"Ticks {0}   X {1}   Loop {2}\"
+node 130 Const 1
+data 126 0 130 0
+node 131 Const 1
+data 127 0 131 0
+node 132 Const 0
+data 127 1 132 0
+node 133 Const 0
+data 127 2 133 0
+node 134 GetVar ticks
+data 129 0 134 0
+node 135 GetX
+data 129 1 135 0
+node 136 GetVar loop
+data 129 2 136 0
+data 128 0 129 0
+exec 124 0 125
+exec 125 0 126
+exec 126 0 127
+exec 127 0 128
+entry OnUpdate 124
+node 137 OnStart
+exec 137 0 128
+entry OnStart 137
+"
+end

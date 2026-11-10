@@ -1,0 +1,66 @@
+okayscene 3
+name "Variables"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "c310119498ef38e0ebee3503f82d91ba"
+  active 1
+  parent -1
+  transform 0 2.2 8 0 0 0 1 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Counter"
+  guid "55a3ee422e6c555dc473097c136c2323"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "Cube" 1 1 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  visualscript "var score 0
+node 1 OnTimer 0.5
+entry OnTimer:0.5 1
+node 2 AddVar score
+node 3 Const 1
+data 2 0 3 0
+node 4 GetVar score
+node 5 SetSceneVar score
+data 5 0 4 0
+node 6 Const 5
+node 7 Compare <
+data 7 0 4 0
+data 7 1 6 0
+node 8 Branch
+data 8 0 7 0
+node 9 Translate
+default 9 0 0.4
+default 9 1 0
+default 9 2 0
+exec 1 0 2
+exec 2 0 5
+exec 5 0 8
+exec 8 0 9
+"
+end
+gameobject 2 "Readout"
+  guid "8a4bbfe459eb6ab75c1b32332f8dae36"
+  active 1
+  parent -1
+  transform 0 2 0 0 0 0 1 1 1 1
+  visualscript "node 1 OnUpdate
+entry OnUpdate 1
+node 2 GetSceneVar score
+node 3 ToString
+data 3 0 2 0
+node 4 Const \"Score: \"
+node 5 Concat
+data 5 0 4 0
+data 5 1 3 0
+node 6 SetText self
+data 6 0 5 0
+exec 1 0 6
+"
+  text "Press Play" 1 1 1 1 0.1 0 12 12 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end

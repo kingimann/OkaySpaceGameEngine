@@ -6,6 +6,8 @@
 // the end of Nodes.hpp; MakeNode (NodeGraph.cpp) builds them by type name.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
+#include "okay/VisualScript/VsWhole.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
@@ -18,6 +20,7 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/UIAnchor.hpp"   // UICanvas size for the mouse-to-ground ray
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -46,10 +49,17 @@
 namespace okay::vs {
 
 inline GameObject* VsFindObject(VsContext& ctx, const std::string& name) {
-    if (!ctx.gameObject || !ctx.gameObject->scene()) return nullptr;
-    if (name.empty() || name == "self") return ctx.gameObject;
-    if (name == "other") return ctx.other;
-    return ctx.gameObject->scene()->Find(name);
+    Scene* scene = (ctx.gameObject && ctx.gameObject->scene()) ? ctx.gameObject->scene() : nullptr;
+    if (!scene) return nullptr;
+    // @guid: stays valid after the object is renamed. self / other / a plain
+    // name are the older graphs, and still work.
+    if (VsStartsWith(name, "@guid:")) return scene->FindByGuid(name.substr(6));
+    if (name.empty() || name == "self" || name == "@self") return ctx.gameObject;
+    if (name == "other" || name == "@other") return ctx.other;
+    if (GameObject* o = scene->Find(name)) return o;
+    for (const auto& up : scene->Objects())
+        if (up && up->name == name) return up.get();
+    return nullptr;
 }
 
 /// An object input: an object reference (Self, Other, Spawn's object, Find,
@@ -212,6 +222,32 @@ struct OtherTagNode : VsNode {
 };
 
 // ---- Mouse buttons ----------------------------------------------------------
+// The point where the cursor's ray crosses the floor at this object's height.
+// out0 x, out1 y, out2 z, out3 hit. Needs the scene's main camera.
+struct MouseGroundNode : VsNode {
+    VsValue Eval(int pin, NodeGraph&, VsContext& ctx) override {
+        const float y = ctx.transform ? ctx.transform->Position().y : 0.0f;
+        Vec3 point{0, y, 0};
+        bool hit = false;
+        Scene* scene = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+        Camera* cam = scene ? scene->mainCamera : nullptr;
+        const float w = UICanvas::Width(), h = UICanvas::Height();
+        if (cam && w >= 1.0f && h >= 1.0f) {
+            Vec3 origin, dir;
+            const Vec2 mp = Input::MousePosition();
+            cam->ScreenPointToRay(mp.x, mp.y, w, h, origin, dir);
+            if (std::fabs(dir.y) > 1e-5f) {
+                const float t = (y - origin.y) / dir.y;
+                if (t >= 0.0f) { point = origin + dir * t; point.y = y; hit = true; }
+            }
+        }
+        if (pin == 0) return point.x;
+        if (pin == 1) return point.y;
+        if (pin == 2) return point.z;
+        return hit;
+    }
+};
+
 struct MouseButtonNode : VsNode {   // arg 0 left, 1 right, 2 middle
     int button; bool pressedOnly;
     MouseButtonNode(int b, bool p) : button(b), pressedOnly(p) {}
@@ -267,17 +303,8 @@ struct SetActiveNode : VsNode {   // in0 = on/off, in1 = object (wins over the n
         if (HasInput(1)) {
             const VsValue t = In(1, g, ctx);
             if (t.IsObject()) o = t.AsObjectId() ? GameObject::FromInstanceId(t.AsObjectId()) : nullptr;
-            else {
-                const std::string nm = t.AsString();
-                if (nm.empty() || nm == "self") o = ctx.gameObject;
-                else if (nm == "other") o = ctx.other;
-                else if (ctx.gameObject && ctx.gameObject->scene())
-                    for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == nm) { o = up.get(); break; }
-            }
-        } else if (name.empty() || name == "self") o = ctx.gameObject;
-        else if (name == "other") o = ctx.other;
-        else if (ctx.gameObject && ctx.gameObject->scene())
-            for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == name) { o = up.get(); break; }
+            else o = VsFindObject(ctx, t.AsString());
+        } else o = VsFindObject(ctx, name);
         if (o) o->active = In(0, g, ctx, VsValue{true}).AsBool();
         return 0;
     }
@@ -298,13 +325,14 @@ struct LoadSceneNode : VsNode {   // arg = scene name (build list) or .okayscene
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
         Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
-        if (!s || scene.empty()) return 0;
-        if (!Save::IsSafeRelative(scene)) {   // graphs are game content: stay in the game's folders
-            OKAY_ERROR("[visual script] Load Scene: refusing '", scene, "' (absolute paths and '..' aren't allowed)");
+        const std::string scenePath = VsBareAsset(scene);
+        if (!s || scenePath.empty()) return 0;
+        if (!Save::IsSafeRelative(scenePath)) {   // graphs are game content: stay in the game's folders
+            OKAY_ERROR("[visual script] Load Scene: refusing '", scenePath, "' (absolute paths and '..' aren't allowed)");
             return 0;
         }
-        if (scene.find(".okayscene") != std::string::npos) s->RequestLoad(scene);
-        else if (!SceneManager::LoadSceneByName(*s, scene)) s->RequestLoad(scene + ".okayscene");
+        if (scenePath.find(".okayscene") != std::string::npos) s->RequestLoad(scenePath);
+        else if (!SceneManager::LoadSceneByName(*s, scenePath)) s->RequestLoad(scenePath + ".okayscene");
         return -1;   // the scene is being replaced: stop this chain
     }
 };
@@ -539,9 +567,10 @@ struct MusicPlayNode : VsNode {   // arg = track file or playlist number ("" = t
     int Exec(NodeGraph&, VsContext& ctx) override {
         MusicPlayer* m = VsMusicPlayer(ctx);
         if (!m) return 0;
-        if (track.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
-        else if (std::all_of(track.begin(), track.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) m->Play(std::atoi(track.c_str()));
-        else m->Play(track);
+        const std::string file = VsBareAsset(track);
+        if (file.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
+        else if (std::all_of(file.begin(), file.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) m->Play(std::atoi(file.c_str()));
+        else m->Play(file);
         return 0;
     }
 };
@@ -730,8 +759,8 @@ struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
     int ExecOutCount() const override { return 2; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)index; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int first = (int)std::lround(In(0, g, ctx, VsValue{0.0f}).AsFloat());
-        const int last  = (int)std::lround(In(1, g, ctx, VsValue{9.0f}).AsFloat());
+        const int first = VsWhole(In(0, g, ctx, VsValue{0.0f}).AsFloat(), 0);
+        const int last  = VsWhole(In(1, g, ctx, VsValue{9.0f}).AsFloat(), 0);
         const int step = last >= first ? 1 : -1;
         const int body = Next(0);
         // No iteration cap of its own: every body run spends the event's step
@@ -748,7 +777,11 @@ struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
 // Only lets the flow through while Open is true.
 struct GateNode : VsNode {   // in0 = open
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { return In(0, g, ctx, VsValue{true}).AsBool() ? 0 : -1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const VsValue v = In(0, g, ctx, VsValue{true});
+        if (v.IsNumber() && !std::isfinite(v.AsFloat())) return -1;   // NaN is not "open"
+        return v.AsBool() ? 0 : -1;
+    }
 };
 // Passes the first N times only; Count reads how many times it has passed.
 struct DoNNode : VsNode {
@@ -762,7 +795,9 @@ struct DoNNode : VsNode {
 struct SwitchIntNode : VsNode {   // in0 = value
     int ExecOutCount() const override { return 4; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int v = (int)std::lround(In(0, g, ctx).AsFloat());
+        const float f = In(0, g, ctx).AsFloat();
+        if (!std::isfinite(f)) return 3;
+        const int v = VsWhole(f, 3);
         return (v >= 0 && v <= 2) ? v : 3;
     }
 };
@@ -1009,7 +1044,7 @@ struct PlayClipNode : VsNode {
     explicit PlayClipNode(std::string c) : clip(std::move(c)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        PlayClipFrom(ctx.gameObject, clip, warned);
+        PlayClipFrom(ctx.gameObject, VsClipToken(clip), warned);
         return 0;
     }
 };

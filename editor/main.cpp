@@ -336,6 +336,9 @@ static bool PlayStopShortcut(bool ctrl, bool keyPressed) { return ctrl && keyPre
 // ----------------------------------------------------------------------------
 // Headless self-test: verifies the editor's model logic with no GUI.
 // ----------------------------------------------------------------------------
+static void RunEditorPlayKeyTest(int& failures);
+static void RunStaleGraphTest(int& failures);
+
 static int RunSelfTest() {
     using namespace okay;
     using namespace okay::editor;
@@ -377,6 +380,9 @@ static int RunSelfTest() {
               "play compiled the open script buffer");
         ped.Stop();
     }
+
+    RunEditorPlayKeyTest(failures);
+    RunStaleGraphTest(failures);
 
     // Play / stop restores edit state (move during play is reverted).
     ed.Play();
@@ -622,6 +628,165 @@ int main(int argc, char** argv) {
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
+#include "EditorPlayInput.hpp"     // Play keyboard: SDL state -> the keys scripts read
+
+// Holding D in EditorState::Play, through CollectEditorPlayKeys, walks a Move
+// with WASD cube into a Door. E then changes the Press E colour.
+static void RunStaleGraphTest(int& failures) {
+    using namespace okay;
+    using namespace okay::editor;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) { ++failures; std::cerr << "  FAIL: " << what << "\n"; }
+    };
+    namespace fs = std::filesystem;
+    const fs::path root = "/tmp/okay_vs_stale";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    const char* oldText =
+        "node 1 OnStart\n"
+        "node 2 SetPosition\n"
+        "default 2 0 1\n"
+        "exec 1 0 2\n"
+        "entry OnStart 1\n";
+    const fs::path graph = root / "Assets" / "move.okayvs";
+    { std::ofstream(graph) << oldText; }
+
+    EditorState ed;
+    ed.setProjectDir(root.string());
+    GameObject* a = ed.scene().CreateGameObject("A");
+    GameObject* b = ed.scene().CreateGameObject("B");
+    check(a->AddComponent<VisualScriptComponent>()->LoadFromFile(graph.string()), "A loaded the old graph");
+    check(b->AddComponent<VisualScriptComponent>()->LoadFromFile(graph.string()), "B loaded the old graph");
+
+    vsed::State() = vsed::VsEditState{};
+    vsed::OpenFile(graph.string());
+    bool found = false;
+    for (auto& n : vsed::State().g.nodes)
+        if (n.type == "SetPosition") { n.pinDefault[0] = "9"; found = true; }
+    check(found, "the open graph has Set Position");
+    vsed::State().g.dirty = true;
+    check(vsed::PublishOpenGraph(ed, true), "saving the edit publishes it");
+    ed.Play();
+    ed.Tick(1.0f / 60.0f);
+    GameObject* pa = ed.scene().Find("A");
+    GameObject* pb = ed.scene().Find("B");
+    check(pa && std::fabs(pa->transform->localPosition.x - 9.0f) < 0.05f,
+          "edited graph runs on Play without detaching");
+    check(pb && std::fabs(pb->transform->localPosition.x - 9.0f) < 0.05f,
+          "a second object sharing the graph updates too");
+    ed.Stop();
+
+    vsed::State() = vsed::VsEditState{};
+    vsed::State().g.fromText(oldText);
+    vsed::State().g.path.clear();
+    vsed::State().g.dirty = true;
+    vsed::State().publishedText = vsed::State().g.toText();
+    GameObject* c = ed.scene().CreateGameObject("C");
+    auto* vc = c->AddComponent<VisualScriptComponent>();
+    vc->LoadFromText(vsed::State().publishedText);
+    vc->SetPath("");
+    vsed::BindObject(c);
+    for (auto& n : vsed::State().g.nodes)
+        if (n.type == "SetPosition") n.pinDefault[0] = "6";
+    vsed::State().g.dirty = true;
+    check(vsed::PublishOpenGraph(ed, true), "an embedded edit publishes");
+    ed.Play();
+    ed.Tick(1.0f / 60.0f);
+    GameObject* pc = ed.scene().Find("C");
+    check(pc && std::fabs(pc->transform->localPosition.x - 6.0f) < 0.05f,
+          "an embedded graph edit runs on Play without detaching");
+    ed.Stop();
+
+    GameObject* d = ed.scene().CreateGameObject("D");
+    auto* vd = d->AddComponent<VisualScriptComponent>();
+    vd->LoadFromText(oldText);
+    vd->SetPath("Assets/move.okayvs");
+    vsed::OpenFile(graph.string());
+    for (auto& n : vsed::State().g.nodes)
+        if (n.type == "SetPosition") n.pinDefault[0] = "4";
+    vsed::State().g.dirty = true;
+    check(vsed::PublishOpenGraph(ed, true), "a relative path still matches the file");
+    ed.Play();
+    ed.Tick(1.0f / 60.0f);
+    GameObject* pd = ed.scene().Find("D");
+    check(pd && std::fabs(pd->transform->localPosition.x - 4.0f) < 0.05f,
+          "relative path picks up the save without reattach");
+    ed.Stop();
+
+    const fs::path prefab = root / "Assets" / "mover.okayprefab";
+    {
+        std::ofstream f(prefab);
+        f << "okayscene 3\n"
+          << "gameobject 0 \"Spawned\"\n"
+          << "  active 1\n  parent -1\n"
+          << "  transform 0 0 0 0 0 0 1 1 1 1\n"
+          << "  visualscript \"old\"\n"
+          << "  visualscriptpath \"" << graph.generic_string() << "\"\n"
+          << "end\n";
+    }
+    std::string err;
+    GameObject* spawned = SceneSerializer::InstantiateFromFile(ed.scene(), prefab.string(), &err);
+    check(spawned != nullptr, "prefab that points at the graph instantiates");
+    ed.Play();
+    ed.Tick(1.0f / 60.0f);
+    GameObject* ps = ed.scene().Find("Spawned");
+    check(ps && std::fabs(ps->transform->localPosition.x - 4.0f) < 0.05f,
+          "a prefab instance runs the saved graph");
+    ed.Stop();
+    vsed::State() = vsed::VsEditState{};
+}
+
+static void RunEditorPlayKeyTest(int& failures) {
+    using namespace okay;
+    using namespace okay::editor;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) { ++failures; std::cerr << "  FAIL: " << what << "\n"; }
+    };
+    if (SDL_WasInit(SDL_INIT_EVENTS) == 0) SDL_Init(SDL_INIT_EVENTS);
+    EditorState ped;
+    auto place = [&](const char* name, const char* which, Vec3 at) {
+        GameObject* go = ped.scene().CreateGameObject(name);
+        go->transform->localPosition = at;
+        go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+        const auto* t = vsed::VsTemplateNamed(which);
+        check(t != nullptr, which);
+        if (!t) return go;
+        vsed::VsAddTemplateComponents(go, t->add);
+        go->AddComponent<VisualScriptComponent>()->LoadFromText(t->graph);
+        return go;
+    };
+    GameObject* player = place("Player", "Move with WASD", {-1.4f, 0, 0});
+    GameObject* door = place("Door", "Door", {0.6f, 0, 0});
+    GameObject* sw = place("Switch", "Press E", {4, 0, 2});
+    if (auto* mesh = sw->GetComponent<MeshRenderer>()) mesh->color = {0.9f, 0.2f, 0.2f, 1};
+    ped.Play();
+    Uint8 ks[SDL_NUM_SCANCODES] = {};
+    ks[SDL_SCANCODE_D] = 1;
+    for (int i = 0; i < 70; ++i) {
+        std::vector<char> down;
+        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        Input::FeedKeys(down);
+        ped.Tick(1.0f / 60.0f);
+    }
+    check(player && player->transform->localPosition.x > -0.2f, "editor play: D moved the WASD cube");
+    check(door && door->transform->localPosition.y > 1.2f, "editor play: walking into the door opened it");
+    ks[SDL_SCANCODE_D] = 0;
+    Input::FeedKeys({});
+    ped.Tick(1.0f / 60.0f);
+    ks[SDL_SCANCODE_E] = 1;
+    {
+        std::vector<char> down;
+        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        Input::FeedKeys(down);
+        ped.Tick(1.0f / 60.0f);
+    }
+    auto* swMesh = sw ? sw->GetComponent<MeshRenderer>() : nullptr;
+    check(swMesh && swMesh->color.g > 0.5f, "editor play: E changed the switch colour");
+    ped.Stop();
+    Input::FeedKeys({});
+}
+#include "NodePlayground.hpp"      // File > Examples > Node Playground
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
 #include "ProblemsPanel.hpp"       // Problems panel: one list of what is wrong
@@ -3388,6 +3553,7 @@ static bool g_playPointerGrabbed = false;
 // KEYDOWN Escape this poll. Cleared once the frame has read it.
 static bool g_escapeEdge = false;
 bool   g_gameCanvasHovered = false;   // mouse over the Game view's picture (last frame)
+bool   g_sceneViewHovered = false;    // mouse over the Scene view (Play keys still reach the game)
 int    g_gameCanvasHoveredFrame = -10; // ImGui frame g_gameCanvasHovered was last set (the Game view may be hidden)
 
 // Shortest distance (pixels) from point p to the segment a-b, for handle picking.
@@ -5774,6 +5940,21 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::Separator();
         if (ImGui::MenuItem("New 2D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene2D(); ConsoleLog("New 2D scene"); });
         if (ImGui::MenuItem("New 3D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene3D(); ConsoleLog("New 3D scene"); });
+        if (ImGui::BeginMenu("Examples")) {
+            const auto playground = okay::editor::NodePlaygroundScenes();
+            if (ImGui::BeginMenu("Node Playground", !playground.empty())) {
+                for (const std::string& p : playground) {
+                    const std::string name = std::filesystem::path(p).stem().string();
+                    if (ImGui::MenuItem(name.c_str())) {
+                        std::string err;
+                        if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                        else ConsoleLog("Open failed: " + err, 2);
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Import Model...")) PickAndImportModel();   // OS file explorer, then settings
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", DAE, STL, ..." : "");
@@ -14367,7 +14548,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Movement", "Jump on Space", "Upward push when Space is pressed (needs a Rigidbody).",
                     "if (key_down(\"space\")) jump(8)   // no braces needed for one line\n"},
                 {"Movement", "Shoot on a cooldown", "Fire at most a few times a second — cooldown() gates the rate.",
-                    "update(dt) {\n    if (mouse(0) && cooldown(\"shoot\", 0.25)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                    "update(dt) {\n    if (mouse(0) && cooldown(\"shoot\", 0.25)) {\n        spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 {"Movement", "Follow the player", "One line: walk toward the object named Player.",
                     "follow(\"Player\", 3)\n"},
                 {"Movement", "Smooth follow", "Glides toward Player with easing (softer than follow).",
@@ -14377,22 +14558,22 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Movement", "Spin forever", "One line: smooth rotation, degrees per second.",
                     "spin(90)\n"},
                 {"Movement", "Key event -> function", "Call your own function the frame a key is pressed.",
-                    "on_key(\"space\", \"shoot\")\n\nshoot() {\n    spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n}\n"},
+                    "on_key(\"space\", \"shoot\")\n\nshoot() {\n    spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n}\n"},
                 {"Movement", "Shoot on click", "Spawn a bullet where we are when clicked.",
-                    "update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                    "update(dt) {\n    if (mouse_down(0)) {\n        spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 // ---- Gameplay ----
                 {"Gameplay", "Health + take damage", "A hp value that drops on collision and dies at 0.",
                     "start() {\n    hp = 100\n}\n\non_collision(other) {\n    hp = hp - 10\n    if (hp <= 0) {\n        destroy()\n    }\n}\n"},
                 {"Gameplay", "Collect coin (+score)", "One line + remove: add_score does the shared score.",
                     "on_collision(other) {\n    add_score(1)\n    destroy()\n}\n"},
                 {"Gameplay", "Spawn on a timer", "One line with timer() - no accumulator needed.",
-                    "if (timer(\"spawn\", 2)) {\n    spawn(\"enemy.okayprefab\", pos_x(), pos_y())\n}\n"},
+                    "if (timer(\"spawn\", 2)) {\n    spawn(\"examples/node_playground/marker.okayprefab\", pos_x(), pos_y())\n}\n"},
                 {"Gameplay", "Countdown to a scene", "Tick a timer down, then load a scene.",
-                    "start() {\n    timeLeft = 10\n}\n\nupdate(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        load_scene(\"GameOver\")\n    }\n}\n"},
-                {"Gameplay", "Do something near the player", "Act only when within a distance.",
-                    "update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        // ... the player is close ...\n    }\n}\n"},
+                    "start() {\n    timeLeft = 10\n}\n\nupdate(dt) {\n    timeLeft = timeLeft - dt\n    if (timeLeft <= 0) {\n        print(\"Game over\")\n    }\n}\n"},
+                {"Gameplay", "When the player is close", "Prints a line while this object is within 3 units of Player.",
+                    "update(dt) {\n    if (dist_to(\"Player\") < 3) {\n        print(\"Player is close\")\n    }\n}\n"},
                 {"Gameplay", "Spawn a wave (loop)", "Create a row of enemies at start.",
-                    "start() {\n    // Spawn 5 enemies in a row.\n    for (i = 0; i < 5; i = i + 1) {\n        spawn(\"enemy.okayprefab\", i * 2, 0)\n    }\n}\n"},
+                    "start() {\n    // Spawn 5 enemies in a row.\n    for (i = 0; i < 5; i = i + 1) {\n        spawn(\"examples/node_playground/marker.okayprefab\", i * 2, 0)\n    }\n}\n"},
                 // ---- HUD (on-screen UI from script) ----
                 {"HUD", "Health bar + buttons", "A draggable window with a bar and two buttons.",
                     "start() {\n    hp = 100\n}\n\nupdate(dt) {\n    ui_begin(\"HUD\", 24, 24, 240, 130)\n    ui_text(\"Health\")\n    ui_progress(hp / 100)\n    if (ui_button(\"Heal\")) { hp = 100 }\n    ui_sameline()\n    if (ui_button(\"Hurt\")) { hp = hp - 10 }\n    ui_end()\n}\n"},
@@ -14419,7 +14600,7 @@ void DrawScriptEditor(EditorState& ed) {
                     "flee(\"Player\", 3)\n"},
                 // ---- Abilities ----
                 {"Abilities", "Ability with cooldown", "Fire on Space, but only every 1.5s.",
-                    "start() {\n    cd = 0\n}\n\nupdate(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"bullet.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
+                    "start() {\n    cd = 0\n}\n\nupdate(dt) {\n    if (cd > 0) { cd = cd - dt }\n    if (key_down(\"space\") && cd <= 0) {\n        cd = 1.5   // seconds until it can fire again\n        spawn(\"examples/node_playground/shot.okayprefab\", pos_x(), pos_y())\n    }\n}\n"},
                 {"Abilities", "Delay then act (once)", "Wait 3 seconds after start, then do something.",
                     "start() {\n    t = 0\n    done = 0\n}\n\nupdate(dt) {\n    if (done == 0) {\n        t = t + dt\n        if (t >= 3) {\n            done = 1\n            // ... runs once, 3 seconds in ...\n        }\n    }\n}\n"},
                 // ---- Effects ----
@@ -14483,16 +14664,16 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Movement", "Move to a spot", "One line: walk to a point and stop there.",
                     "move_to(0, 5, 3)   // go to (0,5) at speed 3\n"},
                 {"Spawning", "Spawn a ring (wave)", "Spawn N enemies in a ring around you, once.",
-                    "start() {\n    spawn_wave(\"enemy.okayprefab\", 8, 3)\n}\n"},
+                    "start() {\n    spawn_wave(\"examples/node_playground/marker.okayprefab\", 8, 3)\n}\n"},
                 {"Abilities", "Auto-fire at the player", "Fire a bullet at the player twice a second.",
-                    "start() {\n    every(0.5, \"fire\")\n}\n\nfunction fire() {\n    shoot_at(\"Player\", \"bullet.okayprefab\", 6)\n}\n"},
+                    "start() {\n    every(0.5, \"fire\")\n}\n\nfunction fire() {\n    shoot_at(\"Player\", \"examples/node_playground/shot.okayprefab\", 6)\n}\n"},
                 {"Motion", "Grow while Up held", "Scale up as long as the Up key is down.",
                     "start() {\n    s = 1\n}\n\nupdate(dt) {\n    if (key(\"up\")) {\n        s = s + dt\n        set_scale(s)\n    }\n}\n"},
                 // ---- Enemy AI (more) ----
                 {"Enemy AI", "Patrol or chase (state)", "Chase when close, otherwise walk right.",
                     "update(dt) {\n    if (dist_to(\"Player\") < 5) {\n        follow(\"Player\", 3)\n    } else {\n        walk(1, 0, 2)\n    }\n}\n"},
                 {"Enemy AI", "Random chance spawner", "Every second, 50% chance to spawn from above.",
-                    "start() {\n    t = 0\n}\n\nupdate(dt) {\n    t = t + dt\n    if (t >= 1) {\n        t = 0\n        if (chance(0.5)) {\n            spawn(\"enemy.okayprefab\", rand(-4, 4), 3)\n        }\n    }\n}\n"},
+                    "start() {\n    t = 0\n}\n\nupdate(dt) {\n    t = t + dt\n    if (t >= 1) {\n        t = 0\n        if (chance(0.5)) {\n            spawn(\"examples/node_playground/marker.okayprefab\", rand(-4, 4), 3)\n        }\n    }\n}\n"},
                 // ---- Gameplay (more) ----
                 {"Gameplay", "Regenerate health (capped)", "Heal over time up to 100.",
                     "start() {\n    hp = 100\n}\n\nupdate(dt) {\n    if (hp < 100) {\n        hp = clamp(hp + 10 * dt, 0, 100)\n    }\n}\n"},
@@ -20537,14 +20718,14 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
         {"Physics", "Bounce up every second", "Gives an upward push on a timer.",
             T::OnInterval, "1", {}, {{"impulse", {"0", "6"}}}},
         // ---- Spawning ----
-        {"Spawning", "Spawn every 2 seconds", "Creates a prefab on a repeating timer.",
-            T::OnInterval, "2", {}, {{"spawn", {"enemy.okayprefab", "0", "0"}}}},
-        {"Spawning", "Spawn from above every 3s", "Drops a prefab in from y = 5 on a timer.",
-            T::OnInterval, "3", {}, {{"spawn", {"enemy.okayprefab", "0", "5"}}}},
-        {"Spawning", "Spawn on click", "Creates a prefab where this object is when clicked.",
-            T::OnClick, "", {}, {{"spawn", {"coin.okayprefab", "0", "0"}}}},
-        {"Spawning", "Random chance spawn", "Every second, a 50% chance to spawn from above.",
-            T::OnInterval, "1", {{"chance", {"0.5"}}}, {{"spawn", {"enemy.okayprefab", "0", "5"}}}},
+        {"Spawning", "Spawn every 2 seconds", "Creates the example marker cube on a repeating timer.",
+            T::OnInterval, "2", {}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "0"}}}},
+        {"Spawning", "Spawn from above every 3s", "Drops the example marker cube in from y = 5 on a timer.",
+            T::OnInterval, "3", {}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "5"}}}},
+        {"Spawning", "Spawn on click", "Creates the example marker cube where this object is when clicked.",
+            T::OnClick, "", {}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "0"}}}},
+        {"Spawning", "Random chance spawn", "Every second, a 50% chance to drop a marker cube from above.",
+            T::OnInterval, "1", {{"chance", {"0.5"}}}, {{"spawn", {"examples/node_playground/marker.okayprefab", "0", "5"}}}},
         {"Spawning", "Self-destruct after 3s", "Waits 3 seconds, then removes this object.",
             T::OnStart, "", {}, {{"wait", {"3"}}, {"destroy", {}}}},
         // ---- Combat / health ----
@@ -20588,12 +20769,12 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnClick, "", {}, {{"set_scale", {"2"}}}},
         {"Interaction", "Toggle a flag on E", "Flips a true/false variable named 'on' when E is pressed.",
             T::OnKey, "e", {}, {{"toggle_var", {"on"}}}},
-        {"Interaction", "Play a sound on click", "Plays a sound when clicked (auto-adds an Audio Source).",
-            T::OnClick, "", {}, {{"play_sound", {"click.wav"}}}},
+        {"Interaction", "Play a sound on click", "Plays this object's sound when clicked (auto-adds an Audio Source).",
+            T::OnClick, "", {}, {{"play_sound", {}}}},
         // ---- Timers ----
         {"Timers", "Countdown timer", "Ticks a 'timer' variable down each second and shows it on this Text.",
             T::OnInterval, "1", {}, {{"add_var", {"timer", "-1"}}, {"set_text", {"Time:", "{timer}"}}}},
-        {"Timers", "Do something every 5s", "A blank timer that fires every 5 seconds — add your actions.",
+        {"Timers", "Log a tick every 5 seconds", "Writes tick to the console every 5 seconds.",
             T::OnInterval, "5", {}, {{"log", {"tick"}}}},
         // ---- HUD / Text ----
         {"HUD", "Say hello on start", "Prints a message to the console when the game starts.",
@@ -20605,13 +20786,13 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
         {"HUD", "Flash 'Go!' then clear", "Shows 'Go!' for 2 seconds, then blanks this Text.",
             T::OnStart, "", {}, {{"set_text", {"Go!"}}, {"wait", {"2"}}, {"set_text", {""}}}},
         // ---- Audio ----
-        {"Audio", "Play music on start", "Plays a sound when the game begins (auto-adds an Audio Source).",
-            T::OnStart, "", {}, {{"play_sound", {"music.wav"}}}},
-        {"Audio", "Footstep while moving", "Plays a step sound whenever this object is moving.",
-            T::OnUpdate, "", {{"is_moving", {}}}, {{"play_sound", {"step.wav"}}}},
+        {"Audio", "Play a sound on start", "Plays this object's sound when the game begins (auto-adds an Audio Source).",
+            T::OnStart, "", {}, {{"play_sound", {}}}},
+        {"Audio", "Sound while moving", "Plays this object's sound whenever it is moving.",
+            T::OnUpdate, "", {{"is_moving", {}}}, {{"play_sound", {}}}},
         // ---- Camera / Scene ----
-        {"Scene", "Win on collision", "Loads the scene named 'Win' on collision.",
-            T::OnCollision, "", {}, {{"load_scene", {"Win"}}}},
+        {"Scene", "Mark a win on collision", "Sets won to 1 and logs You win when this object hits something.",
+            T::OnCollision, "", {}, {{"set_var", {"won", "1"}}, {"log", {"You win"}}}},
         {"Scene", "Next level on collision", "Loads the next scene in build order on collision.",
             T::OnCollision, "", {}, {{"load_next_scene", {}}}},
         {"Scene", "Pause on P", "Freezes the game when P is pressed.",
@@ -20620,13 +20801,13 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
             T::OnClick, "", {}, {{"set_timescale", {"0.5"}}}},
         {"Scene", "Set sky color on start", "Paints the background blue when the game starts.",
             T::OnStart, "", {}, {{"set_bg", {"0.2", "0.4", "0.8"}}}},
-        {"Scene", "Win at 10 points", "Loads the 'Win' scene once 'score' reaches 10.",
-            T::OnUpdate, "", {{"var_ge", {"score", "10"}}}, {{"load_scene", {"Win"}}}},
-        {"Scene", "Win when enemies cleared", "Loads 'Win' when no objects are tagged 'enemy'.",
-            T::OnUpdate, "", {{"tag_count_lt", {"enemy", "1"}}}, {{"load_scene", {"Win"}}}},
+        {"Scene", "Mark a win at 10 points", "Sets won to 1 and logs You win once score reaches 10.",
+            T::OnUpdate, "", {{"var_ge", {"score", "10"}}}, {{"set_var", {"won", "1"}}, {"log", {"You win"}}}},
+        {"Scene", "Mark a win when the tagged enemies are gone", "Sets won to 1 when no objects are tagged enemy.",
+            T::OnUpdate, "", {{"tag_count_lt", {"enemy", "1"}}}, {{"set_var", {"won", "1"}}, {"log", {"You win"}}}},
         // ---- Juice ----
         {"Juice", "Pickup pop", "Punches the scale, plays a sound, then vanishes when clicked.",
-            T::OnClick, "", {}, {{"punch_scale", {"0.4", "0.3"}}, {"play_sound", {"pickup.wav"}},
+            T::OnClick, "", {}, {{"punch_scale", {"0.4", "0.3"}}, {"play_sound", {}},
                                  {"wait", {"0.3"}}, {"destroy", {}}}},
         {"Juice", "Hit shake", "Shakes this object whenever a 'hit' message arrives.",
             T::OnMessage, "hit", {}, {{"shake", {"0.4", "0.35"}}}},
@@ -20656,8 +20837,8 @@ static const std::vector<ScriptRecipe>& ScriptRecipes() {
         {"Move", "Cruise forward", "Moves in the facing direction at 2 units/second — pair with Look At or Aim.",
             T::OnUpdate, "", {}, {{"move_dir", {"forward", "2"}}}},
         // ---- Timing ----
-        {"Timing", "Rate-limited shot on Space", "Spawns a 'Bullet' prefab when Space is held, at most every 0.3s (edit the prefab name).",
-            T::OnKey, " ", {{"cooldown", {"0.3"}}}, {{"spawn", {"Bullet", "0", "0"}}}},
+        {"Timing", "Shot on Space, then wait", "Spawns the example shot when Space is held, at most every 0.3 seconds.",
+            T::OnKey, " ", {{"cooldown", {"0.3"}}}, {{"spawn", {"examples/node_playground/shot.okayprefab", "0", "0"}}}},
         // ---- Cloud (PlayFab) ----
         {"Cloud", "PlayFab sign-in on start", "Signs in to PlayFab when the game starts (put your Title ID in). Sets playfab_ok and playfab_id.",
             T::OnStart, "", {}, {{"playfab_login", {"TITLEID", "player-1"}},
@@ -30467,6 +30648,7 @@ void DrawInspector(EditorState& ed) {
                     vsc->SetPath(path); ed.dirty = true;
                 }
                 okay::editor::vsed::OpenFile(path);
+                okay::editor::vsed::BindObject(go);
                 g_showVisualScript = true;
             }
             ImGui::SameLine();
@@ -30474,6 +30656,62 @@ void DrawInspector(EditorState& ed) {
                 std::string err;
                 if (vsc->Reload(&err)) ConsoleLog("Reloaded " + nm);
                 else ConsoleLog("Reload failed: " + err, 2);
+            }
+            if (vsc->Graph() && !vsc->Graph()->ExposedVars().empty()) {
+                ImGui::TextDisabled("Change these, then press Play.");
+                for (const auto& v : vsc->Graph()->ExposedVars()) {
+                    ImGui::PushID(v.name.c_str());
+                    bool edited = false;
+                    std::string literal, plain;
+                    if (v.value.IsNumber()) {
+                        float f = v.value.AsFloat();
+                        if (ed.isPlaying()) {
+                            auto it = vsc->Variables().find(v.name);
+                            if (it != vsc->Variables().end() && it->second.IsNumber()) f = it->second.AsFloat();
+                        }
+                        if (ImGui::DragFloat(v.name.c_str(), &f, 0.05f)) {
+                            edited = true;
+                            literal = std::to_string(f);
+                            plain = literal;
+                            if (ed.isPlaying()) vsc->SetVariable(v.name, okay::vs::VsValue(f));
+                        }
+                    } else {
+                        char buf[128];
+                        std::snprintf(buf, sizeof(buf), "%s", v.value.AsString().c_str());
+                        if (ImGui::InputText(v.name.c_str(), buf, sizeof(buf))) {
+                            edited = true;
+                            plain = buf;
+                            literal = std::string("\"") + buf + "\"";
+                            if (ed.isPlaying()) vsc->SetVariable(v.name, okay::vs::VsValue(std::string(buf)));
+                        }
+                    }
+                    if (edited && !ed.isPlaying()) {
+                        std::string src = vsc->Source();
+                        const std::string prefix = "var " + v.name + " ";
+                        const auto at = src.find(prefix);
+                        if (at != std::string::npos) {
+                            const auto end = src.find('\n', at);
+                            src.replace(at, end == std::string::npos ? std::string::npos : end - at, prefix + literal);
+                            std::string err;
+                            vsc->LoadFromText(src, &err);
+                            if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
+                            ed.dirty = true;
+                            // Keep the open graph in step, or the next Save / Play
+                            // would put the old number back.
+                            auto& eg = okay::editor::vsed::State().g;
+                            const bool sameFile = !vsc->Path().empty() && okay::editor::vsed::VsSamePath(vsc->Path(), eg.path);
+                            const bool bound = std::find(okay::editor::vsed::State().boundGuids.begin(),
+                                                         okay::editor::vsed::State().boundGuids.end(),
+                                                         go->Guid()) != okay::editor::vsed::State().boundGuids.end();
+                            if (sameFile || bound) {
+                                for (auto& ev : eg.vars)
+                                    if (ev.name == v.name) ev.value = plain;
+                                eg.dirty = true;
+                            }
+                        }
+                    }
+                    ImGui::PopID();
+                }
             }
             if (ed.isPlaying() && !vsc->Variables().empty() && ImGui::TreeNode("Variables##vsc")) {
                 for (const auto& kv : vsc->Variables())
@@ -36440,7 +36678,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Fire Button##t2");
             {
                 char pb[128]; std::strncpy(pb, t2->projectile.c_str(), sizeof(pb) - 1); pb[sizeof(pb) - 1] = '\0';
-                if (ImGui::InputTextWithHint("Projectile##t2", "bullet.okayprefab", pb, sizeof(pb))) { t2->projectile = pb; ed.dirty = true; }
+                if (ImGui::InputTextWithHint("Projectile##t2", "examples/node_playground/shot.okayprefab", pb, sizeof(pb))) { t2->projectile = pb; ed.dirty = true; }
                 oked::FieldTip("Projectile##t2");
                 if (AcceptAssetPathField(t2->projectile)) ed.dirty = true;   // drop a prefab from Project
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Prefab spawned as a bullet — give it a Rigidbody2D (+ Lifetime).");
@@ -41723,6 +41961,29 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
     }
 }
 
+// The selected object's name, drawn in the Scene view. Drag it onto a
+// visual-script slot (the Hierarchy rows do the same).
+static okay::GameObject*& SceneRefDrag() { static okay::GameObject* g = nullptr; return g; }
+static void SceneObjectDragChip(okay::GameObject* go, ImVec2 screen) {
+    if (!go) return;
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) SceneRefDrag() = nullptr;
+    const char* nm = go->name.empty() ? "Object" : go->name.c_str();
+    ImVec2 ts = ImGui::CalcTextSize(nm);
+    ImGui::SetCursorScreenPos(ImVec2(screen.x - ts.x * 0.5f - 8.0f, screen.y - ts.y - 26.0f));
+    ImGui::PushID(go);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.28f, 0.42f, 0.94f));
+    ImGui::Button(nm, ImVec2(ts.x + 16.0f, ts.y + 6.0f));
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemActive()) SceneRefDrag() = go;
+    if (ImGui::BeginDragDropSource()) {
+        ImGui::SetDragDropPayload("GO_PTR", &go, sizeof(go));
+        ImGui::TextUnformatted(nm);
+        ImGui::EndDragDropSource();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag onto a visual-script object slot");
+    ImGui::PopID();
+}
+
 void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
@@ -42067,9 +42328,14 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ed.dirty = true;
         }
     }
+    // The name chip is a drag source for visual-script slots. Draw it before the
+    // move drag so grabbing the name doesn't also slide the object.
+    if (!gameView && ed.selected() && ed.selected()->transform)
+        SceneObjectDragChip(ed.selected(), worldToScreen(ed.selected()->transform->Position()));
     // Selecting and dragging work in Play too.
     // Skipped while a UI widget or a sprite handle is being dragged.
-    else if (ed.selected() && hovered && !g_uiHandled && g_spriteHandle < 0 &&
+    if (g_spriteHandle < 0 && ed.selected() && hovered && !g_uiHandled &&
+        SceneRefDrag() != ed.selected() &&
         !IsUIElement(ed.selected()) &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         Transform* t = ed.selected()->transform;
@@ -42101,6 +42367,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
 void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
+    if (!gameView) g_sceneViewHovered = hovered;
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
 
     // Orbit controls (Scene view only).
@@ -44527,6 +44794,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
         ed.Select(hit);   // hit may be null -> clicking empty space deselects (matches 2D)
     }
+    if (!gameView && ed.selected() && ed.selected()->transform) {
+        ImVec2 sp;
+        if (toScreen(vp * Vec4{ed.selected()->transform->Position(), 1}, sp))
+            SceneObjectDragChip(ed.selected(), sp);
+    }
 }
 
 // ---- Shared game / UI screen resolution ------------------------------------
@@ -45056,6 +45328,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
 
+    ImGui::SetNextItemAllowOverlap();   // the selection's drag chip sits on top of the picture
     ImGui::InvisibleButton("canvas", canvasSize,
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 
@@ -46379,6 +46652,9 @@ static void StartPlayNow(EditorState& ed) {
     StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
     okay::editor::apreview::Stop(ed.scene());
     CompileOpenScriptBuffers(ed.scene());
+    // Save, then Play, runs the graph that is open, including an unsaved edit.
+    if (!okay::editor::vsed::PublishOpenGraph(ed, true))
+        ConsoleLog("Visual script: couldn't save the open graph. Play is using the copy on the objects.", 1);
     NavigationBeforePlay(ed);
     ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
     g_playTextHandoff = true; ImGui::ClearActiveID();
@@ -48268,6 +48544,7 @@ int main(int argc, char** argv) {
                 StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
                 okay::editor::apreview::Stop(ed.scene());
                 CompileOpenScriptBuffers(ed.scene());
+                okay::editor::vsed::PublishOpenGraph(ed, true);
                 ed.Play(); g_paused = false; ConsoleLog("Play");
                 g_playTextHandoff = true; ImGui::ClearActiveID();
             }
@@ -48491,8 +48768,117 @@ int main(int argc, char** argv) {
             // OKAY_UI_VSFILE=graph.okayvs: open that graph file in the Visual Script editor.
             if (const char* vf = std::getenv("OKAY_UI_VSFILE"); vf && s_focusFrames == 42) {
                 okay::editor::vsed::OpenFile(vf);
+                if (ed.selected()) okay::editor::vsed::BindObject(ed.selected());
                 okay::editor::vsed::State().frameAll = true;
                 g_showVisualScript = true;
+            }
+            if (const char* tp = std::getenv("OKAY_UI_VSTPL"); tp && std::strcmp(tp, "picker") == 0 && s_focusFrames == 55) {
+                g_showVisualScript = true;
+                okay::editor::vsed::State().openTemplates = true;
+            }
+            if (std::getenv("OKAY_UI_TPLDEMO") && s_focusFrames == 36) {
+                ed.view3D = true;
+                auto place = [&](const char* name, const char* which, okay::Vec3 at, okay::Color color) {
+                    GameObject* go = ed.scene().CreateGameObject(name);
+                    go->transform->localPosition = at;
+                    auto* mesh = go->AddComponent<MeshRenderer>();
+                    mesh->mesh = Mesh::Cube();
+                    mesh->color = color;
+                    const okay::editor::vsed::VsTemplate* t = okay::editor::vsed::VsTemplateNamed(which);
+                    if (!t) return;
+                    okay::editor::vsed::VsAddTemplateComponents(go, t->add);
+                    go->AddComponent<VisualScriptComponent>()->LoadFromText(t->graph);
+                };
+                place("Spinner", "Spin", {-3.2f, 0.6f, 0}, {0.95f, 0.45f, 0.25f, 1});
+                place("Floater", "Float", {-0.4f, 0.6f, 0}, {0.35f, 0.75f, 0.95f, 1});
+                place("Walker", "Patrol", {2.6f, 0.6f, 0}, {0.45f, 0.85f, 0.45f, 1});
+                place("Clock", "Countdown", {0, 2.2f, 0}, {0.95f, 0.9f, 0.4f, 1});
+                if (!ed.scene().mainCamera) {
+                    GameObject* cam = ed.scene().CreateGameObject("Camera");
+                    cam->transform->localPosition = {0, 2.4f, -8};
+                    ed.scene().mainCamera = cam->AddComponent<Camera>();
+                }
+                place("Shaker", "Camera shake", {0, -1.2f, 0}, {0.7f, 0.55f, 0.95f, 1});
+            }
+            // OKAY_UI_GAMEPLAY=1: the gameplay templates in one scene (Play proof).
+            if (std::getenv("OKAY_UI_GAMEPLAY") && s_focusFrames == 36) {
+                ed.view3D = true;
+                ed.camTarget = {0.4f, 0.8f, 0.2f};
+                ed.camDist = 11.0f;
+                ed.camPitch = 28.0f;
+                ed.camYaw = -25.0f;
+                auto place = [&](const char* name, const char* which, okay::Vec3 at, okay::Color color) {
+                    GameObject* go = ed.scene().CreateGameObject(name);
+                    go->transform->localPosition = at;
+                    auto* mesh = go->AddComponent<MeshRenderer>();
+                    mesh->mesh = Mesh::Cube();
+                    mesh->color = color;
+                    const okay::editor::vsed::VsTemplate* t = okay::editor::vsed::VsTemplateNamed(which);
+                    if (!t) return go;
+                    okay::editor::vsed::VsAddTemplateComponents(go, t->add);
+                    go->AddComponent<VisualScriptComponent>()->LoadFromText(t->graph);
+                    return go;
+                };
+                place("Player", "Move with WASD", {-2.2f, 0.5f, 0}, {0.25f, 0.55f, 0.95f, 1});
+                place("Enemy", "Chase", {-2.2f, 0.5f, 2.2f}, {0.85f, 0.25f, 0.25f, 1});
+                GameObject* door = place("Door", "Door", {1.4f, 0.5f, 0}, {0.55f, 0.38f, 0.22f, 1});
+                if (auto* box = door->GetComponent<BoxCollider3D>()) box->size = {1.4f, 2.0f, 1.4f};
+                GameObject* coin = place("Coin", "Pickup", {2.0f, 0.5f, -1.4f}, {0.95f, 0.8f, 0.2f, 1});
+                if (auto* box = coin->GetComponent<BoxCollider3D>()) box->size = {1.4f, 1.4f, 1.4f};
+                GameObject* collector = ed.scene().CreateGameObject("Collector");
+                collector->transform->localPosition = {0.7f, 0.5f, -1.4f};
+                auto* cm = collector->AddComponent<MeshRenderer>();
+                cm->mesh = Mesh::Cube();
+                cm->color = {0.95f, 0.95f, 0.95f, 1};
+                collector->AddComponent<BoxCollider3D>();
+                auto* cb = collector->AddComponent<Rigidbody3D>();
+                cb->bodyType = Rigidbody3D::BodyType::Kinematic;
+                cb->gravityScale = 0.0f;
+                cb->velocity = {1.4f, 0, 0};
+                GameObject* board = ed.scene().CreateGameObject("Scoreboard");
+                board->transform->localPosition = {2.0f, 2.0f, -1.4f};
+                auto* scoreText = board->AddComponent<TextRenderer>();
+                scoreText->text = "Score: 0";
+                scoreText->pixelSize = 0.8f;
+                scoreText->color = {1, 1, 1, 1};
+                board->AddComponent<VisualScriptComponent>()->LoadFromText(
+                    "node 1 OnUpdate\nentry OnUpdate 1\n"
+                    "node 2 GetSceneVar score\nnode 3 ToString\ndata 3 0 2 0\n"
+                    "node 4 Const \"Score: \"\nnode 5 Concat\ndata 5 0 4 0\ndata 5 1 3 0\n"
+                    "node 6 SetText self\ndata 6 0 5 0\nexec 1 0 6\n");
+                place("Switch", "Press E", {4.2f, 0.5f, 1.2f}, {0.85f, 0.22f, 0.2f, 1});
+                place("Hero", "Health", {6.2f, 0.5f, 1.2f}, {0.95f, 0.45f, 0.55f, 1});
+                place("Flag", "Checkpoint", {6.2f, 0.5f, 3.2f}, {0.35f, 0.85f, 0.55f, 1});
+                place("Clock", "Countdown", {0.4f, 2.5f, 1.2f}, {0.95f, 0.9f, 0.4f, 1});
+            }
+            if (std::getenv("OKAY_UI_GAMEPLAY") && ed.isPlaying()) {
+                static int gp = 0;
+                ++gp;
+                auto find = [&](const char* n) -> GameObject* {
+                    for (const auto& up : ed.scene().Objects()) if (up && up->name == n) return up.get();
+                    return nullptr;
+                };
+                if (gp == 220) {
+                    if (GameObject* hero = find("Hero")) hero->transform->localPosition = {10.5f, 0.5f, 1.2f};
+                }
+                if (gp == 280) {
+                    if (GameObject* hero = find("Hero"))
+                        if (auto* vs = hero->GetComponent<VisualScriptComponent>())
+                            for (int i = 0; i < 4; ++i) vs->SendEvent("hit");
+                }
+                if (gp == 340) {
+                    if (GameObject* flag = find("Flag")) {
+                        flag->transform->localPosition = {4.0f, 1.2f, 3.2f};
+                        if (auto* vs = flag->GetComponent<VisualScriptComponent>()) vs->OnTriggerEnter3D(nullptr);
+                    }
+                }
+                if (gp == 420) {
+                    if (GameObject* flag = find("Flag")) flag->transform->localPosition = {11.0f, 0.5f, 3.2f};
+                }
+                if (gp == 480) {
+                    if (GameObject* flag = find("Flag"))
+                        if (auto* vs = flag->GetComponent<VisualScriptComponent>()) vs->SendEvent("respawn");
+                }
             }
             if (std::getenv("OKAY_UI_VS") && s_focusFrames == 42) {
                 auto& vg = okay::editor::vsed::State().g;

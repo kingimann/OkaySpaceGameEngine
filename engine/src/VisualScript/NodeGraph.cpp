@@ -1,4 +1,5 @@
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/NodeAliases.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
@@ -278,6 +279,8 @@ int ArgInt(const std::string& a, int def) {
 std::unique_ptr<VsNode> MakeNode(const std::string& type,
                                  const std::vector<std::string>& argsIn,
                                  std::string* err) {
+    if (const std::string canon = CanonicalNodeType(type); canon != type)
+        return MakeNode(canon, argsIn, err);
     // A node whose text field was left blank gets a sensible default instead of
     // failing — one empty "Set Var" used to stop the whole graph from loading.
     std::vector<std::string> args = argsIn;
@@ -639,6 +642,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "FindObject")     return std::make_unique<FindObjectNode>(argOr(""));
     if (type == "GetName")        return std::make_unique<ObjectInfoNode>(false);
     if (type == "GetTag")         return std::make_unique<ObjectInfoNode>(true);
+    if (type == "MouseGround") return std::make_unique<MouseGroundNode>();
     if (type == "MouseButton" || type == "MouseButtonDown") {
         // 0/1/2 or left/right/middle (what the editor's button picker writes is 0/1/2).
         int b = 0;
@@ -944,6 +948,10 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             if (!pinOk(x.pin)) return fail("default " + pinRange);
             x.v = ParseValue(tok[3]);
             defaults.push_back(x);
+        } else if (kind == "var") {
+            // var <name> <value>: a starting value, shown in the Inspector.
+            if (tok.size() < 3) return fail("var needs <name> <value>");
+            graph->AddExposedVar(tok[1], ParseValue(tok[2]));
         } else if (kind == "pos" || kind == "comment") {
             // Editor layout (node positions, comment frames): nothing to run.
         } else {

@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-1405 properties on 86 types (a number before a slash counts the authored ones; the rest are
+1469 properties on 90 types (a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 

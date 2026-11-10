@@ -10,6 +10,8 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
@@ -1894,6 +1896,12 @@ struct VsEditState {
     bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
     bool   openTemplates = false;   // dev hook and the Templates menu: open the picker
     const char* templateAdd = "";   // components to add on the selected object when the template lands
+    // Objects whose graph this editor is editing (embedded graphs have no file path).
+    std::vector<std::string> boundGuids;
+    // The graph text last written into those objects. A later edit replaces it.
+    std::string publishedText;
+    // A drop the slot refused, shown on the canvas until the next good drop.
+    std::string refHint;
     bool   frameSel = false;     // fit the selected nodes (F)
     bool   needsEvent = false;   // nodes but no event node: hint on the canvas
     // The graph checker's findings for the graph on screen (recomputed when it changes).
@@ -2021,7 +2029,104 @@ inline void ResetEditState(VsEditState& st) {
 }
 
 // Load a .okayvs into the editor's live graph (used to open one on double-click).
-inline void OpenFile(const std::string& path) { State().g.load(path); ResetEditState(State()); }
+inline void OpenFile(const std::string& path) {
+    VsEditState& st = State();
+    st.g.load(path);
+    ResetEditState(st);
+    st.boundGuids.clear();
+    st.publishedText = st.g.toText();
+    st.refHint.clear();
+}
+
+// Remember that `go` runs the graph currently open, even when the graph is
+// embedded (no file yet). Saving and Play push the editor text onto it.
+inline void BindObject(okay::GameObject* go) {
+    if (!go || go->Guid().empty()) return;
+    auto& b = State().boundGuids;
+    if (std::find(b.begin(), b.end(), go->Guid()) == b.end()) b.push_back(go->Guid());
+}
+
+// Same file, whether one path is relative ("Assets/a.okayvs") and the other absolute.
+inline bool VsSamePath(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    if (a == b) return true;
+    auto norm = [](std::string s) {
+        for (char& c : s) if (c == '\\') c = '/';
+        while (!s.empty() && s.back() == '/') s.pop_back();
+        return s;
+    };
+    const std::string na = norm(a), nb = norm(b);
+    if (na == nb) return true;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const std::string ca = fs::weakly_canonical(fs::absolute(na, ec), ec).generic_string();
+    const std::string cb = fs::weakly_canonical(fs::absolute(nb, ec), ec).generic_string();
+    if (!ca.empty() && ca == cb) return true;
+    auto ends = [](const std::string& full, const std::string& rel) {
+        return rel.size() < full.size() && full.compare(full.size() - rel.size(), rel.size(), rel) == 0
+            && full[full.size() - rel.size() - 1] == '/';
+    };
+    return ends(na, nb) || ends(nb, na);
+}
+
+// Write the open graph to disk when it has edits, then load that text into every
+// object that uses it (same file, an object this editor is bound to, or an
+// embedded copy of the text we last published). Play also re-reads every
+// file-backed graph so a save is what runs, without removing the component.
+// False only when a file write was needed and failed.
+inline bool PublishOpenGraph(EditorState& ed, bool forPlay) {
+    VsEditState& st = State();
+    VsEditGraph& g = st.g;
+    const bool editorHasGraph = !g.nodes.empty() || !g.path.empty() || !st.boundGuids.empty();
+    const std::string text = editorHasGraph ? g.toText() : std::string();
+    const bool editorChanged = editorHasGraph && (g.dirty || text != st.publishedText);
+    const bool wantFile = editorHasGraph && (editorChanged || (!forPlay && !g.path.empty()) || (!forPlay && !g.nodes.empty()));
+    if (wantFile) {
+        namespace fs = std::filesystem;
+        if (g.path.empty()) {
+            std::string stem = "Script";
+            if (!st.boundGuids.empty())
+                if (okay::GameObject* o = ed.scene().FindByGuid(st.boundGuids.front())) {
+                    stem.clear();
+                    for (char c : o->name)
+                        stem.push_back((std::isalnum((unsigned char)c) || c == '_') ? c : '_');
+                    if (stem.empty()) stem = "Object";
+                    stem += "Graph";
+                }
+            fs::path dir = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            std::error_code mk; fs::create_directories(dir, mk);
+            fs::path p = dir / (stem + ".okayvs");
+            for (int k = 2; fs::exists(p, mk); ++k) p = dir / (stem + std::to_string(k) + ".okayvs");
+            g.path = p.string();
+        }
+        if (!g.save(g.path)) return false;
+    }
+    const std::string now = editorHasGraph ? g.toText() : std::string();
+    if (editorHasGraph && (!g.path.empty() || !st.boundGuids.empty() || editorChanged)) {
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up) continue;
+            const bool bound = std::find(st.boundGuids.begin(), st.boundGuids.end(), up->Guid()) != st.boundGuids.end();
+            for (auto* vc : up->GetComponents<okay::VisualScriptComponent>()) {
+                const bool sameFile = !g.path.empty() && VsSamePath(vc->Path(), g.path);
+                const bool sameEmbed = vc->Path().empty() && !st.publishedText.empty() && vc->Source() == st.publishedText;
+                if (!sameFile && !bound && !sameEmbed) continue;
+                std::string err;
+                vc->LoadFromText(now, &err);
+                if (!g.path.empty()) vc->SetPath(g.path);
+            }
+        }
+        st.publishedText = now;
+    }
+    if (forPlay) {
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up) continue;
+            for (auto* vc : up->GetComponents<okay::VisualScriptComponent>())
+                if (!vc->Path().empty()) vc->Reload();
+        }
+        okay::SceneSerializer::ClearPrefabCache();
+    }
+    return true;
+}
 
 // Pin geometry helpers (screen positions computed during draw).
 struct PinKey { int node; int kind; int side; int index; };  // kind:0 exec,1 data; side:0 in,1 out
@@ -2111,6 +2216,181 @@ inline bool VsCompatible(const VsDef& d, bool exec, bool fromOutput,
     return false;
 }
 
+// Node text fields that name an object or a file. Variable names, keys and
+// numbers stay plain text.
+inline okay::vs::VsRefKind VsArgKind(const std::string& type) {
+    if (type == "FindObject" || type == "ObjectExists" || type == "ObjectPosition" ||
+        type == "DistanceTo" || type == "LookAt" || type == "MoveTowards" ||
+        type == "SetActive" || type == "SetText" || type == "Teleport" ||
+        type == "ShowUI" || type == "HideUI") return okay::vs::VsRefKind::Object;
+    if (type == "Spawn" || type == "NetSpawnOwned") return okay::vs::VsRefKind::Prefab;
+    if (type == "LoadScene") return okay::vs::VsRefKind::Scene;
+    if (type == "MusicPlay") return okay::vs::VsRefKind::Audio;
+    if (type == "PlayClip") return okay::vs::VsRefKind::Animation;
+    if (type == "BtRun") return okay::vs::VsRefKind::Graph;
+    return okay::vs::VsRefKind::None;
+}
+inline bool VsArgDefaultsSelf(const std::string& type) {
+    return type == "Teleport" || type == "ShowUI" || type == "HideUI" || type == "SetActive" || type == "ObjectPosition";
+}
+inline okay::vs::VsRefKind VsKindFromWords(const char* words) {
+    if (!words || !words[0]) return okay::vs::VsRefKind::None;
+    std::string s = words;
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    if (s.find("prefab") != std::string::npos) return okay::vs::VsRefKind::Prefab;
+    if (s.find("material") != std::string::npos) return okay::vs::VsRefKind::Material;
+    if (s.find("sound") != std::string::npos || s.find("audio") != std::string::npos || s.find("music") != std::string::npos)
+        return okay::vs::VsRefKind::Audio;
+    if (s.find("scene") != std::string::npos) return okay::vs::VsRefKind::Scene;
+    if (s.find("graph") != std::string::npos || s.find("tree file") != std::string::npos) return okay::vs::VsRefKind::Graph;
+    if (s.find("anim") != std::string::npos || s.find("clip") != std::string::npos) return okay::vs::VsRefKind::Animation;
+    return okay::vs::VsRefKind::None;
+}
+inline okay::vs::VsRefKind VsPinKind(const std::string& type, int pin, okay::vs::PinType pt, const char* label) {
+    if (pt == okay::vs::PinType::Object) return okay::vs::VsRefKind::Object;
+    (void)type; (void)pin;
+    return VsKindFromWords(label);
+}
+inline bool VsUpgradeGraph(VsEditGraph& g, okay::Scene& scene) {
+    bool changed = false;
+    for (auto& n : g.nodes) {
+        const okay::vs::VsRefKind ak = VsArgKind(n.type);
+        if (ak != okay::vs::VsRefKind::None && okay::vs::VsUpgradeRefString(n.arg, ak, &scene)) changed = true;
+        const VsDef* d = FindDef(n.type);
+        if (!d) continue;
+        for (auto it = n.pinDefault.begin(); it != n.pinDefault.end(); ++it) {
+            const char* label = (it->first >= 0 && it->first < (int)d->dataIn.size()) ? d->dataIn[(std::size_t)it->first] : "";
+            const okay::vs::VsRefKind pk = VsPinKind(n.type, it->first, okay::vs::InputType(n.type, it->first), label);
+            if (pk != okay::vs::VsRefKind::None && okay::vs::VsUpgradeRefString(it->second, pk, &scene)) changed = true;
+        }
+    }
+    return changed;
+}
+inline std::string VsProjectRelative(const std::string& full, const std::string& project) {
+    namespace fs = std::filesystem;
+    if (!project.empty()) {
+        std::error_code ec;
+        fs::path rel = fs::relative(fs::path(full), fs::path(project), ec);
+        if (!ec) {
+            const std::string s = rel.generic_string();
+            if (s.find("..") == std::string::npos) return s;
+        }
+    }
+    return fs::path(full).generic_string();
+}
+inline std::string VsRefLabel(const std::string& value, okay::vs::VsRefKind kind, bool defaultSelf, okay::Scene& scene) {
+    if (value.empty()) return (kind == okay::vs::VsRefKind::Object && defaultSelf) ? std::string("Self") : std::string("None");
+    if (value == "@self" || value == "self") return "Self";
+    if (value == "@other" || value == "other") return "Other";
+    if (okay::vs::VsStartsWith(value, "@guid:")) {
+        if (okay::GameObject* o = scene.FindByGuid(value.substr(6))) return o->name;
+        return "Missing object";
+    }
+    if (kind == okay::vs::VsRefKind::Object) {
+        if (okay::GameObject* o = scene.Find(value)) return o->name;
+        return value;
+    }
+    const std::string bare = okay::vs::VsBareAsset(value);
+    if (bare.empty()) return "None";
+    return std::filesystem::path(bare).filename().string();
+}
+inline const char* VsRefIcon(okay::vs::VsRefKind kind) {
+    switch (kind) {
+        case okay::vs::VsRefKind::Object: return "Obj";
+        case okay::vs::VsRefKind::Prefab: return "Pre";
+        case okay::vs::VsRefKind::Material: return "Mat";
+        case okay::vs::VsRefKind::Audio: return "Snd";
+        case okay::vs::VsRefKind::Animation: return "Anm";
+        case okay::vs::VsRefKind::Scene: return "Scn";
+        case okay::vs::VsRefKind::Graph: return "Grf";
+        default: return "File";
+    }
+}
+// Read a Hierarchy / Scene object or a Project file dropped on a slot.
+// True when `value` changed. A wrong type sets st.refHint and leaves `value`.
+inline bool VsApplyDrop(EditorState& ed, VsEditState& st, okay::vs::VsRefKind kind, std::string& value) {
+    using okay::vs::VsRefKind;
+    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
+        okay::GameObject* go = p->Data ? *(okay::GameObject**)p->Data : nullptr;
+        if (kind != VsRefKind::Object) { st.refHint = "That is an object. This slot wants a file from the Project window."; return false; }
+        if (!go) return false;
+        value = go->Guid().empty() ? go->name : okay::vs::VsGuidRef(go->Guid());
+        st.refHint.clear();
+        return true;
+    }
+    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+        const std::string path = p->Data ? std::string((const char*)p->Data) : std::string();
+        if (kind == VsRefKind::Object) { st.refHint = "That is a file. Drag an object from the Hierarchy or Scene view."; return false; }
+        if (!okay::vs::VsExtOk(kind, path)) {
+            st.refHint = std::string("Wrong file. This slot wants ") + okay::vs::VsRefKindName(kind) + ".";
+            return false;
+        }
+        value = okay::vs::VsAssetRef(kind, VsProjectRelative(path, ed.projectDir()));
+        st.refHint.clear();
+        return true;
+    }
+    return false;
+}
+
+// One reference slot: name, picker, clear, and drag-drop. True when `value` changed.
+inline bool VsDrawRefSlot(EditorState& ed, VsEditState& st, std::string& value, okay::vs::VsRefKind kind,
+                          bool defaultSelf, float width, const char* id) {
+    using okay::vs::VsRefKind;
+    bool changed = false;
+    const std::string label = VsRefLabel(value, kind, defaultSelf, ed.scene());
+    std::string shown = std::string(VsRefIcon(kind)) + " " + label;
+    const float xw = 22.0f;
+    ImGui::PushID(id);
+    if (ImGui::Button(shown.c_str(), ImVec2(std::max(40.0f, width - xw - 4.0f), 0)))
+        ImGui::OpenPopup("pick");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(kind == VsRefKind::Object
+            ? "Drag an object from the Hierarchy or the Scene view, or click to pick.\nSelf is this object."
+            : "Drag a file from the Project window, or click to pick.");
+    if (ImGui::BeginDragDropTarget()) {
+        if (VsApplyDrop(ed, st, kind, value)) changed = true;
+        ImGui::EndDragDropTarget();
+    }
+    ImGui::SameLine(0, 4);
+    if (ImGui::Button("x", ImVec2(xw, 0))) { value.clear(); changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(defaultSelf ? "Clear (back to Self)" : "Clear");
+    if (ImGui::BeginPopup("pick")) {
+        static char q[64] = "";
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputTextWithHint("##q", "Search", q, sizeof(q));
+        std::string needle = q;
+        for (char& c : needle) c = (char)std::tolower((unsigned char)c);
+        auto row = [&](const char* name, const std::string& stored) {
+            std::string h = name;
+            for (char& c : h) c = (char)std::tolower((unsigned char)c);
+            if (!needle.empty() && h.find(needle) == std::string::npos) return;
+            if (ImGui::Selectable(name)) { value = stored; changed = true; ImGui::CloseCurrentPopup(); }
+        };
+        if (kind == VsRefKind::Object) {
+            row("Self", "@self");
+            row("Other", "@other");
+            for (const auto& up : ed.scene().Objects()) if (up) row(up->name.c_str(), okay::vs::VsGuidRef(up->Guid()));
+        } else {
+            namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            std::error_code ec; int shownN = 0;
+            if (fs::exists(assets, ec))
+                for (auto it = fs::recursive_directory_iterator(assets, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                    if (ec || !it->is_regular_file(ec)) continue;
+                    const std::string full = it->path().string();
+                    if (!okay::vs::VsExtOk(kind, full)) continue;
+                    const std::string rel = VsProjectRelative(full, ed.projectDir());
+                    row(rel.c_str(), okay::vs::VsAssetRef(kind, rel));
+                    if (++shownN > 400) break;
+                }
+            if (!shownN) ImGui::TextDisabled("Nothing of that type in Assets.");
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 // ---- The editor window -----------------------------------------------------
 // Returns nothing; manages its own state. `ed` is used for "Attach to selected".
 inline void Draw(EditorState& ed, bool* open) {
@@ -2123,6 +2403,9 @@ inline void Draw(EditorState& ed, bool* open) {
     VsEditState& st = State();
     VsEditGraph& g = st.g;
     ImGuiIO& io = ImGui::GetIO();
+    // Names and paths already in the file become references when the scene
+    // (or the file extension) tells us what they point at. Older files still run.
+    if (VsUpgradeGraph(g, ed.scene())) g.dirty = true;
     // Record exec counts + last values so a running graph can be watched live.
     okay::vs::NodeGraph::Tracing() = true;
     if (!st.trackInit) { st.lastText = g.toText(); st.trackInit = true; }
@@ -2147,33 +2430,25 @@ inline void Draw(EditorState& ed, bool* open) {
     // ---- Toolbar: File / Edit / + Add / Templates ... Fit / zoom / View --------------
     // Kept short on purpose: everything else is a shortcut, the right-click menu,
     // or one of these menus.
-    auto savePath = [&](const std::string& stemHint) {
-        if (!g.path.empty()) return g.path;
-        std::string dir = ed.projectDir();
-        return (dir.empty() ? std::string("Script") : dir + "/Assets/" + stemHint) + ".okayvs";
-    };
     auto doSave = [&]() {
-        std::string p = savePath("Script");
-        if (g.save(p)) {
-            // Objects already using this graph pick the change up right away.
-            int n = 0;
-            for (const auto& up : ed.scene().Objects())
-                for (auto* vc : up->GetComponents<VisualScriptComponent>())
-                    if (vc->Path() == p) { vc->Reload(); ++n; }
-            Log("Saved visual script " + p + (n ? " (updated " + std::to_string(n) + " object(s))" : std::string()));
-        } else Log("Save failed: " + p, 2);
+        // Saving writes the file and reloads every object that runs this graph,
+        // including ones whose path was stored differently and embedded copies.
+        if (!PublishOpenGraph(ed, false)) { Log("Save failed", 2); return; }
+        int n = 0;
+        for (const auto& up : ed.scene().Objects())
+            for (auto* vc : up->GetComponents<VisualScriptComponent>())
+                if (!g.path.empty() && vc->Path() == g.path) ++n;
+        Log("Saved visual script " + (g.path.empty() ? std::string("(empty)") : g.path)
+            + (n ? " (updated " + std::to_string(n) + " object(s))" : std::string()));
     };
     auto doAttach = [&](GameObject* o) {
         // Save what's on screen first: attaching loads the file, and an unsaved
         // edit would otherwise silently not be what runs.
-        std::string p = savePath(o->name + "_vs");
-        if (!g.save(p)) { Log("Couldn't save " + p, 2); return; }
-        for (const auto& up : ed.scene().Objects())   // others using the file follow the edit
-            for (auto* other : up->GetComponents<VisualScriptComponent>())
-                if (other->Path() == p) other->Reload();
+        BindObject(o);
+        if (!PublishOpenGraph(ed, false)) { Log("Couldn't save the graph", 2); return; }
         auto* vc = o->GetComponent<VisualScriptComponent>();
         if (!vc) vc = o->AddComponent<VisualScriptComponent>();
-        vc->LoadFromFile(g.path);
+        if (vc->Path() != g.path) vc->LoadFromFile(g.path);
         ed.dirty = true;
         Log("Attached visual script to " + o->name);
     };
@@ -2298,15 +2573,19 @@ inline void Draw(EditorState& ed, bool* open) {
             }
             if (pick) {
                 g.fromText(t.graph);
+                g.path.clear();   // don't overwrite whichever file was open before
                 ResetEditState(st);
+                st.boundGuids.clear();
                 st.frameAll = true;
                 g.dirty = true;
+                st.publishedText = g.toText();
                 if (GameObject* go = ed.selected()) {
                     auto* vs = go->GetComponent<VisualScriptComponent>();
                     if (!vs) vs = go->AddComponent<VisualScriptComponent>();
                     std::string err;
                     vs->LoadFromText(g.toText(), &err);
                     vs->SetPath("");
+                    BindObject(go);
                     VsAddTemplateComponents(go, t.add);
                     ed.dirty = true;
                 }
@@ -2577,6 +2856,23 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& n : g.nodes) refs.push_back({n.type, n.arg, n.id});
             const std::vector<VsVarRef> vars = VsCollectVariables(refs);
             const std::vector<VsParamRef> params = VsCollectParameters(refs);
+            if (!g.vars.empty()) {
+                ImGui::Spacing();
+                ImGui::TextUnformatted("Exposed values");
+                ImGui::Separator();
+                ImGui::TextWrapped("These are the numbers and text the Inspector shows. Change one, Save, then Play.");
+                for (std::size_t i = 0; i < g.vars.size(); ++i) {
+                    ImGui::PushID((int)i + 700000);
+                    ImGui::SetNextItemWidth(90);
+                    char buf[64];
+                    std::snprintf(buf, sizeof(buf), "%s", g.vars[i].value.c_str());
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted(g.vars[i].name.c_str());
+                    ImGui::SameLine();
+                    if (ImGui::InputText("##exvar", buf, sizeof(buf))) { g.vars[i].value = buf; g.dirty = true; }
+                    ImGui::PopID();
+                }
+            }
             ImGui::Spacing();
             ImGui::TextUnformatted("Variables");
             ImGui::Separator();
@@ -2635,12 +2931,29 @@ inline void Draw(EditorState& ed, bool* open) {
     ImGui::InvisibleButton("vscbg", ImVec2(canvasMax.x - canvasMin.x, canvasMax.y - canvasMin.y),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool canvasHovered = ImGui::IsItemHovered();
+    if (!st.refHint.empty()) {
+        ImGui::SetCursorScreenPos(ImVec2(canvasMin.x + 8, canvasMin.y + 8));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
+        ImGui::TextUnformatted(st.refHint.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemClicked()) st.refHint.clear();
+    }
     if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("VS_INSPECTOR")) {
-            const float kL = 1.4f;
-            const float wx = (io.MousePos.x - canvasMin.x - st.pan.x) / (st.zoom * kL);
-            const float wy = (io.MousePos.y - canvasMin.y - st.pan.y) / (st.zoom * kL);
+        const float kL = 1.4f;
+        const float wx = (io.MousePos.x - canvasMin.x - st.pan.x) / (st.zoom * kL);
+        const float wy = (io.MousePos.y - canvasMin.y - st.pan.y) / (st.zoom * kL);
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("VS_INSPECTOR"))
             VsPlaceInspectorDrop(g, st, wx, wy, (const char*)p->Data);
+        if (const ImGuiPayload* gp = ImGui::AcceptDragDropPayload("GO_PTR")) {
+            okay::GameObject* go = gp->Data ? *(okay::GameObject**)gp->Data : nullptr;
+            if (go) {
+                const int nid = g.add("FindObject", wx, wy);
+                if (VsEditNode* nn = g.find(nid))
+                    nn->arg = go->Guid().empty() ? go->name : okay::vs::VsGuidRef(go->Guid());
+                st.selected = nid;
+                st.sel = {nid};
+                g.dirty = true;
+            }
         }
         ImGui::EndDragDropTarget();
     }
@@ -3003,15 +3316,23 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4 * z);
                 const float boxH = fs + 6 * z;
                 ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD + inLabelW + 8 * z, pp.y - boxH * 0.5f));
-                ImGui::SetNextItemWidth(BOX_W);
+                const okay::vs::VsRefKind rk = VsPinKind(n.type, i, pt, d->dataIn[i]);
                 std::string& dv = n.pinDefault[i];
-                char vb[128]; std::snprintf(vb, sizeof(vb), "%s", dv.c_str());
-                char bid[16]; std::snprintf(bid, sizeof(bid), "##pd%d", i);
-                if (ImGui::InputTextWithHint(bid, "value", vb, sizeof(vb))) { dv = vb; g.dirty = true; }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
+                if (rk != okay::vs::VsRefKind::None) {
+                    const bool selfDefault = okay::vs::TargetPinFor(n.type) == i;
+                    char bid[16]; std::snprintf(bid, sizeof(bid), "pd%d", i);
+                    if (VsDrawRefSlot(ed, st, dv, rk, selfDefault, BOX_W, bid)) g.dirty = true;
+                    if (dv.empty()) n.pinDefault.erase(i);
+                } else {
+                    ImGui::SetNextItemWidth(BOX_W);
+                    char vb[128]; std::snprintf(vb, sizeof(vb), "%s", dv.c_str());
+                    char bid[16]; std::snprintf(bid, sizeof(bid), "##pd%d", i);
+                    if (ImGui::InputTextWithHint(bid, "value", vb, sizeof(vb))) { dv = vb; g.dirty = true; }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
+                    if (dv.empty()) n.pinDefault.erase(i);
+                }
                 ImGui::PopStyleVar(2);
-                if (dv.empty()) n.pinDefault.erase(i);
             }
         }
         // Right pins (exec-out then data-out).
@@ -3162,6 +3483,9 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (n.arg == "right") b = 1; else if (n.arg == "middle") b = 2;
                 if (b < 0 || b > 2) b = 0;
                 if (ImGui::Combo("##mbtn", &b, btns, 3)) { n.arg = std::to_string(b); g.dirty = true; }
+            } else if (okay::vs::VsRefKind ak = VsArgKind(n.type); ak != okay::vs::VsRefKind::None) {
+                if (VsDrawRefSlot(ed, st, n.arg, ak, VsArgDefaultsSelf(n.type), NODE_W - PAD * 2, "argref"))
+                    g.dirty = true;
             } else {
                 if (ImGui::InputTextWithHint("##arg", d->paramHint ? d->paramHint : "", buf, sizeof(buf)))
                     { n.arg = buf; g.dirty = true; }
@@ -3178,6 +3502,19 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SetCursorScreenPos(ImVec2(pp.x - hit * 0.5f, pp.y - hit * 0.5f));
             char id[24]; std::snprintf(id, sizeof(id), "p%d%d%d", kind, side, idx);
             ImGui::InvisibleButton(id, ImVec2(hit, hit));
+            if (kind == 1 && side == 0 && ImGui::BeginDragDropTarget()) {
+                const char* label = (idx >= 0 && idx < (int)d->dataIn.size()) ? d->dataIn[(std::size_t)idx] : "";
+                const okay::vs::VsRefKind rk = VsPinKind(n.type, idx, VsInPinType(g, n.id, idx), label);
+                if (rk != okay::vs::VsRefKind::None) {
+                    std::string slot = n.pinDefault.count(idx) ? n.pinDefault[idx] : std::string();
+                    if (VsApplyDrop(ed, st, rk, slot)) {
+                        g.unlinkPin(n.id, 1, 0, idx);
+                        n.pinDefault[idx] = slot;
+                        g.dirty = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
             if (ImGui::IsItemActivated()) {
                 if (io.KeyAlt) g.unlinkPin(n.id, kind, side, idx);
                 else {

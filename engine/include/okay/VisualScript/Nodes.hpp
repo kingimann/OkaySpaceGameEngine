@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -539,9 +540,10 @@ struct SpawnPrefabNode : VsNode {
     int Exec(NodeGraph& gr, VsContext& ctx) override {
         spawned = 0;
         if (ctx.gameObject && ctx.gameObject->scene()) {
-            GameObject* g = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), path);
+            const std::string file = VsBareAsset(path);
+            GameObject* g = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), file);
             if (!g) {
-                gr.Error(this, ctx, "couldn't spawn '" + path + "': the prefab file is missing or invalid");
+                gr.Error(this, ctx, "couldn't spawn '" + file + "': the prefab file is missing or invalid");
                 return 0;
             }
             if (g->transform) {
@@ -707,7 +709,7 @@ struct NetSpawnOwnedNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
         if (auto* n = VsNet(ctx))
-            n->SpawnOwned(path, ctx.transform ? ctx.transform->localPosition : Vec3::Zero);
+            n->SpawnOwned(VsBareAsset(path), ctx.transform ? ctx.transform->localPosition : Vec3::Zero);
         return 0;
     }
 };

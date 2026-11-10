@@ -6,6 +6,7 @@
 // the end of Nodes.hpp; MakeNode (NodeGraph.cpp) builds them by type name.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
 #include "okay/VisualScript/VsWhole.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
@@ -45,10 +46,17 @@
 namespace okay::vs {
 
 inline GameObject* VsFindObject(VsContext& ctx, const std::string& name) {
-    if (!ctx.gameObject || !ctx.gameObject->scene()) return nullptr;
-    if (name.empty() || name == "self") return ctx.gameObject;
-    if (name == "other") return ctx.other;
-    return ctx.gameObject->scene()->Find(name);
+    Scene* scene = (ctx.gameObject && ctx.gameObject->scene()) ? ctx.gameObject->scene() : nullptr;
+    if (!scene) return nullptr;
+    // @guid: stays valid after the object is renamed. self / other / a plain
+    // name are the older graphs, and still work.
+    if (VsStartsWith(name, "@guid:")) return scene->FindByGuid(name.substr(6));
+    if (name.empty() || name == "self" || name == "@self") return ctx.gameObject;
+    if (name == "other" || name == "@other") return ctx.other;
+    if (GameObject* o = scene->Find(name)) return o;
+    for (const auto& up : scene->Objects())
+        if (up && up->name == name) return up.get();
+    return nullptr;
 }
 
 /// An object input: an object reference (Self, Other, Spawn's object, Find,
@@ -292,17 +300,8 @@ struct SetActiveNode : VsNode {   // in0 = on/off, in1 = object (wins over the n
         if (HasInput(1)) {
             const VsValue t = In(1, g, ctx);
             if (t.IsObject()) o = t.AsObjectId() ? GameObject::FromInstanceId(t.AsObjectId()) : nullptr;
-            else {
-                const std::string nm = t.AsString();
-                if (nm.empty() || nm == "self") o = ctx.gameObject;
-                else if (nm == "other") o = ctx.other;
-                else if (ctx.gameObject && ctx.gameObject->scene())
-                    for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == nm) { o = up.get(); break; }
-            }
-        } else if (name.empty() || name == "self") o = ctx.gameObject;
-        else if (name == "other") o = ctx.other;
-        else if (ctx.gameObject && ctx.gameObject->scene())
-            for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == name) { o = up.get(); break; }
+            else o = VsFindObject(ctx, t.AsString());
+        } else o = VsFindObject(ctx, name);
         if (o) o->active = In(0, g, ctx, VsValue{true}).AsBool();
         return 0;
     }
@@ -323,13 +322,14 @@ struct LoadSceneNode : VsNode {   // arg = scene name (build list) or .okayscene
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
         Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
-        if (!s || scene.empty()) return 0;
-        if (!Save::IsSafeRelative(scene)) {   // graphs are game content: stay in the game's folders
-            OKAY_ERROR("[visual script] Load Scene: refusing '", scene, "' (absolute paths and '..' aren't allowed)");
+        const std::string scenePath = VsBareAsset(scene);
+        if (!s || scenePath.empty()) return 0;
+        if (!Save::IsSafeRelative(scenePath)) {   // graphs are game content: stay in the game's folders
+            OKAY_ERROR("[visual script] Load Scene: refusing '", scenePath, "' (absolute paths and '..' aren't allowed)");
             return 0;
         }
-        if (scene.find(".okayscene") != std::string::npos) s->RequestLoad(scene);
-        else if (!SceneManager::LoadSceneByName(*s, scene)) s->RequestLoad(scene + ".okayscene");
+        if (scenePath.find(".okayscene") != std::string::npos) s->RequestLoad(scenePath);
+        else if (!SceneManager::LoadSceneByName(*s, scenePath)) s->RequestLoad(scenePath + ".okayscene");
         return -1;   // the scene is being replaced: stop this chain
     }
 };
@@ -564,9 +564,10 @@ struct MusicPlayNode : VsNode {   // arg = track file or playlist number ("" = t
     int Exec(NodeGraph&, VsContext& ctx) override {
         MusicPlayer* m = VsMusicPlayer(ctx);
         if (!m) return 0;
-        if (track.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
-        else if (std::all_of(track.begin(), track.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) m->Play(std::atoi(track.c_str()));
-        else m->Play(track);
+        const std::string file = VsBareAsset(track);
+        if (file.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
+        else if (std::all_of(file.begin(), file.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) m->Play(std::atoi(file.c_str()));
+        else m->Play(file);
         return 0;
     }
 };
@@ -952,7 +953,7 @@ struct PlayClipNode : VsNode {
     explicit PlayClipNode(std::string c) : clip(std::move(c)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        PlayClipFrom(ctx.gameObject, clip, warned);
+        PlayClipFrom(ctx.gameObject, VsClipToken(clip), warned);
         return 0;
     }
 };

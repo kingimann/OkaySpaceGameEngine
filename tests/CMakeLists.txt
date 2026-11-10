@@ -1116,6 +1116,10 @@ add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
 target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
 add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
 
+add_executable(test_vs_refs test_vs_refs.cpp)
+target_link_libraries(test_vs_refs PRIVATE okay::engine)
+add_test(NAME vs_refs COMMAND test_vs_refs)
+
 # C# / OkayScript: classes, generics, lambdas, coroutines, components.
 add_executable(test_okayscript_csharp test_okayscript_csharp.cpp)
 target_link_libraries(test_okayscript_csharp PRIVATE okay::engine)

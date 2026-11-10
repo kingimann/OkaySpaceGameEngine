@@ -214,6 +214,40 @@ int main() {
         if (bad) std::printf("  %d of %d generated scripts don't load\n", bad, total);
     }
 
+    // A guid reference and a prefab reference survive the editor's save format.
+    {
+        VsEditGraph g;
+        const int find = g.add("FindObject", 0, 0);
+        g.find(find)->arg = "@guid:abc123";
+        const int spawn = g.add("Spawn", 40, 0);
+        g.find(spawn)->arg = "@prefab:Assets/shot.okayprefab";
+        g.find(spawn)->pinDefault[1] = "@guid:abc123";
+        const std::string text = g.toText();
+        VsEditGraph back;
+        back.fromText(text);
+        CHECK(back.find(find) && back.find(find)->arg == "@guid:abc123");
+        CHECK(back.find(spawn) && back.find(spawn)->arg == "@prefab:Assets/shot.okayprefab");
+        CHECK(back.find(spawn)->pinDefault[1] == "@guid:abc123");
+        auto runtime = vs::NodeGraph::Parse(text, nullptr);
+        CHECK(runtime != nullptr);
+    }
+    CHECK(VsSamePath("Assets/move.okayvs", "Assets/move.okayvs"));
+    CHECK(VsSamePath("/tmp/proj/Assets/move.okayvs", "Assets/move.okayvs"));
+    CHECK(!VsSamePath("/tmp/proj/Assets/move.okayvs", "Assets/other.okayvs"));
+    {
+        Scene scene("refs");
+        GameObject* cube = scene.CreateGameObject("Cube");
+        VsEditGraph g;
+        const int mv = g.add("MoveTowards", 0, 0);
+        g.find(mv)->arg = "Cube";
+        const int sp = g.add("Spawn", 0, 0);
+        g.find(sp)->arg = "marker.okayprefab";
+        CHECK(VsUpgradeGraph(g, scene));
+        CHECK(g.find(mv)->arg == std::string("@guid:") + cube->Guid());
+        CHECK(g.find(sp)->arg == "@prefab:marker.okayprefab");
+        CHECK(!VsUpgradeGraph(g, scene));   // already references
+    }
+
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

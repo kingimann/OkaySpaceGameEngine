@@ -275,6 +275,7 @@ static void CompileOpenScriptBuffers(okay::Scene& scene) {
 // Headless self-test: verifies the editor's model logic with no GUI.
 // ----------------------------------------------------------------------------
 static void RunEditorPlayKeyTest(int& failures);
+static void RunStaleGraphTest(int& failures);
 
 static int RunSelfTest() {
     using namespace okay;
@@ -319,6 +320,7 @@ static int RunSelfTest() {
     }
 
     RunEditorPlayKeyTest(failures);
+    RunStaleGraphTest(failures);
 
     // Play / stop restores edit state (move during play is reverted).
     ed.Play();
@@ -522,6 +524,111 @@ int main(int argc, char** argv) {
 
 // Holding D in EditorState::Play, through CollectEditorPlayKeys, walks a Move
 // with WASD cube into a Door. E then changes the Press E colour.
+static void RunStaleGraphTest(int& failures) {
+    using namespace okay;
+    using namespace okay::editor;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) { ++failures; std::cerr << "  FAIL: " << what << "\n"; }
+    };
+    namespace fs = std::filesystem;
+    const fs::path root = "/tmp/okay_vs_stale";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    const char* oldText =
+        "node 1 OnStart\n"
+        "node 2 SetPosition\n"
+        "default 2 0 1\n"
+        "exec 1 0 2\n"
+        "entry OnStart 1\n";
+    const fs::path graph = root / "Assets" / "move.okayvs";
+    { std::ofstream(graph) << oldText; }
+
+    EditorState ed;
+    ed.setProjectDir(root.string());
+    GameObject* a = ed.scene().CreateGameObject("A");
+    GameObject* b = ed.scene().CreateGameObject("B");
+    check(a->AddComponent<VisualScriptComponent>()->LoadFromFile(graph.string()), "A loaded the old graph");
+    check(b->AddComponent<VisualScriptComponent>()->LoadFromFile(graph.string()), "B loaded the old graph");
+
+    vsed::State() = vsed::VsEditState{};
+    vsed::OpenFile(graph.string());
+    bool found = false;
+    for (auto& n : vsed::State().g.nodes)
+        if (n.type == "SetPosition") { n.pinDefault[0] = "9"; found = true; }
+    check(found, "the open graph has Set Position");
+    vsed::State().g.dirty = true;
+    check(vsed::PublishOpenGraph(ed, true), "saving the edit publishes it");
+    ed.Play();
+    ed.Tick(1.0f / 60.0f);
+    GameObject* pa = ed.scene().Find("A");
+    GameObject* pb = ed.scene().Find("B");
+    check(pa && std::fabs(pa->transform->localPosition.x - 9.0f) < 0.05f,
+          "edited graph runs on Play without detaching");
+    check(pb && std::fabs(pb->transform->localPosition.x - 9.0f) < 0.05f,
+          "a second object sharing the graph updates too");
+    ed.Stop();
+
+    vsed::State() = vsed::VsEditState{};
+    vsed::State().g.fromText(oldText);
+    vsed::State().g.path.clear();
+    vsed::State().g.dirty = true;
+    vsed::State().publishedText = vsed::State().g.toText();
+    GameObject* c = ed.scene().CreateGameObject("C");
+    auto* vc = c->AddComponent<VisualScriptComponent>();
+    vc->LoadFromText(vsed::State().publishedText);
+    vc->SetPath("");
+    vsed::BindObject(c);
+    for (auto& n : vsed::State().g.nodes)
+        if (n.type == "SetPosition") n.pinDefault[0] = "6";
+    vsed::State().g.dirty = true;
+    check(vsed::PublishOpenGraph(ed, true), "an embedded edit publishes");
+    ed.Play();
+    ed.Tick(1.0f / 60.0f);
+    GameObject* pc = ed.scene().Find("C");
+    check(pc && std::fabs(pc->transform->localPosition.x - 6.0f) < 0.05f,
+          "an embedded graph edit runs on Play without detaching");
+    ed.Stop();
+
+    GameObject* d = ed.scene().CreateGameObject("D");
+    auto* vd = d->AddComponent<VisualScriptComponent>();
+    vd->LoadFromText(oldText);
+    vd->SetPath("Assets/move.okayvs");
+    vsed::OpenFile(graph.string());
+    for (auto& n : vsed::State().g.nodes)
+        if (n.type == "SetPosition") n.pinDefault[0] = "4";
+    vsed::State().g.dirty = true;
+    check(vsed::PublishOpenGraph(ed, true), "a relative path still matches the file");
+    ed.Play();
+    ed.Tick(1.0f / 60.0f);
+    GameObject* pd = ed.scene().Find("D");
+    check(pd && std::fabs(pd->transform->localPosition.x - 4.0f) < 0.05f,
+          "relative path picks up the save without reattach");
+    ed.Stop();
+
+    const fs::path prefab = root / "Assets" / "mover.okayprefab";
+    {
+        std::ofstream f(prefab);
+        f << "okayscene 3\n"
+          << "gameobject 0 \"Spawned\"\n"
+          << "  active 1\n  parent -1\n"
+          << "  transform 0 0 0 0 0 0 1 1 1 1\n"
+          << "  visualscript \"old\"\n"
+          << "  visualscriptpath \"" << graph.generic_string() << "\"\n"
+          << "end\n";
+    }
+    std::string err;
+    GameObject* spawned = SceneSerializer::InstantiateFromFile(ed.scene(), prefab.string(), &err);
+    check(spawned != nullptr, "prefab that points at the graph instantiates");
+    ed.Play();
+    ed.Tick(1.0f / 60.0f);
+    GameObject* ps = ed.scene().Find("Spawned");
+    check(ps && std::fabs(ps->transform->localPosition.x - 4.0f) < 0.05f,
+          "a prefab instance runs the saved graph");
+    ed.Stop();
+    vsed::State() = vsed::VsEditState{};
+}
+
 static void RunEditorPlayKeyTest(int& failures) {
     using namespace okay;
     using namespace okay::editor;
@@ -6478,6 +6585,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();   // previews must not override Play
             okay::editor::apreview::Stop(ed.scene());   // before the snapshot, so Play doesn't save the preview pose
             CompileOpenScriptBuffers(ed.scene());
+            if (!okay::editor::vsed::PublishOpenGraph(ed, true))
+                ConsoleLog("Visual script: couldn't save the open graph. Play is using the copy on the objects.", 1);
             NavigationBeforePlay(ed);   // surfaces set to bake before Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
@@ -15867,6 +15976,8 @@ void HandleShortcuts(EditorState& ed) {
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();   // previews must not override Play
             okay::editor::apreview::Stop(ed.scene());
             CompileOpenScriptBuffers(ed.scene());
+            if (!okay::editor::vsed::PublishOpenGraph(ed, true))
+                ConsoleLog("Visual script: couldn't save the open graph. Play is using the copy on the objects.", 1);
             NavigationBeforePlay(ed);   // surfaces set to bake before Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
@@ -29125,6 +29236,7 @@ void DrawInspector(EditorState& ed) {
                     vsc->SetPath(path); ed.dirty = true;
                 }
                 okay::editor::vsed::OpenFile(path);
+                okay::editor::vsed::BindObject(go);
                 g_showVisualScript = true;
             }
             ImGui::SameLine();
@@ -29138,7 +29250,7 @@ void DrawInspector(EditorState& ed) {
                 for (const auto& v : vsc->Graph()->ExposedVars()) {
                     ImGui::PushID(v.name.c_str());
                     bool edited = false;
-                    std::string literal;
+                    std::string literal, plain;
                     if (v.value.IsNumber()) {
                         float f = v.value.AsFloat();
                         if (ed.isPlaying()) {
@@ -29148,6 +29260,7 @@ void DrawInspector(EditorState& ed) {
                         if (ImGui::DragFloat(v.name.c_str(), &f, 0.05f)) {
                             edited = true;
                             literal = std::to_string(f);
+                            plain = literal;
                             if (ed.isPlaying()) vsc->SetVariable(v.name, okay::vs::VsValue(f));
                         }
                     } else {
@@ -29155,6 +29268,7 @@ void DrawInspector(EditorState& ed) {
                         std::snprintf(buf, sizeof(buf), "%s", v.value.AsString().c_str());
                         if (ImGui::InputText(v.name.c_str(), buf, sizeof(buf))) {
                             edited = true;
+                            plain = buf;
                             literal = std::string("\"") + buf + "\"";
                             if (ed.isPlaying()) vsc->SetVariable(v.name, okay::vs::VsValue(std::string(buf)));
                         }
@@ -29170,6 +29284,18 @@ void DrawInspector(EditorState& ed) {
                             vsc->LoadFromText(src, &err);
                             if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
                             ed.dirty = true;
+                            // Keep the open graph in step, or the next Save / Play
+                            // would put the old number back.
+                            auto& eg = okay::editor::vsed::State().g;
+                            const bool sameFile = !vsc->Path().empty() && okay::editor::vsed::VsSamePath(vsc->Path(), eg.path);
+                            const bool bound = std::find(okay::editor::vsed::State().boundGuids.begin(),
+                                                         okay::editor::vsed::State().boundGuids.end(),
+                                                         go->Guid()) != okay::editor::vsed::State().boundGuids.end();
+                            if (sameFile || bound) {
+                                for (auto& ev : eg.vars)
+                                    if (ev.name == v.name) ev.value = plain;
+                                eg.dirty = true;
+                            }
                         }
                     }
                     ImGui::PopID();
@@ -38972,6 +39098,29 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
     }
 }
 
+// The selected object's name, drawn in the Scene view. Drag it onto a
+// visual-script slot (the Hierarchy rows do the same).
+static okay::GameObject*& SceneRefDrag() { static okay::GameObject* g = nullptr; return g; }
+static void SceneObjectDragChip(okay::GameObject* go, ImVec2 screen) {
+    if (!go) return;
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) SceneRefDrag() = nullptr;
+    const char* nm = go->name.empty() ? "Object" : go->name.c_str();
+    ImVec2 ts = ImGui::CalcTextSize(nm);
+    ImGui::SetCursorScreenPos(ImVec2(screen.x - ts.x * 0.5f - 8.0f, screen.y - ts.y - 26.0f));
+    ImGui::PushID(go);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.28f, 0.42f, 0.94f));
+    ImGui::Button(nm, ImVec2(ts.x + 16.0f, ts.y + 6.0f));
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemActive()) SceneRefDrag() = go;
+    if (ImGui::BeginDragDropSource()) {
+        ImGui::SetDragDropPayload("GO_PTR", &go, sizeof(go));
+        ImGui::TextUnformatted(nm);
+        ImGui::EndDragDropSource();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag onto a visual-script object slot");
+    ImGui::PopID();
+}
+
 void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
@@ -39316,9 +39465,14 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ed.dirty = true;
         }
     }
+    // The name chip is a drag source for visual-script slots. Draw it before the
+    // move drag so grabbing the name doesn't also slide the object.
+    if (!gameView && ed.selected() && ed.selected()->transform)
+        SceneObjectDragChip(ed.selected(), worldToScreen(ed.selected()->transform->Position()));
     // Selecting and dragging work in Play too.
     // Skipped while a UI widget or a sprite handle is being dragged.
-    else if (ed.selected() && hovered && !g_uiHandled && g_spriteHandle < 0 &&
+    if (g_spriteHandle < 0 && ed.selected() && hovered && !g_uiHandled &&
+        SceneRefDrag() != ed.selected() &&
         !IsUIElement(ed.selected()) &&
         ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         Transform* t = ed.selected()->transform;
@@ -41726,6 +41880,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
         ed.Select(hit);   // hit may be null -> clicking empty space deselects (matches 2D)
     }
+    if (!gameView && ed.selected() && ed.selected()->transform) {
+        ImVec2 sp;
+        if (toScreen(vp * Vec4{ed.selected()->transform->Position(), 1}, sp))
+            SceneObjectDragChip(ed.selected(), sp);
+    }
 }
 
 // ---- Shared game / UI screen resolution ------------------------------------
@@ -42255,6 +42414,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
 
+    ImGui::SetNextItemAllowOverlap();   // the selection's drag chip sits on top of the picture
     ImGui::InvisibleButton("canvas", canvasSize,
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 
@@ -45039,6 +45199,7 @@ int main(int argc, char** argv) {
                 StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
                 okay::editor::apreview::Stop(ed.scene());
                 CompileOpenScriptBuffers(ed.scene());
+                okay::editor::vsed::PublishOpenGraph(ed, true);
                 ed.Play(); g_paused = false; ConsoleLog("Play");
             }
             // OKAY_UI_UIADD=Lobby: the UI editing view with that prebuilt screen added
@@ -45124,7 +45285,8 @@ int main(int argc, char** argv) {
             }
             // OKAY_UI_VSFILE=graph.okayvs: open that graph file in the Visual Script editor.
             if (const char* vf = std::getenv("OKAY_UI_VSFILE"); vf && s_focusFrames == 42) {
-                okay::editor::vsed::State().g.load(vf);
+                okay::editor::vsed::OpenFile(vf);
+                if (ed.selected()) okay::editor::vsed::BindObject(ed.selected());
                 okay::editor::vsed::State().frameAll = true;
                 g_showVisualScript = true;
             }

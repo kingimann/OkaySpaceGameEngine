@@ -87,6 +87,17 @@ v2.856.0
     Traditional and Simplified Chinese players get the right language, plural
     rules for about 25 more languages, {0, number}, currency and select
     placeholders, and UTF-16 CSV import (#611).
+  Animation, camera and Play
+  - The camera orbit stays above the ground, with clamped and tunable pitch.
+    Play takes the keyboard even when an Inspector field was focused. Pressing
+    Esc in Play releases the mouse even on a quick tap, a click in the game view
+    no longer lands on Stop, and Ctrl+P stops Play with the Script Editor
+    focused (#554).
+  - Spawn clearance no longer pushes a body through a single solid (#554).
+  - Locomotion keeps its settings (playback speed, fallback clip, foot and
+    full-body IK weights, look weight, loop, mirror, root motion) when the clip
+    blend updates, and a remote player's action message can carry a direction
+    or swim speed (#554).
   Release channels
   - The update server now supports a long-term-support (LTS) line next to the
     latest version, with versions.json listing every release with sizes and

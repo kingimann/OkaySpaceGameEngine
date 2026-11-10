@@ -75,7 +75,7 @@ widgets; nothing moves.
 | Window | GameObject > UI > Prebuilt Screens > Window | A title bar with **Drag the parent** and **Keep on screen** on a UI Draggable, and an x button that hides it (On Click: `HideObject`). The window carries its own Canvas one step above the page, so it and its contents draw above the page and take clicks first; dragging a window brings it in front of other windows. |
 | Damage Numbers | UI Damage Numbers | `Spawn(text, kind, pos)` (canvas pixels) or `SpawnAtWorld(text, kind, point)`; the numbers are made under the scene's Canvas. Buttons can call `Hit`, `Crit`, `Heal`, `Miss`, `Info`. Numbers drift by a fixed pattern, so a replay looks the same. |
 | Dialogue Box | UI Dialogue Box | Children named `Box`, `Speaker`, `Body`, `Choice1-3`, `Next`. Typing speed, skip on click or Space, up to four choices. |
-| Nameplate | Prebuilt Screens > Nameplate | A plate with name, level and health bar. The "in the world" version follows a 3D object and faces the camera. |
+| Nameplate | Prebuilt Screens > Nameplate | A plate with a name, a level and a health bar. The bar follows the Health Stat (the player's health); the name and level are text you edit. The "in the world" version is a 3D object that faces the camera: make it a child of a character. |
 | Inventory | Prebuilt Screens > Inventory | A bag screen with a slot grid you can click. A **UI Inventory Bind** on the grid shows the real Inventory: the Player's, else the one named in **Inventory Name**, else the first in the scene. Each slot shows its item and stack size ("Potion 7"), empty places stay blank, and the grid gets as many rows as the bag has room for. `SelectedItem()` and `SelectedCount()` say what is in the clicked slot. With no Inventory in the scene the grid keeps its sample names. It shows the bag; moving items between bags is done by the Inventory itself. |
 | Rich text | Text > **Rich Text** | See below. |
 
@@ -186,5 +186,5 @@ once; with no project open it stays an unsaved scene.
 | UIDialogueBox | Add Component, inspector | typed text, choices, Restart | `test_runtime_ui` | yes |
 | UIInventoryBind | Add Component, inspector | slots show the Inventory | `test_runtime_ui` | yes |
 | Radio toggles, draggable window | inspector | one on per group, window moves | `test_runtime_ui` | yes |
-| Nameplate | UI add menu | a static name and bar block | `test_runtime_ui` | yes; no live data binding |
+| Nameplate | UI add menu (and in the world) | health bar follows the Health Stat; the name and level are plain text | `test_runtime_ui` (Hit and Heal change the bar) | yes, with Hit / Heal buttons |
 | `ui_*` script calls | text scripts | as above | `test_runtime_ui` | n/a |

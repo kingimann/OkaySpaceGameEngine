@@ -929,6 +929,37 @@ int main() {
         CHECK_NEAR(btn->color.r, a.button.r, 1e-3f);                    // the Horror button colour is on the widget
     }
 
+    // ---- The nameplate follows the Health Stat; its Hit / Heal buttons change the bar ----
+    {
+        Scene s("Plate");
+        UIGallery::BuildGallery(s, (int)UITheme::Preset::Dark);
+        auto* bar = s.Find("SwatchInsetNameplate")->transform->Find("Health")->gameObject->GetComponent<UIProgressBar>();
+        auto* hs = s.Find("Goblin")->GetComponent<HealthStat>();
+        CHECK(bar && hs && s.Find("PlateHit") && s.Find("PlateHeal"));
+        s.Start();
+        for (int i = 0; i < 3; ++i) s.Update(0.016f);
+        CHECK(std::fabs(bar->value - 1.0f) < 0.01f);                        // the goblin starts at full health
+        auto* hit = s.Find("PlateHit")->GetComponent<UIButton>();
+        CHECK(InvokeNativeUIAction(s.Find(hit->clickTarget), hit->clickFunction, hit->clickArg));
+        for (int i = 0; i < 3; ++i) s.Update(0.016f);
+        CHECK(std::fabs(bar->value - 0.85f) < 0.02f);                       // the bar dropped by the 15 damage
+        auto* heal = s.Find("PlateHeal")->GetComponent<UIButton>();
+        CHECK(InvokeNativeUIAction(s.Find(heal->clickTarget), heal->clickFunction, heal->clickArg));
+        for (int i = 0; i < 3; ++i) s.Update(0.016f);
+        CHECK(std::fabs(bar->value - 1.0f) < 0.02f);                        // and rose again
+        // an in-world plate follows the player's Health too
+        Scene w("PlateWorld");
+        GameObject* player = w.CreateGameObject("Player");
+        player->AddComponent<HealthStat>()->publishPrefs = false;
+        GameObject* plate = UIGallery::AddNameplate(w, true);
+        auto* wb = plate->transform->Find("SwatchPlate/Health")->gameObject->GetComponent<UIProgressBar>();
+        w.Start(); w.Update(0.016f); w.Update(0.016f);
+        CHECK(std::fabs(wb->value - 1.0f) < 0.01f);
+        player->GetComponent<HealthStat>()->Damage(50.0f);
+        w.Update(0.016f); w.Update(0.016f);
+        CHECK(std::fabs(wb->value - 0.5f) < 0.02f);
+    }
+
     // ---- The dialogue box: Talk replays the line, the script can ask if it is open ----
     {
         Scene s("Talk");

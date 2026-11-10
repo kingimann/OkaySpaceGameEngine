@@ -19,6 +19,8 @@
 #include "okay/Components/UISlotGrid.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
 #include "okay/Components/UISafeArea.hpp"
+#include "okay/Components/UIBarBind.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
 #include <string>
 
 namespace okay { namespace UIGallery {
@@ -170,15 +172,23 @@ inline GameObject* AddWindow(Scene& scene, GameObject* parent, const char* name,
     return win;
 }
 
-/// A nameplate: a name, a level badge and a thin health bar. Put it under a character as a
-/// world-space UI object (it follows the character and faces the camera).
+/// Make a nameplate's health bar live: it fills from the `healthFrac` value that a Health Stat
+/// publishes (the player's health), so it moves as the character takes damage or heals.
+inline void BindNameplateHealth(GameObject* bar) {
+    if (!bar) return;
+    auto* b = bar->AddComponent<UIBarBind>();
+    b->var = "healthFrac"; b->min = 0.0f; b->max = 1.0f;
+}
+
+/// A nameplate: a name, a level badge and a thin health bar that follows the Health Stat. Add it as a
+/// world-space UI object and make it a child of the character: it follows and faces the camera.
 inline GameObject* AddNameplate(Scene& scene, bool inWorld) {
     GameObject* root = inWorld ? scene.CreateGameObject("Nameplate") : Child(scene, EnsureCanvas(scene), "Nameplate");
     if (inWorld) root->AddComponent<WorldSpaceUI>();
     GameObject* card = Panel(scene, root, "SwatchPlate", UIAnchor::TopLeft, {0, 0}, {180, 46}, Color::FromBytes(16, 18, 24, 190), 10.0f);
     Text(scene, card, "Name", "Goblin", UIAnchor::TopLeft, {10, 4}, {110, 22}, 15.0f, slate::Text(), 0, true);
     Badge(scene, card, "SwatchLevel", "Lv 7", UIAnchor::TopRight, {-8, 4}, slate::Warning());
-    gx::Bar(scene, card, "Health", {10, 30}, {160, 8}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger);
+    BindNameplateHealth(gx::Bar(scene, card, "Health", {10, 30}, {160, 8}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger));
     return root;
 }
 
@@ -381,7 +391,22 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         GameObject* plate = Panel(scene, c3, "SwatchInsetNameplate", UIAnchor::TopLeft, {244, 410}, {128, 46}, Color::FromBytes(16, 18, 24, 190), 10.0f);
         Text(scene, plate, "Name", "Goblin", UIAnchor::TopLeft, {10, 4}, {70, 22}, 14.0f, slate::Text(), 0, true);
         Badge(scene, plate, "SwatchLevel", "Lv 7", UIAnchor::TopRight, {-6, 5}, slate::Warning());
-        gx::Bar(scene, plate, "Health", {10, 32}, {108, 7}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger);
+        BindNameplateHealth(gx::Bar(scene, plate, "Health", {10, 32}, {108, 7}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger));
+        // The goblin the plate shows: a Health Stat (full at Play start) that heals back slowly. The two buttons hurt and heal it.
+        GameObject* gob = Child(scene, root, "Goblin");
+        auto* hs = gob->AddComponent<HealthStat>();
+        hs->maxHealth = 100.0f; hs->regenPerSecond = 4.0f; hs->regenDelay = 1.5f;
+        hs->respawn = true; hs->respawnDelay = 1.0f; hs->playDeathAnim = false;
+        hs->publishPrefs = false; hs->sendMessages = false; hs->publishBar = false;
+        const char* pn[] = {"PlateHit", "PlateHeal"};
+        const char* pl[] = {"Hit", "Heal"};
+        const char* pf[] = {"Damage", "Heal"};
+        const int pv[] = {(int)UITheme::Variant::Danger, (int)UITheme::Variant::Outline};
+        for (int i = 0; i < 2; ++i) {
+            GameObject* b = gx::Btn(scene, c3, pn[i], pl[i], {244.0f + i * 68.0f, 462}, {60, 28}, pv[i]);
+            auto* ub = b->GetComponent<UIButton>();
+            ub->clickTarget = "Goblin"; ub->clickFunction = pf[i]; ub->clickArg = 15.0f;
+        }
     }
     gx::Label(scene, c3, "FloatLabel", "Floating numbers (click)", {20, 548}, 300);
     {

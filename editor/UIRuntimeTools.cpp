@@ -376,8 +376,8 @@ void DrawUIAddMenuExtras(EditorState& ed, GameObject* parent, bool& created) {
         g->AddComponent<UIDamageNumbers>();
         return g;
     });
-    add("Nameplate", "A name, level and health bar. In the world it follows a character.", [&] { return UIGallery::AddNameplate(sc, false); });
-    add("Nameplate (in the world)", "The same plate as a 3D object that faces the camera: put it over a character.", [&] { return UIGallery::AddNameplate(sc, true); });
+    add("Nameplate", "A name, level and a health bar that follows the Health Stat (the player's health). The name and level are plain text you edit.", [&] { return UIGallery::AddNameplate(sc, false); });
+    add("Nameplate (in the world)", "The same plate as a 3D object that faces the camera: make it a child of a character. Its bar follows the Health Stat.", [&] { return UIGallery::AddNameplate(sc, true); });
     add("Inventory", "A bag screen with a grid of slots.", [&] { return UIGallery::AddInventoryScreen(sc); });
     add("Dialogue", "Speaker, typing text and choice buttons. Scripts call ui_dialogue_show().", [&] { return UIGallery::AddDialogueScreen(sc); });
 }

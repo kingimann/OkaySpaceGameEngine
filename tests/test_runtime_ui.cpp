@@ -938,6 +938,14 @@ int main() {
         bool glass = false;
         for (auto& o : dd->options) if (o == "Glass") glass = true;
         CHECK(glass);
+        // picking Glass in Play (the dropdown runs ui_theme_preset) also shows the glass blobs and the dark-blue backdrop
+        CHECK(!s.Find("SwatchBlobA")->active);
+        auto* ctrl = s.CreateGameObject("Ctrl")->AddComponent<ScriptComponent>("okayscript");
+        ctrl->LoadSource("var n = 0;\nfunction update() { n = n + 1; if (n == 1) { ui_theme_preset(\"Glass\"); } }\n");
+        s.Start(); s.Update(0.016f); s.Update(0.016f);
+        CHECK(s.Find("SwatchBlobA")->active && s.Find("SwatchBlobB")->active);
+        auto* bd = s.Find("SwatchBackdrop")->GetComponent<UIPanel>();
+        CHECK(bd->color.b > bd->color.r + 0.2f);
     }
 
     // ---- The nameplate follows the Health Stat; its Hit / Heal buttons change the bar ----

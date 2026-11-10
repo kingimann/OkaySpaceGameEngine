@@ -38,10 +38,11 @@ inline UITheme* EnsureTheme(Scene& scene, int preset) {
     return th;
 }
 
-/// Restyle everything in the scene with a built-in look. The page background follows the look.
-inline void ApplyThemePreset(Scene& scene, int preset) {
-    UITheme* th = EnsureTheme(scene, preset);
-    th->Apply();
+/// The gallery's own pieces after any theme apply (also from `ui_theme_preset` in Play): slot grids
+/// restyle, inset boxes take a shade, the Glass blobs show, the page backdrop follows the look.
+/// It only touches slot grids and objects whose names start with Swatch, so other scenes are unaffected.
+inline void StyleGalleryExtras(Scene& scene, UITheme* th) {
+    if (!th) return;
     for (const auto& o : scene.Objects())            // slot buttons take their colours from the grid
         if (auto* sg = o->GetComponent<UISlotGrid>()) sg->Rebuild();
     // Panels that sit ON a card (inset boxes, title bars) keep a different shade from it: the theme
@@ -72,6 +73,13 @@ inline void ApplyThemePreset(Scene& scene, int preset) {
             c.a = 1.0f;
             p->color = c; p->colorBottom = c; p->useGradient = false;
         }
+}
+
+/// Restyle everything in the scene with a built-in look. The page background follows the look.
+inline void ApplyThemePreset(Scene& scene, int preset) {
+    UITheme* th = EnsureTheme(scene, preset);
+    th->Apply();
+    StyleGalleryExtras(scene, th);
 }
 
 namespace gx {

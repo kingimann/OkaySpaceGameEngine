@@ -1,3 +1,4 @@
+#include "okay/Scene/UIGallery.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -4846,6 +4847,7 @@ struct OkayScriptVM::Impl {
             if (!th) return Value{0.0f};
             th->ApplyPreset(p);
             th->Apply();
+            UIGallery::StyleGalleryExtras(*s, th);   // the UI Gallery's slots, insets and Glass blobs follow too
             return Value{1.0f};
         };
         // ui_set_rich("Label", true): read [color=...] [b] [i] tags in that screen-space text.

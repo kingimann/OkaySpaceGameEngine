@@ -314,7 +314,8 @@ int main() {
     {
         CHECK(ParseVersionTxt("2.856.0\n") == "2.856.0" && ParseVersionTxt("  2.850.1 \r\n") == "2.850.1" && ParseVersionTxt("\n\n2.856\n") == "2.856.0" &&
               ParseVersionTxt("\xEF\xBB\xBF" "2.856.0") == "2.856.0");
-        for (const char* bad : {"", "\n", "dev", "garbage", "2", "v2.856.0", "2.856.0-rc1", "2.856.0 extra", "<html>", "2..3", ".5", std::string(100, '1').c_str(), "1.2.x"})
+        const std::string longText(100, '1');
+        for (const char* bad : {"", "\n", "dev", "garbage", "2", "v2.856.0", "2.856.0-rc1", "2.856.0 extra", "<html>", "2..3", ".5", longText.c_str(), "1.2.x"})
             CHECK(ParseVersionTxt(bad).empty());
         const Index f = FallbackIndex("2.856.0\n", "2.850.1\n", kArchive, true);
         CHECK(f.ok && f.fallback && f.latest == "2.856.0" && f.lts == "2.850.1" && f.versions.size() == 2 && f.versions[0].version == "2.856.0");

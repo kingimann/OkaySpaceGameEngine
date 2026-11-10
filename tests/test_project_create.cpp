@@ -339,5 +339,41 @@ int main() {
         CHECK(ApplyWizardInput(false, true, false, w) == WizardMove::Closed && !w.open);
     }
 
+    // ---- edges the Create wizard relies on -------------------------------------------------------------------------
+    {
+        // Windows-illegal names, in every spelling the box can receive them
+        for (const char* bad : {"aux", "Nul.txt", "COM1.log", "lpt9", "CON  ", "name.", "name ..", "a|b", "a\"b", "tab\there\x01"})
+            CHECK(!CheckName(bad).ok());
+        CHECK(!CheckName("a|b").ok() && !CheckName("lpt9").ok() && !CheckName("CON  ").ok() && !CheckName("name.").ok());
+        // A failed pass through the wizard never left a half-made project: a project a person is using is not replaced
+        TempDir t;
+        Write(t.path / "Taken", "a file, not a folder");                                  // the name is a file
+        Plan pf = PlanProject(t.path.string(), "Taken");
+        CHECK(pf.ok() && pf.folder == "Taken-2" && pf.renamed);
+        fs::create_directories(t.path / "Game" / "Assets");
+        Write(t.path / "Game" / "Assets" / "x.okayscene", "x");
+        fs::create_directories(t.path / "Game-2");
+        Write(t.path / "Game-2" / "notes.txt", "mine");
+        Plan pg = PlanProject(t.path.string(), "Game");
+        CHECK(pg.ok() && pg.folder == "Game-3");                                          // skips every used folder
+        CHECK(Read(t.path / "Game-2" / "notes.txt") == "mine");                           // and touches none of them
+        // an empty shell left by the launcher is reused, not renamed around
+        fs::create_directories(t.path / "Shell" / "Assets");
+        Plan ps = PlanProject(t.path.string(), "Shell");
+        CHECK(ps.ok() && ps.folder == "Shell" && !ps.renamed);
+        // a location that is a file is refused and nothing is made
+        Plan pl = PlanProject((t.path / "Taken").string(), "Fresh");
+        CHECK(!pl.ok() && !pl.locationProblem.empty() && !fs::exists(t.path / "Taken" / "Fresh"));
+        // MakeDirs below a file fails, records nothing it did not make, and Undo leaves the file alone
+        Made m;
+        std::string err;
+        CHECK(!MakeDirs(t.path / "Taken" / "Sub" / "Deep", m, err) && !err.empty());
+        Undo(m);
+        CHECK(fs::is_regular_file(t.path / "Taken") && Read(t.path / "Taken") == "a file, not a folder");
+        // version box: empty, spaces and quotes are all refused (the launcher passes it on a command line)
+        CHECK(!CheckProjectVersion("").empty() && !CheckProjectVersion("1 0").empty() && !CheckProjectVersion("1.0\"").empty());
+        CHECK(CheckProjectVersion(" 1.0.0 ").empty());
+    }
+
     TEST_MAIN_RESULT();
 }

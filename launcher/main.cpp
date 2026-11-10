@@ -1437,8 +1437,12 @@ std::string CreateProject(const std::string& location, const std::string& rawNam
     const std::string finalName = plan.folder;
     const fs::path root = plan.root;
 
-    if (!fs::create_directories(root / "Assets", ec) && ec) {
-        Toast("Couldn't create project folder: " + ec.message(), 2);
+    // Made one folder at a time and undone if it fails halfway: a failed Create leaves no half-made folder.
+    okayproj::Made made;
+    std::string makeErr;
+    if (!okayproj::MakeDirs(root / "Assets", made, makeErr)) {
+        okayproj::Undo(made);
+        Toast("Couldn't create the project folder. " + makeErr, 2);
         return "";
     }
 
@@ -18288,18 +18292,23 @@ int main(int argc, char** argv) {
                     s_planAt = now;
                 }
             };
-            auto doCreate = [&]() {
+            // Makes the project. Returns "" on success, otherwise one sentence saying why nothing was made
+            // (the wizard goes back to its Details step so it can be fixed).
+            auto doCreate = [&]() -> std::string {
                 s_plan = okayproj::PlanProject(npLoc[0] ? npLoc : ".", npName);
                 s_planKey = std::string(npName) + "\n" + npLoc;
                 s_planAt = SDL_GetTicks();
-                if (!s_plan.ok() || !okayproj::CheckProjectVersion(s_ver).empty()) return;
-                if (editor.empty()) { Toast("Install the editor to create a project", 2); return; }
+                if (!s_plan.ok()) return s_plan.Problem();
+                const std::string verBad = okayproj::CheckProjectVersion(s_ver);
+                if (!verBad.empty()) return verBad;
+                if (editor.empty()) return "Install the editor to create a project.";
                 g_projectsDir = npLoc;
                 SavePrefs();
                 const std::string root = CreateProject(npLoc[0] ? npLoc : ".", npName, s_tpls[(std::size_t)s_tpl].title,
-                                                       editor, s_ver, s_gpu == 0 ? 1 : 0, s_git);
-                if (!root.empty())
-                    Toast("Created " + fs::path(root).filename().string() + " (" + std::string(s_tpls[(std::size_t)s_tpl].title) + ") \xE2\x80\x94 opening the editor", 1);
+                                                       editor, s_ver, s_gpu == 0 ? 1 : 0, s_git && GitAvailable());
+                if (root.empty()) return "The project couldn't be created. Nothing was made.";
+                Toast("Created " + fs::path(root).filename().string() + " (" + std::string(s_tpls[(std::size_t)s_tpl].title) + ") \xE2\x80\x94 opening the editor", 1);
+                return "";
             };
             {
                 const float avail = ImGui::GetContentRegionAvail().x;
@@ -18600,10 +18609,15 @@ int main(int argc, char** argv) {
                         ImGui::Dummy(ImVec2(0, 14));
                         ImGui::ProgressBar(frac, ImVec2(-1, 8), "");
                         if (SDL_GetTicks() - s_createAt >= 400) {
-                            doCreate();
+                            const std::string why = doCreate();
                             s_wiz.creating = false;
-                            s_wiz.open = false;
-                            ImGui::CloseCurrentPopup();
+                            if (why.empty()) {
+                                s_wiz.open = false;
+                                ImGui::CloseCurrentPopup();
+                            } else {
+                                s_wiz.step = 1;   // back to Details, with the reason
+                                Toast(why, 2);
+                            }
                         }
                     } else if (s_wiz.step <= 0) {
                         ImGui::BeginChild("##wiztpl", ImVec2(0, bodyH), false);
@@ -18728,7 +18742,7 @@ int main(int argc, char** argv) {
                         ImGui::TextDisabled("OPTIONS");
                         ImGui::Text("Version %s", s_ver);
                         ImGui::TextUnformatted(s_gpu == 0 ? "GPU renderer" : "Software renderer");
-                        ImGui::TextUnformatted(s_git ? "A Git repository will be created" : "No Git repository");
+                        ImGui::TextUnformatted(s_git && GitAvailable() ? "A Git repository will be created" : "No Git repository");
                         ImGui::EndChild();
                     }
                     if (!s_wiz.creating) {

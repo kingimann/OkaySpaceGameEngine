@@ -749,6 +749,11 @@ target_include_directories(test_project_panel PRIVATE ${PROJECT_SOURCE_DIR}/edit
 target_link_libraries(test_project_panel PRIVATE okay::engine)
 add_test(NAME project_panel COMMAND test_project_panel)
 
+# Import settings that really change behaviour: texture Filter / Wrap / Mipmaps (software sampler + sidecar read by the OpenGL path), model Normals / Smoothing angle / Import animations.
+add_executable(test_import_settings_real test_import_settings_real.cpp)
+target_link_libraries(test_import_settings_real PRIVATE okay::engine)
+add_test(NAME import_settings_real COMMAND test_import_settings_real)
+
 # Save coverage: every component type the engine has survives a scene save and load (and the Enabled switch with it); two colliders / audio sources on one object both do.
 add_executable(test_save_coverage test_save_coverage.cpp)
 target_link_libraries(test_save_coverage PRIVATE okay::engine)

@@ -1886,6 +1886,18 @@ target_link_libraries(test_optimize_streaming PRIVATE okay::engine)
 add_test(NAME optimize_streaming COMMAND test_optimize_streaming)
 
 # Optimization tools (27): scene optimization report (JSON / text)
+add_executable(test_camera_stack test_camera_stack.cpp)
+target_link_libraries(test_camera_stack PRIVATE okay::engine)
+add_test(NAME camera_stack COMMAND test_camera_stack)
+
+add_executable(test_visibility_lod test_visibility_lod.cpp)
+target_link_libraries(test_visibility_lod PRIVATE okay::engine)
+add_test(NAME visibility_lod COMMAND test_visibility_lod)
+
+add_executable(test_gltf_pbr_maps test_gltf_pbr_maps.cpp)
+target_link_libraries(test_gltf_pbr_maps PRIVATE okay::engine)
+add_test(NAME gltf_pbr_maps COMMAND test_gltf_pbr_maps)
+
 add_executable(test_optimize_report test_optimize_report.cpp)
 target_link_libraries(test_optimize_report PRIVATE okay::engine)
 add_test(NAME optimize_report COMMAND test_optimize_report)

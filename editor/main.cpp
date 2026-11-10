@@ -1128,6 +1128,71 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     return g_view3DTex[slot];
 }
 
+// One camera pass, read back as ABGR. Mirrors Render3DTexture's backend choice
+// without the zero-copy path (the stack has to composite on the CPU).
+const std::uint32_t* Render3DPassPixels(const Scene& scene, const okay::CameraPass& pass) {
+    const bool prevSky = okay::SkyPassEnabled();
+    const int prevMask = okay::RenderCullingMask();
+    const float prevFov = okay::visibility::RenderViewFovY();
+    okay::SkyPassEnabled() = pass.sky && scene.renderSettings.skybox;
+    okay::RenderCullingMask() = pass.cullingMask;
+    okay::visibility::RenderViewFovY() = pass.fovY;
+    const std::uint32_t* px = nullptr;
+    const bool tryGpu = g_gpuRender;
+    const int rw = pass.w, rh = pass.h;
+#if defined(_WIN32)
+    if (tryGpu && g_d3dReady && g_d3dRenderer) {
+        g_d3dRenderer->SetReadbackStream(-1);
+        px = g_d3dRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
+                                           pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
+    }
+#endif
+    if (tryGpu && !px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
+        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
+        if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
+            px = g_glRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
+                                              pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
+        SDL_GL_MakeCurrent(prevWin, prevCtx);
+    }
+    okay::SceneOcclusionDepth().valid = false;
+    if (!px) {
+        static Raster stackRaster[4];
+        static std::vector<std::uint32_t> stackDown[4];
+        static int stackSlot = 0;
+        const int s = stackSlot++ & 3;
+        px = RenderMeshesSS(stackRaster[s], stackDown[s], scene, pass.vp, pass.eye, rw, rh, 1, pass.ignore);
+    }
+    okay::SkyPassEnabled() = prevSky;
+    okay::RenderCullingMask() = prevMask;
+    okay::visibility::RenderViewFovY() = prevFov;
+    return px;
+}
+
+// The whole camera stack into one texture, or nullptr when a single camera
+// should keep the existing Render3DTexture path (identical pixels).
+SDL_Texture* RenderCameraStackView(const Scene& scene, int w, int h, int slot, const GameObject* playIgnore) {
+    if (!g_sdlRenderer || w < 1 || h < 1) return nullptr;
+    if (slot < 0 || slot >= kView3DSlots) slot = 0;
+    w = w > 4096 ? 4096 : w; h = h > 4096 ? 4096 : h;
+    okay::ApplySceneLight(scene);
+    const okay::CameraStackPlan plan = okay::PlanCameraStack(scene, w, h, playIgnore);
+    if (plan.singleFullFrame) return nullptr;
+    std::vector<std::uint32_t> composited;
+    if (!okay::CompositeCameraStack(plan, [&](const okay::CameraPass& p) { return Render3DPassPixels(scene, p); }, composited))
+        return nullptr;
+    if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h || g_view3DIsTarget[slot]) {
+        if (g_view3DTex[slot]) DestroyViewTexture(slot);
+        g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                              SDL_TEXTUREACCESS_STREAMING, w, h);
+        SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);
+        g_view3DW[slot] = w; g_view3DH[slot] = h; g_view3DIsTarget[slot] = false;
+    }
+    SDL_UpdateTexture(g_view3DTex[slot], nullptr, composited.data(), w * 4);
+    return g_view3DTex[slot];
+}
+
 // Cached image thumbnail for the Project browser: loads the file once and
 // uploads it as an SDL texture. okay::Image is tightly-packed RGBA8, which is
 // exactly SDL_PIXELFORMAT_ABGR8888 byte order on little-endian. Returns nullptr
@@ -10539,8 +10604,14 @@ void DrawStats(EditorState& ed) {
         {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
         {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
         {"Particles",  stParts},
-        {"Drawn",      okay::LastCullCounters().drawn},    // last GPU frame, after frustum culling
+        {"Drawn",      okay::LastCullCounters().drawn},    // last frame, after culling and batching
         {"Culled",     okay::LastCullCounters().culled},
+        {"Occluded",   okay::LastCullCounters().occluded},
+        {"LOD culled", okay::LastCullCounters().lodCulled},
+        {"LOD0",       okay::LastCullCounters().lod0},
+        {"LOD1+",      okay::LastCullCounters().lod1 + okay::LastCullCounters().lod2 + okay::LastCullCounters().lod3},
+        {"Batches",    okay::LastCullCounters().batches},
+        {"Draws saved", okay::LastCullCounters().drawsSaved},
     };
     if (ImGui::BeginTable("##statgrid", 4, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("n1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
@@ -10563,6 +10634,14 @@ void DrawStats(EditorState& ed) {
     }
     ImGui::Spacing();
     ImGui::Checkbox("Frustum culling", &okay::FrustumCullingEnabled());
+    ImGui::SameLine();
+    ImGui::Checkbox("Occlusion", &okay::visibility::OcclusionCullingEnabled());
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Skip meshes hidden behind an Occluder. Off, or with no Occluder\n"
+                          "in the scene, nothing extra is hidden.");
+    ImGui::Checkbox("Static batching", &okay::visibility::StaticBatchingEnabled());
+    ImGui::SameLine();
+    ImGui::Checkbox("Dynamic batching", &okay::visibility::DynamicBatchingEnabled());
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Skip meshes the camera (or the sun's shadow map) can't see.\n"
                           "Turn off only to check whether culling hides something it shouldn't.");
@@ -29300,6 +29379,26 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Clear##aomap")) { mr->aoMap.clear(); ed.dirty = true; }
                 if (ImGui::SliderFloat("Occlusion##mesh", &mr->aoStrength, 0.0f, 1.0f)) ed.dirty = true;
             }
+            char mrmap[260];
+            std::strncpy(mrmap, mr->metallicRoughnessMap.c_str(), sizeof(mrmap) - 1);
+            mrmap[sizeof(mrmap) - 1] = '\0';
+            if (ImGui::InputText("Metal / Rough##mesh", mrmap, sizeof(mrmap))) { mr->metallicRoughnessMap = mrmap; ed.dirty = true; }
+            if (AcceptAssetPathField(mr->metallicRoughnessMap)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("glTF packed map: green = roughness, blue = metallic.\nMultiplied with Metallic and the highlight tightness.");
+            if (!mr->metallicRoughnessMap.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##mrmap")) { mr->metallicRoughnessMap.clear(); ed.dirty = true; }
+            }
+            char emap[260];
+            std::strncpy(emap, mr->emissiveMap.c_str(), sizeof(emap) - 1);
+            emap[sizeof(emap) - 1] = '\0';
+            if (ImGui::InputText("Emissive Map##mesh", emap, sizeof(emap))) { mr->emissiveMap = emap; ed.dirty = true; }
+            if (AcceptAssetPathField(mr->emissiveMap)) ed.dirty = true;
+            if (!mr->emissiveMap.empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear##emap")) { mr->emissiveMap.clear(); ed.dirty = true; }
+            }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
             if (ImGui::SmallButton("Subdivide##mesh")) {
@@ -30886,8 +30985,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Cast Shadows##light", &li->castShadows)) ed.dirty = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(li->type == Light::Type::Directional
-                    ? "Sun shadows (cascaded). Only the first Directional light casts them.\nQuality/distance: Rendering panel > Shadows."
+                    ? "Sun shadows (cascaded). One Directional light casts them — the first\nthat has Cast Shadows on. Others still light the scene.\nQuality changes the map size and distance (Low / Medium / High)."
                     : "Objects block this light (no light through walls).\nUp to 16 shadow tiles per frame: a Spot uses 1, a Point/Area uses 6;\nlights nearest the camera get them first.");
+            if (li->type == Light::Type::Directional && !okay::DirectionalShadowWarning().empty())
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "%s", okay::DirectionalShadowWarning().c_str());
             if (li->castShadows) {
                 if (ImGui::SliderFloat("Strength##lightsh", &li->shadowStrength, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = invisible, 1 = fully dark (down to the ambient light)");
@@ -30957,8 +31058,13 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Background");
             int cf = (int)cam->clearFlags;
-            const char* cfs[] = {"Skybox", "Solid Color"};
-            if (ImGui::Combo("Clear Flags", &cf, cfs, 2)) { cam->clearFlags = (Camera::ClearFlags)cf; ed.dirty = true; }
+            const char* cfs[] = {"Skybox", "Solid Color", "Depth Only", "Don't Clear"};
+            if (ImGui::Combo("Clear Flags", &cf, cfs, 4)) { cam->clearFlags = (Camera::ClearFlags)cf; ed.dirty = true; }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Skybox / Solid Color replace this camera's rectangle.\n"
+                                  "Depth Only draws over the cameras underneath (a weapon, a minimap).\n"
+                                  "Don't Clear keeps their colour and depth.\n"
+                                  "Cameras run lowest Depth first. The first one always clears.");
             if (cam->clearFlags == Camera::ClearFlags::SolidColor) {
                 float bg[4] = {cam->backgroundColor.r, cam->backgroundColor.g, cam->backgroundColor.b, cam->backgroundColor.a};
                 if (ImGui::ColorEdit4("Background", bg)) { cam->backgroundColor = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
@@ -31059,8 +31165,91 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Main", &cam->main)) ed.dirty = true;
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Depth", &cam->depth, 0.1f)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render priority; the highest-depth camera is used as main");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Draw order: lower Depth draws first, higher Depth on top.\n"
+                                  "The highest-Depth camera marked Main is the scene's main camera\n"
+                                  "(audio listener, scripts). Overlay cameras should not be Main.");
+            {
+                char rt[96];
+                std::snprintf(rt, sizeof(rt), "%s", cam->renderTarget.c_str());
+                if (ImGui::InputText("Render Target", rt, sizeof(rt))) { cam->renderTarget = rt; ed.dirty = true; }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Optional name. After this camera draws, its picture is kept\n"
+                                      "as CameraTarget(name) — a minimap texture, a mirror, a scope.");
+            }
+            if (ImGui::Button("Add overlay camera")) {
+                Camera* keep = ed.scene().mainCamera;
+                GameObject* ov = ed.scene().CreateGameObject("Overlay Camera");
+                auto* oc = ov->AddComponent<Camera>();
+                oc->main = false;
+                oc->depth = cam->depth + 1.0f;
+                oc->clearFlags = Camera::ClearFlags::DepthOnly;
+                oc->rectX = 0.68f; oc->rectY = 0.68f; oc->rectW = 0.28f; oc->rectH = 0.28f;
+                oc->projection = cam->projection;
+                if (ov->transform && cam->gameObject && cam->gameObject->transform) {
+                    ov->transform->localPosition = cam->gameObject->transform->localPosition + Vec3{0, 2.0f, -2.0f};
+                    ov->transform->localRotation = cam->gameObject->transform->localRotation;
+                }
+                if (ed.scene().mainCamera == oc) ed.scene().mainCamera = keep;
+                ed.Select(ov); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("A second camera in the corner, drawn after this one.\n"
+                                  "Move it, set its culling mask, or switch Clear Flags to Solid Color.");
             if (ImGui::SmallButton("Remove##cam")) toRemove = cam;
+        }
+    }
+    if (auto* lod = dynamic_cast<LODGroup*>(curComp)) {
+        if (CompHeader("LOD Group", lod, &toRemove)) {
+            if (ImGui::Checkbox("Screen size", &lod->useScreenSize)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Off: switch by distance (metres).\nOn: switch by how tall the object is on screen (0..1).");
+            if (ImGui::SliderFloat("Hysteresis", &lod->hysteresis, 0.0f, 0.4f, "%.2f")) ed.dirty = true;
+            if (lod->useScreenSize) {
+                if (ImGui::DragFloat("Cull screen", &lod->cullScreen, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+            } else if (ImGui::DragFloat("Cull distance", &lod->cullDistance, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = never stop drawing it, however far it is.");
+            if (ImGui::Checkbox("Tint by level", &lod->debugTint)) ed.dirty = true;
+            int force = lod->forceLevel + 1;
+            const char* forces[] = {"Auto", "LOD 0", "LOD 1", "LOD 2", "LOD 3", "Culled"};
+            if (ImGui::Combo("Force", &force, forces, 6)) { lod->forceLevel = force - 1; ed.dirty = true; }
+            ImGui::TextDisabled("Active level: %s", lod->activeLevel < 0 ? "culled" : (std::to_string(lod->activeLevel).c_str()));
+            if (lod->levels.empty()) ImGui::TextDisabled("No levels yet. Generate them from this object's mesh.");
+            for (int i = 0; i < (int)lod->levels.size(); ++i) {
+                ImGui::PushID(i);
+                auto& L = lod->levels[(std::size_t)i];
+                ImGui::Text("LOD %d", i);
+                ImGui::SameLine();
+                if (lod->useScreenSize) {
+                    if (ImGui::DragFloat("Screen", &L.screenSize, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                } else if (ImGui::DragFloat("Distance", &L.distance, 0.2f, 0.0f, 100000.0f)) ed.dirty = true;
+                if (i > 0) {
+                    ImGui::SameLine();
+                    const int tris = (i - 1 < (int)lod->lodMeshes.size()) ? lod->lodMeshes[(std::size_t)(i - 1)].TriangleCount() : 0;
+                    ImGui::TextDisabled("%d tris", tris);
+                }
+                ImGui::PopID();
+            }
+            if (ImGui::Button("Generate LODs")) {
+                if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    lod->Generate(mr->DisplayMesh());
+                    ed.dirty = true;
+                }
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Four levels: 100%%, 50%%, 25%% and 10%% of the triangles,\n"
+                                  "with distances taken from how much the shape changes.");
+            if (ImGui::SmallButton("Remove##lod")) toRemove = lod;
+        }
+    }
+    if (auto* occ = dynamic_cast<Occluder*>(curComp)) {
+        if (CompHeader("Occluder", occ, &toRemove)) {
+            if (ImGui::Checkbox("Use mesh", &occ->useMesh)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("On: the real triangles hide what's behind them.\n"
+                                  "Off: the bounding box does (only for a solid wall).");
+            ImGui::TextDisabled("Objects behind this one can be skipped when Occlusion is on (Stats).");
+            if (ImGui::SmallButton("Remove##occ")) toRemove = occ;
         }
     }
     if (auto* rb2 = dynamic_cast<Rigidbody2D*>(curComp))
@@ -37791,6 +37980,11 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<SpriteRenderer>(), "Sprite Renderer")) { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<MeshRenderer>(), "Mesh Renderer (3D)")) { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<LODGroup>(), "LOD Group")) {
+                if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>();
+                go->AddComponent<LODGroup>(); ed.view3D = true; ed.dirty = true;
+            }
+            if (item(!go->GetComponent<Occluder>(), "Occluder")) { go->AddComponent<Occluder>(); ed.dirty = true; }
             if (item(!go->GetComponent<okay::MeshModifiers>(), "Modifiers (non-destructive)")) {
                 if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
                 go->AddComponent<okay::MeshModifiers>(); ed.view3D = true; ed.dirty = true;
@@ -40531,6 +40725,23 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); iconLabel(sp, up->name.c_str(), col); }
             }
 
+            if (auto* lod = up->GetComponent<LODGroup>(); lod && up.get() == ed.selected() && !lod->useScreenSize) {
+                const ImU32 cols[4] = {IM_COL32(255, 90, 90, 180), IM_COL32(90, 220, 110, 160),
+                                       IM_COL32(90, 150, 255, 140), IM_COL32(255, 210, 70, 120)};
+                for (int i = 0; i < (int)lod->levels.size() && i < 4; ++i) {
+                    const float rad = lod->levels[(std::size_t)i].distance;
+                    if (rad <= 0.05f) continue;
+                    const int N = 28;
+                    Vec3 prev{0, 0, 0}; bool have = false;
+                    for (int s = 0; s <= N; ++s) {
+                        const float a = 6.2831853f * (float)s / (float)N;
+                        Vec3 q{p.x + std::cos(a) * rad, p.y, p.z + std::sin(a) * rad};
+                        if (have) line(prev, q, cols[i], 1.25f);
+                        prev = q; have = true;
+                    }
+                }
+            }
+
             if (auto* lt = up->GetComponent<Light>()) {
                 // Tint the gizmo by the light's own color (so lights are
                 // distinguishable), brightening to yellow when selected.
@@ -40734,7 +40945,22 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             g->active = false;
         }
     }
-    if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
+    if (gameView) {
+        if (Camera* fovCam = SceneCamera(ed.scene()))
+            okay::visibility::RenderViewFovY() = fovCam->projection == Camera::Projection::Perspective
+                ? fovCam->VerticalFovDegrees(v3h > 1.0f ? v3w / v3h : 1.0f) : 60.0f;
+    } else {
+        okay::visibility::RenderViewFovY() = g_editorFov;
+    }
+    SDL_Texture* stackTex = nullptr;
+    if (gameView) {
+        const int fw = std::max(1, (int)(canvasSize.x * dpi));
+        const int fh = std::max(1, (int)(canvasSize.y * dpi));
+        stackTex = RenderCameraStackView(ed.scene(), fw, fh, 1, viewIgnore);
+    }
+    if (stackTex)
+        dl->AddImage((ImTextureID)stackTex, canvasPos, canvasEnd);
+    else if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)(v3w * dpi), (int)(v3h * dpi),
                                            gameView ? 1 : 0, viewIgnore))
         dl->AddImage((ImTextureID)tex, view3dMin, view3dMax);
@@ -41010,6 +41236,20 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    // GPU frames do not read depth back. When something is drawn on top of the
+    // picture (particles, lines, trails), fill a half-resolution depth buffer the
+    // same way the player does so those ribbons hide behind solid meshes.
+    if (!okay::SceneOcclusionDepth().valid) {
+        bool overlay = false;
+        for (const auto& up : ed.scene().Objects())
+            if (up && up->active && (up->GetComponent<ParticleSystem>() || up->GetComponent<LineRenderer>() ||
+                                     up->GetComponent<TrailRenderer>())) { overlay = true; break; }
+        if (overlay && v3w > 2.0f && v3h > 2.0f) {
+            static Raster occWork; static std::vector<std::uint32_t> occDown;
+            const int hw = std::max(1, (int)(v3w * dpi) / 2), hh = std::max(1, (int)(v3h * dpi) / 2);
+            FillOcclusionDepth(occWork, occDown, ed.scene(), vp, eye, hw, hh, viewIgnore);
+        }
+    }
     // Particles: camera-facing billboards projected with the 3D camera. Collected,
     // depth-sorted back-to-front, and drawn as soft volumetric puffs (a faint outer
     // halo + bright core) so the now-3D particle motion reads as real depth. This
@@ -41031,6 +41271,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (c.w <= 0.05f) continue;
                 ImVec2 sp(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
                           center.y - (c.y / c.w) * canvasSize.y * 0.5f);
+                if (okay::SceneOcclusionDepth().valid) {
+                    const float vw = std::max(1.0f, view3dMax.x - view3dMin.x);
+                    const float vh = std::max(1.0f, view3dMax.y - view3dMin.y);
+                    if (okay::ParticleOccluded((sp.x - view3dMin.x) / vw, (sp.y - view3dMin.y) / vh, c.w)) continue;
+                }
                 float rad = p.size * 0.5f / c.w * canvasSize.x * 0.5f;   // perspective size
                 if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
                 // Long axis: spin angle for billboards, screen-projected velocity for stretch.
@@ -44202,6 +44447,14 @@ void DrawGameView(EditorState& ed) {
                 else              std::snprintf(ml, sizeof(ml), "%d meshes  %dk tris", active3d, tris / 1000);
                 ov.scene.push_back(ml);
             }
+            {
+                const okay::CullCounters& cc = okay::LastCullCounters();
+                char cl[96];
+                std::snprintf(cl, sizeof(cl), "Drawn %d  Culled %d  Occluded %d", cc.drawn, cc.culled, cc.occluded);
+                ov.scene.push_back(cl);
+                std::snprintf(cl, sizeof(cl), "LOD %d/%d/%d/%d  Saved %d", cc.lod0, cc.lod1, cc.lod2, cc.lod3, cc.drawsSaved);
+                ov.scene.push_back(cl);
+            }
             ov.timers = g_gameStatsTimers ? ed.TimerLines(64) : std::vector<std::string>();
         }
         const float lh = ImGui::GetTextLineHeight();
@@ -44827,6 +45080,11 @@ int main(int argc, char** argv) {
     }
 
     if (!PassesLauncherGate(argc, argv)) return 0;
+    // Headless screenshots have no usable GPU. The software rasterizer is the
+    // picture we can trust, and it is the same path a machine without GL uses.
+    // Headless shots default to the software rasterizer. OKAY_UI_GPU=1 keeps the
+    // GPU backend so a screenshot can show per-pixel material maps.
+    if (std::getenv("OKAY_UI_SHOT") && !std::getenv("OKAY_UI_GPU")) g_gpuRender = false;
 
     // Project creation is driven by the launcher's Create tab:
     //   --new-project "<folder>"  create <folder>/Assets + the starting scene there
@@ -45985,6 +46243,142 @@ int main(int argc, char** argv) {
                 for (GameObject* c : cams) ed.scene().Destroy(c);
                 ed.scene().FlushDestroyed();
             }
+            // OKAY_UI_DEMO=stack|lod : a scene the Game view can screenshot.
+            if (const char* demo = std::getenv("OKAY_UI_DEMO"); demo && s_focusFrames == 36) {
+                const std::string which = demo;
+                ed.view3D = true;
+                // The untitled editor scene's placeholder camera is orthographic, so
+                // the Game view would take the sprite path and never draw meshes.
+                for (const auto& up : ed.scene().Objects()) {
+                    if (auto* c = up->GetComponent<Camera>(); c && c->main && up->transform) {
+                        c->projection = Camera::Projection::Perspective;
+                        up->transform->localPosition = {0, 2, 10};
+                        up->transform->localRotation = Quat::Identity;
+                    }
+                }
+                if (which == "stack") {
+                    // The default Main Camera sits at (0, 2, 10) and looks down -Z.
+                    // Keep that aim and put the props in front of it.
+                    GameObject* red = ed.scene().CreateGameObject("Red");
+                    red->transform->localPosition = {-1.2f, 0.6f, 4};
+                    auto* mr = red->AddComponent<MeshRenderer>();
+                    mr->mesh = Mesh::Cube(); mr->color = Color(0.9f, 0.15f, 0.12f, 1);
+                    red->layer = 1;
+                    GameObject* blue = ed.scene().CreateGameObject("Blue");
+                    blue->transform->localPosition = {1.6f, 0.7f, 2};
+                    auto* mb = blue->AddComponent<MeshRenderer>();
+                    mb->mesh = Mesh::Sphere(0.7f); mb->color = Color(0.15f, 0.4f, 0.95f, 1);
+                    blue->layer = 2;
+                    GameObject* floor = ed.scene().CreateGameObject("Floor");
+                    floor->transform->localPosition = {0, 0, 3};
+                    floor->transform->localScale = {8, 0.1f, 8};
+                    floor->AddComponent<MeshRenderer>()->color = Color(0.45f, 0.48f, 0.4f, 1);
+                    Camera* mainCam = nullptr;
+                    for (const auto& up : ed.scene().Objects())
+                        if (auto* c = up->GetComponent<Camera>(); c && c->main) mainCam = c;
+                    if (mainCam) {
+                        // A fresh editor scene's placeholder camera is orthographic
+                        // (the Game view then takes the 2D path and never draws meshes).
+                        // This demo is a 3D stack, so force the perspective pose.
+                        mainCam->projection = Camera::Projection::Perspective;
+                        mainCam->cullingMask = ~(1 << 2);   // the blue sphere is only in the overlay
+                        mainCam->depth = 0;
+                        mainCam->clearFlags = Camera::ClearFlags::Skybox;
+                        if (mainCam->gameObject && mainCam->gameObject->transform) {
+                            mainCam->gameObject->transform->localPosition = {0, 2, 10};
+                            mainCam->gameObject->transform->localRotation = Quat::Identity;
+                        }
+                    }
+                    GameObject* pip = ed.scene().CreateGameObject("Overlay Camera");
+                    auto* oc = pip->AddComponent<Camera>();
+                    oc->main = false; oc->depth = 5;
+                    oc->rectX = 0.62f; oc->rectY = 0.55f; oc->rectW = 0.34f; oc->rectH = 0.38f;
+                    oc->clearFlags = Camera::ClearFlags::SolidColor;
+                    oc->backgroundColor = Color(0.08f, 0.1f, 0.16f, 1);
+                    oc->cullingMask = (1 << 2);
+                    if (pip->transform) {
+                        pip->transform->localPosition = {1.6f, 1.4f, 6.5f};
+                        pip->transform->localRotation = Quat::Identity;   // looks down -Z, at the blue sphere
+                    }
+                    if (ed.scene().mainCamera == oc && mainCam) ed.scene().mainCamera = mainCam;
+                } else if (which == "lod") {
+                    GameObject* prop = ed.scene().CreateGameObject("LOD Near");
+                    prop->transform->localPosition = {-1.2f, 1.0f, 6};
+                    auto* mr = prop->AddComponent<MeshRenderer>();
+                    mr->mesh = Mesh::Sphere(0.8f, 10, 16);
+                    mr->color = Color::White;
+                    auto* lod = prop->AddComponent<LODGroup>();
+                    lod->Generate(mr->mesh);
+                    lod->debugTint = true;
+                    lod->cullDistance = 0;
+                    lod->useScreenSize = false;
+                    if (lod->levels.size() >= 2) {
+                        lod->levels[0].distance = 6.0f;
+                        if (lod->levels.size() >= 3) lod->levels[1].distance = 14.0f;
+                    }
+                    GameObject* lodFar = ed.scene().CreateGameObject("LOD Far");
+                    lodFar->transform->localPosition = {1.4f, 1.0f, -8};
+                    auto* mr2 = lodFar->AddComponent<MeshRenderer>();
+                    mr2->mesh = mr->mesh;
+                    mr2->color = Color::White;
+                    auto* lod2 = lodFar->AddComponent<LODGroup>();
+                    lod2->levels = lod->levels;
+                    lod2->lodMeshes = lod->lodMeshes;
+                    lod2->debugTint = true;
+                    lod2->cullDistance = 0;
+                    lod2->useScreenSize = false;
+                    g_gameStatsOverlay = true;
+                    g_showStats = true;
+                    ed.Select(lodFar);
+                    ImGui::SetWindowFocus("Stats");
+                }
+                if (const char* shot = std::getenv("OKAY_UI_SHOT")) {
+                    if (Camera* cam = SceneCamera(ed.scene())) {
+                        const int W = 640, H = 360;
+                        ApplySceneLight(ed.scene());
+                        ed.scene().Update(0.0f);   // cameras join the stack
+                        const okay::CameraStackPlan plan = okay::PlanCameraStack(ed.scene(), W, H, nullptr);
+                        std::vector<std::uint32_t> hold;
+                        auto one = [&](const okay::CameraPass& p) -> const std::uint32_t* {
+                            static Raster rr[4]; static std::vector<std::uint32_t> dd[4]; static int n = 0;
+                            okay::RenderCullingMask() = p.cullingMask;
+                            const int s = n++ & 3;
+                            return RenderMeshesSS(rr[s], dd[s], ed.scene(), p.vp, p.eye, p.w, p.h, 1, p.ignore);
+                        };
+                        const std::uint32_t* px = nullptr;
+                        int iw = W, ih = H;
+                        if (!plan.singleFullFrame && okay::CompositeCameraStack(plan, one, hold)) {
+                            px = hold.data(); iw = plan.width; ih = plan.height;
+                        } else if (!plan.passes.empty()) {
+                            static Raster rr; static std::vector<std::uint32_t> dd;
+                            okay::RenderCullingMask() = plan.passes[0].cullingMask;
+                            px = RenderMeshesSS(rr, dd, ed.scene(), plan.passes[0].vp, plan.passes[0].eye, W, H, 1, nullptr);
+                            hold.assign(px, px + (std::size_t)W * H);
+                            px = hold.data();
+                        }
+                        if (px) {
+                            std::vector<std::uint8_t> rgba((std::size_t)iw * ih * 4);
+                            for (int i = 0; i < iw * ih; ++i) {
+                                const std::uint32_t p = px[i];
+                                rgba[(std::size_t)i * 4] = (std::uint8_t)(p & 255);
+                                rgba[(std::size_t)i * 4 + 1] = (std::uint8_t)((p >> 8) & 255);
+                                rgba[(std::size_t)i * 4 + 2] = (std::uint8_t)((p >> 16) & 255);
+                                rgba[(std::size_t)i * 4 + 3] = 255;
+                            }
+                            okay::Image img(iw, ih);
+                            img.Set(iw, ih, std::move(rgba));
+                            std::string raw(shot);
+                            const auto dot = raw.rfind('.');
+                            if (dot != std::string::npos) raw.insert(dot, "_render");
+                            else raw += "_render.png";
+                            img.SavePNG(raw);
+                            std::printf("saved raw %s passes %d\n", raw.c_str(), (int)plan.passes.size());
+                            std::fflush(stdout);
+                        }
+                    }
+                }
+                ImGui::SetWindowFocus("Game");
+            }
             if (std::getenv("OKAY_UI_CAMTEST") && s_focusFrames == 85) {
                 ed.camYaw = -30.0f; ed.camPitch = 30.0f; ed.camDist = 9.0f;
                 ed.Select(ed.CreateCamera());
@@ -46063,6 +46457,18 @@ int main(int argc, char** argv) {
                 bool okm = false;
                 if (GameObject* r = okay::ImportModelScene(ed.scene(), imp, &okm); r && okm) {
                     r->transform->SetPosition(ed.camTarget);
+                    if (std::getenv("OKAY_UI_SHOT")) {
+                        ed.view3D = true;
+                        r->transform->SetPosition({0, 0.55f, 0});
+                        r->transform->localScale = {1.15f, 1.15f, 1.15f};
+                        for (const auto& up : ed.scene().Objects()) {
+                            if (auto* c = up->GetComponent<Camera>(); c && c->main && up->transform) {
+                                c->projection = Camera::Projection::Perspective;
+                                up->transform->localPosition = {0.4f, 1.15f, 3.1f};
+                                up->transform->localRotation = Quat::LookRotation(Vec3{0.4f, 1.15f, 3.1f} - Vec3{0, 0.4f, 0});
+                            }
+                        }
+                    }
                     ed.Select(r); ed.dirty = true;
                     LogModelReport(ed, r);
                     if (std::getenv("OKAY_UI_ANIMGRAPH")) {
@@ -46299,6 +46705,24 @@ int main(int argc, char** argv) {
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
         if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
 #endif
+        if (const char* shot = std::getenv("OKAY_UI_SHOT")) {
+            static int shotFrames = 0;
+            if (++shotFrames == 160 && shot[0]) {
+                int sw = 0, sh = 0;
+                SDL_GetRendererOutputSize(renderer, &sw, &sh);
+                if (sw > 0 && sh > 0) {
+                    std::vector<std::uint8_t> px((std::size_t)sw * sh * 4);
+                    if (SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), sw * 4) == 0) {
+                        okay::Image img;
+                        img.Set(sw, sh, std::move(px));
+                        img.SavePNG(shot);
+                        ConsoleLog(std::string("Saved screenshot ") + shot);
+                        std::fflush(stdout);
+                    }
+                }
+                if (std::getenv("OKAY_UI_QUIT")) std::exit(0);
+            }
+        }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
             int sw = 0, sh = 0;
             SDL_GetRendererOutputSize(renderer, &sw, &sh);

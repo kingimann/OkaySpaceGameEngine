@@ -50,3 +50,20 @@ pos 110 1080 710
 default 110 0 "Time: "
 node 111 GlClearText
 pos 111 1340 710
+node 112 GlSetTextOpacity
+pos 112 40 900
+default 112 0 0.3
+node 113 GlFadeTextTo
+pos 113 300 900
+default 113 0 0
+default 113 1 1
+node 114 GlShowTwoNumbersInText
+pos 114 560 900
+default 114 0 "Coins: "
+default 114 1 3
+default 114 2 " of "
+default 114 3 10
+node 115 GlGetTextOpacity
+pos 115 820 900
+node 116 GlGetTextSize
+pos 116 1080 900

@@ -121,3 +121,33 @@ node 126 GlTurnTowardObject
 pos 126 560 1280
 default 126 0 Goal
 default 126 1 90
+node 127 GlRiseAtSpeed
+pos 127 820 1280
+default 127 0 2
+node 128 GlMoveInCircle
+pos 128 1080 1280
+default 128 0 2
+default 128 1 1.5707963
+node 129 GlChangeSizeOverTime
+pos 129 1340 1280
+default 129 0 1
+node 130 GlMultiplySize
+pos 130 40 1470
+default 130 0 3
+node 131 GlFaceAwayFrom
+pos 131 300 1470
+default 131 0 Goal
+node 132 GlGetFacingAngle
+pos 132 560 1470
+node 133 GlSetFacingAngle
+pos 133 820 1470
+default 133 0 75
+node 134 GlSetHeight
+pos 134 1080 1470
+default 134 0 3.5
+node 135 GlIsAboveHeight
+pos 135 1340 1470
+default 135 0 1
+node 136 GlIsBelowHeight
+pos 136 40 1660
+default 136 0 1

@@ -29,3 +29,15 @@ default 107 0 "q1"
 default 107 1 0
 node 108 GlCountActiveQuests
 pos 108 560 710
+node 109 GlCountCompletedQuests
+pos 109 820 710
+node 110 GlIsAnyQuestActive
+pos 110 1080 710
+node 111 GlFailActiveQuests
+pos 111 1340 710
+node 112 GlFinishObjectives
+pos 112 40 900
+default 112 0 "q1"
+node 113 GlGetObjectiveCount
+pos 113 300 900
+default 113 0 "q1"

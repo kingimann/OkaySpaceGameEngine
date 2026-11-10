@@ -60,3 +60,21 @@ default 113 1 2
 node 114 GlTakeOneItem
 pos 114 560 900
 default 114 0 "coin"
+node 115 GlSetCarryLimit
+pos 115 820 900
+default 115 0 30
+node 116 GlSetStackLimit
+pos 116 1080 900
+default 116 0 8
+node 117 GlGetCarryLimit
+pos 117 1340 900
+node 118 GlIsOverweight
+pos 118 40 1090
+node 119 GlGetSlowdownFromWeight
+pos 119 300 1090
+node 120 GlCountAllItems
+pos 120 560 1090
+node 121 GlGetStackLimit
+pos 121 820 1090
+node 122 GlGetInventorySize
+pos 122 1080 1090

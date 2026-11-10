@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "6751b8b8da062d2b6b9dfb195eeadf3a"
+  guid "c75c9201d92346f65492031481aa93e3"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "c88e04e6fc1b5e40434e63ec2f7e9988"
+  guid "4b1adb3e1678eaa7149386744676301c"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. progression" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "40ec431343ed399fb94b1bde338ccfaa"
+  guid "d46d5ae95c0c368d51008a1977e05e1d"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -28,7 +28,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Scorekeeper"
-  guid "20e622b31c69f6c22b64987646a0dfbe"
+  guid "9bef3aa19321ec71c3d821c4449e2273"
   active 1
   parent -1
   transform 0 0.5 0 0 0 0 1 1 1 1

@@ -247,6 +247,10 @@ import gameplay_nodes_batch2
 gameplay_nodes_batch2.define(add, N, B, T, O, R)
 import gameplay_nodes_batch3
 gameplay_nodes_batch3.define(add, N, B, T, O, R)
+import gameplay_nodes_batch4
+gameplay_nodes_batch4.define(add, N, B, T, O, R)
+import gameplay_nodes_batch5
+gameplay_nodes_batch5.define(add, N, B, T, O, R)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -496,7 +500,7 @@ def pgname(n):
     by_topic = {("Physics", "Queries"): "ai", ("Camera", ""): "camera", ("UI", ""): "ui", ("UI", "Fields"): "ui", ("Audio", ""): "audio",
                 ("Physics", ""): "physics", ("Animation", "Procedural"): "animation", ("Scene", "Story"): "quests",
                 ("Variables", "Saved"): "saving", ("Objects", "Groups"): "groups", ("Time", ""): "timing",
-                ("Input", "Axes"): "input", ("Input", "Keys"): "input", ("Objects", "Survival"): "health",
+                ("Input", "Axes"): "input", ("Input", "Keys"): "input", ("Input", "Mouse"): "input", ("Objects", "Survival"): "health",
                 ("Objects", "Items"): "inventory", ("Movement", ""): "movement", ("Movement", "Turn"): "movement", ("Movement", "Size"): "movement",
                 ("Math", "Progression"): "progression"}
     return by_topic[(n["topic"], n["sub"])]

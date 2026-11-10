@@ -89,3 +89,40 @@ default 122 0 100
 default 122 1 15
 default 122 2 10
 default 122 3 20
+node 123 GlSetInvincibleTime
+pos 123 1340 1090
+default 123 0 0.75
+node 124 GlSetLives
+pos 124 40 1280
+default 124 0 3
+node 125 GlSetRespawnTime
+pos 125 300 1280
+default 125 0 true
+default 125 1 4
+node 126 GlSetResistance
+pos 126 560 1280
+default 126 0 0.5
+node 127 GlSetSmallestHit
+pos 127 820 1280
+default 127 0 2
+node 128 GlSetOverhealLimit
+pos 128 1080 1280
+default 128 0 25
+default 128 1 3
+node 129 GlSetRemoveOnDeath
+pos 129 1340 1280
+default 129 0 true
+node 130 GlGetMissingHealth
+pos 130 40 1470
+node 131 GlIsHealthAbove
+pos 131 300 1470
+node 132 GlGetResistance
+pos 132 560 1470
+node 133 GlGetLives
+pos 133 820 1470
+node 134 GlIsRespawnOn
+pos 134 1080 1470
+node 135 GlGetOverhealLimit
+pos 135 1340 1470
+node 136 GlGetHitProtectionTime
+pos 136 40 1660

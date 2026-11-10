@@ -32,3 +32,14 @@ default 107 1 1.3
 node 108 GlMuteSound
 pos 108 560 710
 default 108 0 true
+node 109 GlPlaySoundNow
+pos 109 820 710
+node 110 GlSetSound3D
+pos 110 1080 710
+default 110 0 true
+node 111 GlGetPitch
+pos 111 1340 710
+node 112 GlIsSoundLooping
+pos 112 40 900
+node 113 GlIsSoundPositional
+pos 113 300 900

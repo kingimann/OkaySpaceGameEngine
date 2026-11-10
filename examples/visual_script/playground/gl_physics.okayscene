@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "33c8297d64fb621fd5c0f47f11a8d265"
+  guid "13d1bd6e65a9394eba9b6e992bc8e166"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "784792ad41e16139240a1fb9d0d64f6d"
+  guid "f40e7d326e0f692b8d1188911bb233c1"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. physics" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "31f76fbdfd07cc8fb3cb9217087a6443"
+  guid "82e38004a5ba897be7dde5b342bbe17b"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -28,7 +28,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Ball"
-  guid "dadd06ed5897d98f8d187634d23f0536"
+  guid "26ea2654034640dcfcd2ffee9311e747"
   active 1
   parent -1
   transform 0 4 0 0 0 0 1 1 1 1

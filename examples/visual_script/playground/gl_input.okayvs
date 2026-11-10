@@ -11,3 +11,11 @@ node 104 GlIsAnyKeyHeld
 pos 104 1080 520
 node 105 GlIsJumpHeld
 pos 105 1340 520
+node 106 GlIsFireHeld
+pos 106 40 710
+node 107 GlIsAimHeld
+pos 107 300 710
+node 108 GlIsInteractHeld
+pos 108 560 710
+node 109 GlGetMoveStrength
+pos 109 820 710

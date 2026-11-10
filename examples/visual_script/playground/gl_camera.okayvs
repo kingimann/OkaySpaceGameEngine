@@ -37,3 +37,14 @@ node 108 GlZoomSmoothlyTo
 pos 108 560 710
 default 108 0 2
 default 108 1 1
+node 109 GlSetFlatCameraSize
+pos 109 820 710
+default 109 0 8
+node 110 GlGetFlatCameraSize
+pos 110 1080 710
+node 111 GlResetCamera
+pos 111 1340 710
+node 112 GlIsCameraZoomedIn
+pos 112 40 900
+node 113 GlGetCameraTilt
+pos 113 300 900

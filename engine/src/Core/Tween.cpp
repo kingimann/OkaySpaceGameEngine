@@ -2,6 +2,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Components/Spline.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
@@ -21,6 +22,18 @@ namespace okay {
 
 // ---------------------------------------------------------------- Tweener ----
 
+namespace {
+// The tweens whose callbacks are on the stack right now. A callback that calls TweenManager::Update must not
+// advance the tween it is running in (that would run its callbacks again, inside themselves, with no end for a
+// zero step, and could finish and kill the tween before the outer render got to its completion).
+thread_local std::vector<const Tweener*> g_rendering;
+struct RenderGuard {
+    explicit RenderGuard(const Tweener* t) { g_rendering.push_back(t); }
+    ~RenderGuard() { g_rendering.pop_back(); }
+};
+bool IsRendering(const Tweener* t) { return std::find(g_rendering.begin(), g_rendering.end(), t) != g_rendering.end(); }
+}
+
 Tweener& Tweener::SetEaseBezier(float x1, float y1, float x2, float y2) {
     return SetEaseCurve([x1, y1, x2, y2](float t) { return Easing::CubicBezier(x1, y1, x2, y2, t); });
 }
@@ -36,30 +49,33 @@ Tweener& Tweener::SetEaseSpec(const std::string& text) {
     return SetEaseCurve([c](float t) { return c.Evaluate(t); });
 }
 
-float Tweener::FullDuration() const {
-    if (loops < 0) return std::numeric_limits<float>::infinity();
-    return delay + Duration() * (float)(loops == 0 ? 1 : loops);   // 0 loops plays once, like SetLoops(0)
+double Tweener::FullDurationD() const {
+    if (loops < 0) return std::numeric_limits<double>::infinity();
+    return DelayD() + (double)Duration() * (double)(loops == 0 ? 1 : loops);   // 0 loops plays once, like SetLoops(0)
 }
 
 float Tweener::ElapsedPercentage() const {
-    const float p = Elapsed(), d = Duration();
     if (m_complete) return 1.0f;
-    return Mathf::Clamp01((p - std::floor(p / d) * d) / d);
+    const double d = (double)Duration();
+    const double p = ElapsedD();
+    return Mathf::Clamp01((float)(std::fmod(p, d) / d));
 }
 
 void Tweener::Advance(float dt) {
     if (m_killed || paused) return;
     if (!std::isfinite(dt)) return;   // NaN / infinite frame time: skip it rather than poison the timeline
     if (!backwards && m_complete) return;
-    const float step = dt * timeScale;
+    const double step = (double)dt * (double)timeScale;
     if (!std::isfinite(step)) return;   // a NaN or infinite speed: skip the frame, keep the timeline
-    const float next = m_time + (backwards ? -step : step);
-    if (backwards && next <= 0.0f) { RenderAt(0.0f); paused = true; return; }
+    m_age += step > 0.0 ? step : -step;
+    const double next = m_time + (backwards ? -step : step);
+    if (backwards && next <= 0.0) { RenderAt(0.0); paused = true; return; }
     RenderAt(next);
 }
 
-void Tweener::RenderAt(float time) {
+void Tweener::RenderAt(double time) {
     if (m_killed) return;
+    RenderGuard rendering(this);
     // Every callback below may Kill / Restart / Goto / Complete this tween, which
     // renders again (nested). Then this render is stale and must stop: carrying on
     // would fire callbacks for a state that no longer exists.
@@ -67,29 +83,50 @@ void Tweener::RenderAt(float time) {
     auto stale = [&] { return m_killed || m_epoch != epoch; };
     const int forcedLoop = m_forceLoopEnd;   // Complete() on an endless tween: end of this loop exactly
     m_forceLoopEnd = -1;
-    const float full = FullDuration();
-    if (!(time >= 0.0f)) time = 0.0f;   // also NaN
+    if (!(time >= 0.0)) time = 0.0;   // also NaN
+    const double delayD = DelayD();
+    // The start values are read the first time the delay is over, before the length is used: a
+    // tween whose length depends on them (speed based) knows it from here on.
+    if (time >= delayD && !m_initialized) {
+        m_initialized = true;
+        DoInit();
+        if (stale()) return;
+        if (speedBased && !m_nested) {   // the length follows from the distance now that the start is known
+            const double dist = DoDistance();
+            if (dist >= 0.0 && std::isfinite(dist)) {
+                const double speed = std::isfinite(duration) && duration > 1e-9f ? (double)duration : 0.0;
+                const double len = speed > 0.0 ? dist / speed : 0.0;
+                m_length = (float)std::min(std::max(len, 1.0e-4), (double)kMaxSeconds);
+            }
+        }
+    }
+    const double full = FullDurationD();
     if (time > full) time = full;
-    if (time > 1.0e9f) time = 1.0e9f;   // an endless tween sent to infinity stays a number (31 years in)
+    if (time > 1.0e9) time = 1.0e9;   // an endless tween sent to infinity stays a number (31 years in)
     m_time = time;
-    const float p = time - delay;
-    if (p < 0.0f) {   // still in the delay (or rewound into it): show the start
+    const double p = time - delayD;
+    if (p < 0.0) {   // still in the delay (or rewound into it): show the start
         if (m_initialized) { DoApply(Eased(0.0f), 0.0f, 0); if (stale()) return; }
         m_complete = false; m_loop = 0;
         return;
     }
-    if (!m_initialized) { m_initialized = true; DoInit(); }
     if (!m_started) { m_started = true; if (onStart) { onStart(); if (stale()) return; } }
 
-    const float d = Duration();
+    const double d = (double)Duration();
     const int total = loops == 0 ? 1 : loops;
     const bool finite = total > 0;
-    const bool done = forcedLoop < 0 && finite && p >= d * (float)total;
-    // A frame hitch can skip many loops: floor in double and clamp, so the cast
-    // can't overflow and the callbacks below stay bounded.
-    const double q = std::floor((double)p / (double)d);
-    int loop = forcedLoop >= 0 ? forcedLoop : done ? total - 1 : (int)std::min(q, 2.0e9);
-    float local = (done || forcedLoop >= 0) ? d : Mathf::Clamp(p - (float)loop * d, 0.0f, d);
+    // The end is reached when the (clamped) time is the full length: comparing against `full` itself
+    // is exact, where "p >= d * loops" could miss by one rounding step when a delay is added and taken off.
+    const bool done = forcedLoop < 0 && finite && time >= full;
+    // A frame hitch can skip many loops. The loop number and the place inside it come from the
+    // double time, so hours of play keep the phase; the int is clamped so the callbacks below stay bounded.
+    double loopD = std::floor(p / d);
+    double within = p - loopD * d;
+    if (within < 0.0) { loopD -= 1.0; within += d; } else if (within >= d) { loopD += 1.0; within -= d; }
+    if (done) { loopD = (double)(total - 1); within = d; }
+    else if (forcedLoop >= 0) { loopD = (double)forcedLoop; within = d; }
+    const int loop = (int)std::min(loopD, 2.0e9);
+    const bool oddLoop = std::fmod(loopD, 2.0) >= 1.0;
     const int completed = done ? total : forcedLoop >= 0 ? forcedLoop + 1 : loop;
     // Loops finished since the last frame: play each one's end first, so a
     // sequence fires what's at the end of a loop even when a big step skips past it.
@@ -101,8 +138,8 @@ void Tweener::RenderAt(float time) {
         if (loopType == LoopType::Restart) { DoLoopRestart(); if (stale()) return; }
     }
 
-    float u = Mathf::Clamp01(local / d);
-    if (loopType == LoopType::Yoyo && (loop % 2) == 1) u = 1.0f - u;
+    float u = Mathf::Clamp01((float)(within / d));
+    if (loopType == LoopType::Yoyo && oddLoop) u = 1.0f - u;
     const int inc = loopType == LoopType::Incremental ? loop : 0;
     DoApply(Eased(u), u, inc);
     if (stale()) return;
@@ -131,29 +168,29 @@ void Tweener::Restart(bool includeDelay) {
     if (m_killed) return;
     m_complete = false; m_loop = 0; paused = false; backwards = false;
     DoLoopRestart();
-    RenderAt(includeDelay ? 0.0f : delay);
+    RenderAt(includeDelay ? 0.0 : DelayD());
 }
 
 void Tweener::Rewind() {
     if (m_killed) return;
     m_complete = false; m_loop = 0; backwards = false;
     DoLoopRestart();
-    RenderAt(0.0f);
+    RenderAt(0.0);
     paused = true;
 }
 
 void Tweener::Complete() {
     if (m_killed) return;
     if (loops < 0) {   // endless: finish the loop it's in
-        const float d = Duration();
-        const int k = (int)std::min(std::floor((double)Elapsed() / (double)d), 2.0e9);
+        const double d = (double)Duration();
+        const int k = (int)std::min(std::floor(ElapsedD() / d), 2.0e9);
         m_forceLoopEnd = k;
-        RenderAt(delay + (float)(k + 1) * d);
+        RenderAt(DelayD() + (double)(k + 1) * d);
         if (!m_killed && onComplete) onComplete();
         return;
     }
     if (m_complete && !backwards) return;   // already at the end: nothing to complete twice
-    RenderAt(FullDuration());
+    RenderAt(FullDurationD());
 }
 
 void Tweener::Kill(bool complete) {
@@ -163,28 +200,57 @@ void Tweener::Kill(bool complete) {
         if (m_killed) return;   // a callback during the completion killed it (OnKill already ran)
     }
     m_killed = true;
+    DoKill();
     if (onKill) onKill();
 }
 
 void Tweener::Goto(float seconds, bool andPlay) {
     if (m_killed) return;
-    if (seconds < Elapsed()) { m_loop = 0; m_complete = false; DoLoopRestart(); }
-    RenderAt(delay + seconds);
+    if ((double)seconds < ElapsedD()) { m_loop = 0; m_complete = false; DoLoopRestart(); }
+    RenderAt(DelayD() + (double)seconds);
     paused = !andPlay;
 }
 
 void Tweener::DropDying(const std::unordered_set<const GameObject*>& dying) {
-    if (target && dying.count(target)) m_killed = true;   // silent: its object is gone
+    if (target && dying.count(target)) EndSilently();   // silent: its object is gone
 }
 
 // ------------------------------------------------------------- ValueTween ----
 
 void ValueTween::DoInit() {
-    const Values cur = m_get ? m_get() : Values{};
+    Values cur = m_get ? m_get() : Values{};
     Values tgt{};
     for (int i = 0; i < m_count; ++i) tgt[i] = relative ? cur[i] + m_end[i] : m_end[i];
+    // A NaN or infinite value on either side would be written into the object every frame and stay
+    // there: an end that is not a number leaves that part where it is, a start that is not a number
+    // (the object was already broken) snaps to the end.
+    for (int i = 0; i < m_count; ++i) {
+        if (!std::isfinite(tgt[i])) tgt[i] = std::isfinite(cur[i]) ? cur[i] : 0.0f;
+        if (!std::isfinite(cur[i])) cur[i] = tgt[i];
+    }
     m_from = fromMode ? tgt : cur;
     m_to   = fromMode ? cur : tgt;
+}
+
+double ValueTween::DoDistance() const {
+    double sum = 0.0;
+    for (int i = 0; i < m_count; ++i) { const double d = (double)m_to[i] - (double)m_from[i]; sum += d * d; }
+    return std::sqrt(sum);
+}
+
+ValueTween& ValueTween::ChangeEnd(const Values& end) {
+    m_end = end;
+    if (!m_initialized) return *this;   // not started: DoInit reads m_end
+    // Started: the start stays where it was read. A relative end is an offset from the start again;
+    // in From mode the stored values are the start of the motion, so they are the ones that move.
+    Values tgt{};
+    for (int i = 0; i < m_count; ++i) {
+        const double base = fromMode ? (double)m_to[i] : (double)m_from[i];
+        const float v = relative ? (float)(base + (double)end[i]) : end[i];
+        tgt[i] = std::isfinite(v) ? v : (fromMode ? m_from[i] : m_to[i]);
+    }
+    if (fromMode) m_from = tgt; else m_to = tgt;
+    return *this;
 }
 
 void ValueTween::DoApply(float k, float, int loop) {
@@ -197,7 +263,7 @@ void ValueTween::DoApply(float k, float, int loop) {
 // ---------------------------------------------------------- TweenSequence ----
 
 float TweenSequence::ChildLength(const Tweener& t) {
-    return t.delay + t.Duration() * (float)(t.loops < 0 ? 1 : t.loops == 0 ? 1 : t.loops);
+    return (float)(t.DelayD() + (double)t.Duration() * (double)(t.loops < 0 ? 1 : t.loops == 0 ? 1 : t.loops));
 }
 
 void TweenSequence::Adopt(const std::shared_ptr<Tweener>& t) {
@@ -241,6 +307,26 @@ TweenSequence& TweenSequence::Join(std::shared_ptr<Tweener> t) {
     return Insert(m_lastStart, std::move(t));
 }
 
+TweenSequence& TweenSequence::Prepend(std::shared_ptr<Tweener> t) {
+    if (!t || t.get() == this) return *this;
+    if (auto* s = dynamic_cast<const TweenSequence*>(t.get()); s && s->Contains(this)) return *this;
+    const float len = ChildLength(*t);
+    // Everything already there moves later by what the new one takes; then it goes in at 0.
+    if (std::isfinite(len) && len > 0.0f) {
+        for (auto& it : m_items) it.at = std::min(it.at + len, kMaxSeconds);
+        for (auto& c : m_calls) c.at = std::min(c.at + len, kMaxSeconds);
+        m_lastStart = std::min(m_lastStart + len, kMaxSeconds);
+        m_end = std::min(m_end + len, kMaxSeconds);
+    }
+    const float keepEnd = m_end;
+    const float keepLast = m_lastStart;
+    Insert(0.0f, std::move(t));
+    m_end = keepEnd; m_lastStart = keepLast; duration = m_end;
+    return *this;
+}
+
+TweenSequence& TweenSequence::JoinCallback(Callback fn) { return InsertCallback(m_lastStart, std::move(fn)); }
+
 TweenSequence& TweenSequence::AppendInterval(float seconds) {
     if (seconds > 0 && std::isfinite(seconds)) { m_end = std::min(m_end + seconds, kMaxSeconds); m_lastStart = m_end; duration = m_end; }
     return *this;
@@ -279,8 +365,8 @@ void TweenSequence::DoApply(float k, float, int) {
         Tweener& c = *m_items[i].tween;
         if (c.m_killed) continue;
         const float ct = T - m_items[i].at;
-        if (ct < 0.0f) { if (c.m_initialized) c.RenderAt(0.0f); continue; }   // not reached (yet / any more)
-        c.RenderAt(std::min(ct, ChildLength(c)));
+        if (ct < 0.0f) { if (c.m_initialized) c.RenderAt(0.0); continue; }   // not reached (yet / any more)
+        c.RenderAt((double)std::min(ct, ChildLength(c)));
     }
     // A callback may add to this sequence (Append, AppendCallback...), which can move the
     // lists: go by index over what was there, and run a copy of the function.
@@ -303,9 +389,14 @@ void TweenSequence::DoLoopRestart() {
         Tweener& c = *keep;
         if (c.m_killed || !c.m_initialized) continue;
         c.m_loop = 0; c.m_complete = false;
-        c.RenderAt(0.0f);
+        c.RenderAt(0.0);
     }
     m_prevT = -1.0f;
+}
+
+void TweenSequence::DoKill() {
+    // By index: ending a child runs no user code, but a nested sequence ends its own children the same way.
+    for (std::size_t i = 0; i < m_items.size(); ++i) m_items[i].tween->EndSilently();
 }
 
 void TweenSequence::DropDying(const std::unordered_set<const GameObject*>& dying) {
@@ -319,6 +410,7 @@ TweenManager::~TweenManager() { Clear(); }
 
 void TweenManager::Adopt(const std::shared_ptr<Tweener>& t) {
     if (!t || t->m_owner == this) return;
+    if (t->m_owner) t->m_owner->Detach(t.get());   // one manager at a time: it must not be advanced twice
     t->m_owner = this;
     t->m_handle = m_next++;
     m_tweens.push_back(t);
@@ -357,6 +449,49 @@ std::shared_ptr<ValueTween> TweenManager::Virtual(float from, float to, float du
     return Add(t);
 }
 
+std::shared_ptr<ValueTween> TweenManager::ToVec2(std::function<Vec2()> get, std::function<void(const Vec2&)> set, const Vec2& end, float duration) {
+    auto t = std::make_shared<ValueTween>(2,
+        [get]() { const Vec2 v = get ? get() : Vec2{}; return ValueTween::Values{v.x, v.y, 0, 0}; },
+        [set](const ValueTween::Values& v) { if (set) set(Vec2{v[0], v[1]}); },
+        ValueTween::Values{end.x, end.y, 0, 0});
+    t->duration = duration;
+    return Add(t);
+}
+
+std::shared_ptr<ValueTween> TweenManager::ToVec3(std::function<Vec3()> get, std::function<void(const Vec3&)> set, const Vec3& end, float duration) {
+    auto t = std::make_shared<ValueTween>(3,
+        [get]() { const Vec3 v = get ? get() : Vec3{}; return ValueTween::Values{v.x, v.y, v.z, 0}; },
+        [set](const ValueTween::Values& v) { if (set) set(Vec3{v[0], v[1], v[2]}); },
+        ValueTween::Values{end.x, end.y, end.z, 0});
+    t->duration = duration;
+    return Add(t);
+}
+
+std::shared_ptr<ValueTween> TweenManager::ToColor(std::function<Color()> get, std::function<void(const Color&)> set, const Color& end, float duration) {
+    auto t = std::make_shared<ValueTween>(4,
+        [get]() { const Color c = get ? get() : Color{}; return ValueTween::Values{c.r, c.g, c.b, c.a}; },
+        [set](const ValueTween::Values& v) { if (set) set(Color{v[0], v[1], v[2], v[3]}); },
+        ValueTween::Values{end.r, end.g, end.b, end.a});
+    t->duration = duration;
+    return Add(t);
+}
+
+std::shared_ptr<Tweener> TweenManager::ToQuat(std::function<Quat()> get, std::function<void(const Quat&)> set, const Quat& end, float duration) {
+    auto t = std::make_shared<CustomTween>(nullptr, nullptr);
+    auto start = std::make_shared<Quat>();
+    Tweener* self = t.get();
+    const Quat e = end.Normalized();
+    t->SetFunctions([get, start]() { *start = get ? get() : Quat{}; },
+                    [set, start, e, self](float k, float, int) {
+        if (!set) return;
+        const Quat& a = *start;
+        const Quat b = self->relative ? (*start * e).Normalized() : e;
+        set(self->fromMode ? Quat::Slerp(b, a, k) : Quat::Slerp(a, b, k));
+    });
+    t->duration = duration;
+    return Add(std::shared_ptr<Tweener>(t));
+}
+
 std::shared_ptr<Tweener> TweenManager::DelayedCall(float seconds, std::function<void()> fn) {
     auto t = std::make_shared<CustomTween>(nullptr, nullptr);
     t->duration = seconds > 0 ? seconds : 1e-4f;
@@ -381,7 +516,7 @@ void TweenManager::Update(float dt, float unscaledDt) {
     std::exception_ptr failure;
     for (m_cursor = 0; m_cursor < (std::ptrdiff_t)m_tweens.size(); ++m_cursor) {
         std::shared_ptr<Tweener> t = m_tweens[(std::size_t)m_cursor];   // keep alive through its callbacks
-        if (t->m_killed) continue;
+        if (t->m_killed || IsRendering(t.get())) continue;   // (a callback of this very tween called Update: leave it to the outer one)
         try {
             float step = t->unscaledTime ? unscaledDt : dt;
             if (!t->clock.empty()) {
@@ -395,7 +530,7 @@ void TweenManager::Update(float dt, float unscaledDt) {
             // A tween whose callback throws is ended (it would only throw again next frame);
             // the others still get their time and the first error is rethrown below.
             if (!failure) failure = std::current_exception();
-            t->m_killed = true;
+            t->EndSilently();
         }
     }
     m_cursor = outerCursor;
@@ -423,6 +558,22 @@ std::vector<std::shared_ptr<Tweener>> TweenManager::OfTarget(const GameObject* g
     return out;
 }
 
+std::vector<std::shared_ptr<Tweener>> TweenManager::WithTag(const std::string& tag) const {
+    std::vector<std::shared_ptr<Tweener>> out;
+    if (tag.empty()) return out;
+    for (const auto& t : m_tweens) if (!t->m_killed && t->tag == tag) out.push_back(t);
+    return out;
+}
+int TweenManager::KillByTag(const std::string& tag, bool complete)  { int n = 0; for (auto& t : WithTag(tag)) { t->Kill(complete); ++n; } return n; }
+int TweenManager::PauseByTag(const std::string& tag)    { int n = 0; for (auto& t : WithTag(tag)) { t->Pause(); ++n; } return n; }
+int TweenManager::PlayByTag(const std::string& tag)     { int n = 0; for (auto& t : WithTag(tag)) { t->Play(); ++n; } return n; }
+int TweenManager::CompleteByTag(const std::string& tag) { int n = 0; for (auto& t : WithTag(tag)) { t->Complete(); ++n; } return n; }
+std::size_t TweenManager::CountByTag(const std::string& tag) const {
+    if (tag.empty()) return 0;
+    std::size_t n = 0; for (const auto& t : m_tweens) if (!t->m_killed && t->tag == tag) ++n; return n;
+}
+int TweenManager::Rewind(const std::string& id) { int n = 0; for (auto& t : WithId(id)) { t->Rewind(); ++n; } return n; }
+
 int TweenManager::Kill(const std::string& id, bool complete) {
     int n = 0; for (auto& t : WithId(id)) { t->Kill(complete); ++n; } return n;
 }
@@ -440,10 +591,27 @@ int TweenManager::Complete(const std::string& id) { int n = 0; for (auto& t : Wi
 int TweenManager::PauseTarget(const GameObject* go) { int n = 0; for (auto& t : OfTarget(go)) { t->Pause(); ++n; } return n; }
 int TweenManager::PlayTarget(const GameObject* go)  { int n = 0; for (auto& t : OfTarget(go)) { t->Play(); ++n; } return n; }
 
-void TweenManager::PauseAll(bool keepUnscaled) {
-    for (auto& t : m_tweens) if (!(keepUnscaled && t->unscaledTime)) t->Pause();
+bool TweenManager::KeepsRunningThroughPause(const Tweener& t) const {
+    // A tween on a channel follows that channel and nothing else (it wins over SetUpdate), so the channel
+    // decides: real time, not held by the game pause and not paused itself. "game" is the game's own time
+    // and "cinematic" stands still with it, so both are paused like scene time; a channel nobody has made
+    // yet is created on real time the first time a tween reads it.
+    if (!t.clock.empty()) {
+        const ClockSet& set = m_clocks ? *m_clocks : ClockSet::Global();
+        const Clock* c = set.Find(t.clock);
+        return !c || (c->GetSource() == Clock::Source::Unscaled && !c->HoldsWhileGamePaused() && !c->Paused());
+    }
+    return t.unscaledTime;
 }
-void TweenManager::PlayAll() { for (auto& t : m_tweens) t->Play(); }
+
+void TweenManager::PauseAll(bool keepUnscaled) {
+    for (auto& t : m_tweens) if (!(keepUnscaled && KeepsRunningThroughPause(*t))) t->Pause();
+}
+void TweenManager::PlayAll() {
+    // Resume only: a tween that was playing backwards (a hover that is un-hovering) must go on backwards
+    // after a pause menu, which Play() would turn round.
+    for (auto& t : m_tweens) if (!t->m_killed) t->paused = false;
+}
 
 std::size_t TweenManager::Count() const {
     std::size_t n = 0; for (const auto& t : m_tweens) if (!t->m_killed) ++n; return n;
@@ -477,6 +645,30 @@ std::string TweenManager::Dump() const {
     return out;
 }
 
+std::vector<TweenManager::TweenInfo> TweenManager::Infos() const {
+    std::vector<TweenInfo> out;
+    for (const auto& t : m_tweens) {
+        if (t->m_killed) continue;
+        TweenInfo i;
+        i.handle = t->m_handle;
+        const auto* seq = dynamic_cast<const TweenSequence*>(t.get());
+        i.kind = seq ? TweenInfo::Kind::Sequence : dynamic_cast<const ValueTween*>(t.get()) ? TweenInfo::Kind::Value : TweenInfo::Kind::Custom;
+        i.id = t->id; i.tag = t->tag; i.clock = t->clock;
+        i.elapsed = t->ElapsedD();
+        i.length = (double)t->Duration();
+        i.age = t->m_age;
+        i.loop = t->m_loop;
+        i.loops = t->loops == 0 ? 1 : t->loops;
+        i.children = seq ? (int)seq->Count() : 0;
+        i.paused = t->paused; i.complete = t->m_complete; i.backwards = t->backwards;
+        i.unscaled = t->unscaledTime; i.autoKill = t->autoKill;
+        i.hasTarget = t->target != nullptr;
+        if (t->target) i.targetName = t->target->name;
+        out.push_back(std::move(i));
+    }
+    return out;
+}
+
 void TweenManager::OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) {
     for (auto& t : m_tweens) t->DropDying(dying);
     m_tweens.erase(std::remove_if(m_tweens.begin(), m_tweens.end(),
@@ -489,7 +681,7 @@ void TweenManager::Clear() {
     // a pointer to a manager that is going away.
     std::vector<std::shared_ptr<Tweener>> all;
     all.swap(m_tweens);
-    for (auto& t : all) { t->m_killed = true; t->m_owner = nullptr; }
+    for (auto& t : all) { t->EndSilently(); t->m_owner = nullptr; }
 }
 
 // --------------------------------------------------------------- DOTween ----
@@ -524,6 +716,11 @@ std::shared_ptr<Tweener> Vec3Tween(GameObject* go, std::function<Vec3()> get, st
     return Manage(go, t, duration);
 }
 
+// A NaN or infinite number in a tween's settings would be written into the object's transform on
+// every frame; settings that are not numbers count as 0 (or `fallback`) instead.
+float Fin(float v, float fallback = 0.0f) { return std::isfinite(v) ? v : fallback; }
+Vec3 Fin3(const Vec3& v) { return Vec3{Fin(v.x), Fin(v.y), Fin(v.z)}; }
+
 // Deterministic noise in -1..1 for a shake step.
 float Noise(std::uint32_t seed, int step, int axis) {
     std::uint32_t h = seed * 747796405u + (std::uint32_t)step * 2891336453u + (std::uint32_t)axis * 1181783497u;
@@ -532,22 +729,23 @@ float Noise(std::uint32_t seed, int step, int axis) {
 }
 
 // Shared by the punch tweens: 0 at the ends, oscillating `vibrato` times, fading.
-float PunchCurve(float u, int vibrato, float elasticity) {
+float PunchCurve(float u, int vibrato, float elasticity, float decay) {
     float s = std::sin(u * Mathf::PI * (float)std::max(1, vibrato));
     if (s < 0.0f) s *= Mathf::Clamp01(elasticity);
-    return s * (1.0f - u);
+    return s * Easing::Decay(u, decay);   // decay 0: the straight fade it always had
 }
 
 // Shared by the shake tweens: random offsets every 1/vibrato, blended smoothly.
-Vec3 ShakeOffset(std::uint32_t seed, float u, float duration, int vibrato, bool fadeOut, const Vec3& strength) {
-    const float steps = std::max(1.0f, (float)std::max(1, vibrato) * std::max(duration, 0.05f));
+Vec3 ShakeOffset(std::uint32_t seed, float u, float duration, int vibrato, bool fadeOut, float decay, const Vec3& strength) {
+    // At most 1e8 steps: the step number is an int, and vibrato * duration can be far beyond it (INT_MAX * 1e7 s).
+    const float steps = std::min(1.0e8f, std::max(1.0f, (float)std::max(1, vibrato) * std::max(duration, 0.05f)));
     const float f = u * steps; const int i = (int)f; const float w = f - (float)i;
     const float sw = w * w * (3.0f - 2.0f * w);
     auto at = [&](int step, int axis) { return Noise(seed, step, axis); };
     Vec3 o{at(i, 0) + (at(i + 1, 0) - at(i, 0)) * sw,
            at(i, 1) + (at(i + 1, 1) - at(i, 1)) * sw,
            at(i, 2) + (at(i + 1, 2) - at(i, 2)) * sw};
-    const float fade = fadeOut ? (1.0f - u) : (u < 1.0f ? 1.0f : 0.0f);
+    const float fade = fadeOut ? Easing::Decay(u, decay) : (u < 1.0f ? 1.0f : 0.0f);
     return Vec3{o.x * strength.x, o.y * strength.y, o.z * strength.z} * fade;
 }
 
@@ -585,9 +783,10 @@ std::shared_ptr<Tweener> Scale(GameObject* go, const Vec3& to, float duration) {
 
 std::shared_ptr<Tweener> Scale(GameObject* go, float to, float duration) { return Scale(go, Vec3{to, to, to}, duration); }
 
-std::shared_ptr<Tweener> Rotate(GameObject* go, const Vec3& eulerDeg, float duration) {
+std::shared_ptr<Tweener> Rotate(GameObject* go, const Vec3& eulerDegIn, float duration) {
     if (!go || !go->transform) return Dummy();
     Transform* tr = go->transform;
+    const Vec3 eulerDeg = Fin3(eulerDegIn);
     auto t = std::make_shared<CustomTween>(nullptr, nullptr);
     auto start = std::make_shared<Quat>();
     Tweener* self = t.get();
@@ -605,35 +804,40 @@ std::shared_ptr<Tweener> Rotate(GameObject* go, const Vec3& eulerDeg, float dura
 }
 
 namespace {
-std::shared_ptr<Tweener> Punch(GameObject* go, int what, const Vec3& punch, float duration, int vibrato, float elasticity) {
+std::shared_ptr<Tweener> Punch(GameObject* go, int what, const Vec3& punchIn, float duration, int vibrato, float elasticityIn) {
     if (!go || !go->transform) return Dummy();
     Transform* tr = go->transform;
+    const Vec3 punch = Fin3(punchIn);
+    const float elasticity = Fin(elasticityIn, 1.0f);
     auto t = std::make_shared<CustomTween>(nullptr, nullptr);
     auto start = std::make_shared<std::pair<Vec3, Quat>>();
+    Tweener* self = t.get();
     t->ease = Ease::Linear;
     t->SetFunctions([tr, start, what]() {
         start->first = what == 0 ? tr->localPosition : tr->localScale;
         start->second = tr->localRotation;
-    }, [tr, start, what, punch, vibrato, elasticity](float, float u, int) {
-        const float c = PunchCurve(u, vibrato, elasticity);
+    }, [tr, start, what, punch, vibrato, elasticity, self](float, float u, int) {
+        const float c = PunchCurve(u, vibrato, elasticity, self->decay);
         if (what == 0) tr->localPosition = start->first + punch * c;
         else if (what == 1) tr->localScale = start->first + punch * c;
         else tr->localRotation = (start->second * Quat::Euler(punch * c)).Normalized();
     });
     return Manage(go, t, duration);
 }
-std::shared_ptr<Tweener> Shake(GameObject* go, int what, float duration, const Vec3& strength, int vibrato, bool fadeOut) {
+std::shared_ptr<Tweener> Shake(GameObject* go, int what, float duration, const Vec3& strengthIn, int vibrato, bool fadeOut) {
     if (!go || !go->transform) return Dummy();
     Transform* tr = go->transform;
+    const Vec3 strength = Fin3(strengthIn);
     auto t = std::make_shared<CustomTween>(nullptr, nullptr);
     auto start = std::make_shared<std::pair<Vec3, Quat>>();
+    Tweener* self = t.get();
     const std::uint32_t seed = g_shakeSeed++;
     t->ease = Ease::Linear;
     t->SetFunctions([tr, start, what]() {
         start->first = what == 0 ? tr->localPosition : tr->localScale;
         start->second = tr->localRotation;
-    }, [tr, start, what, seed, duration, strength, vibrato, fadeOut](float, float u, int) {
-        const Vec3 o = ShakeOffset(seed, u, duration, vibrato, fadeOut, strength);
+    }, [tr, start, what, seed, duration, strength, vibrato, fadeOut, self](float, float u, int) {
+        const Vec3 o = ShakeOffset(seed, u, duration, vibrato, fadeOut, self->decay, strength);
         if (what == 0) tr->localPosition = start->first + o;
         else if (what == 1) tr->localScale = start->first + o;
         else tr->localRotation = (start->second * Quat::Euler(o)).Normalized();
@@ -649,9 +853,11 @@ std::shared_ptr<Tweener> ShakePosition(GameObject* go, float d, const Vec3& s, i
 std::shared_ptr<Tweener> ShakeScale(GameObject* go, float d, const Vec3& s, int v, bool f)    { return Shake(go, 1, d, s, v, f); }
 std::shared_ptr<Tweener> ShakeRotation(GameObject* go, float d, const Vec3& s, int v, bool f) { return Shake(go, 2, d, s, v, f); }
 
-std::shared_ptr<Tweener> Jump(GameObject* go, const Vec3& to, float power, int jumps, float duration) {
+std::shared_ptr<Tweener> Jump(GameObject* go, const Vec3& toIn, float powerIn, int jumps, float duration) {
     if (!go || !go->transform) return Dummy();
     Transform* tr = go->transform;
+    const Vec3 to = Fin3(toIn);
+    const float power = Fin(powerIn);
     auto t = std::make_shared<CustomTween>(nullptr, nullptr);
     auto start = std::make_shared<Vec3>();
     Tweener* self = t.get();
@@ -671,6 +877,7 @@ std::shared_ptr<Tweener> Jump(GameObject* go, const Vec3& to, float power, int j
 std::shared_ptr<Tweener> Path(GameObject* go, std::vector<Vec3> points, float duration, PathType type, bool closed) {
     if (!go || !go->transform || points.empty()) return Dummy();
     Transform* tr = go->transform;
+    for (Vec3& p : points) p = Fin3(p);
     auto t = std::make_shared<CustomTween>(nullptr, nullptr);
     auto pts = std::make_shared<std::vector<Vec3>>();
     t->SetFunctions([tr, pts, points, closed]() {
@@ -692,6 +899,24 @@ std::shared_ptr<Tweener> Path(GameObject* go, std::vector<Vec3> points, float du
         } else {
             tr->localPosition = P[i] + (P[i + 1] - P[i]) * s;
         }
+    });
+    return Manage(go, t, duration);
+}
+
+std::shared_ptr<Tweener> AlongSpline(GameObject* go, GameObject* splineObject, float duration, bool orient) {
+    if (!go || !go->transform || !splineObject || !splineObject->GetComponent<Spline>()) return Dummy();
+    Transform* tr = go->transform;
+    // The spline's object is found again by id on every frame: if it (or its Spline) goes away the
+    // tween just stops moving the object, and nothing here ever touches freed memory.
+    const std::uint64_t splineId = splineObject->InstanceId();
+    auto t = std::make_shared<CustomTween>(nullptr, nullptr);
+    t->SetFunctions(nullptr, [tr, splineId, orient](float k, float, int) {
+        GameObject* so = GameObject::FromInstanceId(splineId);
+        Spline* sp = so ? so->GetComponent<Spline>() : nullptr;
+        if (!sp || sp->Count() < 2) return;
+        const SplineSample s = sp->SampleAtDistance(Mathf::Clamp01(k) * sp->Length());
+        tr->SetPosition(s.position);
+        if (orient) tr->SetRotation(s.Rotation());
     });
     return Manage(go, t, duration);
 }

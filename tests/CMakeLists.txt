@@ -11,6 +11,12 @@ add_executable(test_structure_version test_structure_version.cpp)
 target_link_libraries(test_structure_version PRIVATE okay::engine)
 add_test(NAME structure_version COMMAND test_structure_version)
 
+# scripts/versions_index.py maintains the release feed's versions.json (release channels).
+find_program(OKAY_PYTHON NAMES python3 python)
+if(OKAY_PYTHON)
+    add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
+endif()
+
 add_executable(test_serialize test_serialize.cpp)
 target_link_libraries(test_serialize PRIVATE okay::engine)
 add_test(NAME serialize COMMAND test_serialize)
@@ -118,6 +124,9 @@ add_test(NAME scheduler_hardening COMMAND test_scheduler_hardening)
 add_executable(test_scheduler_owner_clock test_scheduler_owner_clock.cpp)
 target_link_libraries(test_scheduler_owner_clock PRIVATE okay::engine)
 add_test(NAME scheduler_owner_clock COMMAND test_scheduler_owner_clock)
+add_executable(test_scheduler_scale test_scheduler_scale.cpp)
+target_link_libraries(test_scheduler_scale PRIVATE okay::engine)
+add_test(NAME scheduler_scale COMMAND test_scheduler_scale)
 
 add_executable(test_gameplay test_gameplay.cpp)
 target_link_libraries(test_gameplay PRIVATE okay::engine)
@@ -295,6 +304,11 @@ add_test(NAME profiler_export COMMAND test_profiler_export)
 add_executable(test_log test_log.cpp)
 target_link_libraries(test_log PRIVATE okay::engine)
 add_test(NAME log COMMAND test_log)
+
+# Core wave 6, 1.10: $OKAY_LOG vs Configure, log file cap / flush / failing disk, sink recursion, profiler bounds, threads and trace validity
+add_executable(test_core_log_profiler test_core_log_profiler.cpp)
+target_link_libraries(test_core_log_profiler PRIVATE okay::engine)
+add_test(NAME core_log_profiler COMMAND test_core_log_profiler)
 
 # Profiling & debugging data layers (okay/Debug): frame history, GPU/render stats, memory, frame debugger, console, overlay
 add_executable(test_debug_frame_history test_debug_frame_history.cpp)
@@ -628,6 +642,11 @@ add_executable(test_dataasset test_dataasset.cpp)
 target_link_libraries(test_dataasset PRIVATE okay::engine)
 add_test(NAME dataasset COMMAND test_dataasset)
 
+# Core wave 6, 1.14: DataAsset BOM / numbers / typed getters / safe Invalidate, DataPack damage and size cases
+add_executable(test_core_data test_core_data.cpp)
+target_link_libraries(test_core_data PRIVATE okay::engine)
+add_test(NAME core_data COMMAND test_core_data)
+
 add_executable(test_item_dragdrop test_item_dragdrop.cpp)
 target_link_libraries(test_item_dragdrop PRIVATE okay::engine)
 add_test(NAME item_dragdrop COMMAND test_item_dragdrop)
@@ -693,10 +712,31 @@ target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
 
 # The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
-add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
+
+# Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
+add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_link_libraries(test_project_save PRIVATE okay::engine)
+add_test(NAME project_save COMMAND test_project_save)
+
+# The project's own state (project.okayproj, build settings, profiles, tags, layers): every field set, written, read back; old files load.
+add_executable(test_project_state test_project_state.cpp)
+target_link_libraries(test_project_state PRIVATE okay::engine)
+add_test(NAME project_state COMMAND test_project_state)
+
+# Upgrading a project to the editor's version (editor/ProjectUpgrade.*, ImGui-free): backup, check and rewrite of scenes and prefabs, stamp, restore, failure injection at every step, and the gate that asks before anything is touched.
+add_executable(test_project_upgrade test_project_upgrade.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
+target_include_directories(test_project_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_project_upgrade PRIVATE okay::engine)
+add_test(NAME project_upgrade COMMAND test_project_upgrade)
+
+# Save coverage: every component type the engine has survives a scene save and load (and the Enabled switch with it); two colliders / audio sources on one object both do.
+add_executable(test_save_coverage test_save_coverage.cpp)
+target_link_libraries(test_save_coverage PRIVATE okay::engine)
+add_test(NAME save_coverage COMMAND test_save_coverage)
 
 add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
@@ -802,6 +842,11 @@ add_test(NAME pause_menu COMMAND test_pause_menu)
 add_executable(test_ui_input_guard test_ui_input_guard.cpp)
 target_link_libraries(test_ui_input_guard PRIVATE okay::engine)
 add_test(NAME ui_input_guard COMMAND test_ui_input_guard)
+
+# Display settings model: window modes, resolutions, vsync, quality preset (no window needed)
+add_executable(test_display_settings test_display_settings.cpp)
+target_link_libraries(test_display_settings PRIVATE okay::engine)
+add_test(NAME display_settings COMMAND test_display_settings)
 
 add_executable(test_char_anim test_char_anim.cpp)
 target_link_libraries(test_char_anim PRIVATE okay::engine)
@@ -977,6 +1022,11 @@ add_executable(test_loc_tools test_loc_tools.cpp)
 target_link_libraries(test_loc_tools PRIVATE okay::engine)
 add_test(NAME loc_tools COMMAND test_loc_tools)
 
+# Localization runtime, second pass: keys, language matching, plural rules, number/select placeholders, CSV
+add_executable(test_loc_runtime test_loc_runtime.cpp)
+target_link_libraries(test_loc_runtime PRIVATE okay::engine)
+add_test(NAME loc_runtime COMMAND test_loc_runtime)
+
 # Accessibility: colour vision, safe palette, subtitles and captions, settings
 add_executable(test_accessibility test_accessibility.cpp)
 target_link_libraries(test_accessibility PRIVATE okay::engine)
@@ -1133,6 +1183,37 @@ add_executable(test_gait_continuity test_gait_continuity.cpp)
 target_link_libraries(test_gait_continuity PRIVATE okay::engine)
 add_test(NAME gait_continuity COMMAND test_gait_continuity)
 
+add_executable(test_player_setup test_player_setup.cpp)
+target_link_libraries(test_player_setup PRIVATE okay::engine)
+target_compile_definitions(test_player_setup PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_setup COMMAND test_player_setup)
+
+add_executable(test_destroy_unstarted test_destroy_unstarted.cpp)
+target_link_libraries(test_destroy_unstarted PRIVATE okay::engine)
+add_test(NAME destroy_unstarted COMMAND test_destroy_unstarted)
+
+add_executable(test_head_stability test_head_stability.cpp)
+target_link_libraries(test_head_stability PRIVATE okay::engine)
+target_compile_definitions(test_head_stability PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME head_stability COMMAND test_head_stability)
+
+add_executable(test_clear_spawn test_clear_spawn.cpp)
+target_link_libraries(test_clear_spawn PRIVATE okay::engine)
+add_test(NAME clear_spawn COMMAND test_clear_spawn)
+
+add_executable(test_play_look test_play_look.cpp)
+target_link_libraries(test_play_look PRIVATE okay::engine)
+add_test(NAME play_look COMMAND test_play_look)
+
+add_executable(test_gap_stuck test_gap_stuck.cpp)
+target_link_libraries(test_gap_stuck PRIVATE okay::engine)
+add_test(NAME gap_stuck COMMAND test_gap_stuck)
+
+add_executable(test_anim_jitter test_anim_jitter.cpp)
+target_link_libraries(test_anim_jitter PRIVATE okay::engine)
+target_compile_definitions(test_anim_jitter PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME anim_jitter COMMAND test_anim_jitter)
+
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
 target_compile_definitions(test_rig_sweep PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -1263,6 +1344,28 @@ target_compile_features(test_project_delete PRIVATE cxx_std_17)
 target_include_directories(test_project_delete PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME project_delete COMMAND test_project_delete)
 
+# New-project rules shared by the editor and the launcher: name, location, folder choice, skeleton, atomic writes.
+add_executable(test_project_create test_project_create.cpp)
+target_link_libraries(test_project_create PRIVATE okay::engine)
+add_test(NAME project_create COMMAND test_project_create)
+
+# The project's engine version (shared/ProjectVersion.hpp): parse / compare / Decide, the engine_version line in project.okayproj, the launcher's Versions layout. Header-only: no engine link.
+add_executable(test_project_version test_project_version.cpp)
+target_compile_features(test_project_version PRIVATE cxx_std_17)
+target_include_directories(test_project_version PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME project_version COMMAND test_project_version)
+
+# Editor/launcher self-update: wait for the old process, swap, relaunch once.
+add_executable(test_app_restart test_app_restart.cpp)
+target_compile_features(test_app_restart PRIVATE cxx_std_17)
+target_include_directories(test_app_restart PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR})
+find_package(Threads REQUIRED)
+target_link_libraries(test_app_restart PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(test_app_restart PRIVATE shell32)
+endif()
+add_test(NAME app_restart COMMAND test_app_restart)
+
 # The launcher's official game (shared/OfficialGame.hpp): header-only, so no engine link.
 add_executable(test_official_game test_official_game.cpp)
 target_include_directories(test_official_game PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
@@ -1331,6 +1434,21 @@ add_test(NAME tween_edges COMMAND test_tween_edges)
 add_executable(test_tween_features test_tween_features.cpp)
 target_link_libraries(test_tween_features PRIVATE okay::engine)
 add_test(NAME tween_features COMMAND test_tween_features)
+add_executable(test_tween_long_run test_tween_long_run.cpp)
+target_link_libraries(test_tween_long_run PRIVATE okay::engine)
+add_test(NAME tween_long_run COMMAND test_tween_long_run)
+add_executable(test_tween_sequencing test_tween_sequencing.cpp)
+target_link_libraries(test_tween_sequencing PRIVATE okay::engine)
+add_test(NAME tween_sequencing COMMAND test_tween_sequencing)
+add_executable(test_timer_debug test_timer_debug.cpp)
+target_link_libraries(test_timer_debug PRIVATE okay::engine)
+add_test(NAME timer_debug COMMAND test_timer_debug)
+add_executable(test_timers_audit test_timers_audit.cpp)
+target_link_libraries(test_timers_audit PRIVATE okay::engine)
+add_test(NAME timers_audit COMMAND test_timers_audit)
+add_executable(test_timers_fifth test_timers_fifth.cpp)
+target_link_libraries(test_timers_fifth PRIVATE okay::engine)
+add_test(NAME timers_fifth COMMAND test_timers_fifth)
 
 add_executable(test_editor_tabs test_editor_tabs.cpp)
 target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -1535,9 +1653,19 @@ add_executable(test_scene_lifecycle test_scene_lifecycle.cpp)
 target_link_libraries(test_scene_lifecycle PRIVATE okay::engine)
 add_test(NAME scene_lifecycle COMMAND test_scene_lifecycle)
 
+# Scene lifecycle audit: event order across a swap, loads from callbacks, two loads at once, failed loads, DontDestroyOnLoad order, unloading the camera's scene
+add_executable(test_scene_lifecycle_audit test_scene_lifecycle_audit.cpp)
+target_link_libraries(test_scene_lifecycle_audit PRIVATE okay::engine)
+add_test(NAME scene_lifecycle_audit COMMAND test_scene_lifecycle_audit)
+
 add_executable(test_durable_saves test_durable_saves.cpp)
 target_link_libraries(test_durable_saves PRIVATE okay::engine)
 add_test(NAME durable_saves COMMAND test_durable_saves)
+
+# Saves and prefs hardening: the shared atomic write, SaveFile checksum and backup, Prefs recovery, SaveGame listing
+add_executable(test_save_hardening test_save_hardening.cpp)
+target_link_libraries(test_save_hardening PRIVATE okay::engine)
+add_test(NAME save_hardening COMMAND test_save_hardening)
 
 # Save game framework: typed blocks, slot files + headers, migration chain, forward
 # compatibility, sync backends, menu model (no scene needed).
@@ -1587,6 +1715,9 @@ endif()
 add_executable(test_vs_media test_vs_media.cpp)
 target_link_libraries(test_vs_media PRIVATE okay::engine)
 add_test(NAME vs_media COMMAND test_vs_media)
+add_executable(test_vs_tween test_vs_tween.cpp)
+target_link_libraries(test_vs_tween PRIVATE okay::engine)
+add_test(NAME vs_tween COMMAND test_vs_tween)
 
 # Script navmesh queries: nav_path_exists / nav_path_length / nav_point_walkable / nav_nearest_point
 add_executable(test_script_nav test_script_nav.cpp)
@@ -1613,6 +1744,10 @@ add_test(NAME core_cli COMMAND test_core_cli)
 add_executable(test_core_console test_core_console.cpp)
 target_link_libraries(test_core_console PRIVATE okay::engine)
 add_test(NAME core_console COMMAND test_core_console)
+# Core wave 6, 1.18: CommandLine defaults, Cvar extremes and flags (read-only, cheat, restart required), Console nesting, StateMachine exit
+add_executable(test_core_utils_audit test_core_utils_audit.cpp)
+target_link_libraries(test_core_utils_audit PRIVATE okay::engine)
+add_test(NAME core_utils_audit COMMAND test_core_utils_audit)
 # Localization formatting + plural rules, typed Prefs, FixedTimestep (docs/localization_prefs_time.md)
 add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
 target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
@@ -1621,6 +1756,11 @@ add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
 add_executable(test_ecs_commands test_ecs_commands.cpp)
 target_link_libraries(test_ecs_commands PRIVATE okay::engine)
 add_test(NAME ecs_commands COMMAND test_ecs_commands)
+
+# Core wave 6, 1.9: Subscription::Active, throwing handlers, SystemScheduler changes while running, entity id wrap, SceneBridge
+add_executable(test_core_events_ecs test_core_events_ecs.cpp)
+target_link_libraries(test_core_events_ecs PRIVATE okay::engine)
+add_test(NAME core_events_ecs COMMAND test_core_events_ecs)
 
 # Multi-frame scene loads (progress, additive load + unload by handle), ObjectPool, RequireComponent rules
 add_executable(test_scene_load_pool test_scene_load_pool.cpp)
@@ -1631,6 +1771,11 @@ add_test(NAME scene_load_pool COMMAND test_scene_load_pool)
 add_executable(test_scene_ids_prefabs test_scene_ids_prefabs.cpp)
 target_link_libraries(test_scene_ids_prefabs PRIVATE okay::engine)
 add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
+
+# Scene serializer audit: key bindings in the one-token records, several components of one type, asset paths, number and text round trips
+add_executable(test_scene_serializer_audit test_scene_serializer_audit.cpp)
+target_link_libraries(test_scene_serializer_audit PRIVATE okay::engine)
+add_test(NAME scene_serializer_audit COMMAND test_scene_serializer_audit)
 
 add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
 target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
@@ -1665,6 +1810,51 @@ add_test(NAME scene_spawn COMMAND test_scene_spawn)
 add_executable(test_mover_spinner_lifetime test_mover_spinner_lifetime.cpp)
 target_link_libraries(test_mover_spinner_lifetime PRIVATE okay::engine)
 add_test(NAME mover_spinner_lifetime COMMAND test_mover_spinner_lifetime)
+
+# Scene graph (1.3, wave 4): world math (singular inverse, shear, negative scale), a cached active state and linear
+# destroy on deep / wide hierarchies, Clear and loads from inside callbacks, saved component order, audit and additions
+add_executable(test_transform_world test_transform_world.cpp)
+target_link_libraries(test_transform_world PRIVATE okay::engine)
+add_test(NAME transform_world COMMAND test_transform_world)
+
+add_executable(test_scene_graph_perf test_scene_graph_perf.cpp)
+target_link_libraries(test_scene_graph_perf PRIVATE okay::engine)
+add_test(NAME scene_graph_perf COMMAND test_scene_graph_perf)
+set_tests_properties(scene_graph_perf PROPERTIES TIMEOUT 240)   # the old per-object detach took minutes at these sizes
+
+add_executable(test_scene_reentrant test_scene_reentrant.cpp)
+target_link_libraries(test_scene_reentrant PRIVATE okay::engine)
+add_test(NAME scene_reentrant COMMAND test_scene_reentrant)
+
+add_executable(test_component_order test_component_order.cpp)
+target_link_libraries(test_component_order PRIVATE okay::engine)
+add_test(NAME component_order COMMAND test_component_order)
+
+add_executable(test_scene_graph_wave4 test_scene_graph_wave4.cpp)
+target_link_libraries(test_scene_graph_wave4 PRIVATE okay::engine)
+add_test(NAME scene_graph_wave4 COMMAND test_scene_graph_wave4)
+
+# Scene graph (1.3, wave 5): world-cache check against a plain walk, constant-cost child-list removal, look-at variants,
+# GetOrAddComponent / ForEachDescendant, FindByPath with duplicates, Stats on a huge scene, tag / layer names in other languages
+add_executable(test_scene_graph_wave5 test_scene_graph_wave5.cpp)
+target_link_libraries(test_scene_graph_wave5 PRIVATE okay::engine)
+add_test(NAME scene_graph_wave5 COMMAND test_scene_graph_wave5)
+set_tests_properties(scene_graph_wave5 PROPERTIES TIMEOUT 240)   # 300000 children, 100000-deep chains
+
+add_executable(test_object_pool_wave5 test_object_pool_wave5.cpp)
+target_link_libraries(test_object_pool_wave5 PRIVATE okay::engine)
+add_test(NAME object_pool_wave5 COMMAND test_object_pool_wave5)
+
+# Object pooling audit: idle objects not saved, Shrink, Scene::Despawn, resets, Spawner usePool, script pool calls
+add_executable(test_object_pool_audit test_object_pool_audit.cpp)
+target_link_libraries(test_object_pool_audit PRIVATE okay::engine)
+add_test(NAME object_pool_audit COMMAND test_object_pool_audit)
+
+# Loading Screen with a background load: progress, kept across the swap, failures, scenes saved before keep loading in one go
+add_executable(test_loading_screen_async test_loading_screen_async.cpp)
+target_link_libraries(test_loading_screen_async PRIVATE okay::engine)
+add_test(NAME loading_screen_async COMMAND test_loading_screen_async)
+
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)
@@ -1708,6 +1898,11 @@ add_executable(test_scene_validator test_scene_validator.cpp)
 target_link_libraries(test_scene_validator PRIVATE okay::engine)
 target_compile_definitions(test_scene_validator PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME scene_validator COMMAND test_scene_validator)
+
+# Core wave 6, 1.17: the two validators agree (asset rule, damaged packs, fonts) and the semantic one carries the file-level checks
+add_executable(test_core_validation test_core_validation.cpp)
+target_link_libraries(test_core_validation PRIVATE okay::engine)
+add_test(NAME core_validation COMMAND test_core_validation)
 
 # 33.3 regression helpers: golden text/binary files, the scene digest, golden images
 # (the software renderer drawn into memory and compared with tests/golden/regression/cube.png;
@@ -1757,6 +1952,11 @@ add_test(NAME random_extras COMMAND test_random_extras)
 add_executable(test_random_wave4 test_random_wave4.cpp)
 target_link_libraries(test_random_wave4 PRIVATE okay::engine)
 add_test(NAME random_wave4 COMMAND test_random_wave4)
+
+# 1.1 fifth pass: Random::Shared() is thread safe (std::thread tests; header-only, also built standalone under a thread sanitizer)
+add_executable(test_random_threads test_random_threads.cpp)
+target_link_libraries(test_random_threads PRIVATE okay::engine)
+add_test(NAME random_threads COMMAND test_random_threads)
 
 add_executable(test_application_loop test_application_loop.cpp)
 target_link_libraries(test_application_loop PRIVATE okay::engine)
@@ -1857,6 +2057,15 @@ add_test(NAME loop_audit3 COMMAND test_loop_audit3)
 add_executable(test_loop_audit4 test_loop_audit4.cpp)
 target_link_libraries(test_loop_audit4 PRIVATE okay::engine)
 add_test(NAME loop_audit4 COMMAND test_loop_audit4)
+
+# 1.1 fifth pass: script access to the clocks, real FPS, TimeSnapshot ramps, replay pauses and seeds, console arguments
+add_executable(test_loop_audit5 test_loop_audit5.cpp)
+target_link_libraries(test_loop_audit5 PRIVATE okay::engine)
+add_test(NAME loop_audit5 COMMAND test_loop_audit5)
+
+add_executable(test_script_time test_script_time.cpp)
+target_link_libraries(test_script_time PRIVATE okay::engine)
+add_test(NAME script_time COMMAND test_script_time)
 
 add_executable(test_frame_overlay test_frame_overlay.cpp)
 target_link_libraries(test_frame_overlay PRIVATE okay::engine)

@@ -410,6 +410,14 @@ const Row kRows[] = {
         {"ParticlePlay", true, "", ""},
         {"ParticleStop", true, "", ""},
         {"ParticleBurst", true, "N", ""},
+        // Tweens, springs and eases.
+        {"EaseCurve", false, "N", "N"},
+        {"SpringStep", true, "NNN", "NN"},
+        {"TweenMove", true, "NNNNT", ""},
+        {"TweenMoveSpeed", true, "NNNNT", ""},
+        {"TweenKillTag", true, "B", "N"},
+        {"TweenPauseTag", true, "", "N"},
+        {"TweenPlayTag", true, "", "N"},
 };
 
 const std::unordered_map<std::string, NodeSignature>& Table() {

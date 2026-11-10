@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <Okay.hpp>
 #include "okay/Core/Game.hpp"
@@ -66,8 +67,15 @@ public:
     /// ("Cube"/"Pyramid"/"Plane"/"Sphere"/"Cylinder").
     GameObject* CreateMesh(const std::string& meshName);
     void DeleteSelected();
+    /// Hierarchy "Delete Children": destroy every child (and what is below them) of the selected object(s) and
+    /// keep the objects themselves selected; one undo step. Returns how many direct children were removed
+    /// (0, and no undo step, when nothing selected has a child).
+    int DeleteChildrenOfSelected();
     /// Clone the selected object(s) (and their children); selects the clones.
     GameObject* DuplicateSelected();
+    /// Move a just-created object onto open ground near the scene-view focus.
+    /// Call it in the same undo step that created the object.
+    GameObject* SettleSpawn(GameObject* go);
     /// Wrap the current selection in a new empty parent,
     /// keeping each object's world position. Returns the new group (selected), or null
     /// if nothing is selected. Only top-level selected objects are reparented.
@@ -100,20 +108,69 @@ public:
     void NewVoxelSandbox();
 
     // ---- Files ---------------------------------------------------------
-    bool Save(const std::string& path);
+    /// Write the scene to `path` (atomically: see SceneSerializer::SaveToFile). Refused while Play is
+    /// running: the scene then is the running game, not what you authored. On success the scene counts
+    /// as saved; on failure nothing changes and `error` says why.
+    bool Save(const std::string& path, std::string* error = nullptr);
     /// Write meshes edited since they were loaded from a .okaymesh file back to
     /// that file (Save does this first). Returns how many files were written.
     int SaveEditedMeshAssets(std::string* report = nullptr);
     /// Called for an object whose mesh was replaced by its re-saved asset (same
     /// vertices, triangles possibly re-ordered): mesh edit mode drops face/edge selections.
     static inline std::function<void(GameObject*)> onMeshTrianglesReordered;
+    /// Open a scene file. All or nothing: a missing or damaged file leaves the open scene, its undo
+    /// history and its saved state exactly as they were (`error` says why). A loaded scene starts a
+    /// fresh undo history, so Undo can never put the old scene's objects into the new file.
     bool Load(const std::string& path, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
 
+    // ---- Unsaved changes --------------------------------------------------------
+    /// The scene as it is now counts as saved: clears `dirty` and remembers what the scene looks like.
+    void MarkClean();
+    /// True when the open scene differs from what was last saved, loaded or created. `dirty` says so
+    /// cheaply, but an edit that forgot to raise it would be lost silently, so this also compares the
+    /// scene's saved text with the text at the last save (it serializes the scene: call it when a
+    /// decision depends on it, such as quitting or opening another scene, not every frame). While Play
+    /// is running it answers for the scene you are editing: changes made to the running game are
+    /// thrown away on Stop and never count.
+    bool HasUnsavedChanges();
+    /// Same as HasUnsavedChanges, and raises `dirty` when the text differs (so the title bar and the
+    /// autosave catch up with an edit that did not mark it). Cheap enough to call every few seconds.
+    bool SyncDirty();
+
+    // ---- A new project: all or nothing -------------------------------------------
+    struct NewProjectResult {
+        bool ok = false;
+        std::string root;    ///< the project folder
+        std::string scene;   ///< its first scene file
+        std::string error;   ///< why it failed; the open scene, project and files are as before
+    };
+    /// Make a project at `root`: its folders, then `writeFiles(root, err)` (the caller's own settings files),
+    /// then the template scene (`tpl`) saved as <root>/Assets/<sceneName>.okayscene, and open it. If any step
+    /// fails everything made is removed and the scene, path, project and undo history are put back, so a
+    /// failed Create never costs the open scene. `writeFiles` may be empty.
+    NewProjectResult CreateProject(const std::string& root, const std::string& sceneName, void (EditorState::*tpl)(),
+                                   const std::function<bool(const std::string& root, std::string& error)>& writeFiles = {});
+    /// Called when the project folder changes (open, create, close): the old folder, then the new one.
+    /// The editor uses it to save the old project's settings and load the new one's.
+    static inline std::function<void(const std::string& oldDir, const std::string& newDir)> onProjectChanged;
+    /// Called after a scene file was opened successfully (the editor clears its "last save failed" note).
+    static inline std::function<void()> onSceneLoaded;
+    /// Asked before Load touches anything: return false (with the reason in `why`) to refuse the file. The editor puts
+    /// the project version gate here, so a scene of a project nobody has answered the version question for can't be
+    /// opened by a path that skipped it. Unset (tests, tools): every file may be opened.
+    static inline std::function<bool(const std::string& path, std::string* why)> beforeLoad;
+
     // ---- Project (a folder on disk holding the scenes + assets) ---------
     const std::string& projectDir() const { return m_projectDir; }
+    /// Make `d` the open project. Only a real change does anything: the item definitions and the string
+    /// table are that project's own and are read again, and onProjectChanged runs. Setting the folder
+    /// that is already open leaves everything (including unsaved edits to those tables) alone.
     void setProjectDir(const std::string& d) {
+        if (d == m_projectDir) return;
+        const std::string old = m_projectDir;
         m_projectDir = d;
+        if (onProjectChanged) onProjectChanged(old, d);
         okay::ItemDatabase::Get().Clear();   // each project has its own item definitions
         if (!d.empty()) okay::ItemDatabase::Get().Load(ItemDatabasePath());
         okay::Localization::Reset();         // ... and its own string table
@@ -188,7 +245,47 @@ public:
     bool StepFrame(float seconds = 1.0f / 60.0f);
     /// The loop itself (statistics, debug time scale, capture mode, frame recording).
     GameLoop& playLoop() { return m_loop; }
+    const GameLoop& playLoop() const { return m_loop; }
     static constexpr const char* kPauseReason = "editor";
+
+    // ---- Debug controls on the Play loop (the toolbar's slow-motion and "run N frames" buttons) --------
+    /// The slow-motion / fast-forward factor of the Play loop (1 = normal). It is a debugging aid, not a
+    /// game setting: only the editor's frame time is scaled, the game's own Time.timeScale is untouched.
+    float debugTimeScale() const { return m_loop.DebugTimeScale(); }
+    /// The "Slower" (`direction` < 0) and "Faster" (> 0) buttons: move to the next preset
+    /// (GameLoop::kDebugScalePresets: 0.05 ... 1 ... 32). Returns the scale now in force. Does nothing
+    /// outside Play (the buttons are greyed out then).
+    float StepDebugTimeScale(int direction);
+    /// The "1x" button.
+    void ResetDebugTimeScale();
+    /// "Run N frames, then pause": runs exactly `frames` more frames of `frameSeconds` each (the same
+    /// frame length every time, so a bug reproduces), then holds the editor's own pause. Paused already,
+    /// it steps `frames` frames and stays paused. The pause button follows through `onRunFramesDone`.
+    /// False, nothing changed, outside Play or for `frames` < 1.
+    bool RunFrames(int frames, float frameSeconds = 1.0f / 60.0f);
+    /// Called (main thread, end of the frame) when a run started by RunFrames has paused the game: the
+    /// editor sets its Pause button flag here so the button and the loop agree.
+    std::function<void()> onRunFramesDone;
+    /// Frames still queued by Step or RunFrames (0 = none): the Pause button shows the number.
+    int PendingFrames() const { return m_loop.StepsRemaining() + m_loop.RunFramesRemaining(); }
+
+    // ---- Text for the Game view's overlays (ImGui-free, so it can be tested) --------------------------
+    /// The Stats overlay: while playing, the performance lines of the Play loop (FrameOverlay::Lines: fps,
+    /// frame times, 1% low, hitches, time scale, pause reasons) followed by the scene's counts
+    /// (Scene::Stats().Lines(maxComponentTypes)); in edit mode only the counts (nothing is running).
+    std::vector<std::string> StatsLines(int maxComponentTypes = 3) const;
+    /// The two halves of StatsLines, for a UI that draws something between them (the fps graph) or leaves one
+    /// out: the loop's performance lines (empty outside Play) and the scene's counts.
+    std::vector<std::string> PerfLines() const;
+    std::vector<std::string> SceneLines(int maxComponentTypes = 3) const;
+    /// One line for the Game view's corner, beside the PLAYING pill (FrameOverlay::FpsLabel: the real frame times of
+    /// the last 30 frames, so a stall reads as a stall; "FPS --" before the first frame).
+    std::string FpsLabel() const;
+    /// The recent frame rate for the overlay's graph, `count` points, oldest first (all 0 until frames ran).
+    std::vector<float> RecentFps(std::size_t count) const;
+    /// The Timers overlay: what the scene's scheduler and tweens are doing (TimerDebug::BuildLines), plus
+    /// the process-wide scheduler when it holds anything. Long lines are shortened to `maxChars`.
+    std::vector<std::string> TimerLines(std::size_t maxChars = 78);
 
     // ---- 2D editor camera (world units) -------------------------------
     Vec2  cameraPos{0, 0};
@@ -218,6 +315,10 @@ private:
     GameLoop m_loop;   // the Play loop (set up in the constructor)
 
     std::vector<std::string> m_undo, m_redo;
+    std::uint64_t m_savedPrint = 0;       // fingerprint of the scene text at the last save / load / new
+    std::uint64_t m_playPrint = 0;        // fingerprint of the edit scene Play() put aside
+    bool m_dirtyAtPlay = false;           // `dirty` when Play started (Play-time edits are thrown away)
+    static std::uint64_t Fingerprint(const std::string& sceneText);
     bool m_suppressUndo = false;
     static constexpr std::size_t kMaxUndo = 100;
 };

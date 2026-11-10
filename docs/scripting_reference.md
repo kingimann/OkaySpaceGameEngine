@@ -226,6 +226,9 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `tween_punch_scale(amount, dur [, vib])` / `tween_punch_pos(dx, dy, dur [, vib])` | Punch & settle ("juice") |
 | `tween_shake(intensity, dur)` | Random shake that decays to a stop |
 | `tween_clock(id, channel)` | Follow a Clock channel (`"game"`, `"ui"`, `"cinematic"`, or your own) instead of scene time; `""` goes back. Returns the id |
+| `tween_tag(id, tag)` / `tween_speed_based(id)` / `tween_decay(id, rate)` | Group label for the `_tag` calls / duration is a speed in units a second / falloff of a punch or shake. Return the id |
+| `tween_kill_tag(tag [, complete])` / `tween_pause_tag(tag)` / `tween_play_tag(tag)` / `tween_complete_tag(tag)` / `tween_rewind_id(id)` | Control every tween with a tag (or id) in the scene; return how many |
+| `seq_prepend(seq, id)` / `seq_join_callback(seq, "fn")` | Play a tween before everything in a sequence / call a function when the last appended tween starts |
 | `tween_prop(path, to, dur [, ease][, "done"])` | Tween any property of this object by path (`"Light.intensity"`, `"Transform.scale.y"`; see docs/properties.md). The ease is a name or curve text: `"cubic-bezier(0.4,0,0.2,1)"`, `"steps(4)"` |
 | `save_game([slot] [, label])` / `load_game([slot])` | Save / load the whole game (see docs/save_games.md) |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
@@ -452,7 +455,11 @@ Each maps a normalized `t` (0..1) to an eased 0..1 — feed the result to `lerp`
 
 `ease_in`, `ease_out`, `ease_in_out`, `ease_in_cubic`, `ease_out_cubic`,
 `ease_in_out_cubic`, `ease_back`, `ease_elastic`, `ease_bounce`,
-plus `fract(x)` for the fractional part.
+plus `fract(x)` for the fractional part. A NaN `t` counts as 0.
+
+`ease_curve(t, "OutBack")` is any ease by name or as curve text (`"cubic-bezier(0.4, 0, 0.2, 1)"`,
+`"steps(4)"`, `"ease-in-out"`; the text `tween_ease` takes). Text it does not know leaves `t` as it is; a curve
+may overshoot 0..1 (Back, Elastic, a bezier with y outside it).
 
 ### More string helpers
 
@@ -469,6 +476,10 @@ Intuitive names for common builtins so code reads naturally:
 `screen_width` / `screen_height`.
 | `upper lower split join substr replace trim str_len` | Strings |
 | `time()` / `dt()` / `fps()` | Timing |
+| `session_time()` / `session_unscaled_time()` / `session_frame_count()` | Game seconds, real seconds and frames since this Play began (`time()` keeps counting across Plays) |
+| `unscaled_dt()` / `is_paused()` / `hitch_count()` | Real frame time (a pause and slow motion do not change it), the pause, frames over 0.1 s |
+| `push_pause(reason)` / `pop_pause(reason)` / `is_paused_by(reason)` | Pause with a reason of your own; the game stays paused until every reason is let go (two scripts never resume each other) |
+| `hit_stop(seconds [, scale])` / `slow_motion(scale, seconds)` / `ramp_timescale(target, seconds)` | Freeze frame, bullet time, an eased time scale (real seconds; they end by themselves) |
 | `print(...)` | Log to the Console panel |
 
 ### Timers & spawning
@@ -478,6 +489,8 @@ Intuitive names for common builtins so code reads naturally:
 | `every(seconds, "fn")` | Call `fn` repeatedly on an interval |
 | `cancel_timers()` | Clear all scheduled callbacks |
 | `spawn("prefab", x, y)` / `spawn3("prefab", x, y, z)` | Instantiate prefabs |
+| `pool_get("prefab", x, y [, z])` / `pool_release()` | Spawn from the scene's pool for a prefab (reused objects start fresh) / give this object back to its pool |
+| `pool_prewarm("prefab", n)` / `pool_idle("prefab")` | Make `n` idle objects ahead of time / count the idle ones |
 
 ### Physics queries
 | Function | Description |

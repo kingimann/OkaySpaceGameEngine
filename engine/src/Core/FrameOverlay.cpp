@@ -87,6 +87,14 @@ std::string FrameOverlay::Text(const std::vector<std::string>& lines) {
     return t;
 }
 
+std::string FrameOverlay::FpsLabel(const FrameStats& stats, std::size_t recentFrames) {
+    const double fps = stats.AverageFps(recentFrames);
+    if (stats.Empty() || !(fps > 0.0)) return "FPS --";
+    return "FPS " + std::to_string((long long)(fps > 1.0e9 ? 1.0e9 : fps + 0.5));
+}
+
+std::string FrameOverlay::FpsLabel(const GameLoop& loop, std::size_t recentFrames) { return FpsLabel(loop.Stats(), recentFrames); }
+
 static std::vector<float> Recent(const FrameStats& stats, std::size_t count, bool fps) {
     if (count > kMaxGraphPoints) count = kMaxGraphPoints;
     std::vector<float> out(count, 0.0f);

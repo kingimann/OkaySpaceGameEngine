@@ -115,7 +115,16 @@ switching back to Both gives that view its defaults again (Undo, Ctrl+Z, brings
 the old ones back). Everything else lives in sections of the same panel:
 movement, jump, sprint, crouch, prone, lean, slide, dodge, vault and mantle,
 foot IK, the first-person eye, bob and zoom, the third-person orbit, aim and
-spring arm, and **Set Character Model...**. First Person Hands, head hiding,
+spring arm, and **Set Character Model...**. Under that button the panel
+shows how many humanoid bones the model has, and whether Foot IK, Look-At
+and an Animator are on the player. **Wire animation and IK** adds only the
+ones that are missing, and matches empty animation slots by name. Press it
+again and it leaves a graph, a clip choice, and any IK weight you already
+set. **Open Animator** opens the state graph. Clip slots stay in the
+Character Model panel above the controller. A model with fewer than 8
+humanoid bones is told so, and the button does not invent foot or look IK
+for it. Right-click that model and choose **Map Humanoid Bones** or **Rig
+Model (Humanoid)**. First Person Hands, head hiding,
 ragdolls, multiplayer ownership and the scripting calls work as before.
 
 Scripts: `set_view(0 or 1)` and `get_view()` (and the Player Controller type's

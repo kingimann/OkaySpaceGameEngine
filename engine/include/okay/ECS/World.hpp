@@ -11,6 +11,7 @@
 //   w.add<Velocity>(e, {1,0,0});
 //   w.each<Position, Velocity>([&](ecs::Entity, Position& p, Velocity& v){ p.x += v.x; });
 // ---------------------------------------------------------------------------
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 #include <deque>
@@ -111,14 +112,16 @@ struct TPool : IPool {
 
 class World {
 public:
-    /// Make a fresh entity.
-    Entity create() { Entity e = m_next++; m_alive[e] = true; return e; }
+    /// Make a fresh entity. Ids count up from 1 and are not reused, so a stale id never
+    /// names a newer entity. After 2^32 - 1 creations the counter wraps; it then skips Null
+    /// and every id that is still alive.
+    Entity create() { Entity e = takeId(); m_alive[e] = true; return e; }
 
     /// Make (or reuse) a specific entity id — used when mirroring a networked world
     /// so client and server share ids.
     Entity ensure(Entity e) {
-        // Null is never a live entity, and the top id would wrap the counter back to
-        // Null (these ids come off the network, so a bad one must not break create()).
+        // Null is never a live entity, and the top id is kept out (these ids come off the
+        // network, so a bad one must not push the counter to the wrap point).
         if (e == Null || e == 0xFFFFFFFFu) return Null;
         if (e >= m_next) m_next = e + 1;
         m_alive[e] = true;
@@ -151,10 +154,12 @@ public:
     template <class T> void remove(Entity e) { pool<T>().remove(e); }
     template <class T> void clearPool() { pool<T>().clear(); }
 
-    /// All live entity ids (order unspecified).
+    /// All live entity ids, in ascending order (the same on every platform and every run, so a
+    /// loop over it, a full snapshot and a checksum of it do not depend on the hash table's layout).
     std::vector<Entity> entities() const {
         std::vector<Entity> out; out.reserve(m_alive.size());
         for (auto& kv : m_alive) if (kv.second) out.push_back(kv.first);
+        std::sort(out.begin(), out.end());
         return out;
     }
 
@@ -254,7 +259,15 @@ private:
         }
         ~IterGuard() { std::apply([](Ps&... q) { (q.endIter(), ...); }, ps); --d; }
     };
-    Entity reserveId() { return m_next++; }
+    // The next id that is not Null and not alive; the counter wraps past the top id back to 1.
+    Entity takeId() {
+        for (;;) {
+            const Entity e = m_next;
+            m_next = (m_next == 0xFFFFFFFFu) ? 1u : m_next + 1u;
+            if (e != Null && m_alive.find(e) == m_alive.end()) return e;
+        }
+    }
+    Entity reserveId() { return takeId(); }
     void activate(Entity e) { if (e != Null) m_alive[e] = true; }
     int m_iterDepth = 0;
     CommandBuffer m_commands;

@@ -6,6 +6,8 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Layers.hpp"
+#include "okay/Scene/ObjectPool.hpp"
+#include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneLocalization.hpp"
@@ -30,6 +32,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <typeindex>
 #include <unordered_map>
 #include <vector>
 
@@ -44,32 +47,40 @@ Scene::~Scene() {   // its scene variables and script statics go with it
     vs::ForgetSceneVariables(this);
     NextScriptVM::ForgetSceneStatics(this);
     ActionList::ForgetScene(this);
+    ObjectPool::ForgetScene(Uid());   // the pools scripts made for this scene (ObjectPool::ForPrefab) go with it
 }
 
+namespace {
+// A destroyed object is only a Transform shell: cloning it would make an empty, switched-off object.
+GameObject* Clone(Scene& scene, const GameObject& prefab) {
+    return prefab.IsDestroyed() ? nullptr : SceneSerializer::Instantiate(scene, prefab);
+}
+} // namespace
+
 GameObject* Scene::Instantiate(const GameObject& prefab) {
-    return SceneSerializer::Instantiate(*this, prefab);
+    return Clone(*this, prefab);
 }
 
 GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position) {
-    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    GameObject* go = Clone(*this, prefab);
     if (go) go->transform->localPosition = position;
     return go;
 }
 
 GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation) {
-    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    GameObject* go = Clone(*this, prefab);
     if (go) { go->transform->localPosition = position; go->transform->localRotation = rotation.Normalized(); }
     return go;
 }
 
 GameObject* Scene::Instantiate(const GameObject& prefab, Transform* parent, bool worldPositionStays) {
-    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    GameObject* go = Clone(*this, prefab);
     if (go && parent) go->transform->SetParent(parent, worldPositionStays);   // refused: it stays a root
     return go;
 }
 
 GameObject* Scene::Instantiate(const GameObject& prefab, const Vec3& position, const Quat& rotation, Transform* parent) {
-    GameObject* go = SceneSerializer::Instantiate(*this, prefab);
+    GameObject* go = Clone(*this, prefab);
     if (!go) return nullptr;
     if (parent) go->transform->SetParent(parent, /*worldPositionStays=*/false);   // refused: it stays a root
     go->transform->SetPosition(position);   // world values, whatever it ended up under
@@ -125,12 +136,32 @@ GameObject* Scene::CreateGameObject(const std::string& name) {
 
 GameObject* Scene::FindByGuid(const std::string& guid) const {
     if (guid.empty()) return nullptr;
+    if (m_guidIndexStructure != m_structureVersion || m_guidIndexCount != m_objects.size()) {
+        m_guidIndex.clear();
+        m_guidIndex.reserve(m_objects.size());
+        for (const auto& o : m_objects)
+            if (!o->IsDestroyed()) m_guidIndex.emplace(o->Guid(), o.get());   // the first object with an id keeps it
+        m_guidIndexStructure = m_structureVersion;
+        m_guidIndexCount = m_objects.size();
+    }
+    auto it = m_guidIndex.find(guid);
+    if (it != m_guidIndex.end() && !it->second->IsDestroyed() && it->second->Guid() == guid) return it->second;
+    // Not listed, or listed for an object whose id was changed since (SetGuid does not tell the scene): scan.
     for (const auto& o : m_objects)
         if (!o->IsDestroyed() && o->Guid() == guid) return o.get();
     return nullptr;
 }
 
+// Counts the stretches where the scene is walking its component lists and calling user code
+// (Awake/Start, Update, physics, render, OnDestroy). DestroyImmediate waits for the end of those.
+struct Scene::BusyScope {
+    Scene& s;
+    explicit BusyScope(Scene& sc) : s(sc) { ++s.m_busy; }
+    ~BusyScope() { --s.m_busy; }
+};
+
 void Scene::DestroyAllLive() {
+    BusyScope busy(*this);   // an OnDisable / OnDestroy that calls Clear() or loads a scene is queued, not re-entered
     // Components that were awakened get OnDisable (if owed) and OnDestroy once, like a
     // destroyed object's. Slots of components a handler removes are nulled in m_active
     // (never erased), so walking by index stays valid; anything a handler adds waits in
@@ -146,7 +177,15 @@ void Scene::DestroyAllLive() {
     m_pending.clear();
 }
 
+bool Scene::Despawn(GameObject* go) {
+    if (!go) return false;
+    if (ObjectPool::ReleaseToOwner(*this, go)) return true;
+    Destroy(go);
+    return false;
+}
+
 void Scene::Clear() {
+    if (m_busy > 0) { m_clearPending = true; return; }   // objects are in use right now: the end of the frame does it
     DestroyAllLive();   // OnDestroy for what the old scene still had running
     vs::ForgetSceneVariables(this);   // a fresh scene (another level loaded) starts with none
     NextScriptVM::ForgetSceneStatics(this);   // ... and script statics start again
@@ -159,6 +198,7 @@ void Scene::Clear() {
     m_destroyQueue.clear();
     m_destroyQueued.clear();
     m_delayedDestroy.clear();
+    m_delayedIndex.clear();
     m_dontDestroy.clear();
     m_scheduler.Clear();
     m_tweens.Clear();
@@ -167,6 +207,7 @@ void Scene::Clear() {
     m_physics3d.gravity = Vec3{0.0f, -9.81f, 0.0f};   // gravity is a scene setting: a new scene starts at the default
     m_physicsAcc = 0.0f;
     uiFont.clear();                            // the loaded scene sets its own, if any
+    unknownRecords.clear();                    // ... and brings the unknown records of its own file
     mainCamera = nullptr;
     ResetLayerCollisions();   // the layer matrix belongs to the scene being cleared
     // The pointer-dispatch state points at objects about to be freed: forget it,
@@ -179,7 +220,14 @@ void Scene::Clear() {
     m_graveyard.clear();
     ++m_structureVersion;
     renderSettings = RenderSettings{};   // back to default sky/ambient
+    m_clearPending = false;              // what asked for another Clear while this one ran is done
     for (auto& d : abandoned) d(false);
+}
+
+void Scene::ApplyPendingClear() {
+    if (!m_clearPending || m_busy > 0) return;
+    m_clearPending = false;
+    Clear();
 }
 
 void Scene::QueuePending(Component* component) {
@@ -207,14 +255,6 @@ bool CanRun(const Component* c) {
     return c->enabled && (!c->gameObject || c->gameObject->ActiveInHierarchy());
 }
 } // namespace
-
-// Counts the stretches where the scene is walking its component lists and calling user code
-// (Awake/Start, Update, physics, render, OnDestroy). DestroyImmediate waits for the end of those.
-struct Scene::BusyScope {
-    Scene& s;
-    explicit BusyScope(Scene& sc) : s(sc) { ++s.m_busy; }
-    ~BusyScope() { --s.m_busy; }
-};
 
 void Scene::FlushPending() {
     if (m_pending.empty()) return;
@@ -262,8 +302,11 @@ void Scene::StartComponent(Component* c) {
 
 void Scene::Start() {
     ActionList::UseScene(this);
-    BusyScope busy(*this);
-    FlushPending();
+    {
+        BusyScope busy(*this);
+        FlushPending();
+    }
+    ApplyPendingClear();   // an Awake / Start that asked for a Clear
 }
 
 void Scene::DetachKept(KeptState& k) {
@@ -276,11 +319,17 @@ void Scene::DetachKept(KeptState& k) {
     }
     k.marked = m_dontDestroy;
     if (k.keep.empty()) return;
+    k.order.reserve(m_objects.size());
+    for (const auto& up : m_objects) k.order.push_back(up.get());
+    k.activeOrder = m_active;
+    if (mainCamera && k.keep.count(mainCamera->gameObject)) k.mainCamera = mainCamera;
     for (const auto& up : m_objects) {   // a kept root must not hang off what is about to be freed
         GameObject* g = up.get();
         Transform* par = g->transform ? g->transform->Parent() : nullptr;
-        if (k.keep.count(g) && par && par->gameObject && !k.keep.count(par->gameObject))
+        if (k.keep.count(g) && par && par->gameObject && !k.keep.count(par->gameObject)) {
+            k.unparented.push_back({g, par, g->transform->GetSiblingIndex()});
             g->transform->SetParent(nullptr, /*worldPositionStays=*/true);
+        }
     }
     for (auto it = m_objects.begin(); it != m_objects.end();) {
         if (k.keep.count(it->get())) { k.objects.push_back(std::move(*it)); it = m_objects.erase(it); }
@@ -297,12 +346,35 @@ void Scene::DetachKept(KeptState& k) {
     ++m_structureVersion;
 }
 
-void Scene::ReattachKept(KeptState& k) {
+void Scene::ReattachKept(KeptState& k, bool undo) {
     if (k.objects.empty()) return;
     for (auto& up : k.objects) m_objects.push_back(std::move(up));
+    if (undo) {
+        // The load did not happen: the scene must be what it was. Objects stand in their old order again, and a kept
+        // object that was moved off a parent that stayed goes back under it, at its old place (the parents that
+        // were not kept are all still here: nothing was cleared).
+        std::unordered_map<const GameObject*, std::size_t> place;
+        for (std::size_t i = 0; i < k.order.size(); ++i) place[k.order[i]] = i;
+        std::stable_sort(m_objects.begin(), m_objects.end(), [&](const std::unique_ptr<GameObject>& a, const std::unique_ptr<GameObject>& b) {
+            auto ia = place.find(a.get()), ib = place.find(b.get());
+            const std::size_t pa = ia == place.end() ? place.size() : ia->second, pb = ib == place.end() ? place.size() : ib->second;
+            return pa < pb;
+        });
+        for (auto it = k.unparented.rbegin(); it != k.unparented.rend(); ++it)   // last taken off, first put back: each index was read after the ones before it left
+            if (it->go && it->go->transform && it->parent) it->go->transform->SetParent(it->parent, /*worldPositionStays=*/true, it->index);
+        if (k.mainCamera) mainCamera = k.mainCamera;
+    }
     m_dontDestroy = std::move(k.marked);
     m_active.insert(m_active.end(), k.active.begin(), k.active.end());
     m_pending.insert(m_pending.end(), k.pending.begin(), k.pending.end());
+    if (undo) {   // the update list is what it was too (the kept components updated in their old turn)
+        std::unordered_map<const Component*, std::size_t> turn;
+        for (std::size_t i = 0; i < k.activeOrder.size(); ++i) turn[k.activeOrder[i]] = i;
+        std::stable_sort(m_active.begin(), m_active.end(), [&](const Component* a, const Component* b) {
+            auto ia = turn.find(a), ib = turn.find(b);
+            return (ia == turn.end() ? turn.size() : ia->second) < (ib == turn.end() ? turn.size() : ib->second);
+        });
+    }
     if (m_hasOrdered)
         std::stable_sort(m_active.begin(), m_active.end(), [](const Component* a, const Component* b) {
             return (a ? a->ExecutionOrder() : 0) < (b ? b->ExecutionOrder() : 0);
@@ -310,7 +382,22 @@ void Scene::ReattachKept(KeptState& k) {
     ++m_structureVersion;
 }
 
+void Scene::MoveKeptToEnd() {
+    std::unordered_set<const GameObject*> keep;
+    std::vector<Transform*> stack;
+    for (GameObject* g : m_dontDestroy) if (g && g->transform) stack.push_back(g->transform);
+    while (!stack.empty()) {
+        Transform* t = stack.back(); stack.pop_back();
+        if (!t->gameObject || !keep.insert(t->gameObject).second) continue;
+        for (Transform* ch : t->Children()) stack.push_back(ch);
+    }
+    if (keep.empty()) return;
+    std::stable_partition(m_objects.begin(), m_objects.end(), [&](const std::unique_ptr<GameObject>& up) { return !keep.count(up.get()); });
+    ++m_structureVersion;
+}
+
 void Scene::Update(float deltaTime) {
+    if (!std::isfinite(deltaTime)) deltaTime = 0.0f;   // NaN or infinity is no time: it would poison the bodies, the timers and every script
     ActionList::UseScene(this);
     {
     BusyScope busy(*this);   // component lists are walked until the end of LateUpdate
@@ -318,6 +405,7 @@ void Scene::Update(float deltaTime) {
     // Drop any components removed last frame (their slots were nulled).
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
     DispatchActivation();
+    ++m_updateCount;   // everything switched off before this point has now heard about it (see UpdateCount)
     LocalizeScene(*this);   // localized text follows the language (a no-op when nothing changed)
 
     // Physics debug view: this frame's rays / contacts replace last frame's.
@@ -393,7 +481,7 @@ void Scene::Update(float deltaTime) {
             m_lastLoadError = "could not load scene '" + path + "': " + (loadError.empty() ? "unknown error" : loadError);
             std::cerr << "[scene] " << m_lastLoadError << "\n";
         }
-        ReattachKept(kept);   // back in, whether or not the load worked
+        ReattachKept(kept, /*undo=*/!loaded);   // back in whether or not the load worked; a failed load leaves them where they stood
         if (loaded) {
             InventoryPersistence::AfterSceneLoad(*this);
             Start(); // run Awake/Start for the freshly loaded objects
@@ -531,6 +619,9 @@ void Scene::DispatchPointer() {
         Vec3 ro, rd;
         mainCamera->ScreenPointToRay(mp.x, mp.y, w, h, ro, rd);
         Physics3D phys;
+        // The pawn's own capsule sits in the middle of the view. A cursor ray
+        // that hits it makes a look target flip between the body and the world.
+        Physics3D::IgnoreHierarchy own(mainCamera->pointerIgnore);
         RaycastHit3D rh = phys.Raycast(*this, ro, rd);
         hit = rh.gameObject;   // needs a Collider3D on the object (primitives get one by default)
     } else {
@@ -539,16 +630,19 @@ void Scene::DispatchPointer() {
         for (const auto& up : m_objects) {
             GameObject* go = up.get();
             if (!go->transform || !go->ActiveInHierarchy()) continue;
+            // Only an object that can be picked pays for its world pose (reading it walks the parent
+            // chain: for every object that made a frame over a deep hierarchy quadratic).
+            auto* sr = go->GetComponent<SpriteRenderer>();
+            auto* bc = sr ? nullptr : go->GetComponent<BoxCollider2D>();
+            if (!sr && !bc) continue;
             Vec3 c = go->transform->Position();
             Vec3 ls = go->transform->LossyScale();
             Vec2 half; int order = 0;
-            if (auto* sr = go->GetComponent<SpriteRenderer>()) {
+            if (sr) {
                 half = {sr->size.x * ls.x * 0.5f, sr->size.y * ls.y * 0.5f};
                 order = sr->sortOrder;
-            } else if (auto* bc = go->GetComponent<BoxCollider2D>()) {
-                half = {bc->size.x * ls.x * 0.5f, bc->size.y * ls.y * 0.5f};
             } else {
-                continue;
+                half = {bc->size.x * ls.x * 0.5f, bc->size.y * ls.y * 0.5f};
             }
             if (world.x >= c.x - half.x && world.x <= c.x + half.x &&
                 world.y >= c.y - half.y && world.y <= c.y + half.y && order >= best) {
@@ -637,12 +731,34 @@ void Scene::Destroy(GameObject* go) {
     }
 }
 
+int Scene::DestroyChildren(GameObject* go) {
+    if (!go || go->IsDestroyed() || !go->transform) return 0;
+    int asked = 0;
+    for (const Transform* c : go->transform->Children())   // Destroy only queues: the child list is not edited here
+        if (c && c->gameObject) { Destroy(c->gameObject); ++asked; }
+    return asked;
+}
+
 void Scene::Destroy(GameObject* go, float seconds) {
     if (!go) return;
     if (!(seconds > 0.0f)) { Destroy(go); return; }   // zero, negative or NaN: now
-    for (auto& d : m_delayedDestroy)
-        if (d.first == go->InstanceId()) { d.second = std::min(d.second, seconds); return; }
+    auto waiting = m_delayedIndex.find(go->InstanceId());
+    if (waiting != m_delayedIndex.end()) { auto& d = m_delayedDestroy[waiting->second]; d.second = std::min(d.second, seconds); return; }
+    m_delayedIndex[go->InstanceId()] = m_delayedDestroy.size();
     m_delayedDestroy.push_back({go->InstanceId(), seconds});
+}
+
+bool Scene::CancelDelayedDestroy(const GameObject* go) {
+    if (!go) return false;
+    const auto waiting = m_delayedIndex.find(go->InstanceId());
+    if (waiting == m_delayedIndex.end()) return false;
+    m_delayedDestroy[waiting->second].first = 0;   // no object has id 0: the next tick drops the entry
+    m_delayedIndex.erase(waiting);
+    return true;
+}
+
+bool Scene::IsDestroyPending(const GameObject* go) const {
+    return go && (m_destroyQueued.count(go) != 0 || m_delayedIndex.count(go->InstanceId()) != 0);
 }
 
 void Scene::DestroyImmediate(GameObject* go) {
@@ -655,13 +771,14 @@ void Scene::TickDelayedDestroys(float deltaTime) {
     if (m_delayedDestroy.empty()) return;
     auto due = std::move(m_delayedDestroy);
     m_delayedDestroy.clear();
+    m_delayedIndex.clear();
     if (!(deltaTime > 0.0f) || !std::isfinite(deltaTime)) deltaTime = 0.0f;   // a bad frame time takes no time off
     for (auto& d : due) {
         GameObject* go = GameObject::FromInstanceId(d.first);   // null once it is gone
         if (!go || go->scene() != this) continue;
         d.second -= deltaTime;
         if (d.second <= 0.0f) Destroy(go);
-        else m_delayedDestroy.push_back(d);
+        else { m_delayedIndex[d.first] = m_delayedDestroy.size(); m_delayedDestroy.push_back(d); }
     }
 }
 
@@ -671,6 +788,13 @@ void Scene::DontDestroyOnLoad(GameObject* go) {
 
 bool Scene::IsDontDestroyOnLoad(const GameObject* go) const {
     return std::find(m_dontDestroy.begin(), m_dontDestroy.end(), go) != m_dontDestroy.end();
+}
+
+bool Scene::CancelDontDestroyOnLoad(const GameObject* go) {
+    auto it = std::find(m_dontDestroy.begin(), m_dontDestroy.end(), go);
+    if (it == m_dontDestroy.end()) return false;
+    m_dontDestroy.erase(it);
+    return true;
 }
 
 void Scene::ResolveMainCamera() {
@@ -695,7 +819,66 @@ void Scene::DispatchActivation() {
     }
 }
 
+// Take every dying object out of the hierarchy: each becomes a root shell at the world pose it had, and
+// each list of children (a surviving parent's, or a dying parent's) loses its dying children in one pass.
+// The objects are visited top down (a parent before its children) with each one's world matrix, rotation
+// and scale carried from its parent's, so the whole job is linear in the number of objects: reading a
+// pose through the chain for every object, or erasing one child at a time from a long list, is not.
+void Scene::DetachDying(const std::vector<GameObject*>& batch, const std::unordered_set<const GameObject*>& inScene) {
+    auto dying = [&inScene](const Transform* t) { return t && t->gameObject && inScene.count(t->gameObject) != 0; };
+    struct Frozen { Mat4 world; Quat rotation; Vec3 scale; };
+    struct Entry { Transform* t; int parent; };   // parent: index into `order` of the dying parent, or -1
+    std::vector<Entry> order;
+    std::vector<Frozen> frozen;
+    order.reserve(inScene.size());
+    frozen.reserve(inScene.size());
+    std::unordered_set<Transform*> survivingParents;   // lists a dying top is taken out of
+    std::vector<std::pair<Transform*, int>> stack;
+    for (GameObject* go : batch) {
+        if (!go || !inScene.count(go) || !go->transform) continue;
+        Transform* top = go->transform;
+        if (dying(top->m_parent)) continue;   // reached from its dying parent below
+        if (top->m_parent) survivingParents.insert(top->m_parent);
+        stack.push_back({top, -1});
+        while (!stack.empty()) {
+            auto [t, parent] = stack.back(); stack.pop_back();
+            const int me = static_cast<int>(order.size());
+            Frozen f;
+            if (parent < 0) { f.world = t->LocalToWorldMatrix(); f.rotation = t->Rotation(); f.scale = t->LossyScale(); }
+            else {
+                const Frozen& up = frozen[static_cast<std::size_t>(parent)];
+                f.world = up.world * Mat4::TRS(t->localPosition, t->localRotation, t->localScale);
+                f.rotation = (up.rotation * t->localRotation).Normalized();
+                f.scale = {up.scale.x * t->localScale.x, up.scale.y * t->localScale.y, up.scale.z * t->localScale.z};
+            }
+            order.push_back({t, parent});
+            frozen.push_back(f);
+            const auto& kids = t->Kids();
+            for (std::size_t i = kids.size(); i-- > 0;)
+                if (dying(kids[i])) stack.push_back({kids[i], me});
+        }
+    }
+    if (order.empty()) return;
+    for (std::size_t i = 0; i < order.size(); ++i) {   // each becomes a root at the pose that was read
+        Transform* t = order[i].t;
+        const Frozen& f = frozen[i];
+        t->m_parent = nullptr;
+        t->localPosition = {f.world.m[12], f.world.m[13], f.world.m[14]};
+        t->localRotation = f.rotation.Normalized();
+        t->localScale = f.scale;
+    }
+    auto trim = [&dying](Transform* list) { list->RemoveChildrenIf(dying); };   // the dying children leave this list together; the others keep their order
+    for (Transform* p : survivingParents) trim(p);
+    for (const Entry& e : order) if (e.t->ChildCount() > 0) trim(e.t);
+    detail::g_activeEpoch.fetch_add(1, std::memory_order_relaxed);   // parent links changed
+}
+
 void Scene::FlushDestroyed() {
+    FlushDestroyedNow();
+    ApplyPendingClear();   // a Clear asked for during the walk (not when this flush itself runs inside one)
+}
+
+void Scene::FlushDestroyedNow() {
     BusyScope busy(*this);   // OnDestroy handlers run: a DestroyImmediate from one only queues
     // OnDestroy handlers (scripts, visual scripts) may destroy or spawn more
     // objects: take the queue as a batch so they can't invalidate it, and treat
@@ -740,6 +923,19 @@ void Scene::FlushDestroyed() {
             }
         }
     }
+    // Still queued for Start (edit mode, or added and destroyed in the same frame).
+    // OnDestroy must not run: many components assume Start already did. ReleaseUnstarted
+    // is the narrow hook for something grabbed before Start (an IK target, a weather count).
+    {
+        RemovalWatch watch(*this);
+        std::vector<Component*> waiting;
+        for (Component* c : m_pending)
+            if (c && inScene.count(c->gameObject)) waiting.push_back(c);
+        for (Component* c : waiting) {
+            if (watch.Any() && watch.Gone(c)) continue;
+            c->ReleaseUnstarted();
+        }
+    }
     // Drop the dying objects' components from the lists, one pass each.
     auto isOwned = [&dying](Component* c) { return !c || dying.count(c->gameObject) != 0; };
     m_active.erase(std::remove_if(m_active.begin(), m_active.end(), isOwned), m_active.end());
@@ -750,6 +946,8 @@ void Scene::FlushDestroyed() {
     if (m_mousePress && dying.count(m_mousePress)) m_mousePress = nullptr;
     m_dontDestroy.erase(std::remove_if(m_dontDestroy.begin(), m_dontDestroy.end(),
         [&dying](GameObject* g) { return dying.count(g) != 0; }), m_dontDestroy.end());
+    // Unlink every dying object from its parent first, all of them in one pass (see DetachDying).
+    DetachDying(batch, inScene);
     // Keep the shells (GameObject + Transform) in the graveyard; free the rest. One pass
     // that keeps the survivors in order.
     {
@@ -758,11 +956,8 @@ void Scene::FlushDestroyed() {
         for (auto& obj : m_objects) {
             GameObject* go = obj.get();
             if (!inScene.count(go)) { kept.push_back(std::move(obj)); continue; }
-            // Unlink the shell from a surviving parent, or it lingers in the
-            // Hierarchy as an empty, inactive child (a deleted camera showed up
-            // as "a camera with no Camera component").
-            // A dying parent's shell is detached from too, so a shell freed from the
-            // graveyard never leaves a child pointing at it.
+            // Anything DetachDying did not reach (a hierarchy whose child lists disagree) is unlinked
+            // here the slow way, so no shell is left with a parent.
             if (Transform* t = go->transform)
                 if (t->Parent()) t->SetParent(nullptr, /*worldPositionStays=*/true);
             go->StripToTransform();
@@ -802,28 +997,52 @@ GameObject* Scene::Find(const std::string& name) const {
     return nullptr;
 }
 
+namespace {
+// The objects a path names, in scene order, stopping after `limit` matches. A path is read from the left: an
+// object matches when its name is what the path starts with, followed by '/' or the end; the next level
+// then has to match the rest. So an object called "a/b" is found by its whole name, and two siblings with the
+// same name are both tried (an object whose subtree has no match is not the end of the search). Runs of '/' count
+// as one, a leading and a trailing '/' are allowed. An explicit stack keeps a very long path from recursing.
+std::vector<GameObject*> CollectByPath(const std::vector<std::unique_ptr<GameObject>>& objects, const std::string& path,
+                                       std::size_t limit) {
+    std::vector<GameObject*> out;
+    std::size_t first = path.find_first_not_of('/');
+    if (first == std::string::npos || limit == 0) return out;
+    struct Frame { GameObject* go; std::size_t at; };   // `at`: where in the path this object's name has to start
+    std::vector<Frame> stack;
+    for (std::size_t i = objects.size(); i-- > 0;)
+        if (!objects[i]->transform || !objects[i]->transform->Parent()) stack.push_back({objects[i].get(), first});
+    while (!stack.empty()) {
+        const Frame f = stack.back();
+        stack.pop_back();
+        const std::string& name = f.go->name;
+        if (name.empty() || path.compare(f.at, name.size(), name) != 0) continue;
+        std::size_t after = f.at + name.size();
+        if (after < path.size()) {
+            if (path[after] != '/') continue;                 // the name is only the start of a longer one
+            after = path.find_first_not_of('/', after);
+        }
+        if (after == std::string::npos || after >= path.size()) {   // the path ends here (maybe with a '/')
+            out.push_back(f.go);
+            if (out.size() >= limit) return out;
+            continue;
+        }
+        if (!f.go->transform) continue;
+        const auto& kids = f.go->transform->Children();
+        for (std::size_t i = kids.size(); i-- > 0;)
+            if (kids[i] && kids[i]->gameObject) stack.push_back({kids[i]->gameObject, after});
+    }
+    return out;
+}
+} // namespace
+
 GameObject* Scene::FindByPath(const std::string& path) const {
-    std::vector<std::string> parts;
-    std::size_t start = 0;
-    while (start <= path.size()) {
-        std::size_t slash = path.find('/', start);
-        std::string part = path.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
-        if (!part.empty()) parts.push_back(std::move(part));   // skips a leading / doubled '/'
-        if (slash == std::string::npos) break;
-        start = slash + 1;
-    }
-    if (parts.empty()) return nullptr;
-    GameObject* cur = nullptr;
-    for (const auto& o : m_objects)
-        if (o->name == parts[0] && (!o->transform || !o->transform->Parent())) { cur = o.get(); break; }
-    for (std::size_t i = 1; cur && i < parts.size(); ++i) {
-        GameObject* next = nullptr;
-        if (cur->transform)
-            for (const Transform* ch : cur->transform->Children())
-                if (ch && ch->gameObject && ch->gameObject->name == parts[i]) { next = ch->gameObject; break; }
-        cur = next;
-    }
-    return cur;
+    const std::vector<GameObject*> hit = CollectByPath(m_objects, path, 1);
+    return hit.empty() ? nullptr : hit.front();
+}
+
+std::vector<GameObject*> Scene::FindAllByPath(const std::string& path) const {
+    return CollectByPath(m_objects, path, std::numeric_limits<std::size_t>::max());
 }
 
 std::vector<GameObject*> Scene::Roots() const {
@@ -831,6 +1050,60 @@ std::vector<GameObject*> Scene::Roots() const {
     for (const auto& o : m_objects)
         if (!o->transform || !o->transform->Parent()) out.push_back(o.get());
     return out;
+}
+
+SceneGraphStats Scene::Stats() const {
+    SceneGraphStats st;
+    st.objects = static_cast<int>(m_objects.size());
+    st.pendingDestroy = static_cast<int>(m_destroyQueue.size());
+    st.shells = static_cast<int>(m_graveyard.size());
+    for (const Component* c : m_active) if (c) ++st.runningComponents;
+    for (const Component* c : m_pending) if (c) ++st.awaitingStart;
+    std::unordered_map<std::type_index, std::pair<const Component*, int>> kinds;   // per type: one exemplar and a count
+    std::vector<std::pair<const Transform*, int>> stack;   // explicit stack: a chain 100000 deep is no recursion
+    for (const auto& o : m_objects) {
+        const GameObject* g = o.get();
+        for (const auto& c : g->Components()) {
+            auto& k = kinds[std::type_index(typeid(*c))];
+            if (!k.first) k.first = c.get();
+            ++k.second;
+            ++st.components;
+        }
+        if (g->ActiveInHierarchy()) ++st.activeInHierarchy;
+        if (g->transform && !g->transform->Parent()) { ++st.roots; stack.push_back({g->transform, 0}); }
+    }
+    st.inactive = st.objects - st.activeInHierarchy;
+    while (!stack.empty()) {
+        auto [t, depth] = stack.back(); stack.pop_back();
+        st.maxDepth = std::max(st.maxDepth, depth);
+        for (const Transform* c : t->Children()) if (c) stack.push_back({c, depth + 1});
+    }
+    st.byType.reserve(kinds.size());
+    for (const auto& kv : kinds)
+        st.byType.push_back({ComponentSerializerRegistry::TypeKey(*kv.second.first), kv.second.second});
+    std::sort(st.byType.begin(), st.byType.end(), [](const SceneGraphStats::TypeCount& a, const SceneGraphStats::TypeCount& b) {
+        return a.count != b.count ? a.count > b.count : a.type < b.type;
+    });
+    return st;
+}
+
+std::vector<std::string> SceneGraphStats::Lines(int maxTypes) const {
+    std::vector<std::string> out;
+    out.push_back("Objects: " + std::to_string(objects) + " (" + std::to_string(roots) + " roots, " +
+                  std::to_string(inactive) + " inactive, depth " + std::to_string(maxDepth) + ")");
+    out.push_back("Components: " + std::to_string(components) + " (" + std::to_string(runningComponents) + " running, " +
+                  std::to_string(awaitingStart) + " waiting to start)");
+    if (pendingDestroy > 0 || shells > 0)
+        out.push_back("Destroy queue: " + std::to_string(pendingDestroy) + ", shells kept: " + std::to_string(shells));
+    for (int i = 0; i < maxTypes && i < static_cast<int>(byType.size()); ++i)
+        out.push_back("  " + byType[static_cast<std::size_t>(i)].type + ": " + std::to_string(byType[static_cast<std::size_t>(i)].count));
+    return out;
+}
+
+std::string SceneGraphStats::ToString(int maxTypes) const {
+    std::string text;
+    for (const std::string& l : Lines(maxTypes)) { text += l; text += '\n'; }
+    return text;
 }
 
 SceneValidationReport Scene::Validate(const std::string& assetRoot) const {
@@ -855,8 +1128,16 @@ const std::vector<GameObject*>* Scene::TagList(const std::string& tag) const {
 
 GameObject* Scene::FindWithTag(const std::string& tag) const {
     if (tag.empty()) return nullptr;   // "no tag" is not a tag: every untagged object would match
-    const auto* list = TagList(tag);
-    return !list || list->empty() ? nullptr : list->front();
+    // Only the first entry is checked against what the object carries now (the one answered): with 10000
+    // objects under one tag a lookup stays a hash and a compare. The list-returning calls check every entry.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const auto& idx = TagIndex();
+        auto it = idx.find(tag);
+        if (it == idx.end() || it->second.empty()) return nullptr;
+        if (it->second.front()->tag == tag) return it->second.front();
+        m_tagIndexTags = 0;   // a tag was changed behind the index's back: rebuild once
+    }
+    return nullptr;
 }
 
 std::vector<GameObject*> Scene::FindGameObjectsWithTag(const std::string& tag) const {
@@ -892,10 +1173,10 @@ int Scene::CountOnLayer(int layer) const {
 }
 
 std::vector<std::string> Scene::UnlistedTags() const {
-    std::vector<std::string> out;
+    std::unordered_set<std::string> seen;   // a hash, not a scan of the result: 10000 different tags stay linear
     for (const auto& o : m_objects)
-        if (!o->tag.empty() && !Tags::Contains(o->tag) && std::find(out.begin(), out.end(), std::string(o->tag)) == out.end())
-            out.push_back(o->tag);
+        if (!o->tag.empty() && !seen.count(o->tag) && !Tags::Contains(o->tag)) seen.insert(o->tag);
+    std::vector<std::string> out(seen.begin(), seen.end());
     std::sort(out.begin(), out.end());
     return out;
 }
@@ -1112,6 +1393,20 @@ int Scene::BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts) {
         if (opts.onDone) opts.onDone(false);
         return 0;
     }
+    if (!opts.additive) {
+        // The last replacing request wins. A deferred load or text load still waiting is told it never ran, and a
+        // replacing load still in flight is stopped (what it made is removed) before the new one clears the scene.
+        if (m_hasPendingLoad || m_hasPendingText) {
+            auto done = std::move(m_pendingLoadDone);
+            m_hasPendingLoad = false; m_hasPendingText = false;
+            m_pendingLoad.clear(); m_pendingLoadDone = {};
+            m_pendingText.clear(); m_pendingTextAfter = {};
+            if (done) done(false);
+        }
+        std::vector<int> earlier;
+        for (const auto& r : m_loads) if (!r.finished && !r.opts.additive) earlier.push_back(r.handle);
+        for (int h : earlier) UnloadAdditive(h);
+    }
     LoadRecord r;
     r.handle = m_nextLoadHandle++;
     r.job = std::move(job);
@@ -1169,11 +1464,21 @@ bool Scene::UnloadAdditive(int handle) {
 }
 
 void Scene::StepAsyncLoads() {
-    for (std::size_t i = 0; i < m_loads.size();) {
-        if (m_loads[i].finished) { ++i; continue; }
+    // Each unfinished load is stepped once per frame, found again by its handle every time: a callback may start,
+    // unload or finish other loads, and the first step of a replacing load clears the scene and with it every other
+    // load in flight, so no position in the list can be trusted from one step to the next. A load started by a
+    // callback in this pass takes its first step in this pass too.
+    std::unordered_set<int> stepped;
+    const std::size_t limit = m_loads.size() * 4 + 64;   // a callback that begins a load as each one ends must not spin for ever
+    while (stepped.size() < limit) {
+        std::size_t i = 0;
+        for (; i < m_loads.size(); ++i) if (!m_loads[i].finished && !stepped.count(m_loads[i].handle)) break;
+        if (i >= m_loads.size()) break;
+        stepped.insert(m_loads[i].handle);
         LoadRecord rec = std::move(m_loads[i]);   // out of the list: callbacks and Clear() can't invalidate it
-        const int handle = rec.handle;
         m_loads.erase(m_loads.begin() + (long)i);
+        // Back in the list at its old place (clamped: the list may have shrunk meanwhile).
+        auto putBack = [&](LoadRecord&& r) { m_loads.insert(m_loads.begin() + (long)std::min(i, m_loads.size()), std::move(r)); };
 
         const bool first = !rec.job->Started();
         KeptState kept;
@@ -1190,15 +1495,14 @@ void Scene::StepAsyncLoads() {
         const std::size_t from = std::min(before, m_pending.size());
         for (std::size_t k = from; k < m_pending.size(); ++k) if (m_pending[k]) rec.held.push_back(m_pending[k]);
         m_pending.resize(from);
-        if (first && !rec.opts.additive) ReattachKept(kept);
+        if (first && !rec.opts.additive) ReattachKept(kept, /*undo=*/!ok);   // a load that failed before it began leaves the scene as it was
 
         if (!ok) {
             rec.held.clear();
             DestroyLoadedObjects(rec.job->AllIds());
             rec.finished = true; rec.ok = false;
             auto done = std::move(rec.opts.onDone);
-            m_loads.insert(m_loads.begin() + (long)i, std::move(rec));
-            ++i;
+            putBack(std::move(rec));
             if (done) done(false);
             continue;
         }
@@ -1210,15 +1514,14 @@ void Scene::StepAsyncLoads() {
             for (Component* c : rec.held) m_pending.push_back(c);
             rec.held.clear();
             if (!rec.opts.additive) InventoryPersistence::AfterSceneLoad(*this);
+            if (!rec.opts.additive && !m_dontDestroy.empty()) MoveKeptToEnd();   // the order a one-go load gives
             Start();   // Awake / Start for everything that came in
-            if (!rec.opts.additive && !kept.keep.empty()) ResolveMainCamera();
+            if (!rec.opts.additive && !m_dontDestroy.empty()) ResolveMainCamera();
         }
         auto done = finished ? std::move(rec.opts.onDone) : std::function<void(bool)>{};
-        m_loads.insert(m_loads.begin() + (long)i, std::move(rec));
-        ++i;
+        putBack(std::move(rec));
         if (progress) progress(p);
         if (done) done(true);
-        (void)handle;
     }
 }
 

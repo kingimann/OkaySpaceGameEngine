@@ -138,9 +138,8 @@ int main() {
     {
         Scene s("Deep");
         auto chain = BuildChain(s, kDepth);
-        // (No Update or Start here: every frame the scene asks each component whether its object is
-        // active, which walks the parent chain, so a chain this deep is quadratic per frame. Real
-        // hierarchies are a few levels deep; this suite is about the walks not overflowing the stack.)
+        // (A frame over a chain this deep is covered by scene_graph_perf: the active state is cached, so
+        // Update is linear. This suite is about the walks not overflowing the stack.)
         s.Destroy(chain.front());
         s.FlushDestroyed();
         CHECK(s.Objects().empty());

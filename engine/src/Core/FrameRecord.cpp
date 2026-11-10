@@ -55,7 +55,7 @@ bool FrameRecording::AddRun(const FrameSample& sample, std::uint64_t count) {
     return true;
 }
 
-void FrameRecording::Clear() { m_runs.clear(); m_frames = m_micros = 0; }
+void FrameRecording::Clear() { m_runs.clear(); m_frames = m_micros = 0; ClearRandom(); }
 
 bool FrameRecording::RunAt(std::size_t i, FrameSample& sample, std::uint64_t& count) const {
     if (i >= m_runs.size()) return false;
@@ -90,6 +90,7 @@ std::vector<FrameSample> FrameRecording::Expand() const {
 
 bool FrameRecording::operator==(const FrameRecording& o) const {
     if (m_frames != o.m_frames || m_micros != o.m_micros || m_runs.size() != o.m_runs.size()) return false;
+    if (m_hasRandom != o.m_hasRandom || (m_hasRandom && (m_random.s0 != o.m_random.s0 || m_random.s1 != o.m_random.s1))) return false;
     for (std::size_t i = 0; i < m_runs.size(); ++i) {   // runs are always maximal, so equal frames mean equal runs
         const Run& a = m_runs[i]; const Run& b = o.m_runs[i];
         if (a.count != b.count || a.micros != b.micros || a.marker != b.marker || a.flags != b.flags) return false;
@@ -228,6 +229,7 @@ std::string FrameRecording::ToText() const {
     out += "okayframes 1\n";
     out += "frames " + std::to_string(m_frames) + "\n";
     out += "micros " + std::to_string(m_micros) + "\n";
+    if (m_hasRandom) out += "random " + savefmt::Hex16(m_random.s0) + " " + savefmt::Hex16(m_random.s1) + "\n";
     int onLine = 0;
     for (const Run& r : m_runs) {
         out += std::to_string(r.micros);
@@ -281,8 +283,29 @@ bool FrameRecording::FromText(const std::string& textIn, FrameRecording& out, st
     FrameRecording tmp;
     std::size_t bodyEnd = std::string::npos;
     std::string checksumLine;
+    bool sawRandom = false;
     while (line(l, at)) {
         if (l.compare(0, 9, "checksum ") == 0) { bodyEnd = at; checksumLine = l.substr(9); break; }
+        // The optional random state: only straight after the totals, once (a frame token starts with a digit).
+        if (l.compare(0, 7, "random ") == 0) {
+            if (sawRandom || tmp.m_frames != 0) return fail("the 'random' line is out of place");
+            std::uint64_t w[2] = {0, 0};
+            std::size_t i = 7;
+            for (int k = 0; k < 2; ++k) {
+                if (k == 1) { if (i >= l.size() || l[i] != ' ') return fail("bad 'random' line"); ++i; }
+                if (i + 16 > l.size()) return fail("bad 'random' line");
+                for (std::size_t d = 0; d < 16; ++d, ++i) {
+                    const char c = l[i];
+                    const int v = c >= '0' && c <= '9' ? c - '0' : (c >= 'a' && c <= 'f' ? c - 'a' + 10 : (c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1));
+                    if (v < 0) return fail("bad 'random' line");
+                    w[k] = (w[k] << 4) | (std::uint64_t)v;
+                }
+            }
+            if (i != l.size()) return fail("bad 'random' line");
+            tmp.SetRandom(Random::State{w[0], w[1]});
+            sawRandom = true;
+            continue;
+        }
         // tokens separated by blanks
         std::size_t i = 0;
         while (i < l.size()) {
@@ -329,6 +352,8 @@ bool FrameRecording::Load(const std::string& path, FrameRecording& out, std::str
 bool FrameRecorder::Add(double seconds, std::uint8_t flags, std::int32_t marker) {
     if (!m_recording) return false;
     if (Full()) { m_truncated = true; return false; }
+    // The shared stream as the recorded game is about to draw from it (the frame is recorded before its updates run).
+    if (m_recordRandom && m_rec.Empty() && !m_rec.HasRandom()) m_rec.SetRandom(Random::Shared().GetState());
     return m_rec.Add(seconds, flags, marker);
 }
 

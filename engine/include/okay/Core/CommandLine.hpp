@@ -52,7 +52,9 @@ public:
     std::vector<std::string> GetAll(const std::string& name) const;
     int         GetInt(const std::string& name, int def = 0) const;
     float       GetFloat(const std::string& name, float def = 0.0f) const;
-    /// A flag is true when present. A value like `--vsync=false` / 0 / off / no is false.
+    /// A flag is true when present. A value like `--vsync=false` / 0 / off / no is false. When the
+    /// option is absent, the default it was declared with (Value(..., "true")) is read the same way,
+    /// else `def`.
     bool        GetBool(const std::string& name, bool def = false) const;
     /// Int/float with a range check: false (and Error() set) when given but malformed or out of range.
     bool        TryGetInt(const std::string& name, int lo, int hi, int& out);

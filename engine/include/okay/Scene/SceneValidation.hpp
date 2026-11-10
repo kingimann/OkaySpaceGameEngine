@@ -4,7 +4,10 @@
 
 namespace okay {
 
-/// One problem found in a scene by SceneSerializer::Validate / Scene::Validate.
+/// One problem found in a scene by SceneSerializer::Validate / Scene::Validate: the validator that reads the scene
+/// text (is the file intact). The one that looks at a loaded scene (does it make sense: cameras, scripts, names,
+/// transforms) is Testing/SceneValidator.hpp, and its ValidateFile also reports duplicate guids and broken parent
+/// links; docs/scene_hierarchy_search.md ("Which validator?") says when to use which.
 struct SceneIssue {
     enum class Kind {
         MissingComponentType,   // an object has a component record this build does not know
@@ -43,5 +46,10 @@ struct SceneValidationReport {
         return s;
     }
 };
+
+/// Only the checks that read the scene text before it is loaded, because the loader repairs what they find:
+/// DuplicateGuid and BrokenParentLink. Cheap (one pass over the text, nothing is loaded). SceneSerializer::Validate
+/// runs these too; Testing/SceneValidator folds them into its report (see ValidatorOptions::checkLinks).
+SceneValidationReport ValidateSceneLinks(const std::string& text);
 
 } // namespace okay

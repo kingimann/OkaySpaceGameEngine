@@ -65,6 +65,13 @@ public:
     static std::string Text(const std::vector<std::string>& lines);
     static std::string Text(const GameLoop& loop) { return Text(Lines(loop)); }
 
+    /// The one-line readout of the "show FPS" switch: "FPS 60", the frames-per-second over the newest
+    /// `recentFrames` (30) of the loop's REAL frame times rounded to a whole number, "FPS --" while there are
+    /// no frames yet. The player's `show_fps` readout used to show the frame time cut to the step limit
+    /// (never below 10 FPS) and smoothed by hand; a 5 s stall now reads as one.
+    static std::string FpsLabel(const FrameStats& stats, std::size_t recentFrames = 30);
+    static std::string FpsLabel(const GameLoop& loop, std::size_t recentFrames = 30);
+
     /// The last `count` frames as frames-per-second, oldest first, for a plot of fixed size: fewer frames than
     /// `count` pad the front with 0, a 0 ms frame reads 0. `count` is capped at 4096.
     static std::vector<float> RecentFps(const FrameStats& stats, std::size_t count);

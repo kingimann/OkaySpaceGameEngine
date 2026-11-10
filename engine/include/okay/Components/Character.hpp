@@ -433,8 +433,12 @@ public:
     float lookPitch = 0.0f;       // + lifts the gaze up
     /// Replicated action (0 none, 1 death, 2 roll, 3 sit, 4 swim). `netActionSeq`
     /// bumps each time it changes so a proxy can replay it. Not saved.
+    /// `netActionParam` is that action's direction or swim speed (sit: 10 + type
+    /// while standing up). An older peer that stops before this field still
+    /// reads the look. Dive, hit, vault and emotes are not replicated here.
     int netActionId = 0;
     int netActionSeq = 0;
+    float netActionParam = 0.0f;
     float headTurnSpeed = 9.0f;   // how fast the head eases toward the look target
     float HeadYaw()   const { return m_headYaw; }
     float HeadPitch() const { return m_headPitch; }
@@ -465,8 +469,14 @@ public:
         const float lim = 72.0f;                 // comfortable neck turn
         float m = relDeg < 0.0f ? -relDeg : relDeg;
         if (m <= lim) return relDeg;
-        float t = (180.0f - m) / (180.0f - lim); // 1 at the limit, 0 when fully behind
-        return (relDeg < 0.0f ? -1.0f : 1.0f) * lim * t;
+        // A strafe puts the camera near 90°. Folding that back toward 0 made the
+        // head look past the camera. Hold the neck limit until the target is
+        // behind the shoulder, then ease to neutral as it comes round the front.
+        const float hold = 105.0f;
+        const float sign = relDeg < 0.0f ? -1.0f : 1.0f;
+        if (m <= hold) return sign * lim;
+        float t = (180.0f - m) / (180.0f - hold); // 1 at the shoulder, 0 when fully behind
+        return sign * lim * t;
     }
 
     // ---- Manual pose: per-bone local rotation (euler deg). Applied when

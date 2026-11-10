@@ -1,4 +1,5 @@
 #include "okay/Core/LocTable.hpp"
+#include "okay/Core/SaveData.hpp"
 #include "okay/Core/Utf8.hpp"
 
 #include <algorithm>
@@ -52,24 +53,13 @@ bool ReadFile(const std::string& path, std::string& out, std::string* err) {
     return true;
 }
 
-// Write beside the target and swap it in, so a crash leaves the old file.
+// Write beside the target and swap it in, so a crash leaves the old file (the shared
+// savefmt::AtomicWriteChecked, with a UTF-8 path).
 bool WriteFile(const std::string& path, const std::string& data) {
-    const fs::path target = fs::u8path(path);
-    const fs::path tmp = fs::u8path(path + ".tmp");
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return false;
-        f << data;
-        if (!f) return false;
-    }
-    std::error_code ec;
-    fs::rename(tmp, target, ec);
-    if (ec) {   // some platforms refuse to replace: remove, then rename
-        fs::remove(target, ec);
-        fs::rename(tmp, target, ec);
-        if (ec) { fs::remove(tmp, ec); return false; }
-    }
-    return true;
+    savefmt::WriteOptions opt;
+    opt.sync = true;
+    opt.utf8Path = true;
+    return savefmt::AtomicWriteChecked(path, data, nullptr, opt);
 }
 
 // ---- Text encodings ---------------------------------------------------------------------

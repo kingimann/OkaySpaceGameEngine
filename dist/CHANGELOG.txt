@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.857.0
+  Properties
+  - A key binding in the property registry can be any key, including Space,
+    Tab and Enter. Spawner pooling is registered, and the Loading Screen is
+    registered as its own type. The registry now covers 1405 properties on
+    86 types (#615).
+  Launcher
+  - The Versions page installs and removes editor versions, with checksums
+    checked before a version is moved into place. Latest or LTS is a channel
+    choice. An update keeps the previous editor, and a project can be opened
+    with the editor version it was saved with (#617).
+
 v2.856.0
   Projects: upgrade or keep your version (editor)
   - Every project now records the editor version that last saved it

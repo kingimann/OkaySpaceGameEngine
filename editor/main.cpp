@@ -51,7 +51,6 @@
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
-#include "DevFieldDemo.hpp"
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
@@ -5012,7 +5011,7 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
     }
     default: {   // Default: the original layout
         ImGuiID left  = split(center, ImGuiDir_Left, 0.20f);
-        ImGuiID right = split(center, ImGuiDir_Right, 0.27f);
+        ImGuiID right = split(center, ImGuiDir_Right, 0.42f);
         ImGuiID down  = split(center, ImGuiDir_Down, std::getenv("OKAY_UI_DIAG") ? 0.36f : 0.22f);
         g_sceneDockId = center;
         dock("Hierarchy", left);
@@ -7488,6 +7487,7 @@ std::string g_assetImportDir;
 // The Project panel's file logic (okaypb): safe create / rename / move / copy / delete with undo and
 // reference rewriting. One per project; DrawProject() keeps it pointed at the open project's Assets.
 static std::unique_ptr<okaypb::Browser> g_pb;
+static std::string g_projectSelected;   // the file picked in the Project panel (the Inspector shows its import settings)
 static std::string g_pbRoot;
 static EditorState* g_projEd = nullptr;
 static std::vector<std::string> g_dragMulti;   // all dragged items when a multi-selection is dragged (the payload carries one)
@@ -9279,6 +9279,7 @@ void DrawProject(EditorState& ed) {
     }
     g_projEd = &ed;
     okaypb::Browser& pb = *g_pb;
+    g_projectSelected = selected;
     g_thumbBudget = 6;
     if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
     {   // keep the asset index fresh without a thread: re-scan when due (cheap; waits 30x as long as the scan took)
@@ -26940,6 +26941,7 @@ static const char* sCompHeaderTip = nullptr;
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
     const char* managed = sManagedFor == comp ? sManagedNote : nullptr;   // set by the Inspector loop for components the Character Model manages
+    oked::SetTipComponent(comp);   // FieldTip() after each hand-written field looks its tooltip up for this component
     ImGui::PushID(comp);
     bool en = comp->enabled;
     const float fh = ImGui::GetFrameHeight();
@@ -27072,6 +27074,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "Managed by Character Model - you normally don't edit this.");
         ImGui::TextDisabled("%s", managed);
     }
+    if (open) oked::DrawMixedNote(comp);   // several objects selected: which values differ
     return open;
 }
 
@@ -28955,6 +28958,7 @@ static GameObject* RevertPrefabInstance(EditorState& ed, GameObject* inst) {
     Transform* parent = inst->transform->Parent();
     std::string name = inst->name;
     std::string err;
+    const oked::RootSlot slot = oked::CaptureRootSlot(ed.scene(), *inst);   // a top-level instance keeps its place in the list
     GameObject* fresh = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
     if (!fresh) { ConsoleLog("Revert failed: " + err, 2); return nullptr; }
     fresh->transform->SetParent(parent, false);  // keep local values; we set them next
@@ -28965,6 +28969,7 @@ static GameObject* RevertPrefabInstance(EditorState& ed, GameObject* inst) {
     fresh->prefabSource = path;      // InstantiateFromFile already set this; be explicit
     ed.Deselect(inst);
     ed.scene().Destroy(inst);
+    oked::RestoreRootSlot(ed.scene(), fresh, slot);
     return fresh;
 }
 
@@ -28996,6 +29001,32 @@ void DrawInspector(EditorState& ed) {
     if (ImGui::Checkbox("Lock Inspector", &s_locked)) s_pinned = s_locked ? ed.selected() : nullptr;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep showing this object while you select others");
 
+    // A file picked in the Project panel (and no object picked since) shows here, with its import settings.
+    {
+        static std::string s_seenAsset;
+        static GameObject* s_seenObj = nullptr;
+        static bool s_assetMode = false;
+        if (g_projectSelected != s_seenAsset) { s_seenAsset = g_projectSelected; s_assetMode = !s_seenAsset.empty(); }
+        if (ed.selected() != s_seenObj) { s_seenObj = ed.selected(); s_assetMode = false; }
+        std::error_code aec;
+        if (s_assetMode && !s_locked && g_pb && std::filesystem::is_regular_file(std::filesystem::path(s_seenAsset), aec)) {
+            const std::filesystem::path ap(s_seenAsset);
+            SectionHeader("Asset");
+            ImGui::TextUnformatted(ap.filename().string().c_str());
+            const std::string rel = (g_pb->Root().empty() || s_seenAsset.rfind(g_pb->Root(), 0) != 0) ? s_seenAsset
+                                    : s_seenAsset.substr(g_pb->Root().size() + (s_seenAsset.size() > g_pb->Root().size() ? 1 : 0));
+            ImGui::TextDisabled("%s", rel.c_str());
+            const auto bytes = (double)std::filesystem::file_size(ap, aec);
+            ImGui::TextDisabled(bytes >= 1048576.0 ? "%.1f MB" : "%.1f KB", bytes >= 1048576.0 ? bytes / 1048576.0 : bytes / 1024.0);
+            if (ImGui::SmallButton("Show in Project")) { g_pingAsset = s_seenAsset; g_showProject = true; ImGui::SetWindowFocus("Project"); }
+            ImGui::Separator();
+            if (oked::projectpanel::HasImportSettings(*g_pb, s_seenAsset)) oked::projectpanel::DrawImportSettings(*g_pb, s_seenAsset);
+            else ImGui::TextDisabled("This file has no import settings.");
+            ImGui::PopStyleVar(3);
+            ImGui::End();
+            return;
+        }
+    }
     GameObject* go = ed.selected();
     if (s_locked && s_pinned) {
         bool alive = false;
@@ -29050,6 +29081,7 @@ void DrawInspector(EditorState& ed) {
     const bool narrowHdr = ImGui::GetContentRegionAvail().x - staticW < 120.0f;
     ImGui::SetNextItemWidth(narrowHdr ? -1.0f : ImGui::GetContentRegionAvail().x - staticW);
     if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
+    oked::FieldTip("##name");
     if (!narrowHdr) ImGui::SameLine();
     if (ImGui::Checkbox("Static", &go->isStatic)) ed.dirty = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Marks the object as non-moving (saved with the scene)");
@@ -29491,6 +29523,7 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { g->transform->localPosition = t->localPosition; });
         }
         if (act) ed.PushUndo();
+        oked::SetTipComponent(t); oked::FieldTip("Position");
         if (ImGui::BeginDragDropSource()) {
             const char* payload = "field\nposition";
             ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
@@ -29514,6 +29547,7 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { g->transform->localRotation = t->localRotation; g_euler[g] = e; });
         }
         if (act) ed.PushUndo();
+        oked::SetTipComponent(t); oked::FieldTip("Rotation");
         if (ImGui::BeginDragDropSource()) {
             const char* payload = "field\nrotation";
             ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
@@ -29541,6 +29575,7 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = t->localScale; });
         }
         if (act) ed.PushUndo();
+        oked::SetTipComponent(t); oked::FieldTip("Scale");
         if (!isCam && ImGui::BeginDragDropSource()) {
             const char* payload = "field\nscale";
             ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
@@ -29594,6 +29629,7 @@ void DrawInspector(EditorState& ed) {
             tex[sizeof(tex) - 1] = '\0';
             ImGui::SetNextItemWidth(210);
             if (ImGui::InputText("##spritetex", tex, sizeof(tex))) { sr->texture = tex; ed.dirty = true; }
+            oked::FieldTip("##spritetex");
             if (AcceptAssetPathField(sr->texture)) ed.dirty = true;   // drop from Project
             ImGui::SameLine(0, 4);
             if (ImGui::Button("...##spritetexbrowse")) {
@@ -29606,10 +29642,14 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextUnformatted("Texture");
             TexFieldThumb(sr->texture);
             if (ImGui::DragInt("Sorting Layer##sprite", &sr->sortingLayer, 0.05f, -100, 100)) ed.dirty = true;
+            oked::FieldTip("Sorting Layer##sprite");
             if (ImGui::DragInt("Sort Order##sprite", &sr->sortOrder, 0.1f, -1000, 1000)) ed.dirty = true;
+            oked::FieldTip("Sort Order##sprite");
             if (ImGui::Checkbox("Flip X##sprite", &sr->flipX)) ed.dirty = true;
+            oked::FieldTip("Flip X##sprite");
             ImGui::SameLine();
             if (ImGui::Checkbox("Flip Y##sprite", &sr->flipY)) ed.dirty = true;
+            oked::FieldTip("Flip Y##sprite");
             const char* sfilters[] = {"Smooth", "Pixel"};
             int sfi = (int)sr->texFilter;
             if (ImGui::Combo("Filter##sprite", &sfi, sfilters, 2)) { sr->texFilter = (SpriteRenderer::TexFilter)sfi; ed.dirty = true; }
@@ -29642,38 +29682,54 @@ void DrawInspector(EditorState& ed) {
             // ---- Emission ----
             SectionHeader("Emission");
             if (ImGui::Checkbox("Playing##ps", &ps->playing)) ed.dirty = true;
+            oked::FieldTip("Playing##ps");
             ImGui::SameLine();
             ImGui::TextDisabled("(%d live)", ps->AliveCount());
             if (ImGui::DragFloat("Rate / sec##ps", &ps->emissionRate, 0.5f, 0.0f, 10000.0f)) ed.dirty = true;
+            oked::FieldTip("Rate / sec##ps");
             if (ImGui::DragInt("Max Particles##ps", &ps->maxParticles, 1.0f, 0, 100000)) ed.dirty = true;
+            oked::FieldTip("Max Particles##ps");
 
             // ---- Shape ----
             SectionHeader("Shape");
             const char* shapes[] = {"Point", "Circle", "Sphere", "Box", "Cone", "Edge"};
             int shp = (int)ps->shape;
             if (ImGui::Combo("Shape##ps", &shp, shapes, 6)) { ps->shape = (ParticleSystem::Shape)shp; ed.dirty = true; }
+            oked::FieldTip("Shape##ps");
             if (ps->shape == ParticleSystem::Shape::Circle || ps->shape == ParticleSystem::Shape::Sphere ||
                 ps->shape == ParticleSystem::Shape::Edge)
                 if (ImGui::DragFloat("Radius##ps", &ps->shapeRadius, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
-            if (ps->shape == ParticleSystem::Shape::Cone)
+                oked::FieldTip("Radius##ps");
+            if (ps->shape == ParticleSystem::Shape::Cone) {
                 if (ImGui::SliderFloat("Cone Angle##ps", &ps->shapeAngle, 0.0f, 180.0f)) ed.dirty = true;
+                oked::FieldTip("Cone Angle##ps");
+            }
             if (ps->shape == ParticleSystem::Shape::Box) {
                 float bs[3] = {ps->boxSize.x, ps->boxSize.y, ps->boxSize.z};
                 if (ImGui::DragFloat3("Box Size##ps", bs, 0.05f, 0.0f, 1000.0f)) { ps->boxSize = {bs[0], bs[1], bs[2]}; ed.dirty = true; }
+                oked::FieldTip("Box Size##ps");
             }
 
             // ---- Start values ----
             SectionHeader("Start");
             if (ImGui::DragFloat("Lifetime##ps", &ps->startLifetime, 0.05f, 0.01f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Lifetime##ps");
             if (ImGui::DragFloat("Lifetime +/-##ps", &ps->startLifetimeRandom, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Lifetime +/-##ps");
             if (ImGui::DragFloat("Size##ps", &ps->startSize, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Size##ps");
             if (ImGui::DragFloat("Size +/-##ps", &ps->startSizeRandom, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Size +/-##ps");
             float sc[4] = {ps->startColor.r, ps->startColor.g, ps->startColor.b, ps->startColor.a};
             if (ImGui::ColorEdit4("Start Color##ps", sc)) { ps->startColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+            oked::FieldTip("Start Color##ps");
             float sv[3] = {ps->startVelocity.x, ps->startVelocity.y, ps->startVelocity.z};
             if (ImGui::DragFloat3("Velocity##ps", sv, 0.05f)) { ps->startVelocity = {sv[0], sv[1], sv[2]}; ed.dirty = true; }
+            oked::FieldTip("Velocity##ps");
             if (ImGui::DragFloat("Velocity +/-##ps", &ps->velocityRandom, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Velocity +/-##ps");
             if (ImGui::DragFloat("Speed +/- %##ps", &ps->speedRandom, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Speed +/- %##ps");
 
             // ---- Appearance (sprite + spin) ----
             SectionHeader("Appearance");
@@ -29681,12 +29737,15 @@ void DrawInspector(EditorState& ed) {
             int rmi = (int)ps->renderMode;
             if (ImGui::Combo("Render##ps", &rmi, rmodes, 2)) { ps->renderMode = (ParticleSystem::RenderMode)rmi; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Billboard = upright camera-facing quad. Stretch = elongated along velocity (rain/sparks/tracers).");
-            if (ps->renderMode == ParticleSystem::RenderMode::Stretch)
+            if (ps->renderMode == ParticleSystem::RenderMode::Stretch) {
                 if (ImGui::DragFloat("Stretch##ps", &ps->stretchScale, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Stretch##ps");
+            }
             char ptex[260];
             std::strncpy(ptex, ps->texture.c_str(), sizeof(ptex) - 1);
             ptex[sizeof(ptex) - 1] = '\0';
             if (ImGui::InputText("Sprite##ps", ptex, sizeof(ptex))) { ps->texture = ptex; ed.dirty = true; }
+            oked::FieldTip("Sprite##ps");
             if (AcceptAssetPathField(ps->texture)) ed.dirty = true;   // drop from Project
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional particle texture (smoke/spark/flare PNG). Empty = a soft round puff.");
             if (!ps->texture.empty()) {
@@ -29694,14 +29753,20 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Clear##ptex")) { ps->texture.clear(); ed.dirty = true; }
             }
             if (ImGui::DragFloat("Rotation##ps", &ps->startRotation, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Rotation##ps");
             if (ImGui::DragFloat("Rotation +/-##ps", &ps->startRotationRandom, 1.0f, 0.0f, 360.0f)) ed.dirty = true;
+            oked::FieldTip("Rotation +/-##ps");
             if (ImGui::DragFloat("Spin / sec##ps", &ps->rotationSpeed, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Spin / sec##ps");
             if (ImGui::DragFloat("Spin +/-##ps", &ps->rotationSpeedRandom, 1.0f, 0.0f, 720.0f)) ed.dirty = true;
+            oked::FieldTip("Spin +/-##ps");
 
             // ---- Over lifetime ----
             SectionHeader("Over Lifetime");
             if (ImGui::Checkbox("Fade Out##ps", &ps->fadeOverLife)) ed.dirty = true;
+            oked::FieldTip("Fade Out##ps");
             if (ImGui::Checkbox("Color Over Life##ps", &ps->colorOverLife)) ed.dirty = true;
+            oked::FieldTip("Color Over Life##ps");
             if (ps->colorOverLife) {
                 // Start -> End is the classic two-colour fade; Gradient adds up to 8 stops.
                 const char* cmodes[] = {"Start -> End", "Gradient"};
@@ -29717,9 +29782,11 @@ void DrawInspector(EditorState& ed) {
                 } else {
                     float ec[4] = {ps->endColor.r, ps->endColor.g, ps->endColor.b, ps->endColor.a};
                     if (ImGui::ColorEdit4("End Color##ps", ec)) { ps->endColor = {ec[0], ec[1], ec[2], ec[3]}; ed.dirty = true; }
+                    oked::FieldTip("End Color##ps");
                 }
             }
             if (ImGui::Checkbox("Size Over Life##ps", &ps->sizeOverLife)) ed.dirty = true;
+            oked::FieldTip("Size Over Life##ps");
             if (ps->sizeOverLife) {
                 const char* smodes[] = {"End Size", "Curve"};
                 int sm = ps->sizeCurve.Active() ? 1 : 0;
@@ -29748,8 +29815,11 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Forces");
             float gv[3] = {ps->gravity.x, ps->gravity.y, ps->gravity.z};
             if (ImGui::DragFloat3("Gravity##ps", gv, 0.05f)) { ps->gravity = {gv[0], gv[1], gv[2]}; ed.dirty = true; }
+            oked::FieldTip("Gravity##ps");
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Gravity Mult##ps");
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Damping / sec##ps");
 
             // ---- Motion (space, inherited velocity, turbulence, orbit/vortex) ----
             SectionHeader("Motion");
@@ -29763,7 +29833,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turbulence: a smooth swirling noise field (units/second). 0 = off.");
             if (ps->noiseStrength > 0.0f) {
                 if (ImGui::DragFloat("Noise Frequency##ps", &ps->noiseFrequency, 0.01f, 0.01f, 50.0f)) ed.dirty = true;
+                oked::FieldTip("Noise Frequency##ps");
                 if (ImGui::DragFloat("Noise Scroll##ps", &ps->noiseScroll, 0.01f, 0.0f, 50.0f)) ed.dirty = true;
+                oked::FieldTip("Noise Scroll##ps");
             }
             if (ImGui::DragFloat("Orbit / sec##ps", &ps->orbitSpeed, 1.0f, -3600.0f, 3600.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spin particles around the axis through the object, in degrees per second.");
@@ -29774,6 +29846,7 @@ void DrawInspector(EditorState& ed) {
             if (ps->orbitSpeed != 0.0f || ps->vortexStrength != 0.0f || ps->vortexPull != 0.0f) {
                 float oa[3] = {ps->orbitAxis.x, ps->orbitAxis.y, ps->orbitAxis.z};
                 if (ImGui::DragFloat3("Axis##ps", oa, 0.02f)) { ps->orbitAxis = {oa[0], oa[1], oa[2]}; ed.dirty = true; }
+                oked::FieldTip("Axis##ps");
             }
 
             // ---- Collision (ground plane) ----
@@ -29782,19 +29855,28 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bounce particles off a horizontal plane at the height below (sparks/debris/rain).");
             if (ps->collision) {
                 if (ImGui::DragFloat("Ground Y##ps", &ps->collisionY, 0.05f)) ed.dirty = true;
+                oked::FieldTip("Ground Y##ps");
                 if (ImGui::SliderFloat("Bounce##ps", &ps->bounce, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Bounce##ps");
                 if (ImGui::SliderFloat("Friction##ps", &ps->collisionFriction, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Friction##ps");
                 if (ImGui::SliderFloat("Life Loss##ps", &ps->collisionLifeLoss, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Life Loss##ps");
             }
 
             // ---- Bursts & duration ----
             SectionHeader("Bursts & Duration");
             if (ImGui::DragInt("Burst Count##ps", &ps->burstCount, 1.0f, 0, 100000)) ed.dirty = true;
-            if (ps->burstCount > 0)
+            oked::FieldTip("Burst Count##ps");
+            if (ps->burstCount > 0) {
                 if (ImGui::DragFloat("Burst Time##ps", &ps->burstTime, 0.02f, 0.0f, 1000.0f)) ed.dirty = true;
+                oked::FieldTip("Burst Time##ps");
+            }
             if (ImGui::DragFloat("Duration##ps", &ps->duration, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
+            oked::FieldTip("Duration##ps");
             ImGui::SameLine(); ImGui::TextDisabled("(0 = forever)");
             if (ImGui::Checkbox("Loop##ps", &ps->loop)) ed.dirty = true;
+            oked::FieldTip("Loop##ps");
             ImGui::SameLine();
             if (ImGui::SmallButton("Restart##ps")) ps->Restart();
             ImGui::SameLine();
@@ -29802,6 +29884,7 @@ void DrawInspector(EditorState& ed) {
 
             int seedI = (int)ps->seed;
             if (ImGui::DragInt("Seed##ps", &seedI, 1.0f, 0, 2000000000)) { ps->seed = (std::uint64_t)seedI; ed.dirty = true; }
+            oked::FieldTip("Seed##ps");
 
             if (ImGui::SmallButton("Remove##ps")) toRemove = ps;
         }
@@ -29828,31 +29911,41 @@ void DrawInspector(EditorState& ed) {
                 mr->unlit = (mr->shader == MeshRenderer::Shader::Unlit);  // keep legacy flag in sync
                 ed.dirty = true;
             }
-            if (mr->shader == MeshRenderer::Shader::Toon)
+            if (mr->shader == MeshRenderer::Shader::Toon) {
                 if (ImGui::SliderInt("Cel Bands##mesh", &mr->toonBands, 2, 6)) ed.dirty = true;
+                oked::FieldTip("Cel Bands##mesh");
+            }
             // Gradient (vertical sky/atmosphere ramp): pick the top + bottom colours.
             if (mr->shader == MeshRenderer::Shader::Gradient) {
                 float gt[3] = {mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b};
                 if (ImGui::ColorEdit3("Gradient Top##mesh", gt)) { mr->gradientTop = {gt[0], gt[1], gt[2], 1.0f}; ed.dirty = true; }
+                oked::FieldTip("Gradient Top##mesh");
                 float gb[3] = {mr->gradientBottom.r, mr->gradientBottom.g, mr->gradientBottom.b};
                 if (ImGui::ColorEdit3("Gradient Bottom##mesh", gb)) { mr->gradientBottom = {gb[0], gb[1], gb[2], 1.0f}; ed.dirty = true; }
+                oked::FieldTip("Gradient Bottom##mesh");
             }
             // Fresnel (rim-glow shell): the rim controls below tune the edge glow.
             if (mr->shader == MeshRenderer::Shader::Fresnel)
                 ImGui::TextDisabled("Edge glow uses the Rim settings below.");
             // Rim (Fresnel) backlight — a per-material glow, great with Toon.
             if (ImGui::SliderFloat("Rim##mesh", &mr->rimStrength, 0.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Rim##mesh");
             if (mr->rimStrength > 0.0f) {
                 if (ImGui::SliderFloat("Rim Power##mesh", &mr->rimPower, 1.0f, 8.0f)) ed.dirty = true;
+                oked::FieldTip("Rim Power##mesh");
                 float rc[3] = {mr->rimColor.r, mr->rimColor.g, mr->rimColor.b};
                 if (ImGui::ColorEdit3("Rim Color##mesh", rc)) { mr->rimColor = {rc[0], rc[1], rc[2], 1.0f}; ed.dirty = true; }
+                oked::FieldTip("Rim Color##mesh");
             }
             // Silhouette outline (inverted hull) — pairs with Toon for a cartoon edge.
             if (ImGui::Checkbox("Outline##mesh", &mr->outline)) ed.dirty = true;
+            oked::FieldTip("Outline##mesh");
             if (mr->outline) {
                 if (ImGui::DragFloat("Outline Width##mesh", &mr->outlineWidth, 0.002f, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Outline Width##mesh");
                 float oc[3] = {mr->outlineColor.r, mr->outlineColor.g, mr->outlineColor.b};
                 if (ImGui::ColorEdit3("Outline Color##mesh", oc)) { mr->outlineColor = {oc[0], oc[1], oc[2], 1.0f}; ed.dirty = true; }
+                oked::FieldTip("Outline Color##mesh");
             }
             // Real (shadow-mapped) shadows: cast / receive.
             if (ImGui::Checkbox("Cast Shadows##mesh", &mr->castShadows)) ed.dirty = true;
@@ -29867,7 +29960,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fallback: a flat contact shadow on the ground plane, drawn only\nwhile real shadows are off (Rendering > Shadows, or the sun's Cast Shadows).");
             if (mr->groundShadow) {
                 if (ImGui::DragFloat("Shadow Ground Y##mesh", &mr->groundShadowY, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                oked::FieldTip("Shadow Ground Y##mesh");
                 if (ImGui::SliderFloat("Shadow Strength##mesh", &mr->groundShadowStrength, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Shadow Strength##mesh");
             }
             // Material: emissive glow + specular highlight.
             float em[3] = {mr->emissive.r, mr->emissive.g, mr->emissive.b};
@@ -29875,8 +29970,11 @@ void DrawInspector(EditorState& ed) {
                 mr->emissive = {em[0], em[1], em[2], 1.0f}; ed.dirty = true;
             }
             if (ImGui::SliderFloat("Specular##mesh", &mr->specular, 0.0f, 1.0f)) ed.dirty = true;
-            if (mr->specular > 0.0f)
+            oked::FieldTip("Specular##mesh");
+            if (mr->specular > 0.0f) {
                 if (ImGui::SliderFloat("Shininess##mesh", &mr->shininess, 1.0f, 128.0f)) ed.dirty = true;
+                oked::FieldTip("Shininess##mesh");
+            }
             const char* shapes[] = {"Cube", "Pyramid", "Wedge", "Quad", "Plane", "Sphere",
                                     "Cylinder", "Cone", "Tube", "Torus", "TorusKnot", "Capsule", "Icosphere", "Grid",
                                     "Hemisphere", "Stairs", "Gear", "Prism", "Octahedron", "Disc", "Tetrahedron", "Bipyramid", "RoundedBox"};
@@ -29902,6 +30000,7 @@ void DrawInspector(EditorState& ed) {
             tex[sizeof(tex) - 1] = '\0';
             ImGui::SetNextItemWidth(210);
             if (ImGui::InputText("##meshtex", tex, sizeof(tex))) { mr->texture = tex; ed.dirty = true; }
+            oked::FieldTip("##meshtex");
             if (AcceptAssetPathField(mr->texture)) ed.dirty = true;   // drop from Project
             ImGui::SameLine(0, 4);
             if (ImGui::Button("...##meshtexbrowse")) {
@@ -29960,19 +30059,24 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(nmap, mr->normalMap.c_str(), sizeof(nmap) - 1);
             nmap[sizeof(nmap) - 1] = '\0';
             if (ImGui::InputText("Normal Map##mesh", nmap, sizeof(nmap))) { mr->normalMap = nmap; ed.dirty = true; }
+            oked::FieldTip("Normal Map##mesh");
             if (AcceptAssetPathField(mr->normalMap)) ed.dirty = true;   // drop from Project
             if (!mr->normalMap.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##nmap")) { mr->normalMap.clear(); ed.dirty = true; }
                 TexFieldThumb(mr->normalMap);
                 if (ImGui::SliderFloat("Bump Strength##mesh", &mr->normalStrength, 0.0f, 2.0f)) ed.dirty = true;
+                oked::FieldTip("Bump Strength##mesh");
             }
             if (ImGui::SliderFloat("Reflectivity##mesh", &mr->reflectivity, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Reflectivity##mesh");
             if (ImGui::SliderFloat("Metallic##mesh", &mr->metallic, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Metallic##mesh");
             char smap[260];
             std::strncpy(smap, mr->specularMap.c_str(), sizeof(smap) - 1);
             smap[sizeof(smap) - 1] = '\0';
             if (ImGui::InputText("Specular Map##mesh", smap, sizeof(smap))) { mr->specularMap = smap; ed.dirty = true; }
+            oked::FieldTip("Specular Map##mesh");
             if (AcceptAssetPathField(mr->specularMap)) ed.dirty = true;   // drop from Project
             if (!mr->specularMap.empty()) {
                 ImGui::SameLine();
@@ -29984,16 +30088,19 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(aomap, mr->aoMap.c_str(), sizeof(aomap) - 1);
             aomap[sizeof(aomap) - 1] = '\0';
             if (ImGui::InputText("Occlusion Map##mesh", aomap, sizeof(aomap))) { mr->aoMap = aomap; ed.dirty = true; }
+            oked::FieldTip("Occlusion Map##mesh");
             if (AcceptAssetPathField(mr->aoMap)) ed.dirty = true;   // drop from Project
             if (!mr->aoMap.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##aomap")) { mr->aoMap.clear(); ed.dirty = true; }
                 if (ImGui::SliderFloat("Occlusion##mesh", &mr->aoStrength, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Occlusion##mesh");
             }
             char mrmap[260];
             std::strncpy(mrmap, mr->metallicRoughnessMap.c_str(), sizeof(mrmap) - 1);
             mrmap[sizeof(mrmap) - 1] = '\0';
             if (ImGui::InputText("Metal / Rough##mesh", mrmap, sizeof(mrmap))) { mr->metallicRoughnessMap = mrmap; ed.dirty = true; }
+            oked::FieldTip("Metal / Rough##mesh");
             if (AcceptAssetPathField(mr->metallicRoughnessMap)) ed.dirty = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("glTF packed map: green = roughness, blue = metallic.\nMultiplied with Metallic and the highlight tightness.");
@@ -30005,6 +30112,7 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(emap, mr->emissiveMap.c_str(), sizeof(emap) - 1);
             emap[sizeof(emap) - 1] = '\0';
             if (ImGui::InputText("Emissive Map##mesh", emap, sizeof(emap))) { mr->emissiveMap = emap; ed.dirty = true; }
+            oked::FieldTip("Emissive Map##mesh");
             if (AcceptAssetPathField(mr->emissiveMap)) ed.dirty = true;
             if (!mr->emissiveMap.empty()) {
                 ImGui::SameLine();
@@ -30082,6 +30190,7 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Terrain", tr, &toRemove)) {
             float c[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##terr", c)) { tr->color = {c[0],c[1],c[2],c[3]}; tr->Apply(); ed.dirty = true; }
+            oked::FieldTip("Color##terr");
             int res = tr->resolution;
             // Resolution: drag for unbounded detail (huge values cost memory/CPU —
             // that's the user's call). Ctrl-click any drag field to type a value.
@@ -30096,21 +30205,26 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Texturing");
             char ttex[260]; std::strncpy(ttex, tr->texture.c_str(), sizeof(ttex) - 1); ttex[sizeof(ttex) - 1] = '\0';
             if (ImGui::InputText("Ground Texture##terr", ttex, sizeof(ttex))) { tr->texture = ttex; tr->Apply(); ed.dirty = true; }
+            oked::FieldTip("Ground Texture##terr");
             if (AcceptAssetPathField(tr->texture)) { tr->Apply(); ed.dirty = true; }   // drop from Project
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tiled ground texture (grass/rock/dirt PNG). Empty = flat auto-colours only.");
             if (!tr->texture.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##terrtex")) { tr->texture.clear(); tr->Apply(); ed.dirty = true; }
                 if (ImGui::DragFloat("Tiling##terr", &tr->textureTiling, 0.1f, 0.1f, 200.0f)) { tr->Apply(); ed.dirty = true; }
+                oked::FieldTip("Tiling##terr");
                 if (ImGui::Checkbox("Triplanar (no cliff smear)##terr", &tr->triplanarTex)) { tr->Apply(); ed.dirty = true; }
+                oked::FieldTip("Triplanar (no cliff smear)##terr");
             }
             char tnrm[260]; std::strncpy(tnrm, tr->normalMap.c_str(), sizeof(tnrm) - 1); tnrm[sizeof(tnrm) - 1] = '\0';
             if (ImGui::InputText("Normal Map##terr", tnrm, sizeof(tnrm))) { tr->normalMap = tnrm; tr->Apply(); ed.dirty = true; }
+            oked::FieldTip("Normal Map##terr");
             if (AcceptAssetPathField(tr->normalMap)) { tr->Apply(); ed.dirty = true; }
             if (!tr->normalMap.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##terrnrm")) { tr->normalMap.clear(); tr->Apply(); ed.dirty = true; }
                 if (ImGui::SliderFloat("Bump##terr", &tr->normalStrength, 0.0f, 2.0f)) { tr->Apply(); ed.dirty = true; }
+                oked::FieldTip("Bump##terr");
             }
             if (ImGui::Checkbox("Auto-color layers##terr", &tr->autoColor)) { tr->Apply(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tint by elevation/slope (water/sand/grass/rock/snow). Tints the texture when one is set.");
@@ -30214,6 +30328,7 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Layers (auto-color by height & slope)");
             if (ImGui::Checkbox("Auto Color##terr", &tr->autoColor)) { tr->Apply(); ed.dirty = true; }
+            oked::FieldTip("Auto Color##terr");
             if (tr->autoColor) {
                 auto layerCol = [&](const char* lbl, Color& col) {
                     float v[3] = {col.r, col.g, col.b};
@@ -30227,8 +30342,11 @@ void DrawInspector(EditorState& ed) {
                 layerCol("Rock##terr",  tr->rockColor);  ImGui::SameLine();
                 layerCol("Snow##terr",  tr->snowColor);
                 if (ImGui::SliderFloat("Water Level##terr", &tr->waterLevel, -20.0f, 40.0f)) { tr->Apply(); ed.dirty = true; }
+                oked::FieldTip("Water Level##terr");
                 if (ImGui::SliderFloat("Snow Level##terr",  &tr->snowLevel,  0.0f, 80.0f))   { tr->Apply(); ed.dirty = true; }
+                oked::FieldTip("Snow Level##terr");
                 if (ImGui::SliderFloat("Rock Slope##terr",  &tr->rockSlope,  0.1f, 1.0f))    { tr->Apply(); ed.dirty = true; }
+                oked::FieldTip("Rock Slope##terr");
             }
 
             SectionHeader("Scatter props (trees, rocks, bushes)");
@@ -30292,15 +30410,20 @@ void DrawInspector(EditorState& ed) {
             const char* modes[] = {"Dig (lower)", "Raise", "Smooth", "Flatten"};
             int md = (int)td->mode;
             if (ImGui::Combo("Mode##tdg", &md, modes, 4)) { td->mode = (TerrainDigger::Mode)md; ed.dirty = true; }
+            oked::FieldTip("Mode##tdg");
             const char* btns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
             int bi = (td->button < 0 || td->button > 2) ? 3 : td->button;
             if (ImGui::Combo("Button##tdg", &bi, btns, 4)) { td->button = (bi == 3) ? -1 : bi; ed.dirty = true; }
+            oked::FieldTip("Button##tdg");
             char kb[2] = {td->key, 0};
             if (ImGui::InputText("Also Key##tdg", kb, sizeof(kb))) { td->key = kb[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional key that also digs (blank = none).");
             if (ImGui::DragFloat("Brush Radius##tdg", &td->radius, 0.1f, 0.25f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Brush Radius##tdg");
             if (ImGui::DragFloat("Strength / sec##tdg", &td->strength, 0.1f, 0.1f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Strength / sec##tdg");
             if (ImGui::DragFloat("Reach##tdg", &td->range, 0.5f, 1.0f, 500.0f)) ed.dirty = true;
+            oked::FieldTip("Reach##tdg");
             if ((td->mode == TerrainDigger::Mode::Smooth || td->mode == TerrainDigger::Mode::Flatten) &&
                 ImGui::DragFloat("Relax / sec##tdg", &td->relax, 0.1f, 0.1f, 40.0f)) ed.dirty = true;
             if (ImGui::SliderFloat("Hardness##tdg", &td->hardness, 0.0f, 1.0f)) ed.dirty = true;
@@ -30310,6 +30433,7 @@ void DrawInspector(EditorState& ed) {
             if (td->showBrush) {
                 float bc[4] = {td->brushColor.r, td->brushColor.g, td->brushColor.b, td->brushColor.a};
                 if (ImGui::ColorEdit4("Marker color##tdg", bc)) { td->brushColor = {bc[0],bc[1],bc[2],bc[3]}; ed.dirty = true; }
+                oked::FieldTip("Marker color##tdg");
             }
             const char* rbtns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
             int rbi = (td->raiseButton < 0 || td->raiseButton > 2) ? 3 : td->raiseButton;
@@ -30324,7 +30448,9 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Smooth marching-cubes voxels: real caves, tunnels & overhangs.");
             float c[4] = {v->color.r, v->color.g, v->color.b, v->color.a};
             if (ImGui::ColorEdit4("Color##vox", c)) { v->color = {c[0],c[1],c[2],c[3]}; v->Apply(); ed.dirty = true; }
+            oked::FieldTip("Color##vox");
             if (ImGui::Checkbox("Auto-color (height/slope)##vox", &v->autoColor)) { v->Apply(); ed.dirty = true; }
+            oked::FieldTip("Auto-color (height/slope)##vox");
             int dims[3] = {v->nx, v->ny, v->nz};
             if (ImGui::DragInt3("Grid (X,Y,Z)##vox", dims, 1, 4, 512)) {
                 for (int& d : dims) if (d < 4) d = 4;
@@ -30332,14 +30458,17 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sample resolution. Resizing clears the field — regenerate after.");
             if (ImGui::DragFloat("Voxel Size##vox", &v->voxelSize, 0.05f, 0.1f, 10.0f)) { v->Apply(); ed.dirty = true; }
+            oked::FieldTip("Voxel Size##vox");
             char vtex[260]; std::strncpy(vtex, v->texture.c_str(), sizeof(vtex) - 1); vtex[sizeof(vtex) - 1] = '\0';
             if (ImGui::InputText("Texture##vox", vtex, sizeof(vtex))) { v->texture = vtex; v->Apply(); ed.dirty = true; }
+            oked::FieldTip("Texture##vox");
             if (AcceptAssetPathField(v->texture)) { v->Apply(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Triplanar ground texture (no seams on cave walls / overhangs). Empty = auto-colours only.");
             if (!v->texture.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##voxtex")) { v->texture.clear(); v->Apply(); ed.dirty = true; }
                 if (ImGui::DragFloat("Tex Scale##vox", &v->textureTiling, 0.005f, 0.005f, 2.0f, "%.3f")) { v->Apply(); ed.dirty = true; }
+                oked::FieldTip("Tex Scale##vox");
             }
             SectionHeader("Generate");
             if (ImGui::DragFloat("Surface##vox", &g_voxSurface, 0.01f, 0.1f, 0.95f)) {}
@@ -30364,16 +30493,22 @@ void DrawInspector(EditorState& ed) {
             const char* modes[] = {"Dig (remove)", "Add (build)", "Smooth", "Box (rectangular)"};
             int md = (int)vd->mode;
             if (ImGui::Combo("Primary##vdg", &md, modes, 4)) { vd->mode = (VoxelDigger::Mode)md; ed.dirty = true; }
+            oked::FieldTip("Primary##vdg");
             const char* btns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
             int bi = (vd->button < 0 || vd->button > 2) ? 3 : vd->button;
             if (ImGui::Combo("Primary Button##vdg", &bi, btns, 4)) { vd->button = (bi == 3) ? -1 : bi; ed.dirty = true; }
+            oked::FieldTip("Primary Button##vdg");
             int abi = (vd->addButton < 0 || vd->addButton > 2) ? 3 : vd->addButton;
             if (ImGui::Combo("Opposite Button##vdg", &abi, btns, 4)) { vd->addButton = (abi == 3) ? -1 : abi; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Does the opposite of Primary, so one digger both digs AND raises. Default right mouse.");
             if (ImGui::DragFloat("Brush Radius##vdg", &vd->radius, 0.1f, 0.25f, 30.0f)) ed.dirty = true;
+            oked::FieldTip("Brush Radius##vdg");
             if (ImGui::DragFloat("Strength / sec##vdg", &vd->strength, 0.1f, 0.1f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Strength / sec##vdg");
             if (ImGui::DragFloat("Reach##vdg", &vd->range, 0.5f, 1.0f, 500.0f)) ed.dirty = true;
+            oked::FieldTip("Reach##vdg");
             if (ImGui::Checkbox("Show brush marker##vdg", &vd->showBrush)) ed.dirty = true;
+            oked::FieldTip("Show brush marker##vdg");
             if (ImGui::SmallButton("Remove##vdg")) toRemove = vd;
         }
     }
@@ -30382,20 +30517,29 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("A living, reflective water surface with rolling waves.");
             float c[4] = {w->color.r, w->color.g, w->color.b, w->opacity};
             if (ImGui::ColorEdit4("Color##wat", c)) { w->color = {c[0],c[1],c[2],c[3]}; w->opacity = c[3]; w->Apply(); ed.dirty = true; }
+            oked::FieldTip("Color##wat");
             if (ImGui::DragFloat("Size##wat", &w->size, 1.0f, 1.0f, 1000000.0f)) { w->Apply(); ed.dirty = true; }
+            oked::FieldTip("Size##wat");
             if (ImGui::DragFloat("Depth##wat", &w->depth, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Metres below the surface. 0 is a visual plane.\nDeeper than the waist, the player swims. Props float or sink by density.");
             if (ImGui::DragFloat("Density##wat", &w->fluidDensity, 0.01f, 0.0f, 20.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mass per cubic metre. A 1 m cube of this mass floats halfway.");
             if (ImGui::DragFloat("Drag##wat", &w->linearDrag, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Drag##wat");
             if (ImGui::SliderInt("Detail##wat", &w->resolution, 4, 128)) { w->Apply(); ed.dirty = true; }
+            oked::FieldTip("Detail##wat");
             SectionHeader("Waves");
             if (ImGui::DragFloat("Height##wat", &w->waveHeight, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Height##wat");
             if (ImGui::DragFloat("Length##wat", &w->waveLength, 0.1f, 0.5f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Length##wat");
             if (ImGui::DragFloat("Speed##wat", &w->waveSpeed, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            oked::FieldTip("Speed##wat");
             SectionHeader("Surface");
             if (ImGui::SliderFloat("Reflectivity##wat", &w->reflectivity, 0.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
+            oked::FieldTip("Reflectivity##wat");
             if (ImGui::SliderFloat("Glint##wat", &w->specular, 0.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
+            oked::FieldTip("Glint##wat");
             if (ImGui::DragFloat2("Flow##wat", &w->flow.x, 0.005f, -1.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("UV scroll speed — the current the surface drifts at.");
             if (ImGui::SmallButton("Remove##wat")) toRemove = w;
@@ -30408,11 +30552,16 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Toggle Key##fl", kb, sizeof(kb))) { fl->toggleKey = kb[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to switch the beam on/off (blank = none).");
             if (ImGui::Checkbox("On##fl", &fl->on)) { fl->SetOn(fl->on); ed.dirty = true; }
+            oked::FieldTip("On##fl");
             if (ImGui::DragFloat("Range##fl", &fl->range, 0.5f, 1.0f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Range##fl");
             if (ImGui::SliderFloat("Cone Angle##fl", &fl->angle, 10.0f, 120.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Cone Angle##fl");
             if (ImGui::DragFloat("Intensity##fl", &fl->intensity, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            oked::FieldTip("Intensity##fl");
             float c[3] = {fl->color.r, fl->color.g, fl->color.b};
             if (ImGui::ColorEdit3("Color##fl", c)) { fl->color = {c[0],c[1],c[2],1.0f}; ed.dirty = true; }
+            oked::FieldTip("Color##fl");
             ImGui::TextDisabled("Mount on the player or its camera; the beam aims where you look.");
             if (ImGui::SmallButton("Remove##fl")) toRemove = fl;
         }
@@ -30583,6 +30732,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::PushID(i);
                 ImGui::SetNextItemWidth(std::max(80.0f, ImGui::GetContentRegionAvail().x - 150.0f));
                 if (ImGui::SliderFloat("##w", &sh.weight, 0.0f, 1.0f, "%.2f")) changed = true;
+                oked::FieldTip("##w");
                 if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::SameLine();
                 ImGui::TextUnformatted(sh.name.c_str());
@@ -30628,8 +30778,11 @@ void DrawInspector(EditorState& ed) {
                 }
             }
             if (ImGui::Checkbox("Auto-play on start##ma", &ma->autoPlay)) ed.dirty = true;
+            oked::FieldTip("Auto-play on start##ma");
             if (ImGui::Checkbox("Loop##ma", &ma->loop)) ed.dirty = true;
+            oked::FieldTip("Loop##ma");
             if (ImGui::DragFloat("Speed##ma", &ma->speed, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            oked::FieldTip("Speed##ma");
             if (ImGui::DragFloat("Blend##ma", &ma->blendTime, 0.01f, 0.0f, 2.0f, "%.2fs")) ed.dirty = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Crossfade when switching clips: the pose eases into the new clip\nover this many seconds instead of snapping. 0 = instant.");
@@ -30747,8 +30900,10 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Built-in for empty slots##ma", &ma->builtinFallback)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("On a retargeted player (Humanoid Retarget), a slot with no clip plays the\nbuilt-in animation instead of freezing the pose.");
                 if (ImGui::DragFloat("Walk threshold##ma", &ma->walkThreshold, 0.05f, 0.0f, 20.0f)) { pushSlots(); }
+                oked::FieldTip("Walk threshold##ma");
                 if (ImGui::IsItemDeactivatedAfterEdit()) ed.PushUndo();
                 if (ImGui::DragFloat("Run threshold##ma",  &ma->runThreshold,  0.1f,  0.0f, 50.0f)) { pushSlots(); }
+                oked::FieldTip("Run threshold##ma");
                 if (ImGui::IsItemDeactivatedAfterEdit()) ed.PushUndo();
                 clipCombo("Jump clip##ma", ma->jumpClip, ModelAnimator::SlotJump);
                 clipCombo("Fall clip##ma", ma->fallClip, ModelAnimator::SlotFall);
@@ -30885,6 +31040,7 @@ void DrawInspector(EditorState& ed) {
                 char nb[48]; std::snprintf(nb, sizeof(nb), "%s", st.name.c_str());
                 ImGui::SetNextItemWidth(140);
                 if (ImGui::InputText("State##asm", nb, sizeof(nb))) { st.name = nb; ed.dirty = true; }
+                oked::FieldTip("State##asm");
                 ImGui::SameLine();
                 // Clip picker (from the Model Animator's or the Character's clips); a
                 // blend tree is edited in the graph.
@@ -30900,8 +31056,10 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(70);
                 if (ImGui::DragFloat("##asmspd", &st.speed, 0.02f, 0.05f, 5.0f, "x%.2f")) ed.dirty = true;
+                oked::FieldTip("##asmspd");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("loop##asm", &st.loop)) ed.dirty = true;
+                oked::FieldTip("loop##asm");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x##asmst")) delState = si;
                 // On a Character: watch the state's clip in the Scene view, or open
@@ -30948,20 +31106,24 @@ void DrawInspector(EditorState& ed) {
                     int cd = (int)tr.cond;
                     ImGui::SetNextItemWidth(110);
                     if (ImGui::Combo("##trcond", &cd, kCondNames, 6)) { tr.cond = (okay::AnimStateMachine::Cond)cd; ed.dirty = true; }
+                    oked::FieldTip("##trcond");
                     if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
                         ImGui::SameLine();
                         char pb[32]; std::snprintf(pb, sizeof(pb), "%s", tr.param.c_str());
                         ImGui::SetNextItemWidth(90);
                         if (ImGui::InputTextWithHint("##trparam", "param", pb, sizeof(pb))) { tr.param = pb; ed.dirty = true; }
+                        oked::FieldTip("##trparam");
                     }
                     if (tr.cond == AnimStateMachine::Cond::FloatGreater || tr.cond == AnimStateMachine::Cond::FloatLess) {
                         ImGui::SameLine();
                         ImGui::SetNextItemWidth(60);
                         if (ImGui::DragFloat("##trval", &tr.value, 0.05f)) ed.dirty = true;
+                        oked::FieldTip("##trval");
                     }
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(60);
                     if (ImGui::DragFloat("##trblend", &tr.blend, 0.01f, 0.0f, 2.0f, "%.2fs")) ed.dirty = true;
+                    oked::FieldTip("##trblend");
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x##tr")) delTr = ti;
                     ImGui::PopID();
@@ -31003,11 +31165,13 @@ void DrawInspector(EditorState& ed) {
             const char* sides[] = {"Right arm", "Left arm"};
             int si = fh->showLeftArm ? 1 : 0;
             if (ImGui::Combo("Arm side##fh", &si, sides, 2)) { fh->showLeftArm = (si == 1); ed.dirty = true; }
+            oked::FieldTip("Arm side##fh");
             if (ImGui::Checkbox("Follow camera look##fh", &fh->followPitch)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view (Minecraft-style).");
             if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
             if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
+            oked::FieldTip("Steady arm (ignore lean/crouch/prone)##fh");
             if (ImGui::Checkbox("Show While Running##fh", &fh->showWhileRunning)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: the arm, sleeve and held item leave the local view while sprinting. Others still see them.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fully decouple the arm from the body so it stays put in view no matter what the body does (lean, crouch, prone).");
@@ -31035,8 +31199,11 @@ void DrawInspector(EditorState& ed) {
             const char* auth[] = {"Host (server drives it)", "Mine (this peer drives it)", "Manual (use Owned)"};
             int ai = (int)ns->authority;
             if (ImGui::Combo("Authority##ns", &ai, auth, 3)) { ns->authority = (NetworkSync::Authority)ai; ed.dirty = true; }
-            if (ns->authority == NetworkSync::Authority::Manual)
+            oked::FieldTip("Authority##ns");
+            if (ns->authority == NetworkSync::Authority::Manual) {
                 if (ImGui::Checkbox("Owned (this peer broadcasts)##ns", &ns->owned)) ed.dirty = true;
+                oked::FieldTip("Owned (this peer broadcasts)##ns");
+            }
             if (ImGui::Checkbox("Sync animation##ns", &ns->syncAnimation)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
             if (ImGui::Checkbox("Players can claim it##ns", &ns->clientClaimable)) ed.dirty = true;
@@ -31058,9 +31225,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayprefab to spawn instead of the template (takes priority).");
             float sp[3] = { ps->spawnPoint.x, ps->spawnPoint.y, ps->spawnPoint.z };
             if (ImGui::DragFloat3("Spawn point##nps", sp, 0.1f)) { ps->spawnPoint = { sp[0], sp[1], sp[2] }; ed.dirty = true; }
+            oked::FieldTip("Spawn point##nps");
             if (ImGui::DragFloat("Spawn spread##nps", &ps->spawnSpread, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stagger remote players so they don't spawn on top of each other.");
             if (ImGui::Checkbox("Spawn local player##nps", &ps->spawnLocalPlayer)) ed.dirty = true;
+            oked::FieldTip("Spawn local player##nps");
             if (ImGui::SmallButton("Remove##nps")) toRemove = ps;
         }
     }
@@ -31072,6 +31241,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::PopTextWrapPos();
             AntiCheatSettings& s = ac->settings;
             if (ImGui::Checkbox("Enabled##ac", &s.enabled)) ed.dirty = true;
+            oked::FieldTip("Enabled##ac");
             char fp[256]; std::snprintf(fp, sizeof(fp), "%s", ac->file.c_str());
             if (ImGui::InputText("Rules file##ac", fp, sizeof(fp))) { ac->file = fp; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayac file. When it loads it replaces the settings below.");
@@ -31103,6 +31273,7 @@ void DrawInspector(EditorState& ed) {
                 char p[256]; std::snprintf(p, sizeof(p), "%s", s.spawnAllowlist[i].c_str());
                 ImGui::SetNextItemWidth(-40);
                 if (ImGui::InputText("##acspawn", p, sizeof(p))) { s.spawnAllowlist[i] = p; ed.dirty = true; }
+                oked::FieldTip("##acspawn");
                 ImGui::SameLine(); if (ImGui::SmallButton("x")) del = i;
                 ImGui::PopID();
             }
@@ -31116,6 +31287,7 @@ void DrawInspector(EditorState& ed) {
                 char v[128]; std::snprintf(v, sizeof(v), "%s", s.serverVars[i].c_str());
                 ImGui::SetNextItemWidth(-40);
                 if (ImGui::InputText("##acsvar", v, sizeof(v))) { s.serverVars[i] = v; ed.dirty = true; }
+                oked::FieldTip("##acsvar");
                 ImGui::SameLine(); if (ImGui::SmallButton("x")) delVar = i;
                 ImGui::PopID();
             }
@@ -31129,6 +31301,7 @@ void DrawInspector(EditorState& ed) {
                 char w[64]; std::snprintf(w, sizeof(w), "%s", s.weapons[i].c_str());
                 ImGui::SetNextItemWidth(-40);
                 if (ImGui::InputText("##acweapon", w, sizeof(w))) { s.weapons[i] = w; ed.dirty = true; }
+                oked::FieldTip("##acweapon");
                 ImGui::SameLine(); if (ImGui::SmallButton("x")) delWeapon = i;
                 ImGui::PopID();
             }
@@ -31184,11 +31357,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Every (s)##as", &as->interval, 1.0f, 0.0f, 3600.0f, "%.0f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds of play between saves (0 = only when the scene starts, if ticked below).");
             if (ImGui::Checkbox("Save when the scene starts##as", &as->saveOnStart)) ed.dirty = true;
+            oked::FieldTip("Save when the scene starts##as");
             char sbuf[65]; std::snprintf(sbuf, sizeof(sbuf), "%s", as->slot.c_str());
             if (ImGui::InputText("Slot##as", sbuf, sizeof(sbuf))) { as->slot = sbuf; ed.dirty = true; }
+            oked::FieldTip("Slot##as");
             if (!SaveGame::ValidSlot(as->slot)) ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.3f, 1), "Use letters, digits, - and _ only.");
             char lbuf[128]; std::snprintf(lbuf, sizeof(lbuf), "%s", as->label.c_str());
             if (ImGui::InputText("Label##as", lbuf, sizeof(lbuf))) { as->label = lbuf; ed.dirty = true; }
+            oked::FieldTip("Label##as");
             if (ImGui::SmallButton("Remove##as")) toRemove = as;
         }
     }
@@ -31210,15 +31386,20 @@ void DrawInspector(EditorState& ed) {
             const char kcodes[] = {27, 'p', 9};
             int ki = 0; for (int i = 0; i < 3; ++i) if (pm->toggleKey == kcodes[i]) ki = i;
             if (ImGui::Combo("Toggle Key##pm", &ki, keys, 3)) { pm->toggleKey = kcodes[ki]; ed.dirty = true; }
+            oked::FieldTip("Toggle Key##pm");
             if (ImGui::Checkbox("Resume button##pm", &pm->showResume)) ed.dirty = true;
+            oked::FieldTip("Resume button##pm");
             if (ImGui::Checkbox("Quit button##pm", &pm->showQuit)) ed.dirty = true;
+            oked::FieldTip("Quit button##pm");
             char mbuf[200]; std::snprintf(mbuf, sizeof(mbuf), "%s", pm->mainMenuScene.c_str());
             if (ImGui::InputText("Main Menu Scene##pm", mbuf, sizeof(mbuf))) { pm->mainMenuScene = mbuf; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayscene to load from a 'Main Menu' button (blank = no button).");
             float dc[4] = {pm->dimColor.r, pm->dimColor.g, pm->dimColor.b, pm->dimColor.a};
             if (ImGui::ColorEdit4("Backdrop##pm", dc)) { pm->dimColor = {dc[0],dc[1],dc[2],dc[3]}; ed.dirty = true; }
+            oked::FieldTip("Backdrop##pm");
             float pc[4] = {pm->panelColor.r, pm->panelColor.g, pm->panelColor.b, pm->panelColor.a};
             if (ImGui::ColorEdit4("Panel##pm", pc)) { pm->panelColor = {pc[0],pc[1],pc[2],pc[3]}; ed.dirty = true; }
+            oked::FieldTip("Panel##pm");
             if (ImGui::SmallButton("Remove##pm")) toRemove = pm;
         }
     }
@@ -31228,15 +31409,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Cell Size##ws", &ws->cellSize, 1.0f, 1.0f, 5000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units per chunk edge (XZ).");
             if (ImGui::DragInt("Load Radius##ws", &ws->loadRadius, 0.1f, 0, 32)) ed.dirty = true;
+            oked::FieldTip("Load Radius##ws");
             if (ImGui::DragInt("Unload Radius##ws", &ws->unloadRadius, 0.1f, 0, 64)) ed.dirty = true;
+            oked::FieldTip("Unload Radius##ws");
             if (ws->unloadRadius < ws->loadRadius)
                 ImGui::TextColored(ImVec4(0.95f,0.7f,0.3f,1), "Unload < Load: set Unload >= Load for hysteresis.");
             char fbuf[256]; std::snprintf(fbuf, sizeof(fbuf), "%s", ws->folder.c_str());
             if (ImGui::InputText("Folder##ws", fbuf, sizeof(fbuf))) { ws->folder = fbuf; ed.dirty = true; }
+            oked::FieldTip("Folder##ws");
             char pbuf[128]; std::snprintf(pbuf, sizeof(pbuf), "%s", ws->prefix.c_str());
             if (ImGui::InputText("Prefix##ws", pbuf, sizeof(pbuf))) { ws->prefix = pbuf; ed.dirty = true; }
+            oked::FieldTip("Prefix##ws");
             char ebuf[64]; std::snprintf(ebuf, sizeof(ebuf), "%s", ws->ext.c_str());
             if (ImGui::InputText("Extension##ws", ebuf, sizeof(ebuf))) { ws->ext = ebuf; ed.dirty = true; }
+            oked::FieldTip("Extension##ws");
             char tbuf[128]; std::snprintf(tbuf, sizeof(tbuf), "%s", ws->target.c_str());
             if (ImGui::InputText("Follow Object##ws", tbuf, sizeof(tbuf))) { ws->target = tbuf; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the object to follow. Blank = the main camera.");
@@ -31253,15 +31439,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Block Tag##de", tbuf, sizeof(tbuf))) { de->blockTag = tbuf; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only objects with this tag fracture (matches BlockBuilder's Block Tag).");
             if (ImGui::DragFloat("Voxel Size##de", &de->voxelSize, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Voxel Size##de");
             SectionHeader("Fracture");
             if (ImGui::SliderInt("Shards / axis##de", &de->fractureChunks, 1, 4)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Debris cubes per axis: 2 = 8 shards, 3 = 27, 4 = 64.");
             if (ImGui::DragFloat("Explosion Force##de", &de->explosionForce, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Explosion Force##de");
             if (ImGui::DragFloat("Upward Pop##de", &de->upwardBias, 0.01f, 0.0f, 3.0f)) ed.dirty = true;
+            oked::FieldTip("Upward Pop##de");
             if (ImGui::DragFloat("Debris Lifetime##de", &de->debrisLifetime, 0.1f, 0.1f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Debris Lifetime##de");
             if (ImGui::DragFloat("Debris Gravity##de", &de->debrisGravityScale, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Debris Gravity##de");
             if (ImGui::DragFloat("Debris Drag##de", &de->debrisDrag, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Debris Drag##de");
             if (ImGui::DragInt("Max Debris##de", &de->maxDebris, 1.0f, 8, 4096)) ed.dirty = true;
+            oked::FieldTip("Max Debris##de");
             SectionHeader("Structural Collapse");
             if (ImGui::Checkbox("Collapse unsupported##de", &de->collapseEnabled)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("After a break, blocks with no path to the ground fall.");
@@ -31271,9 +31464,12 @@ void DrawInspector(EditorState& ed) {
             const char* btns[] = {"None", "Left Mouse", "Right Mouse", "Middle Mouse"};
             int bi = (de->breakButton < 0 || de->breakButton > 2) ? 0 : de->breakButton + 1;
             if (ImGui::Combo("Fire Button##de", &bi, btns, 4)) { de->breakButton = (bi == 0) ? -1 : bi - 1; ed.dirty = true; }
+            oked::FieldTip("Fire Button##de");
             if (de->breakButton >= 0) {
                 if (ImGui::DragFloat("Blast Radius##de", &de->breakRadius, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+                oked::FieldTip("Blast Radius##de");
                 if (ImGui::DragFloat("Reach##de", &de->reach, 0.5f, 1.0f, 200.0f)) ed.dirty = true;
+                oked::FieldTip("Reach##de");
             }
             if (ImGui::SmallButton("Remove##de")) toRemove = de;
         }
@@ -31428,19 +31624,25 @@ void DrawInspector(EditorState& ed) {
               if (ImGui::InputText("Look at Object##char", lookBuf, sizeof(lookBuf))) { ch->lookAtTarget = lookBuf; ed.dirty = true; }
               if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional: name of an object to look at instead of the camera (e.g. the player). Leave blank to use the camera."); }
             if (ImGui::SliderFloat("Head Turn Speed##char", &ch->headTurnSpeed, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Head Turn Speed##char");
 
             SectionHeader("Feel");
             if (ImGui::SliderFloat("Jump Crouch (s)##char", &ch->jumpCrouchTime, 0.0f, 0.4f, "%.2f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long the knees dip as a jump starts. The jump is not delayed.");
             if (ImGui::SliderFloat("Jump Crouch Bend##char", &ch->jumpCrouchBend, 0.0f, 60.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Jump Crouch Bend##char");
             if (ImGui::SliderFloat("Turn Step Angle##char", &ch->turnStepAngle, 0.0f, 120.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Standing still, the body can twist this far before a foot steps.");
             if (ImGui::SliderFloat("Turn Step Time##char", &ch->turnStepTime, 0.05f, 0.6f, "%.2f")) ed.dirty = true;
+            oked::FieldTip("Turn Step Time##char");
             if (ImGui::SliderFloat("Turn Step Lift##char", &ch->turnStepLift, 0.0f, 70.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Turn Step Lift##char");
             if (ImGui::SliderFloat("Turn Still Speed##char", &ch->turnStillSpeed, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+            oked::FieldTip("Turn Still Speed##char");
             if (ImGui::SliderFloat("Motion Lean##char", &ch->motionLean, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lean into speeding up and turning. 0 turns it off.");
             if (ImGui::SliderFloat("Motion Lean Max##char", &ch->motionLeanMax, 0.0f, 15.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Motion Lean Max##char");
 
             if (c) { ch->Apply(); ed.dirty = true; }
         }
@@ -31516,15 +31718,20 @@ void DrawInspector(EditorState& ed) {
                     switch (m.type) {
                         case MT::Mirror:
                             if (ImGui::Checkbox("X##mx", &m.mirrorX)) ed.dirty = true; ImGui::SameLine();
+                            oked::FieldTip("X##mx");
                             if (ImGui::Checkbox("Y##my", &m.mirrorY)) ed.dirty = true; ImGui::SameLine();
+                            oked::FieldTip("Y##my");
                             if (ImGui::Checkbox("Z##mz", &m.mirrorZ)) ed.dirty = true; ImGui::SameLine();
+                            oked::FieldTip("Z##mz");
                             ImGui::TextDisabled("axes");
                             if (ImGui::Checkbox("Merge at the mirror##mm", &m.mirrorMerge)) ed.dirty = true;
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Weld vertices on the mirror plane so there's no seam.\nA mesh that crosses the plane is cut there first (the + side is kept).");
                             break;
                         case MT::Array:
                             if (ImGui::DragInt("Count##ac", &m.count, 0.1f, 1, 1000)) ed.dirty = true;
+                            oked::FieldTip("Count##ac");
                             if (ImGui::Checkbox("Relative (x mesh size)##ar", &m.relative)) ed.dirty = true;
+                            oked::FieldTip("Relative (x mesh size)##ar");
                             if (ImGui::DragFloat3("Offset##ao", &m.offset.x, 0.01f, 0.0f, 0.0f, "%.2f")) ed.dirty = true;
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip(m.relative ? "Step between copies, times the mesh size (1.1 = a 10%% gap)" : "Step between copies, in units");
                             break;
@@ -31532,19 +31739,24 @@ void DrawInspector(EditorState& ed) {
                             if (ImGui::SliderInt("Levels##sl", &m.levels, 0, 4)) ed.dirty = true;
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Each level splits every face into one quad per corner (x4)\nand rounds the shape (Catmull-Clark). Model in quads for best results.");
                             if (ImGui::Checkbox("Smooth shading##ss", &m.smoothShading)) ed.dirty = true;
+                            oked::FieldTip("Smooth shading##ss");
                             break;
                         case MT::Solidify:
                             if (ImGui::DragFloat("Thickness##st", &m.thickness, 0.005f, -10.0f, 10.0f)) ed.dirty = true;
+                            oked::FieldTip("Thickness##st");
                             break;
                         case MT::Bevel:
                             if (ImGui::DragFloat("Width##bw", &m.width, 0.002f, 0.0001f, 10.0f, "%.3f")) ed.dirty = true;
+                            oked::FieldTip("Width##bw");
                             if (ImGui::SliderInt("Segments##bs", &m.segments, 1, 8)) ed.dirty = true;
+                            oked::FieldTip("Segments##bs");
                             if (ImGui::SliderFloat("Angle limit##ba", &m.angle, 0.0f, 180.0f, "%.0f deg")) ed.dirty = true;
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only edges whose faces meet at least this sharply are beveled.");
                             break;
                         case MT::Boolean: {
                             const char* ops[] = {"Union", "Subtract", "Intersect"};
                             if (ImGui::Combo("Operation##bo", &m.boolOp, ops, 3)) ed.dirty = true;
+                            oked::FieldTip("Operation##bo");
                             if (ObjNamePicker("bt", m.target, &ed.scene(), false)) ed.dirty = true;
                             ImGui::SameLine(); ImGui::TextDisabled("cutter");
                             if (ImGui::DragFloat("Voxel size##bv", &m.voxel, 0.002f, 0.005f, 5.0f, "%.3f")) ed.dirty = true;
@@ -31553,6 +31765,7 @@ void DrawInspector(EditorState& ed) {
                                 if (auto* cmr = cut->GetComponent<MeshRenderer>()) {
                                     bool vis = cmr->enabled;
                                     if (ImGui::Checkbox("Show cutter##bshow", &vis)) { ed.PushUndo(); cmr->enabled = vis; ed.dirty = true; }
+                                    oked::FieldTip("Show cutter##bshow");
                                 }
                             break;
                         }
@@ -31562,8 +31775,11 @@ void DrawInspector(EditorState& ed) {
                             break;
                         case MT::Displace:
                             if (ImGui::DragFloat("Strength##ds", &m.strength, 0.002f, -10.0f, 10.0f)) ed.dirty = true;
+                            oked::FieldTip("Strength##ds");
                             if (ImGui::DragFloat("Frequency##df", &m.frequency, 0.05f, 0.01f, 100.0f)) ed.dirty = true;
+                            oked::FieldTip("Frequency##df");
                             if (ImGui::DragInt("Seed##dseed", &m.seed, 0.2f)) ed.dirty = true;
+                            oked::FieldTip("Seed##dseed");
                             break;
                         default: break;
                     }
@@ -31604,6 +31820,7 @@ void DrawInspector(EditorState& ed) {
 
             // Color mode: an RGB swatch, or a Kelvin temperature like a real bulb.
             if (ImGui::Checkbox("Use Temperature##light", &li->useTemperature)) ed.dirty = true;
+            oked::FieldTip("Use Temperature##light");
             if (li->useTemperature) {
                 if (ImGui::SliderFloat("Kelvin##light", &li->temperature, 1500.0f, 15000.0f, "%.0f K"))
                     ed.dirty = true;
@@ -31625,19 +31842,23 @@ void DrawInspector(EditorState& ed) {
             } else {
                 float c[4] = {li->color.r, li->color.g, li->color.b, li->color.a};
                 if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+                oked::FieldTip("Color##light");
             }
             if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
+            oked::FieldTip("Intensity##light");
 
             SectionHeader("Ambient (scene floor)");
             if (ImGui::SliderFloat("Ambient##light", &li->ambient, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unlit floor brightness (taken from the first light)");
             float ac[3] = {li->ambientColor.r, li->ambientColor.g, li->ambientColor.b};
             if (ImGui::ColorEdit3("Ambient Tint##light", ac)) { li->ambientColor = {ac[0], ac[1], ac[2], 1.0f}; ed.dirty = true; }
+            oked::FieldTip("Ambient Tint##light");
 
             if (li->type != Light::Type::Directional) {
                 SectionHeader(li->type == Light::Type::Spot ? "Spot"
                             : li->type == Light::Type::Area ? "Area" : "Point");
                 if (ImGui::DragFloat("Range##light", &li->range, 0.2f, 0.1f, 500.0f)) ed.dirty = true;
+                oked::FieldTip("Range##light");
                 const char* falls[] = {"Linear", "Inverse Square"};
                 int fo = (int)li->falloff;
                 if (ImGui::Combo("Falloff##light", &fo, falls, 2)) { li->falloff = (Light::Falloff)fo; ed.dirty = true; }
@@ -31645,6 +31866,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (li->type == Light::Type::Spot) {
                 if (ImGui::SliderFloat("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f)) ed.dirty = true;
+                oked::FieldTip("Spot Angle##light");
                 if (ImGui::SliderFloat("Softness##light", &li->spotSoftness, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp cone edge, 1 = very feathered");
             }
@@ -31669,6 +31891,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Randomly dims the light while the game runs\n(torches, candles, a failing bulb). 0 = steady.");
             if (li->flicker > 0.0f) {
                 if (ImGui::SliderFloat("Speed##lightfl", &li->flickerSpeed, 0.5f, 30.0f, "%.1f /s")) ed.dirty = true;
+                oked::FieldTip("Speed##lightfl");
                 static const struct { const char* n; float a, sp; } kFlick[] = {
                     {"Candle", 0.25f, 6.0f}, {"Torch", 0.35f, 9.0f}, {"Faulty bulb", 0.9f, 18.0f}};
                 for (int fi = 0; fi < 3; ++fi) {
@@ -31691,15 +31914,19 @@ void DrawInspector(EditorState& ed) {
             const float projLabel = ImGui::CalcTextSize("Projection").x + ImGui::GetStyle().ItemInnerSpacing.x;
             ImGui::SetNextItemWidth(std::max(120.0f, ImGui::GetContentRegionAvail().x - projLabel));
             if (ImGui::Combo("Projection", &proj, projs, 2)) { cam->projection = (Camera::Projection)proj; ed.dirty = true; }
+            oked::FieldTip("Projection");
             if (cam->projection == Camera::Projection::Orthographic) {
                 if (ImGui::DragFloat("Size", &cam->orthographicSize, 0.1f, 0.1f, 1000.0f)) ed.dirty = true;
+                oked::FieldTip("Size");
             } else {
                 if (ImGui::Checkbox("Physical Camera", &cam->physicalCamera)) ed.dirty = true;
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Drive FOV from real lens optics (focal length + sensor size),\nlike a real camera.");
                 if (cam->physicalCamera) {
                     if (ImGui::DragFloat("Focal Length", &cam->focalLength, 0.5f, 1.0f, 300.0f, "%.1f mm")) ed.dirty = true;
+                    oked::FieldTip("Focal Length");
                     if (ImGui::DragFloat("Sensor Height", &cam->sensorHeight, 0.1f, 1.0f, 100.0f, "%.1f mm")) ed.dirty = true;
+                    oked::FieldTip("Sensor Height");
                     {   // Common sensor sizes (vertical mm), one click each.
                         static const struct { const char* n; float h; } kSensors[] = {
                             {"Full frame", 24.0f}, {"Super 35", 18.66f}, {"APS-C", 15.6f}, {"Micro 4/3", 13.0f}, {"16mm", 7.49f}};
@@ -31711,6 +31938,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::TextDisabled("Effective FOV: %.1f deg", cam->VerticalFovDegrees(16.0f / 9.0f));
                 } else {
                     if (ImGui::SliderFloat("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+                    oked::FieldTip("Field of View");
                     // Common gaming FOVs, one click each.
                     static const struct { const char* n; float v; } kFovs[] = {
                         {"60", 60.0f}, {"75", 75.0f}, {"90", 90.0f}, {"110", 110.0f}};
@@ -31721,6 +31949,7 @@ void DrawInspector(EditorState& ed) {
                     int ax = cam->fovAxisHorizontal ? 1 : 0;
                     const char* axes[] = {"Vertical", "Horizontal"};
                     if (ImGui::Combo("FOV Axis", &ax, axes, 2)) { cam->fovAxisHorizontal = (ax == 1); ed.dirty = true; }
+                    oked::FieldTip("FOV Axis");
                 }
             }
 
@@ -31736,6 +31965,7 @@ void DrawInspector(EditorState& ed) {
             if (cam->clearFlags == Camera::ClearFlags::SolidColor) {
                 float bg[4] = {cam->backgroundColor.r, cam->backgroundColor.g, cam->backgroundColor.b, cam->backgroundColor.a};
                 if (ImGui::ColorEdit4("Background", bg)) { cam->backgroundColor = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
+                oked::FieldTip("Background");
                 // Quick swatches for the usual backdrops.
                 static const struct { const char* n; float r, g, b; } kBgs[] = {
                     {"Sky", 0.36f, 0.58f, 0.85f}, {"Dusk", 0.16f, 0.12f, 0.24f},
@@ -31754,7 +31984,9 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Clipping Planes");
             if (ImGui::DragFloat("Near", &cam->nearClip, 0.01f, 0.001f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Near");
             if (ImGui::DragFloat("Far",  &cam->farClip, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Far");
             if (cam->farClip <= cam->nearClip) { cam->farClip = cam->nearClip + 0.01f; ed.dirty = true; }   // keep a valid depth range
 
             SectionHeader("Zoom & Framing");
@@ -31772,6 +32004,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap the camera to whole pixels so pixel art doesn't shimmer when it moves.");
                 if (cam->pixelPerfect) {
                     if (ImGui::DragFloat("Pixels Per Unit", &cam->pixelsPerUnit, 1.0f, 1.0f, 1024.0f, "%.0f")) ed.dirty = true;
+                    oked::FieldTip("Pixels Per Unit");
                     if (cam->pixelsPerUnit < 1.0f) cam->pixelsPerUnit = 1.0f;
                 }
             }
@@ -31781,6 +32014,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the camera moves at full shake.");
             if (cam3D && ImGui::SliderFloat("Angle", &cam->shakeAngle, 0.0f, 15.0f, "%.1f deg")) ed.dirty = true;
             if (ImGui::SliderFloat("Frequency", &cam->shakeFrequency, 1.0f, 60.0f, "%.0f Hz")) ed.dirty = true;
+            oked::FieldTip("Frequency");
             if (ImGui::SliderFloat("Recovery", &cam->shakeRecovery, 0.1f, 10.0f, "%.1f /s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly the shake settles (higher = shorter shakes).");
             ImGui::BeginDisabled(!ed.isPlaying());
@@ -31831,6 +32065,7 @@ void DrawInspector(EditorState& ed) {
 
             ImGui::Spacing();
             if (ImGui::Checkbox("Main", &cam->main)) ed.dirty = true;
+            oked::FieldTip("Main");
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Depth", &cam->depth, 0.1f)) ed.dirty = true;
             if (ImGui::IsItemHovered())
@@ -31873,14 +32108,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Off: switch by distance (metres).\nOn: switch by how tall the object is on screen (0..1).");
             if (ImGui::SliderFloat("Hysteresis", &lod->hysteresis, 0.0f, 0.4f, "%.2f")) ed.dirty = true;
+            oked::FieldTip("Hysteresis");
             if (lod->useScreenSize) {
                 if (ImGui::DragFloat("Cull screen", &lod->cullScreen, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+                oked::FieldTip("Cull screen");
             } else if (ImGui::DragFloat("Cull distance", &lod->cullDistance, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = never stop drawing it, however far it is.");
             if (ImGui::Checkbox("Tint by level", &lod->debugTint)) ed.dirty = true;
+            oked::FieldTip("Tint by level");
             int force = lod->forceLevel + 1;
             const char* forces[] = {"Auto", "LOD 0", "LOD 1", "LOD 2", "LOD 3", "Culled"};
             if (ImGui::Combo("Force", &force, forces, 6)) { lod->forceLevel = force - 1; ed.dirty = true; }
+            oked::FieldTip("Force");
             ImGui::TextDisabled("Active level: %s", lod->activeLevel < 0 ? "culled" : (std::to_string(lod->activeLevel).c_str()));
             if (lod->levels.empty()) ImGui::TextDisabled("No levels yet. Generate them from this object's mesh.");
             for (int i = 0; i < (int)lod->levels.size(); ++i) {
@@ -31890,6 +32129,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 if (lod->useScreenSize) {
                     if (ImGui::DragFloat("Screen", &L.screenSize, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                    oked::FieldTip("Screen");
                 } else if (ImGui::DragFloat("Distance", &L.distance, 0.2f, 0.0f, 100000.0f)) ed.dirty = true;
                 if (i > 0) {
                     ImGui::SameLine();
@@ -31926,6 +32166,7 @@ void DrawInspector(EditorState& ed) {
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
             if (ImGui::Combo("Body Type", &bt, types, 3)) rb->bodyType = (Rigidbody2D::BodyType)bt;
+            oked::FieldTip("Body Type");
             ImGui::DragFloat("Gravity Scale", &rb->gravityScale, 0.05f);
             ImGui::DragFloat("Mass", &rb->mass, 0.05f, 0.01f, 1000.0f);
             ImGui::DragFloat("Drag", &rb->drag, 0.01f, 0.0f, 100.0f);
@@ -31945,8 +32186,10 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Box Collider 2D", bc, &toRemove)) {
             float sz[2] = {bc->size.x, bc->size.y};
             if (ImGui::DragFloat2("Size##bc", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size##bc");
             float off[2] = {bc->offset.x, bc->offset.y};
             if (ImGui::DragFloat2("Offset##bc", off, 0.05f)) { bc->offset = {off[0], off[1]}; ed.dirty = true; }
+            oked::FieldTip("Offset##bc");
             ImGui::Checkbox("Trigger##bc", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc", &bc->layer, 0.1f, 0, 31);
@@ -31954,6 +32197,7 @@ void DrawInspector(EditorState& ed) {
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##bc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##bc", &bc->autoFit)) { if (bc->autoFit) FitColliders(go); ed.dirty = true; }
+            oked::FieldTip("Auto Fit##bc");
             if (bc->autoFit) FitColliders(go, true);   // keep matched while editing
             if (ImGui::SmallButton("Remove##bc")) toRemove = bc;
         }
@@ -31963,6 +32207,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Radius##cc", &cc->radius, 0.05f, 0.0f, 1000.0f);
             float off[2] = {cc->offset.x, cc->offset.y};
             if (ImGui::DragFloat2("Offset##cc", off, 0.05f)) { cc->offset = {off[0], off[1]}; ed.dirty = true; }
+            oked::FieldTip("Offset##cc");
             ImGui::Checkbox("Trigger##cc", &cc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cc", &cc->layer, 0.1f, 0, 31);
@@ -31970,6 +32215,7 @@ void DrawInspector(EditorState& ed) {
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##cc", &cc->autoFit)) { if (cc->autoFit) FitColliders(go); ed.dirty = true; }
+            oked::FieldTip("Auto Fit##cc");
             if (cc->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cc")) toRemove = cc;
         }
@@ -31978,11 +32224,14 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Capsule Collider 2D", cap, &toRemove)) {
             float sz[2] = {cap->size.x, cap->size.y};
             if (ImGui::DragFloat2("Size##cap2", sz, 0.05f, 0.0f, 1000.0f)) { cap->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size##cap2");
             int dir = (int)cap->direction;
             const char* dirs[] = {"Vertical", "Horizontal"};
             if (ImGui::Combo("Direction##cap2", &dir, dirs, 2)) cap->direction = (CapsuleCollider2D::Direction)dir;
+            oked::FieldTip("Direction##cap2");
             float off[2] = {cap->offset.x, cap->offset.y};
             if (ImGui::DragFloat2("Offset##cap2", off, 0.05f)) { cap->offset = {off[0], off[1]}; ed.dirty = true; }
+            oked::FieldTip("Offset##cap2");
             ImGui::Checkbox("Trigger##cap2", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap2", &cap->layer, 0.1f, 0, 31);
@@ -31990,6 +32239,7 @@ void DrawInspector(EditorState& ed) {
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cap2")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##cap2", &cap->autoFit)) { if (cap->autoFit) FitColliders(go); ed.dirty = true; }
+            oked::FieldTip("Auto Fit##cap2");
             if (cap->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cap2")) toRemove = cap;
         }
@@ -31999,6 +32249,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Open polyline: ground, slopes, walls. Local-space points.");
             float off[2] = {ec->offset.x, ec->offset.y};
             if (ImGui::DragFloat2("Offset##ec2", off, 0.05f)) { ec->offset = {off[0], off[1]}; ed.dirty = true; }
+            oked::FieldTip("Offset##ec2");
             ImGui::Checkbox("Trigger##ec2", &ec->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##ec2", &ec->layer, 0.1f, 0, 31);
@@ -32008,6 +32259,7 @@ void DrawInspector(EditorState& ed) {
             if (ec->oneWay) {
                 float n[2] = {ec->oneWayNormal.x, ec->oneWayNormal.y};
                 if (ImGui::DragFloat2("Block Normal##ec2", n, 0.05f)) { ec->oneWayNormal = {n[0], n[1]}; ed.dirty = true; }
+                oked::FieldTip("Block Normal##ec2");
             }
             ImGui::Separator();
             ImGui::Text("Points (%d)", (int)ec->points.size());
@@ -32015,6 +32267,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::PushID((int)i);
                 float p[2] = {ec->points[i].x, ec->points[i].y};
                 if (ImGui::DragFloat2("##pt", p, 0.05f)) { ec->points[i] = {p[0], p[1]}; ed.dirty = true; }
+                oked::FieldTip("##pt");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x") && ec->points.size() > 2) { ec->points.erase(ec->points.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                 ImGui::PopID();
@@ -32031,6 +32284,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Closed loop (convex works best). Local-space vertices.");
             float off[2] = {pc->offset.x, pc->offset.y};
             if (ImGui::DragFloat2("Offset##pc2", off, 0.05f)) { pc->offset = {off[0], off[1]}; ed.dirty = true; }
+            oked::FieldTip("Offset##pc2");
             ImGui::Checkbox("Trigger##pc2", &pc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##pc2", &pc->layer, 0.1f, 0, 31);
@@ -32041,6 +32295,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::PushID((int)i);
                 float p[2] = {pc->points[i].x, pc->points[i].y};
                 if (ImGui::DragFloat2("##v", p, 0.05f)) { pc->points[i] = {p[0], p[1]}; ed.dirty = true; }
+                oked::FieldTip("##v");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x") && pc->points.size() > 3) { pc->points.erase(pc->points.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                 ImGui::PopID();
@@ -32058,6 +32313,7 @@ void DrawInspector(EditorState& ed) {
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
             if (ImGui::Combo("Body Type##rb3", &bt, types, 3)) rb->bodyType = (Rigidbody3D::BodyType)bt;
+            oked::FieldTip("Body Type##rb3");
             ImGui::DragFloat("Gravity Scale##rb3", &rb->gravityScale, 0.05f);
             ImGui::DragFloat("Mass##rb3", &rb->mass, 0.05f, 0.01f, 1000.0f);
             ImGui::DragFloat("Drag##rb3", &rb->drag, 0.01f, 0.0f, 100.0f);
@@ -32090,6 +32346,7 @@ void DrawInspector(EditorState& ed) {
             if (jt->connectedBody.empty()) {
                 float a[3] = {jt->anchor.x, jt->anchor.y, jt->anchor.z};
                 if (ImGui::DragFloat3("Anchor##jt", a, 0.1f)) { jt->anchor = {a[0], a[1], a[2]}; ed.dirty = true; }
+                oked::FieldTip("Anchor##jt");
             }
             if (jt->mode != (int)Joint3D::Mode::Pin && jt->mode != (int)Joint3D::Mode::Hinge) {
                 ImGui::Checkbox("Auto distance##jt", &jt->autoConfigure);
@@ -32103,7 +32360,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("Pins a point, spins about the axis. Needs Freeze Rotation OFF.");
                 float ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
                 if (ImGui::DragFloat3("Axis##jt", ax, 0.05f)) { jt->axis = {ax[0], ax[1], ax[2]}; ed.dirty = true; }
+                oked::FieldTip("Axis##jt");
                 if (ImGui::Checkbox("Use Motor##jt", &jt->useMotor)) ed.dirty = true;
+                oked::FieldTip("Use Motor##jt");
                 if (jt->useMotor) {
                     ImGui::DragFloat("Motor Speed (deg/s)##jt", &jt->motorSpeed, 1.0f);
                     ImGui::DragFloat("Max Motor Torque##jt", &jt->maxMotorTorque, 1.0f, 0.0f, 100000.0f);
@@ -32125,6 +32384,7 @@ void DrawInspector(EditorState& ed) {
             if (jt->connectedBody.empty()) {
                 float a[2] = {jt->anchor.x, jt->anchor.y};
                 if (ImGui::DragFloat2("Anchor##jt2", a, 0.1f)) { jt->anchor = {a[0], a[1]}; ed.dirty = true; }
+                oked::FieldTip("Anchor##jt2");
             }
             if (jt->mode != (int)Joint2D::Mode::Pin && jt->mode != (int)Joint2D::Mode::Hinge) {
                 ImGui::Checkbox("Auto distance##jt2", &jt->autoConfigure);
@@ -32137,11 +32397,13 @@ void DrawInspector(EditorState& ed) {
             if (jt->mode == (int)Joint2D::Mode::Hinge) {
                 ImGui::TextDisabled("Pins a point, free to spin. Needs Freeze Rotation OFF on the body.");
                 if (ImGui::Checkbox("Use Motor##jt2", &jt->useMotor)) ed.dirty = true;
+                oked::FieldTip("Use Motor##jt2");
                 if (jt->useMotor) {
                     ImGui::DragFloat("Motor Speed (deg/s)##jt2", &jt->motorSpeed, 1.0f);
                     ImGui::DragFloat("Max Motor Torque##jt2", &jt->maxMotorTorque, 1.0f, 0.0f, 100000.0f);
                 }
                 if (ImGui::Checkbox("Use Limits##jt2", &jt->useLimits)) ed.dirty = true;
+                oked::FieldTip("Use Limits##jt2");
                 if (jt->useLimits) {
                     ImGui::DragFloat("Min Angle##jt2", &jt->minAngle, 1.0f, -360.0f, 360.0f);
                     ImGui::DragFloat("Max Angle##jt2", &jt->maxAngle, 1.0f, -360.0f, 360.0f);
@@ -32169,8 +32431,10 @@ void DrawInspector(EditorState& ed) {
             }
             char bn[64]; std::strncpy(bn, a->boneName.c_str(), sizeof(bn) - 1); bn[sizeof(bn) - 1] = '\0';
             if (ImGui::InputText("Bone (blank = self)##aim", bn, sizeof(bn))) { a->boneName = bn; ed.dirty = true; }
+            oked::FieldTip("Bone (blank = self)##aim");
             char tn[64]; std::strncpy(tn, a->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target object##aim", tn, sizeof(tn))) { a->targetName = tn; ed.dirty = true; }
+            oked::FieldTip("Target object##aim");
             ImGui::SameLine();
             if (ImGui::SmallButton("Create##aimtgt")) {
                 Vec3 seed = IKBonePos(ed, go, a->boneName, go->transform->Position()) + Vec3{0,0,2};
@@ -32182,8 +32446,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used when no Target object is set.");
             float ax[3] = {a->aimAxis.x, a->aimAxis.y, a->aimAxis.z};
             if (ImGui::DragFloat3("Aim Axis##aim", ax, 0.05f)) { a->aimAxis = {ax[0], ax[1], ax[2]}; ed.dirty = true; }
+            oked::FieldTip("Aim Axis##aim");
             float up[3] = {a->upAxis.x, a->upAxis.y, a->upAxis.z};
             if (ImGui::DragFloat3("Up Axis##aim", up, 0.05f)) { a->upAxis = {up[0], up[1], up[2]}; ed.dirty = true; }
+            oked::FieldTip("Up Axis##aim");
             ImGui::DragFloat("Weight##aim", &a->weight, 0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Max Angle##aim", &a->maxAngle, 1.0f, 0.0f, 180.0f);
             ImGui::DragFloat("Smoothing##aim", &a->smoothing, 0.5f, 0.0f, 40.0f);
@@ -32196,10 +32462,12 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("This object is where a hand, foot, or the head reaches.");
             char cn[64]; std::strncpy(cn, ikt->characterName.c_str(), sizeof(cn) - 1); cn[sizeof(cn) - 1] = '\0';
             if (ImGui::InputText("Character##ikt", cn, sizeof(cn))) { ikt->characterName = cn; ikt->character = nullptr; ed.dirty = true; }
+            oked::FieldTip("Character##ikt");
             const char* limbs[] = {"Left Hand", "Right Hand", "Left Foot", "Right Foot", "Head"};
             int limb = ikt->limb;
             if (limb < 0 || limb > 4) limb = 0;
             if (ImGui::Combo("Limb##ikt", &limb, limbs, 5)) { ikt->limb = limb; ed.dirty = true; }
+            oked::FieldTip("Limb##ikt");
             ImGui::DragFloat("Weight##ikt", &ikt->weight, 0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Blend time##ikt", &ikt->blendTime, 0.01f, 0.0f, 2.0f);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to ease the limb onto this object.");
@@ -32232,6 +32500,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("In Play, save the pose on the model as a clip the Animator can play.");
             char nm[64]; std::strncpy(nm, pc->clipName.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
             if (ImGui::InputText("Clip name##pc", nm, sizeof(nm))) { pc->clipName = nm; ed.dirty = true; }
+            oked::FieldTip("Clip name##pc");
             ImGui::DragFloat("Record seconds##pc", &pc->recordSeconds, 0.05f, 0.05f, 30.0f);
             if (!ed.isPlaying()) ImGui::TextDisabled("Press Play, then save or record.");
             if (ImGui::Button("Save pose##pc")) {
@@ -32292,6 +32561,7 @@ void DrawInspector(EditorState& ed) {
             }
             char tn[64]; std::strncpy(tn, l->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target object##look", tn, sizeof(tn))) { l->targetName = tn; l->targetObject = nullptr; ed.dirty = true; }
+            oked::FieldTip("Target object##look");
             ImGui::SameLine();
             if (ImGui::SmallButton("Create##looktgt")) {
                 std::string tip = l->chainNames.empty() ? std::string() : l->chainNames.back();
@@ -32301,8 +32571,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a target object you can drag in the Scene view.");
             float t[3] = {l->target.x, l->target.y, l->target.z};
             if (ImGui::DragFloat3("Target point##look", t, 0.1f)) { l->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+            oked::FieldTip("Target point##look");
             float fa[3] = {l->forwardAxis.x, l->forwardAxis.y, l->forwardAxis.z};
             if (ImGui::DragFloat3("Forward Axis##look", fa, 0.05f)) { l->forwardAxis = {fa[0], fa[1], fa[2]}; ed.dirty = true; }
+            oked::FieldTip("Forward Axis##look");
             ImGui::DragFloat("Weight##look", &l->weight, 0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Max Angle / bone##look", &l->maxAngle, 1.0f, 0.0f, 180.0f);
             ImGui::DragFloat("Smoothing##look", &l->smoothing, 0.5f, 0.0f, 40.0f);
@@ -32324,6 +32596,7 @@ void DrawInspector(EditorState& ed) {
                 char nb[64]; std::strncpy(nb, l->chainNames[i].c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
                 ImGui::SetNextItemWidth(150.0f);
                 if (ImGui::InputText("##cb", nb, sizeof(nb))) { l->chainNames[i] = nb; ed.dirty = true; }
+                oked::FieldTip("##cb");
                 ImGui::SameLine();
                 // Each bone's share of the turn; the tip always finishes it. Bones
                 // without an entry ramp up to the tip.
@@ -32356,6 +32629,7 @@ void DrawInspector(EditorState& ed) {
                 char nb[64]; std::strncpy(nb, l->eyeNames[i].c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
                 ImGui::SetNextItemWidth(150.0f);
                 if (ImGui::InputText("##eye", nb, sizeof(nb))) { l->eyeNames[i] = nb; l->eyes.clear(); ed.dirty = true; }
+                oked::FieldTip("##eye");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x")) { l->eyeNames.erase(l->eyeNames.begin() + i); l->eyes.clear(); ed.dirty = true; ImGui::PopID(); break; }
                 ImGui::PopID();
@@ -32363,7 +32637,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("+ Eye##look")) { l->eyeNames.push_back(""); ed.dirty = true; }
             if (!l->eyeNames.empty()) {
                 if (ImGui::DragFloat("Eye Max Angle##look", &l->eyeMaxAngle, 1.0f, 0.0f, 90.0f)) ed.dirty = true;
+                oked::FieldTip("Eye Max Angle##look");
                 if (ImGui::DragFloat("Eye Weight##look", &l->eyeWeight, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Eye Weight##look");
             }
             if (ImGui::SmallButton("Remove##look")) toRemove = l;
         }
@@ -32416,6 +32692,7 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::DragFloat3("Sole Up L##fik", ul, 0.05f)) { f->footUpAxis = {ul[0], ul[1], ul[2]}; ed.dirty = true; }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The foot bone's local sole normal. Left at (0,1,0), it's read\nfrom that foot's own rest pose, so mirrored rigs just work.");
                     if (ImGui::DragFloat3("Sole Up R##fik", ur, 0.05f)) { f->footUpAxisR = {ur[0], ur[1], ur[2]}; ed.dirty = true; }
+                    oked::FieldTip("Sole Up R##fik");
                 }
                 ImGui::DragFloat("Max Knee Bend##fik", &f->maxKneeBend, 1.0f, 0.0f, 180.0f);
                 if (IKJointLimitUI("Hip limit##fik", f->hipLimit)) ed.dirty = true;
@@ -32500,12 +32777,14 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn an elbow/knee pole hint you can drag to aim the bend.");
                 float t[3] = {lb->target.x, lb->target.y, lb->target.z};
                 if (ImGui::DragFloat3("Target point##lik", t, 0.1f)) { lb->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+                oked::FieldTip("Target point##lik");
                 {
                     int pm = (int)lb->poleMode;
                     if (ImGui::Combo("Pole Mode##lik", &pm, "Auto (keep the bend)\0Character\0World\0")) { lb->poleMode = (LimbIK::PoleMode)pm; ed.dirty = true; }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a Pole object: Auto keeps the animation's own elbow/knee bend\n(a straight limb bends toward Pole Dir, turning with the character);\nCharacter bends toward Pole Dir in this object's space; World toward a fixed world direction.");
                     float pd[3] = {lb->pole.x, lb->pole.y, lb->pole.z};
                     if (ImGui::DragFloat3("Pole Dir##lik", pd, 0.05f)) { lb->pole = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
+                    oked::FieldTip("Pole Dir##lik");
                 }
                 ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
@@ -32525,6 +32804,7 @@ void DrawInspector(EditorState& ed) {
                     Vec3 e = lb->targetRotation.ToEuler();
                     float ea[3] = {e.x, e.y, e.z};
                     if (ImGui::DragFloat3("Target Rotation##lik", ea, 1.0f)) { lb->targetRotation = Quat::Euler({ea[0], ea[1], ea[2]}); ed.dirty = true; }
+                    oked::FieldTip("Target Rotation##lik");
                 }
                 ImGui::Checkbox("Orient Bones##lik", &lb->orient);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Joints that aren't parented in a chain: also rotate the upper/lower\nbones toward the moved joints. A bone chain always turns.");
@@ -32548,6 +32828,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a tip target you can drag in the Scene view.");
                 float t[3] = {ci->target.x, ci->target.y, ci->target.z};
                 if (ImGui::DragFloat3("Target point##cik", t, 0.1f)) { ci->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+                oked::FieldTip("Target point##cik");
                 const char* solvers[] = {"FABRIK", "CCD"};
                 ImGui::Combo("Solver##cik", &ci->solver, solvers, 2);
                 ImGui::DragInt("Iterations##cik", &ci->iterations, 0.2f, 1, 50);
@@ -32571,10 +32852,12 @@ void DrawInspector(EditorState& ed) {
                         if (ci->usePole) {
                             float pp[3] = {ci->pole.x, ci->pole.y, ci->pole.z};
                             if (ImGui::DragFloat3("Pole point##cik", pp, 0.1f)) { ci->pole = {pp[0], pp[1], pp[2]}; ed.dirty = true; }
+                            oked::FieldTip("Pole point##cik");
                         }
                     } else {
                         float pd[3] = {ci->poleDir.x, ci->poleDir.y, ci->poleDir.z};
                         if (ImGui::DragFloat3("Pole Dir##cik", pd, 0.05f)) { ci->poleDir = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
+                        oked::FieldTip("Pole Dir##cik");
                     }
                 }
                 if (ImGui::DragFloat("Target Blend (s)##cik", &ci->targetBlendTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
@@ -32590,6 +32873,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PushID((int)i);
                     char nb[64]; std::strncpy(nb, ci->boneNames[i].c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
                     if (ImGui::InputText("##cb", nb, sizeof(nb))) { ci->boneNames[i] = nb; ed.dirty = true; }
+                    oked::FieldTip("##cb");
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) { ci->boneNames.erase(ci->boneNames.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                     ImGui::PopID();
@@ -32712,6 +32996,7 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The head swings toward a new point at this rate (0 = snap).");
                     float hf[3] = {fb->headForward.x, fb->headForward.y, fb->headForward.z};
                     if (ImGui::DragFloat3("Head Forward##fbl", hf, 0.05f, -1.0f, 1.0f)) { fb->headForward = {hf[0], hf[1], hf[2]}; ed.dirty = true; }
+                    oked::FieldTip("Head Forward##fbl");
                     ImGui::TreePop();
                 }
                 ImGui::TextDisabled("Scripts: ik_hand(\"left\", x, y, z), ik_foot(...), ik_look(x, y, z),\nik_reached(\"left_hand\"), ik_release()");
@@ -32728,7 +33013,9 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Combo("Holding Style##poh", &st, "Automatic\0Custom\0")) { ph->holdingStyle = (ProceduralObjectHolding::StyleMode)st; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: each object's own style (a carry from its size and weight unless it says Custom).\nCustom: always the object's grip points.");
                 if (ImGui::Checkbox("Arm IK##poh", &ph->armIK)) ed.dirty = true;
+                oked::FieldTip("Arm IK##poh");
                 if (ImGui::DragFloat("Transition (s)##poh", &ph->transitionTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                oked::FieldTip("Transition (s)##poh");
                 if (ImGui::Checkbox("Body Adjustment##poh", &ph->bodyAdjustment)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heavy or big loads: lean back, walk slower, kept off the body.");
                 int ca = (int)ph->carryAnimations;
@@ -32741,12 +33028,17 @@ void DrawInspector(EditorState& ed) {
                 const char* mbtns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
                 int tbi = (ph->throwMouseButton < 0 || ph->throwMouseButton > 2) ? 3 : ph->throwMouseButton;
                 if (ImGui::Combo("Throw Mouse##poh", &tbi, mbtns, 4)) { ph->throwMouseButton = (tbi == 3) ? -1 : tbi; ed.dirty = true; }
+                oked::FieldTip("Throw Mouse##poh");
                 if (ImGui::DragInt("Throw Pad Button##poh", &ph->throwGamepadButton, 0.1f, -1, 11)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0=A 1=B 2=X 3=Y 4=Back 5=Start 6=L 7=R. -1 = none.");
                 if (ImGui::DragFloat("Charge Time##poh", &ph->throwChargeTime, 0.01f, 0.05f, 3.0f)) ed.dirty = true;
+                oked::FieldTip("Charge Time##poh");
                 if (ImGui::DragFloat("Min Speed##poh", &ph->throwMinSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+                oked::FieldTip("Min Speed##poh");
                 if (ImGui::DragFloat("Max Speed##poh", &ph->throwMaxSpeed, 0.1f, 0.0f, 60.0f)) ed.dirty = true;
+                oked::FieldTip("Max Speed##poh");
                 if (ImGui::DragFloat("Pickup Range##poh", &ph->pickupRange, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+                oked::FieldTip("Pickup Range##poh");
                 if (ed.isPlaying()) ImGui::Text("Charge %.0f%%", ph->ThrowCharge() * 100.0f);
                 if (GameObject* held = ph->Held()) {
                     ImGui::Text("Holding: %s (%s)", held->name.c_str(), ph->CarryStyle() == HoldableObject::Style::Automatic ? "small item" : HoldableObject::StyleName(ph->CarryStyle()));
@@ -32761,8 +33053,10 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("E picks a hold-in-hands item up. E again, or G, puts it down.");
                 char dk[2] = {hp->dropKey, 0};
                 if (ImGui::InputText("Drop Key##hp", dk, sizeof(dk))) { hp->dropKey = dk[0]; ed.dirty = true; }
+                oked::FieldTip("Drop Key##hp");
                 char ak[2] = {hp->altDropKey, 0};
                 if (ImGui::InputText("Alt Drop Key##hp", ak, sizeof(ak))) { hp->altDropKey = ak[0]; ed.dirty = true; }
+                oked::FieldTip("Alt Drop Key##hp");
                 char pn[64]; std::snprintf(pn, sizeof(pn), "%s", hp->promptObject.c_str());
                 if (ImGui::InputText("Prompt Object##hp", pn, sizeof(pn))) { hp->promptObject = pn; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A screen-space Text named this shows \"E to pick up\" and \"E or G to drop\".");
@@ -32798,10 +33092,15 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat3("Hold Offset##hold", &ho->holdOffset.x, 0.01f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: where the object's origin sits from the chest (right, up, forward), metres.");
                 if (ImGui::DragFloat3("Hold Rotation##hold", &ho->holdRotation.x, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Hold Rotation##hold");
                 if (ImGui::DragFloat("In-hand scale##hold", &ho->inHandScale, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
+                oked::FieldTip("In-hand scale##hold");
                 if (ImGui::DragFloat3("FP offset##hold", &ho->fpOffset.x, 0.005f)) ed.dirty = true;
+                oked::FieldTip("FP offset##hold");
                 if (ImGui::DragFloat3("FP rotation##hold", &ho->fpRotation.x, 1.0f)) ed.dirty = true;
+                oked::FieldTip("FP rotation##hold");
                 if (ImGui::DragFloat("FP scale##hold", &ho->fpScale, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
+                oked::FieldTip("FP scale##hold");
                 if (ImGui::DragFloat3("TP offset##hold", &ho->tpOffset.x, 0.005f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Side, up, forward, added on top of the hold. Use this when a third-person grip sits too high.");
                 if (ImGui::DragFloat3("TP rotation##hold", &ho->tpRotation.x, 1.0f)) ed.dirty = true;
@@ -32813,7 +33112,9 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::Checkbox(g == 0 ? "Left Grip" : "Right Grip", &gr.enabled)) ed.dirty = true;
                     if (gr.enabled) {
                         if (ImGui::DragFloat3("Position##grip", &gr.position.x, 0.005f)) ed.dirty = true;
+                        oked::FieldTip("Position##grip");
                         if (ImGui::DragFloat3("Rotation##grip", &gr.rotation.x, 1.0f)) ed.dirty = true;
+                        oked::FieldTip("Rotation##grip");
                         // Hands have no fingers. `curl` stays on the grip so saved
                         // scenes still load; it is not applied to any bone.
                     }
@@ -32851,6 +33152,7 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##bc3", &bc->autoFit)) { if (bc->autoFit) FitColliders(go); ed.dirty = true; }
+            oked::FieldTip("Auto Fit##bc3");
             if (bc->autoFit) FitColliders(go, true);
             // Interactive edit: drag the 6 face handles in the Scene view to hand-fit
             // the box to the model.
@@ -32879,6 +33181,7 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##sc3", &sc->autoFit)) { if (sc->autoFit) FitColliders(go); ed.dirty = true; }
+            oked::FieldTip("Auto Fit##sc3");
             if (sc->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##sc3")) toRemove = sc;
         }
@@ -32900,6 +33203,7 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::SameLine();
             if (ImGui::Checkbox("Auto Fit##cap3", &cap->autoFit)) { if (cap->autoFit) FitColliders(go); ed.dirty = true; }
+            oked::FieldTip("Auto Fit##cap3");
             if (cap->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
         }
@@ -32957,6 +33261,7 @@ void DrawInspector(EditorState& ed) {
                     if (cur == "true" || cur == "false") {
                         bool b = (cur == "true");
                         if (ImGui::Checkbox("##v", &b)) { cur = b ? "true" : "false"; changed = true; }
+                        oked::FieldTip("##v");
                     } else if (isVec) {
                         // Pull 3 numbers from "...(x,y,z)" and edit them.
                         float v[3] = {0, 0, 0};
@@ -33031,21 +33336,28 @@ void DrawInspector(EditorState& ed) {
             int m = (int)cc->mode;
             const char* modes[] = {"Top-Down", "Platformer"};
             if (ImGui::Combo("Mode##cc2", &m, modes, 2)) { cc->mode = (CharacterController2D::Mode)m; ed.dirty = true; }
+            oked::FieldTip("Mode##cc2");
 
             SectionHeader("Movement");
             if (ImGui::DragFloat("Speed##cc2", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Speed##cc2");
             if (ImGui::DragFloat("Run Speed##cc2", &cc->runSpeed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Run Speed##cc2");
             int sk = cc->sprintKey ? cc->sprintKey : 0; char skb[2] = { (char)(sk ? sk : ' '), 0 };
             if (ImGui::InputText("Sprint Key##cc2", skb, sizeof(skb))) { cc->sprintKey = skb[0] == ' ' ? 0 : skb[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold to run (blank = disabled)");
             if (ImGui::DragFloat("Acceleration##cc2", &cc->acceleration, 0.5f, 0.0f, 500.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = instant; higher = snappier ramp-up");
             if (ImGui::DragFloat("Deceleration##cc2", &cc->deceleration, 0.5f, 0.0f, 500.0f)) ed.dirty = true;
+            oked::FieldTip("Deceleration##cc2");
             if (ImGui::Checkbox("Use Gamepad##cc2", &cc->useGamepad)) ed.dirty = true;
+            oked::FieldTip("Use Gamepad##cc2");
             ImGui::SameLine();
             if (ImGui::Checkbox("Flip Sprite##cc2", &cc->flipSprite)) ed.dirty = true;
+            oked::FieldTip("Flip Sprite##cc2");
             if (cc->mode == CharacterController2D::Mode::TopDown) {
                 if (ImGui::Checkbox("Normalize Diagonal##cc2", &cc->normalizeDiagonal)) ed.dirty = true;
+                oked::FieldTip("Normalize Diagonal##cc2");
             }
 
             if (cc->mode == CharacterController2D::Mode::Platformer) {
@@ -33083,22 +33395,34 @@ void DrawInspector(EditorState& ed) {
                     }
                 }
                 if (ImGui::DragFloat("Jump Force##cc2", &cc->jumpForce, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+                oked::FieldTip("Jump Force##cc2");
                 if (ImGui::DragInt("Max Jumps##cc2", &cc->maxJumps, 0.05f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("2 = double jump (ground counts as one)");
                 if (ImGui::Checkbox("Variable Jump##cc2", &cc->variableJump)) ed.dirty = true;
-                if (cc->variableJump)
+                oked::FieldTip("Variable Jump##cc2");
+                if (cc->variableJump) {
                     if (ImGui::DragFloat("Jump Cut##cc2", &cc->jumpCutMultiplier, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                    oked::FieldTip("Jump Cut##cc2");
+                }
                 if (ImGui::DragFloat("Coyote Time##cc2", &cc->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+                oked::FieldTip("Coyote Time##cc2");
                 if (ImGui::DragFloat("Jump Buffer##cc2", &cc->jumpBuffer, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+                oked::FieldTip("Jump Buffer##cc2");
                 if (ImGui::DragFloat("Air Control##cc2", &cc->airControl, 0.02f, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Air Control##cc2");
                 if (ImGui::DragFloat("Max Fall Speed##cc2", &cc->maxFallSpeed, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
+                oked::FieldTip("Max Fall Speed##cc2");
                 if (ImGui::DragFloat("Extra Fall Gravity##cc2", &cc->extraFallGravity, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
+                oked::FieldTip("Extra Fall Gravity##cc2");
                 if (ImGui::Checkbox("Wall Slide + Jump##cc2", &cc->wallJump)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide slowly down walls and jump off them (needs side colliders).");
                 if (cc->wallJump) {
                     if (ImGui::DragFloat("Wall Slide Speed##cc2", &cc->wallSlideSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+                    oked::FieldTip("Wall Slide Speed##cc2");
                     if (ImGui::DragFloat("Wall Jump Up##cc2", &cc->wallJumpForce, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                    oked::FieldTip("Wall Jump Up##cc2");
                     if (ImGui::DragFloat("Wall Jump Push##cc2", &cc->wallJumpPush, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                    oked::FieldTip("Wall Jump Push##cc2");
                 }
             }
             ImGui::TextDisabled("WASD / arrows / stick. Uses a Rigidbody2D if present.");
@@ -33109,9 +33433,13 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Character Controller 3D", cc, &toRemove)) {
             if (StanceControlFields(cc->stanceControl, "cc3")) ed.dirty = true;
             if (ImGui::DragFloat("Speed##cc3", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Speed##cc3");
             if (ImGui::Checkbox("Can Jump##cc3", &cc->canJump)) ed.dirty = true;
-            if (cc->canJump)
+            oked::FieldTip("Can Jump##cc3");
+            if (cc->canJump) {
                 if (ImGui::DragFloat("Jump Force##cc3", &cc->jumpForce, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+                oked::FieldTip("Jump Force##cc3");
+            }
             ImGui::TextDisabled("WASD / arrows on XZ. Uses a Rigidbody3D if present.");
             if (ImGui::SmallButton("Remove##cc3")) toRemove = cc;
         }
@@ -33119,36 +33447,55 @@ void DrawInspector(EditorState& ed) {
     if (auto* v = dynamic_cast<VehicleController*>(curComp)) {
         if (CompHeader("Vehicle Controller (Car)", v, &toRemove)) {
             if (ImGui::DragFloat("Max Speed##veh", &v->maxSpeed, 0.5f, 0.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Max Speed##veh");
             if (ImGui::DragFloat("Reverse Speed##veh", &v->reverseSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Reverse Speed##veh");
             if (ImGui::DragFloat("Acceleration##veh", &v->acceleration, 0.5f, 0.5f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Acceleration##veh");
             if (ImGui::DragFloat("Brake Force##veh", &v->brakeForce, 0.5f, 0.5f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Brake Force##veh");
             if (ImGui::DragFloat("Drag (coast)##veh", &v->drag, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Drag (coast)##veh");
             if (ImGui::DragFloat("Turn Speed##veh", &v->turnSpeed, 1.0f, 0.0f, 400.0f, "%.0f deg/s")) ed.dirty = true;
+            oked::FieldTip("Turn Speed##veh");
             if (ImGui::DragFloat("Grip##veh", &v->grip, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast sideways slide is killed. Higher = sticky cornering, lower = slidey.");
             if (ImGui::DragFloat("Handbrake Grip##veh", &v->handbrakeGrip, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grip while the handbrake (Space) is held. Low = drift.");
             if (ImGui::DragFloat("Ground Check##veh", &v->groundCheckDistance, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Ground Check##veh");
             if (ImGui::Checkbox("Follow Camera##veh", &v->followCamera)) ed.dirty = true;
+            oked::FieldTip("Follow Camera##veh");
             if (v->followCamera) {
                 if (ImGui::DragFloat("Cam Distance##veh", &v->camDistance, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+                oked::FieldTip("Cam Distance##veh");
                 if (ImGui::DragFloat("Cam Height##veh", &v->camHeight, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+                oked::FieldTip("Cam Height##veh");
                 if (ImGui::DragFloat("Cam Smoothing##veh", &v->camLerp, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Cam Smoothing##veh");
             }
             ImGui::Separator();
             if (ImGui::Checkbox("Raycast Suspension##veh", &v->suspension)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Per-wheel down-rays drive a vertical spring (ride height,\nbump absorption) and tilt the chassis when cornering/braking.");
             if (v->suspension) {
                 if (ImGui::DragFloat("Ride Height##veh", &v->rideHeight, 0.05f, 0.05f, 5.0f)) ed.dirty = true;
+                oked::FieldTip("Ride Height##veh");
                 if (ImGui::DragFloat("Spring Strength##veh", &v->springStrength, 1.0f, 1.0f, 400.0f)) ed.dirty = true;
+                oked::FieldTip("Spring Strength##veh");
                 if (ImGui::DragFloat("Spring Damping##veh", &v->springDamping, 0.2f, 0.0f, 60.0f)) ed.dirty = true;
+                oked::FieldTip("Spring Damping##veh");
                 if (ImGui::DragFloat("Suspension Travel##veh", &v->suspensionTravel, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+                oked::FieldTip("Suspension Travel##veh");
                 if (ImGui::DragFloat("Wheel Base##veh", &v->wheelBase, 0.1f, 0.2f, 12.0f)) ed.dirty = true;
+                oked::FieldTip("Wheel Base##veh");
                 if (ImGui::DragFloat("Track Width##veh", &v->trackWidth, 0.1f, 0.2f, 8.0f)) ed.dirty = true;
+                oked::FieldTip("Track Width##veh");
                 if (ImGui::DragFloat("Body Lean##veh", &v->bodyLean, 0.05f, 0.0f, 4.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Chassis lean from accel/cornering. 0 = no dynamic lean.");
                 if (ImGui::DragFloat("Max Tilt##veh", &v->maxTilt, 0.5f, 0.0f, 45.0f, "%.0f deg")) ed.dirty = true;
+                oked::FieldTip("Max Tilt##veh");
                 if (ImGui::DragFloat("Tilt Smoothing##veh", &v->tiltSmooth, 0.2f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Tilt Smoothing##veh");
             }
             ImGui::Separator();
             ImGui::TextDisabled("Drive: W/S or arrows = gas/reverse, A/D = steer,");
@@ -33161,14 +33508,21 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Side View (platformer)##veh2", &v2->sideView)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = top-down (steer + drift). On = side-scroller car (A/D drive, gravity on).");
             if (ImGui::DragFloat("Max Speed##veh2", &v2->maxSpeed, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Max Speed##veh2");
             if (!v2->sideView) if (ImGui::DragFloat("Reverse Speed##veh2", &v2->reverseSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Acceleration##veh2", &v2->acceleration, 0.5f, 0.5f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Acceleration##veh2");
             if (ImGui::DragFloat("Brake Force##veh2", &v2->brakeForce, 0.5f, 0.5f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Brake Force##veh2");
             if (ImGui::DragFloat("Drag (coast)##veh2", &v2->drag, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Drag (coast)##veh2");
             if (!v2->sideView) {
                 if (ImGui::DragFloat("Turn Speed##veh2", &v2->turnSpeed, 1.0f, 0.0f, 600.0f, "%.0f deg/s")) ed.dirty = true;
+                oked::FieldTip("Turn Speed##veh2");
                 if (ImGui::DragFloat("Grip##veh2", &v2->grip, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Grip##veh2");
                 if (ImGui::DragFloat("Handbrake Grip##veh2", &v2->handbrakeGrip, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Handbrake Grip##veh2");
             }
             ImGui::TextDisabled(v2->sideView ? "A/D drive, Space brake. Needs Rigidbody2D + collider."
                                              : "W/S gas, A/D steer, Space handbrake (drift).");
@@ -33180,16 +33534,22 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Look + click to place a cube on a grid; right-click removes it.");
             ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
             if (ImGui::DragFloat("Block Size##bb", &bb->blockSize, 0.05f, 0.05f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Block Size##bb");
             if (ImGui::DragFloat("Reach##bb", &bb->reach, 0.25f, 0.5f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Reach##bb");
             float bc[4] = {bb->blockColor.r, bb->blockColor.g, bb->blockColor.b, bb->blockColor.a};
             if (ImGui::ColorEdit4("Block Color##bb", bc)) { bb->blockColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            oked::FieldTip("Block Color##bb");
             ImGui::Text("Texture"); ImGui::SameLine(120);
             if (AssetSlot("bbtex", bb->blockTexture, "Texture", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
             char tagbuf[64]; std::snprintf(tagbuf, sizeof(tagbuf), "%s", bb->blockTag.c_str());
             if (ImGui::InputText("Block Tag##bb", tagbuf, sizeof(tagbuf))) { bb->blockTag = tagbuf; ed.dirty = true; }
+            oked::FieldTip("Block Tag##bb");
             const char* btns[] = {"Left", "Right", "Middle"};
             if (ImGui::Combo("Place Button##bb", &bb->placeButton, btns, 3)) ed.dirty = true;
+            oked::FieldTip("Place Button##bb");
             if (ImGui::Combo("Remove Button##bb", &bb->removeButton, btns, 3)) ed.dirty = true;
+            oked::FieldTip("Remove Button##bb");
             if (ImGui::Checkbox("Placement preview##bb", &bb->showPreview)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show a ghost outline of the cell the next block lands in (green = free, red = blocked).");
             ImGui::SameLine();
@@ -33209,21 +33569,31 @@ void DrawInspector(EditorState& ed) {
                                     "Window", "Floor", "Pillar", "Ramp"};
             int pc = (int)sb->piece;
             if (ImGui::Combo("Piece##sb", &pc, pieces, 8)) { sb->piece = (StructureBuilder::Piece)pc; ed.dirty = true; }
+            oked::FieldTip("Piece##sb");
             if (ImGui::SliderInt("Rotation (90°)##sb", &sb->rotSteps, 0, 3)) ed.dirty = true;
+            oked::FieldTip("Rotation (90°)##sb");
             if (ImGui::DragFloat("Cell Size##sb", &sb->cellSize, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Cell Size##sb");
             if (ImGui::DragFloat("Wall Height##sb", &sb->wallHeight, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Wall Height##sb");
             if (ImGui::DragFloat("Slab Thickness##sb", &sb->slabThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Slab Thickness##sb");
             if (ImGui::DragFloat("Wall Thickness##sb", &sb->wallThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Wall Thickness##sb");
             if (ImGui::DragFloat("Pillar Thickness##sb", &sb->pillarThickness, 0.02f, 0.05f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Pillar Thickness##sb");
             if (ImGui::DragFloat("Reach##sb", &sb->reach, 0.25f, 1.0f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Reach##sb");
             ImGui::Text("Texture"); ImGui::SameLine(120);
             if (AssetSlot("sbtex", sb->structureTexture, "Texture", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
             char tagbuf[64]; std::snprintf(tagbuf, sizeof(tagbuf), "%s", sb->structureTag.c_str());
             if (ImGui::InputText("Structure Tag##sb", tagbuf, sizeof(tagbuf))) { sb->structureTag = tagbuf; ed.dirty = true; }
+            oked::FieldTip("Structure Tag##sb");
             if (ImGui::TreeNodeEx("Resources / Inventory##sb", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::Checkbox("Require resources (off = creative)##sb", &sb->requireResources)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Building/upgrading/repairing draws items from the player's Inventory component.");
                 if (ImGui::SliderFloat("Refund on demolish##sb", &sb->refundFraction, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Refund on demolish##sb");
                 auto matRow = [&](const char* lbl, std::string& item, int& cost, const char* id) {
                     char b[64]; std::snprintf(b, sizeof(b), "%s", item.c_str());
                     ImGui::SetNextItemWidth(110);
@@ -33237,8 +33607,10 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TreePop();
             }
             if (ImGui::Checkbox("Placement preview##sb", &sb->showPreview)) ed.dirty = true;
+            oked::FieldTip("Placement preview##sb");
             ImGui::SameLine();
             if (ImGui::Checkbox("Crosshair##sb", &sb->showCrosshair)) ed.dirty = true;
+            oked::FieldTip("Crosshair##sb");
             if (ImGui::SmallButton("Remove##sb")) toRemove = sb;
         }
     }
@@ -33251,25 +33623,35 @@ void DrawInspector(EditorState& ed) {
                                      "Pyramid", "Plane", "Capsule", "Torus", "Prefab"};
             int br = (int)bm->brush;
             if (ImGui::Combo("Brush##bm", &br, brushes, BuilderMode::kBrushCount)) { bm->brush = (BuilderMode::Brush)br; ed.dirty = true; }
+            oked::FieldTip("Brush##bm");
             if (ImGui::Checkbox("Snap to grid##bm", &bm->snapToGrid)) ed.dirty = true;
+            oked::FieldTip("Snap to grid##bm");
             ImGui::SameLine();
             if (ImGui::DragFloat("Grid##bm", &bm->gridSize, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Grid##bm");
             if (ImGui::DragFloat("Reach##bm", &bm->reach, 0.25f, 0.5f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Reach##bm");
             if (ImGui::DragFloat("Rotate Step (deg)##bm", &bm->rotateStepDeg, 1.0f, 1.0f, 180.0f)) ed.dirty = true;
+            oked::FieldTip("Rotate Step (deg)##bm");
             if (ImGui::DragFloat("Scale Step##bm", &bm->scaleStep, 0.01f, 0.01f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Scale Step##bm");
             float sr[2] = {bm->minScale, bm->maxScale};
             if (ImGui::DragFloat2("Scale Min/Max##bm", sr, 0.05f, 0.01f, 100.0f)) { bm->minScale = sr[0]; bm->maxScale = sr[1]; ed.dirty = true; }
+            oked::FieldTip("Scale Min/Max##bm");
             float pc[4] = {bm->partColor.r, bm->partColor.g, bm->partColor.b, bm->partColor.a};
             if (ImGui::ColorEdit4("Part Color##bm", pc)) { bm->partColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
+            oked::FieldTip("Part Color##bm");
             ImGui::Text("Texture"); ImGui::SameLine(120);
             if (AssetSlot("bmtex", bm->partTexture, "Texture", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
             char tagbuf[64]; std::snprintf(tagbuf, sizeof(tagbuf), "%s", bm->buildTag.c_str());
             if (ImGui::InputText("Build Tag##bm", tagbuf, sizeof(tagbuf))) { bm->buildTag = tagbuf; ed.dirty = true; }
+            oked::FieldTip("Build Tag##bm");
             if (ImGui::TreeNodeEx("Model / Prefab##bm", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::Checkbox("Parent parts under one model root##bm", &bm->parentToModel)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: pieces hang under one root so Save (P) writes them as a single prefab.\nOff: pieces drop straight into the world (map building).");
                 char mn[96]; std::snprintf(mn, sizeof(mn), "%s", bm->modelName.c_str());
                 if (ImGui::InputText("Model Name##bm", mn, sizeof(mn))) { bm->modelName = mn; ed.dirty = true; }
+                oked::FieldTip("Model Name##bm");
                 ImGui::Text("Prefab"); ImGui::SameLine(120);
                 if (AssetSlot("bmprefab", bm->prefabPath, "Prefab", {".okayprefab"})) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Prefab brush stamps this file; Save (P) writes the model here if set.");
@@ -33280,9 +33662,12 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::TextDisabled("Play controls: click place / right-click remove / R rotate / +- scale / G grab / P save model / O save map");
             if (ImGui::Checkbox("Brush hotkeys (1-9)##bm", &bm->brushHotkeys)) ed.dirty = true;
+            oked::FieldTip("Brush hotkeys (1-9)##bm");
             if (ImGui::Checkbox("Placement preview##bm", &bm->showPreview)) ed.dirty = true;
+            oked::FieldTip("Placement preview##bm");
             ImGui::SameLine();
             if (ImGui::Checkbox("Crosshair##bm", &bm->showCrosshair)) ed.dirty = true;
+            oked::FieldTip("Crosshair##bm");
             if (ImGui::SmallButton("Remove##bm")) toRemove = bm;
         }
     }
@@ -33291,12 +33676,17 @@ void DrawInspector(EditorState& ed) {
             const char* tiers[] = {"Wood", "Stone", "Metal"};
             int t = bp->tier < 0 ? 0 : (bp->tier > 2 ? 2 : bp->tier);
             if (ImGui::Combo("Tier##bp", &t, tiers, 3)) { bp->tier = t; ed.dirty = true; }
+            oked::FieldTip("Tier##bp");
             if (ImGui::DragFloat("Health##bp", &bp->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Health##bp");
             if (ImGui::DragFloat("Max Health##bp", &bp->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max Health##bp");
             ImGui::ProgressBar(bp->maxHealth > 0 ? bp->health / bp->maxHealth : 0.0f, ImVec2(-1, 0));
             char mb[64]; std::snprintf(mb, sizeof(mb), "%s", bp->material.c_str());
             if (ImGui::InputText("Material##bp", mb, sizeof(mb))) { bp->material = mb; ed.dirty = true; }
+            oked::FieldTip("Material##bp");
             if (ImGui::DragInt("Cost##bp", &bp->cost, 0.2f, 0, 9999)) ed.dirty = true;
+            oked::FieldTip("Cost##bp");
             if (ImGui::SmallButton("Remove##bp")) toRemove = bp;
         }
     }
@@ -33337,6 +33727,7 @@ void DrawInspector(EditorState& ed) {
                     char nb[64]; std::snprintf(nb, sizeof(nb), "%s", it.name.c_str());
                     ImGui::SetNextItemWidth(120);
                     if (ImGui::InputTextWithHint("##name", "name", nb, sizeof(nb))) { it.name = nb; ed.dirty = true; }
+                    oked::FieldTip("##name");
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) del = (int)i;
                     ImGui::Text("Prefab"); ImGui::SameLine(120);
@@ -33353,7 +33744,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Grid##bmd", &bm->gridSize, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap step in world units (0 = no grid).");
             if (ImGui::DragFloat("Rotate Step (deg)##bmd", &bm->rotationStep, 1.0f, 1.0f, 180.0f)) ed.dirty = true;
+            oked::FieldTip("Rotate Step (deg)##bmd");
             if (ImGui::DragFloat("Max Reach##bmd", &bm->maxReach, 0.25f, 0.5f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Max Reach##bmd");
             if (ImGui::DragInt("Max Objects##bmd", &bm->maxObjects, 1.0f, 0, 100000)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap on objects players can place (0 = no cap).");
             {
@@ -33364,12 +33757,15 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collider layers players may build on: numbers or names\nseparated by commas (0,3 or Default,Ground). Blank = all layers.");
             }
             if (ImGui::Checkbox("Start in build mode##bmd", &bm->startActive)) ed.dirty = true;
+            oked::FieldTip("Start in build mode##bmd");
             ImGui::SameLine();
             if (ImGui::Checkbox("Allow mid-air##bmd", &bm->allowAirPlacement)) ed.dirty = true;
+            oked::FieldTip("Allow mid-air##bmd");
             if (ImGui::Checkbox("Built-in hotbar##bmd", &bm->showHotbar)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: draw your own palette UI (read build_selected() / build_active()).");
             ImGui::SameLine();
             if (ImGui::Checkbox("Ghost preview##bmd", &bm->showGhost)) ed.dirty = true;
+            oked::FieldTip("Ghost preview##bmd");
             char fb[96]; std::snprintf(fb, sizeof(fb), "%s", bm->creationFolder.c_str());
             if (ImGui::InputTextWithHint("Creations Folder##bmd", "creations", fb, sizeof(fb))) { bm->creationFolder = fb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Folder inside the player's save folder where build_save(name) writes.");
@@ -33397,8 +33793,10 @@ void DrawInspector(EditorState& ed) {
                 bmKey("Next item##bmdk", k.nextItem); ImGui::SameLine(); bmPad("##bmdpn", k.padNext);
                 bmKey("Prev item##bmdk", k.prevItem); ImGui::SameLine(); bmPad("##bmdpv", k.padPrev);
                 if (ImGui::Checkbox("1-9 pick items##bmdk", &k.numberKeys)) ed.dirty = true;
+                oked::FieldTip("1-9 pick items##bmdk");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Wheel cycles##bmdk", &k.mouseWheel)) ed.dirty = true;
+                oked::FieldTip("Wheel cycles##bmdk");
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##bmd")) toRemove = bm;
@@ -33409,6 +33807,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Players may edit this in build mode. Put one on every palette prefab");
             ImGui::TextDisabled("and on level props players are allowed to rearrange.");
             if (ImGui::Checkbox("Players can edit##bl", &bl->editable)) ed.dirty = true;
+            oked::FieldTip("Players can edit##bl");
             ImGui::Text("Build id: %d", bl->buildId);
             ImGui::SameLine();
             if (ImGui::SmallButton("New id##bl")) { bl->buildId = Buildable::MaxId(ed.scene()) + 1; ed.dirty = true; }
@@ -33431,22 +33830,29 @@ void DrawInspector(EditorState& ed) {
             }
             if (ls->kind == LogicSource::Kind::Button) {
                 if (ImGui::Checkbox("Toggle (else momentary)##ls", &ls->toggle)) ed.dirty = true;
+                oked::FieldTip("Toggle (else momentary)##ls");
                 if (!ls->toggle && ImGui::DragFloat("Hold Time (s)##ls", &ls->holdTime, 0.05f, 0.05f, 60.0f)) ed.dirty = true;
                 if (ls->toggle && ImGui::Checkbox("Starts on##ls", &ls->startOn)) ed.dirty = true;
                 bmKey("Press Key##ls", ls->pressKey); ImGui::SameLine(); bmPad("Pad##ls", ls->pressPadButton);
                 if (ImGui::DragFloat("Press Reach##ls", &ls->pressReach, 0.1f, 0.5f, 50.0f)) ed.dirty = true;
+                oked::FieldTip("Press Reach##ls");
             } else if (ls->kind == LogicSource::Kind::Timer) {
                 if (ImGui::DragFloat("Interval (s)##ls", &ls->interval, 0.05f, 0.05f, 3600.0f)) ed.dirty = true;
+                oked::FieldTip("Interval (s)##ls");
                 if (ImGui::DragFloat("On Time (s)##ls", &ls->onTime, 0.05f, 0.0f, 3600.0f)) ed.dirty = true;
+                oked::FieldTip("On Time (s)##ls");
                 if (ImGui::Checkbox("Starts on##ls", &ls->startOn)) ed.dirty = true;
+                oked::FieldTip("Starts on##ls");
             } else {
                 float zs[3] = {ls->zoneSize.x, ls->zoneSize.y, ls->zoneSize.z};
                 if (ImGui::DragFloat3("Zone Size##ls", zs, 0.05f, 0.01f, 1000.0f)) { ls->zoneSize = {zs[0], zs[1], zs[2]}; ed.dirty = true; }
+                oked::FieldTip("Zone Size##ls");
                 float zo[3] = {ls->zoneOffset.x, ls->zoneOffset.y, ls->zoneOffset.z};
                 if (ImGui::DragFloat3("Zone Offset##ls", zo, 0.05f)) { ls->zoneOffset = {zo[0], zo[1], zo[2]}; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the object's local units (scaled with it).");
                 char tb[64]; std::snprintf(tb, sizeof(tb), "%s", ls->activatorTag.c_str());
                 if (ImGui::InputTextWithHint("Only Tag##ls", "anything that moves", tb, sizeof(tb))) { ls->activatorTag = tb; ed.dirty = true; }
+                oked::FieldTip("Only Tag##ls");
             }
             std::string ids;
             for (int id : ls->links) ids += (ids.empty() ? "" : ", ") + std::to_string(id);
@@ -33461,26 +33867,36 @@ void DrawInspector(EditorState& ed) {
             const char* kinds[] = {"Door", "Mover", "Light", "Spawner", "Event"};
             int k = (int)lt->kind;
             if (ImGui::Combo("Kind##lt", &k, kinds, LogicTarget::kKindCount)) { lt->kind = (LogicTarget::Kind)k; ed.dirty = true; }
+            oked::FieldTip("Kind##lt");
             const char* modes[] = {"Follow (on while powered)", "Toggle (each signal flips)"};
             int m = (int)lt->mode;
             if (ImGui::Combo("Mode##lt", &m, modes, 2)) { lt->mode = (LogicTarget::Mode)m; ed.dirty = true; }
+            oked::FieldTip("Mode##lt");
             if (ImGui::Checkbox("Invert##lt", &lt->invert)) ed.dirty = true;
+            oked::FieldTip("Invert##lt");
             if (lt->kind == LogicTarget::Kind::Door || lt->kind == LogicTarget::Kind::Mover) {
                 float o[3] = {lt->openOffset.x, lt->openOffset.y, lt->openOffset.z};
                 if (ImGui::DragFloat3("Open Offset##lt", o, 0.05f)) { lt->openOffset = {o[0], o[1], o[2]}; ed.dirty = true; }
+                oked::FieldTip("Open Offset##lt");
                 if (ImGui::DragFloat("Open Turn (deg)##lt", &lt->openYaw, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
+                oked::FieldTip("Open Turn (deg)##lt");
                 if (ImGui::DragFloat("Move Time (s)##lt", &lt->moveTime, 0.02f, 0.02f, 60.0f)) ed.dirty = true;
+                oked::FieldTip("Move Time (s)##lt");
             } else if (lt->kind == LogicTarget::Kind::Light) {
                 if (ImGui::DragFloat("Intensity When On##lt", &lt->lightIntensity, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Intensity When On##lt");
                 float g[4] = {lt->onEmissive.r, lt->onEmissive.g, lt->onEmissive.b, lt->onEmissive.a};
                 if (ImGui::ColorEdit4("Glow When On##lt", g)) { lt->onEmissive = {g[0], g[1], g[2], g[3]}; ed.dirty = true; }
+                oked::FieldTip("Glow When On##lt");
             } else if (lt->kind == LogicTarget::Kind::Spawner) {
                 ImGui::Text("Prefab"); ImGui::SameLine(120);
                 if (AssetSlot("ltpf", lt->spawnPrefab, "Prefab", {".okayprefab"})) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Empty: uses a Spawner component on this object.");
                 float o[3] = {lt->spawnOffset.x, lt->spawnOffset.y, lt->spawnOffset.z};
                 if (ImGui::DragFloat3("Spawn Offset##lt", o, 0.05f)) { lt->spawnOffset = {o[0], o[1], o[2]}; ed.dirty = true; }
+                oked::FieldTip("Spawn Offset##lt");
                 if (ImGui::DragInt("Max Alive##lt", &lt->maxAlive, 0.2f, 0, 1000)) ed.dirty = true;
+                oked::FieldTip("Max Alive##lt");
             }
             char eb[64]; std::snprintf(eb, sizeof(eb), "%s", lt->eventName.c_str());
             if (ImGui::InputTextWithHint(lt->kind == LogicTarget::Kind::Event ? "Event Name##lt" : "Signal Name##lt",
@@ -33531,16 +33947,21 @@ void DrawInspector(EditorState& ed) {
             if (lsLoc) LocKeyInput(ed, "Subtitle key", ls->subtitle);
             else if (ImGui::InputTextWithHint("Subtitle##ls", "level name, chapter...", stb, sizeof(stb))) { ls->subtitle = stb; ed.dirty = true; }
             if (ImGui::Checkbox("Show title##ls", &ls->showTitle)) ed.dirty = true; ImGui::SameLine();
+            oked::FieldTip("Show title##ls");
             if (ImGui::Checkbox("Show bar##ls", &ls->showBar)) ed.dirty = true;
+            oked::FieldTip("Show bar##ls");
             if (ImGui::Checkbox("Show on scene start##ls", &ls->showOnStart)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show automatically when the scene starts (level intro / transition scene).");
             if (ImGui::DragFloat("Duration (s)##ls", &ls->duration, 0.05f, 0.0f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Duration (s)##ls");
             if (ImGui::DragFloat("Fade (s)##ls", &ls->fadeTime, 0.02f, 0.0f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Fade (s)##ls");
             char sn[96]; std::snprintf(sn, sizeof(sn), "%s", ls->targetScene.c_str());
             if (ImGui::InputText("Load scene when done##ls", sn, sizeof(sn))) { ls->targetScene = sn; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scene name to load when the bar fills (empty = just reveal this scene).");
             float bgc[4] = {ls->backgroundColor.r, ls->backgroundColor.g, ls->backgroundColor.b, ls->backgroundColor.a};
             if (ImGui::ColorEdit4("Background##ls", bgc)) { ls->backgroundColor = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            oked::FieldTip("Background##ls");
             ImGui::Text("Background image"); ImGui::SameLine(150);
             if (AssetSlot("lsbg", ls->backgroundImage, "Image", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
             if (!ls->backgroundImage.empty()) {
@@ -33551,18 +33972,24 @@ void DrawInspector(EditorState& ed) {
             if (AssetSlot("lslogo", ls->logoImage, "Image", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
             if (!ls->logoImage.empty()) {
                 if (ImGui::SliderFloat("Logo size##ls", &ls->logoSize, 0.05f, 0.8f)) ed.dirty = true;
+                oked::FieldTip("Logo size##ls");
                 if (ImGui::Checkbox("Logo pulse##ls", &ls->logoPulse)) ed.dirty = true;
+                oked::FieldTip("Logo pulse##ls");
             }
             if (ls->layout == (int)LoadingScreen::Layout::Card) {
                 float cc4[4] = {ls->cardColor.r, ls->cardColor.g, ls->cardColor.b, ls->cardColor.a};
                 if (ImGui::ColorEdit4("Card##ls", cc4)) { ls->cardColor = {cc4[0], cc4[1], cc4[2], cc4[3]}; ed.dirty = true; }
+                oked::FieldTip("Card##ls");
             }
             float txc[4] = {ls->textColor.r, ls->textColor.g, ls->textColor.b, ls->textColor.a};
             if (ImGui::ColorEdit4("Text##ls", txc)) { ls->textColor = {txc[0], txc[1], txc[2], txc[3]}; ed.dirty = true; }
+            oked::FieldTip("Text##ls");
             float bbc[4] = {ls->barBackground.r, ls->barBackground.g, ls->barBackground.b, ls->barBackground.a};
             if (ImGui::ColorEdit4("Bar BG##ls", bbc)) { ls->barBackground = {bbc[0], bbc[1], bbc[2], bbc[3]}; ed.dirty = true; }
+            oked::FieldTip("Bar BG##ls");
             float bfc[4] = {ls->barFill.r, ls->barFill.g, ls->barFill.b, ls->barFill.a};
             if (ImGui::ColorEdit4("Bar Fill##ls", bfc)) { ls->barFill = {bfc[0], bfc[1], bfc[2], bfc[3]}; ed.dirty = true; }
+            oked::FieldTip("Bar Fill##ls");
             if (ImGui::TreeNodeEx("Tips##ls", ImGuiTreeNodeFlags_DefaultOpen)) {
                 for (std::size_t i = 0; i < ls->tips.size(); ++i) {
                     char tipb[160]; std::snprintf(tipb, sizeof(tipb), "%s", ls->tips[i].c_str());
@@ -33583,19 +34010,24 @@ void DrawInspector(EditorState& ed) {
             };
             if (ImGui::TreeNode("Background##ls")) {
                 if (ImGui::Checkbox("Gradient##ls", &ls->gradientBackground)) ed.dirty = true;
+                oked::FieldTip("Gradient##ls");
                 if (ls->gradientBackground) lc("Background 2", ls->backgroundColor2, "lsbg2");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNode("Title##lst")) {
                 lc("Title color", ls->titleColor, "lstc");
                 if (ImGui::DragFloat("Title scale##ls", &ls->titleScale, 0.02f, 0.2f, 6.0f)) ed.dirty = true;
+                oked::FieldTip("Title scale##ls");
                 if (ImGui::SliderFloat("Title Y##ls", &ls->titleY, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Title Y##ls");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNode("Tip##lstip")) {
                 lc("Tip color", ls->tipColor, "lstipc");
                 if (ImGui::DragFloat("Tip scale##ls", &ls->tipScale, 0.02f, 0.2f, 6.0f)) ed.dirty = true;
+                oked::FieldTip("Tip scale##ls");
                 if (ImGui::SliderFloat("Tip Y##ls", &ls->tipY, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Tip Y##ls");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNode("Progress bar##lsbar")) {
@@ -33603,23 +34035,35 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Combo("Style##lsbar", &ls->barStyle, kBarStyles, IM_ARRAYSIZE(kBarStyles))) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Indeterminate: a sliding chunk, for loads with no known length.");
                 if (ImGui::SliderFloat("Width##lsbar", &ls->barWidth, 0.05f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Width##lsbar");
                 if (ImGui::SliderFloat("Height##lsbar", &ls->barHeight, 0.005f, 0.1f)) ed.dirty = true;
+                oked::FieldTip("Height##lsbar");
                 if (ImGui::SliderFloat("Y##lsbar", &ls->barY, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Y##lsbar");
                 if (ImGui::DragFloat("Corner radius##lsbar", &ls->barRadius, 0.25f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Corner radius##lsbar");
                 if (ImGui::Checkbox("Border##lsbar", &ls->barBorder)) ed.dirty = true; ImGui::SameLine();
+                oked::FieldTip("Border##lsbar");
                 if (ImGui::Checkbox("Show percent##lsbar", &ls->showPercent)) ed.dirty = true;
+                oked::FieldTip("Show percent##lsbar");
                 if (ls->barBorder) lc("Border color", ls->barBorderColor, "lsbarbc");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNode("Spinner##lsspin")) {
                 if (ImGui::Checkbox("Show spinner##ls", &ls->showSpinner)) ed.dirty = true;
+                oked::FieldTip("Show spinner##ls");
                 static const char* kSpinStyles[] = {"Dots", "Arc", "Bars", "Pulse"};
                 if (ImGui::Combo("Style##lsspin", &ls->spinnerStyle, kSpinStyles, IM_ARRAYSIZE(kSpinStyles))) ed.dirty = true;
+                oked::FieldTip("Style##lsspin");
                 lc("Spinner color", ls->spinnerColor, "lsspc");
                 if (ImGui::SliderFloat("Radius##lsspin", &ls->spinnerRadius, 0.01f, 0.2f)) ed.dirty = true;
+                oked::FieldTip("Radius##lsspin");
                 if (ImGui::DragFloat("Dot size##lsspin", &ls->spinnerDotSize, 0.1f, 1.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Dot size##lsspin");
                 if (ImGui::DragFloat("Speed##lsspin", &ls->spinnerSpeed, 0.1f, -30.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Speed##lsspin");
                 if (ImGui::SliderFloat("Y##lsspin", &ls->spinnerY, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Y##lsspin");
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
@@ -33630,23 +34074,30 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Hotbar + backpack drawn from a sibling/owner Inventory.");
             if (!ui->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to show items.");
             if (ImGui::SliderInt("Hotbar Slots##iu", &ui->hotbarSlots, 1, 9)) ed.dirty = true;
+            oked::FieldTip("Hotbar Slots##iu");
             if (ImGui::SliderInt("Backpack Rows##iu", &ui->backpackRows, 0, 6)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used when the Inventory has no capacity; otherwise the UI shows exactly its capacity.");
             char itb[64]; std::snprintf(itb, sizeof(itb), "%s", ui->inventoryTarget.c_str());
             if (ImGui::InputText("Inventory Object##iu", itb, sizeof(itb))) { ui->inventoryTarget = itb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the object holding the Inventory (e.g. Player). Blank = this object or its root.");
             if (ImGui::DragFloat("Slot Size##iu", &ui->slotSize, 0.5f, 16.0f, 128.0f)) ed.dirty = true;
+            oked::FieldTip("Slot Size##iu");
             if (ImGui::DragFloat("Slot Gap##iu", &ui->slotGap, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
+            oked::FieldTip("Slot Gap##iu");
             char tk[2] = {ui->toggleKey, 0};
             if (ImGui::InputText("Open Key##iu", tk, sizeof(tk))) { if (tk[0]) ui->toggleKey = tk[0]; ed.dirty = true; }
+            oked::FieldTip("Open Key##iu");
             if (ImGui::IsItemDeactivatedAfterEdit()) ed.PushUndo();
             ShowInvKeyWarning(ed.scene());
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to open/close the backpack (default E).");
             if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
+            oked::FieldTip("1-9 select##iu");
             if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
+            oked::FieldTip("Wheel select##iu");
             if (ImGui::Checkbox("Drag items##iu", &ui->dragItems)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag stacks between slots while the backpack is open (swap / merge).");
             if (ImGui::Checkbox("Darken when open##iu", &ui->darkenWhenOpen)) ed.dirty = true;
+            oked::FieldTip("Darken when open##iu");
             char icf[128]; std::snprintf(icf, sizeof(icf), "%s", ui->iconFolder.c_str());
             if (ImGui::InputText("Icon Folder##iu", icf, sizeof(icf))) { ui->iconFolder = icf; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Looks for <folder><item-name>.png per slot; falls back to the item name.");
@@ -33662,23 +34113,36 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the same on-screen size at any resolution (fixes 'too big in the build'). Sizes below are authored for the Reference Height.");
                 if (ui->scaleToScreen && ImGui::DragFloat("Reference Height##iu", &ui->referenceHeight, 1.0f, 120.0f, 4320.0f)) ed.dirty = true;
                 if (ImGui::Checkbox("Anchor to top##iu", &ui->anchorTop)) ed.dirty = true;
+                oked::FieldTip("Anchor to top##iu");
                 if (ImGui::DragFloat("Margin X##iu", &ui->marginX, 0.5f, -2000.0f, 2000.0f)) ed.dirty = true;
+                oked::FieldTip("Margin X##iu");
                 if (ImGui::DragFloat("Edge Margin##iu", &ui->marginY, 0.5f, 0.0f, 2000.0f)) ed.dirty = true;
+                oked::FieldTip("Edge Margin##iu");
                 if (ImGui::DragFloat("Corner Radius##iu", &ui->cornerRadius, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##iu");
                 if (ImGui::DragFloat("Border Width##iu", &ui->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                oked::FieldTip("Border Width##iu");
                 if (ImGui::DragFloat("Icon Inset##iu", &ui->iconInset, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+                oked::FieldTip("Icon Inset##iu");
                 if (ImGui::DragFloat("Label Scale##iu", &ui->labelScale, 0.02f, 0.2f, 4.0f)) ed.dirty = true;
+                oked::FieldTip("Label Scale##iu");
                 if (ImGui::SliderInt("Name Chars##iu", &ui->nameChars, 1, 12)) ed.dirty = true;
+                oked::FieldTip("Name Chars##iu");
                 if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
+                oked::FieldTip("Show counts##iu");
                 if (ImGui::Checkbox("Show names##iu", &ui->showNames)) ed.dirty = true;
+                oked::FieldTip("Show names##iu");
                 if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
+                oked::FieldTip("Background panel##iu");
                 if (ImGui::Checkbox("Held item name##iu", &ui->showSelectedName)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar (Minecraft-style).");
                 if (ui->showPanel && ImGui::DragFloat("Panel Padding##iu", &ui->panelPad, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
                 float pc[4] = {ui->panelColor.r, ui->panelColor.g, ui->panelColor.b, ui->panelColor.a};
                 if (ImGui::ColorEdit4("Panel Color##iu", pc)) { ui->panelColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
+                oked::FieldTip("Panel Color##iu");
                 float hc[4] = {ui->hoverColor.r, ui->hoverColor.g, ui->hoverColor.b, ui->hoverColor.a};
                 if (ImGui::ColorEdit4("Hover Color##iu", hc)) { ui->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
+                oked::FieldTip("Hover Color##iu");
                 // --- New style options ---
                 const char* aligns[] = {"Left", "Center", "Right"};
                 int ha = (int)ui->hAlign;
@@ -33691,10 +34155,13 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Separate fill for hotbar slots vs the backpack (Slot color).");
                 cc("Panel Border", ui->panelBorder, "iupb");
                 if (ImGui::DragFloat("Panel Border W##iu", &ui->panelBorderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                oked::FieldTip("Panel Border W##iu");
                 if (ImGui::Checkbox("Backpack title##iu", &ui->showTitle)) ed.dirty = true;
+                oked::FieldTip("Backpack title##iu");
                 if (ui->showTitle) {
                     char bt[64]; std::strncpy(bt, ui->backpackTitle.c_str(), sizeof(bt) - 1); bt[sizeof(bt) - 1] = '\0';
                     if (ImGui::InputText("Title Text##iu", bt, sizeof(bt))) { ui->backpackTitle = bt; ed.dirty = true; }
+                    oked::FieldTip("Title Text##iu");
                     cc("Title Color", ui->titleColor, "iutc");
                 }
                 ImGui::TreePop();
@@ -33722,6 +34189,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::InputText("Use Key##iu", uk, sizeof(uk))) { ui->useKey = uk[0]; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Uses the held item: eats/drinks/heals it (Consumables or its definition) or picks its build piece.");
                 if (ImGui::Checkbox("Click to Use##iu", &ui->clickToUse)) ed.dirty = true;
+                oked::FieldTip("Click to Use##iu");
                 if (ImGui::Checkbox("Right-click split##iu", &ui->splitRightClick)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click a stack to pick up part of it, then drop it where you want.");
                 ImGui::SameLine();
@@ -33740,9 +34208,11 @@ void DrawInspector(EditorState& ed) {
                         char nb[64]; std::snprintf(nb, sizeof(nb), "%s", ui->rarities[i].item.c_str());
                         ImGui::SetNextItemWidth(120);
                         if (ImGui::InputText("##rn", nb, sizeof(nb))) { ui->rarities[i].item = nb; ed.dirty = true; }
+                        oked::FieldTip("##rn");
                         ImGui::SameLine(); float rv[4] = {ui->rarities[i].color.r, ui->rarities[i].color.g, ui->rarities[i].color.b, ui->rarities[i].color.a};
                         ImGui::SetNextItemWidth(150);
                         if (ImGui::ColorEdit4("##rc", rv, ImGuiColorEditFlags_NoInputs)) { ui->rarities[i].color = {rv[0], rv[1], rv[2], rv[3]}; ed.dirty = true; }
+                        oked::FieldTip("##rc");
                         ImGui::SameLine();
                         if (ImGui::SmallButton("x")) { ui->rarities.erase(ui->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                         ImGui::PopID();
@@ -33760,10 +34230,14 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Multi-cell items in a grid; drag to rearrange in Play.");
             char tb[96]; std::snprintf(tb, sizeof(tb), "%s", gi->title.c_str());
             if (ImGui::InputText("Title##gi", tb, sizeof(tb))) { gi->title = tb; ed.dirty = true; }
+            oked::FieldTip("Title##gi");
             if (ImGui::SliderInt("Columns##gi", &gi->cols, 1, 16)) { gi->Validate(); ed.dirty = true; }
+            oked::FieldTip("Columns##gi");
             if (ImGui::SliderInt("Rows##gi", &gi->rows, 1, 12)) { gi->Validate(); ed.dirty = true; }
+            oked::FieldTip("Rows##gi");
             char ok[2] = {gi->toggleKey, 0};
             if (ImGui::InputText("Open Key##gi", ok, sizeof(ok))) { if (ok[0]) gi->toggleKey = ok[0]; ed.dirty = true; }
+            oked::FieldTip("Open Key##gi");
             ShowInvKeyWarning(ed.scene());
             char cab[48]; std::snprintf(cab, sizeof(cab), "%s", gi->category.c_str());
             if (ImGui::InputText("Category##gi", cab, sizeof(cab))) { gi->category = cab; ed.dirty = true; }
@@ -33775,6 +34249,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Enforce Weight Limit##gi", &gi->enforceWeight)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse adds and drags that would go over the weight limit (off = the limit is only shown).");
             if (ImGui::DragInt("Max Stack##gi", &gi->maxStack, 0.2f, 0, 9999)) ed.dirty = true;
+            oked::FieldTip("Max Stack##gi");
             if (ImGui::Checkbox("Keep On Scene Load##gi", &gi->keepOnSceneLoad)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Same-name items merge when dropped on each other, up to this many (0 = never). Right-click a stack in Play to split it.");
@@ -33792,13 +34267,17 @@ void DrawInspector(EditorState& ed) {
                     ImGui::SameLine(); ImGui::SetNextItemWidth(150);
                     int wh[2] = {it.w, it.h};
                     if (ImGui::DragInt2("wxh##s", wh, 0.1f, 1, 12)) { it.w = wh[0]; it.h = wh[1]; moved = true; }
+                    oked::FieldTip("wxh##s");
                     ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragInt("##c", &it.count, 0.2f, 1, 9999)) ed.dirty = true;
+                    oked::FieldTip("##c");
                     ImGui::SetNextItemWidth(110); ImGui::Indent(110);
                     int xy[2] = {it.x, it.y};
                     if (ImGui::DragInt2("x,y##p", xy, 0.1f, 0, 63)) { it.x = xy[0]; it.y = xy[1]; moved = true; }
+                    oked::FieldTip("x,y##p");
                     ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragFloat("kg##w", &it.weight, 0.05f, 0.0f, 10000.0f, "%.2f")) ed.dirty = true;
+                    oked::FieldTip("kg##w");
                     ImGui::Unindent(110);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) { gi->items.erase(gi->items.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
@@ -33831,14 +34310,21 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("World distance within which ground containers (Grid Inventory > Ground/Nearby) show up in the right column.");
                 char ntb[48]; std::snprintf(ntb, sizeof(ntb), "%s", gu->nearbyTitle.c_str());
                 if (ImGui::InputText("Nearby Title##gu", ntb, sizeof(ntb))) { gu->nearbyTitle = ntb; ed.dirty = true; }
+                oked::FieldTip("Nearby Title##gu");
             }
             if (ImGui::DragFloat("Cell Size##gu", &gu->cellSize, 0.5f, 20.0f, 160.0f)) ed.dirty = true;
+            oked::FieldTip("Cell Size##gu");
             if (ImGui::DragFloat("Gap##gu", &gu->gap, 0.1f, 0.0f, 24.0f)) ed.dirty = true;
+            oked::FieldTip("Gap##gu");
             if (ImGui::DragFloat("Corner Radius##gu", &gu->cornerRadius, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
+            oked::FieldTip("Corner Radius##gu");
             if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
+            oked::FieldTip("Darken when open##gu");
             if (ImGui::Checkbox("Show weight##gu", &gu->showWeight)) ed.dirty = true;
+            oked::FieldTip("Show weight##gu");
             char icf[128]; std::snprintf(icf, sizeof(icf), "%s", gu->iconFolder.c_str());
             if (ImGui::InputText("Icon Folder##gu", icf, sizeof(icf))) { gu->iconFolder = icf; ed.dirty = true; }
+            oked::FieldTip("Icon Folder##gu");
             auto cc = [&](const char* lbl, Color& c, const char* id) {
                 float v[4] = {c.r, c.g, c.b, c.a};
                 if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
@@ -33850,28 +34336,38 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::TreeNodeEx("Layout & Style##gu", ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::TextDisabled("Spacing (pixels)");
                 if (ImGui::DragFloat("Header Height##gu", &gu->headerHeight, 0.5f, 12.0f, 60.0f)) ed.dirty = true;
+                oked::FieldTip("Header Height##gu");
                 if (ImGui::DragFloat("Panel Padding##gu", &gu->panelPad, 0.5f, 2.0f, 60.0f)) ed.dirty = true;
+                oked::FieldTip("Panel Padding##gu");
                 if (ImGui::DragFloat("Container Gap##gu", &gu->containerGap, 0.5f, 0.0f, 80.0f)) ed.dirty = true;
+                oked::FieldTip("Container Gap##gu");
                 if (ImGui::DragFloat("Column Gap##gu", &gu->columnGap, 0.5f, 4.0f, 200.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Space between the worn-bags column and the Nearby column.");
                 ImGui::Separator();
                 ImGui::TextDisabled("Title & toggles");
                 if (ImGui::Checkbox("Master title##gu", &gu->showMasterTitle)) ed.dirty = true;
+                oked::FieldTip("Master title##gu");
                 if (gu->showMasterTitle) {
                     char mt[48]; std::snprintf(mt, sizeof(mt), "%s", gu->masterTitle.c_str());
                     if (ImGui::InputText("Title Text##gu", mt, sizeof(mt))) { gu->masterTitle = mt; ed.dirty = true; }
+                    oked::FieldTip("Title Text##gu");
                     if (ImGui::DragFloat("Title Scale##gu", &gu->titleScale, 0.02f, 0.5f, 5.0f)) ed.dirty = true;
+                    oked::FieldTip("Title Scale##gu");
                 }
                 if (ImGui::Checkbox("Item names##gu", &gu->showItemNames)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw each item's name on its tile (off = icon/colour only).");
                 if (gu->showItemNames) {
                     if (ImGui::DragFloat("Item Name Scale##gu", &gu->itemNameScale, 0.02f, 0.5f, 4.0f)) ed.dirty = true;
+                    oked::FieldTip("Item Name Scale##gu");
                 }
                 if (ImGui::SliderFloat("Backdrop Dim##gu", &gu->backdropDim, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How dark the screen behind the inventory is when open.");
                 if (ImGui::Checkbox("Gradients##gu", &gu->useGradients)) ed.dirty = true; ImGui::SameLine();
+                oked::FieldTip("Gradients##gu");
                 if (ImGui::Checkbox("Drop shadows##gu", &gu->dropShadows)) ed.dirty = true;
+                oked::FieldTip("Drop shadows##gu");
                 if (ImGui::Checkbox("Accent bars##gu", &gu->accentBars)) ed.dirty = true; ImGui::SameLine();
+                oked::FieldTip("Accent bars##gu");
                 if (ImGui::Checkbox("Auto accent colour##gu", &gu->autoAccent)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: each bag/item gets a distinct colour from its name. Off: use the fixed Accent colour.");
                 ImGui::Separator();
@@ -33900,9 +34396,11 @@ void DrawInspector(EditorState& ed) {
                         char nb[64]; std::snprintf(nb, sizeof(nb), "%s", gu->rarities[i].item.c_str());
                         ImGui::SetNextItemWidth(120);
                         if (ImGui::InputText("##rn", nb, sizeof(nb))) { gu->rarities[i].item = nb; ed.dirty = true; }
+                        oked::FieldTip("##rn");
                         ImGui::SameLine(); float rv[4] = {gu->rarities[i].color.r, gu->rarities[i].color.g, gu->rarities[i].color.b, gu->rarities[i].color.a};
                         ImGui::SetNextItemWidth(150);
                         if (ImGui::ColorEdit4("##rc", rv, ImGuiColorEditFlags_NoInputs)) { gu->rarities[i].color = {rv[0], rv[1], rv[2], rv[3]}; ed.dirty = true; }
+                        oked::FieldTip("##rc");
                         ImGui::SameLine();
                         if (ImGui::SmallButton("x")) { gu->rarities.erase(gu->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                         ImGui::PopID();
@@ -33921,10 +34419,13 @@ void DrawInspector(EditorState& ed) {
             if (!cs->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to craft from.");
             char tb[96]; std::snprintf(tb, sizeof(tb), "%s", cs->title.c_str());
             if (ImGui::InputText("Title##cs", tb, sizeof(tb))) { cs->title = tb; ed.dirty = true; }
+            oked::FieldTip("Title##cs");
             char ok[2] = {cs->toggleKey, 0};
             if (ImGui::InputText("Open Key##cs", ok, sizeof(ok))) { if (ok[0]) cs->toggleKey = ok[0]; ed.dirty = true; }
+            oked::FieldTip("Open Key##cs");
             ShowInvKeyWarning(ed.scene());
             if (ImGui::Checkbox("Close after craft##cs", &cs->closeWhenCrafted)) ed.dirty = true;
+            oked::FieldTip("Close after craft##cs");
             if (ImGui::DragFloat("Open Range##cs", &cs->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be. Only the nearest bench in range opens. 0 = any distance.");
             char pnc[64]; std::snprintf(pnc, sizeof(pnc), "%s", cs->playerName.c_str());
@@ -33937,7 +34438,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Station Tag##cs", tg, sizeof(tg))) { cs->stationTag = tg; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("What kind of bench this is (workbench, forge...). Recipes needing this tag craft here.");
             if (ImGui::DragFloat("Width##cs", &cs->width, 0.5f, 80.0f, 800.0f)) ed.dirty = true;
+            oked::FieldTip("Width##cs");
             if (ImGui::DragFloat("Row Height##cs", &cs->rowHeight, 0.25f, 14.0f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Row Height##cs");
             auto cc = [&](const char* lbl, Color& c, const char* id) {
                 float v[4] = {c.r, c.g, c.b, c.a};
                 if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
@@ -33952,6 +34455,7 @@ void DrawInspector(EditorState& ed) {
                     if (ItemPicker("out##o", rec.output, 110)) ed.dirty = true;
                     ImGui::SameLine(); ImGui::SetNextItemWidth(70);
                     if (ImGui::DragInt("x##oc", &rec.outputCount, 0.1f, 1, 999)) ed.dirty = true;
+                    oked::FieldTip("x##oc");
                     ImGui::SameLine();
                     if (ImGui::SmallButton("del")) { cs->recipes.erase(cs->recipes.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                     ImGui::Indent();
@@ -33960,6 +34464,7 @@ void DrawInspector(EditorState& ed) {
                         if (ItemPicker("##in", rec.inputs[j].item, 100)) ed.dirty = true;
                         ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                         if (ImGui::DragInt("##ic", &rec.inputs[j].count, 0.1f, 1, 999)) ed.dirty = true;
+                        oked::FieldTip("##ic");
                         ImGui::SameLine();
                         if (ImGui::SmallButton("x")) { rec.inputs.erase(rec.inputs.begin() + j); ed.dirty = true; ImGui::PopID(); break; }
                         ImGui::PopID();
@@ -33980,7 +34485,9 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Equipment", eq, &toRemove)) {
             ImGui::TextDisabled("Worn / held items. Drag an item from the bag onto a slot in Play.");
             if (ImGui::Checkbox("Show On Character##eq", &eq->showOnCharacter)) ed.dirty = true;
+            oked::FieldTip("Show On Character##eq");
             if (ImGui::Checkbox("Keep On Scene Load##eq", &eq->keepOnSceneLoad)) ed.dirty = true;
+            oked::FieldTip("Keep On Scene Load##eq");
             int removeAt = -1;
             for (int i = 0; i < (int)eq->slots.size(); ++i) {
                 auto& s = eq->slots[i];
@@ -33988,6 +34495,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Separator();
                 char nb[64]; std::snprintf(nb, sizeof(nb), "%s", s.name.c_str());
                 if (ImGui::InputText("Slot", nb, sizeof(nb))) { s.name = nb; ed.dirty = true; }
+                oked::FieldTip("Slot");
                 int acc = (int)s.accepts;
                 if (ImGui::BeginCombo("Accepts", acc == 0 ? "Anything equippable" : okay::EquipSlotName(s.accepts))) {
                     for (int k = 0; k <= (int)okay::EquipSlot::OffHand; ++k)
@@ -33998,6 +34506,7 @@ void DrawInspector(EditorState& ed) {
                 }
                 char sb[64]; std::snprintf(sb, sizeof(sb), "%s", s.socket.c_str());
                 if (ImGui::InputTextWithHint("Socket", Equipment::DefaultSocket(s.accepts), sb, sizeof(sb))) { s.socket = sb; ed.dirty = true; }
+                oked::FieldTip("Socket");
                 if (ItemPicker("Worn Item", s.item, 160)) ed.dirty = true;
                 if (!s.item.empty() && !eq->Accepts(i, s.item))
                     ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "This item's equip slot doesn't match.");
@@ -34014,16 +34523,22 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("An item in the world. Walk into it (trigger), come close, or press the key.");
             if (ItemPicker("Item##pk", pk->item, 160)) ed.dirty = true;
             if (ImGui::DragInt("Count##pk", &pk->count, 0.2f, 1, 99999)) ed.dirty = true;
+            oked::FieldTip("Count##pk");
             char tb[64]; std::snprintf(tb, sizeof(tb), "%s", pk->collectorTag.c_str());
             if (ImGui::InputText("Collector Tag##pk", tb, sizeof(tb))) { pk->collectorTag = tb; ed.dirty = true; }
+            oked::FieldTip("Collector Tag##pk");
             if (ImGui::Checkbox("Pick Up On Touch##pk", &pk->pickupOnTouch)) ed.dirty = true;
+            oked::FieldTip("Pick Up On Touch##pk");
             if (ImGui::DragFloat("Auto Radius##pk", &pk->autoRadius, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Auto Radius##pk");
             char ik[2] = {pk->interactKey, 0};
             if (ImGui::InputText("Interact Key##pk", ik, sizeof(ik))) { pk->interactKey = ik[0]; ed.dirty = true; }
+            oked::FieldTip("Interact Key##pk");
             if (pk->interactKey && ImGui::DragFloat("Interact Range##pk", &pk->interactRange, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
             if (pk->interactKey && ImGui::Checkbox("Hold In Hands##pk", &pk->holdInHands)) ed.dirty = true;
             if (pk->interactKey && pk->holdInHands) ImGui::TextDisabled("The key picks it up with Procedural Object Holding (if the player has it).");
             if (ImGui::DragFloat("Magnet Radius##pk", &pk->magnetRadius, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Magnet Radius##pk");
             if (pk->magnetRadius > 0.0f && ImGui::DragFloat("Magnet Speed##pk", &pk->magnetSpeed, 0.1f, 0.1f, 100.0f)) ed.dirty = true;
         }
     }
@@ -34032,9 +34547,11 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Rolls an .okayloot table into this container, or onto the ground on death.");
             char tb[256]; std::snprintf(tb, sizeof(tb), "%s", ls->table.c_str());
             if (ImGui::InputText("Loot Table##ls", tb, sizeof(tb))) { ls->table = tb; ed.dirty = true; }
+            oked::FieldTip("Loot Table##ls");
             int w = (int)ls->when;
             const char* whens[] = {"On Start", "On First Open", "On Death"};
             if (ImGui::Combo("When##ls", &w, whens, IM_ARRAYSIZE(whens))) { ls->when = (LootSource::When)w; ed.dirty = true; }
+            oked::FieldTip("When##ls");
             if (ImGui::DragFloat("Refill After (s)##ls", &ls->refill, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Once emptied, fill again after this many seconds (0 = only once).");
             if (ImGui::DragInt("Seed##ls", &ls->seed, 1.0f, 0, 1 << 30)) ed.dirty = true;
@@ -34047,8 +34564,10 @@ void DrawInspector(EditorState& ed) {
             if (!ch->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component for the chest's items.");
             char tb[96]; std::snprintf(tb, sizeof(tb), "%s", ch->title.c_str());
             if (ImGui::InputText("Title##ch", tb, sizeof(tb))) { ch->title = tb; ed.dirty = true; }
+            oked::FieldTip("Title##ch");
             char ok[2] = {ch->openKey, 0};
             if (ImGui::InputText("Open Key##ch", ok, sizeof(ok))) { if (ok[0]) ch->openKey = ok[0]; ed.dirty = true; }
+            oked::FieldTip("Open Key##ch");
             ShowInvKeyWarning(ed.scene());
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press near the chest to open (default F). Click items to move them.");
             if (ImGui::DragFloat("Open Range##ch", &ch->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
@@ -34057,12 +34576,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Player Object##ch", pnh, sizeof(pnh))) { ch->playerName = pnh; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who the player is. Blank = the \"Player\"-tagged object, else the main camera's target.");
             if (ImGui::SliderInt("Columns##ch", &ch->cols, 1, 12)) ed.dirty = true;
+            oked::FieldTip("Columns##ch");
             if (ImGui::DragFloat("Slot Size##ch", &ch->slotSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
+            oked::FieldTip("Slot Size##ch");
             if (ImGui::DragFloat("Gap##ch", &ch->gap, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            oked::FieldTip("Gap##ch");
             if (ImGui::DragFloat("Corner Radius##ch", &ch->cornerRadius, 0.25f, 0.0f, 24.0f)) ed.dirty = true;
+            oked::FieldTip("Corner Radius##ch");
             if (ImGui::Checkbox("Darken when open##ch", &ch->darkenWhenOpen)) ed.dirty = true;
+            oked::FieldTip("Darken when open##ch");
             char icf[128]; std::snprintf(icf, sizeof(icf), "%s", ch->iconFolder.c_str());
             if (ImGui::InputText("Icon Folder##ch", icf, sizeof(icf))) { ch->iconFolder = icf; ed.dirty = true; }
+            oked::FieldTip("Icon Folder##ch");
             auto cc = [&](const char* lbl, Color& c, const char* id) {
                 float v[4] = {c.r, c.g, c.b, c.a};
                 if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
@@ -34079,10 +34604,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Range##ni", &ni->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close someone must be to take from a chest (0 = any distance).");
             if (ImGui::DragInt("Requests / sec##ni", &ni->maxPerSecond, 0.2f, 0, 200)) ed.dirty = true;
+            oked::FieldTip("Requests / sec##ni");
             if (ImGui::DragInt("Cheat threshold##ni", &ni->cheatThreshold, 0.1f, 1, 100)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Invalid requests before On Cheat Detected, with detail \"inventory\".");
             if (ImGui::DragInt("Max request bytes##ni", &ni->maxRequestBytes, 1.0f, 32, 4096)) ed.dirty = true;
+            oked::FieldTip("Max request bytes##ni");
             if (ImGui::Checkbox("Hide until opened##ni", &ni->hideUntilOpen)) ed.dirty = true;
+            oked::FieldTip("Hide until opened##ni");
             char sd[256]; std::snprintf(sd, sizeof(sd), "%s", ni->saveDir.c_str());
             if (ImGui::InputText("Host save folder##ni", sd, sizeof(sd))) { ni->saveDir = sd; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional folder for the host's copy of a signed-in player's bag. Empty = memory only, until the host quits.");
@@ -34107,45 +34635,70 @@ void DrawInspector(EditorState& ed) {
             ImGui::Spacing();
             if (ImGui::TreeNodeEx("Health##sv", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::DragFloat("Max Health##sv", &sv->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("Max Health##sv");
                 if (ImGui::DragFloat("Armor##sv", &sv->armor, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+                oked::FieldTip("Armor##sv");
                 if (ImGui::DragFloat("Regen / s (fed)##sv", &sv->regenWhenFed, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Regen / s (fed)##sv");
                 if (ImGui::DragFloat("Regen Delay##sv", &sv->regenDelay, 0.1f, 0.0f, 60.0f, "%.1f s")) ed.dirty = true;
+                oked::FieldTip("Regen Delay##sv");
                 if (ImGui::SliderFloat("Resistance##sv", &sv->resistance, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Resistance##sv");
                 if (ImGui::DragFloat("I-Frames##sv", &sv->invincibleTime, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("I-Frames##sv");
                 if (ImGui::Checkbox("God Mode##sv", &sv->godMode)) ed.dirty = true;
+                oked::FieldTip("God Mode##sv");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Hunger##sv")) {
                 if (ImGui::DragFloat("Max##svh", &sv->maxHunger, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("Max##svh");
                 if (ImGui::DragFloat("Drain / s##svh", &sv->hungerDrain, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Drain / s##svh");
                 if (ImGui::DragFloat("Starve Dmg / s##svh", &sv->starveDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Starve Dmg / s##svh");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Thirst##sv")) {
                 if (ImGui::DragFloat("Max##svt", &sv->maxThirst, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("Max##svt");
                 if (ImGui::DragFloat("Drain / s##svt", &sv->thirstDrain, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Drain / s##svt");
                 if (ImGui::DragFloat("Dehydrate Dmg / s##svt", &sv->dehydrateDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Dehydrate Dmg / s##svt");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Stamina##sv")) {
                 if (ImGui::DragFloat("Max##svs", &sv->maxStamina, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("Max##svs");
                 if (ImGui::DragFloat("Regen / s##svs", &sv->staminaRegen, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Regen / s##svs");
                 if (ImGui::DragFloat("Sprint Cost / s##svs", &sv->sprintCost, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Sprint Cost / s##svs");
                 if (ImGui::DragFloat("Sprint Drain x##svs", &sv->sprintDrainMult, 0.1f, 0.0f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Sprint Drain x##svs");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Oxygen##sv")) {
                 if (ImGui::DragFloat("Max##svo", &sv->maxOxygen, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("Max##svo");
                 if (ImGui::DragFloat("Drain / s##svo", &sv->oxygenDrain, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Drain / s##svo");
                 if (ImGui::DragFloat("Refill / s##svo", &sv->oxygenRefill, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Refill / s##svo");
                 if (ImGui::DragFloat("Drown Dmg / s##svo", &sv->drownDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Drown Dmg / s##svo");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Temperature##sv")) {
                 if (ImGui::DragFloat("Max Warmth##svw", &sv->maxWarmth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("Max Warmth##svw");
                 if (ImGui::DragFloat("Cold Drain / s##svw", &sv->coldDrain, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Cold Drain / s##svw");
                 if (ImGui::DragFloat("Warm Regen / s##svw", &sv->warmRegen, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Warm Regen / s##svw");
                 if (ImGui::DragFloat("Freeze Dmg / s##svw", &sv->freezeDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Freeze Dmg / s##svw");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Output##sv")) {
@@ -34185,25 +34738,36 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Stat: Health", c, &toRemove)) {
             statValue(&c->health, c->maxHealth, "sth");
             if (ImGui::DragFloat("Max Health##sth", &c->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max Health##sth");
             if (ImGui::DragFloat("Armor##sth", &c->armor, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Armor##sth");
             if (ImGui::DragFloat("Regen / s##sth", &c->regenPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Regen / s##sth");
             if (ImGui::DragFloat("Regen Delay##sth", &c->regenDelay, 0.1f, 0.0f, 60.0f, "%.1f s")) ed.dirty = true;
+            oked::FieldTip("Regen Delay##sth");
             if (ImGui::DragFloat("Low Threshold##sth", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Low Threshold##sth");
             if (ImGui::TreeNodeEx("Mitigation##sth")) {
                 if (ImGui::SliderFloat("Resistance##sth", &c->resistance, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of post-armor damage ignored.");
                 if (ImGui::DragFloat("Min Damage##sth", &c->minDamage, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+                oked::FieldTip("Min Damage##sth");
                 if (ImGui::DragFloat("I-Frames##sth", &c->invincibleTime, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("I-Frames##sth");
                 if (ImGui::Checkbox("God Mode##sth", &c->godMode)) ed.dirty = true;
+                oked::FieldTip("God Mode##sth");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Overheal##sth")) {
                 if (ImGui::DragFloat("Overheal Max##sth", &c->overhealMax, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("Overheal Max##sth");
                 if (ImGui::DragFloat("Overheal Decay / s##sth", &c->overhealDecay, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Overheal Decay / s##sth");
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Death / Respawn##sth")) {
                 if (ImGui::Checkbox("Play Death Anim##sth", &c->playDeathAnim)) ed.dirty = true;
+                oked::FieldTip("Play Death Anim##sth");
                 if (ImGui::Checkbox("Play Hit Anim##sth", &c->playHitAnim)) ed.dirty = true;
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Off by default. When on, Damage that knows where the hit came from\n"
@@ -34212,10 +34776,14 @@ void DrawInspector(EditorState& ed) {
                     ImGui::SetTooltip("On death, play Death in the direction of the last hit and keep the\n"
                                       "body active until it settles, then shrink the capsule to crouch height.");
                 if (ImGui::Checkbox("Destroy on Death##sth", &c->destroyOnDeath)) ed.dirty = true;
+                oked::FieldTip("Destroy on Death##sth");
                 if (ImGui::Checkbox("Respawn##sth", &c->respawn)) ed.dirty = true;
+                oked::FieldTip("Respawn##sth");
                 if (c->respawn) {
                     if (ImGui::DragFloat("Respawn Delay##sth", &c->respawnDelay, 0.1f, 0.0f, 60.0f, "%.1f s")) ed.dirty = true;
+                    oked::FieldTip("Respawn Delay##sth");
                     if (ImGui::DragInt("Lives (0=inf)##sth", &c->lives, 0.1f, 0, 999)) ed.dirty = true;
+                    oked::FieldTip("Lives (0=inf)##sth");
                 }
                 ImGui::TreePop();
             }
@@ -34229,17 +34797,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Height##seat", &c->seatHeight, 0.01f, 0.0f, 2.0f, "%.2f m")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The chair clips are baked for 0.45 m. This moves the body onto the seat.");
             if (ImGui::DragFloat3("Sit Point##seat", &c->sitPoint.x, 0.01f)) ed.dirty = true;
+            oked::FieldTip("Sit Point##seat");
             if (ImGui::DragFloat("Facing##seat", &c->facing, 1.0f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Facing##seat");
             const char* kinds[] = {"Chair", "Ground", "Bench"};
             int kind = c->type;
             if (kind < 0 || kind > 2) kind = 0;
             if (ImGui::Combo("Type##seat", &kind, kinds, 3)) { c->type = kind; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bench uses the chair clips. Ground uses the cross-legged sit.");
             if (ImGui::DragFloat3("Exit Point##seat", &c->exitPoint.x, 0.01f)) ed.dirty = true;
+            oked::FieldTip("Exit Point##seat");
             if (ImGui::DragFloat("Use Radius##seat", &c->useRadius, 0.05f, 0.1f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Use Radius##seat");
             char pbuf[128];
             std::snprintf(pbuf, sizeof(pbuf), "%s", c->prompt.c_str());
             if (ImGui::InputText("Prompt##seat", pbuf, sizeof(pbuf))) { c->prompt = pbuf; ed.dirty = true; }
+            oked::FieldTip("Prompt##seat");
             if (c->occupied) ImGui::TextDisabled("Occupied");
             if (ImGui::SmallButton("Remove##seat")) toRemove = c;
         }
@@ -34248,16 +34821,23 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Stat: Hunger", c, &toRemove)) {
             statValue(&c->hunger, c->maxHunger, "sthu");
             if (ImGui::DragFloat("Max##sthu", &c->maxHunger, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max##sthu");
             if (ImGui::DragFloat("Drain / s##sthu", &c->drainPerSecond, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Drain / s##sthu");
             if (ImGui::DragFloat("Sprint x##sthu", &c->sprintMultiplier, 0.1f, 0.0f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Sprint x##sthu");
             if (ImGui::DragFloat("Low Threshold##sthu", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Low Threshold##sthu");
             if (ImGui::DragFloat("Starve Damage / s##sthu", &c->starveDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s drained from a sibling Stat: Health while empty (0 = off).");
             if (ImGui::DragFloat("Overeat Max##sthu", &c->overeatMax, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eat can stack this far past full (a saturation buffer that bleeds off).");
             if (ImGui::Checkbox("Slow When Starving##sthu", &c->slowWhenStarving)) ed.dirty = true;
-            if (c->slowWhenStarving)
+            oked::FieldTip("Slow When Starving##sthu");
+            if (c->slowWhenStarving) {
                 if (ImGui::SliderFloat("Min Speed##sthu", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Min Speed##sthu");
+            }
             statOutputs(c, "sthu");
             ImGui::TextDisabled("Methods: Eat, SetSprinting, SetDrainScale, SpeedFactor().");
             if (ImGui::SmallButton("Remove##sthu")) toRemove = c;
@@ -34267,13 +34847,19 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Stat: Thirst", c, &toRemove)) {
             statValue(&c->thirst, c->maxThirst, "stt");
             if (ImGui::DragFloat("Max##stt", &c->maxThirst, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max##stt");
             if (ImGui::DragFloat("Drain / s##stt", &c->drainPerSecond, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Drain / s##stt");
             if (ImGui::DragFloat("Sprint x##stt", &c->sprintMultiplier, 0.1f, 0.0f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Sprint x##stt");
             if (ImGui::DragFloat("Low Threshold##stt", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Low Threshold##stt");
             if (ImGui::DragFloat("Dehydrate Dmg / s##stt", &c->dehydrateDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while empty (0 = off).");
             if (ImGui::DragFloat("Overdrink Max##stt", &c->overdrinkMax, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Overdrink Max##stt");
             if (ImGui::Checkbox("Slow When Dehydrated##stt", &c->slowWhenDehydrated)) ed.dirty = true;
+            oked::FieldTip("Slow When Dehydrated##stt");
             if (c->slowWhenDehydrated) if (ImGui::SliderFloat("Min Speed##stt", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
             statOutputs(c, "stt");
             ImGui::TextDisabled("Methods: Drink, SetSprinting, SetDrainScale, SpeedFactor().");
@@ -34284,14 +34870,23 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Stat: Stamina", c, &toRemove)) {
             statValue(&c->stamina, c->maxStamina, "sts");
             if (ImGui::DragFloat("Max##sts", &c->maxStamina, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max##sts");
             if (ImGui::DragFloat("Regen / s##sts", &c->regenPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Regen / s##sts");
             if (ImGui::DragFloat("Regen Delay##sts", &c->regenDelay, 0.1f, 0.0f, 60.0f, "%.1f s")) ed.dirty = true;
+            oked::FieldTip("Regen Delay##sts");
             if (ImGui::DragFloat("Sprint Cost / s##sts", &c->sprintCost, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Sprint Cost / s##sts");
             if (ImGui::DragFloat("Jump Cost##sts", &c->jumpCost, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Jump Cost##sts");
             if (ImGui::DragFloat("Recover Until##sts", &c->exhaustedUntil, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Recover Until##sts");
             if (ImGui::DragFloat("Regen Scale##sts", &c->regenScale, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Regen Scale##sts");
             if (ImGui::DragFloat("Low Threshold##sts", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Low Threshold##sts");
             if (ImGui::Checkbox("Slow When Exhausted##sts", &c->slowWhenExhausted)) ed.dirty = true;
+            oked::FieldTip("Slow When Exhausted##sts");
             if (c->slowWhenExhausted) if (ImGui::SliderFloat("Min Speed##sts", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
             statOutputs(c, "sts");
             ImGui::TextDisabled("Methods: TryJump, SetSprinting, CanSprint, SetDrainScale, SpeedFactor().");
@@ -34302,9 +34897,13 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Stat: Oxygen", c, &toRemove)) {
             statValue(&c->oxygen, c->maxOxygen, "sto");
             if (ImGui::DragFloat("Max##sto", &c->maxOxygen, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max##sto");
             if (ImGui::DragFloat("Drain / s##sto", &c->drainPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Drain / s##sto");
             if (ImGui::DragFloat("Refill / s##sto", &c->refillPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Refill / s##sto");
             if (ImGui::DragFloat("Low Threshold##sto", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Low Threshold##sto");
             if (ImGui::DragFloat("Drown Dmg / s##sto", &c->drownDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while out of air (0 = off).");
             statOutputs(c, "sto");
@@ -34316,9 +34915,13 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Stat: Temperature", c, &toRemove)) {
             statValue(&c->warmth, c->maxWarmth, "stmp");
             if (ImGui::DragFloat("Max Warmth##stmp", &c->maxWarmth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max Warmth##stmp");
             if (ImGui::DragFloat("Cold Drain / s##stmp", &c->coldDrain, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Cold Drain / s##stmp");
             if (ImGui::DragFloat("Warm Regen / s##stmp", &c->warmRegen, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Warm Regen / s##stmp");
             if (ImGui::DragFloat("Low Threshold##stmp", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Low Threshold##stmp");
             if (ImGui::DragFloat("Freeze Dmg / s##stmp", &c->freezeDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while frozen (0 = off).");
             statOutputs(c, "stmp");
@@ -34330,12 +34933,17 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Stat: Sleep / Energy", c, &toRemove)) {
             statValue(&c->energy, c->maxEnergy, "stsl");
             if (ImGui::DragFloat("Max Energy##stsl", &c->maxEnergy, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max Energy##stsl");
             if (ImGui::DragFloat("Drain / s##stsl", &c->drainPerSecond, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Drain / s##stsl");
             if (ImGui::DragFloat("Rest / s##stsl", &c->restPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Rest / s##stsl");
             if (ImGui::DragFloat("Tired Threshold##stsl", &c->tiredThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Tired Threshold##stsl");
             if (ImGui::DragFloat("Exhaust Dmg / s##stsl", &c->exhaustDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health at 0 energy (0 = off).");
             if (ImGui::Checkbox("Slow When Tired##stsl", &c->slowWhenTired)) ed.dirty = true;
+            oked::FieldTip("Slow When Tired##stsl");
             if (c->slowWhenTired) if (ImGui::SliderFloat("Min Speed##stsl", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
             statOutputs(c, "stsl");
             ImGui::TextDisabled("Methods: Rest, SetResting, SetDrainScale, SpeedFactor().");
@@ -34346,9 +34954,13 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Stat: Sanity", c, &toRemove)) {
             statValue(&c->sanity, c->maxSanity, "stsn");
             if (ImGui::DragFloat("Max##stsn", &c->maxSanity, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max##stsn");
             if (ImGui::DragFloat("Drain in Danger / s##stsn", &c->drainInDark, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Drain in Danger / s##stsn");
             if (ImGui::DragFloat("Regen Safe / s##stsn", &c->regenInLight, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Regen Safe / s##stsn");
             if (ImGui::DragFloat("Low Threshold##stsn", &c->lowThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Low Threshold##stsn");
             if (ImGui::DragFloat("Insane Dmg / s##stsn", &c->insaneDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while insane (0 = off).");
             statOutputs(c, "stsn");
@@ -34361,10 +34973,15 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Builds in zones; past threshold it poisons Health.");
             statValue(&c->radiation, c->maxRadiation, "strd");
             if (ImGui::DragFloat("Max##strd", &c->maxRadiation, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max##strd");
             if (ImGui::DragFloat("Gain / s (in zone)##strd", &c->gainPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Gain / s (in zone)##strd");
             if (ImGui::DragFloat("Decay / s##strd", &c->decayPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Decay / s##strd");
             if (ImGui::DragFloat("Sick Threshold##strd", &c->sickThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Sick Threshold##strd");
             if (ImGui::DragFloat("Damage / s##strd", &c->damagePerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Damage / s##strd");
             statOutputs(c, "strd");
             ImGui::TextDisabled("Methods: AddRadiation, TakeAntiRad, SetInRadiation.");
             if (ImGui::SmallButton("Remove##strd")) toRemove = c;
@@ -34375,8 +34992,11 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Wounds drain Health until bandaged.");
             statValue(&c->bleed, c->maxBleed, "stbl");
             if (ImGui::DragFloat("Max Bleed##stbl", &c->maxBleed, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max Bleed##stbl");
             if (ImGui::DragFloat("Damage / s (full)##stbl", &c->damagePerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Damage / s (full)##stbl");
             if (ImGui::DragFloat("Clot / s##stbl", &c->clotPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Clot / s##stbl");
             statOutputs(c, "stbl");
             ImGui::TextDisabled("Methods: Wound, Bandage, Heal.");
             if (ImGui::SmallButton("Remove##stbl")) toRemove = c;
@@ -34387,8 +35007,11 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Toxin damages Health, then fades; antidote clears.");
             statValue(&c->poison, c->maxPoison, "stpo");
             if (ImGui::DragFloat("Max Poison##stpo", &c->maxPoison, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max Poison##stpo");
             if (ImGui::DragFloat("Damage / s (full)##stpo", &c->damagePerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Damage / s (full)##stpo");
             if (ImGui::DragFloat("Decay / s##stpo", &c->decayPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Decay / s##stpo");
             statOutputs(c, "stpo");
             ImGui::TextDisabled("Methods: Poison, Cure, CureAll.");
             if (ImGui::SmallButton("Remove##stpo")) toRemove = c;
@@ -34399,11 +35022,15 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Soaks in water/rain; chills warmth while wet.");
             statValue(&c->wetness, c->maxWetness, "stwe");
             if (ImGui::DragFloat("Max Wetness##stwe", &c->maxWetness, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max Wetness##stwe");
             if (ImGui::DragFloat("Soak / s##stwe", &c->soakPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Soak / s##stwe");
             if (ImGui::DragFloat("Dry / s##stwe", &c->dryPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Dry / s##stwe");
             if (ImGui::DragFloat("Chill Warmth / s##stwe", &c->chillPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Warmth drained from a sibling Temperature/Survival while soaked. 0 = off.");
             if (ImGui::DragFloat("Soaked Threshold##stwe", &c->soakedThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Soaked Threshold##stwe");
             statOutputs(c, "stwe");
             ImGui::TextDisabled("Methods: AddWetness, DryOff, SetInWater.");
             if (ImGui::SmallButton("Remove##stwe")) toRemove = c;
@@ -34414,7 +35041,9 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Over the limit: drains stamina, slows movement.");
             statValue(&c->load, c->maxLoad, "stcw");
             if (ImGui::DragFloat("Max Load##stcw", &c->maxLoad, 1.0f, 0.0f, 1000000.0f)) ed.dirty = true;
+            oked::FieldTip("Max Load##stcw");
             if (ImGui::DragFloat("Over Stamina Drain / s##stcw", &c->overStaminaDrain, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Over Stamina Drain / s##stcw");
             if (ImGui::DragFloat("Min Speed Factor##stcw", &c->minSpeedFactor, 0.05f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Movement multiplier when heavily overloaded. Read SpeedFactor() from a controller.");
             statOutputs(c, "stcw");
@@ -34440,6 +35069,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Save Key##svsv", key, sizeof(key))) { c->saveKey = key; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Writes <key>.okayprefs beside the game.");
             if (ImGui::Checkbox("Load on Start##svsv", &c->loadOnStart)) ed.dirty = true;
+            oked::FieldTip("Load on Start##svsv");
             if (ImGui::Checkbox("Save Continuously##svsv", &c->saveContinuously)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror current values to Prefs every frame (still call Save() to write the file).");
             if (ed.isPlaying()) {
@@ -34457,16 +35087,21 @@ void DrawInspector(EditorState& ed) {
             const char* kinds[] = { "Radiation", "Water", "Cold", "Fire (warm)", "Danger (sanity)",
                                     "Submerged", "Poison", "Status Effect", "Damage", "Heal", "Eat (hunger)", "Drink (thirst)" };
             if (ImGui::Combo("Effect##svz", &c->effect, kinds, IM_ARRAYSIZE(kinds))) ed.dirty = true;
+            oked::FieldTip("Effect##svz");
             auto eff = (SurvivalZone::Effect)c->effect;
             if (eff == SurvivalZone::Effect::Poison || eff == SurvivalZone::Effect::Damage ||
                 eff == SurvivalZone::Effect::Heal   || eff == SurvivalZone::Effect::Eat ||
                 eff == SurvivalZone::Effect::Drink)
                 if (ImGui::DragFloat("Amount##svz", &c->amount, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("Amount##svz");
             if (eff == SurvivalZone::Effect::Status) {
                 char nm[64]; std::strncpy(nm, c->effectName.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
                 if (ImGui::InputText("Effect Name##svz", nm, sizeof(nm))) { c->effectName = nm; ed.dirty = true; }
+                oked::FieldTip("Effect Name##svz");
                 if (ImGui::DragFloat("HP / s (+heal/-dmg)##svz", &c->amount, 0.5f, -10000.0f, 10000.0f)) ed.dirty = true;
+                oked::FieldTip("HP / s (+heal/-dmg)##svz");
                 if (ImGui::DragFloat("Duration##svz", &c->duration, 0.1f, 0.0f, 600.0f, "%.1f s")) ed.dirty = true;
+                oked::FieldTip("Duration##svz");
             }
             ImGui::TextDisabled("Needs a trigger Collider (isTrigger). Toggle effects clear on exit.");
             if (ImGui::SmallButton("Remove##svz")) toRemove = c;
@@ -34478,8 +35113,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Require Inventory##cons", &c->requireInventory)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use() removes the item from a sibling Inventory first.");
             if (ImGui::Checkbox("Consume on Drop##cons", &c->consumeOnDrop)) ed.dirty = true;
-            if (c->consumeOnDrop)
+            oked::FieldTip("Consume on Drop##cons");
+            if (c->consumeOnDrop) {
                 if (ImGui::Checkbox("Destroy Dropped Item##cons", &c->destroyDroppedItem)) ed.dirty = true;
+                oked::FieldTip("Destroy Dropped Item##cons");
+            }
             ImGui::Separator();
             int removeAt = -1;
             for (int i = 0; i < (int)c->recipes.size(); ++i) {
@@ -34492,8 +35130,10 @@ void DrawInspector(EditorState& ed) {
                 int vi = 0; for (int k = 0; k < IM_ARRAYSIZE(verbs); ++k) if (r.action == verbs[k]) vi = k;
                 ImGui::SetNextItemWidth(100);
                 if (ImGui::Combo("##act", &vi, verbs, IM_ARRAYSIZE(verbs))) { r.action = verbs[vi]; ed.dirty = true; }
+                oked::FieldTip("##act");
                 ImGui::SameLine(); ImGui::SetNextItemWidth(70);
                 if (ImGui::DragFloat("##amt", &r.amount, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("##amt");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) removeAt = i;
                 ImGui::PopID();
@@ -34509,25 +35149,37 @@ void DrawInspector(EditorState& ed) {
             int h = (int)c->time; int m = (int)((c->time - h) * 60.0f);
             ImGui::Text("Time: %02d:%02d  (%s)", h, m, c->IsNight() ? "night" : "day");
             if (ImGui::SliderFloat("Time of Day##dnc", &c->time, 0.0f, 24.0f, "%.2f h")) ed.dirty = true;
+            oked::FieldTip("Time of Day##dnc");
             if (ImGui::DragFloat("Day Length##dnc", &c->dayLengthSeconds, 1.0f, 1.0f, 100000.0f, "%.0f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Real seconds for a full 24h day.");
             if (ImGui::Checkbox("Paused##dnc", &c->paused)) ed.dirty = true;
+            oked::FieldTip("Paused##dnc");
             if (ImGui::Checkbox("Drive Sun Light##dnc", &c->controlSun)) ed.dirty = true;
+            oked::FieldTip("Drive Sun Light##dnc");
             if (c->controlSun) {
                 if (ImGui::Checkbox("Rotate Sun##dnc", &c->rotateSun)) ed.dirty = true;
+                oked::FieldTip("Rotate Sun##dnc");
                 if (ImGui::DragFloat("Day Intensity##dnc", &c->dayIntensity, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Day Intensity##dnc");
                 if (ImGui::DragFloat("Night Intensity##dnc", &c->nightIntensity, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Night Intensity##dnc");
                 if (ImGui::DragFloat("Day Ambient##dnc", &c->dayAmbient, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Day Ambient##dnc");
                 if (ImGui::DragFloat("Night Ambient##dnc", &c->nightAmbient, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Night Ambient##dnc");
             }
             if (ImGui::Checkbox("Drive Sky Color##dnc", &c->controlSky)) ed.dirty = true;
+            oked::FieldTip("Drive Sky Color##dnc");
             if (c->controlSky) {
                 float d[3] = { c->skyDay.r, c->skyDay.g, c->skyDay.b };
                 if (ImGui::ColorEdit3("Day Sky##dnc", d)) { c->skyDay = {d[0], d[1], d[2], 1}; ed.dirty = true; }
+                oked::FieldTip("Day Sky##dnc");
                 float ho[3] = { c->skyHorizon.r, c->skyHorizon.g, c->skyHorizon.b };
                 if (ImGui::ColorEdit3("Horizon##dnc", ho)) { c->skyHorizon = {ho[0], ho[1], ho[2], 1}; ed.dirty = true; }
+                oked::FieldTip("Horizon##dnc");
                 float n[3] = { c->skyNight.r, c->skyNight.g, c->skyNight.b };
                 if (ImGui::ColorEdit3("Night Sky##dnc", n)) { c->skyNight = {n[0], n[1], n[2], 1}; ed.dirty = true; }
+                oked::FieldTip("Night Sky##dnc");
             }
             ImGui::TextDisabled("Drives the Sun light + main camera sky. Bind UI text with {hour}.");
             if (ImGui::SmallButton("Remove##dnc")) toRemove = c;
@@ -34538,8 +35190,10 @@ void DrawInspector(EditorState& ed) {
             if (StanceControlFields(c->stanceControl, "npc")) ed.dirty = true;
             const char* bs[] = { "Idle", "Wander", "Follow", "Flee", "Chase (attack)", "Patrol", "Guard" };
             if (ImGui::Combo("Behavior##npc", &c->behavior, bs, IM_ARRAYSIZE(bs))) ed.dirty = true;
+            oked::FieldTip("Behavior##npc");
             char tn[48]; std::strncpy(tn, c->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target##npc", tn, sizeof(tn))) { c->targetName = tn; ed.dirty = true; }
+            oked::FieldTip("Target##npc");
             if (ed.isPlaying()) ImGui::TextDisabled("State: %s%s", c->StateName(), c->IsDead() ? " (dead)" : "");
 
             // Archetype presets: one click configures behavior + movement +
@@ -34598,25 +35252,32 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##npc", &c->moveSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Speed##npc");
             if (ImGui::DragFloat("Run Speed##npc", &c->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used when chasing, fleeing or searching.");
             if (ImGui::DragFloat("Turn Speed##npc", &c->turnSpeed, 5.0f, 0.0f, 1440.0f, "%.0f deg/s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast it rotates toward its heading (0 = snap instantly).");
             if (ImGui::DragFloat("Acceleration##npc", &c->acceleration, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Acceleration##npc");
             if (ImGui::DragFloat("Stop Distance##npc", &c->stopDistance, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Stop Distance##npc");
             if (ImGui::Checkbox("Face Movement##npc", &c->faceMovement)) ed.dirty = true;
+            oked::FieldTip("Face Movement##npc");
 
             SectionHeader("Perception");
             if (ImGui::DragFloat("Sight Range##npc", &c->sightRange, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Sight Range##npc");
             if (ImGui::DragFloat("Field of View##npc", &c->fieldOfView, 1.0f, 10.0f, 360.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vision cone width. 360 = sees in every direction.");
             if (ImGui::Checkbox("Line of Sight (walls block)##npc", &c->lineOfSight)) ed.dirty = true;
+            oked::FieldTip("Line of Sight (walls block)##npc");
             if (c->lineOfSight) if (ImGui::DragFloat("Eye Height##npc", &c->eyeHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Hearing Range##npc", &c->hearingRange, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Senses the target within this radius even out of sight (0 = deaf).");
             if (ImGui::DragFloat("Detection Time##npc", &c->detectionTime, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Continuous sight needed before reacting (0 = instant; >0 = stealth meter).");
             if (ImGui::DragFloat("Lose Sight Time##npc", &c->loseSightTime, 0.1f, 0.0f, 30.0f, "%.1f s")) ed.dirty = true;
+            oked::FieldTip("Lose Sight Time##npc");
             if (ImGui::DragFloat("Search Time##npc", &c->searchTime, 0.1f, 0.0f, 30.0f, "%.1f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long it investigates the last-known spot before giving up.");
 
@@ -34624,26 +35285,32 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Aggressive (hunt on sight)##npc", &c->aggressive)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle/Wander/Patrol/Guard NPCs chase a perceived target.");
             if (ImGui::Checkbox("Provokable (fights back)##npc", &c->provokable)) ed.dirty = true;
+            oked::FieldTip("Provokable (fights back)##npc");
             if (ImGui::Checkbox("Returns Home##npc", &c->returnsHome)) ed.dirty = true;
+            oked::FieldTip("Returns Home##npc");
             if (ImGui::DragFloat("Leash Range##npc", &c->leashRange, 0.5f, 0.0f, 500.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gives up the chase past this distance from spawn (0 = unlimited).");
 
             if (bh == NPCController::Behavior::Wander || bh == NPCController::Behavior::Idle) {
                 SectionHeader("Wander");
                 if (ImGui::DragFloat("Wander Radius##npc", &c->wanderRadius, 0.2f, 0.0f, 200.0f)) ed.dirty = true;
+                oked::FieldTip("Wander Radius##npc");
                 if (ImGui::DragFloat("Wander Pause##npc", &c->wanderPause, 0.1f, 0.0f, 20.0f, "%.1f s")) ed.dirty = true;
+                oked::FieldTip("Wander Pause##npc");
             }
             if (bh == NPCController::Behavior::Patrol) {
                 SectionHeader("Patrol Route");
                 if (ImGui::Checkbox("Loop##npc", &c->patrolLoop)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = A->B->C->A. Off = ping-pong A->B->C->B->A.");
                 if (ImGui::DragFloat("Wait at Waypoint##npc", &c->waypointWait, 0.1f, 0.0f, 20.0f, "%.1f s")) ed.dirty = true;
+                oked::FieldTip("Wait at Waypoint##npc");
                 int removeWp = -1;
                 for (int i = 0; i < (int)c->waypoints.size(); ++i) {
                     ImGui::PushID(i);
                     float p[3] = { c->waypoints[i].x, c->waypoints[i].y, c->waypoints[i].z };
                     ImGui::SetNextItemWidth(180);
                     if (ImGui::DragFloat3("##wp", p, 0.1f)) { c->waypoints[i] = { p[0], p[1], p[2] }; ed.dirty = true; }
+                    oked::FieldTip("##wp");
                     ImGui::SameLine(); if (ImGui::SmallButton("X")) removeWp = i;
                     ImGui::PopID();
                 }
@@ -34664,8 +35331,11 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Combat");
             if (ImGui::DragFloat("Attack/Stop Range##npc", &c->attackRange, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Attack/Stop Range##npc");
             if (ImGui::DragFloat("Attack Damage##npc", &c->attackDamage, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Attack Damage##npc");
             if (ImGui::DragFloat("Attack Interval##npc", &c->attackInterval, 0.05f, 0.05f, 10.0f, "%.2f s")) ed.dirty = true;
+            oked::FieldTip("Attack Interval##npc");
             if (ImGui::DragFloat("Attack Windup##npc", &c->attackWindup, 0.05f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Telegraph delay before a hit lands (0 = instant).");
             if (ImGui::SliderFloat("Flee at Health %##npc", &c->fleeHealthPct, 0.0f, 1.0f, "%.0f%%", ImGuiSliderFlags_None)) ed.dirty = true;
@@ -34675,18 +35345,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Separation Radius##npc", &c->separationRadius, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steer away from other NPCs within this radius so they don't pile up (0 = off).");
             if (ImGui::Checkbox("Drive Character Animation##npc", &c->driveAnimation)) ed.dirty = true;
+            oked::FieldTip("Drive Character Animation##npc");
             if (ImGui::Checkbox("Foot IK##npc", &c->footIK)) ed.dirty = true;
+            oked::FieldTip("Foot IK##npc");
             if (ImGui::Checkbox("Pathfinding##npc", &c->usePathfinding)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Route around walls/props/holes with grid A* instead of\nwalking straight lines into them (follow/chase/patrol/wander).");
             if (c->usePathfinding)
                 if (ImGui::DragFloat("Repath (s)##npc", &c->repathInterval, 0.05f, 0.1f, 3.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets a sibling Character's idle/walk/run animation from movement.");
             if (ImGui::Checkbox("Look At Target##npc", &c->lookAtTarget)) ed.dirty = true;
+            oked::FieldTip("Look At Target##npc");
 
             SectionHeader("Health");
             if (ImGui::DragFloat("Max Health##npc", &c->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Damage() kills it at 0 (a MeleeAttacker can fight it).");
             if (ImGui::Checkbox("Invulnerable##npc", &c->invulnerable)) ed.dirty = true;
+            oked::FieldTip("Invulnerable##npc");
             ImGui::TextDisabled("Moves a sibling Rigidbody3D (or the Transform).");
             if (ImGui::SmallButton("Remove##npc")) toRemove = c;
         }
@@ -34704,6 +35378,7 @@ void DrawInspector(EditorState& ed) {
                 if (ItemPicker("##out", r.output, 110)) ed.dirty = true;
                 ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                 if (ImGui::DragInt("x##outc", &r.outputCount, 0.1f, 1, 999)) ed.dirty = true;
+                oked::FieldTip("x##outc");
                 ImGui::SameLine();
                 if (c->Inv()) ImGui::TextDisabled(c->CanCraft(r) ? "(ready)" : "(missing)");
                 ImGui::SameLine();
@@ -34716,6 +35391,7 @@ void DrawInspector(EditorState& ed) {
                     if (ItemPicker("##ing", in.item, 100)) ed.dirty = true;
                     ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragInt("##ingc", &in.count, 0.1f, 1, 999)) ed.dirty = true;
+                    oked::FieldTip("##ingc");
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x##rmi")) rmIng = j;
                     ImGui::Unindent(16.0f);
@@ -34742,13 +35418,18 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Auto-builds a button per Crafting recipe at play.");
             char k[2] = { c->toggleKey, 0 };
             if (ImGui::InputText("Toggle Key##cmenu", k, sizeof(k))) { c->toggleKey = k[0]; ed.dirty = true; }
+            oked::FieldTip("Toggle Key##cmenu");
             ShowInvKeyWarning(ed.scene());
             if (ImGui::Checkbox("Open at start##cmenu", &c->open)) ed.dirty = true;
+            oked::FieldTip("Open at start##cmenu");
             float p[2] = { c->position.x, c->position.y };
             if (ImGui::DragFloat2("Position##cmenu", p)) { c->position = {p[0], p[1]}; ed.dirty = true; }
+            oked::FieldTip("Position##cmenu");
             float bs[2] = { c->buttonSize.x, c->buttonSize.y };
             if (ImGui::DragFloat2("Button Size##cmenu", bs)) { c->buttonSize = {bs[0], bs[1]}; ed.dirty = true; }
+            oked::FieldTip("Button Size##cmenu");
             if (ImGui::DragFloat("Spacing##cmenu", &c->spacing, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Spacing##cmenu");
             if (!go->GetComponent<Crafting>())
                 ImGui::TextDisabled("Add a Crafting component for it to build buttons from.");
             if (ImGui::SmallButton("Remove##cmenu")) toRemove = c;
@@ -34758,12 +35439,18 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Melee Attacker", c, &toRemove)) {
             ImGui::TextDisabled("Hits NPCs in a cone in front on attack input.");
             if (ImGui::DragFloat("Damage##melee", &c->damage, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Damage##melee");
             if (ImGui::DragFloat("Range##melee", &c->range, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Range##melee");
             if (ImGui::DragFloat("Arc##melee", &c->arc, 1.0f, 1.0f, 360.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Arc##melee");
             if (ImGui::DragFloat("Cooldown##melee", &c->cooldown, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            oked::FieldTip("Cooldown##melee");
             char k[2] = { c->attackKey, 0 };
             if (ImGui::InputText("Attack Key##melee", k, sizeof(k))) { c->attackKey = k[0]; ed.dirty = true; }
+            oked::FieldTip("Attack Key##melee");
             if (ImGui::Checkbox("Left Mouse Too##melee", &c->useMouse)) ed.dirty = true;
+            oked::FieldTip("Left Mouse Too##melee");
             if (ImGui::SmallButton("Remove##melee")) toRemove = c;
         }
     }
@@ -34816,14 +35503,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Max Alive##spwn", &c->maxAlive, 0.1f, 0, 1000)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause spawning while this many of its spawns are alive. 0 = unlimited.");
             if (ImGui::DragInt("Total (0=endless)##spwn", &c->totalToSpawn, 0.1f, 0, 100000)) ed.dirty = true;
+            oked::FieldTip("Total (0=endless)##spwn");
             if (ImGui::DragFloat("Spawn Radius##spwn", &c->spawnRadius, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawns land on this disc around the spawner (green ring in the Scene view when selected).");
             if (ImGui::DragFloat("Start Delay##spwn", &c->startDelay, 0.1f, 0.0f, 600.0f, "%.2f s")) ed.dirty = true;
+            oked::FieldTip("Start Delay##spwn");
             if (ImGui::Checkbox("Hide Template##spwn", &c->deactivateTemplate)) ed.dirty = true;
+            oked::FieldTip("Hide Template##spwn");
             ImGui::SeparatorText("Waves");
             if (ImGui::DragInt("Count Per Wave##spwn", &c->count, 0.1f, 1, 200)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawns per wave. 1 = classic steady drip (no waves).");
             if (ImGui::DragInt("Waves (0=endless)##spwn", &c->waves, 0.1f, 0, 999)) ed.dirty = true;
+            oked::FieldTip("Waves (0=endless)##spwn");
             if (ImGui::DragFloat("Wave Delay##spwn", &c->waveDelay, 0.05f, 0.0f, 300.0f, "%.2f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause between waves. 0 = just the normal Interval.");
             if (ImGui::Checkbox("Auto Start##spwn", &c->autoStart)) ed.dirty = true;
@@ -34875,26 +35566,40 @@ void DrawInspector(EditorState& ed) {
                 }
             }
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Speed##fp");
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Run Speed##fp");
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Jump Force##fp");
             if (ImGui::DragFloat("Walk Accel##fp", &fp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Accel##fp");
             if (ImGui::DragFloat("Run Accel##fp", &fp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Run Accel##fp");
             if (ImGui::DragFloat("Decel##fp", &fp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Decel##fp");
             if (ImGui::DragFloat("Turn Rate##fp", &fp->steerRate, 1.0f, 1.0f, 600.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast a turn drops the old heading. The mouse still aims directly.");
             if (ImGui::DragFloat("Air Control##fp", &fp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Air Control##fp");
             if (ImGui::DragFloat("Coyote Time##fp", &fp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+            oked::FieldTip("Coyote Time##fp");
             if (ImGui::DragFloat("Jump Buffer##fp", &fp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+            oked::FieldTip("Jump Buffer##fp");
             if (ImGui::DragFloat("Mouse Sensitivity##fp", &fp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Mouse Sensitivity##fp");
             if (ImGui::DragFloat("Captured Sensitivity##fp", &fp->capturedSensitivity, 0.005f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Degrees per pixel while the cursor is locked or confined.");
             if (ImGui::DragFloat("Captured Pixel Cap##fp", &fp->capturedPixelCap, 1.0f, 4.0f, 120.0f, "%.0f px")) ed.dirty = true;
+            oked::FieldTip("Captured Pixel Cap##fp");
             if (ImGui::Checkbox("Invert Y##fp", &fp->invertY)) ed.dirty = true;
+            oked::FieldTip("Invert Y##fp");
             if (ImGui::Checkbox("Can Jump##fp", &fp->canJump)) ed.dirty = true;
+            oked::FieldTip("Can Jump##fp");
             if (fp->canJump) { ImGui::SameLine(); ImGui::SetNextItemWidth(90);
                 if (ImGui::DragInt("Max Jumps##fp", &fp->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ..."); }
             if (ImGui::Checkbox("Drive Animation##fp", &fp->driveAnimation)) ed.dirty = true;
+            oked::FieldTip("Drive Animation##fp");
             if (ImGui::Checkbox("Foot IK##fp", &fp->footIK)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plant the Character's feet on the ground (foot IK) at Play.");
             if (ImGui::Checkbox("Lock + Hide Cursor##fp", &fp->lockCursor)) ed.dirty = true;
@@ -34908,14 +35613,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Toggle Stance##fp", &fp->toggleStance)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
             if (ImGui::DragFloat("Crouch Speed##fp", &fp->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Crouch Speed##fp");
             if (ImGui::DragFloat("Prone Speed##fp", &fp->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Prone Speed##fp");
             if (ImGui::Checkbox("Allow Prone##fp", &fp->allowProne)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lie down flat and crawl (Prone Key, or hold the gamepad stance button). Off = no prone at all.");
             ImGui::SameLine(); if (ImGui::Checkbox("Resize Body##fp", &fp->resizeBody)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crouching and prone really make the player shorter: the collider shrinks so you can crawl under low cover, and you can't stand up into a ceiling.");
             if (fp->resizeBody) {
                 if (ImGui::SliderFloat("Crouch Height##fp", &fp->crouchHeight, 0.3f, 1.0f, "%.2f x standing")) ed.dirty = true;
+                oked::FieldTip("Crouch Height##fp");
                 if (ImGui::SliderFloat("Prone Height##fp", &fp->proneHeight, 0.15f, 0.8f, "%.2f x standing")) ed.dirty = true;
+                oked::FieldTip("Prone Height##fp");
             }
             {
                 const char* padBtns[] = {"None","A","B","X","Y","Back","Start","L","R","D-pad Up","D-pad Down","D-pad Left","D-pad Right"};
@@ -34927,33 +35636,48 @@ void DrawInspector(EditorState& ed) {
                 if (fp->allowProne) {
                     ImGui::SameLine(); ImGui::SetNextItemWidth(90);
                     if (ImGui::DragFloat("Hold For Prone##fp", &fp->proneHoldTime, 0.02f, 0.1f, 2.0f, "%.2fs")) ed.dirty = true;
+                    oked::FieldTip("Hold For Prone##fp");
                 }
             }
             if (ImGui::DragFloat("Stand Eye Height##fp", &fp->standEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            oked::FieldTip("Stand Eye Height##fp");
             if (ImGui::DragFloat("Crouch Eye Height##fp", &fp->crouchEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            oked::FieldTip("Crouch Eye Height##fp");
             if (ImGui::DragFloat("Prone Eye Height##fp", &fp->proneEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            oked::FieldTip("Prone Eye Height##fp");
             if (ImGui::DragFloat("Stance Ease##fp", &fp->stanceLerp, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+            oked::FieldTip("Stance Ease##fp");
 
             SectionHeader("Lean (peek)");
             if (KeyBindCombo("Lean Left##fp", fp->leanLeftKey)) ed.dirty = true;
             ImGui::SameLine(); if (KeyBindCombo("Lean Right##fp", fp->leanRightKey)) ed.dirty = true;
             if (ImGui::DragFloat("Lean Angle##fp", &fp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            oked::FieldTip("Lean Angle##fp");
             if (ImGui::DragFloat("Lean Offset##fp", &fp->leanOffset, 0.02f, 0.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Lean Offset##fp");
             if (ImGui::DragFloat("Lean Ease##fp", &fp->leanSpeed, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+            oked::FieldTip("Lean Ease##fp");
             SectionHeader("Feel");
             if (ImGui::DragFloat("Look Smoothing##fp", &fp->lookSmoothing, 0.002f, 0.0f, 0.2f, fp->lookSmoothing <= 0 ? "raw" : "%.3f s")) ed.dirty = true;
+            oked::FieldTip("Look Smoothing##fp");
             if (ImGui::DragFloat("Sprint FOV Boost##fp", &fp->sprintFovBoost, 0.2f, 0.0f, 30.0f, "%.1f deg")) ed.dirty = true;
+            oked::FieldTip("Sprint FOV Boost##fp");
             if (ImGui::Checkbox("Right-mouse Zoom##fp", &fp->zoomWithRightMouse)) ed.dirty = true;
+            oked::FieldTip("Right-mouse Zoom##fp");
             if (fp->zoomWithRightMouse) {
                 ImGui::SameLine(); ImGui::SetNextItemWidth(70);
                 if (ImGui::DragFloat("FOV##fpz", &fp->zoomFov, 0.5f, 5.0f, 90.0f, "%.0f")) ed.dirty = true;
+                oked::FieldTip("FOV##fpz");
                 if (ImGui::DragFloat("Zoom Sensitivity##fp", &fp->zoomSensitivity, 0.01f, 0.05f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Zoom Sensitivity##fp");
             }
             if (ImGui::DragFloat("Landing Dip##fp", &fp->landDip, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+            oked::FieldTip("Landing Dip##fp");
             if (ImGui::DragFloat("Eye Step Smoothing##fp", &fp->eyeStepSmoothing, 0.2f, 0.0f, 60.0f, fp->eyeStepSmoothing <= 0 ? "off" : "%.1f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("When the body is lifted or dropped on the ground (a step, a curb, a platform),\nthe eye eases there instead of popping. Higher = quicker; 0 = off.");
             SectionHeader("Head Bob");
             if (ImGui::Checkbox("Head Bob##fp", &fp->headBob)) ed.dirty = true;
+            oked::FieldTip("Head Bob##fp");
             if (fp->headBob) {
                 if (ImGui::DragFloat("Bob##fp", &fp->bobAmount, 0.001f, 0.0f, 0.3f, "%.3f m")) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera bob height. At a walk it follows the footstep cycle.");
@@ -34969,16 +35693,22 @@ void DrawInspector(EditorState& ed) {
             }
             SectionHeader("Slide (sprint + crouch)");
             if (ImGui::Checkbox("Can Slide##fp", &fp->canSlide)) ed.dirty = true;
+            oked::FieldTip("Can Slide##fp");
             if (fp->canSlide) {
                 if (ImGui::DragFloat("Slide Speed##fp", &fp->slideSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Slide Speed##fp");
                 if (ImGui::DragFloat("Slide Time##fp", &fp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Slide Time##fp");
                 if (ImGui::DragFloat("Slide Eye Height##fp", &fp->slideEyeHeight, 0.01f, 0.1f, 2.0f)) ed.dirty = true;
+                oked::FieldTip("Slide Eye Height##fp");
             }
             if (ImGui::Checkbox("Dive On Prone While Sprinting##fp", &fp->diveOnProneWhileSprinting)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprint, then press prone: launch forward and land flat.\nCrouch-to-slide is unchanged. Off: prone works as before.");
             if (fp->diveOnProneWhileSprinting) {
                 if (ImGui::DragFloat("Dive Hop##fp", &fp->diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
+                oked::FieldTip("Dive Hop##fp");
                 if (ImGui::DragFloat("Dive Slide Time##fp", &fp->diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Dive Slide Time##fp");
             }
             SectionHeader("Dodge");
             if (ImGui::Checkbox("Can Dodge##fp", &fp->dodge.canDodge)) ed.dirty = true;
@@ -34986,10 +35716,15 @@ void DrawInspector(EditorState& ed) {
             if (fp->dodge.canDodge) {
                 char dk[8]; dk[0] = fp->dodge.key ? fp->dodge.key : '\0'; dk[1] = 0;
                 if (ImGui::InputText("Dodge Key##fp", dk, sizeof(dk))) { fp->dodge.key = dk[0]; ed.dirty = true; }
+                oked::FieldTip("Dodge Key##fp");
                 if (ImGui::DragFloat("Dodge Speed##fp", &fp->dodge.impulse, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Dodge Speed##fp");
                 if (ImGui::DragFloat("Dodge Time##fp", &fp->dodge.duration, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Dodge Time##fp");
                 if (ImGui::DragFloat("Cooldown##fp", &fp->dodge.cooldown, 0.01f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Cooldown##fp");
                 if (ImGui::DragFloat("Stamina##fp", &fp->dodge.stamina, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Stamina##fp");
                 if (ImGui::Checkbox("I-Frames##fp", &fp->dodge.iFrames)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off by default. While on, Health ignores damage during the burst.");
             }
@@ -35004,6 +35739,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
             if (ImGui::Checkbox("Full Body IK looks with camera##fp", &fp->ikLook)) ed.dirty = true;
+            oked::FieldTip("Full Body IK looks with camera##fp");
 
             ImGui::TextDisabled("Mouse look + WASD. Put a Camera as a child (eye height).");
             if (!owned && ImGui::SmallButton("Remove##fp")) toRemove = fp;
@@ -35050,25 +35786,34 @@ void DrawInspector(EditorState& ed) {
                 }
             }
             if (ImGui::DragFloat("Walk Speed##tp", &tp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Speed##tp");
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Run Speed##tp");
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Jump Force##tp");
             if (ImGui::DragFloat("Turn Rate##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the body rotates toward the way it is moving.");
             if (ImGui::DragFloat("Walk Accel##tp", &tp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Accel##tp");
             if (ImGui::DragFloat("Run Accel##tp", &tp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher = snappier starts; very high ~= instant (no momentum)");
             if (ImGui::DragFloat("Decel##tp", &tp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Decel##tp");
             if (ImGui::DragFloat("Steer##tp", &tp->steerRate, 1.0f, 1.0f, 600.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast a turn drops the old velocity heading.");
             if (ImGui::DragFloat("Air Control##tp", &tp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Air Control##tp");
             if (ImGui::DragFloat("Coyote Time##tp", &tp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grace window to still jump just after leaving a ledge");
             if (ImGui::DragFloat("Jump Buffer##tp", &tp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remembers a jump pressed just before landing");
             if (ImGui::Checkbox("Can Jump##tp", &tp->canJump)) ed.dirty = true;
+            oked::FieldTip("Can Jump##tp");
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##tp", &tp->driveAnimation)) ed.dirty = true;
+            oked::FieldTip("Drive Animation##tp");
             if (ImGui::Checkbox("Foot IK##tp", &tp->footIK)) ed.dirty = true;
+            oked::FieldTip("Foot IK##tp");
             if (ImGui::DragFloat("Step Offset##tp", &tp->stepOffset, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
             {
@@ -35092,22 +35837,32 @@ void DrawInspector(EditorState& ed) {
             int fm = (int)tp->faceMode;
             ImGui::SetNextItemWidth(160);
             if (ImGui::Combo("Body Facing##tp", &fm, faceModes, 2)) { tp->faceMode = (ThirdPersonController::FaceMode)fm; ed.dirty = true; }
+            oked::FieldTip("Body Facing##tp");
 
             SectionHeader("Camera");
             if (ImGui::DragFloat("Mouse Sensitivity##tp", &tp->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Mouse Sensitivity##tp");
             if (ImGui::DragFloat("Captured Sensitivity##tp", &tp->capturedSensitivity, 0.005f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Degrees per pixel while the cursor is locked or confined.\nA captured delta is raw device motion, so this stays gentler than a free cursor.");
             if (ImGui::DragFloat("Captured Pixel Cap##tp", &tp->capturedPixelCap, 1.0f, 4.0f, 120.0f, "%.0f px")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("One captured frame cannot turn more than this many pixels.\nStops a warp, or one injected move, from pitching the camera through the ground.");
             if (ImGui::Checkbox("Invert X##tp", &tp->invertX)) ed.dirty = true;
+            oked::FieldTip("Invert X##tp");
             ImGui::SameLine();
             if (ImGui::Checkbox("Invert Y##tp", &tp->invertY)) ed.dirty = true;
+            oked::FieldTip("Invert Y##tp");
             if (ImGui::DragFloat("Distance##tp", &tp->distance, 0.1f, 1.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Distance##tp");
             if (ImGui::DragFloat("Min Distance##tp", &tp->minDistance, 0.1f, 0.5f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Min Distance##tp");
             if (ImGui::DragFloat("Max Distance##tp", &tp->maxDistance, 0.1f, 1.0f, 40.0f)) ed.dirty = true;
+            oked::FieldTip("Max Distance##tp");
             if (ImGui::DragFloat("Zoom Speed##tp", &tp->zoomSpeed, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Zoom Speed##tp");
             if (ImGui::DragFloat("Camera Height##tp", &tp->cameraHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Camera Height##tp");
             if (ImGui::DragFloat("Shoulder Offset##tp", &tp->shoulderOffset, 0.02f, -3.0f, 3.0f)) ed.dirty = true;
+            oked::FieldTip("Shoulder Offset##tp");
             if (ImGui::DragFloat("Follow Damping##tp", &tp->pivotDampingXZ, 0.1f, 0.0f, 60.0f, "%.1f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How tightly the camera's pivot (the player's head) follows sideways.\nHigher = tighter; 0 = instant. The camera always turns around the pivot\nwith no lag of its own, so the player stays centred while you orbit.");
             if (ImGui::DragFloat("Vertical Damping##tp", &tp->pivotDampingY, 0.1f, 0.0f, 60.0f, "%.1f")) ed.dirty = true;
@@ -35120,6 +35875,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pull the camera in so it never clips through walls/floors");
             if (tp->cameraCollision) {
                 if (ImGui::DragFloat("Collision Skin##tp", &tp->cameraCollisionSkin, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                oked::FieldTip("Collision Skin##tp");
                 if (ImGui::DragFloat("Collision Radius##tp", &tp->cameraCollisionRadius, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The camera is a sphere this big: it doesn't flicker on edges, poles and railings.\nTriggers and the player's own parts never block it.");
                 if (LayerMaskField("Collision Layers##tp", tp->cameraCollisionMask, "Collider layers that block the camera: numbers or names\nseparated by commas (0,3 or Default,Walls). Blank = all layers.")) ed.dirty = true;
@@ -35127,7 +35883,9 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the camera glides back out once an obstacle clears (0 = at once).");
             }
             if (ImGui::DragFloat("Min Pitch##tp", &tp->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
+            oked::FieldTip("Min Pitch##tp");
             if (ImGui::DragFloat("Max Pitch##tp", &tp->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
+            oked::FieldTip("Max Pitch##tp");
 
             SectionHeader("Run / Stance");
             if (KeyBindCombo("Sprint Key##tp", tp->sprintKey)) ed.dirty = true;
@@ -35137,14 +35895,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Toggle Stance##tp", &tp->toggleStance)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
             if (ImGui::DragFloat("Crouch Speed##tp", &tp->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Crouch Speed##tp");
             if (ImGui::DragFloat("Prone Speed##tp", &tp->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Prone Speed##tp");
             if (ImGui::Checkbox("Allow Prone##tp", &tp->allowProne)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lie down flat and crawl (Prone Key, or hold the gamepad stance button). Off = no prone at all.");
             ImGui::SameLine(); if (ImGui::Checkbox("Resize Body##tp", &tp->resizeBody)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crouching and prone really make the player shorter: the collider shrinks so you can crawl under low cover, and you can't stand up into a ceiling.");
             if (tp->resizeBody) {
                 if (ImGui::SliderFloat("Crouch Height##tp", &tp->crouchHeight, 0.3f, 1.0f, "%.2f x standing")) ed.dirty = true;
+                oked::FieldTip("Crouch Height##tp");
                 if (ImGui::SliderFloat("Prone Height##tp", &tp->proneHeight, 0.15f, 0.8f, "%.2f x standing")) ed.dirty = true;
+                oked::FieldTip("Prone Height##tp");
             }
             {
                 const char* padBtns[] = {"None","A","B","X","Y","Back","Start","L","R","D-pad Up","D-pad Down","D-pad Left","D-pad Right"};
@@ -35156,60 +35918,89 @@ void DrawInspector(EditorState& ed) {
                 if (tp->allowProne) {
                     ImGui::SameLine(); ImGui::SetNextItemWidth(90);
                     if (ImGui::DragFloat("Hold For Prone##tp", &tp->proneHoldTime, 0.02f, 0.1f, 2.0f, "%.2fs")) ed.dirty = true;
+                    oked::FieldTip("Hold For Prone##tp");
                 }
             }
             if (ImGui::DragFloat("Crouch Drop##tp", &tp->crouchHeightDrop, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the camera's look target lowers when crouched");
             if (ImGui::DragFloat("Prone Drop##tp", &tp->proneHeightDrop, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
+            oked::FieldTip("Prone Drop##tp");
             if (ImGui::DragFloat("Stance Ease##tp", &tp->stanceLerp, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+            oked::FieldTip("Stance Ease##tp");
 
             SectionHeader("Lean (peek)");
             if (KeyBindCombo("Lean Left##tp", tp->leanLeftKey)) ed.dirty = true;
             ImGui::SameLine(); if (KeyBindCombo("Lean Right##tp", tp->leanRightKey)) ed.dirty = true;
             if (ImGui::DragFloat("Lean Angle##tp", &tp->leanAngle, 0.5f, 0.0f, 45.0f, "%.1f deg")) ed.dirty = true;
+            oked::FieldTip("Lean Angle##tp");
             if (ImGui::DragFloat("Lean Offset##tp", &tp->leanOffset, 0.02f, 0.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Lean Offset##tp");
             if (ImGui::DragFloat("Lean Ease##tp", &tp->leanSpeed, 0.5f, 0.0f, 40.0f)) ed.dirty = true;
+            oked::FieldTip("Lean Ease##tp");
             SectionHeader("Feel");
             if (ImGui::DragFloat("Look Smoothing##tp", &tp->lookSmoothing, 0.002f, 0.0f, 0.2f, tp->lookSmoothing <= 0 ? "raw" : "%.3f s")) ed.dirty = true;
+            oked::FieldTip("Look Smoothing##tp");
             if (ImGui::DragFloat("Sprint FOV Boost##tp", &tp->sprintFovBoost, 0.2f, 0.0f, 30.0f, "%.1f deg")) ed.dirty = true;
+            oked::FieldTip("Sprint FOV Boost##tp");
             if (ImGui::DragFloat("Landing Shake##tp", &tp->landShake, 0.005f, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Landing Shake##tp");
             if (ImGui::DragFloat("Stride Length##tp", &tp->strideLength, 0.02f, 0.2f, 5.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance per footstep event (onFootstep) at walking speed.");
             SectionHeader("Aim (hold right mouse)");
             if (ImGui::Checkbox("Right-mouse Aim##tp", &tp->aimWithRightMouse)) ed.dirty = true;
+            oked::FieldTip("Right-mouse Aim##tp");
             if (tp->aimWithRightMouse) {
                 if (ImGui::DragFloat("Aim Distance##tp", &tp->aimDistance, 0.05f, 0.5f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Aim Distance##tp");
                 if (ImGui::DragFloat("Aim Shoulder##tp", &tp->aimShoulder, 0.02f, -3.0f, 3.0f)) ed.dirty = true;
+                oked::FieldTip("Aim Shoulder##tp");
                 if (ImGui::DragFloat("Aim FOV##tp", &tp->aimFov, 0.5f, 10.0f, 90.0f, "%.0f")) ed.dirty = true;
+                oked::FieldTip("Aim FOV##tp");
                 if (ImGui::DragFloat("Aim Sensitivity##tp", &tp->aimSensitivity, 0.01f, 0.05f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Aim Sensitivity##tp");
             }
             if (ImGui::Checkbox("Auto-recenter Camera##tp", &tp->autoRecenter)) ed.dirty = true;
+            oked::FieldTip("Auto-recenter Camera##tp");
             if (tp->autoRecenter) {
                 if (ImGui::DragFloat("Recenter Delay##tp", &tp->recenterDelay, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Recenter Delay##tp");
                 if (ImGui::DragFloat("Recenter Speed##tp", &tp->recenterSpeed, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+                oked::FieldTip("Recenter Speed##tp");
             }
             SectionHeader("Slide (sprint + crouch)");
             if (ImGui::Checkbox("Can Slide##tp", &tp->canSlide)) ed.dirty = true;
+            oked::FieldTip("Can Slide##tp");
             if (tp->canSlide) {
                 if (ImGui::DragFloat("Slide Speed##tp", &tp->slideSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Slide Speed##tp");
                 if (ImGui::DragFloat("Slide Time##tp", &tp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Slide Time##tp");
             }
             if (ImGui::Checkbox("Dive On Prone While Sprinting##tp", &tp->diveOnProneWhileSprinting)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprint, then press prone: launch forward and land flat.\nCrouch-to-slide is unchanged.");
             if (tp->diveOnProneWhileSprinting) {
                 if (ImGui::DragFloat("Dive Hop##tp", &tp->diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
+                oked::FieldTip("Dive Hop##tp");
                 if (ImGui::DragFloat("Dive Slide Time##tp", &tp->diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Dive Slide Time##tp");
             }
             SectionHeader("Dodge");
             if (ImGui::Checkbox("Can Dodge##tp", &tp->dodge.canDodge)) ed.dirty = true;
+            oked::FieldTip("Can Dodge##tp");
             if (tp->dodge.canDodge) {
                 char dk[8]; dk[0] = tp->dodge.key ? tp->dodge.key : '\0'; dk[1] = 0;
                 if (ImGui::InputText("Dodge Key##tp", dk, sizeof(dk))) { tp->dodge.key = dk[0]; ed.dirty = true; }
+                oked::FieldTip("Dodge Key##tp");
                 if (ImGui::DragFloat("Dodge Speed##tp", &tp->dodge.impulse, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Dodge Speed##tp");
                 if (ImGui::DragFloat("Dodge Time##tp", &tp->dodge.duration, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Dodge Time##tp");
                 if (ImGui::DragFloat("Cooldown##tp", &tp->dodge.cooldown, 0.01f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Cooldown##tp");
                 if (ImGui::DragFloat("Stamina##tp", &tp->dodge.stamina, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Stamina##tp");
                 if (ImGui::Checkbox("I-Frames##tp", &tp->dodge.iFrames)) ed.dirty = true;
+                oked::FieldTip("I-Frames##tp");
             }
             SectionHeader("Traversal");
             if (ImGui::Checkbox("Can Vault##tp", &tp->canVault)) ed.dirty = true;
@@ -35222,6 +36013,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
             if (ImGui::Checkbox("Full Body IK looks with camera##tp", &tp->ikLook)) ed.dirty = true;
+            oked::FieldTip("Full Body IK looks with camera##tp");
 
             ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD/stick. Uses the main Camera.");
             if (!owned && ImGui::SmallButton("Remove##tp")) toRemove = tp;
@@ -35311,6 +36103,7 @@ void DrawInspector(EditorState& ed) {
             char nb[64];
             std::snprintf(nb, sizeof(nb), "%s", th->themeName.c_str());
             if (ImGui::InputText("Name##uitheme", nb, sizeof(nb))) { th->themeName = nb; th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
+            oked::FieldTip("Name##uitheme");
             {
                 oked::DrawThemePresetCombo(*th, ed);   // 12 looks + Custom
             }
@@ -35326,17 +36119,23 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Button("Apply Now##uitheme")) { th->Apply(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write the colors, radius, border, shadow and fade speed onto the widgets under this object.");
             if (ImGui::DragFloat("Corner Radius##uitheme", &th->cornerRadius, 0.1f, 0.0f, 64.0f)) { th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
+            oked::FieldTip("Corner Radius##uitheme");
             CornerMaskEditor("uitheme", th->cornerMask, ed);
             if (ImGui::DragFloat("Border Width##uitheme", &th->borderWidth, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            oked::FieldTip("Border Width##uitheme");
             if (ImGui::Checkbox("Gradient##uitheme", &th->gradient)) ed.dirty = true;
+            oked::FieldTip("Gradient##uitheme");
             if (th->gradient) {
                 const char* dirs[] = {"Vertical", "Horizontal", "Diagonal down", "Diagonal up"};
                 if (th->gradientDir < 0 || th->gradientDir > 3) th->gradientDir = 0;
                 if (ImGui::Combo("Gradient Direction##uitheme", &th->gradientDir, dirs, 4)) ed.dirty = true;
+                oked::FieldTip("Gradient Direction##uitheme");
             }
             if (ImGui::Checkbox("Drop Shadow##uitheme", &th->shadow)) ed.dirty = true;
+            oked::FieldTip("Drop Shadow##uitheme");
             if (th->shadow) {
                 if (ImGui::DragFloat("Shadow Softness##uitheme", &th->shadowSoftness, 0.1f, 0.0f, 48.0f)) ed.dirty = true;
+                oked::FieldTip("Shadow Softness##uitheme");
                 float off[2] = {th->shadowOffset.x, th->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##uitheme", off, 0.1f)) {
                     th->shadowOffset = {off[0], off[1]}; ed.dirty = true;
@@ -35345,14 +36144,19 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Padding##uitheme", &th->padding, 0.5f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spacing hint for screens built from this theme. Apply does not move widgets.");
             if (ImGui::DragFloat("Font Scale##uitheme", &th->fontScale, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
+            oked::FieldTip("Font Scale##uitheme");
             if (ImGui::DragFloat("Text Size##uitheme", &th->textPixelSize, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
+            oked::FieldTip("Text Size##uitheme");
             if (ImGui::DragFloat("Transition Speed##uitheme", &th->transitionSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast buttons ease between normal, hover, pressed and disabled. 0 is instant.");
             if (ImGui::DragFloat("Hover Scale##uitheme", &th->hoverScale, 0.01f, 1.0f, 1.4f)) ed.dirty = true;
+            oked::FieldTip("Hover Scale##uitheme");
             if (ImGui::DragFloat("Glow##uitheme", &th->glow, 0.05f, 0.0f, 16.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Outer glow width in pixels. 0 is off. This is not a blur of the scene behind the panel.");
             if (ImGui::DragFloat("Opacity##uitheme", &th->opacity, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Opacity##uitheme");
             if (ImGui::Checkbox("Top Sheen##uitheme", &th->sheen)) ed.dirty = true;
+            oked::FieldTip("Top Sheen##uitheme");
             auto col4 = [&](const char* label, Color& c) {
                 float v[4] = {c.r, c.g, c.b, c.a};
                 if (ImGui::ColorEdit4(label, v, ImGuiColorEditFlags_AlphaBar)) {
@@ -35383,22 +36187,36 @@ void DrawInspector(EditorState& ed) {
             if (StanceControlFields(td->stanceControl, "td")) ed.dirty = true;
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##td", &td->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Speed##td");
             if (ImGui::DragFloat("Run Speed##td", &td->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Run Speed##td");
             if (ImGui::DragFloat("Acceleration##td", &td->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Acceleration##td");
             if (ImGui::DragFloat("Deceleration##td", &td->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Deceleration##td");
             if (ImGui::Checkbox("Rotate To Face##td", &td->rotateToFace)) ed.dirty = true;
-            if (td->rotateToFace)
+            oked::FieldTip("Rotate To Face##td");
+            if (td->rotateToFace) {
                 if (ImGui::DragFloat("Turn Speed##td", &td->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+                oked::FieldTip("Turn Speed##td");
+            }
             if (ImGui::Checkbox("Camera-Relative Move##td", &td->cameraRelative)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("WASD relative to the camera yaw instead of world axes");
             if (ImGui::Checkbox("Drive Animation##td", &td->driveAnimation)) ed.dirty = true;
+            oked::FieldTip("Drive Animation##td");
             if (ImGui::Checkbox("Foot IK##td", &td->footIK)) ed.dirty = true;
+            oked::FieldTip("Foot IK##td");
             SectionHeader("Camera");
             if (ImGui::DragFloat("Distance##td", &td->cameraDistance, 0.1f, 1.0f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Distance##td");
             if (ImGui::DragFloat("Pitch##td", &td->cameraPitch, 0.5f, 10.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Pitch##td");
             if (ImGui::DragFloat("Yaw##td", &td->cameraYaw, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Yaw##td");
             if (ImGui::DragFloat("Look Height##td", &td->lookHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Look Height##td");
             if (ImGui::DragFloat("Damping##td", &td->cameraDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+            oked::FieldTip("Damping##td");
             ImGui::TextDisabled("Twin-stick / ARPG: WASD + a fixed high follow camera.");
             if (ImGui::SmallButton("Remove##td")) toRemove = td;
         }
@@ -35408,17 +36226,28 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).");
             SectionHeader("Triggers");
             if (ImGui::Checkbox("Ragdoll On Death##rd", &rd->ragdollOnDeath)) ed.dirty = true;
+            oked::FieldTip("Ragdoll On Death##rd");
             if (ImGui::DragFloat("Death Push##rd", &rd->deathImpulse, 0.05f, 0.0f, 20.0f, "%.2f m/s")) ed.dirty = true;
+            oked::FieldTip("Death Push##rd");
             if (ImGui::Checkbox("Hit Reactions##rd", &rd->hitReactions)) ed.dirty = true;
+            oked::FieldTip("Hit Reactions##rd");
             if (ImGui::DragFloat("Hit Push##rd", &rd->hitImpulse, 0.05f, 0.0f, 20.0f, "%.2f m/s")) ed.dirty = true;
+            oked::FieldTip("Hit Push##rd");
             if (ImGui::DragFloat("Recover Time##rd", &rd->hitRecover, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
+            oked::FieldTip("Recover Time##rd");
             SectionHeader("Simulation");
             if (ImGui::DragFloat("Gravity##rd", &rd->gravity, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Gravity##rd");
             if (ImGui::SliderFloat("Damping##rd", &rd->damping, 0.0f, 0.5f)) ed.dirty = true;
+            oked::FieldTip("Damping##rd");
             if (ImGui::SliderFloat("Friction##rd", &rd->friction, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Friction##rd");
             if (ImGui::DragFloat("Skin Radius##rd", &rd->radius, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+            oked::FieldTip("Skin Radius##rd");
             if (ImGui::SliderInt("Iterations##rd", &rd->iterations, 1, 30)) ed.dirty = true;
+            oked::FieldTip("Iterations##rd");
             if (ImGui::DragFloat("Max Speed##rd", &rd->maxSpeed, 0.5f, 1.0f, 200.0f, "%.1f m/s")) ed.dirty = true;
+            oked::FieldTip("Max Speed##rd");
             if (ImGui::SmallButton("Remove##rd")) toRemove = rd;
         }
     }
@@ -35427,24 +36256,31 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.");
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tds", &sh->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Speed##tds");
             if (KeyBindCombo("Sprint Key##tds", sh->sprintKey)) ed.dirty = true;
             if (sh->sprintKey) if (ImGui::DragFloat("Run Speed##tds", &sh->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Acceleration##tds", &sh->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Acceleration##tds");
             if (ImGui::DragFloat("Deceleration##tds", &sh->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Deceleration##tds");
             if (ImGui::SliderFloat("Backpedal Speed##tds", &sh->backpedalMultiplier, 0.2f, 1.0f, "x%.2f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed while walking away from where you aim.");
             if (ImGui::Checkbox("Camera-Relative Move##tds", &sh->cameraRelative)) ed.dirty = true;
+            oked::FieldTip("Camera-Relative Move##tds");
             if (ImGui::Checkbox("Drive Animation##tds", &sh->driveAnimation)) ed.dirty = true;
+            oked::FieldTip("Drive Animation##tds");
 
             SectionHeader("Aim");
             const char* aims[] = {"Mouse cursor", "Move direction", "Auto (mouse or gamepad)"};
             if (ImGui::Combo("Aim With##tds", &sh->aimMode, aims, 3)) ed.dirty = true;
+            oked::FieldTip("Aim With##tds");
             if (ImGui::DragFloat("Turn Speed##tds", &sh->turnSpeed, 0.2f, 0.0f, 80.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = face the aim instantly.");
 
             SectionHeader("Weapon");
             const char* modes[] = {"Bullets (built in)", "Projectile prefab", "Hitscan (instant ray)"};
             if (ImGui::Combo("Shoots##tds", &sh->fireMode, modes, 3)) ed.dirty = true;
+            oked::FieldTip("Shoots##tds");
             if (sh->fireMode == (int)TopDownShooterController::FireMode::Prefab) {
                 if (AssetSlot("tdsproj", sh->projectile, "Prefab", {".okayprefab", ".prefab"})) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop a prefab. A Projectile 3D on it gets the speed; else its Rigidbody 3D.");
@@ -35452,25 +36288,37 @@ void DrawInspector(EditorState& ed) {
             const char* btns[] = {"Left mouse", "Right mouse", "Middle mouse", "None"};
             int fb = sh->fireButton < 0 || sh->fireButton > 2 ? 3 : sh->fireButton;
             if (ImGui::Combo("Fire Button##tds", &fb, btns, 4)) { sh->fireButton = fb == 3 ? -1 : fb; ed.dirty = true; }
+            oked::FieldTip("Fire Button##tds");
             if (KeyBindCombo("Fire Key##tds", sh->fireKey)) ed.dirty = true;
             if (ImGui::Checkbox("Hold To Fire##tds", &sh->autoFire)) ed.dirty = true;
+            oked::FieldTip("Hold To Fire##tds");
             if (ImGui::DragFloat("Fire Rate##tds", &sh->fireRate, 0.1f, 0.1f, 60.0f, "%.1f / s")) ed.dirty = true;
+            oked::FieldTip("Fire Rate##tds");
             if (ImGui::DragFloat("Damage##tds", &sh->damage, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Damage##tds");
             if (ImGui::DragInt("Pellets##tds", &sh->pellets, 0.1f, 1, 24)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bullets per shot. Above 1 = shotgun, fanned across the spread.");
             if (ImGui::DragFloat("Spread##tds", &sh->spread, 0.2f, 0.0f, 90.0f, "%.1f deg")) ed.dirty = true;
+            oked::FieldTip("Spread##tds");
             if (sh->fireMode == (int)TopDownShooterController::FireMode::Hitscan) {
                 if (ImGui::DragFloat("Range##tds", &sh->range, 0.5f, 1.0f, 500.0f)) ed.dirty = true;
+                oked::FieldTip("Range##tds");
             } else {
                 if (ImGui::DragFloat("Bullet Speed##tds", &sh->projectileSpeed, 0.5f, 1.0f, 300.0f)) ed.dirty = true;
+                oked::FieldTip("Bullet Speed##tds");
                 if (ImGui::DragFloat("Bullet Lifetime##tds", &sh->projectileLifetime, 0.05f, 0.05f, 20.0f, "%.2fs")) ed.dirty = true;
+                oked::FieldTip("Bullet Lifetime##tds");
             }
             if (sh->fireMode == (int)TopDownShooterController::FireMode::Bullets) {
                 if (ImGui::DragFloat("Bullet Size##tds", &sh->bulletSize, 0.01f, 0.02f, 2.0f)) ed.dirty = true;
+                oked::FieldTip("Bullet Size##tds");
                 if (ImGui::ColorEdit4("Bullet Colour##tds", &sh->bulletColor.r, ImGuiColorEditFlags_NoInputs)) ed.dirty = true;
+                oked::FieldTip("Bullet Colour##tds");
             }
             if (ImGui::DragFloat("Impact Force##tds", &sh->impactForce, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Impact Force##tds");
             if (ImGui::DragFloat("Muzzle Height##tds", &sh->muzzleHeight, 0.02f, 0.0f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Muzzle Height##tds");
 
             SectionHeader("Ammo");
             if (ImGui::DragInt("Magazine##tds", &sh->magazineSize, 0.2f, 0, 999)) ed.dirty = true;
@@ -35478,7 +36326,9 @@ void DrawInspector(EditorState& ed) {
             if (sh->magazineSize > 0) {
                 if (KeyBindCombo("Reload Key##tds", sh->reloadKey)) ed.dirty = true;
                 if (ImGui::DragFloat("Reload Time##tds", &sh->reloadTime, 0.05f, 0.0f, 10.0f, "%.2fs")) ed.dirty = true;
+                oked::FieldTip("Reload Time##tds");
                 if (ImGui::Checkbox("Auto Reload When Empty##tds", &sh->autoReload)) ed.dirty = true;
+                oked::FieldTip("Auto Reload When Empty##tds");
                 if (ed.isPlaying()) ImGui::Text("Ammo: %d / %d%s", sh->ammo, sh->magazineSize, sh->IsReloading() ? "  (reloading)" : "");
             }
 
@@ -35488,29 +36338,42 @@ void DrawInspector(EditorState& ed) {
                 const char* pads[] = {"A", "B", "X", "Y", "None"};
                 int pb = sh->dashGamepadButton < 0 || sh->dashGamepadButton > 3 ? 4 : sh->dashGamepadButton;
                 if (ImGui::Combo("Dash Pad Button##tds", &pb, pads, 5)) { sh->dashGamepadButton = pb == 4 ? -1 : pb; ed.dirty = true; }
+                oked::FieldTip("Dash Pad Button##tds");
             }
             if (sh->dashKey || sh->dashGamepadButton >= 0) {
                 if (ImGui::DragFloat("Dash Speed##tds", &sh->dashSpeed, 0.2f, 0.0f, 80.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Peak speed at the start of the dash; it eases down to your move speed.");
                 if (ImGui::DragFloat("Dash Time##tds", &sh->dashTime, 0.01f, 0.02f, 2.0f, "%.2fs")) ed.dirty = true;
+                oked::FieldTip("Dash Time##tds");
                 if (ImGui::DragFloat("Dash Cooldown##tds", &sh->dashCooldown, 0.05f, 0.0f, 10.0f, "%.2fs")) ed.dirty = true;
+                oked::FieldTip("Dash Cooldown##tds");
                 if (ImGui::Checkbox("Invulnerable While Dashing##tds", &sh->dashInvulnerable)) ed.dirty = true;
+                oked::FieldTip("Invulnerable While Dashing##tds");
             }
 
             SectionHeader("Camera");
             if (ImGui::DragFloat("Distance##tds", &sh->cameraDistance, 0.1f, 1.0f, 80.0f)) ed.dirty = true;
+            oked::FieldTip("Distance##tds");
             if (ImGui::DragFloat("Pitch##tds", &sh->cameraPitch, 0.5f, 10.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Pitch##tds");
             if (ImGui::DragFloat("Yaw##tds", &sh->cameraYaw, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Yaw##tds");
             if (ImGui::DragFloat("Damping##tds", &sh->cameraDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+            oked::FieldTip("Damping##tds");
             if (ImGui::SliderFloat("Look Toward Aim##tds", &sh->aimLookAhead, 0.0f, 0.8f, "%.2f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the camera leans toward the cursor.");
             if (ImGui::DragFloat("Max Lean##tds", &sh->maxLookAhead, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Max Lean##tds");
             if (ImGui::Checkbox("Wheel Zoom##tds", &sh->wheelZoom)) ed.dirty = true;
+            oked::FieldTip("Wheel Zoom##tds");
             if (sh->wheelZoom) {
                 if (ImGui::DragFloat("Min Distance##tds", &sh->minDistance, 0.1f, 1.0f, sh->maxDistance)) ed.dirty = true;
+                oked::FieldTip("Min Distance##tds");
                 if (ImGui::DragFloat("Max Distance##tds", &sh->maxDistance, 0.1f, sh->minDistance, 120.0f)) ed.dirty = true;
+                oked::FieldTip("Max Distance##tds");
             }
             if (ImGui::DragFloat("Fire Shake##tds", &sh->fireShake, 0.005f, 0.0f, 0.5f, "%.3f")) ed.dirty = true;
+            oked::FieldTip("Fire Shake##tds");
             ImGui::TextDisabled("Script events: on_fire, on_reload, on_reloaded, on_empty, on_dash.");
             if (ImGui::SmallButton("Remove##tds")) toRemove = sh;
         }
@@ -35520,11 +36383,15 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("LittleBigPlanet-style: A/D run, Space jump, W/S change layer, E grab, Ctrl crouch, Z prone.\nGamepad: stick runs (all the way = run), A jump, stick/d-pad up-down layers, RB grab, B crouch (hold = prone).");
             SectionHeader("Run");
             if (ImGui::DragFloat("Walk Speed##p25", &pc->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Speed##p25");
             if (KeyBindCombo("Sprint Key##p25", pc->sprintKey)) ed.dirty = true;
             if (pc->sprintKey) if (ImGui::DragFloat("Run Speed##p25", &pc->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Acceleration##p25", &pc->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Acceleration##p25");
             if (ImGui::DragFloat("Deceleration##p25", &pc->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Deceleration##p25");
             if (ImGui::SliderFloat("Air Control##p25", &pc->airControl, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            oked::FieldTip("Air Control##p25");
             if (ImGui::DragFloat("Step Height##p25", &pc->stepHeight, 0.01f, 0.0f, 1.5f, "%.2f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ledges up to this high are walked up without jumping (kerbs, stairs). 0 = off.");
             if (ImGui::SliderFloat("Stick Run Threshold##p25", &pc->stickRunThreshold, 0.3f, 1.0f, "%.2f")) ed.dirty = true;
@@ -35534,22 +36401,29 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Jump");
             if (ImGui::Checkbox("Can Jump##p25", &pc->canJump)) ed.dirty = true;
+            oked::FieldTip("Can Jump##p25");
             if (pc->canJump) {
                 if (KeyBindCombo("Jump Key##p25", pc->jumpKey)) ed.dirty = true;
                 {
                     const char* pads[] = {"A", "B", "X", "Y", "None"};
                     int pb = pc->jumpGamepadButton < 0 || pc->jumpGamepadButton > 3 ? 4 : pc->jumpGamepadButton;
                     if (ImGui::Combo("Jump Pad Button##p25", &pb, pads, 5)) { pc->jumpGamepadButton = pb == 4 ? -1 : pb; ed.dirty = true; }
+                    oked::FieldTip("Jump Pad Button##p25");
                 }
                 if (ImGui::DragFloat("Jump Force##p25", &pc->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+                oked::FieldTip("Jump Force##p25");
                 if (ImGui::DragInt("Jumps##p25", &pc->maxJumps, 0.05f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("2 = double jump.");
                 if (ImGui::SliderFloat("Short Hop##p25", &pc->jumpCut, 0.1f, 1.0f, "%.2f")) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Upward speed kept when you let go of jump early.\n1 = every jump is the same height.");
                 if (ImGui::DragFloat("Fall Gravity##p25", &pc->fallGravity, 0.02f, 1.0f, 5.0f, "x%.2f")) ed.dirty = true;
+                oked::FieldTip("Fall Gravity##p25");
                 if (ImGui::DragFloat("Max Fall Speed##p25", &pc->maxFallSpeed, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Max Fall Speed##p25");
                 if (ImGui::DragFloat("Coyote Time##p25", &pc->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3fs")) ed.dirty = true;
+                oked::FieldTip("Coyote Time##p25");
                 if (ImGui::DragFloat("Jump Buffer##p25", &pc->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3fs")) ed.dirty = true;
+                oked::FieldTip("Jump Buffer##p25");
             }
 
             SectionHeader("Stance");
@@ -35558,13 +36432,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Toggle Stance##p25", &pc->toggleStance)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
             if (ImGui::DragFloat("Crouch Speed##p25", &pc->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Crouch Speed##p25");
             if (ImGui::DragFloat("Prone Speed##p25", &pc->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Prone Speed##p25");
             if (ImGui::Checkbox("Allow Prone##p25", &pc->allowProne)) ed.dirty = true;
+            oked::FieldTip("Allow Prone##p25");
             ImGui::SameLine(); if (ImGui::Checkbox("Resize Body##p25", &pc->resizeBody)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crouching and prone really make the player shorter: the collider shrinks so you fit under low things, and you can't stand up into a ceiling.");
             if (pc->resizeBody) {
                 if (ImGui::SliderFloat("Crouch Height##p25", &pc->crouchHeight, 0.3f, 1.0f, "%.2f x standing")) ed.dirty = true;
+                oked::FieldTip("Crouch Height##p25");
                 if (ImGui::SliderFloat("Prone Height##p25", &pc->proneHeight, 0.15f, 0.8f, "%.2f x standing")) ed.dirty = true;
+                oked::FieldTip("Prone Height##p25");
             }
             {
                 const char* padBtns[] = {"None","A","B","X","Y","Back","Start","L","R","D-pad Up","D-pad Down","D-pad Left","D-pad Right"};
@@ -35577,8 +36456,11 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Depth Layers");
             if (ImGui::DragInt("Layers##p25", &pc->layerCount, 0.05f, 1, 8)) { pc->layer = std::min(pc->layer, pc->layerCount - 1); ed.dirty = true; }
+            oked::FieldTip("Layers##p25");
             if (ImGui::DragFloat("Layer Spacing##p25", &pc->layerSpacing, 0.02f, 0.2f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Layer Spacing##p25");
             if (ImGui::DragFloat("Front Layer Z##p25", &pc->frontLayerZ, 0.05f)) ed.dirty = true;
+            oked::FieldTip("Front Layer Z##p25");
             ImGui::SameLine();
             if (ImGui::SmallButton("Use Mine##p25")) {
                 ed.PushUndo();
@@ -35591,7 +36473,9 @@ void DrawInspector(EditorState& ed) {
             if (KeyBindCombo("Back Key##p25", pc->layerBackKey)) ed.dirty = true;
             if (KeyBindCombo("Front Key##p25", pc->layerFrontKey)) ed.dirty = true;
             if (ImGui::DragFloat("Switch Speed##p25", &pc->layerSwitchSpeed, 0.1f, 1.0f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Switch Speed##p25");
             if (ImGui::Checkbox("Only When There's Room##p25", &pc->checkLayerFree)) ed.dirty = true;
+            oked::FieldTip("Only When There's Room##p25");
             if (pc->checkLayerFree) if (ImGui::DragFloat("Body Radius##p25", &pc->bodyRadius, 0.01f, 0.05f, 2.0f)) ed.dirty = true;
             {   // little side diagram of the layers
                 ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -35610,30 +36494,43 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Facing");
             if (ImGui::DragFloat("Turn Speed##p25", &pc->turnSpeed, 0.2f, 0.0f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Turn Speed##p25");
             if (ImGui::SliderFloat("Turn To Camera##p25", &pc->faceCameraAngle, 0.0f, 80.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Turn To Camera##p25");
 
             SectionHeader("Grab");
             if (ImGui::Checkbox("Can Grab##p25", &pc->canGrab)) ed.dirty = true;
+            oked::FieldTip("Can Grab##p25");
             if (pc->canGrab) {
                 if (KeyBindCombo("Grab Key##p25", pc->grabKey)) ed.dirty = true;
                 if (ImGui::DragFloat("Reach##p25", &pc->grabReach, 0.02f, 0.1f, 5.0f)) ed.dirty = true;
+                oked::FieldTip("Reach##p25");
                 if (ImGui::SliderFloat("Drag Speed##p25", &pc->grabPullSpeed, 0.1f, 1.0f, "x%.2f")) ed.dirty = true;
+                oked::FieldTip("Drag Speed##p25");
                 if (ImGui::Checkbox("Hang From Ledges##p25", &pc->grabHang)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold grab in the air near the top edge of something solid to catch it and hang.\nS / down lets go, jump jumps off.");
                 if (pc->grabHang) {
                     if (ImGui::Checkbox("Climb Up (W / up)##p25", &pc->ledgeClimb)) ed.dirty = true;
+                    oked::FieldTip("Climb Up (W / up)##p25");
                     if (pc->ledgeClimb) if (ImGui::DragFloat("Climb Time##p25", &pc->climbTime, 0.01f, 0.05f, 2.0f, "%.2fs")) ed.dirty = true;
                 }
             }
 
             SectionHeader("Camera");
             if (ImGui::DragFloat("Distance##p25", &pc->cameraDistance, 0.1f, 1.0f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Distance##p25");
             if (ImGui::DragFloat("Height##p25", &pc->cameraHeight, 0.05f, -5.0f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Height##p25");
             if (ImGui::DragFloat("Pitch##p25", &pc->cameraPitch, 0.2f, -30.0f, 60.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Pitch##p25");
             if (ImGui::DragFloat("Look Ahead##p25", &pc->lookAhead, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Look Ahead##p25");
             if (ImGui::DragFloat("Damping##p25", &pc->cameraDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+            oked::FieldTip("Damping##p25");
             if (ImGui::DragFloat("Vertical Damping##p25", &pc->verticalDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+            oked::FieldTip("Vertical Damping##p25");
             if (ImGui::DragFloat("Speed Zoom##p25", &pc->speedZoom, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Speed Zoom##p25");
             if (ImGui::Checkbox("Camera Follows Layer##p25", &pc->cameraFollowsLayer)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: the camera stays centred on the layers, like LittleBigPlanet.");
             ImGui::TextDisabled("Script events: on_jump, on_land, on_layer, on_grab, on_release, on_climb.");
@@ -35643,14 +36540,19 @@ void DrawInspector(EditorState& ed) {
     if (auto* pj = dynamic_cast<Projectile3D*>(curComp)) {
         if (CompHeader("Projectile 3D", pj, &toRemove)) {
             if (ImGui::DragFloat3("Velocity##pj", &pj->velocity.x, 0.1f)) ed.dirty = true;
+            oked::FieldTip("Velocity##pj");
             if (ImGui::DragFloat("Damage##pj", &pj->damage, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Damage##pj");
             if (ImGui::DragFloat("Lifetime##pj", &pj->lifetime, 0.05f, 0.05f, 60.0f, "%.2fs")) ed.dirty = true;
+            oked::FieldTip("Lifetime##pj");
             if (ImGui::DragFloat("Gravity##pj", &pj->gravityScale, 0.02f, -5.0f, 5.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = straight line, 1 = falls like a grenade.");
             if (ImGui::DragFloat("Impact Force##pj", &pj->impactForce, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Impact Force##pj");
             if (ImGui::DragInt("Pierce##pj", &pj->pierce, 0.05f, 0, 20)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra targets it goes through. Walls always stop it.");
             if (ImGui::Checkbox("Bounce Off Walls##pj", &pj->bounce)) ed.dirty = true;
+            oked::FieldTip("Bounce Off Walls##pj");
             if (pj->bounce) if (ImGui::DragInt("Bounces##pj", &pj->maxBounces, 0.05f, 1, 20)) ed.dirty = true;
             ImGui::TextDisabled("Damages the Health it hits; calls on_hit on its script.");
             if (ImGui::SmallButton("Remove##pj")) toRemove = pj;
@@ -35660,23 +36562,32 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Top Down Controller 2D", t2, &toRemove)) {
             SectionHeader("Movement");
             if (ImGui::DragFloat("Speed##t2", &t2->speed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Speed##t2");
             if (ImGui::DragFloat("Run Speed##t2", &t2->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Run Speed##t2");
             if (KeyBindCombo("Sprint Key##t2", t2->sprintKey)) ed.dirty = true;
             if (ImGui::DragFloat("Acceleration##t2", &t2->acceleration, 1.0f, 0.0f, 400.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = instant (arcade). Higher = momentum/weight.");
             if (ImGui::DragFloat("Deceleration##t2", &t2->deceleration, 1.0f, 0.0f, 400.0f)) ed.dirty = true;
+            oked::FieldTip("Deceleration##t2");
             if (ImGui::Checkbox("Normalize Diagonal##t2", &t2->normalizeDiagonal)) ed.dirty = true;
+            oked::FieldTip("Normalize Diagonal##t2");
             if (ImGui::Checkbox("Use Gamepad##t2", &t2->useGamepad)) ed.dirty = true;
+            oked::FieldTip("Use Gamepad##t2");
             SectionHeader("Dash");
             if (KeyBindCombo("Dash Key##t2", t2->dashKey)) ed.dirty = true;
             if (t2->dashKey) {
                 if (ImGui::DragFloat("Dash Speed##t2", &t2->dashSpeed, 0.2f, 0.0f, 80.0f)) ed.dirty = true;
+                oked::FieldTip("Dash Speed##t2");
                 if (ImGui::DragFloat("Dash Time##t2", &t2->dashDuration, 0.01f, 0.02f, 2.0f, "%.2fs")) ed.dirty = true;
+                oked::FieldTip("Dash Time##t2");
                 if (ImGui::DragFloat("Dash Cooldown##t2", &t2->dashCooldown, 0.05f, 0.0f, 10.0f, "%.2fs")) ed.dirty = true;
+                oked::FieldTip("Dash Cooldown##t2");
             }
             SectionHeader("Facing");
             const char* faces[] = {"None", "Move Direction", "Mouse (aim)"};
             if (ImGui::Combo("Face##t2", &t2->faceMode, faces, 3)) ed.dirty = true;
+            oked::FieldTip("Face##t2");
             if (t2->faceMode != 0) {
                 const char* fwd[] = {"Up", "Right", "Down", "Left"};
                 if (ImGui::Combo("Sprite Points##t2", &t2->spriteForward, fwd, 4)) ed.dirty = true;
@@ -35685,12 +36596,16 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = snap instantly.");
             }
             if (ImGui::Checkbox("Drive Animation##t2", &t2->driveAnimation)) ed.dirty = true;
+            oked::FieldTip("Drive Animation##t2");
             SectionHeader("World Limits");
             if (ImGui::Checkbox("Clamp To Bounds##t2", &t2->clampBounds)) ed.dirty = true;
+            oked::FieldTip("Clamp To Bounds##t2");
             if (t2->clampBounds) {
                 float mn[2] = {t2->boundsMin.x, t2->boundsMin.y}, mx[2] = {t2->boundsMax.x, t2->boundsMax.y};
                 if (ImGui::DragFloat2("Min##t2", mn, 0.1f)) { t2->boundsMin = {mn[0], mn[1]}; ed.dirty = true; }
+                oked::FieldTip("Min##t2");
                 if (ImGui::DragFloat2("Max##t2", mx, 0.1f)) { t2->boundsMax = {mx[0], mx[1]}; ed.dirty = true; }
+                oked::FieldTip("Max##t2");
             }
             if (ImGui::Checkbox("Screen Wrap##t2", &t2->screenWrap)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wrap around the camera view edges (asteroids-style).");
@@ -35699,15 +36614,19 @@ void DrawInspector(EditorState& ed) {
             const char* mb[] = {"(none)", "Left Mouse", "Right Mouse", "Middle Mouse"};
             int fbi = (t2->fireButton < 0 || t2->fireButton > 2) ? 0 : t2->fireButton + 1;
             if (ImGui::Combo("Fire Button##t2", &fbi, mb, 4)) { t2->fireButton = fbi - 1; ed.dirty = true; }
+            oked::FieldTip("Fire Button##t2");
             {
                 char pb[128]; std::strncpy(pb, t2->projectile.c_str(), sizeof(pb) - 1); pb[sizeof(pb) - 1] = '\0';
                 if (ImGui::InputTextWithHint("Projectile##t2", "examples/node_playground/shot.okayprefab", pb, sizeof(pb))) { t2->projectile = pb; ed.dirty = true; }
+                oked::FieldTip("Projectile##t2");
                 if (AcceptAssetPathField(t2->projectile)) ed.dirty = true;   // drop a prefab from Project
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Prefab spawned as a bullet — give it a Rigidbody2D (+ Lifetime).");
             }
             if (t2->fireKey || t2->fireButton >= 0) {
                 if (ImGui::DragFloat("Bullet Speed##t2", &t2->projectileSpeed, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Bullet Speed##t2");
                 if (ImGui::DragFloat("Fire Rate##t2", &t2->fireRate, 0.1f, 0.1f, 40.0f, "%.1f/s")) ed.dirty = true;
+                oked::FieldTip("Fire Rate##t2");
                 ImGui::TextDisabled("Aims at the mouse when Face = Mouse, else the move direction.");
             }
             SectionHeader("Knockback");
@@ -35720,6 +36639,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* fr = dynamic_cast<FreeRoamController*>(curComp)) {
         if (CompHeader("Free Roam (Fly) Controller", fr, &toRemove)) {
             if (ImGui::DragFloat("Move Speed##fr", &fr->moveSpeed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Move Speed##fr");
             if (ImGui::DragFloat("Boost x##fr", &fr->boostMultiplier, 0.1f, 1.0f, 20.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed multiplier while holding Sprint (Shift)");
             if (ImGui::DragFloat("Smoothing##fr", &fr->acceleration, 0.5f, 0.0f, 60.0f)) ed.dirty = true;
@@ -35728,13 +36648,19 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine(); if (KeyBindCombo("Down Key##fr", fr->downKey)) ed.dirty = true;
             SectionHeader("Look");
             if (ImGui::DragFloat("Sensitivity##fr", &fr->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Sensitivity##fr");
             if (ImGui::Checkbox("Invert Y##fr", &fr->invertY)) ed.dirty = true;
+            oked::FieldTip("Invert Y##fr");
             if (ImGui::Checkbox("Lock Cursor##fr", &fr->lockCursor)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Capture the cursor and always look (FPS spectator)");
-            if (!fr->lockCursor)
+            if (!fr->lockCursor) {
                 if (ImGui::Checkbox("Hold Right-Mouse to Look##fr", &fr->lookRequiresRightMouse)) ed.dirty = true;
+                oked::FieldTip("Hold Right-Mouse to Look##fr");
+            }
             if (ImGui::DragFloat("Min Pitch##fr", &fr->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
+            oked::FieldTip("Min Pitch##fr");
             if (ImGui::DragFloat("Max Pitch##fr", &fr->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
+            oked::FieldTip("Max Pitch##fr");
             ImGui::TextDisabled("Put on a Camera. WASD fly, Space/C up/down, Shift boost.");
             if (ImGui::SmallButton("Remove##fr")) toRemove = fr;
         }
@@ -35743,48 +36669,75 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Third Person Shooter Controller", ts, &toRemove)) {
             if (StanceControlFields(ts->stanceControl, "ts")) ed.dirty = true;
             if (ImGui::Checkbox("Dive On Prone While Sprinting##tps", &ts->stanceControl.diveOnProne)) ed.dirty = true;
+            oked::FieldTip("Dive On Prone While Sprinting##tps");
             if (ts->stanceControl.diveOnProne) {
                 if (ImGui::DragFloat("Dive Hop##tps", &ts->stanceControl.diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
+                oked::FieldTip("Dive Hop##tps");
                 if (ImGui::DragFloat("Dive Slide Time##tps", &ts->stanceControl.diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+                oked::FieldTip("Dive Slide Time##tps");
             }
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tps", &ts->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Speed##tps");
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Run Speed##tps");
             if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Jump Force##tps");
             if (ImGui::DragInt("Max Jumps##tps", &ts->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ...");
             if (ImGui::DragFloat("Walk Accel##tps", &ts->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Accel##tps");
             if (ImGui::DragFloat("Run Accel##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Run Accel##tps");
             if (ImGui::DragFloat("Decel##tps", &ts->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            oked::FieldTip("Decel##tps");
             if (ImGui::DragFloat("Turn Rate##tps", &ts->turnSpeed, 0.1f, 0.0f, 60.0f)) ed.dirty = true;
+            oked::FieldTip("Turn Rate##tps");
             if (ImGui::DragFloat("Steer##tps", &ts->steerRate, 1.0f, 1.0f, 600.0f)) ed.dirty = true;
+            oked::FieldTip("Steer##tps");
             if (ImGui::DragFloat("Air Control##tps", &ts->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Air Control##tps");
             if (ImGui::Checkbox("Foot IK##tps", &ts->footIK)) ed.dirty = true;
+            oked::FieldTip("Foot IK##tps");
             SectionHeader("Look / Camera");
             if (ImGui::DragFloat("Sensitivity##tps", &ts->mouseSensitivity, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Sensitivity##tps");
             if (ImGui::Checkbox("Invert Y##tps", &ts->invertY)) ed.dirty = true;
+            oked::FieldTip("Invert Y##tps");
             if (ImGui::DragFloat("Distance##tps", &ts->distance, 0.1f, 1.0f, 15.0f)) ed.dirty = true;
+            oked::FieldTip("Distance##tps");
             if (ImGui::DragFloat("Camera Height##tps", &ts->cameraHeight, 0.05f, 0.0f, 4.0f)) ed.dirty = true;
+            oked::FieldTip("Camera Height##tps");
             if (ImGui::DragFloat("Shoulder Offset##tps", &ts->shoulderOffset, 0.02f, -2.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Shoulder Offset##tps");
             if (ImGui::DragFloat("Follow Damping##tps", &ts->pivotDampingXZ, 0.1f, 0.0f, 60.0f, "%.1f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How tightly the camera's pivot (the shoulder) follows sideways.\nHigher = tighter; 0 = instant.");
             if (ImGui::DragFloat("Vertical Damping##tps", &ts->pivotDampingY, 0.1f, 0.0f, 60.0f, "%.1f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How tightly the pivot follows up and down, so steps, landings and\nplatforms don't pop the view. 0 = instant.");
             if (ImGui::DragFloat("Max Follow Lag##tps", &ts->maxPivotLag, 0.01f, 0.0f, 5.0f, "%.2f m")) ed.dirty = true;
+            oked::FieldTip("Max Follow Lag##tps");
             if (ImGui::Checkbox("Camera Collision##tps", &ts->cameraCollision)) ed.dirty = true;
+            oked::FieldTip("Camera Collision##tps");
             if (ts->cameraCollision) {
                 if (ImGui::DragFloat("Collision Skin##tps", &ts->cameraCollisionSkin, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                oked::FieldTip("Collision Skin##tps");
                 if (ImGui::DragFloat("Collision Radius##tps", &ts->cameraCollisionRadius, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The camera is a sphere this big: it doesn't flicker on edges, poles and railings.\nTriggers and the player's own parts never block it.");
                 if (LayerMaskField("Collision Layers##tps", ts->cameraCollisionMask, "Collider layers that block the camera: numbers or names\nseparated by commas (0,3 or Default,Walls). Blank = all layers.")) ed.dirty = true;
                 if (ImGui::DragFloat("Collision Recover##tps", &ts->cameraCollisionRecover, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Collision Recover##tps");
             }
             SectionHeader("Aim & Fire");
             if (ImGui::DragInt("Aim Button##tps", &ts->aimButton, 0.1f, 0, 4)) ed.dirty = true;
+            oked::FieldTip("Aim Button##tps");
             if (ImGui::DragFloat("Aim Distance##tps", &ts->aimDistance, 0.05f, 0.5f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Aim Distance##tps");
             if (ImGui::DragFloat("Aim Shoulder##tps", &ts->aimShoulder, 0.02f, -2.0f, 2.0f)) ed.dirty = true;
+            oked::FieldTip("Aim Shoulder##tps");
             if (ImGui::DragInt("Fire Button##tps", &ts->fireButton, 0.1f, 0, 4)) ed.dirty = true;
+            oked::FieldTip("Fire Button##tps");
             if (ImGui::Checkbox("Auto Fire##tps", &ts->autoFire)) ed.dirty = true;
+            oked::FieldTip("Auto Fire##tps");
             if (ts->autoFire)
                 if (ImGui::DragFloat("Fire Rate##tps", &ts->fireRate, 0.2f, 0.5f, 30.0f, "%.1f /s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Left mouse fires; calls the script's on_fire()");
@@ -35798,38 +36751,58 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Click To Move Controller", cm, &toRemove)) {
             if (StanceControlFields(cm->stanceControl, "cm")) ed.dirty = true;
             if (ImGui::DragFloat("Walk Speed##ctm", &cm->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Walk Speed##ctm");
             if (ImGui::DragFloat("Run Speed##ctm", &cm->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Run Speed##ctm");
             int rk = cm->runKey ? cm->runKey : 0; char rkb[2] = { (char)(rk ? rk : ' '), 0 };
             if (ImGui::InputText("Run Key##ctm", rkb, sizeof(rkb))) { cm->runKey = rkb[0] == ' ' ? 0 : rkb[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold to run (blank = disabled)");
             if (ImGui::DragFloat("Stop Distance##ctm", &cm->stopDistance, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Stop Distance##ctm");
             if (ImGui::DragFloat("Arrive Radius##ctm", &cm->arriveRadius, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease to a stop over the last this-many metres (0 = abrupt stop)");
             if (ImGui::DragFloat("Turn Speed##ctm", &cm->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            oked::FieldTip("Turn Speed##ctm");
             const char* btns[] = {"Left", "Right", "Middle"};
             ImGui::SetNextItemWidth(110);
             if (ImGui::Combo("Click Button##ctm", &cm->mouseButton, btns, 3)) ed.dirty = true;
+            oked::FieldTip("Click Button##ctm");
             if (ImGui::Checkbox("Hold To Move##ctm", &cm->holdToMove)) ed.dirty = true;
+            oked::FieldTip("Hold To Move##ctm");
             ImGui::SameLine();
             if (ImGui::Checkbox("Drive Animation##ctm", &cm->driveAnimation)) ed.dirty = true;
+            oked::FieldTip("Drive Animation##ctm");
             if (ImGui::Checkbox("Foot IK##ctm", &cm->footIK)) ed.dirty = true;
+            oked::FieldTip("Foot IK##ctm");
             if (ImGui::Checkbox("Pathfinding##ctm", &cm->usePathfinding)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clicks behind walls walk AROUND them (grid A*), Diablo-style.");
             if (ImGui::Checkbox("Use Player Height##ctm", &cm->usePlayerHeight)) ed.dirty = true;
-            if (!cm->usePlayerHeight)
+            oked::FieldTip("Use Player Height##ctm");
+            if (!cm->usePlayerHeight) {
                 if (ImGui::DragFloat("Ground Y##ctm", &cm->groundY, 0.05f)) ed.dirty = true;
+                oked::FieldTip("Ground Y##ctm");
+            }
 
             SectionHeader("Follow Camera");
             if (ImGui::Checkbox("Follow Camera##ctm", &cm->followCamera)) ed.dirty = true;
+            oked::FieldTip("Follow Camera##ctm");
             if (cm->followCamera) {
                 if (ImGui::DragFloat("Cam Height##ctm", &cm->cameraHeight, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
+                oked::FieldTip("Cam Height##ctm");
                 if (ImGui::DragFloat("Cam Distance##ctm", &cm->cameraDistance, 0.1f, 1.0f, 40.0f)) ed.dirty = true;
+                oked::FieldTip("Cam Distance##ctm");
                 if (ImGui::DragFloat("Min Distance##ctm", &cm->minDistance, 0.1f, 1.0f, 40.0f)) ed.dirty = true;
+                oked::FieldTip("Min Distance##ctm");
                 if (ImGui::DragFloat("Max Distance##ctm", &cm->maxDistance, 0.1f, 1.0f, 60.0f)) ed.dirty = true;
+                oked::FieldTip("Max Distance##ctm");
                 if (ImGui::DragFloat("Cam Yaw##ctm", &cm->cameraYaw, 0.5f)) ed.dirty = true;
+                oked::FieldTip("Cam Yaw##ctm");
                 if (ImGui::DragFloat("Cam Pitch##ctm", &cm->cameraPitch, 0.5f, 5.0f, 89.0f)) ed.dirty = true;
+                oked::FieldTip("Cam Pitch##ctm");
                 if (ImGui::DragFloat("Rotate Speed##ctm", &cm->rotateSpeed, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                oked::FieldTip("Rotate Speed##ctm");
                 if (ImGui::DragFloat("Damping##ctm", &cm->cameraDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                oked::FieldTip("Damping##ctm");
                 ImGui::TextDisabled("Middle-drag rotates, wheel zooms.");
             }
             ImGui::TextDisabled("Click the ground to walk there (RuneScape-style). Needs the main Camera.");
@@ -35841,8 +36814,11 @@ void DrawInspector(EditorState& ed) {
             char tb[64];
             std::strncpy(tb, ft->target.c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';
             if (ImGui::InputText("Target##ft", tb, sizeof(tb))) { ft->target = tb; ed.dirty = true; }
+            oked::FieldTip("Target##ft");
             if (ImGui::DragFloat("Speed##ft", &ft->speed, 0.05f, 0.0f, 200.0f)) ed.dirty = true;
+            oked::FieldTip("Speed##ft");
             if (ImGui::DragFloat("Stop Distance##ft", &ft->stopDistance, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Stop Distance##ft");
             ImGui::TextDisabled("Chases the named object (enemy AI / homing).");
             if (ImGui::SmallButton("Remove##ft")) toRemove = ft;
         }
@@ -35877,6 +36853,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* a = dynamic_cast<AudioSource*>(curComp)) {
         if (CompHeader("Audio Source", a, &toRemove)) {
             if (ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Volume");
             if (ImGui::DragFloat("Pitch##audio", &a->pitch, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed and pitch together: 2 is an octave up and twice as fast");
             if (ImGui::SliderFloat("Pan##audio", &a->pan, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
@@ -35904,6 +36881,7 @@ void DrawInspector(EditorState& ed) {
             cb[sizeof(cb) - 1] = '\0';
             ImGui::SetNextItemWidth(210);
             if (ImGui::InputText("##audiowav", cb, sizeof(cb))) { a->clipPath = cb; ed.dirty = true; }
+            oked::FieldTip("##audiowav");
             if (AcceptAssetPathField(a->clipPath)) ed.dirty = true;   // drop from Project
             ImGui::SameLine(0, 4);
             // Browse for an audio file and load it now so Play previews it in-editor.
@@ -35929,9 +36907,12 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::TextDisabled("WAV, OGG or MP3; loads on Play and in the built game; %.2fs clip", a->clip.Duration());
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
+            oked::FieldTip("3D (spatial)");
             if (a->spatial) {
                 if (ImGui::DragFloat("Min Distance##audio", &a->minDistance, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+                oked::FieldTip("Min Distance##audio");
                 if (ImGui::DragFloat("Max Distance##audio", &a->maxDistance, 0.1f, 0.0f, 5000.0f)) ed.dirty = true;
+                oked::FieldTip("Max Distance##audio");
                 int r = (int)a->rolloff;
                 const char* rolls[] = {"Linear", "Inverse", "Logarithmic"};
                 if (ImGui::Combo("Rolloff##audio", &r, rolls, IM_ARRAYSIZE(rolls))) { a->rolloff = (AudioRolloff)r; ed.dirty = true; }
@@ -35953,6 +36934,7 @@ void DrawInspector(EditorState& ed) {
                 tb[sizeof(tb) - 1] = '\0';
                 ImGui::SetNextItemWidth(200);
                 if (ImGui::InputText("##track", tb, sizeof(tb))) { mp->tracks[i] = tb; ed.dirty = true; }
+                oked::FieldTip("##track");
                 if (AcceptAssetPathField(mp->tracks[i])) ed.dirty = true;   // drop from Project
                 ImGui::SameLine(0, 4);
                 if (ImGui::SmallButton("...")) {
@@ -35968,12 +36950,17 @@ void DrawInspector(EditorState& ed) {
             if (removeAt >= 0) { mp->tracks.erase(mp->tracks.begin() + removeAt); ed.dirty = true; }
             if (ImGui::Button("+ Track")) { mp->tracks.emplace_back(); ed.dirty = true; }
             if (ImGui::DragFloat("Volume##music", &mp->volume, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Volume##music");
             if (ImGui::DragFloat("Crossfade##music", &mp->crossfade, 0.05f, 0.0f, 20.0f, "%.2f s")) ed.dirty = true;
+            oked::FieldTip("Crossfade##music");
             if (ImGui::Checkbox("Play On Start##music", &mp->playOnStart)) ed.dirty = true;
+            oked::FieldTip("Play On Start##music");
             ImGui::SameLine();
             if (ImGui::Checkbox("Shuffle##music", &mp->shuffle)) ed.dirty = true;
+            oked::FieldTip("Shuffle##music");
             ImGui::SameLine();
             if (ImGui::Checkbox("Loop##music", &mp->loopPlaylist)) ed.dirty = true;
+            oked::FieldTip("Loop##music");
             if (ed.isPlaying()) {
                 ImGui::Text("Now: %s", mp->CurrentTrack().empty() ? "(nothing)" : mp->CurrentTrack().c_str());
                 if (ImGui::Button("Previous##music")) mp->Previous();
@@ -35989,6 +36976,7 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Mover", mv, &toRemove)) {
             float v[3] = {mv->velocity.x, mv->velocity.y, mv->velocity.z};
             if (ImGui::DragFloat3("Velocity##mv", v, 0.05f)) { mv->velocity = {v[0], v[1], v[2]}; ed.dirty = true; }
+            oked::FieldTip("Velocity##mv");
             ImGui::TextDisabled("units / second");
             if (ImGui::SmallButton("Remove##mv")) toRemove = mv;
         }
@@ -35997,6 +36985,7 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Spinner", sp, &toRemove)) {
             float v[3] = {sp->angularVelocity.x, sp->angularVelocity.y, sp->angularVelocity.z};
             if (ImGui::DragFloat3("Angular Vel##sp", v, 0.5f)) { sp->angularVelocity = {v[0], v[1], v[2]}; ed.dirty = true; }
+            oked::FieldTip("Angular Vel##sp");
             ImGui::TextDisabled("degrees / second (X, Y, Z)");
             if (ImGui::SmallButton("Remove##sp")) toRemove = sp;
         }
@@ -36004,6 +36993,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* lt = dynamic_cast<Lifetime*>(curComp)) {
         if (CompHeader("Lifetime", lt, &toRemove)) {
             if (ImGui::DragFloat("Seconds##lt", &lt->seconds, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
+            oked::FieldTip("Seconds##lt");
             ImGui::TextDisabled("destroys this object after N seconds of play");
             if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
         }
@@ -36026,9 +37016,11 @@ void DrawInspector(EditorState& ed) {
             strField("Score Var##co", co->scoreVar, "coSV");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Variable to add to on pickup. The prebuilt HUD shows it via  Score: {score}.");
             if (ImGui::DragFloat("Points##co", &co->points, 0.1f, -100000.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Points##co");
             if (ImGui::DragFloat("Heal##co", &co->heal, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also heal the collector this much (needs a Health component).");
             if (ImGui::Checkbox("Respawn##co", &co->respawn)) ed.dirty = true;
+            oked::FieldTip("Respawn##co");
             if (co->respawn) { ImGui::SameLine(); ImGui::SetNextItemWidth(90);
                 if (ImGui::DragFloat("Delay##cord", &co->respawnDelay, 0.05f, 0.0f, 10000.0f)) ed.dirty = true; }
             strField("Collector Tag##co", co->collectorTag, "coCT");
@@ -36040,9 +37032,11 @@ void DrawInspector(EditorState& ed) {
     if (auto* dt = dynamic_cast<DamageOnTouch*>(curComp)) {
         if (CompHeader("Damage On Touch", dt, &toRemove)) {
             if (ImGui::DragFloat("Damage##dot", &dt->damage, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Damage##dot");
             if (ImGui::DragFloat("Interval##dot", &dt->interval, 0.02f, 0.0f, 60.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds between repeat hits while overlapping (0 = every frame).");
             if (ImGui::Checkbox("Hit Once##dot", &dt->once)) ed.dirty = true;
+            oked::FieldTip("Hit Once##dot");
             if (ImGui::DragFloat("Knockback##dot", &dt->knockback, 0.2f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Push a Rigidbody toucher away from this object.");
             if (ImGui::Checkbox("Destroy Self##dot", &dt->destroySelf)) ed.dirty = true;
@@ -36057,11 +37051,13 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Jump Pad", jp, &toRemove)) {
             ImGui::TextDisabled("Launches bodies that touch it (needs a collider on this object).");
             if (ImGui::DragFloat("Force##jp", &jp->force, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
+            oked::FieldTip("Force##jp");
             if (ImGui::Checkbox("Launch Along Object Up##jp", &jp->useObjectUp)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tilt this object to aim the launch; off = always straight up.");
             if (ImGui::DragFloat("Forward Boost##jp", &jp->forwardBoost, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra speed along the body's current travel direction (booster rings).");
             if (ImGui::DragFloat("Cooldown##jp", &jp->cooldown, 0.05f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
+            oked::FieldTip("Cooldown##jp");
             { char tb[48]; std::snprintf(tb, sizeof(tb), "%s", jp->triggerTag.c_str());
               if (ImGui::InputText("Who##jp", tb, sizeof(tb))) { jp->triggerTag = tb; ed.dirty = true; }
               if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tag or name of who launches; empty = anyone."); }
@@ -36074,6 +37070,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Teleport to this object's position. Leave empty to use the fixed destination below.");
             float d[3] = {tp->destination.x, tp->destination.y, tp->destination.z};
             if (ImGui::DragFloat3("Destination##tp", d, 0.1f)) { tp->destination = {d[0], d[1], d[2]}; ed.dirty = true; }
+            oked::FieldTip("Destination##tp");
             if (ImGui::DragFloat("Cooldown##tp", &tp->cooldown, 0.02f, 0.0f, 60.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ignore a just-teleported body this long (stops linked pads ping-ponging).");
             strField("Trigger Tag##tp", tp->triggerTag, "tpTT");
@@ -36086,10 +37083,12 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Trigger Zone", tz, &toRemove)) {
             const char* acts[] = {"Set Variable", "Add To Variable", "Activate Object", "Deactivate Object", "Win", "Lose", "Quit"};
             if (ImGui::Combo("Action##tz", &tz->action, acts, IM_ARRAYSIZE(acts))) ed.dirty = true;
+            oked::FieldTip("Action##tz");
             auto A = (TriggerZone::Action)tz->action;
             if (A == TriggerZone::Action::SetVar || A == TriggerZone::Action::AddVar) {
                 strField("Variable##tz", tz->varName, "tzVN");
                 if (ImGui::DragFloat("Amount##tz", &tz->amount, 0.1f, -100000.0f, 100000.0f)) ed.dirty = true;
+                oked::FieldTip("Amount##tz");
             }
             if (A == TriggerZone::Action::ActivateTarget || A == TriggerZone::Action::DeactivateTarget) {
                 strField("Target Object##tz", tz->targetName, "tzTN");
@@ -36109,22 +37108,33 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Stats", st, &toRemove)) {
             SectionHeader("Vitals");
             if (ImGui::DragFloat("Health##st", &st->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Health##st");
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Max##sthp", &st->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max##sthp");
             if (ImGui::DragFloat("Mana##st", &st->mana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Mana##st");
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Max##stmp", &st->maxMana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max##stmp");
             ImGui::ProgressBar(st->HealthFraction(), ImVec2(-1, 0), "HP");
             SectionHeader("Progression");
             if (ImGui::DragInt("Level##st", &st->level, 0.1f, 1, 999)) ed.dirty = true;
+            oked::FieldTip("Level##st");
             if (ImGui::DragInt("XP##st", &st->xp, 1.0f, 0, 1000000)) ed.dirty = true;
+            oked::FieldTip("XP##st");
             ImGui::SameLine(); ImGui::SetNextItemWidth(90);
             if (ImGui::DragInt("To Next##st", &st->xpToNext, 1.0f, 1, 1000000)) ed.dirty = true;
+            oked::FieldTip("To Next##st");
             SectionHeader("Attributes");
             if (ImGui::DragInt("Strength##st", &st->strength, 0.1f, 0, 999)) ed.dirty = true;
+            oked::FieldTip("Strength##st");
             if (ImGui::DragInt("Defense##st", &st->defense, 0.1f, 0, 999)) ed.dirty = true;
+            oked::FieldTip("Defense##st");
             if (ImGui::DragInt("Intelligence##st", &st->intelligence, 0.1f, 0, 999)) ed.dirty = true;
+            oked::FieldTip("Intelligence##st");
             if (ImGui::DragInt("Agility##st", &st->agility, 0.1f, 0, 999)) ed.dirty = true;
+            oked::FieldTip("Agility##st");
             ImGui::TextDisabled("scripts: take_damage / heal / add_xp; fires on_death, on_level_up");
             if (ImGui::SmallButton("Remove##st")) toRemove = st;
         }
@@ -36202,6 +37212,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* tm = dynamic_cast<TurnManager*>(curComp)) {
         if (CompHeader("Turn Manager", tm, &toRemove)) {
             if (ImGui::Checkbox("Auto Start##tm", &tm->autoStart)) ed.dirty = true;
+            oked::FieldTip("Auto Start##tm");
             ImGui::Text("Round %d  |  Turn: %s", tm->round,
                         tm->Current().empty() ? "-" : tm->Current().c_str());
             SectionHeader("Participants (turn order)");
@@ -36214,6 +37225,7 @@ void DrawInspector(EditorState& ed) {
                 else ImGui::TextUnformatted(" ");
                 ImGui::SameLine(); ImGui::SetNextItemWidth(160);
                 if (ImGui::InputText("##part", pb, sizeof(pb))) { tm->participants[i] = pb; ed.dirty = true; }
+                oked::FieldTip("##part");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) eraseP = i;
                 ImGui::PopID();
@@ -36232,9 +37244,11 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(buf, cf->targetName.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
             if (ImGui::InputText("Target##cf", buf, sizeof(buf))) { cf->targetName = buf; ed.dirty = true; }
+            oked::FieldTip("Target##cf");
             float off[3] = {cf->offset.x, cf->offset.y, cf->offset.z};
             if (DragVec3Axis("Offset##cf", off, 0.05f)) { cf->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
             if (ImGui::DragFloat("Smoothing##cf", &cf->smoothing, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Smoothing##cf");
             ImGui::TextDisabled("follows the named GameObject (0 = instant snap)");
             if (ImGui::SmallButton("Remove##cf")) toRemove = cf;
         }
@@ -36259,16 +37273,23 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Orbit the Follow target on a sphere (overrides offset + aim).\nGreat for 3rd-person player cameras.");
             if (vc->freeLook) {
                 if (ImGui::DragFloat("Radius##vcfl", &vc->orbitRadius, 0.1f, 0.1f, 200.0f)) ed.dirty = true;
+                oked::FieldTip("Radius##vcfl");
                 if (ImGui::DragFloat("Pivot Height##vcfl", &vc->orbitHeight, 0.05f)) ed.dirty = true;
+                oked::FieldTip("Pivot Height##vcfl");
                 if (ImGui::DragFloat("Yaw##vcfl", &vc->orbitYaw, 0.5f)) ed.dirty = true;
+                oked::FieldTip("Yaw##vcfl");
                 if (ImGui::DragFloat("Pitch##vcfl", &vc->orbitPitch, 0.5f)) ed.dirty = true;
+                oked::FieldTip("Pitch##vcfl");
                 float pc[2] = {vc->orbitMinPitch, vc->orbitMaxPitch};
                 if (ImGui::DragFloat2("Pitch Min/Max##vcfl", pc, 0.5f, -89.0f, 89.0f)) { vc->orbitMinPitch = pc[0]; vc->orbitMaxPitch = pc[1]; ed.dirty = true; }
+                oked::FieldTip("Pitch Min/Max##vcfl");
                 if (ImGui::Checkbox("Mouse Look##vcfl", &vc->orbitInput)) ed.dirty = true;
+                oked::FieldTip("Mouse Look##vcfl");
                 if (vc->orbitInput) {
                     if (ImGui::DragInt("Mouse Button##vcfl", &vc->orbitButton, 0.1f, -1, 4)) ed.dirty = true;
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold this mouse button to orbit (-1 = always; 1 = right button).");
                     if (ImGui::DragFloat("Sensitivity##vcfl", &vc->mouseSensitivity, 0.01f, 0.0f, 5.0f)) ed.dirty = true;
+                    oked::FieldTip("Sensitivity##vcfl");
                 }
             }
             SectionHeader("Tracked Dolly");
@@ -36281,8 +37302,10 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("GameObject holding a Dolly Path component.");
                 if (ImGui::Checkbox("Auto Dolly##vcd", &vc->autoDolly)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide to the path point nearest the Follow target.");
-                if (!vc->autoDolly)
+                if (!vc->autoDolly) {
                     if (ImGui::SliderFloat("Position##vcd", &vc->dollyPosition, 0.0f, 1.0f)) ed.dirty = true;
+                    oked::FieldTip("Position##vcd");
+                }
             }
             SectionHeader("Aim");
             char lb[128];
@@ -36296,9 +37319,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Don't re-aim until the target drifts beyond this angle (reduces jitter).");
             SectionHeader("Damping");
             if (ImGui::DragFloat("Position##vcd", &vc->positionDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Position##vcd");
             if (ImGui::DragFloat("Rotation##vcd", &vc->rotationDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Rotation##vcd");
             SectionHeader("Lens");
             if (ImGui::SliderFloat("Field of View##vc", &vc->fieldOfView, 10.0f, 170.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Field of View##vc");
             if (ImGui::SliderFloat("Dutch (roll)##vc", &vc->dutch, -45.0f, 45.0f, "%.1f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roll the shot around the view axis (tilted horizon).");
             SectionHeader("Confiner");
@@ -36312,8 +37338,11 @@ void DrawInspector(EditorState& ed) {
             }
             SectionHeader("Noise / Impulse");
             if (ImGui::DragFloat("Amplitude##vcn", &vc->shakeAmplitude, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
+            oked::FieldTip("Amplitude##vcn");
             if (ImGui::DragFloat("Frequency##vcn", &vc->shakeFrequency, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
+            oked::FieldTip("Frequency##vcn");
             if (ImGui::DragFloat("Impulse Decay##vcn", &vc->impulseDecay, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Impulse Decay##vcn");
             ImGui::SameLine();
             if (ImGui::SmallButton("Test Impulse##vc")) vc->AddImpulse(1.0f);
             ImGui::TextDisabled("Needs a Cinemachine Brain on the main camera.");
@@ -36336,11 +37365,13 @@ void DrawInspector(EditorState& ed) {
     if (auto* dp = dynamic_cast<DollyPath*>(curComp)) {
         if (CompHeader("Dolly Path", dp, &toRemove)) {
             if (ImGui::Checkbox("Looped##dp", &dp->looped)) ed.dirty = true;
+            oked::FieldTip("Looped##dp");
             ImGui::Text("Waypoints: %d (local space)", (int)dp->waypoints.size());
             for (int i = 0; i < (int)dp->waypoints.size(); ++i) {
                 float w[3] = {dp->waypoints[i].x, dp->waypoints[i].y, dp->waypoints[i].z};
                 ImGui::PushID(i);
                 if (ImGui::DragFloat3("##wp", w, 0.1f)) { dp->waypoints[i] = {w[0], w[1], w[2]}; ed.dirty = true; }
+                oked::FieldTip("##wp");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) { dp->waypoints.erase(dp->waypoints.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                 ImGui::PopID();
@@ -36357,9 +37388,13 @@ void DrawInspector(EditorState& ed) {
             char db[128];
             std::strncpy(db, dc->path.c_str(), sizeof(db) - 1); db[sizeof(db) - 1] = '\0';
             if (ImGui::InputText("Path##dc", db, sizeof(db))) { dc->path = db; ed.dirty = true; }
+            oked::FieldTip("Path##dc");
             if (ImGui::SliderFloat("Position##dc", &dc->position, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Position##dc");
             if (ImGui::DragFloat("Speed##dc", &dc->speed, 0.01f)) ed.dirty = true;
+            oked::FieldTip("Speed##dc");
             if (ImGui::Checkbox("Auto Move##dc", &dc->autoMove)) ed.dirty = true;
+            oked::FieldTip("Auto Move##dc");
             if (ImGui::SmallButton("Remove##dc")) toRemove = dc;
         }
     }
@@ -36375,6 +37410,7 @@ void DrawInspector(EditorState& ed) {
                     ImVec2(-1.0f, ImGui::GetTextLineHeight() * 3.0f))) { tr->text = buf; ed.dirty = true; }
             float col[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##txt", col)) { tr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true; }
+            oked::FieldTip("Color##txt");
             // Common text colors, one click each.
             static const struct { const char* n; float r, g, b; } kTxtCols[] = {
                 {"White", 1, 1, 1}, {"Black", 0, 0, 0}, {"Gold", 1.0f, 0.84f, 0.30f},
@@ -36402,9 +37438,11 @@ void DrawInspector(EditorState& ed) {
                 }
             }
             if (ImGui::Checkbox("Screen Space (UI)##txt", &tr->screenSpace)) ed.dirty = true;
+            oked::FieldTip("Screen Space (UI)##txt");
             if (tr->screenSpace) {
                 float bs[2] = {tr->size.x, tr->size.y};
                 if (ImGui::DragFloat2("Box Size##txt", bs, 1.0f, 1.0f, 4000.0f)) { tr->size = {bs[0], bs[1]}; ed.dirty = true; }
+                oked::FieldTip("Box Size##txt");
                 if (ImGui::SmallButton("Fit to Text##txt")) {
                     tr->size = {(float)tr->PixelWidth() * tr->pixelSize + 8.0f,
                                 (float)tr->PixelHeight() * tr->pixelSize + 8.0f};
@@ -36412,42 +37450,56 @@ void DrawInspector(EditorState& ed) {
                 }
                 float sp[2] = {tr->screenPos.x, tr->screenPos.y};
                 if (ImGui::DragFloat2("Offset##txt", sp, 1.0f)) { tr->screenPos = {sp[0], sp[1]}; ed.dirty = true; }
+                oked::FieldTip("Offset##txt");
                 AnchorCombo("Anchor##txt", tr->anchor, ed);
                 const char* aligns[] = {"Left", "Center", "Right"};
                 if (ImGui::Combo("Align##txt", &tr->align, aligns, 3)) ed.dirty = true;
+                oked::FieldTip("Align##txt");
                 const char* valigns[] = {"Top", "Middle", "Bottom"};
                 int va = tr->alignBottom ? 2 : (tr->vcenter ? 1 : 0);
                 if (ImGui::Combo("V-Align##txt", &va, valigns, 3)) {
                     tr->alignBottom = (va == 2); tr->vcenter = (va == 1); ed.dirty = true;
                 }
                 if (ImGui::Checkbox("Background##txt", &tr->background)) ed.dirty = true;
+                oked::FieldTip("Background##txt");
                 if (tr->background) {
                     float bg[4] = {tr->backgroundColor.r, tr->backgroundColor.g, tr->backgroundColor.b, tr->backgroundColor.a};
                     if (ImGui::ColorEdit4("BG Color##txt", bg)) { tr->backgroundColor = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
+                    oked::FieldTip("BG Color##txt");
                 }
             }
             if (ImGui::Checkbox("Shadow##txt", &tr->shadow)) ed.dirty = true;
+            oked::FieldTip("Shadow##txt");
             if (tr->shadow) {
                 float scol[4] = {tr->shadowColor.r, tr->shadowColor.g, tr->shadowColor.b, tr->shadowColor.a};
                 if (ImGui::ColorEdit4("Shadow Color##txt", scol)) { tr->shadowColor = {scol[0], scol[1], scol[2], scol[3]}; ed.dirty = true; }
+                oked::FieldTip("Shadow Color##txt");
                 float so[2] = {tr->shadowOffset.x, tr->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##txt", so, 0.1f)) { tr->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+                oked::FieldTip("Shadow Offset##txt");
             }
             if (ImGui::Checkbox("Outline##txt", &tr->outline)) ed.dirty = true;
+            oked::FieldTip("Outline##txt");
             if (tr->outline) {
                 float ocol[4] = {tr->outlineColor.r, tr->outlineColor.g, tr->outlineColor.b, tr->outlineColor.a};
                 if (ImGui::ColorEdit4("Outline Color##txt", ocol)) { tr->outlineColor = {ocol[0], ocol[1], ocol[2], ocol[3]}; ed.dirty = true; }
+                oked::FieldTip("Outline Color##txt");
             }
             if (ImGui::Checkbox("Bold##txt", &tr->bold)) ed.dirty = true;
+            oked::FieldTip("Bold##txt");
             ImGui::SameLine();
             if (ImGui::Checkbox("Italic##txt", &tr->italic)) ed.dirty = true;
+            oked::FieldTip("Italic##txt");
             ImGui::SameLine();
             if (ImGui::Checkbox("UPPERCASE##txt", &tr->uppercase)) ed.dirty = true;
+            oked::FieldTip("UPPERCASE##txt");
             // Vertical color gradient (top = Color, bottom = this).
             if (ImGui::Checkbox("Gradient##txt", &tr->gradient)) ed.dirty = true;
+            oked::FieldTip("Gradient##txt");
             if (tr->gradient) {
                 float cb[4] = {tr->colorBottom.r, tr->colorBottom.g, tr->colorBottom.b, tr->colorBottom.a};
                 if (ImGui::ColorEdit4("Bottom Color##txt", cb)) { tr->colorBottom = {cb[0], cb[1], cb[2], cb[3]}; ed.dirty = true; }
+                oked::FieldTip("Bottom Color##txt");
             }
             // Typewriter reveal: show first N chars, optionally auto-typing.
             if (ImGui::DragInt("Visible Chars##txt", &tr->visibleChars, 0.5f, -1, 100000))
@@ -36458,7 +37510,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
+            oked::FieldTip("Letter Spacing##txt");
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
+            oked::FieldTip("Line Spacing##txt");
             // Font: a drag-only slot — empty = built-in 8x8 bitmap; drop a .ttf/.otf
             // from the Project panel to use it.
             ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Font"); ImGui::SameLine();
@@ -36475,6 +37529,7 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Design pixels per world unit (smaller = bigger in-world).");
             if (ImGui::Checkbox("Billboard (face camera)##w3", &w3->billboard)) ed.dirty = true;
+            oked::FieldTip("Billboard (face camera)##w3");
             if (ImGui::Checkbox("Constant size (don't resize with distance)##w3", &w3->constantSize)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep a fixed on-screen size no matter how near/far the camera is.\nThe widget still moves in 3D, it just never shrinks or grows.");
             if (w3->constantSize) {
@@ -36499,10 +37554,12 @@ void DrawInspector(EditorState& ed) {
             const char* modes[] = {"Constant Pixel Size", "Scale With Screen Size"};
             int m = (int)cv->scaleMode;
             if (ImGui::Combo("UI Scale Mode##cv", &m, modes, 2)) { cv->scaleMode = (Canvas::ScaleMode)m; ed.dirty = true; }
+            oked::FieldTip("UI Scale Mode##cv");
 
             if (cv->scaleMode == Canvas::ScaleMode::ScaleWithScreenSize) {
                 float ref[2] = {cv->referenceResolution.x, cv->referenceResolution.y};
                 if (ImGui::DragFloat2("Reference Res##cv", ref, 1.0f, 1.0f, 8000.0f)) { cv->referenceResolution = {ref[0], ref[1]}; ed.dirty = true; }
+                oked::FieldTip("Reference Res##cv");
                 // Quick presets for the most common authoring resolutions.
                 ImGui::TextDisabled("Presets:");
                 auto preset = [&](const char* label, float w, float h) {
@@ -36608,31 +37665,40 @@ void DrawInspector(EditorState& ed) {
             const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play"};
             int m = (int)nm->autoStart;
             if (ImGui::Combo("Auto Start##nm", &m, modes, 3)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
+            oked::FieldTip("Auto Start##nm");
             int port = nm->autoPort;
             ImGui::SetNextItemWidth(120);
             if (ImGui::InputInt("Port##nm", &port)) { nm->autoPort = (std::uint16_t)(port < 0 ? 0 : port); ed.dirty = true; }
+            oked::FieldTip("Port##nm");
             if (nm->autoStart == NetworkManager::AutoStart::Join) {
                 static char hostBuf[64]; static NetworkManager* bound = nullptr;
                 if (bound != nm) { std::strncpy(hostBuf, nm->autoHost.c_str(), sizeof(hostBuf) - 1); hostBuf[sizeof(hostBuf)-1]='\0'; bound = nm; }
                 if (ImGui::InputText("Host IP##nm", hostBuf, sizeof(hostBuf))) { nm->autoHost = hostBuf; ed.dirty = true; }
+                oked::FieldTip("Host IP##nm");
             }
             static char nameBuf[48]; static NetworkManager* nbound = nullptr;
             if (nbound != nm) { std::strncpy(nameBuf, nm->startName.c_str(), sizeof(nameBuf) - 1); nameBuf[sizeof(nameBuf)-1]='\0'; nbound = nm; }
             if (ImGui::InputText("Player Name##nm", nameBuf, sizeof(nameBuf))) { nm->startName = nameBuf; ed.dirty = true; }
+            oked::FieldTip("Player Name##nm");
             static char roomBuf[48]; static NetworkManager* rbound = nullptr;
             if (rbound != nm) { std::strncpy(roomBuf, nm->startRoom.c_str(), sizeof(roomBuf) - 1); roomBuf[sizeof(roomBuf)-1]='\0'; rbound = nm; }
             if (ImGui::InputText("Room (lobby)##nm", roomBuf, sizeof(roomBuf))) { nm->startRoom = roomBuf; ed.dirty = true; }
+            oked::FieldTip("Room (lobby)##nm");
             ImGui::SliderFloat("Smoothing##nm", &nm->interpolationRate, 0.0f, 30.0f, "%.0f /s");
 
             SectionHeader("Host settings");
             static char srvBuf[64]; static NetworkManager* sbound = nullptr;
             if (sbound != nm) { std::strncpy(srvBuf, nm->serverName.c_str(), sizeof(srvBuf)-1); srvBuf[sizeof(srvBuf)-1]='\0'; sbound = nm; }
             if (ImGui::InputText("Server Name##nm", srvBuf, sizeof(srvBuf))) { nm->serverName = srvBuf; ed.dirty = true; }
+            oked::FieldTip("Server Name##nm");
             static char passBuf[48]; static NetworkManager* pbound = nullptr;
             if (pbound != nm) { std::strncpy(passBuf, nm->password.c_str(), sizeof(passBuf)-1); passBuf[sizeof(passBuf)-1]='\0'; pbound = nm; }
             if (ImGui::InputText("Password##nm", passBuf, sizeof(passBuf), ImGuiInputTextFlags_Password)) { nm->password = passBuf; ed.dirty = true; }
+            oked::FieldTip("Password##nm");
             if (ImGui::SliderInt("Max Players##nm", &nm->maxPlayers, 1, 64)) ed.dirty = true;
+            oked::FieldTip("Max Players##nm");
             if (ImGui::SliderFloat("Tick Rate##nm", &nm->snapshotRate, 5.0f, 60.0f, "%.0f /s")) ed.dirty = true;
+            oked::FieldTip("Tick Rate##nm");
             if (ImGui::SliderFloat("Fixed Net Tick##nm", &nm->netTickRate, 0.0f, 60.0f, nm->netTickRate > 0.0f ? "%.0f Hz" : "off")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: as before (clients send every frame). On (30 is a good rate): the host ticks at this rate whatever the frame rate, snapshots carry the tick, and clients send their state once a tick. Replaces Tick Rate for snapshots.");
             if (ImGui::Checkbox("Authoritative movement##nm", &nm->authoritativeMovement)) ed.dirty = true;
@@ -36652,6 +37718,7 @@ void DrawInspector(EditorState& ed) {
                 char pf[256]; std::snprintf(pf, sizeof(pf), "%s", nm->spawnablePrefabs[i].c_str());
                 ImGui::SetNextItemWidth(-30);
                 if (ImGui::InputText("##nmpf", pf, sizeof(pf))) { nm->spawnablePrefabs[i] = pf; ed.dirty = true; }
+                oked::FieldTip("##nmpf");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X##nmpf")) removePf = i;
                 ImGui::PopID();
@@ -36732,6 +37799,7 @@ void DrawInspector(EditorState& ed) {
             if (!wuLoc && ImGui::InputText("Text##wu", tb, sizeof(tb))) { wu->text = tb; ed.dirty = true; }
             float c[4] = {wu->color.r, wu->color.g, wu->color.b, wu->color.a};
             if (ImGui::ColorEdit4("Text Color##wu", c)) { wu->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
+            oked::FieldTip("Text Color##wu");
             float bg[4] = {wu->background.r, wu->background.g, wu->background.b, wu->background.a};
             if (ImGui::ColorEdit4("Background##wu", bg)) { wu->background = {bg[0],bg[1],bg[2],bg[3]}; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Panel behind the text. Set alpha to 0 for no panel.");
@@ -36739,7 +37807,9 @@ void DrawInspector(EditorState& ed) {
             if (DragVec3Axis("World Offset##wu", off, 0.05f)) { wu->worldOffset = {off[0],off[1],off[2]}; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Offset from the object in world units (default: 2 above it).");
             if (ImGui::DragFloat("Size##wu", &wu->pixelSize, 0.05f, 0.2f, 16.0f)) ed.dirty = true;
+            oked::FieldTip("Size##wu");
             if (ImGui::Checkbox("Scale With Distance##wu", &wu->scaleWithDistance)) ed.dirty = true;
+            oked::FieldTip("Scale With Distance##wu");
             if (ImGui::DragFloat("Max Distance##wu", &wu->maxDistance, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = always visible; otherwise hide when farther than this.");
             if (ImGui::DragFloat("Bar (0..1, <0 = none)##wu", &wu->bar, 0.01f, -1.0f, 1.0f)) ed.dirty = true;
@@ -36747,6 +37817,7 @@ void DrawInspector(EditorState& ed) {
             if (wu->bar >= 0.0f) {
                 float bc[4] = {wu->barColor.r, wu->barColor.g, wu->barColor.b, wu->barColor.a};
                 if (ImGui::ColorEdit4("Bar Color##wu", bc)) { wu->barColor = {bc[0],bc[1],bc[2],bc[3]}; ed.dirty = true; }
+                oked::FieldTip("Bar Color##wu");
             }
             ImGui::TextDisabled("Floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
             if (ImGui::SmallButton("Remove##wu")) toRemove = wu;
@@ -36782,25 +37853,34 @@ void DrawInspector(EditorState& ed) {
             }
             float pos[2] = {btn->position.x, btn->position.y};
             if (ImGui::DragFloat2("Pos (px)##uib", pos, 1.0f)) { btn->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##uib");
             float sz[2] = {btn->size.x, btn->size.y};
             if (ImGui::DragFloat2("Size (px)##uib", sz, 1.0f, 1.0f, 4000.0f)) { btn->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##uib");
             float c[4] = {btn->color.r, btn->color.g, btn->color.b, btn->color.a};
             if (ImGui::ColorEdit4("Color##uib", c)) { btn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            oked::FieldTip("Color##uib");
             float hc[4] = {btn->hoverColor.r, btn->hoverColor.g, btn->hoverColor.b, btn->hoverColor.a};
             if (ImGui::ColorEdit4("Hover##uib", hc)) { btn->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
+            oked::FieldTip("Hover##uib");
             float prc[4] = {btn->pressedColor.r, btn->pressedColor.g, btn->pressedColor.b, btn->pressedColor.a};
             if (ImGui::ColorEdit4("Pressed##uib", prc)) { btn->pressedColor = {prc[0], prc[1], prc[2], prc[3]}; ed.dirty = true; }
+            oked::FieldTip("Pressed##uib");
             float dc[4] = {btn->disabledColor.r, btn->disabledColor.g, btn->disabledColor.b, btn->disabledColor.a};
             if (ImGui::ColorEdit4("Disabled##uib", dc)) { btn->disabledColor = {dc[0], dc[1], dc[2], dc[3]}; ed.dirty = true; }
+            oked::FieldTip("Disabled##uib");
             if (ImGui::Checkbox("Interactable##uib", &btn->interactable)) ed.dirty = true;
+            oked::FieldTip("Interactable##uib");
             ImGui::SameLine();
             if (ImGui::Checkbox("Focusable##uib", &btn->focusable)) ed.dirty = true;
+            oked::FieldTip("Focusable##uib");
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
 
             SectionHeader("On Click (assign a function)");
             { static char tgt[64]; static UIButton* tbound = nullptr;
               if (tbound != btn) { std::strncpy(tgt, btn->clickTarget.c_str(), sizeof(tgt)-1); tgt[sizeof(tgt)-1]='\0'; tbound = btn; }
               if (ImGui::InputText("Target Object##uibclk", tgt, sizeof(tgt))) { btn->clickTarget = tgt; ed.dirty = true; }
+              oked::FieldTip("Target Object##uibclk");
               // Drag an object from the Hierarchy onto the field to set the target
               // — its public functions then populate the dropdown below.
               if (ImGui::BeginDragDropTarget()) {
@@ -36847,11 +37927,14 @@ void DrawInspector(EditorState& ed) {
             AnchorCombo("Anchor##uib", btn->anchor, ed);
             SectionHeader("Style");
             ShapeCombo("Shape##uib", btn->shape, ed);
-            if (UIShapeUsesRadius(btn->shape))
+            if (UIShapeUsesRadius(btn->shape)) {
                 if (ImGui::DragFloat("Corner Radius##uib", &btn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##uib");
+            }
             // Font Scale only styles the built-in label; with a child Text it's edited there.
             if (!childTr) {
                 if (ImGui::DragFloat("Font Scale##uib", &btn->fontScale, 0.05f, 0.5f, 16.0f)) ed.dirty = true;
+                oked::FieldTip("Font Scale##uib");
                 // Optional TTF label font — drag-only slot (empty = built-in bitmap).
                 ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Font"); ImGui::SameLine();
                 if (AssetSlot("uibfont", btn->fontPath, "Font", {".ttf", ".otf"})) ed.dirty = true;
@@ -36859,17 +37942,23 @@ void DrawInspector(EditorState& ed) {
                     ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
             }
             if (ImGui::Checkbox("Drop Shadow##uib", &btn->shadow)) ed.dirty = true;
+            oked::FieldTip("Drop Shadow##uib");
             if (btn->shadow) {
                 float sc[4] = {btn->shadowColor.r, btn->shadowColor.g, btn->shadowColor.b, btn->shadowColor.a};
                 if (ImGui::ColorEdit4("Shadow Color##uib", sc)) { btn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+                oked::FieldTip("Shadow Color##uib");
                 float so[2] = {btn->shadowOffset.x, btn->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##uib", so, 0.5f)) { btn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+                oked::FieldTip("Shadow Offset##uib");
                 if (ImGui::DragFloat("Shadow Blur##uib", &btn->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
+                oked::FieldTip("Shadow Blur##uib");
             }
             if (ImGui::DragFloat("Border Width##uib", &btn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            oked::FieldTip("Border Width##uib");
             if (btn->borderWidth > 0.0f) {
                 float bc[4] = {btn->borderColor.r, btn->borderColor.g, btn->borderColor.b, btn->borderColor.a};
                 if (ImGui::ColorEdit4("Border Color##uib", bc)) { btn->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+                oked::FieldTip("Border Color##uib");
             }
             if (ImGui::DragFloat("Hover Grow##uib", &btn->hoverScale, 0.01f, 1.0f, 2.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale when hovered/focused (1 = none)");
@@ -36878,6 +37967,7 @@ void DrawInspector(EditorState& ed) {
             if (!childTr) {
                 float htc[4] = {btn->hoverTextColor.r, btn->hoverTextColor.g, btn->hoverTextColor.b, btn->hoverTextColor.a};
                 if (ImGui::ColorEdit4("Hover Text##uib", htc)) { btn->hoverTextColor = {htc[0], htc[1], htc[2], htc[3]}; ed.dirty = true; }
+                oked::FieldTip("Hover Text##uib");
             }
             if (ImGui::DragFloat("Transition Speed##uib", &btn->transitionSpeed, 0.2f, 0.0f, 30.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth color fade on hover/press (0 = instant)");
@@ -36886,20 +37976,26 @@ void DrawInspector(EditorState& ed) {
                 const char* eases[] = {"Linear", "Smooth", "Ease Out", "Ease In"};
                 int ez = btn->transitionEase; if (ez < 0 || ez > 3) ez = 0;
                 if (ImGui::Combo("Ease##uib", &ez, eases, 4)) { btn->transitionEase = ez; ed.dirty = true; }
+                oked::FieldTip("Ease##uib");
                 if (ImGui::DragFloat("Transition Time##uib", &btn->transitionDuration, 0.01f, 0.0f, 3.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to reach the state color and scale. 0 uses Transition Speed.");
                 if (ImGui::Checkbox("Own Focus Color##uib", &btn->separateFocus)) ed.dirty = true;
+                oked::FieldTip("Own Focus Color##uib");
                 if (btn->separateFocus) {
                     float fc[4] = {btn->focusColor.r, btn->focusColor.g, btn->focusColor.b, btn->focusColor.a};
                     if (ImGui::ColorEdit4("Focus Color##uib", fc)) { btn->focusColor = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
+                    oked::FieldTip("Focus Color##uib");
                 }
             }
             if (ImGui::DragFloat("Press Offset##uib", &btn->pressOffset, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            oked::FieldTip("Press Offset##uib");
             char ic[256]; std::strncpy(ic, btn->icon.c_str(), sizeof(ic) - 1); ic[sizeof(ic)-1] = '\0';
             if (ImGui::InputText("Icon##uib", ic, sizeof(ic))) { btn->icon = ic; ed.dirty = true; }
+            oked::FieldTip("Icon##uib");
             if (ImGui::DragFloat("Icon Size##uib", &btn->iconSize, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("PNG/JPG drawn beside the label; 0 = none");
             if (ImGui::Checkbox("Icon on Right##uib", &btn->iconRight)) ed.dirty = true;
+            oked::FieldTip("Icon on Right##uib");
             SectionHeader("Behavior");
             if (ImGui::Checkbox("Toggle Button##uib", &btn->toggleMode)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stays pressed; each click flips its on/off state");
@@ -36908,7 +38004,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fires on_click() repeatedly while held (steppers)");
             if (btn->holdRepeat) {
                 if (ImGui::DragFloat("Repeat Delay##uib", &btn->repeatDelay, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                oked::FieldTip("Repeat Delay##uib");
                 if (ImGui::DragFloat("Repeat Rate##uib", &btn->repeatInterval, 0.01f, 0.01f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("Repeat Rate##uib");
             }
             if (ImGui::SmallButton("Remove##uib")) toRemove = btn;
         }
@@ -36920,11 +38018,13 @@ void DrawInspector(EditorState& ed) {
             UIRectFields("uip", pn->anchor, pn->position, pn->size, ed);
             float c[4] = {pn->color.r, pn->color.g, pn->color.b, pn->color.a};
             if (ImGui::ColorEdit4("Color##uip", c)) { pn->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            oked::FieldTip("Color##uip");
             SectionHeader("Style");
             ShapeCombo("Shape##uip", pn->shape, ed);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The panel's silhouette — circle, pill, hexagon, etc. Octagon/Parallelogram/Trapezoid use Corner Radius for their cut/skew.");
             if (UIShapeUsesRadius(pn->shape)) {
                 if (ImGui::DragFloat("Corner Radius##uip", &pn->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##uip");
                 if (pn->cornerRadius > 0.0f) CornerMaskEditor("uip", pn->cornerMask, ed);
             }
             if (ImGui::DragFloat("Border Width##uip", &pn->borderWidth, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
@@ -36932,17 +38032,21 @@ void DrawInspector(EditorState& ed) {
             if (pn->borderWidth > 0.0f) {
                 float bc[4] = {pn->borderColor.r, pn->borderColor.g, pn->borderColor.b, pn->borderColor.a};
                 if (ImGui::ColorEdit4("Border Color##uip", bc)) { pn->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+                oked::FieldTip("Border Color##uip");
             }
             if (ImGui::DragFloat("Outline##uip", &pn->outlineWidth, 0.1f, 0.0f, 24.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("An outer keyline/glow ring drawn OUTSIDE the panel edge (focus rings, neon accents).");
             if (pn->outlineWidth > 0.0f) {
                 float oc[4] = {pn->outlineColor.r, pn->outlineColor.g, pn->outlineColor.b, pn->outlineColor.a};
                 if (ImGui::ColorEdit4("Outline Color##uip", oc)) { pn->outlineColor = {oc[0], oc[1], oc[2], oc[3]}; ed.dirty = true; }
+                oked::FieldTip("Outline Color##uip");
             }
             if (ImGui::Checkbox("Gradient##uip", &pn->useGradient)) ed.dirty = true;
+            oked::FieldTip("Gradient##uip");
             if (pn->useGradient) {
                 float gb[4] = {pn->colorBottom.r, pn->colorBottom.g, pn->colorBottom.b, pn->colorBottom.a};
                 if (ImGui::ColorEdit4("Bottom Color##uip", gb)) { pn->colorBottom = {gb[0], gb[1], gb[2], gb[3]}; ed.dirty = true; }
+                oked::FieldTip("Bottom Color##uip");
                 const char* gdirs[] = {"Vertical", "Horizontal", "Diagonal \\", "Diagonal /"};
                 int gd = (int)pn->gradientDir;
                 if (ImGui::Combo("Direction##uipgd", &gd, gdirs, 4)) {
@@ -36959,13 +38063,17 @@ void DrawInspector(EditorState& ed) {
             if (pn->topHighlight) {
                 float hc[4] = {pn->highlightColor.r, pn->highlightColor.g, pn->highlightColor.b, pn->highlightColor.a};
                 if (ImGui::ColorEdit4("Highlight Color##uip", hc)) { pn->highlightColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
+                oked::FieldTip("Highlight Color##uip");
             }
             if (ImGui::Checkbox("Drop Shadow##uip", &pn->shadow)) ed.dirty = true;
+            oked::FieldTip("Drop Shadow##uip");
             if (pn->shadow) {
                 float sc[4] = {pn->shadowColor.r, pn->shadowColor.g, pn->shadowColor.b, pn->shadowColor.a};
                 if (ImGui::ColorEdit4("Shadow Color##uip", sc)) { pn->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+                oked::FieldTip("Shadow Color##uip");
                 float so[2] = {pn->shadowOffset.x, pn->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##uip", so, 0.5f)) { pn->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+                oked::FieldTip("Shadow Offset##uip");
                 if (ImGui::DragFloat("Shadow Blur##uip", &pn->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp; higher = a soft penumbra (premium card look)");
             }
@@ -36977,27 +38085,37 @@ void DrawInspector(EditorState& ed) {
             UIStyleBar(ed, in);
             char tb[128]; std::strncpy(tb, in->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Text##uif", tb, sizeof(tb))) { in->text = tb; ed.dirty = true; }
+            oked::FieldTip("Text##uif");
             const bool phLoc = LocalizedTextField(ed, "uifloc", in->loc, in->placeholder, go);   // the placeholder from a string-table key
             char ph[96]; std::strncpy(ph, in->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
             if (!phLoc && ImGui::InputText("Placeholder##uif", ph, sizeof(ph))) { in->placeholder = ph; ed.dirty = true; }
             float pos[2] = {in->position.x, in->position.y};
             if (ImGui::DragFloat2("Pos (px)##uif", pos, 1.0f)) { in->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##uif");
             float sz[2] = {in->size.x, in->size.y};
             if (ImGui::DragFloat2("Size (px)##uif", sz, 1.0f, 8.0f, 4000.0f)) { in->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##uif");
             float c[4] = {in->color.r, in->color.g, in->color.b, in->color.a};
             if (ImGui::ColorEdit4("Color##uif", c)) { in->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
+            oked::FieldTip("Color##uif");
             if (ImGui::DragInt("Max Length##uif", &in->maxLength, 1, 1, 1024)) ed.dirty = true;
+            oked::FieldTip("Max Length##uif");
             const char* cts[] = {"Standard", "Integer", "Decimal", "Password"};
             int ct = (int)in->contentType;
             if (ImGui::Combo("Content Type##uif", &ct, cts, 4)) { in->contentType = (UIInputField::ContentType)ct; ed.dirty = true; }
+            oked::FieldTip("Content Type##uif");
             AnchorCombo("Anchor##uif", in->anchor, ed);
             ShapeCombo("Shape##uif", in->shape, ed);
-            if (UIShapeUsesRadius(in->shape))
+            if (UIShapeUsesRadius(in->shape)) {
                 if (ImGui::DragFloat("Corner Radius##uif", &in->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##uif");
+            }
             if (ImGui::DragFloat("Focus Ring##uif", &in->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+            oked::FieldTip("Focus Ring##uif");
             if (in->borderWidth > 0.0f) {
                 float bc[4] = {in->borderColor.r, in->borderColor.g, in->borderColor.b, in->borderColor.a};
                 if (ImGui::ColorEdit4("Ring Color##uif", bc)) { in->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+                oked::FieldTip("Ring Color##uif");
             }
             ImGui::TextDisabled("Click to focus + type at runtime; Enter calls on_submit().");
             // grok/ui-controls
@@ -37011,14 +38129,19 @@ void DrawInspector(EditorState& ed) {
             UIStyleBar(ed, dd);
             float pos[2] = {dd->position.x, dd->position.y};
             if (ImGui::DragFloat2("Pos (px)##udd", pos, 1.0f)) { dd->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##udd");
             float sz[2] = {dd->size.x, dd->size.y};
             if (ImGui::DragFloat2("Size (px)##udd", sz, 1.0f, 8.0f, 4000.0f)) { dd->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##udd");
             AnchorCombo("Anchor##udd", dd->anchor, ed);
             ShapeCombo("Shape##udd", dd->shape, ed);
-            if (UIShapeUsesRadius(dd->shape))
+            if (UIShapeUsesRadius(dd->shape)) {
                 if (ImGui::DragFloat("Corner Radius##udd", &dd->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##udd");
+            }
             char ph[96]; std::strncpy(ph, dd->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
             if (ImGui::InputText("Placeholder##udd", ph, sizeof(ph))) { dd->placeholder = ph; ed.dirty = true; }
+            oked::FieldTip("Placeholder##udd");
             if (ImGui::Button("Clear selection##udd")) { dd->value = -1; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("value = -1 shows the placeholder");
             SectionHeader("Options");
@@ -37028,6 +38151,7 @@ void DrawInspector(EditorState& ed) {
                 char ob[96]; std::strncpy(ob, dd->options[i].c_str(), sizeof(ob) - 1); ob[sizeof(ob)-1] = '\0';
                 ImGui::SetNextItemWidth(160);
                 if (ImGui::InputText("##opt", ob, sizeof(ob))) { dd->options[i] = ob; ed.dirty = true; }
+                oked::FieldTip("##opt");
                 ImGui::SameLine();
                 bool sel = (dd->value == i);
                 if (ImGui::RadioButton("##selopt", sel)) { dd->value = i; ed.dirty = true; }
@@ -37045,16 +38169,22 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Style");
             float c[4]  = {dd->color.r, dd->color.g, dd->color.b, dd->color.a};
             if (ImGui::ColorEdit4("Header##udd", c)) { dd->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
+            oked::FieldTip("Header##udd");
             float h[4]  = {dd->hoverColor.r, dd->hoverColor.g, dd->hoverColor.b, dd->hoverColor.a};
             if (ImGui::ColorEdit4("Highlight##udd", h)) { dd->hoverColor = {h[0],h[1],h[2],h[3]}; ed.dirty = true; }
+            oked::FieldTip("Highlight##udd");
             float l[4]  = {dd->listColor.r, dd->listColor.g, dd->listColor.b, dd->listColor.a};
             if (ImGui::ColorEdit4("List BG##udd", l)) { dd->listColor = {l[0],l[1],l[2],l[3]}; ed.dirty = true; }
+            oked::FieldTip("List BG##udd");
             float t[4]  = {dd->textColor.r, dd->textColor.g, dd->textColor.b, dd->textColor.a};
             if (ImGui::ColorEdit4("Text##udd", t)) { dd->textColor = {t[0],t[1],t[2],t[3]}; ed.dirty = true; }
+            oked::FieldTip("Text##udd");
             float b[4]  = {dd->borderColor.r, dd->borderColor.g, dd->borderColor.b, dd->borderColor.a};
             if (ImGui::ColorEdit4("Border##udd", b)) { dd->borderColor = {b[0],b[1],b[2],b[3]}; ed.dirty = true; }
+            oked::FieldTip("Border##udd");
             ImGui::TextDisabled("Click to open; picking an option calls on_change().");
             if (ImGui::Checkbox("Interactable##udd", &dd->interactable)) ed.dirty = true;
+            oked::FieldTip("Interactable##udd");
             // grok/ui-controls
             if (ImGui::Checkbox("Searchable##udd", &dd->searchable)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The open list starts with a row you can type in. It filters the options.");
@@ -37101,9 +38231,11 @@ void DrawInspector(EditorState& ed) {
                                : ty == TT::UISize ? "Size##ta" : "End##ta";
             if (ty == TT::Fade) {
                 if (ImGui::SliderFloat("End alpha##ta", &ta->endFloat, 0.0f, 1.0f)) ed.dirty = true;
+                oked::FieldTip("End alpha##ta");
             } else if (ty == TT::Color) {
                 float c4[4] = {ta->endColor.r, ta->endColor.g, ta->endColor.b, ta->endColor.a};
                 if (ImGui::ColorEdit4("End color##ta", c4)) { ta->endColor = {c4[0], c4[1], c4[2], c4[3]}; ed.dirty = true; }
+                oked::FieldTip("End color##ta");
             } else if (ty == TT::UIMove || ty == TT::UISize) {
                 float v2[2] = {ta->endValue.x, ta->endValue.y};
                 if (ImGui::DragFloat2(endLbl, v2, 1.0f)) { ta->endValue.x = v2[0]; ta->endValue.y = v2[1]; ed.dirty = true; }
@@ -37113,7 +38245,9 @@ void DrawInspector(EditorState& ed) {
             }
             if (ty == TT::Jump) {
                 if (ImGui::DragFloat("Height##ta", &ta->endFloat, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+                oked::FieldTip("Height##ta");
                 if (ImGui::SliderInt("Jumps##ta", &ta->jumps, 1, 10)) ed.dirty = true;
+                oked::FieldTip("Jumps##ta");
             }
             if (!punchy && ty != TT::Fade && ty != TT::Color) {
                 if (ImGui::Checkbox("Relative##ta", &ta->relative)) ed.dirty = true;
@@ -37127,6 +38261,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (punchy) {
                 if (ImGui::SliderInt("Vibrato##ta", &ta->vibrato, 1, 40)) ed.dirty = true;
+                oked::FieldTip("Vibrato##ta");
                 if (ty <= TT::PunchRotation && ImGui::SliderFloat("Elasticity##ta", &ta->elasticity, 0.0f, 1.0f)) ed.dirty = true;
             }
             // Speed based: the number is a speed in units a second and the tween lasts distance / speed (move, scale,
@@ -37134,6 +38269,7 @@ void DrawInspector(EditorState& ed) {
             const bool speedable = ty != TT::Rotate && ty <= TT::UISize;
             if (ImGui::DragFloat(speedable && ta->speedBased ? "Speed (units/s)##ta" : "Duration (s)##ta", &ta->duration, 0.01f, 0.01f, 120.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Delay (s)##ta", &ta->delay, 0.01f, 0.0f, 120.0f)) ed.dirty = true;
+            oked::FieldTip("Delay (s)##ta");
             if (speedable) {
                 if (ImGui::Checkbox("Speed based##ta", &ta->speedBased)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The number above (Speed) is a speed in units per second, not seconds:\nthe tween lasts as long as the distance needs (a long move takes longer\nthan a short one at the same speed).");
@@ -37172,13 +38308,16 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetNextItemWidth(ImGui::CalcItemWidth() * 0.45f);
                 ImGui::BeginDisabled(forever);
                 if (ImGui::DragInt("##taloops", &n, 0.1f, 1, 999)) { ta->loops = std::max(1, n); ed.dirty = true; }
+                oked::FieldTip("##taloops");
                 ImGui::EndDisabled();
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Forever##ta", &forever)) { ta->loops = forever ? -1 : 1; ed.dirty = true; }
+                oked::FieldTip("Forever##ta");
                 ImGui::SameLine(); ImGui::TextUnformatted("Loops");
                 if (ta->loops != 1) {
                     static const char* kLoopTypes[] = {"Restart", "Yoyo (back and forth)", "Incremental (keep going)"};
                     if (ImGui::Combo("Loop type##ta", &ta->loopType, kLoopTypes, IM_ARRAYSIZE(kLoopTypes))) ed.dirty = true;
+                    oked::FieldTip("Loop type##ta");
                 }
             }
             if (punchy) {
@@ -37186,11 +38325,13 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How a punch or shake dies away: 0 is a straight fade,\n4 is lively, 8 snappy (the motion is quiet sooner).");
             }
             if (ImGui::Checkbox("Play on start##ta", &ta->autoPlay)) ed.dirty = true;
+            oked::FieldTip("Play on start##ta");
             SameLineOrWrap(ButtonW("Ignore time scale") + 30);
             if (ImGui::Checkbox("Ignore time scale##ta", &ta->unscaled)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keeps playing while the game is paused (menus).");
             char idb[64]; std::snprintf(idb, sizeof(idb), "%s", ta->id.c_str());
             if (ImGui::InputTextWithHint("Id##ta", "for tween_play_id(\"...\")", idb, sizeof(idb))) { ta->id = idb; ed.dirty = true; }
+            oked::FieldTip("Id##ta");
             char tagb[okay::Tags::kMaxLength * 4 + 1]; std::snprintf(tagb, sizeof(tagb), "%s", ta->tag.c_str());
             if (ImGui::InputTextWithHint("Tag##ta", "for tween_kill_tag(\"...\")", tagb, sizeof(tagb))) { ta->tag = tagb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A group label: tween_kill_tag(\"menu\"), tween_pause_tag and tween_play_tag\n(and the Kill / Pause / Play Tweens With Tag nodes) reach every\ntween that carries it. Many tweens can share one.");
@@ -37218,25 +38359,34 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays when the scene starts and whenever the object is shown again.\nA fading panel fades everything under it.");
             v = (int)ua->loop;
             if (ImGui::Combo("Loop##uan", &v, kLoop, IM_ARRAYSIZE(kLoop))) { ua->loop = (UIAnimation::Loop)v; ed.dirty = true; }
+            oked::FieldTip("Loop##uan");
             v = (int)ua->outro;
             if (ImGui::Combo("Outro##uan", &v, kOutro, IM_ARRAYSIZE(kOutro))) { ua->outro = (UIAnimation::Outro)v; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays from a script (ui_hide) or the Hide UI node, then hides the object.");
             v = (int)ua->ease;
             if (ImGui::Combo("Easing##uan", &v, kEase, IM_ARRAYSIZE(kEase))) { ua->ease = (Ease)v; ed.dirty = true; }
+            oked::FieldTip("Easing##uan");
             if (ImGui::DragFloat("Duration##uan", &ua->duration, 0.01f, 0.02f, 5.0f, "%.2f s")) ed.dirty = true;
+            oked::FieldTip("Duration##uan");
             if (ImGui::DragFloat("Delay##uan", &ua->delay, 0.01f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wait before the intro: give each button of a menu a bigger delay\nso they come in one after another.");
             if (ua->intro >= UIAnimation::Intro::SlideLeft && ua->intro <= UIAnimation::Intro::SlideBottom || ua->intro == UIAnimation::Intro::Drop ||
                 ua->outro >= UIAnimation::Outro::SlideLeft && ua->outro <= UIAnimation::Outro::SlideBottom)
                 if (ImGui::DragFloat("Slide Distance##uan", &ua->distance, 1.0f, 0.0f, 2000.0f, "%.0f px")) ed.dirty = true;
+                oked::FieldTip("Slide Distance##uan");
             if (ua->loop != UIAnimation::Loop::None) {
                 if (ImGui::DragFloat("Loop Speed##uan", &ua->loopSpeed, 0.01f, 0.05f, 10.0f, "%.2f /s")) ed.dirty = true;
+                oked::FieldTip("Loop Speed##uan");
                 if (ImGui::DragFloat("Loop Amount##uan", &ua->loopAmount, 0.005f, 0.0f, 1.0f, "%.3f")) ed.dirty = true;
+                oked::FieldTip("Loop Amount##uan");
             }
             if (ImGui::Checkbox("Play on Start##uan", &ua->playOnStart)) ed.dirty = true;
+            oked::FieldTip("Play on Start##uan");
             ImGui::SameLine();
             if (ImGui::Checkbox("Replay when shown##uan", &ua->replayOnShow)) ed.dirty = true;
+            oked::FieldTip("Replay when shown##uan");
             if (ImGui::Checkbox("Hide after Outro##uan", &ua->hideAfterOutro)) ed.dirty = true;
+            oked::FieldTip("Hide after Outro##uan");
             // Preview in edit mode: tick the animation here, then put the layout back.
             static UIAnimation* s_prevAnim = nullptr;
             static float s_prevLeft = 0.0f;
@@ -37274,10 +38424,13 @@ void DrawInspector(EditorState& ed) {
             char tb[256]; std::strncpy(tb, tt->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (!ttLoc && ImGui::InputText("Text##utt", tb, sizeof(tb))) { tt->text = tb; ed.dirty = true; }
             if (ImGui::DragFloat("Delay (s)##utt", &tt->delay, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
+            oked::FieldTip("Delay (s)##utt");
             float bg[4] = {tt->background.r, tt->background.g, tt->background.b, tt->background.a};
             if (ImGui::ColorEdit4("Background##utt", bg)) { tt->background = {bg[0],bg[1],bg[2],bg[3]}; ed.dirty = true; }
+            oked::FieldTip("Background##utt");
             float tc[4] = {tt->textColor.r, tt->textColor.g, tt->textColor.b, tt->textColor.a};
             if (ImGui::ColorEdit4("Text Color##utt", tc)) { tt->textColor = {tc[0],tc[1],tc[2],tc[3]}; ed.dirty = true; }
+            oked::FieldTip("Text Color##utt");
             ImGui::TextDisabled("Hover the sibling widget to show it (in Game view / built game).");
             // grok/ui-controls — delay and follow-cursor already exist; these two are new.
             if (ImGui::Checkbox("Rich Text##utt", &tt->richText)) ed.dirty = true;
@@ -37291,17 +38444,23 @@ void DrawInspector(EditorState& ed) {
     if (auto* dg = dynamic_cast<UIDraggable*>(curComp)) {
         if (CompHeader("UI Draggable", dg, &toRemove)) {
             if (ImGui::Checkbox("Return to Start##udg", &dg->returnToStart)) ed.dirty = true;
+            oked::FieldTip("Return to Start##udg");
             if (ImGui::Checkbox("Any widget is a target##udg", &dg->anyTarget)) ed.dirty = true;
+            oked::FieldTip("Any widget is a target##udg");
             if (ImGui::Checkbox("Snap into slot##udg", &dg->snapToSlot)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Centers the item in the drop target — instant inventory");
             const char* axes[] = {"Both", "Horizontal", "Vertical"};
             int ax = (int)dg->axis;
             if (ImGui::Combo("Lock Axis##udg", &ax, axes, 3)) { dg->axis = (UIDraggable::Axis)ax; ed.dirty = true; }
+            oked::FieldTip("Lock Axis##udg");
             if (ImGui::DragFloat("Drag Threshold##udg", &dg->dragThreshold, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pixels before a drag starts (0 = instant)");
             if (ImGui::Checkbox("Bring to Front while dragging##udg", &dg->bringToFront)) ed.dirty = true;
+            oked::FieldTip("Bring to Front while dragging##udg");
             if (ImGui::Checkbox("Drag the parent (window title bar)##udg", &dg->dragParent)) ed.dirty = true;
+            oked::FieldTip("Drag the parent (window title bar)##udg");
             if (ImGui::Checkbox("Keep on screen##udg", &dg->keepOnScreen)) ed.dirty = true;
+            oked::FieldTip("Keep on screen##udg");
             ImGui::TextDisabled("Drop onto a UI Drop Target fires on_drop() here +");
             ImGui::TextDisabled("on_receive() on the target.");
             if (ImGui::SmallButton("Remove##udg")) toRemove = dg;
@@ -37315,22 +38474,29 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Slot background");
             if (ImGui::Checkbox("Draw background##udt", &dt->drawBackground)) ed.dirty = true;
+            oked::FieldTip("Draw background##udt");
             if (dt->drawBackground) {
                 float bgc[4] = {dt->background.r, dt->background.g, dt->background.b, dt->background.a};
                 if (ImGui::ColorEdit4("Background##udt", bgc)) { dt->background = {bgc[0],bgc[1],bgc[2],bgc[3]}; ed.dirty = true; }
+                oked::FieldTip("Background##udt");
                 if (ImGui::DragFloat("Corner Radius##udt", &dt->cornerRadius, 0.2f, 0.0f, 32.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##udt");
                 if (ImGui::DragFloat("Border Width##udt", &dt->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                oked::FieldTip("Border Width##udt");
                 if (dt->borderWidth > 0.0f) {
                     float bc[4] = {dt->borderColor.r, dt->borderColor.g, dt->borderColor.b, dt->borderColor.a};
                     if (ImGui::ColorEdit4("Border Color##udt", bc)) { dt->borderColor = {bc[0],bc[1],bc[2],bc[3]}; ed.dirty = true; }
+                    oked::FieldTip("Border Color##udt");
                 }
             }
 
             SectionHeader("Hover feedback");
             if (ImGui::Checkbox("Highlight on hover##udt", &dt->showHighlight)) ed.dirty = true;
+            oked::FieldTip("Highlight on hover##udt");
             if (dt->showHighlight) {
                 float hl[4] = {dt->highlight.r, dt->highlight.g, dt->highlight.b, dt->highlight.a};
                 if (ImGui::ColorEdit4("Accept tint##udt", hl)) { dt->highlight = {hl[0],hl[1],hl[2],hl[3]}; ed.dirty = true; }
+                oked::FieldTip("Accept tint##udt");
                 float rj[4] = {dt->rejectHighlight.r, dt->rejectHighlight.g, dt->rejectHighlight.b, dt->rejectHighlight.a};
                 if (ImGui::ColorEdit4("Reject tint##udt", rj)) { dt->rejectHighlight = {rj[0],rj[1],rj[2],rj[3]}; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shown when a wrong-tag item hovers over the slot.");
@@ -37338,6 +38504,7 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Drop");
             if (ImGui::Checkbox("Snap dropped item to center##udt", &dt->snapToCenter)) ed.dirty = true;
+            oked::FieldTip("Snap dropped item to center##udt");
             ImGui::TextDisabled("Script events (on a ScriptComponent here):");
             ImGui::BulletText("on_receive  — an item is dropped on this slot");
             ImGui::BulletText("on_remove   — an item is dragged out of this slot");
@@ -37349,15 +38516,19 @@ void DrawInspector(EditorState& ed) {
     if (auto* dg = dynamic_cast<Draggable*>(curComp)) {
         if (CompHeader("Draggable (item)", dg, &toRemove)) {
             if (ImGui::Checkbox("Return to Start##dg", &dg->returnToStart)) ed.dirty = true;
+            oked::FieldTip("Return to Start##dg");
             if (ImGui::Checkbox("Any sprite is a target##dg", &dg->anyTarget)) ed.dirty = true;
+            oked::FieldTip("Any sprite is a target##dg");
             if (ImGui::Checkbox("Snap onto zone##dg", &dg->snapToZone)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Centers the item on the drop zone — instant world-space slots");
             const char* axes[] = {"Both", "Horizontal", "Vertical"};
             int ax = (int)dg->axis;
             if (ImGui::Combo("Lock Axis##dg", &ax, axes, 3)) { dg->axis = (Draggable::Axis)ax; ed.dirty = true; }
+            oked::FieldTip("Lock Axis##dg");
             if (ImGui::DragFloat("Drag Threshold##dg", &dg->dragThreshold, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units before a drag starts (0 = instant)");
             if (ImGui::Checkbox("Bring to Front while dragging##dg", &dg->bringToFront)) ed.dirty = true;
+            oked::FieldTip("Bring to Front while dragging##dg");
             float grid[2] = {dg->gridX, dg->gridY};
             if (ImGui::DragFloat2("Grid Snap##dg", grid, 0.05f, 0.0f, 100.0f)) { dg->gridX = grid[0]; dg->gridY = grid[1]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap drag to a world grid (0 = off) — board/tile games");
@@ -37383,16 +38554,20 @@ void DrawInspector(EditorState& ed) {
             const char* dirs[] = {"Vertical", "Horizontal", "Grid", "Flex Row", "Flex Column"};
             int d = (int)lg->direction;
             if (ImGui::Combo("Direction##lg", &d, dirs, 5)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            oked::FieldTip("Direction##lg");
             oked::DrawLayoutGroupFlexFields(*lg, ed);
             bool isGrid = (lg->direction == UILayoutGroup::Direction::Grid);
             if (isGrid) {
                 if (ImGui::DragInt("Columns##lg", &lg->columns, 0.1f, 1, 32)) { if (lg->columns < 1) lg->columns = 1; lg->Arrange(); ed.dirty = true; }
+                oked::FieldTip("Columns##lg");
             }
             float orig[2] = {lg->origin.x, lg->origin.y};
             if (ImGui::DragFloat2("Origin##lg", orig, 1.0f)) { lg->origin = {orig[0], orig[1]}; lg->Arrange(); ed.dirty = true; }
+            oked::FieldTip("Origin##lg");
             if (ImGui::DragFloat(isGrid ? "Column Gap##lg" : "Spacing##lg", &lg->spacing, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
             if (isGrid && ImGui::DragFloat("Row Gap##lg", &lg->spacingY, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
             if (ImGui::DragFloat("Padding##lg", &lg->padding, 0.5f, 0.0f, 400.0f)) { lg->Arrange(); ed.dirty = true; }
+            oked::FieldTip("Padding##lg");
             AnchorCombo("Anchor##lg", lg->anchor, ed);
             if (ImGui::SmallButton("Arrange Now##lg")) { lg->Arrange(); ed.dirty = true; }
             ImGui::SameLine();
@@ -37404,17 +38579,22 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("UI Scroll View", sv, &toRemove)) {
             float pos[2] = {sv->position.x, sv->position.y};
             if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##usv");
             float sz[2] = {sv->size.x, sv->size.y};
             if (ImGui::DragFloat2("Viewport (px)##usv", sz, 1.0f, 16.0f, 8000.0f)) { sv->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Viewport (px)##usv");
             oked::DrawScrollViewAxisFields(*sv, ed);
             if (ImGui::Checkbox("Auto content height##usv", &sv->autoContent)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the scroll range to the child widgets automatically.");
             ImGui::BeginDisabled(sv->autoContent);
             if (ImGui::DragFloat("Content Height##usv", &sv->contentHeight, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Content Height##usv");
             ImGui::EndDisabled();
             if (ImGui::SliderFloat("Scroll##usv", &sv->scroll, 0.0f, sv->ScrollMax())) ed.dirty = true;
+            oked::FieldTip("Scroll##usv");
             float c[4] = {sv->background.r, sv->background.g, sv->background.b, sv->background.a};
             if (ImGui::ColorEdit4("Background##usv", c)) { sv->background = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            oked::FieldTip("Background##usv");
             AnchorCombo("Anchor##usv", sv->anchor, ed);
             ImGui::TextDisabled("Parent UI widgets to this; the wheel or scrollbar scrolls them.");
             // grok/ui-controls
@@ -37425,6 +38605,7 @@ void DrawInspector(EditorState& ed) {
             const char* bars[] = {"Bar", "Thin", "Autohide"};
             int bs = sv->barStyle; if (bs < 0) bs = 0; if (bs > 2) bs = 2;
             if (ImGui::Combo("Bar##usv", &bs, bars, 3)) { sv->barStyle = bs; ed.dirty = true; }
+            oked::FieldTip("Bar##usv");
             if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
@@ -37436,48 +38617,66 @@ void DrawInspector(EditorState& ed) {
             UIStyleBar(ed, pb);
             float pos[2] = {pb->position.x, pb->position.y};
             if (ImGui::DragFloat2("Pos (px)##upb", pos, 1.0f)) { pb->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##upb");
             float sz[2] = {pb->size.x, pb->size.y};
             if (ImGui::DragFloat2("Size (px)##upb", sz, 1.0f, 1.0f, 8000.0f)) { pb->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##upb");
             if (ImGui::SliderFloat("Value##upb", &pb->value, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Value##upb");
             float fc[4] = {pb->fill.r, pb->fill.g, pb->fill.b, pb->fill.a};
             if (ImGui::ColorEdit4("Fill##upb", fc)) { pb->fill = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
+            oked::FieldTip("Fill##upb");
             float bc[4] = {pb->background.r, pb->background.g, pb->background.b, pb->background.a};
             if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+            oked::FieldTip("Background##upb");
             ImGui::TextDisabled("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
             ShapeCombo("Shape##upb", pb->shape, ed);
-            if (UIShapeUsesRadius(pb->shape))
+            if (UIShapeUsesRadius(pb->shape)) {
                 if (ImGui::DragFloat("Corner Radius##upb", &pb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##upb");
+            }
             if (ImGui::Checkbox("Gradient Fill##upb", &pb->gradientFill)) ed.dirty = true;
+            oked::FieldTip("Gradient Fill##upb");
             if (pb->gradientFill) {
                 float fe[4] = {pb->fillEnd.r, pb->fillEnd.g, pb->fillEnd.b, pb->fillEnd.a};
                 if (ImGui::ColorEdit4("Fill End##upb", fe)) { pb->fillEnd = {fe[0], fe[1], fe[2], fe[3]}; ed.dirty = true; }
+                oked::FieldTip("Fill End##upb");
             }
             if (ImGui::Checkbox("Show Percent##upb", &pb->showPercent)) ed.dirty = true;
+            oked::FieldTip("Show Percent##upb");
             if (pb->showPercent) {
                 float tc[4] = {pb->textColor.r, pb->textColor.g, pb->textColor.b, pb->textColor.a};
                 if (ImGui::ColorEdit4("Text Color##upb", tc)) { pb->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+                oked::FieldTip("Text Color##upb");
             }
             const char* fds[] = {"Left -> Right", "Right -> Left", "Bottom -> Top", "Top -> Bottom"};
             int fd = (int)pb->fillDir;
             if (ImGui::Combo("Fill Dir##upb", &fd, fds, 4)) { pb->fillDir = (UIProgressBar::FillDir)fd; ed.dirty = true; }
+            oked::FieldTip("Fill Dir##upb");
             // grok/ui-options: chunks, a delayed damage trail, color by value, and a text format.
             if (ImGui::DragInt("Segments##upb", &pb->segments, 0.1f, 0, 40)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 or 1 = one solid bar. 2 or more = separate chunks.");
-            if (pb->segments >= 2)
+            if (pb->segments >= 2) {
                 if (ImGui::DragFloat("Segment Gap##upb", &pb->segmentGap, 0.1f, 0.0f, 32.0f)) ed.dirty = true;
+                oked::FieldTip("Segment Gap##upb");
+            }
             if (ImGui::DragFloat("Damage Trail##upb", &pb->trailDelay, 0.01f, 0.0f, 3.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds for the trail to catch a drop. 0 = off.");
             if (pb->trailDelay > 0.0f) {
                 float trc[4] = {pb->trailColor.r, pb->trailColor.g, pb->trailColor.b, pb->trailColor.a};
                 if (ImGui::ColorEdit4("Trail Color##upb", trc)) { pb->trailColor = {trc[0], trc[1], trc[2], trc[3]}; ed.dirty = true; }
+                oked::FieldTip("Trail Color##upb");
             }
             if (ImGui::Checkbox("Color By Value##upb", &pb->colorByValue)) ed.dirty = true;
+            oked::FieldTip("Color By Value##upb");
             if (pb->colorByValue) {
                 float lo[4] = {pb->lowColor.r, pb->lowColor.g, pb->lowColor.b, pb->lowColor.a};
                 float hi[4] = {pb->highColor.r, pb->highColor.g, pb->highColor.b, pb->highColor.a};
                 if (ImGui::ColorEdit4("Low Color##upb", lo)) { pb->lowColor = {lo[0], lo[1], lo[2], lo[3]}; ed.dirty = true; }
+                oked::FieldTip("Low Color##upb");
                 if (ImGui::ColorEdit4("High Color##upb", hi)) { pb->highColor = {hi[0], hi[1], hi[2], hi[3]}; ed.dirty = true; }
+                oked::FieldTip("High Color##upb");
             }
             {
                 char fmt[64]; std::strncpy(fmt, pb->textFormat.c_str(), sizeof(fmt) - 1); fmt[sizeof(fmt) - 1] = '\0';
@@ -37492,22 +38691,33 @@ void DrawInspector(EditorState& ed) {
             UIStyleBar(ed, rp);
             float pos[2] = {rp->position.x, rp->position.y};
             if (ImGui::DragFloat2("Pos (px)##urp", pos, 1.0f)) { rp->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##urp");
             float sz[2] = {rp->size.x, rp->size.y};
             if (ImGui::DragFloat2("Size (px)##urp", sz, 1.0f, 8.0f, 4000.0f)) { rp->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##urp");
             if (ImGui::SliderFloat("Value##urp", &rp->value, 0.0f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Value##urp");
             if (ImGui::DragFloat("Thickness##urp", &rp->thickness, 0.5f, 0.0f, 200.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ring width in px (0 = filled pie)");
             if (ImGui::DragFloat("Start Angle##urp", &rp->startAngle, 1.0f, -360.0f, 360.0f, "%.0f deg")) ed.dirty = true;
+            oked::FieldTip("Start Angle##urp");
             if (ImGui::Checkbox("Clockwise##urp", &rp->clockwise)) ed.dirty = true;
+            oked::FieldTip("Clockwise##urp");
             if (ImGui::Checkbox("Spin (loader)##urp", &rp->spin)) ed.dirty = true;
-            if (rp->spin)
+            oked::FieldTip("Spin (loader)##urp");
+            if (rp->spin) {
                 if (ImGui::DragFloat("Spin Speed##urp", &rp->spinSpeed, 2.0f, -1080.0f, 1080.0f, "%.0f deg/s")) ed.dirty = true;
+                oked::FieldTip("Spin Speed##urp");
+            }
             float bgc[4] = {rp->background.r, rp->background.g, rp->background.b, rp->background.a};
             if (ImGui::ColorEdit4("Track##urp", bgc)) { rp->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            oked::FieldTip("Track##urp");
             float flc[4] = {rp->fill.r, rp->fill.g, rp->fill.b, rp->fill.a};
             if (ImGui::ColorEdit4("Fill##urp", flc)) { rp->fill = {flc[0], flc[1], flc[2], flc[3]}; ed.dirty = true; }
+            oked::FieldTip("Fill##urp");
             AnchorCombo("Anchor##urp", rp->anchor, ed);
             if (ImGui::Checkbox("Show Percent##urp", &rp->showPercent)) ed.dirty = true;
+            oked::FieldTip("Show Percent##urp");
             ImGui::TextDisabled("script: set_radial(\"name\", 0..1), thickness / spin / start"); // grok/ui-hud
             if (ImGui::SmallButton("Remove##urp")) toRemove = rp;
         }
@@ -37516,6 +38726,7 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("UI Text Bind", tb, &toRemove)) {
             char fmt[256]; std::strncpy(fmt, tb->format.c_str(), sizeof(fmt) - 1); fmt[sizeof(fmt) - 1] = '\0';
             if (ImGui::InputText("Format##utbind", fmt, sizeof(fmt))) { tb->format = fmt; ed.dirty = true; }
+            oked::FieldTip("Format##utbind");
             ImGui::TextDisabled("Shows live values each frame on the sibling Text/Button.");
             ImGui::TextDisabled("Use {name} for a visual-script variable or a saved value,");
             ImGui::TextDisabled("e.g.  Health: {hp}   or   Score: {score}");
@@ -37526,8 +38737,11 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("UI Bar Bind", bb, &toRemove)) {
             char vr[128]; std::strncpy(vr, bb->var.c_str(), sizeof(vr) - 1); vr[sizeof(vr) - 1] = '\0';
             if (ImGui::InputText("Variable##ubbind", vr, sizeof(vr))) { bb->var = vr; ed.dirty = true; }
+            oked::FieldTip("Variable##ubbind");
             if (ImGui::DragFloat("Min (empty)##ubbind", &bb->min, 0.5f)) ed.dirty = true;
+            oked::FieldTip("Min (empty)##ubbind");
             if (ImGui::DragFloat("Max (full)##ubbind", &bb->max, 0.5f)) ed.dirty = true;
+            oked::FieldTip("Max (full)##ubbind");
             ImGui::TextDisabled("Fills the sibling Progress Bar / Radial from the named");
             ImGui::TextDisabled("visual-script variable (or saved value) each frame.");
             if (ImGui::SmallButton("Remove##ubbind")) toRemove = bb;
@@ -37537,13 +38751,18 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Minimap", mm, &toRemove)) {
             float pos[2] = {mm->position.x, mm->position.y};
             if (ImGui::DragFloat2("Pos (px)##umm", pos, 1.0f)) { mm->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##umm");
             float sz[2] = {mm->size.x, mm->size.y};
             if (ImGui::DragFloat2("Size (px)##umm", sz, 1.0f, 16.0f, 4000.0f)) { mm->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##umm");
             float bgc[4] = {mm->background.r, mm->background.g, mm->background.b, mm->background.a};
             if (ImGui::ColorEdit4("Background##umm", bgc)) { mm->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            oked::FieldTip("Background##umm");
             float bdc[4] = {mm->border.r, mm->border.g, mm->border.b, mm->border.a};
             if (ImGui::ColorEdit4("Border##umm", bdc)) { mm->border = {bdc[0], bdc[1], bdc[2], bdc[3]}; ed.dirty = true; }
+            oked::FieldTip("Border##umm");
             if (ImGui::DragFloat("Border Width##umm", &mm->borderWidth, 0.5f, 0.0f, 32.0f)) ed.dirty = true;
+            oked::FieldTip("Border Width##umm");
             char tg[256];
             std::strncpy(tg, mm->target.c_str(), sizeof(tg) - 1);
             tg[sizeof(tg) - 1] = '\0';
@@ -37551,57 +38770,73 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Object name to center on; empty = world origin");
             float tc[4] = {mm->targetColor.r, mm->targetColor.g, mm->targetColor.b, mm->targetColor.a};
             if (ImGui::ColorEdit4("Target Color##umm", tc)) { mm->targetColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+            oked::FieldTip("Target Color##umm");
             if (ImGui::DragFloat("World/Pixel##umm", &mm->worldPerPixel, 0.05f, 0.001f, 1000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom: world units per map pixel (smaller = more zoomed in)");
             if (ImGui::Checkbox("Use XZ (3D)##umm", &mm->useXZ)) ed.dirty = true;
+            oked::FieldTip("Use XZ (3D)##umm");
             if (ImGui::DragFloat("Blip Size##umm", &mm->blipSize, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
+            oked::FieldTip("Blip Size##umm");
             if (ImGui::DragFloat("Blip Range##umm", &mm->blipRange, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Radar range: hide blips farther than this many world units from the centre (0 = show all).");
             AnchorCombo("Anchor##umm", mm->anchor, ed);
             SectionHeader("Style");
             if (ImGui::Checkbox("Circular##umm", &mm->circular)) ed.dirty = true;
+            oked::FieldTip("Circular##umm");
             ImGui::SameLine();
             if (ImGui::Checkbox("Heading Up##umm", &mm->rotateWithTarget)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate the map so the target always faces up.");
             if (ImGui::Checkbox("Player Arrow##umm", &mm->playerArrow)) ed.dirty = true;
+            oked::FieldTip("Player Arrow##umm");
             ImGui::SameLine();
             if (ImGui::Checkbox("Clamp Blips##umm", &mm->clampBlips)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pin off-map blips to the edge as direction markers.");
             if (ImGui::Checkbox("Grid##umm", &mm->showGrid)) ed.dirty = true;
+            oked::FieldTip("Grid##umm");
             if (mm->showGrid) {
                 ImGui::SameLine();
                 if (ImGui::DragFloat("Spacing##umm", &mm->gridSpacing, 0.5f, 4.0f, 256.0f)) ed.dirty = true;
+                oked::FieldTip("Spacing##umm");
                 float gc[4] = {mm->gridColor.r, mm->gridColor.g, mm->gridColor.b, mm->gridColor.a};
                 if (ImGui::ColorEdit4("Grid Color##umm", gc)) { mm->gridColor = {gc[0], gc[1], gc[2], gc[3]}; ed.dirty = true; }
+                oked::FieldTip("Grid Color##umm");
             }
             SectionHeader("Radar");
             if (ImGui::Checkbox("Show Self##umm", &mm->showSelf)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw the centre (player) marker.");
             ImGui::SameLine();
             if (ImGui::Checkbox("North Tick##umm", &mm->showNorth)) ed.dirty = true;
+            oked::FieldTip("North Tick##umm");
             if (mm->showNorth) {
                 ImGui::SameLine();
                 float nc[4] = {mm->northColor.r, mm->northColor.g, mm->northColor.b, mm->northColor.a};
                 if (ImGui::ColorEdit4("##nc", nc, ImGuiColorEditFlags_NoInputs)) { mm->northColor = {nc[0],nc[1],nc[2],nc[3]}; ed.dirty = true; }
+                oked::FieldTip("##nc");
             }
             if (ImGui::Checkbox("View Cone##umm", &mm->viewCone)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A translucent FOV wedge showing where the player faces.");
             if (mm->viewCone) {
                 if (ImGui::SliderFloat("Cone Angle##umm", &mm->viewConeAngle, 5.0f, 170.0f)) ed.dirty = true;
+                oked::FieldTip("Cone Angle##umm");
                 if (ImGui::DragFloat("Cone Length##umm", &mm->viewConeLength, 0.5f, 2.0f, 4000.0f)) ed.dirty = true;
+                oked::FieldTip("Cone Length##umm");
                 float vc[4] = {mm->viewConeColor.r, mm->viewConeColor.g, mm->viewConeColor.b, mm->viewConeColor.a};
                 if (ImGui::ColorEdit4("Cone Color##umm", vc)) { mm->viewConeColor = {vc[0],vc[1],vc[2],vc[3]}; ed.dirty = true; }
+                oked::FieldTip("Cone Color##umm");
             }
             if (ImGui::SliderInt("Range Rings##umm", &mm->rangeRings, 0, 6)) ed.dirty = true;
+            oked::FieldTip("Range Rings##umm");
             if (mm->rangeRings > 0) {
                 float rc[4] = {mm->ringColor.r, mm->ringColor.g, mm->ringColor.b, mm->ringColor.a};
                 if (ImGui::ColorEdit4("Ring Color##umm", rc)) { mm->ringColor = {rc[0],rc[1],rc[2],rc[3]}; ed.dirty = true; }
+                oked::FieldTip("Ring Color##umm");
             }
             SectionHeader("Custom Map (GTA-style)");
             char mt[256];
             std::strncpy(mt, mm->mapTexture.c_str(), sizeof(mt) - 1);
             mt[sizeof(mt) - 1] = '\0';
             if (ImGui::InputText("Map Image##umm", mt, sizeof(mt))) { mm->mapTexture = mt; ed.dirty = true; }
+            oked::FieldTip("Map Image##umm");
             if (AcceptAssetPathField(mm->mapTexture)) ed.dirty = true;   // drop from Project
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A world-map image drawn under the blips. Renders north-up; the player arrow shows facing.");
             if (mm->HasMap()) {
@@ -37615,16 +38850,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Fullscreen Key##umm", fk, sizeof(fk))) { mm->fullscreenKey = fk[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to toggle the big pause-map (blank = off).");
             if (ImGui::DragFloat("Fullscreen Zoom##umm", &mm->fullscreenZoom, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
+            oked::FieldTip("Fullscreen Zoom##umm");
             if (ImGui::DragFloat("Fullscreen Fill##umm", &mm->fullscreenFrac, 0.01f, 0.2f, 1.0f)) ed.dirty = true;
+            oked::FieldTip("Fullscreen Fill##umm");
             SectionHeader("Zoom Keys");
             char zi[2] = {mm->zoomInKey, 0};
             if (ImGui::InputText("Zoom In##umm", zi, sizeof(zi))) { mm->zoomInKey = zi[0]; ed.dirty = true; }
+            oked::FieldTip("Zoom In##umm");
             ImGui::SameLine();
             char zo[2] = {mm->zoomOutKey, 0};
             if (ImGui::InputText("Zoom Out##umm", zo, sizeof(zo))) { mm->zoomOutKey = zo[0]; ed.dirty = true; }
+            oked::FieldTip("Zoom Out##umm");
             if (ImGui::DragFloat("Min Zoom##umm", &mm->minZoom, 0.01f, 0.01f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Min Zoom##umm");
             ImGui::SameLine();
             if (ImGui::DragFloat("Max Zoom##umm", &mm->maxZoom, 0.05f, 0.01f, 100000.0f)) ed.dirty = true;
+            oked::FieldTip("Max Zoom##umm");
             SectionHeader("Waypoints");
             if (ImGui::TreeNode("Markers##umm")) {
                 int del = -1;
@@ -37633,14 +38874,18 @@ void DrawInspector(EditorState& ed) {
                     auto& mk = mm->markers[i];
                     float wp[2] = {mk.world.x, mk.world.y};
                     if (ImGui::DragFloat2("World##mk", wp, 0.5f)) { mk.world = {wp[0], wp[1]}; ed.dirty = true; }
+                    oked::FieldTip("World##mk");
                     ImGui::SameLine();
                     float mc[4] = {mk.color.r, mk.color.g, mk.color.b, mk.color.a};
                     if (ImGui::ColorEdit4("##mkc", mc, ImGuiColorEditFlags_NoInputs)) { mk.color = {mc[0],mc[1],mc[2],mc[3]}; ed.dirty = true; }
+                    oked::FieldTip("##mkc");
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X##mkdel")) del = (int)i;
                     if (ImGui::DragFloat("Size##mk", &mk.size, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
+                    oked::FieldTip("Size##mk");
                     char ml[128]; std::strncpy(ml, mk.label.c_str(), sizeof(ml)-1); ml[sizeof(ml)-1] = '\0';
                     if (ImGui::InputText("Label##mk", ml, sizeof(ml))) { mk.label = ml; ed.dirty = true; }
+                    oked::FieldTip("Label##mk");
                     ImGui::PopID();
                 }
                 if (del >= 0) { mm->markers.erase(mm->markers.begin() + del); ed.dirty = true; }
@@ -37658,12 +38903,15 @@ void DrawInspector(EditorState& ed) {
                     int ki = (int)sh.kind;
                     ImGui::SetNextItemWidth(80);
                     if (ImGui::Combo("##shk", &ki, kinds, 3)) { sh.kind = (Minimap::MapShape::Kind)ki; ed.dirty = true; }
+                    oked::FieldTip("##shk");
                     ImGui::SameLine();
                     float sc[4] = {sh.color.r, sh.color.g, sh.color.b, sh.color.a};
                     if (ImGui::ColorEdit4("##shc", sc, ImGuiColorEditFlags_NoInputs)) { sh.color = {sc[0],sc[1],sc[2],sc[3]}; ed.dirty = true; }
+                    oked::FieldTip("##shc");
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(70);
                     if (ImGui::DragFloat("##sht", &sh.thickness, 0.2f, 0.5f, 64.0f, "w%.1f")) ed.dirty = true;
+                    oked::FieldTip("##sht");
                     if (sh.kind != Minimap::MapShape::Kind::Line) { ImGui::SameLine(); if (ImGui::Checkbox("Fill##shf", &sh.filled)) ed.dirty = true; }
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Del##shd")) sdel = (int)i;
@@ -37674,6 +38922,7 @@ void DrawInspector(EditorState& ed) {
                         float pv[2] = {sh.points[p].x, sh.points[p].y};
                         ImGui::SetNextItemWidth(160);
                         if (ImGui::DragFloat2("##shp", pv, 0.25f)) { sh.points[p] = {pv[0], pv[1]}; ed.dirty = true; }
+                        oked::FieldTip("##shp");
                         ImGui::SameLine();
                         if (ImGui::SmallButton("x")) pdel = (int)p;
                         ImGui::PopID();
@@ -37720,18 +38969,23 @@ void DrawInspector(EditorState& ed) {
             }
             SectionHeader("Labels & Route");
             if (ImGui::Checkbox("Show Labels##umm", &mm->showLabels)) ed.dirty = true;
+            oked::FieldTip("Show Labels##umm");
             if (mm->showLabels) {
                 if (ImGui::DragFloat("Label Size##umm", &mm->labelSize, 0.2f, 4.0f, 48.0f)) ed.dirty = true;
+                oked::FieldTip("Label Size##umm");
                 float lc[4] = {mm->labelColor.r, mm->labelColor.g, mm->labelColor.b, mm->labelColor.a};
                 if (ImGui::ColorEdit4("Label Color##umm", lc)) { mm->labelColor = {lc[0],lc[1],lc[2],lc[3]}; ed.dirty = true; }
+                oked::FieldTip("Label Color##umm");
             }
             int rmk = mm->routeMarker;
             if (ImGui::DragInt("Route To Marker##umm", &rmk, 0.1f, -1, (int)mm->markers.size()-1)) { mm->routeMarker = rmk; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a GTA-style line from the player to this waypoint index (-1 = off).");
             if (mm->routeMarker >= 0 || mm->hasUserWaypoint) {
                 if (ImGui::DragFloat("Route Width##umm", &mm->routeWidth, 0.2f, 1.0f, 16.0f)) ed.dirty = true;
+                oked::FieldTip("Route Width##umm");
                 float rc[4] = {mm->routeColor.r, mm->routeColor.g, mm->routeColor.b, mm->routeColor.a};
                 if (ImGui::ColorEdit4("Route Color##umm", rc)) { mm->routeColor = {rc[0],rc[1],rc[2],rc[3]}; ed.dirty = true; }
+                oked::FieldTip("Route Color##umm");
             }
             SectionHeader("Waypoint (click map)");
             if (ImGui::Checkbox("Click To Set##umm", &mm->mapClickWaypoint)) ed.dirty = true;
@@ -37751,7 +39005,9 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Minimap Blip", bl, &toRemove)) {
             float c[4] = {bl->color.r, bl->color.g, bl->color.b, bl->color.a};
             if (ImGui::ColorEdit4("Color##umb", c)) { bl->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            oked::FieldTip("Color##umb");
             if (ImGui::DragFloat("Size##umb", &bl->size, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
+            oked::FieldTip("Size##umb");
             const char* blShapes[] = {"Square", "Dot", "Triangle", "Arrow"};
             int bs = (int)bl->shape;
             if (ImGui::Combo("Shape##umb", &bs, blShapes, 4)) {
@@ -37759,12 +39015,15 @@ void DrawInspector(EditorState& ed) {
                 bl->square = (bl->shape == MinimapBlip::Shape::Square);  // keep legacy flag in sync
                 ed.dirty = true;
             }
-            if (bl->shape == MinimapBlip::Shape::Triangle || bl->shape == MinimapBlip::Shape::Arrow)
+            if (bl->shape == MinimapBlip::Shape::Triangle || bl->shape == MinimapBlip::Shape::Arrow) {
                 if (ImGui::Checkbox("Face Heading##umb", &bl->rotateWithObject)) ed.dirty = true;
+                oked::FieldTip("Face Heading##umb");
+            }
             char ic[256];
             std::strncpy(ic, bl->icon.c_str(), sizeof(ic) - 1);
             ic[sizeof(ic) - 1] = '\0';
             if (ImGui::InputText("Icon##umb", ic, sizeof(ic))) { bl->icon = ic; ed.dirty = true; }
+            oked::FieldTip("Icon##umb");
             if (AcceptAssetPathField(bl->icon)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional icon image; overrides the shape.");
             char lb[128]; std::strncpy(lb, bl->label.c_str(), sizeof(lb)-1); lb[sizeof(lb)-1] = '\0';
@@ -37778,44 +39037,64 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Crosshair", cr, &toRemove)) {
             float pos[2] = {cr->position.x, cr->position.y};
             if (ImGui::DragFloat2("Offset (px)##uch", pos, 1.0f)) { cr->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Offset (px)##uch");
             float sz[2] = {cr->size.x, cr->size.y};
             if (ImGui::DragFloat2("Size (px)##uch", sz, 1.0f, 4.0f, 4000.0f)) { cr->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##uch");
             float c[4] = {cr->color.r, cr->color.g, cr->color.b, cr->color.a};
             if (ImGui::ColorEdit4("Color##uch", c)) { cr->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            oked::FieldTip("Color##uch");
             if (ImGui::DragFloat("Thickness##uch", &cr->thickness, 0.5f, 1.0f, 32.0f)) ed.dirty = true;
+            oked::FieldTip("Thickness##uch");
             if (ImGui::DragFloat("Gap##uch", &cr->gap, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
+            oked::FieldTip("Gap##uch");
             if (ImGui::DragFloat("Length##uch", &cr->length, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
+            oked::FieldTip("Length##uch");
             if (ImGui::DragFloat("Spread##uch", &cr->spread, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra gap added to every tick (aim spread).");
             // grok/ui-hud — 0 leaves the authored spread alone.
             if (ImGui::DragFloat("Spread Recover##uch", &cr->spreadRecover, 1.0f, 0.0f, 400.0f, "%.0f px/s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the extra gap eases back to 0. 0 keeps the authored spread.");
             if (ImGui::DragFloat("Spread Max##uch", &cr->spreadMax, 1.0f, 0.0f, 256.0f)) ed.dirty = true;
+            oked::FieldTip("Spread Max##uch");
             if (ImGui::Checkbox("Show Lines##uch", &cr->showLines)) ed.dirty = true;
+            oked::FieldTip("Show Lines##uch");
             if (cr->showLines) {
                 if (ImGui::Checkbox("Up##uchl", &cr->lineUp)) ed.dirty = true; ImGui::SameLine();
+                oked::FieldTip("Up##uchl");
                 if (ImGui::Checkbox("Down##uchl", &cr->lineDown)) ed.dirty = true; ImGui::SameLine();
+                oked::FieldTip("Down##uchl");
                 if (ImGui::Checkbox("Left##uchl", &cr->lineLeft)) ed.dirty = true; ImGui::SameLine();
+                oked::FieldTip("Left##uchl");
                 if (ImGui::Checkbox("Right##uchl", &cr->lineRight)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle individual ticks (e.g. turn Up off for a T-style reticle).");
             }
             if (ImGui::Checkbox("Dot##uch", &cr->dot)) ed.dirty = true;
+            oked::FieldTip("Dot##uch");
             if (cr->dot) {
                 if (ImGui::DragFloat("Dot Size##uch", &cr->dotSize, 0.5f, 1.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Dot Size##uch");
                 float dc[4] = {cr->dotColor.r, cr->dotColor.g, cr->dotColor.b, cr->dotColor.a};
                 if (ImGui::ColorEdit4("Dot Color##uch", dc)) { cr->dotColor = {dc[0], dc[1], dc[2], dc[3]}; ed.dirty = true; }
+                oked::FieldTip("Dot Color##uch");
             }
             if (ImGui::Checkbox("Circle##uch", &cr->circle)) ed.dirty = true;
+            oked::FieldTip("Circle##uch");
             if (cr->circle) {
                 if (ImGui::DragFloat("Circle Radius##uch", &cr->circleRadius, 0.5f, 1.0f, 512.0f)) ed.dirty = true;
+                oked::FieldTip("Circle Radius##uch");
                 if (ImGui::DragFloat("Circle Thickness##uch", &cr->circleThickness, 0.25f, 1.0f, 16.0f)) ed.dirty = true;
+                oked::FieldTip("Circle Thickness##uch");
                 float qc[4] = {cr->circleColor.r, cr->circleColor.g, cr->circleColor.b, cr->circleColor.a};
                 if (ImGui::ColorEdit4("Circle Color##uch", qc)) { cr->circleColor = {qc[0], qc[1], qc[2], qc[3]}; ed.dirty = true; }
+                oked::FieldTip("Circle Color##uch");
             }
             if (ImGui::Checkbox("Outline##uch", &cr->outline)) ed.dirty = true;
+            oked::FieldTip("Outline##uch");
             if (cr->outline) {
                 float oc[4] = {cr->outlineColor.r, cr->outlineColor.g, cr->outlineColor.b, cr->outlineColor.a};
                 if (ImGui::ColorEdit4("Outline Color##uch", oc)) { cr->outlineColor = {oc[0], oc[1], oc[2], oc[3]}; ed.dirty = true; }
+                oked::FieldTip("Outline Color##uch");
             }
             AnchorCombo("Anchor##uch", cr->anchor, ed);
             if (ImGui::SmallButton("Remove##uch")) toRemove = cr;
@@ -37825,11 +39104,15 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("UI Color Picker", cp, &toRemove)) {
             float pos[2] = {cp->position.x, cp->position.y};
             if (ImGui::DragFloat2("Pos (px)##ucp", pos, 1.0f)) { cp->position = {pos[0], pos[1]}; cp->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Pos (px)##ucp");
             if (ImGui::DragFloat("Swatch##ucp", &cp->swatch, 1.0f, 16.0f, 128.0f)) { cp->SetSwatchSize(cp->swatch); cp->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Swatch##ucp");
             float gap = cp->gap;
             if (ImGui::DragFloat("Gap##ucp", &gap, 0.5f, 0.0f, 48.0f)) { cp->SetGap(gap); cp->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Gap##ucp");
             int sel = cp->value;
             if (ImGui::DragInt("Selected##ucp", &sel, 0.1f, 0, std::max(0, cp->Count() - 1))) { cp->SetValue(sel); ed.dirty = true; }
+            oked::FieldTip("Selected##ucp");
             AnchorCombo("Anchor##ucp", cp->anchor, ed);
             cp->Rebuild();
             for (int i = 0; i < cp->Count(); ++i) {
@@ -37837,6 +39120,7 @@ void DrawInspector(EditorState& ed) {
                 float col[4] = {c.r, c.g, c.b, c.a};
                 ImGui::PushID(i);
                 if (ImGui::ColorEdit4("Swatch##ucp", col)) { cp->SetSwatch(i, {col[0], col[1], col[2], col[3]}); cp->Rebuild(); ed.dirty = true; }
+                oked::FieldTip("Swatch##ucp");
                 ImGui::PopID();
             }
             ImGui::TextDisabled("script: set_swatch(\"name\", i)   event: on_change");
@@ -37847,19 +39131,27 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("UI Slot Grid", sg, &toRemove)) {
             float pos[2] = {sg->position.x, sg->position.y};
             if (ImGui::DragFloat2("Pos (px)##usg", pos, 1.0f)) { sg->position = {pos[0], pos[1]}; sg->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Pos (px)##usg");
             int cols = sg->columns, rows = sg->rows;
             if (ImGui::DragInt("Columns##usg", &cols, 0.1f, 1, 16)) { sg->SetColumns(cols); sg->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Columns##usg");
             if (ImGui::DragInt("Rows##usg", &rows, 0.1f, 1, 16)) { sg->SetRows(rows); sg->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Rows##usg");
             float cell[2] = {sg->cell.x, sg->cell.y};
             if (ImGui::DragFloat2("Cell (px)##usg", cell, 1.0f, 8.0f, 256.0f)) { sg->SetCell(cell[0], cell[1]); sg->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Cell (px)##usg");
             float gap = sg->gap;
             if (ImGui::DragFloat("Gap##usg", &gap, 0.5f, 0.0f, 64.0f)) { sg->SetGap(gap); sg->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Gap##usg");
             int sel = sg->value;
             if (ImGui::DragInt("Selected##usg", &sel, 0.1f, -1, sg->Count() - 1)) { sg->SetValue(sel); ed.dirty = true; }
+            oked::FieldTip("Selected##usg");
             float bc[4] = {sg->color.r, sg->color.g, sg->color.b, sg->color.a};
             if (ImGui::ColorEdit4("Color##usg", bc)) { sg->color = {bc[0], bc[1], bc[2], bc[3]}; sg->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Color##usg");
             float sc[4] = {sg->selectedColor.r, sg->selectedColor.g, sg->selectedColor.b, sg->selectedColor.a};
             if (ImGui::ColorEdit4("Selected Color##usg", sc)) { sg->selectedColor = {sc[0], sc[1], sc[2], sc[3]}; sg->Rebuild(); ed.dirty = true; }
+            oked::FieldTip("Selected Color##usg");
             AnchorCombo("Anchor##usg", sg->anchor, ed);
             sg->Rebuild();
             for (int i = 0; i < sg->Count(); ++i) {
@@ -37868,6 +39160,7 @@ void DrawInspector(EditorState& ed) {
                 buf[sizeof(buf) - 1] = '\0';
                 ImGui::PushID(i);
                 if (ImGui::InputText("Label##usg", buf, sizeof(buf))) { sg->SetLabel(i, buf); sg->Rebuild(); ed.dirty = true; }
+                oked::FieldTip("Label##usg");
                 ImGui::PopID();
             }
             ImGui::TextDisabled("script: set_slot(\"name\", i)   event: on_change");
@@ -37880,9 +39173,13 @@ void DrawInspector(EditorState& ed) {
                                "Widgets inside it stay visible and tappable on any phone.");
             ImGui::TextDisabled("Keep clear of:");
             if (ImGui::Checkbox("Top##usa", &sa->top)) ed.dirty = true; ImGui::SameLine();
+            oked::FieldTip("Top##usa");
             if (ImGui::Checkbox("Bottom##usa", &sa->bottom)) ed.dirty = true; ImGui::SameLine();
+            oked::FieldTip("Bottom##usa");
             if (ImGui::Checkbox("Left##usa", &sa->left)) ed.dirty = true; ImGui::SameLine();
+            oked::FieldTip("Left##usa");
             if (ImGui::Checkbox("Right##usa", &sa->right)) ed.dirty = true;
+            oked::FieldTip("Right##usa");
             const auto& f = okay::UISafeInsets();
             if (f.top + f.bottom + f.left + f.right > 0.0f)
                 ImGui::TextDisabled("Now: top %.1f%%  bottom %.1f%%  left %.1f%%  right %.1f%%",
@@ -37911,9 +39208,11 @@ void DrawInspector(EditorState& ed) {
             }
             float c[4] = {ri->color.r, ri->color.g, ri->color.b, ri->color.a};
             if (ImGui::ColorEdit4("Tint##uri", c)) { ri->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            oked::FieldTip("Tint##uri");
             SectionHeader("UV Rect");
             float uvp[2] = {ri->uvX, ri->uvY}, uvs[2] = {ri->uvW, ri->uvH};
             if (ImGui::DragFloat2("Offset (X, Y)##uri", uvp, 0.01f)) { ri->uvX = uvp[0]; ri->uvY = uvp[1]; ed.dirty = true; }
+            oked::FieldTip("Offset (X, Y)##uri");
             if (ImGui::DragFloat2("Size (W, H)##uri", uvs, 0.01f, -64.0f, 64.0f)) { ri->uvW = uvs[0]; ri->uvH = uvs[1]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("1, 1 = the whole image once. 3, 2 tiles it 3 across, 2 down.\nA negative size mirrors it.");
             if (ImGui::SmallButton("Reset##uriuv")) { ri->uvX = ri->uvY = 0.0f; ri->uvW = ri->uvH = 1.0f; ed.dirty = true; }
@@ -37950,16 +39249,20 @@ void DrawInspector(EditorState& ed) {
             }
             float c[4] = {im->color.r, im->color.g, im->color.b, im->color.a};
             if (ImGui::ColorEdit4("Tint##uim", c)) { im->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
+            oked::FieldTip("Tint##uim");
             if (im->texture.empty()) ImGui::TextDisabled("No image: it draws as a coloured shape.");
             SectionHeader("Texture");
             if (ImGui::Checkbox("Flip X##uim", &im->flipX)) ed.dirty = true; ImGui::SameLine();
+            oked::FieldTip("Flip X##uim");
             if (ImGui::Checkbox("Flip Y##uim", &im->flipY)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror the texture without a second asset.");
             if (ImGui::Checkbox("Preserve Aspect##uim", &im->preserveAspect)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the texture inside the box without stretching (letterboxed, centered). Ignored for nine-slice / fills.");
             if (ImGui::Checkbox("Nine-slice##uim", &im->nineSlice)) ed.dirty = true;
+            oked::FieldTip("Nine-slice##uim");
             if (im->nineSlice) {
                 if (ImGui::DragFloat("Border (px)##uim", &im->border, 0.5f, 0.0f, 512.0f)) ed.dirty = true;
+                oked::FieldTip("Border (px)##uim");
                 ImGui::TextDisabled("corners stay fixed; edges/center stretch to size");
             }
             SectionHeader("Shape & Frame");
@@ -37967,6 +39270,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The image silhouette: circle for avatars, pill/tab for cards, arrows for nav, etc. Applies to the colored fill when no texture is set.");
             if (UIShapeUsesRadius(im->shape)) {
                 if (ImGui::DragFloat("Corner Radius##uim", &im->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##uim");
                 if (im->cornerRadius > 0.0f) CornerMaskEditor("uim", im->cornerMask, ed);
             }
             if (ImGui::DragFloat("Frame Width##uim", &im->borderWidth, 0.1f, 0.0f, 24.0f)) ed.dirty = true;
@@ -37974,14 +39278,19 @@ void DrawInspector(EditorState& ed) {
             if (im->borderWidth > 0.0f) {
                 float bc[4] = {im->borderColor.r, im->borderColor.g, im->borderColor.b, im->borderColor.a};
                 if (ImGui::ColorEdit4("Frame Color##uim", bc)) { im->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
+                oked::FieldTip("Frame Color##uim");
             }
             if (ImGui::Checkbox("Drop Shadow##uim", &im->shadow)) ed.dirty = true;
+            oked::FieldTip("Drop Shadow##uim");
             if (im->shadow) {
                 float sc[4] = {im->shadowColor.r, im->shadowColor.g, im->shadowColor.b, im->shadowColor.a};
                 if (ImGui::ColorEdit4("Shadow Color##uim", sc)) { im->shadowColor = {sc[0], sc[1], sc[2], sc[3]}; ed.dirty = true; }
+                oked::FieldTip("Shadow Color##uim");
                 float so[2] = {im->shadowOffset.x, im->shadowOffset.y};
                 if (ImGui::DragFloat2("Shadow Offset##uim", so, 0.5f)) { im->shadowOffset = {so[0], so[1]}; ed.dirty = true; }
+                oked::FieldTip("Shadow Offset##uim");
                 if (ImGui::DragFloat("Shadow Blur##uim", &im->shadowSoftness, 0.2f, 0.0f, 48.0f)) ed.dirty = true;
+                oked::FieldTip("Shadow Blur##uim");
             }
             if (ImGui::SmallButton("Remove##uim")) toRemove = im;
         }
@@ -37991,25 +39300,38 @@ void DrawInspector(EditorState& ed) {
             UIStyleBar(ed, sl);
             float pos[2] = {sl->position.x, sl->position.y};
             if (ImGui::DragFloat2("Pos (px)##usl", pos, 1.0f)) { sl->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##usl");
             float sz[2] = {sl->size.x, sl->size.y};
             if (ImGui::DragFloat2("Size (px)##usl", sz, 1.0f, 1.0f, 8000.0f)) { sl->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##usl");
             if (ImGui::DragFloat("Min##usl", &sl->minValue, 0.1f)) ed.dirty = true;
+            oked::FieldTip("Min##usl");
             if (ImGui::DragFloat("Max##usl", &sl->maxValue, 0.1f)) ed.dirty = true;
+            oked::FieldTip("Max##usl");
             if (ImGui::SliderFloat("Value##usl", &sl->value, sl->minValue, sl->maxValue)) ed.dirty = true;
+            oked::FieldTip("Value##usl");
             float slbg[4] = {sl->background.r, sl->background.g, sl->background.b, sl->background.a};
             if (ImGui::ColorEdit4("Track##usl", slbg)) { sl->background = {slbg[0], slbg[1], slbg[2], slbg[3]}; ed.dirty = true; }
+            oked::FieldTip("Track##usl");
             float fc[4] = {sl->fill.r, sl->fill.g, sl->fill.b, sl->fill.a};
             if (ImGui::ColorEdit4("Fill##usl", fc)) { sl->fill = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
+            oked::FieldTip("Fill##usl");
             float kc[4] = {sl->knob.r, sl->knob.g, sl->knob.b, sl->knob.a};
             if (ImGui::ColorEdit4("Knob##usl", kc)) { sl->knob = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
+            oked::FieldTip("Knob##usl");
             ImGui::TextDisabled("drag in the built game; calls script on_change()");
             AnchorCombo("Anchor##usl", sl->anchor, ed);
             ShapeCombo("Track Shape##usl", sl->trackShape, ed);
-            if (sl->trackShape == UIShape::Rounded)
+            if (sl->trackShape == UIShape::Rounded) {
                 if (ImGui::DragFloat("Corner Radius##usl", &sl->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##usl");
+            }
             if (ImGui::Checkbox("Round Knob##usl", &sl->roundKnob)) ed.dirty = true;
+            oked::FieldTip("Round Knob##usl");
             if (ImGui::DragFloat("Knob Size##usl", &sl->knobSize, 0.02f, 0.1f, 3.0f)) ed.dirty = true;
+            oked::FieldTip("Knob Size##usl");
             if (ImGui::Checkbox("Show Value##usl", &sl->showValue)) ed.dirty = true;
+            oked::FieldTip("Show Value##usl");
             ImGui::SameLine();
             if (ImGui::Checkbox("Whole Numbers##usl", &sl->wholeNumbers)) {
                 if (sl->wholeNumbers) sl->value = Mathf::Round(sl->value);
@@ -38018,10 +39340,13 @@ void DrawInspector(EditorState& ed) {
             if (sl->showValue) {
                 float tc[4] = {sl->textColor.r, sl->textColor.g, sl->textColor.b, sl->textColor.a};
                 if (ImGui::ColorEdit4("Text Color##usl", tc)) { sl->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+                oked::FieldTip("Text Color##usl");
             }
             if (ImGui::Checkbox("Interactable##usl", &sl->interactable)) ed.dirty = true;
+            oked::FieldTip("Interactable##usl");
             ImGui::SameLine();
             if (ImGui::Checkbox("Vertical##usl", &sl->vertical)) ed.dirty = true;
+            oked::FieldTip("Vertical##usl");
             // grok/ui-options: step, a value format, a fill gradient, and a handle shape.
             if (ImGui::DragFloat("Step##usl", &sl->step, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap spacing from Min. 0 = continuous.");
@@ -38031,9 +39356,11 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("{v} is the number, for example \"{v}%\". Empty prints two decimals.");
             }
             if (ImGui::Checkbox("Fill Gradient##usl", &sl->fillGradient)) ed.dirty = true;
+            oked::FieldTip("Fill Gradient##usl");
             if (sl->fillGradient) {
                 float fe[4] = {sl->fillEnd.r, sl->fillEnd.g, sl->fillEnd.b, sl->fillEnd.a};
                 if (ImGui::ColorEdit4("Fill End##usl", fe)) { sl->fillEnd = {fe[0], fe[1], fe[2], fe[3]}; ed.dirty = true; }
+                oked::FieldTip("Fill End##usl");
             }
             {
                 const char* handles[] = {"From Round Knob", "Circle", "Rounded", "Square", "Pill", "Diamond"};
@@ -38060,26 +39387,40 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("UI Stepper", st, &toRemove)) {
             float pos[2] = {st->position.x, st->position.y};
             if (ImGui::DragFloat2("Pos (px)##ust", pos, 1.0f)) { st->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##ust");
             float sz[2] = {st->size.x, st->size.y};
             if (ImGui::DragFloat2("Size (px)##ust", sz, 1.0f, 1.0f, 8000.0f)) { st->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##ust");
             if (ImGui::DragFloat("Min##ust", &st->minValue, 0.1f)) ed.dirty = true;
+            oked::FieldTip("Min##ust");
             if (ImGui::DragFloat("Max##ust", &st->maxValue, 0.1f)) ed.dirty = true;
+            oked::FieldTip("Max##ust");
             if (ImGui::DragFloat("Step##ust", &st->step, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            oked::FieldTip("Step##ust");
             if (ImGui::SliderFloat("Value##ust", &st->value, st->minValue, st->maxValue)) ed.dirty = true;
+            oked::FieldTip("Value##ust");
             if (ImGui::Checkbox("Whole Numbers##ust", &st->wholeNumbers)) ed.dirty = true;
+            oked::FieldTip("Whole Numbers##ust");
             ImGui::SameLine();
             if (ImGui::Checkbox("Wrap##ust", &st->wrap)) ed.dirty = true;
+            oked::FieldTip("Wrap##ust");
             float bg[4] = {st->background.r, st->background.g, st->background.b, st->background.a};
             if (ImGui::ColorEdit4("Background##ust", bg)) { st->background = {bg[0], bg[1], bg[2], bg[3]}; ed.dirty = true; }
+            oked::FieldTip("Background##ust");
             float bt[4] = {st->button.r, st->button.g, st->button.b, st->button.a};
             if (ImGui::ColorEdit4("Buttons##ust", bt)) { st->button = {bt[0], bt[1], bt[2], bt[3]}; ed.dirty = true; }
+            oked::FieldTip("Buttons##ust");
             float tc[4] = {st->textColor.r, st->textColor.g, st->textColor.b, st->textColor.a};
             if (ImGui::ColorEdit4("Text##ust", tc)) { st->textColor = {tc[0], tc[1], tc[2], tc[3]}; ed.dirty = true; }
+            oked::FieldTip("Text##ust");
             AnchorCombo("Anchor##ust", st->anchor, ed);
             ShapeCombo("Shape##ust", st->shape, ed);
-            if (UIShapeUsesRadius(st->shape))
+            if (UIShapeUsesRadius(st->shape)) {
                 if (ImGui::DragFloat("Corner Radius##ust", &st->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##ust");
+            }
             if (ImGui::Checkbox("Interactable##ust", &st->interactable)) ed.dirty = true;
+            oked::FieldTip("Interactable##ust");
             ImGui::TextDisabled("[-] value [+] ; calls script on_change()");
             if (ImGui::SmallButton("Remove##ust")) toRemove = st;
         }
@@ -38088,17 +39429,25 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("UI Rating", rt, &toRemove)) {
             float pos[2] = {rt->position.x, rt->position.y};
             if (ImGui::DragFloat2("Pos (px)##urt", pos, 1.0f)) { rt->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##urt");
             float sz[2] = {rt->size.x, rt->size.y};
             if (ImGui::DragFloat2("Size (px)##urt", sz, 1.0f, 1.0f, 8000.0f)) { rt->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##urt");
             if (ImGui::SliderInt("Stars##urt", &rt->count, 1, 10)) ed.dirty = true;
+            oked::FieldTip("Stars##urt");
             if (ImGui::SliderFloat("Value##urt", &rt->value, 0.0f, (float)rt->count)) ed.dirty = true;
+            oked::FieldTip("Value##urt");
             if (ImGui::Checkbox("Allow Half##urt", &rt->allowHalf)) ed.dirty = true;
+            oked::FieldTip("Allow Half##urt");
             ImGui::SameLine();
             if (ImGui::Checkbox("Read Only##urt", &rt->readOnly)) ed.dirty = true;
+            oked::FieldTip("Read Only##urt");
             float on[4] = {rt->on.r, rt->on.g, rt->on.b, rt->on.a};
             if (ImGui::ColorEdit4("Filled##urt", on)) { rt->on = {on[0], on[1], on[2], on[3]}; ed.dirty = true; }
+            oked::FieldTip("Filled##urt");
             float off[4] = {rt->off.r, rt->off.g, rt->off.b, rt->off.a};
             if (ImGui::ColorEdit4("Empty##urt", off)) { rt->off = {off[0], off[1], off[2], off[3]}; ed.dirty = true; }
+            oked::FieldTip("Empty##urt");
             AnchorCombo("Anchor##urt", rt->anchor, ed);
             ImGui::TextDisabled("click a star to rate; calls script on_change()");
             if (ImGui::SmallButton("Remove##urt")) toRemove = rt;
@@ -38113,22 +39462,30 @@ void DrawInspector(EditorState& ed) {
             lb[sizeof(lb) - 1] = '\0';
             if (!tgLoc && ImGui::InputText("Label##utg", lb, sizeof(lb))) { tg->label = lb; ed.dirty = true; }
             if (ImGui::Checkbox("On##utg", &tg->on)) ed.dirty = true;
+            oked::FieldTip("On##utg");
             float pos[2] = {tg->position.x, tg->position.y};
             if (ImGui::DragFloat2("Pos (px)##utg", pos, 1.0f)) { tg->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##utg");
             float sz[2] = {tg->size.x, tg->size.y};
             if (ImGui::DragFloat2("Size (px)##utg", sz, 1.0f, 1.0f, 4000.0f)) { tg->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##utg");
             float tbx[4] = {tg->boxColor.r, tg->boxColor.g, tg->boxColor.b, tg->boxColor.a};
             if (ImGui::ColorEdit4("Box##utg", tbx)) { tg->boxColor = {tbx[0], tbx[1], tbx[2], tbx[3]}; ed.dirty = true; }
+            oked::FieldTip("Box##utg");
             float cc[4] = {tg->checkColor.r, tg->checkColor.g, tg->checkColor.b, tg->checkColor.a};
             if (ImGui::ColorEdit4("Check##utg", cc)) { tg->checkColor = {cc[0], cc[1], cc[2], cc[3]}; ed.dirty = true; }
+            oked::FieldTip("Check##utg");
             float ttc[4] = {tg->textColor.r, tg->textColor.g, tg->textColor.b, tg->textColor.a};
             if (ImGui::ColorEdit4("Label Color##utg", ttc)) { tg->textColor = {ttc[0], ttc[1], ttc[2], ttc[3]}; ed.dirty = true; }
+            oked::FieldTip("Label Color##utg");
             ImGui::TextDisabled("click in the built game; calls script on_toggle()");
             AnchorCombo("Anchor##utg", tg->anchor, ed);
             if (ImGui::DragFloat("Corner Radius##utg", &tg->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            oked::FieldTip("Corner Radius##utg");
             const char* styles[] = {"Checkbox", "Switch", "Radio"};
             int st = (int)tg->style;
             if (ImGui::Combo("Style##utg", &st, styles, 3)) { tg->style = (UIToggle::Style)st; ed.dirty = true; }
+            oked::FieldTip("Style##utg");
             if (tg->style == UIToggle::Style::Radio) {
                 char gb[64]; std::snprintf(gb, sizeof gb, "%s", tg->radioGroup.c_str());
                 if (ImGui::InputText("Group##utg", gb, sizeof gb)) { tg->radioGroup = gb; ed.dirty = true; }
@@ -38137,10 +39494,12 @@ void DrawInspector(EditorState& ed) {
             if (tg->style == UIToggle::Style::Switch) {
                 float kc[4] = {tg->knobColor.r, tg->knobColor.g, tg->knobColor.b, tg->knobColor.a};
                 if (ImGui::ColorEdit4("Knob##utg", kc)) { tg->knobColor = {kc[0], kc[1], kc[2], kc[3]}; ed.dirty = true; }
+                oked::FieldTip("Knob##utg");
             }
             if (ImGui::DragFloat("Anim Speed##utg", &tg->animSpeed, 0.2f, 0.0f, 40.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Knob glide / check fade speed (0 = snap).");
             if (ImGui::Checkbox("Interactable##utg", &tg->interactable)) ed.dirty = true;
+            oked::FieldTip("Interactable##utg");
             if (ImGui::SmallButton("Remove##utg")) toRemove = tg;
         }
     }
@@ -38149,8 +39508,10 @@ void DrawInspector(EditorState& ed) {
             UIStyleBar(ed, tb);
             float pos[2] = {tb->position.x, tb->position.y};
             if (ImGui::DragFloat2("Pos (px)##utb", pos, 1.0f)) { tb->position = {pos[0], pos[1]}; ed.dirty = true; }
+            oked::FieldTip("Pos (px)##utb");
             float sz[2] = {tb->size.x, tb->size.y};
             if (ImGui::DragFloat2("Size (px)##utb", sz, 1.0f, 8.0f, 4000.0f)) { tb->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::FieldTip("Size (px)##utb");
             AnchorCombo("Anchor##utb", tb->anchor, ed);
             // Style: the tab bar's look. Picking one fills in sensible spacing/shape
             // (all still editable below).
@@ -38171,48 +39532,67 @@ void DrawInspector(EditorState& ed) {
                                   "Vertical: stacked down the side (settings menus).");
             if (tb->style == UITabs::Style::Segmented || tb->style == UITabs::Style::Vertical) {
                 ShapeCombo("Shape##utb", tb->shape, ed);
-                if (UIShapeUsesRadius(tb->shape))
+                if (UIShapeUsesRadius(tb->shape)) {
                     if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                    oked::FieldTip("Corner Radius##utb");
+                }
             } else if (tb->style != UITabs::Style::Pills) {
                 if (ImGui::DragFloat("Corner Radius##utb", &tb->cornerRadius, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+                oked::FieldTip("Corner Radius##utb");
             }
             static const char* tabSizing[] = {"Equal width", "Fit text"};
             int tsz = (int)tb->sizing;
             if (ImGui::Combo("Sizing##utb", &tsz, tabSizing, 2)) { tb->sizing = (UITabs::Sizing)tsz; ed.dirty = true; }
+            oked::FieldTip("Sizing##utb");
             if (ImGui::DragFloat("Spacing##utb", &tb->spacing, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
+            oked::FieldTip("Spacing##utb");
             if (ImGui::DragFloat("Padding##utb", &tb->padding, 0.2f, 0.0f, 64.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Space either side of a tab's text (Fit text sizing, Vertical rows)");
             if (ImGui::DragFloat("Min Tab Size##utb", &tb->minTabSize, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tabs never get smaller than this; when they no longer fit,\nthe bar scrolls (wheel / drag) with arrow buttons at the ends.");
             if (ImGui::DragFloat("Font Scale##utb", &tb->fontScale, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
-            if (tb->style != UITabs::Style::Segmented && tb->style != UITabs::Style::Pills)
+            oked::FieldTip("Font Scale##utb");
+            if (tb->style != UITabs::Style::Segmented && tb->style != UITabs::Style::Pills) {
                 if (ImGui::DragFloat("Indicator##utb", &tb->indicatorThickness, 0.1f, 1.0f, 16.0f)) ed.dirty = true;
+                oked::FieldTip("Indicator##utb");
+            }
             if (ImGui::DragFloat("Icon Size##utb", &tb->iconSize, 0.5f, 4.0f, 128.0f)) ed.dirty = true;
+            oked::FieldTip("Icon Size##utb");
             if (tb->Count() > 0) {
                 int v = tb->value;
                 // Edit mode doesn't tick the scene: apply the pages here so the preview
                 // shows the selected tab's content straight away.
                 if (ImGui::SliderInt("Selected##utb", &v, 0, tb->Count() - 1)) { tb->value = v; tb->ApplyPages(); ed.dirty = true; }
+                oked::FieldTip("Selected##utb");
             }
             SectionHeader("Colors");
             float se[4] = {tb->selected.r, tb->selected.g, tb->selected.b, tb->selected.a};
             if (ImGui::ColorEdit4("Selected Color##utb", se)) { tb->selected = {se[0], se[1], se[2], se[3]}; ed.dirty = true; }
+            oked::FieldTip("Selected Color##utb");
             float bgc[4] = {tb->background.r, tb->background.g, tb->background.b, tb->background.a};
             if (ImGui::ColorEdit4("Track Color##utb", bgc)) { tb->background = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
+            oked::FieldTip("Track Color##utb");
             float txc[4] = {tb->textColor.r, tb->textColor.g, tb->textColor.b, tb->textColor.a};
             if (ImGui::ColorEdit4("Text##utb", txc)) { tb->textColor = {txc[0], txc[1], txc[2], txc[3]}; ed.dirty = true; }
+            oked::FieldTip("Text##utb");
             float stc[4] = {tb->selectedTextColor.r, tb->selectedTextColor.g, tb->selectedTextColor.b, tb->selectedTextColor.a};
             if (ImGui::ColorEdit4("Selected Text##utb", stc)) { tb->selectedTextColor = {stc[0], stc[1], stc[2], stc[3]}; ed.dirty = true; }
+            oked::FieldTip("Selected Text##utb");
             float hvc[4] = {tb->hoverColor.r, tb->hoverColor.g, tb->hoverColor.b, tb->hoverColor.a};
             if (ImGui::ColorEdit4("Hover Tint##utb", hvc)) { tb->hoverColor = {hvc[0], hvc[1], hvc[2], hvc[3]}; ed.dirty = true; }
+            oked::FieldTip("Hover Tint##utb");
             float prc[4] = {tb->pressedColor.r, tb->pressedColor.g, tb->pressedColor.b, tb->pressedColor.a};
             if (ImGui::ColorEdit4("Pressed Tint##utb", prc)) { tb->pressedColor = {prc[0], prc[1], prc[2], prc[3]}; ed.dirty = true; }
+            oked::FieldTip("Pressed Tint##utb");
             float bdc[4] = {tb->badgeColor.r, tb->badgeColor.g, tb->badgeColor.b, tb->badgeColor.a};
             if (ImGui::ColorEdit4("Badge##utb", bdc)) { tb->badgeColor = {bdc[0], bdc[1], bdc[2], bdc[3]}; ed.dirty = true; }
+            oked::FieldTip("Badge##utb");
             float btc[4] = {tb->badgeTextColor.r, tb->badgeTextColor.g, tb->badgeTextColor.b, tb->badgeTextColor.a};
             if (ImGui::ColorEdit4("Badge Text##utb", btc)) { tb->badgeTextColor = {btc[0], btc[1], btc[2], btc[3]}; ed.dirty = true; }
+            oked::FieldTip("Badge Text##utb");
             SectionHeader("Behavior");
             if (ImGui::Checkbox("Interactable##utb", &tb->interactable)) ed.dirty = true;
+            oked::FieldTip("Interactable##utb");
             // grok/ui-controls — Vertical in the Style list is the side-tab layout.
             if (ImGui::Checkbox("Closable##utb", &tb->closable)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("An X on each tab. Clicking it removes the tab and fires on_tab_close().");
@@ -38224,6 +39604,7 @@ void DrawInspector(EditorState& ed) {
             if (tb->animate) {
                 ImGui::SameLine(); ImGui::SetNextItemWidth(90);
                 if (ImGui::DragFloat("Speed##utbanim", &tb->animSpeed, 0.2f, 1.0f, 60.0f)) ed.dirty = true;
+                oked::FieldTip("Speed##utbanim");
             }
             if (ImGui::Checkbox("Prev/Next Keys##utb", &tb->hotkeys)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch tabs with these keys (and the gamepad L / R\nshoulder buttons) while the bar is on screen");
@@ -38232,10 +39613,13 @@ void DrawInspector(EditorState& ed) {
                 char nk[16]; std::strncpy(nk, tb->nextKey.c_str(), sizeof(nk) - 1); nk[sizeof(nk) - 1] = '\0';
                 ImGui::SetNextItemWidth(60);
                 if (ImGui::InputText("Prev##utbkey", pk, sizeof(pk))) { tb->prevKey = pk; ed.dirty = true; }
+                oked::FieldTip("Prev##utbkey");
                 ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                 if (ImGui::InputText("Next##utbkey", nk, sizeof(nk))) { tb->nextKey = nk; ed.dirty = true; }
+                oked::FieldTip("Next##utbkey");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Wrap##utb", &tb->wrapAround)) ed.dirty = true;
+                oked::FieldTip("Wrap##utb");
             }
             SectionHeader("Tabs & content");
             // Each tab can name a GameObject to show as its content page (others are
@@ -38247,12 +39631,14 @@ void DrawInspector(EditorState& ed) {
                 char ob[64]; std::strncpy(ob, tb->tabs[i].c_str(), sizeof(ob) - 1); ob[sizeof(ob) - 1] = '\0';
                 ImGui::SetNextItemWidth(120);
                 if (ImGui::InputText("##tab", ob, sizeof(ob))) { tb->tabs[i] = ob; ed.dirty = true; }
+                oked::FieldTip("##tab");
                 ImGui::SameLine();
                 // Page (content object) for this tab. Accepts a name typed in or a
                 // GameObject dropped from the Hierarchy.
                 char pb[96]; std::strncpy(pb, tb->pages[i].c_str(), sizeof(pb) - 1); pb[sizeof(pb) - 1] = '\0';
                 ImGui::SetNextItemWidth(150);
                 if (ImGui::InputText("Page##pg", pb, sizeof(pb))) { tb->pages[i] = pb; ed.dirty = true; }
+                oked::FieldTip("Page##pg");
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
                         if (GameObject* dropped = *static_cast<GameObject* const*>(p->Data)) {
@@ -38269,6 +39655,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Indent(12.0f);
                 ImGui::SetNextItemWidth(120);
                 if (ImGui::InputText("Icon##ic", ib, sizeof(ib))) { tb->SetIcon(i, ib); ed.dirty = true; }
+                oked::FieldTip("Icon##ic");
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
                         tb->SetIcon(i, (const char*)p->Data); ed.dirty = true;
@@ -38282,6 +39669,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 bool en = tb->IsTabEnabled(i);
                 if (ImGui::Checkbox("Enabled##en", &en)) { tb->SetTabEnabled(i, en); ed.dirty = true; }
+                oked::FieldTip("Enabled##en");
                 ImGui::Unindent(12.0f);
                 ImGui::PopID();
             }
@@ -38340,14 +39728,20 @@ void DrawInspector(EditorState& ed) {
     if (auto* an = dynamic_cast<SpriteAnimator*>(curComp)) {
         if (CompHeader("Sprite Animator", an, &toRemove)) {
             if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
+            oked::FieldTip("FPS##anim");
             if (ImGui::Checkbox("Loop##anim", &an->loop)) ed.dirty = true;
+            oked::FieldTip("Loop##anim");
             ImGui::SameLine();
             if (ImGui::Checkbox("Playing##anim", &an->playing)) ed.dirty = true;
+            oked::FieldTip("Playing##anim");
             ImGui::Spacing();
             ImGui::TextDisabled("Atlas mode (sprite sheet on the SpriteRenderer texture):");
             if (ImGui::DragInt("Columns##anim", &an->atlasColumns, 0.1f, 0, 64)) ed.dirty = true;
+            oked::FieldTip("Columns##anim");
             if (ImGui::DragInt("Rows##anim", &an->atlasRows, 0.1f, 1, 64)) ed.dirty = true;
+            oked::FieldTip("Rows##anim");
             if (ImGui::DragInt("Count 0=all##anim", &an->atlasCount, 0.1f, 0, 4096)) ed.dirty = true;
+            oked::FieldTip("Count 0=all##anim");
             if (an->atlasColumns > 0) ImGui::TextDisabled("Using atlas cells; frame list ignored.");
             ImGui::Spacing();
             ImGui::TextDisabled("Frames (image paths, used when Columns = 0):");
@@ -38358,6 +39752,7 @@ void DrawInspector(EditorState& ed) {
                 fb[sizeof(fb) - 1] = '\0';
                 ImGui::PushID((int)i);
                 if (ImGui::InputText("##frame", fb, sizeof(fb))) { an->frames[i] = fb; ed.dirty = true; }
+                oked::FieldTip("##frame");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) removeAt = (int)i;
                 ImGui::PopID();
@@ -38372,11 +39767,15 @@ void DrawInspector(EditorState& ed) {
                 ImGui::PushID(1000 + (int)i);
                 char nb[64]; std::strncpy(nb, cl.name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
                 if (ImGui::InputText("Name##clip", nb, sizeof(nb))) { cl.name = nb; ed.dirty = true; }
+                oked::FieldTip("Name##clip");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) removeClip = (int)i;
                 if (ImGui::DragInt("Row##clip", &cl.row, 0.1f, 0, 63)) ed.dirty = true;
+                oked::FieldTip("Row##clip");
                 if (ImGui::DragFloat("FPS##clip", &cl.fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
+                oked::FieldTip("FPS##clip");
                 if (ImGui::Checkbox("Loop##clip", &cl.loop)) ed.dirty = true;
+                oked::FieldTip("Loop##clip");
                 std::string joined;   // frames as "a.png, b.png" (empty = use the atlas row)
                 for (const auto& f : cl.frames) joined += (joined.empty() ? "" : ", ") + f;
                 char fb[512]; std::strncpy(fb, joined.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
@@ -38405,10 +39804,14 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Animator", anm, &toRemove)) {
             char cn[64]; std::strncpy(cn, anm->clip.name.c_str(), sizeof(cn) - 1); cn[sizeof(cn)-1] = '\0';
             if (ImGui::InputText("Clip##anm", cn, sizeof(cn))) { anm->clip.name = cn; ed.dirty = true; }
+            oked::FieldTip("Clip##anm");
             if (ImGui::Checkbox("Loop##anm", &anm->clip.loop)) { anm->clip.Recompute(); ed.dirty = true; }
+            oked::FieldTip("Loop##anm");
             ImGui::SameLine();
             if (ImGui::Checkbox("Playing##anm", &anm->playing)) ed.dirty = true;
+            oked::FieldTip("Playing##anm");
             if (ImGui::DragFloat("Speed##anm", &anm->speed, 0.02f, -4.0f, 4.0f)) ed.dirty = true;
+            oked::FieldTip("Speed##anm");
 
             // Playback scrubber: drag to preview the clip at any time.
             float len = anm->clip.Length();
@@ -38480,8 +39883,11 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::SmallButton("Timeline##sp")) { if (!sp->sequencePath.empty()) OpenTimelineFile(sp->ResolvedPath()); g_showTimeline = true; }
             if (ImGui::Checkbox("Play On Start##sp", &sp->playOnStart)) ed.dirty = true;
+            oked::FieldTip("Play On Start##sp");
             if (ImGui::Checkbox("Loop##sp", &sp->loop)) ed.dirty = true;
+            oked::FieldTip("Loop##sp");
             if (ImGui::DragFloat("Time Scale##sp", &sp->timeScale, 0.01f, 0.0f, 10.0f, "x%.2f")) ed.dirty = true;
+            oked::FieldTip("Time Scale##sp");
             {
                 struct Opt { const char* name; char code; };
                 static const Opt opts[] = {{"(none)", 0}, {"Escape", 27}, {"Space", ' '}, {"Enter", '\r'}, {"Tab", '\t'}, {"Backspace", 8}, {"E", 'e'}, {"Q", 'q'}, {"F", 'f'}};
@@ -47053,7 +48459,6 @@ int main(int argc, char** argv) {
                 ed.scene().renderSettings.weather.intensity = 1.0f;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
-            oked::DevFieldDemo(ed);   // OKAY_DEV_FIELD_DEMO: a component with every property kind, to show the registry-driven Inspector card
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY

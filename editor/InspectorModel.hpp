@@ -121,6 +121,30 @@ bool AssetKindAccepts(const std::string& kind, const std::string& path);
 /// (at most `limit`). Paths are the same strings a drag from the Project panel carries.
 std::vector<std::string> ListAssetsOfKind(const std::string& root, const std::string& kind, std::size_t limit = 4000);
 
+// ---- Tooltips for hand-written fields ----------------------------------------------------------
+/// The tooltip of a property: the registry's own, else a plain-English default for the commonly used components
+/// (Transform, Rigidbody, colliders, Light, Camera, Audio Source, Sprite / Mesh Renderer). "" when there is none.
+std::string TooltipFor(const std::string& typeName, const okay::PropertyDesc& desc);
+/// The tooltip for a field a hand-written Inspector drew with this label ("Use Temperature##light", "Sort Order"):
+/// found by matching the label to a property of the component type. "" when nothing matches.
+std::string FieldTooltip(const std::string& typeName, const std::string& label);
+/// Names (as shown in the Inspector) of the properties whose value differs between the selected objects, for the
+/// component of this type and position. Hidden and runtime-only properties are left out.
+std::vector<std::string> MixedPropertyNames(const std::vector<okay::GameObject*>& objs, const std::string& typeName, int index);
+
+// ---- Keeping a prefab root's place --------------------------------------------------------------------
+/// Where a top-level object sits among the scene's top-level objects: the one before it (or, for the first, the
+/// one after it), by guid. Taken before a revert rebuilds the instance.
+struct RootSlot {
+    bool valid = false;
+    std::string neighbourGuid;
+    bool neighbourIsBefore = true;
+};
+RootSlot CaptureRootSlot(okay::Scene& scene, const okay::GameObject& go);
+/// Put `go` (the rebuilt instance) back at that place. No-op for a child (the engine keeps its slot) or when the
+/// neighbour is gone.
+void RestoreRootSlot(okay::Scene& scene, okay::GameObject* go, const RootSlot& slot);
+
 // ---- Prefab overrides ----------------------------------------------------------------------
 /// One changed record of an instance, tied to the live object and component it belongs to.
 struct PrefabChange {

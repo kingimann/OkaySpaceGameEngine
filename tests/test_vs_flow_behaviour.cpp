@@ -427,9 +427,6 @@ int main() {
     }
     for (const VsDef& d : Registry()) {
         if (d.cat != CAT_FLOW) continue;
-        // These four are exercised, with a scene, by test_vs_runtime (maps, latch, switch, run graph).
-        if (!std::strcmp(d.type, "SwitchCases") || !std::strcmp(d.type, "LatchGate") ||
-            !std::strcmp(d.type, "ForEachMap") || !std::strcmp(d.type, "RunGraph")) continue;
         // Flow nodes that came in with the logic runtime are shown by their own
         // Node Playground scene (VsPlaygroundForNode), not by this one.
         const bool listed = graph.find(" " + std::string(d.type) + "\n") != std::string::npos ||

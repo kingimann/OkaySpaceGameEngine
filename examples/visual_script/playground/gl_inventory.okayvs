@@ -2,10 +2,9 @@
 node 1 OnStart
 pos 1 40 40
 entry OnStart 1
-node 2 AddItem
+node 2 AddItem coin
 pos 2 300 40
-default 2 0 coin
-default 2 1 5
+default 2 0 5
 exec 1 0 2
 node 3 GlCountItem
 pos 3 300 240

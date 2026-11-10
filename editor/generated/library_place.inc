@@ -118,7 +118,6 @@
     if (std::strcmp(type, "LbCountWords") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbHasText") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbIsBlank") == 0) return VsAt("Text");
-    if (std::strcmp(type, "LbReplaceText") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbCutText") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbFindText") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbJoinWith") == 0) return VsAt("Text");
@@ -129,6 +128,7 @@
     if (std::strcmp(type, "LbRemoveSpaces") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbBeforeSeparator") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbAfterSeparator") == 0) return VsAt("Text");
+    if (std::strcmp(type, "LbReplaceText") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbIsNumberText") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbNumberFromText") == 0) return VsAt("Text");
     if (std::strcmp(type, "LbTextFromNumber") == 0) return VsAt("Text");

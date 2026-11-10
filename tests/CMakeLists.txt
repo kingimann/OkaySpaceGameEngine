@@ -1325,6 +1325,16 @@ add_executable(test_vs_smart_logic test_vs_smart_logic.cpp)
 target_link_libraries(test_vs_smart_logic PRIVATE okay::engine)
 add_test(NAME vs_smart_logic COMMAND test_vs_smart_logic)
 
+add_executable(test_vs_flow_playground test_vs_flow_playground.cpp)
+target_link_libraries(test_vs_flow_playground PRIVATE okay::engine)
+target_compile_definitions(test_vs_flow_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_flow_playground COMMAND test_vs_flow_playground)
+
+add_executable(test_vs_node_effect test_vs_node_effect.cpp)
+target_include_directories(test_vs_node_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_node_effect PRIVATE okay::engine)
+add_test(NAME vs_node_effect COMMAND test_vs_node_effect)
+
 add_executable(test_vs_gameplay_library test_vs_gameplay_library.cpp)
 target_link_libraries(test_vs_gameplay_library PRIVATE okay::engine)
 target_compile_definitions(test_vs_gameplay_library PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

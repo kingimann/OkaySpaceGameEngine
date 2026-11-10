@@ -6,6 +6,8 @@
          "The speaker's volume is set to half. The other audio nodes are in the graph."},
         {"gl_camera", "Gameplay - Camera", "gl_camera.okayscene", "gl_camera.okayvs", "Main Camera",
          "The camera zooms in a little and gives one shake when you press Play. The other camera nodes are in the graph."},
+        {"gl_dialogue", "Gameplay - Dialogue", "gl_dialogue.okayscene", "gl_dialogue.okayvs", "Guide",
+         "The guide starts a conversation. The readout shows the line, the speaker and the options."},
         {"gl_groups", "Gameplay - Groups of Objects", "gl_groups.okayscene", "gl_groups.okayvs", "Boss",
          "Three crates are hidden when you press Play. The other group nodes are in the graph."},
         {"gl_health", "Gameplay - Health", "gl_health.okayscene", "gl_health.okayvs", "Fighter",

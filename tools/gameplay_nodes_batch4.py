@@ -43,7 +43,7 @@ def define(add, N, B, T, O, R):
            [B("Remove", "true")], HC, "GpHealth", "c->destroyOnDeath = b0;", hp, ["true"],
            "CHECK(me->GetComponent<HealthStat>()->destroyOnDeath);")
     getter("GlGetMissingHealth", "Get Missing Health", *H, "Basic", "How much health is missing from the maximum.", "Missing", HC, "GpHealth",
-           "c->maxHealth - c->health", "0.0f", hp, 0.0, demo="health")
+           "c->maxHealth - c->health", "0.0f", hp, 30.0, demo="health", post="me->GetComponent<HealthStat>()->health = 70;", update=True)
     getter("GlIsHealthAbove", "Is Health Above", *H, "Basic", "True when health is above 50 percent of the maximum.", "Result", HC, "GpHealth",
            "c->Fraction() > 0.5f", "false", hp, True, "b", question=True)
     getter("GlGetResistance", "Get Damage Resistance", *H, "Intermediate", "The share of each hit that is ignored after armor.", "Share", HC, "GpHealth",
@@ -64,9 +64,9 @@ def define(add, N, B, T, O, R):
     getter("GlGetCarryLimit", "Get Carry Limit", *I, "Intermediate", "The most weight that can be carried. 0 means no limit.", "Weight", IC, "GlInventory",
            "c->weightLimit", "0.0f", inv + "me->GetComponent<Inventory>()->weightLimit = 12.0f;", 12.0)
     getter("GlIsOverweight", "Is Overweight", *I, "Intermediate", "True when more is carried than the carry limit allows.", "Result", IC, "GlInventory",
-           "c->OverWeight()", "false", inv, False, "b", question=True)
+           "c->OverWeight()", "false", inv + r'''ItemDatabase::Get().Clear(); ItemDatabase::Get().LoadText("okayitems 1\nitem \"crate\"\n  name \"Crate\"\n  weight 4\nend\n"); ''' + 'me->GetComponent<Inventory>()->weightLimit = 5.0f; me->GetComponent<Inventory>()->Add("crate", 2);', True, "b", question=True)
     getter("GlGetSlowdownFromWeight", "Get Slowdown From Weight", *I, "Advanced", "The speed factor weight causes: 1 is none, lower is slower.", "Factor", IC, "GlInventory",
-           "c->SpeedFactor()", "1.0f", inv, 1.0)
+           "c->SpeedFactor()", "1.0f", inv + r'''ItemDatabase::Get().Clear(); ItemDatabase::Get().LoadText("okayitems 1\nitem \"crate\"\n  name \"Crate\"\n  weight 4\nend\n"); ''' + 'me->GetComponent<Inventory>()->weightLimit = 5.0f; me->GetComponent<Inventory>()->slowWhenOverWeight = true; me->GetComponent<Inventory>()->overWeightSpeed = 0.5f; me->GetComponent<Inventory>()->Add("crate", 2);', 0.5)
     add("GlCountAllItems", "Count All Items", *I, "Basic", "How many items are carried in all, adding every stack together.",
         [O()], [N("Count")],
         "Inventory* inv = GlInventory(this, o, g, ctx); float total = 0; if (inv) for (const auto& sl : inv->slots) if (!Inventory::Empty(sl)) total += (float)sl.count; out = VsValue(total);",
@@ -230,7 +230,7 @@ def define(add, N, B, T, O, R):
         reg="CAT_LOGIC", defaults=["1", None], setup="me->transform->SetPosition(Vec3(0, 2, 0));", expect=True, etype="b")
     add("GlIsBelowHeight", "Is Below Height", *M, "Basic", "True when this object is lower than this.",
         [N("Height"), O()], [B("Result")], "out = VsValue(o && o->transform && o->transform->Position().y < n0);",
-        reg="CAT_LOGIC", defaults=["1", None], setup="me->transform->SetPosition(Vec3(0, -2, 0));", expect=True, etype="b")
+        reg="CAT_LOGIC", defaults=["1", None], setup="me->transform->SetPosition(Vec3(0, -2, 0));", alt="me->transform->SetPosition(Vec3(0, 5, 0));", expect=True, etype="b")
 
     # -----------------------------------------------------------------------
     # Input

@@ -174,6 +174,16 @@ inline void DrawCategoryIcon(ImDrawList* dl, ImVec2 c, float r, int cat, ImU32 c
 /// True when a Registry row is the same job as a hand-written node of the same title
 /// (an engine-API binding such as Animator.Roll next to Roll). It is not listed twice.
 inline bool VsPaletteHidesAsDuplicate(const VsDef& d) {
+    // A text-script alias (play_sfx next to play_sound, vec2 next to vec3): one row per title.
+    if (std::strncmp(d.type, "Fn.", 3) == 0) {
+        for (const auto& h : Registry()) {
+            if (&h == &d) break;
+            if (h.title && d.title && std::strcmp(h.title, d.title) == 0) return true;
+        }
+        for (const auto& h : Registry())
+            if (std::strncmp(h.type, "Fn.", 3) != 0 && h.title && d.title && std::strcmp(h.title, d.title) == 0) return true;
+        return false;
+    }
     const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
     if (api) {
         for (const auto& h : Registry()) {

@@ -1,4 +1,21 @@
 # Gameplay library: quests. Every node below is declared here; the first chain runs in Play.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 StartQuest q1
+pos 2 300 40
+exec 1 0 2
+node 3 GlCompleteQuest
+pos 3 560 40
+default 3 0 q1
+exec 2 0 3
+node 4 GlIsQuestCompleted
+pos 4 560 240
+default 4 0 q1
+node 5 SetVar done
+pos 5 820 40
+exec 3 0 5
+data 5 0 4 0
 node 99 OnEvent specimens
 pos 99 40 440
 entry OnEvent:specimens 99

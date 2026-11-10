@@ -1,4 +1,20 @@
 # Gameplay library: timing. Every node below is declared here; the first chain runs in Play.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 GlHasTimePassed
+pos 2 300 240
+default 2 0 0
+node 3 SetVar passed
+pos 3 300 40
+exec 1 0 3
+data 3 0 2 0
+node 4 GlGetGameSpeed
+pos 4 560 240
+node 5 SetVar speed
+pos 5 560 40
+exec 3 0 5
+data 5 0 4 0
 node 99 OnEvent specimens
 pos 99 40 440
 entry OnEvent:specimens 99

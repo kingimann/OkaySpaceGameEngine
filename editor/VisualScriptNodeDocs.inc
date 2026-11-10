@@ -4890,17 +4890,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "LbSmoothStep";
-        d.title = "Smooth Step";
+        d.title = "Smooth Portion";
         d.description = "The smooth 0 to 1 curve. 0 and 1 stay put, and the middle eases.";
         d.requirements = "No component is required. It only computes a value from its inputs.";
         d.component = "";
-        d.example = "Wire Smooth Step's Result output into another node's input. It has no flow of its own.";
+        d.example = "Wire Smooth Portion's Result output into another node's input. It has no flow of its own.";
         d.related = "";
-        d.keywords = "smooth step";
+        d.keywords = "smooth portion";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, false, "Value", "Number", "The value being stored, sent or tested. It is a Number. Unwired, this is 0.", "0"});
-        d.pins.push_back({false, false, "Result", "Number", "What Smooth Step produces on Result. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Result", "Number", "What Smooth Portion produces on Result. It is a Number. Wire it into an input that expects a Number.", ""});
         add(std::move(d));
     }
     {
@@ -4938,17 +4938,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "LbEaseOut";
-        d.title = "Ease Out";
+        d.title = "Ease Out Portion";
         d.description = "Starts fast and settles. Value is 0 to 1.";
         d.requirements = "No component is required. It only computes a value from its inputs.";
         d.component = "";
-        d.example = "Wire Ease Out's Result output into another node's input. It has no flow of its own.";
+        d.example = "Wire Ease Out Portion's Result output into another node's input. It has no flow of its own.";
         d.related = "";
-        d.keywords = "ease out";
+        d.keywords = "ease out portion";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, false, "Value", "Number", "The value being stored, sent or tested. It is a Number. Unwired, this is 0.", "0"});
-        d.pins.push_back({false, false, "Result", "Number", "What Ease Out produces on Result. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Result", "Number", "What Ease Out Portion produces on Result. It is a Number. Wire it into an input that expects a Number.", ""});
         add(std::move(d));
     }
     {
@@ -5798,21 +5798,21 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     {
         VsNodeDoc d;
         d.type = "LbSpringStep";
-        d.title = "Spring Step";
+        d.title = "Spring Toward Target";
         d.description = "One spring step toward Target. Stiffness 0 leaves Current alone. Result is the new current.";
         d.requirements = "No component is required. It only computes a value from its inputs.";
         d.component = "";
-        d.example = "Wire Spring Step's Result output into another node's input. It has no flow of its own.";
+        d.example = "Wire Spring Toward Target's Result output into another node's input. It has no flow of its own.";
         d.related = "";
-        d.keywords = "spring step";
+        d.keywords = "spring toward target";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, false, "Current", "Number", "The value to move from. It is a Number. Unwired, this is 0.", "0"});
-        d.pins.push_back({true, false, "Velocity", "Number", "The Velocity input of Spring Step. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Velocity", "Number", "The Velocity input of Spring Toward Target. It is a Number. Unwired, this is 0.", "0"});
         d.pins.push_back({true, false, "Target", "Number", "The object to act on. Leave it empty to use this object (the one the graph is on). It is a Number. Unwired, this is this object.", "this object"});
-        d.pins.push_back({true, false, "Stiffness", "Number", "The Stiffness input of Spring Step. It is a Number. Unwired, this is 0.", "0"});
-        d.pins.push_back({true, false, "Seconds", "Number", "The Seconds input of Spring Step. It is a Number. Unwired, this is 0.", "0"});
-        d.pins.push_back({false, false, "Result", "Number", "What Spring Step produces on Result. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({true, false, "Stiffness", "Number", "The Stiffness input of Spring Toward Target. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Seconds", "Number", "The Seconds input of Spring Toward Target. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Result", "Number", "What Spring Toward Target produces on Result. It is a Number. Wire it into an input that expects a Number.", ""});
         add(std::move(d));
     }
     {
@@ -6984,24 +6984,6 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
-        d.type = "LbReplaceText";
-        d.title = "Replace Text";
-        d.description = "Replaces the first Find in Text with Replace.";
-        d.requirements = "No component is required. It only computes a value from its inputs.";
-        d.component = "";
-        d.example = "Wire Replace Text's Result output into another node's input. It has no flow of its own.";
-        d.related = "";
-        d.keywords = "replace text";
-        d.setting = "";
-        d.settingDefault = "";
-        d.pins.push_back({true, false, "Text", "Text", "The text to read or change. It is a Text. Unwired, this is empty text.", "empty text"});
-        d.pins.push_back({true, false, "Find", "Text", "The text to look for. It is a Text. Unwired, this is empty text.", "empty text"});
-        d.pins.push_back({true, false, "Replace", "Text", "The Replace input of Replace Text. It is a Text. Unwired, this is empty text.", "empty text"});
-        d.pins.push_back({false, false, "Result", "Text", "What Replace Text produces on Result. It is a Text. Wire it into an input that expects a Text.", ""});
-        add(std::move(d));
-    }
-    {
-        VsNodeDoc d;
         d.type = "LbCutText";
         d.title = "Cut Text";
         d.description = "A piece of Text. Start counts from 0.";
@@ -7166,6 +7148,24 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.pins.push_back({true, false, "Text", "Text", "The text to read or change. It is a Text. Unwired, this is empty text.", "empty text"});
         d.pins.push_back({true, false, "Separator", "Text", "The Separator input of After Separator. It is a Text. Unwired, this is empty text.", "empty text"});
         d.pins.push_back({false, false, "Result", "Text", "What After Separator produces on Result. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "LbReplaceText";
+        d.title = "Replace First Match";
+        d.description = "Replaces the first Find in Text with Replace.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Replace First Match's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "replace first match";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Text", "Text", "The text to read or change. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Find", "Text", "The text to look for. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Replace", "Text", "The Replace input of Replace First Match. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({false, false, "Result", "Text", "What Replace First Match produces on Result. It is a Text. Wire it into an input that expects a Text.", ""});
         add(std::move(d));
     }
     {
@@ -12818,6 +12818,155 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.settingDefault = "";
         d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
         d.pins.push_back({false, false, "Slots", "Number", "What Get Inventory Size produces on Slots. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsDialogueRunning";
+        d.title = "Is Dialogue Running";
+        d.description = "True while a conversation is going on.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Dialogue Running's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is dialogue running";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Dialogue Running produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetDialogueLine";
+        d.title = "Get Dialogue Line";
+        d.description = "The words being spoken now. Empty when no conversation is going.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Dialogue Line's Text output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get dialogue line";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Text", "Text", "The text result. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetDialogueSpeaker";
+        d.title = "Get Dialogue Speaker";
+        d.description = "Get Dialogue Speaker — Who is speaking now.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Dialogue Speaker's Name output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get dialogue speaker";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Name", "Text", "The name. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlIsDialogueWaitingForChoice";
+        d.title = "Is Dialogue Waiting for Choice";
+        d.description = "True when the conversation is showing options and waits for one to be picked.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Is Dialogue Waiting for Choice's Result output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "is dialogue waiting for choice";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Result", "Bool", "What Is Dialogue Waiting for Choice produces on Result. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetDialogueOptionCount";
+        d.title = "Get Dialogue Option Count";
+        d.description = "How many options the player can pick from now.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Dialogue Option Count's Count output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get dialogue option count";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlGetDialogueOptionText";
+        d.title = "Get Dialogue Option Text";
+        d.description = "The words of one option, counted from 0.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Dialogue Option Text's Text output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get dialogue option text";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Option", "Number", "The Option input of Get Dialogue Option Text. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Text", "Text", "The text result. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlAdvanceDialogue";
+        d.title = "Advance Dialogue";
+        d.description = "Moves the conversation on to the next line.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Advance Dialogue after an event such as On Start or On Update, and wire a value into Target.";
+        d.related = "";
+        d.keywords = "advance dialogue";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Advance Dialogue runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Advance Dialogue finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlChooseDialogueOption";
+        d.title = "Choose Dialogue Option";
+        d.description = "Picks one of the options, counted from 0, and carries the conversation on.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Choose Dialogue Option after an event such as On Start or On Update, and wire a value into Option.";
+        d.related = "";
+        d.keywords = "choose dialogue option";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Choose Dialogue Option runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Choose Dialogue Option finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Option", "Number", "The Option input of Choose Dialogue Option. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GlStopDialogue";
+        d.title = "Stop Dialogue";
+        d.description = "Ends the conversation now.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Stop Dialogue after an event such as On Start or On Update, and wire a value into Target.";
+        d.related = "";
+        d.keywords = "stop dialogue";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Stop Dialogue runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Stop Dialogue finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
         add(std::move(d));
     }
     {

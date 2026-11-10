@@ -25,7 +25,7 @@ T = lambda name: (name, "T")
 
 def math_curves():
     P = ("Math", "Curves", "CAT_MATH")
-    add("LbSmoothStep", "Smooth Step", *P, [N("Value")], [N("Result")],
+    add("LbSmoothStep", "Smooth Portion", *P, [N("Value")], [N("Result")],
         "float x=n0; if(x<0)x=0; if(x>1)x=1; out=VsValue(x*x*(3.f-2.f*x));",
         ["0.5"], 0.5, help_="The smooth 0 to 1 curve. 0 and 1 stay put, and the middle eases.")
     add("LbSmootherStep", "Smoother Step", *P, [N("Value")], [N("Result")],
@@ -34,7 +34,7 @@ def math_curves():
     add("LbEaseIn", "Ease in", *P, [N("Value")], [N("Result")],
         "float x=n0; if(x<0)x=0; if(x>1)x=1; out=VsValue(x*x);",
         ["0.5"], 0.25, help_="Starts slow and speeds up. Value is 0 to 1.")
-    add("LbEaseOut", "Ease Out", *P, [N("Value")], [N("Result")],
+    add("LbEaseOut", "Ease Out Portion", *P, [N("Value")], [N("Result")],
         "float x=n0; if(x<0)x=0; if(x>1)x=1; float k=1.f-x; out=VsValue(1.f-k*k);",
         ["0.5"], 0.75, help_="Starts fast and settles. Value is 0 to 1.")
     add("LbEaseInOut", "Ease in Out", *P, [N("Value")], [N("Result")],
@@ -198,7 +198,7 @@ def math_numbers():
         ["0", "10", "2", "1"], 2.0, help_="Current, but it cannot move from Previous faster than Rate per second.")
     add("LbChangeBetween", "Change Between", *P, [N("Previous"), N("Current")], [N("Result")],
         "out=VsValue(n1-n0);", ["2", "5"], 3.0, help_="Current minus Previous.")
-    add("LbSpringStep", "Spring Step", "Math", "Curves", "CAT_MATH",
+    add("LbSpringStep", "Spring Toward Target", "Math", "Curves", "CAT_MATH",
         [N("Current"), N("Velocity"), N("Target"), N("Stiffness"), N("Seconds")], [N("Result")],
         "float dt=n4; if(dt<0)dt=0; if(dt>0.1f)dt=0.1f; float k=n3; if(k<0)k=0; float acc=(n2-n0)*k - n1*2.f*std::sqrt(k); float v=n1+acc*dt; out=VsValue(n0+v*dt);",
         ["0", "0", "10", "0", "0.1"], 0.0, help_="One spring step toward Target. Stiffness 0 leaves Current alone. Result is the new current.")
@@ -403,9 +403,6 @@ def text_nodes():
     add("LbIsBlank", "Is Blank", *P, [T("Text")], [B("Result")],
         "bool any=false; for(char c: t0) if(!std::isspace((unsigned char)c)) any=true; out=VsValue(!any);",
         ['"   "'], 1, "b", help_="True when Text is empty or only spaces.")
-    add("LbReplaceText", "Replace Text", *P, [T("Text"), T("Find"), T("Replace")], [T("Result")],
-        "std::string r=t0; if(!t1.empty()){ auto p=r.find(t1); if(p!=std::string::npos) r.replace(p,t1.size(),t2);} out=VsValue(r);",
-        ['"cat"','"a"','"o"'], "cot", "s", help_="Replaces the first Find in Text with Replace.")
     add("LbCutText", "Cut Text", *P, [T("Text"), N("Start"), N("Count")], [T("Result")],
         "int a=(int)std::lround(n0); int c=(int)std::lround(n1); if(a<0)a=0; if(c<0)c=0; if(a>(int)t0.size()) a=(int)t0.size();"
         "if(a+c>(int)t0.size()) c=(int)t0.size()-a; out=VsValue(t0.substr((size_t)a,(size_t)c));",
@@ -436,6 +433,9 @@ def text_nodes():
     add("LbAfterSeparator", "After Separator", *P, [T("Text"), T("Separator")], [T("Result")],
         "auto p=t1.empty()? std::string::npos : t0.find(t1); out=VsValue(p==std::string::npos? std::string() : t0.substr(p+t1.size()));",
         ['"red-blue"','"-"'], "blue", "s", help_="The part of Text after the first Separator. Empty when it is missing.")
+    add("LbReplaceText", "Replace First Match", *P, [T("Text"), T("Find"), T("Replace")], [T("Result")],
+        "std::string r=t0; if(!t1.empty()){ auto p=r.find(t1); if(p!=std::string::npos) r.replace(p,t1.size(),t2);} out=VsValue(r);",
+        ['"cat"','"a"','"o"'], "cot", "s", help_="Replaces the first Find in Text with Replace.")
     add("LbIsNumberText", "Is Number Text", *P, [T("Text")], [B("Result")],
         "bool ok=!t0.empty(); size_t i=0; if(ok && (t0[0]=='+'||t0[0]=='-')) ++i; bool dot=false, dig=false;"
         "for(; ok && i<t0.size(); ++i){ char c=t0[i]; if(c=='.' && !dot){ dot=true; continue;} if(!std::isdigit((unsigned char)c)) ok=false; else dig=true;} out=VsValue(ok && dig);",

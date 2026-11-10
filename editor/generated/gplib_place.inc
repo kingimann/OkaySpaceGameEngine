@@ -230,3 +230,12 @@
     if (std::strcmp(type, "GlGetTextSize") == 0) return VsAt("UI");
     if (std::strcmp(type, "GlGetStackLimit") == 0) return VsAt("Objects", "Items");
     if (std::strcmp(type, "GlGetInventorySize") == 0) return VsAt("Objects", "Items");
+    if (std::strcmp(type, "GlIsDialogueRunning") == 0) return VsAt("Scene", "Dialogue");
+    if (std::strcmp(type, "GlGetDialogueLine") == 0) return VsAt("Scene", "Dialogue");
+    if (std::strcmp(type, "GlGetDialogueSpeaker") == 0) return VsAt("Scene", "Dialogue");
+    if (std::strcmp(type, "GlIsDialogueWaitingForChoice") == 0) return VsAt("Scene", "Dialogue");
+    if (std::strcmp(type, "GlGetDialogueOptionCount") == 0) return VsAt("Scene", "Dialogue");
+    if (std::strcmp(type, "GlGetDialogueOptionText") == 0) return VsAt("Scene", "Dialogue");
+    if (std::strcmp(type, "GlAdvanceDialogue") == 0) return VsAt("Scene", "Dialogue");
+    if (std::strcmp(type, "GlChooseDialogueOption") == 0) return VsAt("Scene", "Dialogue");
+    if (std::strcmp(type, "GlStopDialogue") == 0) return VsAt("Scene", "Dialogue");

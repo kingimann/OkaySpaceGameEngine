@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "54d09b0fa66994805d820042c35bca78"
+  guid "5f73eada0e990a4019c0a401433c56c4"
   active 1
   parent -1
   transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "dd93991b76486d39a1d7e7e31be4a37b"
+  guid "9c788883ee42f6d720b378ea02dc104e"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play. timing" 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 900 120 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Floor"
-  guid "989116373c7e639297c6968035f360b7"
+  guid "869dbcd401c8c4dd210dd76b9cea75e2"
   active 1
   parent -1
   transform 0 -0.15 0 0 0 0 1 16 0.3 16
@@ -28,7 +28,7 @@ gameobject 2 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Clock"
-  guid "90f9afab0221c9fc92519adc772f7d2c"
+  guid "5a2415c06231388b1d6e36634542126b"
   active 1
   parent -1
   transform 0 0.5 0 0 0 0 1 1 1 1

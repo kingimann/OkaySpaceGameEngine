@@ -28,7 +28,7 @@ def define(add, N, B, T, O, R):
         [R("Object"), O()], [N("Right"), N("Up"), N("Forward")],
         "Vec3 d = (o && o2 && o->transform && o2->transform) ? o->transform->Position() - o2->transform->Position() : Vec3::Zero;"
         " float len = d.Magnitude(); if (len > 1e-5f) d = d * (1.0f / len); out = VsValue(pin == 0 ? d.x : (pin == 1 ? d.y : d.z));",
-        defaults=["Goal", None], setup=goal + " goal->transform->SetPosition(Vec3(0, 3, 0));", expect=0.0)
+        defaults=["Goal", None], setup=goal + " goal->transform->SetPosition(Vec3(4, 0, 0));", expect=1.0)
     add("GlCountObjectsWithTag", "Count Objects With Tag", *Q, "Basic", "How many active objects carry this tag.",
         [T("Tag")], [N("Count")],
         "float c = 0; if (ctx.gameObject && ctx.gameObject->scene()) for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->active && up->tag == t0) c += 1.0f; out = VsValue(c);",
@@ -252,8 +252,7 @@ def define(add, N, B, T, O, R):
         check='CHECK_NEAR(me->transform->Position().x, 7.0f, 0.001f); Prefs::Delete("vs.position.back");')
     add("GlHasSavedPosition", "Has Saved Position", *V, "Intermediate", "True when a position was saved under that name.",
         [T("Name")], [B("Result")], "out = VsValue(Prefs::Has(\"vs.position.\" + t0));",
-        reg="CAT_LOGIC", defaults=['"known"'], setup='Prefs::SetVec3("vs.position.known", Vec3(1, 2, 3));', expect=True, etype="b",
-        check=None)
+        reg="CAT_LOGIC", defaults=['"known"'], setup='Prefs::SetVec3("vs.position.known", Vec3(1, 2, 3));', alt='Prefs::Delete("vs.position.known");', expect=True, etype="b")
     add("GlForgetSavedPosition", "Forget Saved Position", *V, "Intermediate", "Throws away the position saved under that name.",
         [T("Name")], [], "Prefs::Delete(\"vs.position.\" + t0);",
         reg="CAT_ACTION", exec_=True, defaults=['"gone"'], setup='Prefs::SetVec3("vs.position.gone", Vec3(1, 2, 3));',
@@ -295,11 +294,11 @@ def define(add, N, B, T, O, R):
         [], [], "Time::CancelHitStop(); Time::SetTimeScale(1.0f);",
         reg="CAT_ACTION", exec_=True, setup="Time::SetTimeScale(0.5f);", check="CHECK_NEAR(Time::BaseTimeScale(), 1.0f, 0.001f);")
     add("GlGetSessionTime", "Get Session Time", *TM, "Basic", "Seconds of play since the game started.",
-        [], [N("Seconds")], "out = VsValue((float)Time::SessionTime());", expect=None, check="CHECK(Var(v, \"out\").AsFloat() >= 0.0f);")
+        [], [N("Seconds")], "out = VsValue((float)Time::SessionTime());", setup="Time::SetTimeScale(1.0f); Time::CancelHitStop(); Time::MarkSessionStart(); Time::Step(3.0f);", alt="Time::MarkSessionStart();", check="CHECK_NEAR(Var(v, \"out\").AsFloat(), 3.0f, 0.1f);")
     add("GlIsEveryOtherInterval", "Is Every Other Interval", *TM, "Intermediate", "Flips between true and false each time Seconds pass. Handy for a blink.",
         [N("Seconds", "1.0f")], [B("Result")],
         "float len = std::max(0.01f, n0); out = VsValue((((long long)std::floor(Time::ElapsedTime() / len)) % 2) == 0);",
-        reg="CAT_LOGIC", defaults=["1"],
+        reg="CAT_LOGIC", defaults=["1"], setup="Time::SetTimeScale(1.0f); Time::CancelHitStop(); Time::Step(1.5f);", alt="Time::SetTimeScale(1.0f); Time::CancelHitStop(); Time::Step(2.5f);",
         check="CHECK(Var(v, \"out\").AsBool() == ((((long long)std::floor(Time::ElapsedTime() / 1.0f)) % 2) == 0));")
 
     # -----------------------------------------------------------------------

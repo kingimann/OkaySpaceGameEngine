@@ -30,10 +30,10 @@ def R(name): return (name, "R", None)
 
 def add(typ, title, topic, sub, level, help_, ins, outs, cpp, *, reg="CAT_DATA",
         exec_=False, exec_outs=None, defaults=None, expect=None, etype="f",
-        setup="", post="", check=None, steps=1, dt=0.1, update=False, graph=None, demo=None):
+        setup="", post="", drive="", alt=None, check=None, steps=1, dt=0.1, update=False, graph=None, demo=None):
     NODES.append(dict(type=typ, title=title, topic=topic, sub=sub, level=level, help=help_,
                       ins=ins, outs=outs, cpp=cpp, reg=reg, exec=exec_, exec_outs=exec_outs or [],
-                      defaults=defaults, expect=expect, etype=etype, setup=setup, post=post, check=check,
+                      defaults=defaults, expect=expect, etype=etype, setup=setup, post=post, drive=drive, alt=alt, check=check,
                       steps=steps, dt=dt, update=update, graph=graph, demo=demo))
 
 # ---------------------------------------------------------------------------
@@ -221,7 +221,7 @@ def inventory():
         check="CHECK(me->GetComponent<Inventory>()->SlotsUsed() == 0);")
     add("GlGetCarriedWeight", "Get Carried Weight", *I, "Intermediate", "The combined weight of everything carried.",
         [O()], [N("Weight")], "Inventory* inv = GlInventory(this, o, g, ctx); out = VsValue(inv ? inv->TotalWeight() : 0.0f);",
-        setup=inv, expect=0.0)
+        setup=inv + r'''ItemDatabase::Get().Clear(); ItemDatabase::Get().LoadText("okayitems 1\nitem \"crate\"\n  name \"Crate\"\n  weight 4\nend\n"); ''' + 'me->GetComponent<Inventory>()->Add("crate", 3);', expect=12.0)
     add("GlSetInventorySize", "Set Inventory Size", *I, "Intermediate", "Sets how many slots the inventory has.",
         [N("Slots", "20.0f"), O()], [], "if (Inventory* inv = GlInventory(this, o, g, ctx)) inv->capacity = std::max(1, (int)std::lround(n0));",
         reg="CAT_ACTION", exec_=True, defaults=["6", None], setup=inv,
@@ -251,6 +251,8 @@ import gameplay_nodes_batch4
 gameplay_nodes_batch4.define(add, N, B, T, O, R)
 import gameplay_nodes_batch5
 gameplay_nodes_batch5.define(add, N, B, T, O, R)
+import gameplay_nodes_batch6
+gameplay_nodes_batch6.define(add, N, B, T, O, R)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -353,9 +355,11 @@ def main():
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/QuestLog.hpp"
+#include "okay/Components/DialogueRunner.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
+#include <algorithm>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -385,6 +389,12 @@ inline SpriteRenderer* GlSprite(VsNode* n, GameObject* o, NodeGraph& g, VsContex
     if (!o) return nullptr;
     if (auto* sr = o->GetComponent<SpriteRenderer>()) return sr;
     g.Error(n, ctx, "its object has no Sprite");
+    return nullptr;
+}}
+inline DialogueRunner* GlDialogue(VsNode* n, GameObject* o, NodeGraph& g, VsContext& ctx) {{
+    if (!o) return nullptr;
+    if (auto* d = o->GetComponent<DialogueRunner>()) return d;
+    g.Error(n, ctx, "its object has no Dialogue Runner");
     return nullptr;
 }}
 inline QuestLog* GlQuest(VsContext& ctx) {{
@@ -485,6 +495,8 @@ inline std::unique_ptr<VsNode> MakeGameplayLibNode(const std::string& type) {{
     (gen / "gplib_place.inc").write_text("\n".join(places) + "\n")
     (gen / "gplib_levels.inc").write_text("\n".join(levels) + "\n")
     (gen / "gplib_playground.inc").write_text("\n".join(pg) + "\n")
+    ab = [n["type"] for n in NODES if not n["exec"] and (n["setup"].strip() or n["alt"] is not None)]
+    (gen / "gplib_scene_readers.inc").write_text("\n".join(f'    "{t}",' for t in ab) + "\n")
     demos = []
     for name in sorted({pgname(n) for n in NODES}):
         title, focus, blurb, _ = PG_INFO[name]
@@ -498,7 +510,7 @@ inline std::unique_ptr<VsNode> MakeGameplayLibNode(const std::string& type) {{
 def pgname(n):
     if n["demo"]: return n["demo"]
     by_topic = {("Physics", "Queries"): "ai", ("Camera", ""): "camera", ("UI", ""): "ui", ("UI", "Fields"): "ui", ("Audio", ""): "audio",
-                ("Physics", ""): "physics", ("Animation", "Procedural"): "animation", ("Scene", "Story"): "quests",
+                ("Physics", ""): "physics", ("Animation", "Procedural"): "animation", ("Scene", "Story"): "quests", ("Scene", "Dialogue"): "dialogue",
                 ("Variables", "Saved"): "saving", ("Objects", "Groups"): "groups", ("Time", ""): "timing",
                 ("Input", "Axes"): "input", ("Input", "Keys"): "input", ("Input", "Mouse"): "input", ("Objects", "Survival"): "health",
                 ("Objects", "Items"): "inventory", ("Movement", ""): "movement", ("Movement", "Turn"): "movement", ("Movement", "Size"): "movement",
@@ -544,6 +556,9 @@ PG_INFO.update({
     "quests": ("Gameplay - Quests", "Guide",
         "A quest log with one quest, and a guide whose graph holds the quest nodes.",
         _hero("Guide", "(0, 0.5f, 0)", "(0.7f, 0.5f, 0.9f, 1)", "GameObject* qo = sc.CreateGameObject(\"Quests\"); auto* ql = qo->AddComponent<QuestLog>(); ql->drawUI = false; QuestDef qd; qd.id = \"q1\"; qd.title = \"First quest\"; ql->quests.push_back(qd);")),
+    "dialogue": ("Gameplay - Dialogue", "Guide",
+        "The guide starts a conversation. The readout shows the line, the speaker and the options.",
+        _hero("Guide", "(0, 0.5f, 0)", "(0.9f, 0.7f, 0.4f, 1)", "auto* dlg = hero->AddComponent<DialogueRunner>(); dlg->drawUI = false; dlg->typewriterSpeed = 0.0f; dlg->graphFile = \"examples/visual_script/playground/gl_dialogue.okaydialog\";")),
     "saving": ("Gameplay - Saving", "Courier",
         "The courier's graph holds the save and load position nodes.",
         _hero("Courier", "(2, 0.5f, 1)", "(0.9f, 0.9f, 0.9f, 1)")),
@@ -560,6 +575,31 @@ PG_INFO.update({
         "The player's graph holds the horizontal and vertical input, sprint and crouch nodes.",
         _hero("Player", "(0, 0.5f, 0)", "(0.4f, 0.9f, 0.6f, 1)")),
 })
+
+# What a player would see after Play: C++ run on the loaded scene after 180 frames.
+# `focus` is the object that holds the graph and V("name") reads one of its variables.
+PG_CHECK = {
+    "movement": 'CHECK(std::fabs(focus->transform->Position().x) + std::fabs(focus->transform->Position().z + 3.0f) > 1.0f); CHECK(std::fabs(focus->transform->Position().x) <= 6.01f && std::fabs(focus->transform->Position().z) <= 6.01f);',
+    "health": 'CHECK(V("health").AsFloat() > 55.0f && V("health").AsFloat() < 70.0f);',
+    "animation": 'CHECK(std::fabs(focus->transform->localScale.x - 1.0f) > 0.01f); CHECK(std::fabs(focus->transform->EulerAngles().y) > 1.0f);',
+    "camera": 'CHECK_NEAR(focus->GetComponent<Camera>()->zoom, 1.3f, 0.001f);',
+    "ui": 'CHECK(focus->GetComponent<TextRenderer>()->text == "Score: 42");',
+    "audio": 'CHECK_NEAR(focus->GetComponent<AudioSource>()->volume, 0.5f, 0.001f);',
+    "physics": 'CHECK_NEAR(focus->GetComponent<Rigidbody3D>()->gravityScale, 0.3f, 0.001f); CHECK_NEAR(focus->GetComponent<Rigidbody3D>()->bounciness, 0.7f, 0.001f);',
+    "ai": 'CHECK(V("angle").AsFloat() > 1.0f);',
+    "groups": 'for (int i = 0; i < 3; ++i) CHECK(!scene.Find("Crate" + std::to_string(i))->active);',
+    "progression": 'CHECK_NEAR(V("level").AsFloat(), 3.0f, 0.001f);',
+    "inventory": 'CHECK_NEAR(V("coins").AsFloat(), 5.0f, 0.001f);',
+    "quests": 'CHECK(V("done").AsBool()); CHECK(scene.Find("Quests")->GetComponent<QuestLog>()->IsCompleted("q1"));',
+    "saving": 'CHECK(V("saved").AsBool()); CHECK(!Prefs::Has("vs.position.pgspot"));',
+    "input": 'CHECK_NEAR(V("h").AsFloat(), 1.0f, 0.001f); CHECK(V("sprint").AsBool());',
+    "timing": 'CHECK(V("passed").AsBool()); CHECK_NEAR(V("speed").AsFloat(), 1.0f, 0.001f);',
+}
+PG_CHECK["dialogue"] = 'CHECK(V("line").AsString() == "Hello there"); CHECK_NEAR(V("options").AsFloat(), 2.0f, 0.001f); CHECK(V("answer").AsString() == "Glad to help");'
+PG_PRE = {
+    "input": "Input::FeedKeys({'d', Input::KeyShift});",
+    "timing": "Time::SetTimeScale(1.0f); Time::CancelHitStop();",
+}
 
 PLAYGROUNDS = {}
 
@@ -647,9 +687,49 @@ PLAYGROUND_DEMO = {
     ],
     "inventory": [
         "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
-        "node 2 AddItem", "pos 2 300 40", "default 2 0 coin", "default 2 1 5", "exec 1 0 2",
+        "node 2 AddItem coin", "pos 2 300 40", "default 2 0 5", "exec 1 0 2",
         "node 3 GlCountItem", "pos 3 300 240", "default 3 0 coin",
         "node 4 SetVar coins", "pos 4 560 40", "exec 2 0 4", "data 4 0 3 0",
+    ],
+    "quests": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 StartQuest q1", "pos 2 300 40", "exec 1 0 2",
+        "node 3 GlCompleteQuest", "pos 3 560 40", "default 3 0 q1", "exec 2 0 3",
+        "node 4 GlIsQuestCompleted", "pos 4 560 240", "default 4 0 q1",
+        "node 5 SetVar done", "pos 5 820 40", "exec 3 0 5", "data 5 0 4 0",
+    ],
+    "saving": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 GlSavePosition", "pos 2 300 40", "default 2 0 pgspot", "exec 1 0 2",
+        "node 3 GlHasSavedPosition", "pos 3 560 240", "default 3 0 pgspot",
+        "node 4 SetVar saved", "pos 4 560 40", "exec 2 0 4", "data 4 0 3 0",
+        "node 5 GlForgetSavedPosition", "pos 5 820 40", "default 5 0 pgspot", "exec 4 0 5",
+    ],
+    "input": [
+        "node 1 OnUpdate", "pos 1 40 40", "entry OnUpdate 1",
+        "node 2 GlGetHorizontalInput", "pos 2 300 240",
+        "node 3 SetVar h", "pos 3 300 40", "exec 1 0 3", "data 3 0 2 0",
+        "node 4 GlIsSprinting", "pos 4 560 240",
+        "node 5 SetVar sprint", "pos 5 560 40", "exec 3 0 5", "data 5 0 4 0",
+    ],
+    "dialogue": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 StartDialogue", "pos 2 300 40", "exec 1 0 2",
+        "node 3 GlGetDialogueLine", "pos 3 560 240",
+        "node 4 SetVar line", "pos 4 560 40", "exec 2 0 4", "data 4 0 3 0",
+        "node 5 GlAdvanceDialogue", "pos 5 820 40", "exec 4 0 5",
+        "node 6 GlGetDialogueOptionCount", "pos 6 820 240",
+        "node 7 SetVar options", "pos 7 1080 40", "exec 5 0 7", "data 7 0 6 0",
+        "node 8 GlChooseDialogueOption", "pos 8 1340 40", "default 8 0 0", "exec 7 0 8",
+        "node 9 GlGetDialogueLine", "pos 9 1340 240",
+        "node 10 SetVar answer", "pos 10 1600 40", "exec 8 0 10", "data 10 0 9 0",
+    ],
+    "timing": [
+        "node 1 OnStart", "pos 1 40 40", "entry OnStart 1",
+        "node 2 GlHasTimePassed", "pos 2 300 240", "default 2 0 0",
+        "node 3 SetVar passed", "pos 3 300 40", "exec 1 0 3", "data 3 0 2 0",
+        "node 4 GlGetGameSpeed", "pos 4 560 240",
+        "node 5 SetVar speed", "pos 5 560 40", "exec 3 0 5", "data 5 0 4 0",
     ],
 }
 
@@ -661,11 +741,15 @@ def write_tests():
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/QuestLog.hpp"
+#include "okay/Components/DialogueGraph.hpp"
+#include "okay/Components/DialogueRunner.hpp"
+#include "okay/Components/Character.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
@@ -690,6 +774,92 @@ static VisualScriptComponent* Attach(GameObject* go, const std::string& text) {
     return vc;
 }
 static vs::VsValue Var(VisualScriptComponent* v, const char* name) { return v->GetVariable(name); }
+using DKind = DialogueNode::Kind;
+static DialogueGraph TalkGraph() {
+    DialogueGraph g;
+    g.name = "Talk";
+    g.speakers = {"Smith"};
+    auto& a = g.Add(DKind::Line, 0, 0); a.speaker = "Smith"; a.text = "Hello there"; a.next = 1;
+    auto& c = g.Add(DKind::Choice, 200, 0); c.choices.clear();
+    DialogueChoice yes; yes.text = "Yes please"; yes.target = 2;
+    DialogueChoice no; no.text = "No thanks"; no.target = 3;
+    c.choices = {yes, no};
+    auto& l = g.Add(DKind::Line, 400, -60); l.speaker = "Smith"; l.text = "Glad to help"; l.next = 3;
+    g.Add(DKind::End, 600, 0);
+    g.start = 0;
+    return g;
+}
+static std::string Str(const vs::VsValue& v) {
+    char b[96];
+    std::snprintf(b, sizeof b, "%.4f|%d|", (double)v.AsFloat(), (int)v.AsBool());
+    return std::string(b) + v.AsString() + "|" + std::to_string((unsigned long long)v.AsObjectId());
+}
+// Everything a gameplay node can change that a test can see: transforms, flags, names, tags,
+// the components the nodes touch, and each script's variables.
+static std::string Snapshot(Scene& s) {
+    std::string out;
+    char b[512];
+    for (const auto& up : s.Objects()) {
+        if (!up) continue;
+        GameObject* g = up.get();
+        const Vec3 p = g->transform->Position(), e = g->transform->EulerAngles(), sc = g->transform->localScale;
+        std::snprintf(b, sizeof b, "[%s|%s|%d|%.3f,%.3f,%.3f|%.2f,%.2f,%.2f|%.3f,%.3f,%.3f]", g->name.c_str(), std::string(g->tag).c_str(), (int)g->active,
+                      p.x, p.y, p.z, e.x, e.y, e.z, sc.x, sc.y, sc.z);
+        out += b;
+        if (auto* h = g->GetComponent<HealthStat>()) {
+            std::snprintf(b, sizeof b, "H%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%.3f,%.3f", h->health, h->maxHealth, h->armor, h->resistance, h->minDamage,
+                          (int)h->godMode, (int)h->dead, h->invincibleTime, h->regenPerSecond, h->regenDelay, h->overhealMax, h->lives, (int)h->respawn, (int)h->destroyOnDeath, h->respawnDelay, h->overhealDecay);
+            out += b;
+        }
+        if (auto* inv = g->GetComponent<Inventory>()) {
+            std::snprintf(b, sizeof b, "I%d,%d,%.2f;", inv->capacity, inv->maxStack, inv->weightLimit);
+            out += b;
+            for (const auto& sl : inv->slots) out += sl.item + "x" + std::to_string(sl.count) + ",";
+        }
+        if (auto* rb = g->GetComponent<Rigidbody3D>()) {
+            std::snprintf(b, sizeof b, "R%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d,%d,%d,%.3f,%.3f", rb->velocity.x, rb->velocity.y, rb->velocity.z, rb->angularVelocity.y,
+                          rb->mass, rb->gravityScale, rb->drag, rb->bounciness, rb->friction, (int)rb->freezeRotation, (int)rb->freezeX, (int)rb->freezeY, (int)rb->freezeZ,
+                          (int)rb->sleeping, (int)rb->bodyType, rb->maxFallSpeed, 0.0f);
+            out += b;
+        }
+        if (auto* t = g->GetComponent<TextRenderer>()) {
+            std::snprintf(b, sizeof b, "T%s|%.3f,%.3f,%.3f,%.3f|%.3f", t->text.c_str(), t->color.r, t->color.g, t->color.b, t->color.a, t->pixelSize);
+            out += b;
+        }
+        if (auto* a = g->GetComponent<AudioSource>()) {
+            std::snprintf(b, sizeof b, "A%.3f,%.3f,%d,%d,%d", a->volume, a->pitch, (int)a->loop, (int)a->spatial, (int)a->IsPlaying());
+            out += b;
+        }
+        if (auto* c = g->GetComponent<Camera>()) {
+            std::snprintf(b, sizeof b, "C%.3f,%.3f,%.3f,%.3f,%.3f", c->zoom, c->fieldOfView, c->dutch, c->orthographicSize, c->ShakeTrauma());
+            out += b;
+        }
+        if (auto* sr = g->GetComponent<SpriteRenderer>()) {
+            std::snprintf(b, sizeof b, "S%.3f", sr->color.a);
+            out += b;
+        }
+        if (auto* dr = g->GetComponent<DialogueRunner>()) {
+            const auto ln = dr->CurrentLine();
+            out += std::string("D") + (dr->IsActive() ? "1" : "0") + std::to_string(ln.nodeId) + ln.text;
+        }
+        if (auto* q = g->GetComponent<QuestLog>()) {
+            for (const auto& id : q->Ids()) {
+                out += id + QuestStatusName(q->Status(id));
+                for (int i = 0; i < 4; ++i) out += std::to_string(q->Progress(id, i)) + (q->ObjectiveDone(id, i) ? "d" : "-");
+            }
+        }
+        for (auto* vc : g->GetComponents<VisualScriptComponent>()) {
+            std::vector<std::string> names;
+            for (const auto& kv : vc->Variables()) names.push_back(kv.first + "=" + Str(kv.second));
+            std::sort(names.begin(), names.end());
+            for (const auto& n2 : names) out += n2 + ";";
+        }
+    }
+    for (const char* key : {"vs.position.spot", "vs.position.gone", "vs.health.hero"})
+        out += std::string(key) + (Prefs::Has(key) ? "1" : "0");
+    std::snprintf(b, sizeof b, "|time %.3f %d", Time::BaseTimeScale(), (int)Time::HitStopActive());
+    return out + b;
+}
 static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + ": " + e.message); }
 '''
     blocks = []
@@ -712,18 +882,64 @@ static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + "
             check = f'CHECK(Var(v, "out").AsBool() == {"true" if n["expect"] else "false"});'
         else:
             check = f'CHECK(Var(v, "out").AsString() == "{n["expect"]}");'
-        blocks.append(f'''    {{
+        if n["exec"]:
+            blocks.append(f'''    {{   // {n["type"]}: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {{
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            {n["setup"]}
+            auto* v = Attach(me, real ? "{text}" : "node 1 {entry}\\nentry {entry} 1\\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            {n["post"]}
+            for (int i = 0; i < {n["steps"]}; ++i) s.Update({n["dt"]}f);
+            {n["drive"]}
+            snaps[pass] = Snapshot(s);
+            if (real) {{
+                {check}
+                if (!g_errs.empty()) {{ std::printf("  {n["type"]} reported: %s\\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }}
+            }}
+            Input::FeedKeys({{}});
+        }}
+        if (snaps[0] == snaps[1]) std::printf("  {n["type"]} changed nothing compared with no node\\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("{n["type"]}");
+    }}''')
+        else:
+            extra = ""
+            if n["setup"].strip() or n["alt"] is not None:
+                extra = f'''
+    {{   // {n["type"]} again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        {n["setup"]}
+        {n["alt"] or ""}
         auto* v = Attach(me, "{text}");
-        g_errs.clear();
         s.Start();
-        {n["post"]}
         for (int i = 0; i < {n["steps"]}; ++i) s.Update({n["dt"]}f);
-        {check}
-        if (!g_errs.empty()) {{ std::printf("  {n["type"]} reported: %s\\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }}
-        Input::FeedKeys({{}});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  {n["type"]} gave the same value in an empty scene: %s\\n", outA.c_str());
+        g_errs.clear();
+    }}'''
+            blocks.append(f'''    {{
+        std::string outA;
+        {{
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            {n["setup"]}
+            auto* v = Attach(me, "{text}");
+            g_errs.clear();
+            s.Start();
+            {n["post"]}
+            for (int i = 0; i < {n["steps"]}; ++i) s.Update({n["dt"]}f);
+            {n["drive"]}
+            {check}
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) {{ std::printf("  {n["type"]} reported: %s\\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }}
+            Input::FeedKeys({{}});
+        }}{extra}
         g_seen.insert("{n["type"]}");
     }}''')
     move = r'''    {   // Move Item To Object: the Moved branch, then Not Enough, then Too Full.
@@ -767,6 +983,13 @@ static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + "
     for name in names:
         title, focus, blurb, cpp = PG_INFO[name]
         builders.append(f'    if (name == "{name}") {{ {cpp} }}')
+    check_cases = []
+    for name in names:
+        focus = PG_INFO[name][1]
+        check_cases.append(f'        if (std::string(r.name) == "{name}") {{ GameObject* focus = scene.Find("{focus}"); CHECK(focus != nullptr); '
+                           f'auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); '
+                           f'auto V = [&](const char* nm) {{ return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }}; (void)V; if (focus && fvc) {{ {PG_CHECK[name]} }} }}')
+    pre_cases = [f'        if (std::string(r.name) == "{name}") {{ {PG_PRE[name]} }}' for name in names if name in PG_PRE]
     pg_types = []
     for name in names:
         pg_types.append("        {\"" + name + "\", {" + ", ".join(f'"{n["type"]}"' for n in NODES if pgname(n) == name) + "}},")
@@ -806,6 +1029,12 @@ static void CheckPlaygrounds() {{
             CHECK(SceneSerializer::SaveToFile(writing, dir + base + ".okayscene"));
             std::remove((dir + base + ".okayscene.bak").c_str());   // the saver keeps a backup; it is not part of the example
         }}
+        if (std::string(r.name) == "dialogue") {{
+            if (const char* w = std::getenv("OKAY_WRITE_GL_PLAYGROUND"); w && w[0] == '1') {{
+                std::ofstream df(dir + "gl_dialogue.okaydialog"); df << TalkGraph().Write();
+            }}
+            Character::SetAssetBaseDir(std::string(OKAY_SOURCE_DIR));   // the graph file is repo-relative
+        }}
         const std::string graph = ReadFile(dir + base + ".okayvs");
         CHECK(!graph.empty());
         for (const auto& is : vs::ValidateGraphText(graph, dir)) {{
@@ -828,16 +1057,20 @@ static void CheckPlaygrounds() {{
         }}
         CHECK(told); CHECK(script);
         g_errs.clear();
+{chr(10).join(pre_cases)}
         scene.Start();
         for (int i = 0; i < 180; ++i) scene.Update(1.0f / 60.0f);
         if (!g_errs.empty()) for (const auto& e : g_errs) std::printf("  %s: %s\\n", r.name, e.c_str());
         CHECK(g_errs.empty());
+{chr(10).join(check_cases)}
+        Input::FeedKeys({{}});
         g_seen.insert(std::string("playground:") + r.name);
     }}
 }}
 '''
     test = prelude + playground + f'''int main() {{
     RUN_SUITE("vs_gameplay_library");
+    Log::sink = [](Log::Level, const std::string&) {{}};   // node errors are collected by the hook
     vs::SetRuntimeErrorHook(&OnErr);
     const char* types[] = {{ {types} }};
 {chr(10).join(blocks)}

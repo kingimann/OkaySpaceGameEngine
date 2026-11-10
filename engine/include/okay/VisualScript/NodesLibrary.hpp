@@ -925,28 +925,20 @@ return out;
 }
 case 120: {
 std::string t0 = In(0, g, ctx).AsString();
-std::string t1 = In(1, g, ctx).AsString();
-std::string t2 = In(2, g, ctx).AsString();
-VsValue out;
-std::string r=t0; if(!t1.empty()){ auto p=r.find(t1); if(p!=std::string::npos) r.replace(p,t1.size(),t2);} out=VsValue(r);
-return out;
-}
-case 121: {
-std::string t0 = In(0, g, ctx).AsString();
 float n0 = In(1, g, ctx).AsFloat();
 float n1 = In(2, g, ctx).AsFloat();
 VsValue out;
 int a=(int)std::lround(n0); int c=(int)std::lround(n1); if(a<0)a=0; if(c<0)c=0; if(a>(int)t0.size()) a=(int)t0.size();if(a+c>(int)t0.size()) c=(int)t0.size()-a; out=VsValue(t0.substr((size_t)a,(size_t)c));
 return out;
 }
-case 122: {
+case 121: {
 std::string t0 = In(0, g, ctx).AsString();
 std::string t1 = In(1, g, ctx).AsString();
 VsValue out;
 auto p=t0.find(t1); out=VsValue(p==std::string::npos? -1.f : (float)p);
 return out;
 }
-case 123: {
+case 122: {
 std::string t0 = In(0, g, ctx).AsString();
 std::string t1 = In(1, g, ctx).AsString();
 std::string t2 = In(2, g, ctx).AsString();
@@ -954,49 +946,57 @@ VsValue out;
 out=VsValue(t0+t2+t1);
 return out;
 }
-case 124: {
+case 123: {
 std::string t0 = In(0, g, ctx).AsString();
 float n0 = In(1, g, ctx).AsFloat();
 VsValue out;
 int n=(int)std::lround(n0); if(n<0)n=0; if(n>32)n=32; std::string r; for(int i=0;i<n;++i) r+=t0; out=VsValue(r);
 return out;
 }
-case 125: {
+case 124: {
 std::string t0 = In(0, g, ctx).AsString();
 VsValue out;
 std::string r=t0; for(char& c: r) c=(char)std::tolower((unsigned char)c); out=VsValue(r);
 return out;
 }
-case 126: {
+case 125: {
 std::string t0 = In(0, g, ctx).AsString();
 VsValue out;
 std::string r=t0; for(char& c: r) c=(char)std::toupper((unsigned char)c); out=VsValue(r);
 return out;
 }
-case 127: {
+case 126: {
 std::string t0 = In(0, g, ctx).AsString();
 VsValue out;
 std::string r=t0; std::reverse(r.begin(), r.end()); out=VsValue(r);
 return out;
 }
-case 128: {
+case 127: {
 std::string t0 = In(0, g, ctx).AsString();
 VsValue out;
 std::string r; for(char c: t0) if(!std::isspace((unsigned char)c)) r.push_back(c); out=VsValue(r);
 return out;
 }
-case 129: {
+case 128: {
 std::string t0 = In(0, g, ctx).AsString();
 std::string t1 = In(1, g, ctx).AsString();
 VsValue out;
 auto p=t1.empty()? std::string::npos : t0.find(t1); out=VsValue(p==std::string::npos? t0 : t0.substr(0,p));
 return out;
 }
-case 130: {
+case 129: {
 std::string t0 = In(0, g, ctx).AsString();
 std::string t1 = In(1, g, ctx).AsString();
 VsValue out;
 auto p=t1.empty()? std::string::npos : t0.find(t1); out=VsValue(p==std::string::npos? std::string() : t0.substr(p+t1.size()));
+return out;
+}
+case 130: {
+std::string t0 = In(0, g, ctx).AsString();
+std::string t1 = In(1, g, ctx).AsString();
+std::string t2 = In(2, g, ctx).AsString();
+VsValue out;
+std::string r=t0; if(!t1.empty()){ auto p=r.find(t1); if(p!=std::string::npos) r.replace(p,t1.size(),t2);} out=VsValue(r);
 return out;
 }
 case 131: {
@@ -1691,7 +1691,7 @@ return flow;
     }
 };
 inline int LibraryOp(const std::string& type) {
-    if (type=="LbSmoothStep") return 0; if (type=="LbSmootherStep") return 1; if (type=="LbEaseIn") return 2; if (type=="LbEaseOut") return 3; if (type=="LbEaseInOut") return 4; if (type=="LbPowerEase") return 5; if (type=="LbBiasCurve") return 6; if (type=="LbGainCurve") return 7; if (type=="LbLogistic") return 8; if (type=="LbSampleCurve") return 9; if (type=="LbSampleBezier") return 10; if (type=="LbHermite") return 11; if (type=="LbTriangleWave") return 12; if (type=="LbSawWave") return 13; if (type=="LbSquareWave") return 14; if (type=="LbSineWave") return 15; if (type=="LbSampleNoise") return 16; if (type=="LbDeadZone") return 17; if (type=="LbSoftClamp") return 18; if (type=="LbRepeatRange") return 19; if (type=="LbFoldRange") return 20; if (type=="LbSafeReciprocal") return 21; if (type=="LbSquare") return 22; if (type=="LbCube") return 23; if (type=="LbNaturalLog") return 24; if (type=="LbRaiseE") return 25; if (type=="LbHypotenuse") return 26; if (type=="LbAngleFromPair") return 27; if (type=="LbDirectionFromAngle") return 28; if (type=="LbUpFromAngle") return 29; if (type=="LbMedianThree") return 30; if (type=="LbWeightedMean") return 31; if (type=="LbInverseSquare") return 32; if (type=="LbLinearFalloff") return 33; if (type=="LbSmoothFalloff") return 34; if (type=="LbPortionAlong") return 35; if (type=="LbRemapClamped") return 36; if (type=="LbAbsDiff") return 37; if (type=="LbPositiveRemainder") return 38; if (type=="LbNearestMultiple") return 39; if (type=="LbFloorTo") return 40; if (type=="LbCeilTo") return 41; if (type=="LbTruncZero") return 42; if (type=="LbKeepPositive") return 43; if (type=="LbKeepAtMost") return 44; if (type=="LbKeepAtLeast") return 45; if (type=="LbSpread") return 46; if (type=="LbPercentOf") return 47; if (type=="LbValueFromPercent") return 48; if (type=="LbDampToward") return 49; if (type=="LbApproach") return 50; if (type=="LbLimitRate") return 51; if (type=="LbChangeBetween") return 52; if (type=="LbSpringStep") return 53; if (type=="LbSmoothSmaller") return 54; if (type=="LbSmoothLarger") return 55; if (type=="LbExponentialDecay") return 56; if (type=="LbOneMinus") return 57; if (type=="LbSaturateNumber") return 58; if (type=="LbRoundPlaces") return 59; if (type=="LbLerpUnclamped") return 60; if (type=="LbInverseLerpUnclamped") return 61; if (type=="LbMapSigned") return 62; if (type=="LbMapBipolar") return 63; if (type=="LbStepAt") return 64; if (type=="LbIsOutside") return 65; if (type=="LbIsStrictBetween") return 66; if (type=="LbHasSameSign") return 67; if (type=="LbHasOppositeSign") return 68; if (type=="LbIsAlmostZero") return 69; if (type=="LbIsMultiple") return 70; if (type=="LbIsPositive") return 71; if (type=="LbIsNegative") return 72; if (type=="LbIsWhole") return 73; if (type=="LbSignOf") return 74; if (type=="LbFractionOf") return 75; if (type=="LbClamp11") return 76; if (type=="LbLerpClamp") return 77; if (type=="LbSmoothDampStep") return 78; if (type=="LbCircleEaseIn") return 79; if (type=="LbCircleEaseOut") return 80; if (type=="LbBounceOut") return 81; if (type=="LbExpEaseIn") return 82; if (type=="LbExpEaseOut") return 83; if (type=="LbShortestAngle") return 84; if (type=="LbApproachAngle") return 85; if (type=="LbBlendAngles") return 86; if (type=="LbWrapAngle") return 87; if (type=="LbSnapAngle") return 88; if (type=="LbFlatLength") return 89; if (type=="LbLimitFlat") return 90; if (type=="LbAheadLimited") return 91; if (type=="LbDotFlat") return 92; if (type=="LbCrossFlat") return 93; if (type=="LbIsBehindFlat") return 94; if (type=="LbIsLeftFlat") return 95; if (type=="LbIsRightFlat") return 96; if (type=="LbMidpoint") return 97; if (type=="LbMidAhead") return 98; if (type=="LbDistanceFlat") return 99; if (type=="LbIsWithinFlat") return 100; if (type=="LbClosestOnSegment") return 101; if (type=="LbDistanceToSegment") return 102; if (type=="LbIsInsideCircle") return 103; if (type=="LbIsInsideSphere") return 104; if (type=="LbVerticalGap") return 105; if (type=="LbIsAbove") return 106; if (type=="LbIsBelow") return 107; if (type=="LbOffsetAhead") return 108; if (type=="LbOffsetAcross") return 109; if (type=="LbGridCell") return 110; if (type=="LbCellCenter") return 111; if (type=="LbReflectFlat") return 112; if (type=="LbReflectAhead") return 113; if (type=="LbProjectFlat") return 114; if (type=="LbPortionFacing") return 115; if (type=="LbCountLetters") return 116; if (type=="LbCountWords") return 117; if (type=="LbHasText") return 118; if (type=="LbIsBlank") return 119; if (type=="LbReplaceText") return 120; if (type=="LbCutText") return 121; if (type=="LbFindText") return 122; if (type=="LbJoinWith") return 123; if (type=="LbRepeatText") return 124; if (type=="LbLowerText") return 125; if (type=="LbUpperText") return 126; if (type=="LbReverseText") return 127; if (type=="LbRemoveSpaces") return 128; if (type=="LbBeforeSeparator") return 129; if (type=="LbAfterSeparator") return 130; if (type=="LbIsNumberText") return 131; if (type=="LbNumberFromText") return 132; if (type=="LbTextFromNumber") return 133; if (type=="LbEqualLoose") return 134; if (type=="LbContainsLoose") return 135; if (type=="LbFirstWord") return 136; if (type=="LbLastWord") return 137; if (type=="LbEnsurePrefix") return 138; if (type=="LbEnsureSuffix") return 139; if (type=="LbClampText") return 140; if (type=="LbCountMatches") return 141; if (type=="LbPadLeft") return 142; if (type=="LbPadRight") return 143; if (type=="LbSelectLarger") return 144; if (type=="LbSelectSmaller") return 145; if (type=="LbClampRange") return 146; if (type=="LbMapRange") return 147; if (type=="LbIsNearly") return 148; if (type=="LbIsFar") return 149; if (type=="LbChooseNumber") return 150; if (type=="LbChooseText") return 151; if (type=="LbAllNumbers") return 152; if (type=="LbAnyNumber") return 153; if (type=="LbNoneNumber") return 154; if (type=="LbXorThree") return 155; if (type=="LbNorThree") return 156; if (type=="LbNandThree") return 157; if (type=="LbImplies") return 158; if (type=="LbResourcePortion") return 159; if (type=="LbIsResourceLow") return 160; if (type=="LbIsResourceFull") return 161; if (type=="LbTrySpend") return 162; if (type=="LbCouldSpend") return 163; if (type=="LbRegenStep") return 164; if (type=="LbStackMultiply") return 165; if (type=="LbDiminishing") return 166; if (type=="LbOverflow") return 167; if (type=="LbQuestPortion") return 168; if (type=="LbIsQuestDone") return 169; if (type=="LbStepsLeft") return 170; if (type=="LbScoreGap") return 171; if (type=="LbPickWorst") return 172; if (type=="LbClosestScore") return 173; if (type=="LbScoresAbove") return 174; if (type=="LbNormalizeScore") return 175; if (type=="LbHysteresis") return 176; if (type=="LbRememberPeak") return 177; if (type=="LbRememberValley") return 178; if (type=="LbRunningMean") return 179; if (type=="LbCountTrueFrames") return 180; if (type=="LbSampleHold") return 181; if (type=="LbPreviousNumber") return 182; if (type=="LbSpike") return 183; if (type=="LbPassAfter") return 184; if (type=="LbEveryCalls") return 185; if (type=="LbAccumulate") return 186; if (type=="LbSquaredDistance") return 187; if (type=="LbLerpInverse") return 188; if (type=="LbWrapPair") return 189; if (type=="LbSnapPair") return 190; if (type=="LbIsBetweenPair") return 191; if (type=="LbScaleAround") return 192; if (type=="LbPingTime") return 193; if (type=="LbLoopTime") return 194; if (type=="LbElapsedPortion") return 195; if (type=="LbTimeLeft") return 196; if (type=="LbIsTimeUp") return 197; if (type=="LbFramesToSeconds") return 198; if (type=="LbSecondsToFrames") return 199; if (type=="LbCooldownLeft") return 200; if (type=="LbIsCooldownReady") return 201; if (type=="LbPulseAt") return 202; if (type=="LbBeatNumber") return 203; if (type=="LbPhase") return 204; if (type=="LbMixThree") return 205; if (type=="LbHoldRange") return 206; if (type=="LbGreaterGap") return 207; if (type=="LbLetterAt") return 208; if (type=="LbHasPrefix") return 209; if (type=="LbHasSuffix") return 210; if (type=="LbReplaceAll") return 211; if (type=="LbTrimEnds") return 212; if (type=="LbIsSameText") return 213; if (type=="LbLongerText") return 214; if (type=="LbIsBlinking") return 215; if (type=="LbResponseCurve") return 216; if (type=="LbWeighPick") return 217; if (type=="LbQuestStage") return 218; if (type=="LbFillBlanks") return 219; if (type=="LbRunAndCheck") return 220; if (type=="LbTrySeveral") return 221; if (type=="LbRepeatUntilSuccess") return 222; if (type=="LbRunInState") return 223;
+    if (type=="LbSmoothStep") return 0; if (type=="LbSmootherStep") return 1; if (type=="LbEaseIn") return 2; if (type=="LbEaseOut") return 3; if (type=="LbEaseInOut") return 4; if (type=="LbPowerEase") return 5; if (type=="LbBiasCurve") return 6; if (type=="LbGainCurve") return 7; if (type=="LbLogistic") return 8; if (type=="LbSampleCurve") return 9; if (type=="LbSampleBezier") return 10; if (type=="LbHermite") return 11; if (type=="LbTriangleWave") return 12; if (type=="LbSawWave") return 13; if (type=="LbSquareWave") return 14; if (type=="LbSineWave") return 15; if (type=="LbSampleNoise") return 16; if (type=="LbDeadZone") return 17; if (type=="LbSoftClamp") return 18; if (type=="LbRepeatRange") return 19; if (type=="LbFoldRange") return 20; if (type=="LbSafeReciprocal") return 21; if (type=="LbSquare") return 22; if (type=="LbCube") return 23; if (type=="LbNaturalLog") return 24; if (type=="LbRaiseE") return 25; if (type=="LbHypotenuse") return 26; if (type=="LbAngleFromPair") return 27; if (type=="LbDirectionFromAngle") return 28; if (type=="LbUpFromAngle") return 29; if (type=="LbMedianThree") return 30; if (type=="LbWeightedMean") return 31; if (type=="LbInverseSquare") return 32; if (type=="LbLinearFalloff") return 33; if (type=="LbSmoothFalloff") return 34; if (type=="LbPortionAlong") return 35; if (type=="LbRemapClamped") return 36; if (type=="LbAbsDiff") return 37; if (type=="LbPositiveRemainder") return 38; if (type=="LbNearestMultiple") return 39; if (type=="LbFloorTo") return 40; if (type=="LbCeilTo") return 41; if (type=="LbTruncZero") return 42; if (type=="LbKeepPositive") return 43; if (type=="LbKeepAtMost") return 44; if (type=="LbKeepAtLeast") return 45; if (type=="LbSpread") return 46; if (type=="LbPercentOf") return 47; if (type=="LbValueFromPercent") return 48; if (type=="LbDampToward") return 49; if (type=="LbApproach") return 50; if (type=="LbLimitRate") return 51; if (type=="LbChangeBetween") return 52; if (type=="LbSpringStep") return 53; if (type=="LbSmoothSmaller") return 54; if (type=="LbSmoothLarger") return 55; if (type=="LbExponentialDecay") return 56; if (type=="LbOneMinus") return 57; if (type=="LbSaturateNumber") return 58; if (type=="LbRoundPlaces") return 59; if (type=="LbLerpUnclamped") return 60; if (type=="LbInverseLerpUnclamped") return 61; if (type=="LbMapSigned") return 62; if (type=="LbMapBipolar") return 63; if (type=="LbStepAt") return 64; if (type=="LbIsOutside") return 65; if (type=="LbIsStrictBetween") return 66; if (type=="LbHasSameSign") return 67; if (type=="LbHasOppositeSign") return 68; if (type=="LbIsAlmostZero") return 69; if (type=="LbIsMultiple") return 70; if (type=="LbIsPositive") return 71; if (type=="LbIsNegative") return 72; if (type=="LbIsWhole") return 73; if (type=="LbSignOf") return 74; if (type=="LbFractionOf") return 75; if (type=="LbClamp11") return 76; if (type=="LbLerpClamp") return 77; if (type=="LbSmoothDampStep") return 78; if (type=="LbCircleEaseIn") return 79; if (type=="LbCircleEaseOut") return 80; if (type=="LbBounceOut") return 81; if (type=="LbExpEaseIn") return 82; if (type=="LbExpEaseOut") return 83; if (type=="LbShortestAngle") return 84; if (type=="LbApproachAngle") return 85; if (type=="LbBlendAngles") return 86; if (type=="LbWrapAngle") return 87; if (type=="LbSnapAngle") return 88; if (type=="LbFlatLength") return 89; if (type=="LbLimitFlat") return 90; if (type=="LbAheadLimited") return 91; if (type=="LbDotFlat") return 92; if (type=="LbCrossFlat") return 93; if (type=="LbIsBehindFlat") return 94; if (type=="LbIsLeftFlat") return 95; if (type=="LbIsRightFlat") return 96; if (type=="LbMidpoint") return 97; if (type=="LbMidAhead") return 98; if (type=="LbDistanceFlat") return 99; if (type=="LbIsWithinFlat") return 100; if (type=="LbClosestOnSegment") return 101; if (type=="LbDistanceToSegment") return 102; if (type=="LbIsInsideCircle") return 103; if (type=="LbIsInsideSphere") return 104; if (type=="LbVerticalGap") return 105; if (type=="LbIsAbove") return 106; if (type=="LbIsBelow") return 107; if (type=="LbOffsetAhead") return 108; if (type=="LbOffsetAcross") return 109; if (type=="LbGridCell") return 110; if (type=="LbCellCenter") return 111; if (type=="LbReflectFlat") return 112; if (type=="LbReflectAhead") return 113; if (type=="LbProjectFlat") return 114; if (type=="LbPortionFacing") return 115; if (type=="LbCountLetters") return 116; if (type=="LbCountWords") return 117; if (type=="LbHasText") return 118; if (type=="LbIsBlank") return 119; if (type=="LbCutText") return 120; if (type=="LbFindText") return 121; if (type=="LbJoinWith") return 122; if (type=="LbRepeatText") return 123; if (type=="LbLowerText") return 124; if (type=="LbUpperText") return 125; if (type=="LbReverseText") return 126; if (type=="LbRemoveSpaces") return 127; if (type=="LbBeforeSeparator") return 128; if (type=="LbAfterSeparator") return 129; if (type=="LbReplaceText") return 130; if (type=="LbIsNumberText") return 131; if (type=="LbNumberFromText") return 132; if (type=="LbTextFromNumber") return 133; if (type=="LbEqualLoose") return 134; if (type=="LbContainsLoose") return 135; if (type=="LbFirstWord") return 136; if (type=="LbLastWord") return 137; if (type=="LbEnsurePrefix") return 138; if (type=="LbEnsureSuffix") return 139; if (type=="LbClampText") return 140; if (type=="LbCountMatches") return 141; if (type=="LbPadLeft") return 142; if (type=="LbPadRight") return 143; if (type=="LbSelectLarger") return 144; if (type=="LbSelectSmaller") return 145; if (type=="LbClampRange") return 146; if (type=="LbMapRange") return 147; if (type=="LbIsNearly") return 148; if (type=="LbIsFar") return 149; if (type=="LbChooseNumber") return 150; if (type=="LbChooseText") return 151; if (type=="LbAllNumbers") return 152; if (type=="LbAnyNumber") return 153; if (type=="LbNoneNumber") return 154; if (type=="LbXorThree") return 155; if (type=="LbNorThree") return 156; if (type=="LbNandThree") return 157; if (type=="LbImplies") return 158; if (type=="LbResourcePortion") return 159; if (type=="LbIsResourceLow") return 160; if (type=="LbIsResourceFull") return 161; if (type=="LbTrySpend") return 162; if (type=="LbCouldSpend") return 163; if (type=="LbRegenStep") return 164; if (type=="LbStackMultiply") return 165; if (type=="LbDiminishing") return 166; if (type=="LbOverflow") return 167; if (type=="LbQuestPortion") return 168; if (type=="LbIsQuestDone") return 169; if (type=="LbStepsLeft") return 170; if (type=="LbScoreGap") return 171; if (type=="LbPickWorst") return 172; if (type=="LbClosestScore") return 173; if (type=="LbScoresAbove") return 174; if (type=="LbNormalizeScore") return 175; if (type=="LbHysteresis") return 176; if (type=="LbRememberPeak") return 177; if (type=="LbRememberValley") return 178; if (type=="LbRunningMean") return 179; if (type=="LbCountTrueFrames") return 180; if (type=="LbSampleHold") return 181; if (type=="LbPreviousNumber") return 182; if (type=="LbSpike") return 183; if (type=="LbPassAfter") return 184; if (type=="LbEveryCalls") return 185; if (type=="LbAccumulate") return 186; if (type=="LbSquaredDistance") return 187; if (type=="LbLerpInverse") return 188; if (type=="LbWrapPair") return 189; if (type=="LbSnapPair") return 190; if (type=="LbIsBetweenPair") return 191; if (type=="LbScaleAround") return 192; if (type=="LbPingTime") return 193; if (type=="LbLoopTime") return 194; if (type=="LbElapsedPortion") return 195; if (type=="LbTimeLeft") return 196; if (type=="LbIsTimeUp") return 197; if (type=="LbFramesToSeconds") return 198; if (type=="LbSecondsToFrames") return 199; if (type=="LbCooldownLeft") return 200; if (type=="LbIsCooldownReady") return 201; if (type=="LbPulseAt") return 202; if (type=="LbBeatNumber") return 203; if (type=="LbPhase") return 204; if (type=="LbMixThree") return 205; if (type=="LbHoldRange") return 206; if (type=="LbGreaterGap") return 207; if (type=="LbLetterAt") return 208; if (type=="LbHasPrefix") return 209; if (type=="LbHasSuffix") return 210; if (type=="LbReplaceAll") return 211; if (type=="LbTrimEnds") return 212; if (type=="LbIsSameText") return 213; if (type=="LbLongerText") return 214; if (type=="LbIsBlinking") return 215; if (type=="LbResponseCurve") return 216; if (type=="LbWeighPick") return 217; if (type=="LbQuestStage") return 218; if (type=="LbFillBlanks") return 219; if (type=="LbRunAndCheck") return 220; if (type=="LbTrySeveral") return 221; if (type=="LbRepeatUntilSuccess") return 222; if (type=="LbRunInState") return 223;
     return -1;
 }
 inline std::unique_ptr<VsNode> MakeLibraryNode(const std::string& type) {

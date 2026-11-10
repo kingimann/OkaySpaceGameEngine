@@ -5,11 +5,15 @@
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/QuestLog.hpp"
+#include "okay/Components/DialogueGraph.hpp"
+#include "okay/Components/DialogueRunner.hpp"
+#include "okay/Components/Character.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
@@ -34,6 +38,92 @@ static VisualScriptComponent* Attach(GameObject* go, const std::string& text) {
     return vc;
 }
 static vs::VsValue Var(VisualScriptComponent* v, const char* name) { return v->GetVariable(name); }
+using DKind = DialogueNode::Kind;
+static DialogueGraph TalkGraph() {
+    DialogueGraph g;
+    g.name = "Talk";
+    g.speakers = {"Smith"};
+    auto& a = g.Add(DKind::Line, 0, 0); a.speaker = "Smith"; a.text = "Hello there"; a.next = 1;
+    auto& c = g.Add(DKind::Choice, 200, 0); c.choices.clear();
+    DialogueChoice yes; yes.text = "Yes please"; yes.target = 2;
+    DialogueChoice no; no.text = "No thanks"; no.target = 3;
+    c.choices = {yes, no};
+    auto& l = g.Add(DKind::Line, 400, -60); l.speaker = "Smith"; l.text = "Glad to help"; l.next = 3;
+    g.Add(DKind::End, 600, 0);
+    g.start = 0;
+    return g;
+}
+static std::string Str(const vs::VsValue& v) {
+    char b[96];
+    std::snprintf(b, sizeof b, "%.4f|%d|", (double)v.AsFloat(), (int)v.AsBool());
+    return std::string(b) + v.AsString() + "|" + std::to_string((unsigned long long)v.AsObjectId());
+}
+// Everything a gameplay node can change that a test can see: transforms, flags, names, tags,
+// the components the nodes touch, and each script's variables.
+static std::string Snapshot(Scene& s) {
+    std::string out;
+    char b[512];
+    for (const auto& up : s.Objects()) {
+        if (!up) continue;
+        GameObject* g = up.get();
+        const Vec3 p = g->transform->Position(), e = g->transform->EulerAngles(), sc = g->transform->localScale;
+        std::snprintf(b, sizeof b, "[%s|%s|%d|%.3f,%.3f,%.3f|%.2f,%.2f,%.2f|%.3f,%.3f,%.3f]", g->name.c_str(), std::string(g->tag).c_str(), (int)g->active,
+                      p.x, p.y, p.z, e.x, e.y, e.z, sc.x, sc.y, sc.z);
+        out += b;
+        if (auto* h = g->GetComponent<HealthStat>()) {
+            std::snprintf(b, sizeof b, "H%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%.3f,%.3f", h->health, h->maxHealth, h->armor, h->resistance, h->minDamage,
+                          (int)h->godMode, (int)h->dead, h->invincibleTime, h->regenPerSecond, h->regenDelay, h->overhealMax, h->lives, (int)h->respawn, (int)h->destroyOnDeath, h->respawnDelay, h->overhealDecay);
+            out += b;
+        }
+        if (auto* inv = g->GetComponent<Inventory>()) {
+            std::snprintf(b, sizeof b, "I%d,%d,%.2f;", inv->capacity, inv->maxStack, inv->weightLimit);
+            out += b;
+            for (const auto& sl : inv->slots) out += sl.item + "x" + std::to_string(sl.count) + ",";
+        }
+        if (auto* rb = g->GetComponent<Rigidbody3D>()) {
+            std::snprintf(b, sizeof b, "R%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d,%d,%d,%.3f,%.3f", rb->velocity.x, rb->velocity.y, rb->velocity.z, rb->angularVelocity.y,
+                          rb->mass, rb->gravityScale, rb->drag, rb->bounciness, rb->friction, (int)rb->freezeRotation, (int)rb->freezeX, (int)rb->freezeY, (int)rb->freezeZ,
+                          (int)rb->sleeping, (int)rb->bodyType, rb->maxFallSpeed, 0.0f);
+            out += b;
+        }
+        if (auto* t = g->GetComponent<TextRenderer>()) {
+            std::snprintf(b, sizeof b, "T%s|%.3f,%.3f,%.3f,%.3f|%.3f", t->text.c_str(), t->color.r, t->color.g, t->color.b, t->color.a, t->pixelSize);
+            out += b;
+        }
+        if (auto* a = g->GetComponent<AudioSource>()) {
+            std::snprintf(b, sizeof b, "A%.3f,%.3f,%d,%d,%d", a->volume, a->pitch, (int)a->loop, (int)a->spatial, (int)a->IsPlaying());
+            out += b;
+        }
+        if (auto* c = g->GetComponent<Camera>()) {
+            std::snprintf(b, sizeof b, "C%.3f,%.3f,%.3f,%.3f,%.3f", c->zoom, c->fieldOfView, c->dutch, c->orthographicSize, c->ShakeTrauma());
+            out += b;
+        }
+        if (auto* sr = g->GetComponent<SpriteRenderer>()) {
+            std::snprintf(b, sizeof b, "S%.3f", sr->color.a);
+            out += b;
+        }
+        if (auto* dr = g->GetComponent<DialogueRunner>()) {
+            const auto ln = dr->CurrentLine();
+            out += std::string("D") + (dr->IsActive() ? "1" : "0") + std::to_string(ln.nodeId) + ln.text;
+        }
+        if (auto* q = g->GetComponent<QuestLog>()) {
+            for (const auto& id : q->Ids()) {
+                out += id + QuestStatusName(q->Status(id));
+                for (int i = 0; i < 4; ++i) out += std::to_string(q->Progress(id, i)) + (q->ObjectiveDone(id, i) ? "d" : "-");
+            }
+        }
+        for (auto* vc : g->GetComponents<VisualScriptComponent>()) {
+            std::vector<std::string> names;
+            for (const auto& kv : vc->Variables()) names.push_back(kv.first + "=" + Str(kv.second));
+            std::sort(names.begin(), names.end());
+            for (const auto& n2 : names) out += n2 + ";";
+        }
+    }
+    for (const char* key : {"vs.position.spot", "vs.position.gone", "vs.health.hero"})
+        out += std::string(key) + (Prefs::Has(key) ? "1" : "0");
+    std::snprintf(b, sizeof b, "|time %.3f %d", Time::BaseTimeScale(), (int)Time::HitStopActive());
+    return out + b;
+}
 static void OnErr(const vs::VsRuntimeError& e) { g_errs.push_back(e.nodeType + ": " + e.message); }
 
 static const char* kDir = "examples/visual_script/playground";
@@ -55,6 +145,7 @@ static void BuildPlayground(Scene& sc, const std::string& name, const std::strin
     if (name == "animation") { GameObject* hero = sc.CreateGameObject("Pulser"); hero->transform->SetPosition(Vec3(0, 0.7f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.6f, 0.9f, 0.5f, 1); hero->AddComponent<SpriteRenderer>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "audio") { GameObject* hero = sc.CreateGameObject("Speaker"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.5f, 0.2f, 1); hero->AddComponent<AudioSource>(); hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "camera") { cam->AddComponent<VisualScriptComponent>()->SetPath(file); GameObject* mark = sc.CreateGameObject("Landmark"); mark->transform->SetPosition(Vec3(0, 0.5f, 0)); mark->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.8f, 0.3f, 1); }
+    if (name == "dialogue") { GameObject* hero = sc.CreateGameObject("Guide"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.9f, 0.7f, 0.4f, 1); auto* dlg = hero->AddComponent<DialogueRunner>(); dlg->drawUI = false; dlg->typewriterSpeed = 0.0f; dlg->graphFile = "examples/visual_script/playground/gl_dialogue.okaydialog"; hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "groups") { GameObject* hero = sc.CreateGameObject("Boss"); hero->transform->SetPosition(Vec3(0, 0.5f, -3)); hero->AddComponent<MeshRenderer>()->color = Color(0.8f, 0.3f, 0.3f, 1);  hero->AddComponent<VisualScriptComponent>()->SetPath(file); for (int i = 0; i < 3; ++i) { GameObject* cr = sc.CreateGameObject("Crate" + std::to_string(i)); cr->tag = "crate"; cr->transform->SetPosition(Vec3(-2.0f + 2.0f * i, 0.5f, 1)); cr->AddComponent<MeshRenderer>()->color = Color(0.7f, 0.5f, 0.3f, 1); } }
     if (name == "health") { GameObject* hero = sc.CreateGameObject("Fighter"); hero->transform->SetPosition(Vec3(0, 0.8f, 0)); hero->transform->SetScale(Vec3(0.8f, 1.6f, 0.8f)); hero->AddComponent<MeshRenderer>()->color = Color(0.3f, 0.55f, 0.95f, 1); hero->AddComponent<HealthStat>()->playDeathAnim = false; hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
     if (name == "input") { GameObject* hero = sc.CreateGameObject("Player"); hero->transform->SetPosition(Vec3(0, 0.5f, 0)); hero->AddComponent<MeshRenderer>()->color = Color(0.4f, 0.9f, 0.6f, 1);  hero->AddComponent<VisualScriptComponent>()->SetPath(file); }
@@ -78,6 +169,7 @@ static void CheckPlaygrounds() {
         {"animation", {"GlPulseSize", "GlSwayTurn", "GlFadeSpriteTo", "GlGetSpriteOpacity"}},
         {"audio", {"GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlFadeVolumeTo", "GlRandomizePitch", "GlMuteSound", "GlPlaySoundNow", "GlSetSound3D", "GlGetPitch", "GlIsSoundLooping", "GlIsSoundPositional"}},
         {"camera", {"GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlCameraFollowObject", "GlCameraLookAtObject", "GlZoomSmoothlyTo", "GlSetFlatCameraSize", "GlGetFlatCameraSize", "GlResetCamera", "GlIsCameraZoomedIn", "GlGetCameraTilt"}},
+        {"dialogue", {"GlIsDialogueRunning", "GlGetDialogueLine", "GlGetDialogueSpeaker", "GlIsDialogueWaitingForChoice", "GlGetDialogueOptionCount", "GlGetDialogueOptionText", "GlAdvanceDialogue", "GlChooseDialogueOption", "GlStopDialogue"}},
         {"groups", {"GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject", "GlRenameObject"}},
         {"health", {"GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor", "GlHealPortion", "GlDamagePortion", "GlSetHealthPortion", "GlReviveWithHealth", "GlCriticalDamage", "GlDamageFalloff", "GlSetInvincibleTime", "GlSetLives", "GlSetRespawnTime", "GlSetResistance", "GlSetSmallestHit", "GlSetOverhealLimit", "GlSetRemoveOnDeath", "GlGetMissingHealth", "GlIsHealthAbove", "GlGetResistance", "GlGetLives", "GlIsRespawnOn", "GlGetOverhealLimit", "GlGetHitProtectionTime"}},
         {"input", {"GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld", "GlIsJumpHeld", "GlIsFireHeld", "GlIsAimHeld", "GlIsInteractHeld", "GlGetMoveStrength"}},
@@ -97,6 +189,12 @@ static void CheckPlaygrounds() {
             Scene writing; BuildPlayground(writing, r.name, base + ".okayvs");
             CHECK(SceneSerializer::SaveToFile(writing, dir + base + ".okayscene"));
             std::remove((dir + base + ".okayscene.bak").c_str());   // the saver keeps a backup; it is not part of the example
+        }
+        if (std::string(r.name) == "dialogue") {
+            if (const char* w = std::getenv("OKAY_WRITE_GL_PLAYGROUND"); w && w[0] == '1') {
+                std::ofstream df(dir + "gl_dialogue.okaydialog"); df << TalkGraph().Write();
+            }
+            Character::SetAssetBaseDir(std::string(OKAY_SOURCE_DIR));   // the graph file is repo-relative
         }
         const std::string graph = ReadFile(dir + base + ".okayvs");
         CHECK(!graph.empty());
@@ -120,3250 +218,6386 @@ static void CheckPlaygrounds() {
         }
         CHECK(told); CHECK(script);
         g_errs.clear();
+        if (std::string(r.name) == "input") { Input::FeedKeys({'d', Input::KeyShift}); }
+        if (std::string(r.name) == "timing") { Time::SetTimeScale(1.0f); Time::CancelHitStop(); }
         scene.Start();
         for (int i = 0; i < 180; ++i) scene.Update(1.0f / 60.0f);
         if (!g_errs.empty()) for (const auto& e : g_errs) std::printf("  %s: %s\n", r.name, e.c_str());
         CHECK(g_errs.empty());
+        if (std::string(r.name) == "ai") { GameObject* focus = scene.Find("Watcher"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK(V("angle").AsFloat() > 1.0f); } }
+        if (std::string(r.name) == "animation") { GameObject* focus = scene.Find("Pulser"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK(std::fabs(focus->transform->localScale.x - 1.0f) > 0.01f); CHECK(std::fabs(focus->transform->EulerAngles().y) > 1.0f); } }
+        if (std::string(r.name) == "audio") { GameObject* focus = scene.Find("Speaker"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK_NEAR(focus->GetComponent<AudioSource>()->volume, 0.5f, 0.001f); } }
+        if (std::string(r.name) == "camera") { GameObject* focus = scene.Find("Main Camera"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK_NEAR(focus->GetComponent<Camera>()->zoom, 1.3f, 0.001f); } }
+        if (std::string(r.name) == "dialogue") { GameObject* focus = scene.Find("Guide"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK(V("line").AsString() == "Hello there"); CHECK_NEAR(V("options").AsFloat(), 2.0f, 0.001f); CHECK(V("answer").AsString() == "Glad to help"); } }
+        if (std::string(r.name) == "groups") { GameObject* focus = scene.Find("Boss"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { for (int i = 0; i < 3; ++i) CHECK(!scene.Find("Crate" + std::to_string(i))->active); } }
+        if (std::string(r.name) == "health") { GameObject* focus = scene.Find("Fighter"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK(V("health").AsFloat() > 55.0f && V("health").AsFloat() < 70.0f); } }
+        if (std::string(r.name) == "input") { GameObject* focus = scene.Find("Player"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK_NEAR(V("h").AsFloat(), 1.0f, 0.001f); CHECK(V("sprint").AsBool()); } }
+        if (std::string(r.name) == "inventory") { GameObject* focus = scene.Find("Backpack"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK_NEAR(V("coins").AsFloat(), 5.0f, 0.001f); } }
+        if (std::string(r.name) == "movement") { GameObject* focus = scene.Find("Hero"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK(std::fabs(focus->transform->Position().x) + std::fabs(focus->transform->Position().z + 3.0f) > 1.0f); CHECK(std::fabs(focus->transform->Position().x) <= 6.01f && std::fabs(focus->transform->Position().z) <= 6.01f); } }
+        if (std::string(r.name) == "physics") { GameObject* focus = scene.Find("Ball"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK_NEAR(focus->GetComponent<Rigidbody3D>()->gravityScale, 0.3f, 0.001f); CHECK_NEAR(focus->GetComponent<Rigidbody3D>()->bounciness, 0.7f, 0.001f); } }
+        if (std::string(r.name) == "progression") { GameObject* focus = scene.Find("Scorekeeper"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK_NEAR(V("level").AsFloat(), 3.0f, 0.001f); } }
+        if (std::string(r.name) == "quests") { GameObject* focus = scene.Find("Guide"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK(V("done").AsBool()); CHECK(scene.Find("Quests")->GetComponent<QuestLog>()->IsCompleted("q1")); } }
+        if (std::string(r.name) == "saving") { GameObject* focus = scene.Find("Courier"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK(V("saved").AsBool()); CHECK(!Prefs::Has("vs.position.pgspot")); } }
+        if (std::string(r.name) == "timing") { GameObject* focus = scene.Find("Clock"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK(V("passed").AsBool()); CHECK_NEAR(V("speed").AsFloat(), 1.0f, 0.001f); } }
+        if (std::string(r.name) == "ui") { GameObject* focus = scene.Find("Hud"); CHECK(focus != nullptr); auto* fvc = focus ? focus->GetComponent<VisualScriptComponent>() : nullptr; CHECK(fvc != nullptr); auto V = [&](const char* nm) { return fvc ? fvc->GetVariable(nm) : vs::VsValue(); }; (void)V; if (focus && fvc) { CHECK(focus->GetComponent<TextRenderer>()->text == "Score: 42"); } }
+        Input::FeedKeys({});
         g_seen.insert(std::string("playground:") + r.name);
     }
 }
 int main() {
     RUN_SUITE("vs_gameplay_library");
+    Log::sink = [](Log::Level, const std::string&) {};   // node errors are collected by the hook
     vs::SetRuntimeErrorHook(&OnErr);
-    const char* types[] = { "GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor", "GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid", "GlCountItem", "GlIsInventoryFull", "GlGetFreeSlots", "GlGetUsedSlots", "GlCanFitItem", "GlHasBothItems", "GlRemoveAllOfItem", "GlEmptyInventory", "GlGetCarriedWeight", "GlSetInventorySize", "GlMoveItem", "GlIsFacingObject", "GlGetAngleToObject", "GlIsObjectBehind", "GlIsObjectHigher", "GlGetDirectionToObject", "GlCountObjectsWithTag", "GlIsAnyTaggedInRange", "GlGetAlertLevel", "GlPickRandomTagged", "GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize", "GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed", "GlPulseSize", "GlSwayTurn", "GlFadeSpriteTo", "GlGetSpriteOpacity", "GlIsQuestActive", "GlIsQuestCompleted", "GlCompleteQuest", "GlFailQuest", "GlResetQuest", "GlAddQuestProgress", "GlGetQuestProgress", "GlIsObjectiveDone", "GlCountActiveQuests", "GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition", "GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject", "GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval", "GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld", "GlMoveToPosition", "GlLookAtPosition", "GlGetDistanceToPosition", "GlIsNearPosition", "GlHop", "GlMoveBackAndForth", "GlShakePosition", "GlKeepAboveHeight", "GlLimitHeight", "GlResetRotation", "GlSetSizeEvenly", "GlFlipSide", "GlCopyPositionFrom", "GlStayAtDistanceFrom", "GlFaceObject", "GlTurnTowardObject", "GlJump", "GlIsFalling", "GlIsRising", "GlGetVerticalSpeed", "GlGetFlatSpeed", "GlLimitSpeed", "GlSetFlatSpeed", "GlHealPortion", "GlDamagePortion", "GlSetHealthPortion", "GlReviveWithHealth", "GlCriticalDamage", "GlDamageFalloff", "GlIsInventoryEmpty", "GlStacksNeeded", "GlAddItemIfRoom", "GlTakeOneItem", "GlLevelFromExperience", "GlExperienceForLevel", "GlExperienceToNextLevel", "GlGrowByLevel", "GlPriceWithDiscount", "GlCooldownPortion", "GlRollChance", "GlTypewriterText", "GlShowHealthInText", "GlShowSessionTimeInText", "GlClearText", "GlFadeVolumeTo", "GlRandomizePitch", "GlMuteSound", "GlCameraFollowObject", "GlCameraLookAtObject", "GlZoomSmoothlyTo", "GlCountTaggedInRange", "GlIsJumpHeld", "GlSaveHealth", "GlLoadHealth", "GlHasTimePassed", "GlGetGameSpeed", "GlRenameObject", "GlSetInvincibleTime", "GlSetLives", "GlSetRespawnTime", "GlSetResistance", "GlSetSmallestHit", "GlSetOverhealLimit", "GlSetRemoveOnDeath", "GlGetMissingHealth", "GlIsHealthAbove", "GlGetResistance", "GlSetCarryLimit", "GlSetStackLimit", "GlGetCarryLimit", "GlIsOverweight", "GlGetSlowdownFromWeight", "GlCountAllItems", "GlSetBodyType", "GlSetFallSpeedLimit", "GlSetSurfaceFriction", "GlFreezeAxis", "GlWakeBody", "GlPushAwayFrom", "GlIsBodyMovable", "GlPlaySoundNow", "GlSetSound3D", "GlGetPitch", "GlIsSoundLooping", "GlSetFlatCameraSize", "GlGetFlatCameraSize", "GlResetCamera", "GlIsCameraZoomedIn", "GlCountCompletedQuests", "GlIsAnyQuestActive", "GlFailActiveQuests", "GlFinishObjectives", "GlGetObjectiveCount", "GlSetTextOpacity", "GlFadeTextTo", "GlShowTwoNumbersInText", "GlRiseAtSpeed", "GlMoveInCircle", "GlChangeSizeOverTime", "GlMultiplySize", "GlFaceAwayFrom", "GlGetFacingAngle", "GlSetFacingAngle", "GlSetHeight", "GlIsAboveHeight", "GlIsBelowHeight", "GlIsFireHeld", "GlIsAimHeld", "GlIsInteractHeld", "GlGetMoveStrength", "GlGetLives", "GlIsRespawnOn", "GlGetOverhealLimit", "GlGetHitProtectionTime", "GlGetGravityStrength", "GlGetBounciness", "GlGetAirDrag", "GlGetSurfaceFriction", "GlIsRotationLocked", "GlIsSoundPositional", "GlGetCameraTilt", "GlGetTextOpacity", "GlGetTextSize", "GlGetStackLimit", "GlGetInventorySize" };
+    const char* types[] = { "GlGetHealth", "GlGetHealthPortion", "GlGetMaxHealth", "GlSetHealth", "GlSetMaximumHealth", "GlIsHealthLow", "GlIsHealthFull", "GlHealToFull", "GlKill", "GlSetInvincible", "GlIsInvincible", "GlDamageOverTime", "GlHealOverTime", "GlSetArmor", "GlGetArmor", "GlSetRegeneration", "GlDamageAfterArmor", "GlGetSpeed", "GlIsMoving", "GlSetVelocity", "GlPushWithImpulse", "GlStopMoving", "GlMoveForward", "GlMoveSideways", "GlTurnBy", "GlFaceDirection", "GlKeepInsideBox", "GlWrapAroundBox", "GlSnapToGrid", "GlCountItem", "GlIsInventoryFull", "GlGetFreeSlots", "GlGetUsedSlots", "GlCanFitItem", "GlHasBothItems", "GlRemoveAllOfItem", "GlEmptyInventory", "GlGetCarriedWeight", "GlSetInventorySize", "GlMoveItem", "GlIsFacingObject", "GlGetAngleToObject", "GlIsObjectBehind", "GlIsObjectHigher", "GlGetDirectionToObject", "GlCountObjectsWithTag", "GlIsAnyTaggedInRange", "GlGetAlertLevel", "GlPickRandomTagged", "GlSetCameraZoom", "GlGetCameraZoom", "GlSetFieldOfView", "GlGetFieldOfView", "GlShakeCamera", "GlTiltCamera", "GlShowNumberInText", "GlFormatNumber", "GlFormatClock", "GlFormatPercent", "GlSetTextColor", "GlGetText", "GlAddLineToText", "GlSetTextSize", "GlSetVolume", "GlGetVolume", "GlSetPitch", "GlIsSoundPlaying", "GlPauseSound", "GlSetSoundLooping", "GlGetMass", "GlSetMass", "GlSetGravityStrength", "GlSetBounciness", "GlSetAirDrag", "GlLockRotation", "GlSpinAtSpeed", "GlGetSpinSpeed", "GlPulseSize", "GlSwayTurn", "GlFadeSpriteTo", "GlGetSpriteOpacity", "GlIsQuestActive", "GlIsQuestCompleted", "GlCompleteQuest", "GlFailQuest", "GlResetQuest", "GlAddQuestProgress", "GlGetQuestProgress", "GlIsObjectiveDone", "GlCountActiveQuests", "GlSavePosition", "GlLoadPosition", "GlHasSavedPosition", "GlForgetSavedPosition", "GlDestroyAllWithTag", "GlHideAllWithTag", "GlShowAllWithTag", "GlSetTagOnObject", "GlSlowMotion", "GlResetGameSpeed", "GlGetSessionTime", "GlIsEveryOtherInterval", "GlGetHorizontalInput", "GlGetVerticalInput", "GlIsSprinting", "GlIsCrouching", "GlIsAnyKeyHeld", "GlMoveToPosition", "GlLookAtPosition", "GlGetDistanceToPosition", "GlIsNearPosition", "GlHop", "GlMoveBackAndForth", "GlShakePosition", "GlKeepAboveHeight", "GlLimitHeight", "GlResetRotation", "GlSetSizeEvenly", "GlFlipSide", "GlCopyPositionFrom", "GlStayAtDistanceFrom", "GlFaceObject", "GlTurnTowardObject", "GlJump", "GlIsFalling", "GlIsRising", "GlGetVerticalSpeed", "GlGetFlatSpeed", "GlLimitSpeed", "GlSetFlatSpeed", "GlHealPortion", "GlDamagePortion", "GlSetHealthPortion", "GlReviveWithHealth", "GlCriticalDamage", "GlDamageFalloff", "GlIsInventoryEmpty", "GlStacksNeeded", "GlAddItemIfRoom", "GlTakeOneItem", "GlLevelFromExperience", "GlExperienceForLevel", "GlExperienceToNextLevel", "GlGrowByLevel", "GlPriceWithDiscount", "GlCooldownPortion", "GlRollChance", "GlTypewriterText", "GlShowHealthInText", "GlShowSessionTimeInText", "GlClearText", "GlFadeVolumeTo", "GlRandomizePitch", "GlMuteSound", "GlCameraFollowObject", "GlCameraLookAtObject", "GlZoomSmoothlyTo", "GlCountTaggedInRange", "GlIsJumpHeld", "GlSaveHealth", "GlLoadHealth", "GlHasTimePassed", "GlGetGameSpeed", "GlRenameObject", "GlSetInvincibleTime", "GlSetLives", "GlSetRespawnTime", "GlSetResistance", "GlSetSmallestHit", "GlSetOverhealLimit", "GlSetRemoveOnDeath", "GlGetMissingHealth", "GlIsHealthAbove", "GlGetResistance", "GlSetCarryLimit", "GlSetStackLimit", "GlGetCarryLimit", "GlIsOverweight", "GlGetSlowdownFromWeight", "GlCountAllItems", "GlSetBodyType", "GlSetFallSpeedLimit", "GlSetSurfaceFriction", "GlFreezeAxis", "GlWakeBody", "GlPushAwayFrom", "GlIsBodyMovable", "GlPlaySoundNow", "GlSetSound3D", "GlGetPitch", "GlIsSoundLooping", "GlSetFlatCameraSize", "GlGetFlatCameraSize", "GlResetCamera", "GlIsCameraZoomedIn", "GlCountCompletedQuests", "GlIsAnyQuestActive", "GlFailActiveQuests", "GlFinishObjectives", "GlGetObjectiveCount", "GlSetTextOpacity", "GlFadeTextTo", "GlShowTwoNumbersInText", "GlRiseAtSpeed", "GlMoveInCircle", "GlChangeSizeOverTime", "GlMultiplySize", "GlFaceAwayFrom", "GlGetFacingAngle", "GlSetFacingAngle", "GlSetHeight", "GlIsAboveHeight", "GlIsBelowHeight", "GlIsFireHeld", "GlIsAimHeld", "GlIsInteractHeld", "GlGetMoveStrength", "GlGetLives", "GlIsRespawnOn", "GlGetOverhealLimit", "GlGetHitProtectionTime", "GlGetGravityStrength", "GlGetBounciness", "GlGetAirDrag", "GlGetSurfaceFriction", "GlIsRotationLocked", "GlIsSoundPositional", "GlGetCameraTilt", "GlGetTextOpacity", "GlGetTextSize", "GlGetStackLimit", "GlGetInventorySize", "GlIsDialogueRunning", "GlGetDialogueLine", "GlGetDialogueSpeaker", "GlIsDialogueWaitingForChoice", "GlGetDialogueOptionCount", "GlGetDialogueOptionText", "GlAdvanceDialogue", "GlChooseDialogueOption", "GlStopDialogue" };
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetHealth\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<HealthStat>()->health = 60;
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 60.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetHealth again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
+        
         auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetHealth\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
         s.Start();
-        me->GetComponent<HealthStat>()->health = 60;
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 60.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetHealth gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetHealth");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->maxHealth = 80;
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetHealthPortion\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<HealthStat>()->health = 20;
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.25f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetHealthPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetHealthPortion again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->maxHealth = 80;
+        
         auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetHealthPortion\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
         s.Start();
-        me->GetComponent<HealthStat>()->health = 20;
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.25f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetHealthPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetHealthPortion gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetHealthPortion");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->maxHealth = 80;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetMaxHealth\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 80.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetMaxHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetMaxHealth again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->maxHealth = 80;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetMaxHealth\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetMaxHealth\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 80.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetMaxHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetMaxHealth gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetMaxHealth");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetHealth\ndefault 2 0 30\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 30.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetHealth: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetHealth\ndefault 2 0 30\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->health, 30.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetHealth changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetHealth");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetMaximumHealth\ndefault 2 0 50\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->maxHealth, 50.0f, 0.01f); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 50.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetMaximumHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetMaximumHealth: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetMaximumHealth\ndefault 2 0 50\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->maxHealth, 50.0f, 0.01f); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 50.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetMaximumHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetMaximumHealth changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetMaximumHealth");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsHealthLow\ndefault 2 0 0.25\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<HealthStat>()->health = 20;
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsHealthLow reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsHealthLow again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
+        
         auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsHealthLow\ndefault 2 0 0.25\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
         s.Start();
-        me->GetComponent<HealthStat>()->health = 20;
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsHealthLow reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsHealthLow gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsHealthLow");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsHealthFull\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsHealthFull reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsHealthFull again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsHealthFull\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsHealthFull\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsHealthFull reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsHealthFull gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsHealthFull");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHealToFull\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        me->GetComponent<HealthStat>()->health = 10;
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 100.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlHealToFull reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlHealToFull: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHealToFull\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<HealthStat>()->health = 10;
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->health, 100.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlHealToFull reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlHealToFull changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlHealToFull");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->playDeathAnim = false;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlKill\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<HealthStat>()->IsDead());
-        if (!g_errs.empty()) { std::printf("  GlKill reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlKill: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->playDeathAnim = false;
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlKill\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<HealthStat>()->IsDead());
+                if (!g_errs.empty()) { std::printf("  GlKill reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlKill changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlKill");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetInvincible\ndefault 2 0 true\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<HealthStat>()->IsInvincible()); me->GetComponent<HealthStat>()->Damage(40); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 100.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetInvincible reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetInvincible: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetInvincible\ndefault 2 0 true\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<HealthStat>()->IsInvincible()); me->GetComponent<HealthStat>()->Damage(40); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 100.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetInvincible reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetInvincible changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetInvincible");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->godMode = true;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInvincible\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsInvincible reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsInvincible again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->godMode = true;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInvincible\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInvincible\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsInvincible reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsInvincible gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsInvincible");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlDamageOverTime\ndefault 2 0 10\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 95.0f, 0.05f);
-        if (!g_errs.empty()) { std::printf("  GlDamageOverTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlDamageOverTime: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlDamageOverTime\ndefault 2 0 10\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->health, 95.0f, 0.05f);
+                if (!g_errs.empty()) { std::printf("  GlDamageOverTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlDamageOverTime changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlDamageOverTime");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHealOverTime\ndefault 2 0 10\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        me->GetComponent<HealthStat>()->health = 50;
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 55.0f, 0.05f);
-        if (!g_errs.empty()) { std::printf("  GlHealOverTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlHealOverTime: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHealOverTime\ndefault 2 0 10\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<HealthStat>()->health = 50;
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->health, 55.0f, 0.05f);
+                if (!g_errs.empty()) { std::printf("  GlHealOverTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlHealOverTime changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlHealOverTime");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetArmor\ndefault 2 0 5\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        me->GetComponent<HealthStat>()->Damage(8); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 97.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetArmor reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetArmor: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetArmor\ndefault 2 0 5\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                me->GetComponent<HealthStat>()->Damage(8); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 97.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetArmor reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetArmor changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetArmor");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->armor = 7;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetArmor\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 7.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetArmor reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetArmor again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->armor = 7;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetArmor\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetArmor\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 7.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetArmor reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetArmor gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetArmor");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetRegeneration\ndefault 2 0 4\ndefault 2 1 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->regenPerSecond, 4.0f, 0.01f); CHECK_NEAR(me->GetComponent<HealthStat>()->regenDelay, 1.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetRegeneration reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetRegeneration: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetRegeneration\ndefault 2 0 4\ndefault 2 1 1\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->regenPerSecond, 4.0f, 0.01f); CHECK_NEAR(me->GetComponent<HealthStat>()->regenDelay, 1.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetRegeneration reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetRegeneration changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetRegeneration");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlDamageAfterArmor\ndefault 2 0 20\ndefault 2 1 5\ndefault 2 2 0.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 7.5f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlDamageAfterArmor reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlDamageAfterArmor\ndefault 2 0 20\ndefault 2 1 5\ndefault 2 2 0.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 7.5f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlDamageAfterArmor reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlDamageAfterArmor");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>()->velocity = Vec3(3, 0, 4);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 5.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetSpeed again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>()->velocity = Vec3(3, 0, 4);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 5.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetSpeed gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetSpeed");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>()->velocity = Vec3(0, 0, 0.5f);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsMoving\ndefault 2 0 0.1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsMoving reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsMoving again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>()->velocity = Vec3(0, 0, 0.5f);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsMoving\ndefault 2 0 0.1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsMoving\ndefault 2 0 0.1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsMoving reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsMoving gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsMoving");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetVelocity\ndefault 2 0 2\ndefault 2 1 0\ndefault 2 2 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.x, 2.0f, 0.01f); CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.z, 1.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetVelocity reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetVelocity: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetVelocity\ndefault 2 0 2\ndefault 2 1 0\ndefault 2 2 1\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.x, 2.0f, 0.01f); CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.z, 1.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetVelocity reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetVelocity changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetVelocity");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>()->mass = 2.0f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlPushWithImpulse\ndefault 2 0 2\ndefault 2 1 0\ndefault 2 2 0\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.x, 1.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlPushWithImpulse reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlPushWithImpulse: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>()->mass = 2.0f;
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlPushWithImpulse\ndefault 2 0 2\ndefault 2 1 0\ndefault 2 2 0\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.x, 1.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlPushWithImpulse reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlPushWithImpulse changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlPushWithImpulse");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>()->velocity = Vec3(1, 2, 3);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlStopMoving\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.Magnitude(), 0.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlStopMoving reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlStopMoving: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>()->velocity = Vec3(1, 2, 3);
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlStopMoving\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.Magnitude(), 0.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlStopMoving reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlStopMoving changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlStopMoving");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveForward\ndefault 2 0 4\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        { Vec3 d = me->transform->Position(); Vec3 f = me->transform->Forward(); CHECK_NEAR(d.x, f.x * 2.0f, 0.02f); CHECK_NEAR(d.z, f.z * 2.0f, 0.02f); }
-        if (!g_errs.empty()) { std::printf("  GlMoveForward reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlMoveForward: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveForward\ndefault 2 0 4\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { Vec3 d = me->transform->Position(); Vec3 f = me->transform->Forward(); CHECK_NEAR(d.x, f.x * 2.0f, 0.02f); CHECK_NEAR(d.z, f.z * 2.0f, 0.02f); }
+                if (!g_errs.empty()) { std::printf("  GlMoveForward reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlMoveForward changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlMoveForward");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveSideways\ndefault 2 0 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        { Vec3 d = me->transform->Position(); Vec3 r = me->transform->Right(); CHECK_NEAR(d.x, r.x, 0.02f); CHECK_NEAR(d.z, r.z, 0.02f); }
-        if (!g_errs.empty()) { std::printf("  GlMoveSideways reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlMoveSideways: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveSideways\ndefault 2 0 2\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { Vec3 d = me->transform->Position(); Vec3 r = me->transform->Right(); CHECK_NEAR(d.x, r.x, 0.02f); CHECK_NEAR(d.z, r.z, 0.02f); }
+                if (!g_errs.empty()) { std::printf("  GlMoveSideways reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlMoveSideways changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlMoveSideways");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlTurnBy\ndefault 2 0 90\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK_NEAR(std::fabs(me->transform->EulerAngles().y), 45.0f, 0.5f);
-        if (!g_errs.empty()) { std::printf("  GlTurnBy reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlTurnBy: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlTurnBy\ndefault 2 0 90\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(std::fabs(me->transform->EulerAngles().y), 45.0f, 0.5f);
+                if (!g_errs.empty()) { std::printf("  GlTurnBy reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlTurnBy changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlTurnBy");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFaceDirection\ndefault 2 0 1\ndefault 2 1 0\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->Forward().x, 1.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlFaceDirection reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFaceDirection: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlFaceDirection\ndefault 2 0 1\ndefault 2 1 0\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Forward().x, 1.0f, 0.02f);
+                if (!g_errs.empty()) { std::printf("  GlFaceDirection reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFaceDirection changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFaceDirection");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(10, 0, -10));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlKeepInsideBox\ndefault 2 0 -1\ndefault 2 1 1\ndefault 2 2 -2\ndefault 2 3 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->Position().x, 1.0f, 0.01f); CHECK_NEAR(me->transform->Position().z, -2.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlKeepInsideBox reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlKeepInsideBox: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(10, 0, -10));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlKeepInsideBox\ndefault 2 0 -1\ndefault 2 1 1\ndefault 2 2 -2\ndefault 2 3 2\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().x, 1.0f, 0.01f); CHECK_NEAR(me->transform->Position().z, -2.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlKeepInsideBox reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlKeepInsideBox changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlKeepInsideBox");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(3, 0, -2.5f));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlWrapAroundBox\ndefault 2 0 -1\ndefault 2 1 1\ndefault 2 2 -1\ndefault 2 3 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->Position().x, -1.0f, 0.01f); CHECK_NEAR(me->transform->Position().z, -0.5f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlWrapAroundBox reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlWrapAroundBox: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(3, 0, -2.5f));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlWrapAroundBox\ndefault 2 0 -1\ndefault 2 1 1\ndefault 2 2 -1\ndefault 2 3 1\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().x, -1.0f, 0.01f); CHECK_NEAR(me->transform->Position().z, -0.5f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlWrapAroundBox reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlWrapAroundBox changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlWrapAroundBox");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(1.4f, 0.2f, 2.6f));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSnapToGrid\ndefault 2 0 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->Position().x, 1.0f, 0.01f); CHECK_NEAR(me->transform->Position().z, 3.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSnapToGrid reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSnapToGrid: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(1.4f, 0.2f, 2.6f));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSnapToGrid\ndefault 2 0 1\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().x, 1.0f, 0.01f); CHECK_NEAR(me->transform->Position().z, 3.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSnapToGrid reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSnapToGrid changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSnapToGrid");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 7);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountItem\ndefault 2 0 \"coin\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 7.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlCountItem reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlCountItem again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 7);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountItem\ndefault 2 0 \"coin\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountItem\ndefault 2 0 \"coin\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 7.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlCountItem reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlCountItem gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlCountItem");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->capacity = 1; me->GetComponent<Inventory>()->Add("coin", 1);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInventoryFull\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsInventoryFull reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsInventoryFull again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->capacity = 1; me->GetComponent<Inventory>()->Add("coin", 1);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInventoryFull\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInventoryFull\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsInventoryFull reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsInventoryFull gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsInventoryFull");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->capacity = 5; me->GetComponent<Inventory>()->Add("coin", 1);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFreeSlots\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 4.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetFreeSlots reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetFreeSlots again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->capacity = 5; me->GetComponent<Inventory>()->Add("coin", 1);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFreeSlots\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFreeSlots\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 4.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetFreeSlots reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetFreeSlots gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetFreeSlots");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 1); me->GetComponent<Inventory>()->Add("key", 1);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetUsedSlots\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 2.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetUsedSlots reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetUsedSlots again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 1); me->GetComponent<Inventory>()->Add("key", 1);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetUsedSlots\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetUsedSlots\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 2.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetUsedSlots reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetUsedSlots gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetUsedSlots");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); 
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCanFitItem\ndefault 2 0 \"coin\"\ndefault 2 1 3\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlCanFitItem reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlCanFitItem again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); 
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCanFitItem\ndefault 2 0 \"coin\"\ndefault 2 1 3\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCanFitItem\ndefault 2 0 \"coin\"\ndefault 2 1 3\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlCanFitItem reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlCanFitItem gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlCanFitItem");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 2); me->GetComponent<Inventory>()->Add("key", 1);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasBothItems\ndefault 2 0 \"coin\"\ndefault 2 1 2\ndefault 2 2 \"key\"\ndefault 2 3 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlHasBothItems reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlHasBothItems again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 2); me->GetComponent<Inventory>()->Add("key", 1);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasBothItems\ndefault 2 0 \"coin\"\ndefault 2 1 2\ndefault 2 2 \"key\"\ndefault 2 3 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasBothItems\ndefault 2 0 \"coin\"\ndefault 2 1 2\ndefault 2 2 \"key\"\ndefault 2 3 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlHasBothItems reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlHasBothItems gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlHasBothItems");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 9);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlRemoveAllOfItem\ndefault 2 0 \"coin\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<Inventory>()->Count("coin") == 0);
-        if (!g_errs.empty()) { std::printf("  GlRemoveAllOfItem reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlRemoveAllOfItem: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 9);
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlRemoveAllOfItem\ndefault 2 0 \"coin\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<Inventory>()->Count("coin") == 0);
+                if (!g_errs.empty()) { std::printf("  GlRemoveAllOfItem reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlRemoveAllOfItem changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlRemoveAllOfItem");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 9); me->GetComponent<Inventory>()->Add("key", 1);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlEmptyInventory\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<Inventory>()->SlotsUsed() == 0);
-        if (!g_errs.empty()) { std::printf("  GlEmptyInventory reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlEmptyInventory: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 9); me->GetComponent<Inventory>()->Add("key", 1);
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlEmptyInventory\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<Inventory>()->SlotsUsed() == 0);
+                if (!g_errs.empty()) { std::printf("  GlEmptyInventory reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlEmptyInventory changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlEmptyInventory");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); ItemDatabase::Get().Clear(); ItemDatabase::Get().LoadText("okayitems 1\nitem \"crate\"\n  name \"Crate\"\n  weight 4\nend\n"); me->GetComponent<Inventory>()->Add("crate", 3);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCarriedWeight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 12.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetCarriedWeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetCarriedWeight again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); 
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCarriedWeight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCarriedWeight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetCarriedWeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetCarriedWeight gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetCarriedWeight");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); 
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetInventorySize\ndefault 2 0 6\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<Inventory>()->capacity == 6);
-        if (!g_errs.empty()) { std::printf("  GlSetInventorySize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetInventorySize: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); 
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetInventorySize\ndefault 2 0 6\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<Inventory>()->capacity == 6);
+                if (!g_errs.empty()) { std::printf("  GlSetInventorySize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetInventorySize changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetInventorySize");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Forward() * 5.0f);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsFacingObject\ndefault 2 0 Goal\ndefault 2 1 45\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsFacingObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsFacingObject again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Forward() * 5.0f);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsFacingObject\ndefault 2 0 Goal\ndefault 2 1 45\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsFacingObject\ndefault 2 0 Goal\ndefault 2 1 45\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsFacingObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsFacingObject gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsFacingObject");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Right() * 4.0f);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetAngleToObject\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 90.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetAngleToObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetAngleToObject again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Right() * 4.0f);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetAngleToObject\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetAngleToObject\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 90.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetAngleToObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetAngleToObject gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetAngleToObject");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Forward() * -3.0f);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectBehind\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsObjectBehind reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsObjectBehind again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Forward() * -3.0f);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectBehind\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectBehind\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsObjectBehind reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsObjectBehind gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsObjectBehind");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(0, 2, 0));
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectHigher\ndefault 2 0 Goal\ndefault 2 1 0.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsObjectHigher reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsObjectHigher again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(0, 2, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectHigher\ndefault 2 0 Goal\ndefault 2 1 0.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectHigher\ndefault 2 0 Goal\ndefault 2 1 0.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsObjectHigher reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsObjectHigher gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsObjectHigher");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(4, 0, 0));
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetDirectionToObject\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetDirectionToObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetDirectionToObject again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(0, 3, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetDirectionToObject\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetDirectionToObject\ndefault 2 0 Goal\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetDirectionToObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetDirectionToObject gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetDirectionToObject");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            for (int i = 0; i < 3; ++i) s.CreateGameObject("C")->tag = "coin"; s.CreateGameObject("Off")->tag = "coin"; s.Find("Off")->active = false;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountObjectsWithTag\ndefault 2 0 \"coin\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 3.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlCountObjectsWithTag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlCountObjectsWithTag again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        for (int i = 0; i < 3; ++i) s.CreateGameObject("C")->tag = "coin"; s.CreateGameObject("Off")->tag = "coin"; s.Find("Off")->active = false;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountObjectsWithTag\ndefault 2 0 \"coin\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountObjectsWithTag\ndefault 2 0 \"coin\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 3.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlCountObjectsWithTag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlCountObjectsWithTag gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlCountObjectsWithTag");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->tag = "enemy"; goal->transform->SetPosition(Vec3(3, 0, 0));
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsAnyTaggedInRange\ndefault 2 0 \"enemy\"\ndefault 2 1 4\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsAnyTaggedInRange reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsAnyTaggedInRange again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->tag = "enemy"; goal->transform->SetPosition(Vec3(3, 0, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsAnyTaggedInRange\ndefault 2 0 \"enemy\"\ndefault 2 1 4\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsAnyTaggedInRange\ndefault 2 0 \"enemy\"\ndefault 2 1 4\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsAnyTaggedInRange reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsAnyTaggedInRange gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsAnyTaggedInRange");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetAlertLevel\ndefault 2 0 true\ndefault 2 1 1\ndefault 2 2 0.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 2; ++i) s.Update(0.25f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.5f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetAlertLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetAlertLevel\ndefault 2 0 true\ndefault 2 1 1\ndefault 2 2 0.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 2; ++i) s.Update(0.25f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.5f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetAlertLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlGetAlertLevel");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            s.CreateGameObject("OnlyOne")->tag = "pick";
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlPickRandomTagged\ndefault 2 0 \"pick\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").IsObject()); CHECK(Var(v, "out").AsObjectId() == s.Find("OnlyOne")->InstanceId());
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlPickRandomTagged reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlPickRandomTagged again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        s.CreateGameObject("OnlyOne")->tag = "pick";
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlPickRandomTagged\ndefault 2 0 \"pick\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlPickRandomTagged\ndefault 2 0 \"pick\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").IsObject()); CHECK(Var(v, "out").AsObjectId() == s.Find("OnlyOne")->InstanceId());
-        if (!g_errs.empty()) { std::printf("  GlPickRandomTagged reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlPickRandomTagged gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlPickRandomTagged");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetCameraZoom\ndefault 2 0 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Camera>()->zoom, 2.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetCameraZoom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetCameraZoom: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetCameraZoom\ndefault 2 0 2\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Camera>()->zoom, 2.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetCameraZoom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetCameraZoom changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetCameraZoom");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>(); me->GetComponent<Camera>()->zoom = 1.5f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraZoom\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.5f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetCameraZoom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetCameraZoom again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>(); me->GetComponent<Camera>()->zoom = 1.5f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraZoom\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraZoom\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.5f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetCameraZoom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetCameraZoom gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetCameraZoom");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFieldOfView\ndefault 2 0 90\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Camera>()->fieldOfView, 90.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetFieldOfView reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetFieldOfView: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFieldOfView\ndefault 2 0 90\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Camera>()->fieldOfView, 90.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetFieldOfView reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetFieldOfView changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetFieldOfView");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>(); me->GetComponent<Camera>()->fieldOfView = 75.0f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFieldOfView\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 75.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetFieldOfView reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetFieldOfView again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>(); me->GetComponent<Camera>()->fieldOfView = 75.0f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFieldOfView\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFieldOfView\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 75.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetFieldOfView reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetFieldOfView gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetFieldOfView");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlShakeCamera\ndefault 2 0 0.4\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<Camera>()->ShakeTrauma() > 0.2f);
-        if (!g_errs.empty()) { std::printf("  GlShakeCamera reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlShakeCamera: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlShakeCamera\ndefault 2 0 0.4\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<Camera>()->ShakeTrauma() > 0.2f);
+                if (!g_errs.empty()) { std::printf("  GlShakeCamera reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlShakeCamera changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlShakeCamera");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlTiltCamera\ndefault 2 0 12\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Camera>()->dutch, 12.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlTiltCamera reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlTiltCamera: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlTiltCamera\ndefault 2 0 12\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Camera>()->dutch, 12.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlTiltCamera reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlTiltCamera changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlTiltCamera");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowNumberInText\ndefault 2 0 \"Score: \"\ndefault 2 1 12.5\ndefault 2 2 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<TextRenderer>()->text == "Score: 12.5");
-        if (!g_errs.empty()) { std::printf("  GlShowNumberInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlShowNumberInText: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowNumberInText\ndefault 2 0 \"Score: \"\ndefault 2 1 12.5\ndefault 2 2 1\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<TextRenderer>()->text == "Score: 12.5");
+                if (!g_errs.empty()) { std::printf("  GlShowNumberInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlShowNumberInText changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlShowNumberInText");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFormatNumber\ndefault 2 0 3.14159\ndefault 2 1 2\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsString() == "3.14");
-        if (!g_errs.empty()) { std::printf("  GlFormatNumber reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFormatNumber\ndefault 2 0 3.14159\ndefault 2 1 2\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsString() == "3.14");
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlFormatNumber reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlFormatNumber");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFormatClock\ndefault 2 0 125\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsString() == "02:05");
-        if (!g_errs.empty()) { std::printf("  GlFormatClock reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFormatClock\ndefault 2 0 125\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsString() == "02:05");
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlFormatClock reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlFormatClock");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFormatPercent\ndefault 2 0 0.75\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsString() == "75%");
-        if (!g_errs.empty()) { std::printf("  GlFormatPercent reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFormatPercent\ndefault 2 0 0.75\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsString() == "75%");
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlFormatPercent reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlFormatPercent");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetTextColor\ndefault 2 0 0.2\ndefault 2 1 0.4\ndefault 2 2 0.6\ndefault 2 3 0.8\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        { Color c = me->GetComponent<TextRenderer>()->color; CHECK_NEAR(c.r, 0.2f, 0.001f); CHECK_NEAR(c.b, 0.6f, 0.001f); CHECK_NEAR(c.a, 0.8f, 0.001f); }
-        if (!g_errs.empty()) { std::printf("  GlSetTextColor reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetTextColor: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetTextColor\ndefault 2 0 0.2\ndefault 2 1 0.4\ndefault 2 2 0.6\ndefault 2 3 0.8\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { Color c = me->GetComponent<TextRenderer>()->color; CHECK_NEAR(c.r, 0.2f, 0.001f); CHECK_NEAR(c.b, 0.6f, 0.001f); CHECK_NEAR(c.a, 0.8f, 0.001f); }
+                if (!g_errs.empty()) { std::printf("  GlSetTextColor reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetTextColor changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetTextColor");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>(); me->GetComponent<TextRenderer>()->text = "hello";
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetText\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsString() == "hello");
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetText again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>(); me->GetComponent<TextRenderer>()->text = "hello";
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetText\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetText\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsString() == "hello");
-        if (!g_errs.empty()) { std::printf("  GlGetText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetText gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetText");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>(); me->GetComponent<TextRenderer>()->text = "one";
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlAddLineToText\ndefault 2 0 \"two\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<TextRenderer>()->text == "one\ntwo");
-        if (!g_errs.empty()) { std::printf("  GlAddLineToText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlAddLineToText: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>(); me->GetComponent<TextRenderer>()->text = "one";
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlAddLineToText\ndefault 2 0 \"two\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<TextRenderer>()->text == "one\ntwo");
+                if (!g_errs.empty()) { std::printf("  GlAddLineToText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlAddLineToText changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlAddLineToText");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetTextSize\ndefault 2 0 3\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<TextRenderer>()->pixelSize, 3.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetTextSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetTextSize: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetTextSize\ndefault 2 0 3\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<TextRenderer>()->pixelSize, 3.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetTextSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetTextSize changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetTextSize");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetVolume\ndefault 2 0 0.4\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<AudioSource>()->volume, 0.4f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetVolume reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetVolume: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetVolume\ndefault 2 0 0.4\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<AudioSource>()->volume, 0.4f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetVolume reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetVolume changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetVolume");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>(); me->GetComponent<AudioSource>()->volume = 0.7f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetVolume\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.7f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetVolume reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetVolume again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>(); me->GetComponent<AudioSource>()->volume = 0.7f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetVolume\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetVolume\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.7f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetVolume reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetVolume gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetVolume");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetPitch\ndefault 2 0 1.5\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<AudioSource>()->pitch, 1.5f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetPitch reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetPitch: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetPitch\ndefault 2 0 1.5\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<AudioSource>()->pitch, 1.5f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetPitch reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetPitch changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetPitch");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsSoundPlaying\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<AudioSource>()->Play();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsSoundPlaying reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsSoundPlaying again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
+        
         auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsSoundPlaying\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
         s.Start();
-        me->GetComponent<AudioSource>()->Play();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsSoundPlaying reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsSoundPlaying gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsSoundPlaying");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlPauseSound\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        me->GetComponent<AudioSource>()->Play();
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(!me->GetComponent<AudioSource>()->IsPlaying());
-        if (!g_errs.empty()) { std::printf("  GlPauseSound reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlPauseSound: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlPauseSound\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<AudioSource>()->Play();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(!me->GetComponent<AudioSource>()->IsPlaying());
+                if (!g_errs.empty()) { std::printf("  GlPauseSound reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlPauseSound changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlPauseSound");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSoundLooping\ndefault 2 0 true\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<AudioSource>()->loop);
-        if (!g_errs.empty()) { std::printf("  GlSetSoundLooping reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetSoundLooping: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSoundLooping\ndefault 2 0 true\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<AudioSource>()->loop);
+                if (!g_errs.empty()) { std::printf("  GlSetSoundLooping reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetSoundLooping changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetSoundLooping");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->mass = 4.0f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetMass\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 4.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetMass reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetMass again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->mass = 4.0f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetMass\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetMass\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 4.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetMass reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetMass gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetMass");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetMass\ndefault 2 0 6\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->mass, 6.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetMass reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetMass: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetMass\ndefault 2 0 6\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->mass, 6.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetMass reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetMass changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetMass");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetGravityStrength\ndefault 2 0 0.2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->gravityScale, 0.2f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetGravityStrength reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetGravityStrength: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetGravityStrength\ndefault 2 0 0.2\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->gravityScale, 0.2f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetGravityStrength reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetGravityStrength changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetGravityStrength");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetBounciness\ndefault 2 0 0.8\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->bounciness, 0.8f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetBounciness reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetBounciness: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetBounciness\ndefault 2 0 0.8\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->bounciness, 0.8f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetBounciness reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetBounciness changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetBounciness");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetAirDrag\ndefault 2 0 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->drag, 2.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetAirDrag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetAirDrag: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetAirDrag\ndefault 2 0 2\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->drag, 2.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetAirDrag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetAirDrag changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetAirDrag");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLockRotation\ndefault 2 0 false\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(!me->GetComponent<Rigidbody3D>()->freezeRotation);
-        if (!g_errs.empty()) { std::printf("  GlLockRotation reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlLockRotation: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlLockRotation\ndefault 2 0 false\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(!me->GetComponent<Rigidbody3D>()->freezeRotation);
+                if (!g_errs.empty()) { std::printf("  GlLockRotation reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlLockRotation changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlLockRotation");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSpinAtSpeed\ndefault 2 0 180\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->angularVelocity.y, 3.14159f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSpinAtSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSpinAtSpeed: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSpinAtSpeed\ndefault 2 0 180\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->angularVelocity.y, 3.14159f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSpinAtSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSpinAtSpeed changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSpinAtSpeed");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->angularVelocity = Vec3(0, 1.0f, 0);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSpinSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 57.2958f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetSpinSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetSpinSpeed again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->angularVelocity = Vec3(0, 1.0f, 0);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSpinSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSpinSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 57.2958f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetSpinSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetSpinSpeed gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetSpinSpeed");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlPulseSize\ndefault 2 0 1.5707963\ndefault 2 1 0.2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(1.0f);
-        CHECK_NEAR(me->transform->localScale.x, 1.2f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlPulseSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlPulseSize: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlPulseSize\ndefault 2 0 1.5707963\ndefault 2 1 0.2\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(1.0f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->localScale.x, 1.2f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlPulseSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlPulseSize changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlPulseSize");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlSwayTurn\ndefault 2 0 1.5707963\ndefault 2 1 30\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(1.0f);
-        CHECK_NEAR(std::fabs(me->transform->EulerAngles().y), 30.0f, 0.5f);
-        if (!g_errs.empty()) { std::printf("  GlSwayTurn reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSwayTurn: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlSwayTurn\ndefault 2 0 1.5707963\ndefault 2 1 30\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(1.0f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(std::fabs(me->transform->EulerAngles().y), 30.0f, 0.5f);
+                if (!g_errs.empty()) { std::printf("  GlSwayTurn reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSwayTurn changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSwayTurn");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<SpriteRenderer>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlFadeSpriteTo\ndefault 2 0 0\ndefault 2 1 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK_NEAR(me->GetComponent<SpriteRenderer>()->color.a, 0.5f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlFadeSpriteTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFadeSpriteTo: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<SpriteRenderer>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlFadeSpriteTo\ndefault 2 0 0\ndefault 2 1 1\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<SpriteRenderer>()->color.a, 0.5f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlFadeSpriteTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFadeSpriteTo changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFadeSpriteTo");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<SpriteRenderer>()->color.a = 0.25f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSpriteOpacity\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.25f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetSpriteOpacity reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetSpriteOpacity again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<SpriteRenderer>()->color.a = 0.25f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSpriteOpacity\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSpriteOpacity\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.25f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetSpriteOpacity reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetSpriteOpacity gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetSpriteOpacity");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsQuestActive\ndefault 2 0 \"q1\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsQuestActive reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsQuestActive again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsQuestActive\ndefault 2 0 \"q1\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsQuestActive\ndefault 2 0 \"q1\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsQuestActive reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsQuestActive gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsQuestActive");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1"); log->CompleteQuest("q1");
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsQuestCompleted\ndefault 2 0 \"q1\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsQuestCompleted reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsQuestCompleted again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1"); log->CompleteQuest("q1");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsQuestCompleted\ndefault 2 0 \"q1\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsQuestCompleted\ndefault 2 0 \"q1\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsQuestCompleted reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsQuestCompleted gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsQuestCompleted");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCompleteQuest\ndefault 2 0 \"q1\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(s.Find("Quests")->GetComponent<QuestLog>()->IsCompleted("q1"));
-        if (!g_errs.empty()) { std::printf("  GlCompleteQuest reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlCompleteQuest: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlCompleteQuest\ndefault 2 0 \"q1\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Quests")->GetComponent<QuestLog>()->IsCompleted("q1"));
+                if (!g_errs.empty()) { std::printf("  GlCompleteQuest reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlCompleteQuest changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlCompleteQuest");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFailQuest\ndefault 2 0 \"q1\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(s.Find("Quests")->GetComponent<QuestLog>()->Status("q1") == QuestStatus::Failed);
-        if (!g_errs.empty()) { std::printf("  GlFailQuest reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFailQuest: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlFailQuest\ndefault 2 0 \"q1\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Quests")->GetComponent<QuestLog>()->Status("q1") == QuestStatus::Failed);
+                if (!g_errs.empty()) { std::printf("  GlFailQuest reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFailQuest changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFailQuest");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlResetQuest\ndefault 2 0 \"q1\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(s.Find("Quests")->GetComponent<QuestLog>()->Status("q1") == QuestStatus::Inactive);
-        if (!g_errs.empty()) { std::printf("  GlResetQuest reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlResetQuest: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlResetQuest\ndefault 2 0 \"q1\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Quests")->GetComponent<QuestLog>()->Status("q1") == QuestStatus::Inactive);
+                if (!g_errs.empty()) { std::printf("  GlResetQuest reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlResetQuest changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlResetQuest");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlAddQuestProgress\ndefault 2 0 \"q1\"\ndefault 2 1 0\ndefault 2 2 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(s.Find("Quests")->GetComponent<QuestLog>()->Progress("q1", 0) == 2);
-        if (!g_errs.empty()) { std::printf("  GlAddQuestProgress reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlAddQuestProgress: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlAddQuestProgress\ndefault 2 0 \"q1\"\ndefault 2 1 0\ndefault 2 2 2\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Quests")->GetComponent<QuestLog>()->Progress("q1", 0) == 2);
+                if (!g_errs.empty()) { std::printf("  GlAddQuestProgress reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlAddQuestProgress changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlAddQuestProgress");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1"); log->AddProgress("q1", 0, 2);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetQuestProgress\ndefault 2 0 \"q1\"\ndefault 2 1 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 2.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetQuestProgress reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetQuestProgress again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1"); log->AddProgress("q1", 0, 2);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetQuestProgress\ndefault 2 0 \"q1\"\ndefault 2 1 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetQuestProgress\ndefault 2 0 \"q1\"\ndefault 2 1 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 2.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetQuestProgress reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetQuestProgress gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetQuestProgress");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1"); log->AddProgress("q1", 0, 3);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectiveDone\ndefault 2 0 \"q1\"\ndefault 2 1 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsObjectiveDone reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsObjectiveDone again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1"); log->AddProgress("q1", 0, 3);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectiveDone\ndefault 2 0 \"q1\"\ndefault 2 1 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsObjectiveDone\ndefault 2 0 \"q1\"\ndefault 2 1 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsObjectiveDone reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsObjectiveDone gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsObjectiveDone");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountActiveQuests\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlCountActiveQuests reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlCountActiveQuests again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; QuestDef qd; qd.id = "q1"; qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); log->StartQuest("q1");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountActiveQuests\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountActiveQuests\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlCountActiveQuests reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlCountActiveQuests gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlCountActiveQuests");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(4, 1, -2));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSavePosition\ndefault 2 0 \"spot\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        { Vec3 p = Prefs::GetVec3("vs.position.spot"); CHECK_NEAR(p.x, 4.0f, 0.001f); CHECK_NEAR(p.z, -2.0f, 0.001f); Prefs::Delete("vs.position.spot"); }
-        if (!g_errs.empty()) { std::printf("  GlSavePosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSavePosition: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(4, 1, -2));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSavePosition\ndefault 2 0 \"spot\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { Vec3 p = Prefs::GetVec3("vs.position.spot"); CHECK_NEAR(p.x, 4.0f, 0.001f); CHECK_NEAR(p.z, -2.0f, 0.001f); Prefs::Delete("vs.position.spot"); }
+                if (!g_errs.empty()) { std::printf("  GlSavePosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSavePosition changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSavePosition");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        Prefs::SetVec3("vs.position.back", Vec3(7, 0, 7));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLoadPosition\ndefault 2 0 \"back\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->Position().x, 7.0f, 0.001f); Prefs::Delete("vs.position.back");
-        if (!g_errs.empty()) { std::printf("  GlLoadPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlLoadPosition: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Prefs::SetVec3("vs.position.back", Vec3(7, 0, 7));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlLoadPosition\ndefault 2 0 \"back\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().x, 7.0f, 0.001f); Prefs::Delete("vs.position.back");
+                if (!g_errs.empty()) { std::printf("  GlLoadPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlLoadPosition changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlLoadPosition");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Prefs::SetVec3("vs.position.known", Vec3(1, 2, 3));
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasSavedPosition\ndefault 2 0 \"known\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlHasSavedPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlHasSavedPosition again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        Prefs::SetVec3("vs.position.known", Vec3(1, 2, 3));
+        Prefs::Delete("vs.position.known");
         auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasSavedPosition\ndefault 2 0 \"known\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
         s.Start();
-        
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlHasSavedPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlHasSavedPosition gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlHasSavedPosition");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        Prefs::SetVec3("vs.position.gone", Vec3(1, 2, 3));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlForgetSavedPosition\ndefault 2 0 \"gone\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(!Prefs::Has("vs.position.gone"));
-        if (!g_errs.empty()) { std::printf("  GlForgetSavedPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlForgetSavedPosition: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Prefs::SetVec3("vs.position.gone", Vec3(1, 2, 3));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlForgetSavedPosition\ndefault 2 0 \"gone\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(!Prefs::Has("vs.position.gone"));
+                if (!g_errs.empty()) { std::printf("  GlForgetSavedPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlForgetSavedPosition changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlForgetSavedPosition");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        for (int i = 0; i < 3; ++i) s.CreateGameObject("Crate" + std::to_string(i))->tag = "crate";
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlDestroyAllWithTag\ndefault 2 0 \"crate\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        s.Update(0.0f);
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(s.FindGameObjectsWithTag("crate").empty());
-        if (!g_errs.empty()) { std::printf("  GlDestroyAllWithTag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlDestroyAllWithTag: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            for (int i = 0; i < 3; ++i) s.CreateGameObject("Crate" + std::to_string(i))->tag = "crate";
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlDestroyAllWithTag\ndefault 2 0 \"crate\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            s.Update(0.0f);
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.FindGameObjectsWithTag("crate").empty());
+                if (!g_errs.empty()) { std::printf("  GlDestroyAllWithTag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlDestroyAllWithTag changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlDestroyAllWithTag");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        for (int i = 0; i < 3; ++i) s.CreateGameObject("Crate" + std::to_string(i))->tag = "crate";
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHideAllWithTag\ndefault 2 0 \"crate\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(!s.Find("Crate0")->active); CHECK(!s.Find("Crate2")->active);
-        if (!g_errs.empty()) { std::printf("  GlHideAllWithTag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlHideAllWithTag: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            for (int i = 0; i < 3; ++i) s.CreateGameObject("Crate" + std::to_string(i))->tag = "crate";
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlHideAllWithTag\ndefault 2 0 \"crate\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(!s.Find("Crate0")->active); CHECK(!s.Find("Crate2")->active);
+                if (!g_errs.empty()) { std::printf("  GlHideAllWithTag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlHideAllWithTag changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlHideAllWithTag");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        for (int i = 0; i < 3; ++i) s.CreateGameObject("Crate" + std::to_string(i))->tag = "crate"; s.Find("Crate1")->active = false;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowAllWithTag\ndefault 2 0 \"crate\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(s.Find("Crate1")->active);
-        if (!g_errs.empty()) { std::printf("  GlShowAllWithTag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlShowAllWithTag: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            for (int i = 0; i < 3; ++i) s.CreateGameObject("Crate" + std::to_string(i))->tag = "crate"; s.Find("Crate1")->active = false;
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowAllWithTag\ndefault 2 0 \"crate\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Crate1")->active);
+                if (!g_errs.empty()) { std::printf("  GlShowAllWithTag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlShowAllWithTag changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlShowAllWithTag");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetTagOnObject\ndefault 2 0 \"loot\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(std::string(me->tag) == "loot");
-        if (!g_errs.empty()) { std::printf("  GlSetTagOnObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetTagOnObject: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetTagOnObject\ndefault 2 0 \"loot\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(std::string(me->tag) == "loot");
+                if (!g_errs.empty()) { std::printf("  GlSetTagOnObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetTagOnObject changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetTagOnObject");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSlowMotion\ndefault 2 0 0.25\ndefault 2 1 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Time::HitStopActive()); Time::CancelHitStop();
-        if (!g_errs.empty()) { std::printf("  GlSlowMotion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSlowMotion: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSlowMotion\ndefault 2 0 0.25\ndefault 2 1 2\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(Time::HitStopActive()); Time::CancelHitStop();
+                if (!g_errs.empty()) { std::printf("  GlSlowMotion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSlowMotion changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSlowMotion");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        Time::SetTimeScale(0.5f);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlResetGameSpeed\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Time::BaseTimeScale(), 1.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlResetGameSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlResetGameSpeed: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Time::SetTimeScale(0.5f);
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlResetGameSpeed\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(Time::BaseTimeScale(), 1.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlResetGameSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlResetGameSpeed changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlResetGameSpeed");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Time::SetTimeScale(1.0f); Time::CancelHitStop(); Time::MarkSessionStart(); Time::Step(3.0f);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSessionTime\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 3.0f, 0.1f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetSessionTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetSessionTime again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        
+        Time::MarkSessionStart();
         auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSessionTime\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
         s.Start();
-        
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsFloat() >= 0.0f);
-        if (!g_errs.empty()) { std::printf("  GlGetSessionTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetSessionTime gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetSessionTime");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Time::SetTimeScale(1.0f); Time::CancelHitStop(); Time::Step(1.5f);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsEveryOtherInterval\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == ((((long long)std::floor(Time::ElapsedTime() / 1.0f)) % 2) == 0));
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsEveryOtherInterval reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsEveryOtherInterval again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        
+        Time::SetTimeScale(1.0f); Time::CancelHitStop(); Time::Step(2.5f);
         auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsEveryOtherInterval\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
         s.Start();
-        
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == ((((long long)std::floor(Time::ElapsedTime() / 1.0f)) % 2) == 0));
-        if (!g_errs.empty()) { std::printf("  GlIsEveryOtherInterval reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsEveryOtherInterval gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsEveryOtherInterval");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Input::FeedKeys({'d'});
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetHorizontalInput\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetHorizontalInput reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetHorizontalInput again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        Input::FeedKeys({'d'});
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetHorizontalInput\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetHorizontalInput\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetHorizontalInput reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetHorizontalInput gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetHorizontalInput");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Input::FeedKeys({'s'});
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetVerticalInput\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), -1.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetVerticalInput reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetVerticalInput again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        Input::FeedKeys({'s'});
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetVerticalInput\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetVerticalInput\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), -1.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetVerticalInput reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetVerticalInput gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetVerticalInput");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Input::FeedKeys({Input::KeyShift});
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsSprinting\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsSprinting reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsSprinting again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        Input::FeedKeys({Input::KeyShift});
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsSprinting\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsSprinting\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsSprinting reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsSprinting gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsSprinting");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Input::FeedKeys({Input::KeyCtrl});
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsCrouching\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsCrouching reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsCrouching again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        Input::FeedKeys({Input::KeyCtrl});
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsCrouching\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsCrouching\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsCrouching reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsCrouching gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsCrouching");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Input::FeedKeys({'q'});
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsAnyKeyHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsAnyKeyHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsAnyKeyHeld again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        Input::FeedKeys({'q'});
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsAnyKeyHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsAnyKeyHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsAnyKeyHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsAnyKeyHeld gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsAnyKeyHeld");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveToPosition\ndefault 2 0 10\ndefault 2 1 0\ndefault 2 2 0\ndefault 2 3 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(1.0f);
-        CHECK_NEAR(me->transform->Position().x, 2.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlMoveToPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlMoveToPosition: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveToPosition\ndefault 2 0 10\ndefault 2 1 0\ndefault 2 2 0\ndefault 2 3 2\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(1.0f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().x, 2.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlMoveToPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlMoveToPosition changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlMoveToPosition");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLookAtPosition\ndefault 2 0 10\ndefault 2 1 0\ndefault 2 2 0\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->transform->Forward().x > 0.95f);
-        if (!g_errs.empty()) { std::printf("  GlLookAtPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlLookAtPosition: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlLookAtPosition\ndefault 2 0 10\ndefault 2 1 0\ndefault 2 2 0\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->transform->Forward().x > 0.95f);
+                if (!g_errs.empty()) { std::printf("  GlLookAtPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlLookAtPosition changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlLookAtPosition");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetDistanceToPosition\ndefault 2 0 3\ndefault 2 1 4\ndefault 2 2 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 5.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetDistanceToPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetDistanceToPosition\ndefault 2 0 3\ndefault 2 1 4\ndefault 2 2 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 5.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetDistanceToPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlGetDistanceToPosition");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsNearPosition\ndefault 2 0 1\ndefault 2 1 0\ndefault 2 2 0\ndefault 2 3 2\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsNearPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsNearPosition\ndefault 2 0 1\ndefault 2 1 0\ndefault 2 2 0\ndefault 2 3 2\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsNearPosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlIsNearPosition");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(0, 0.5f, 0));
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHop\ndefault 2 0 1\ndefault 2 1 1.5707963\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(1.0f);
-        CHECK_NEAR(me->transform->Position().y, 1.5f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlHop reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlHop: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(0, 0.5f, 0));
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHop\ndefault 2 0 1\ndefault 2 1 1.5707963\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(1.0f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().y, 1.5f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlHop reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlHop changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlHop");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveBackAndForth\ndefault 2 0 3\ndefault 2 1 1.5707963\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(1.0f);
-        CHECK_NEAR(me->transform->Position().x, 3.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlMoveBackAndForth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlMoveBackAndForth: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveBackAndForth\ndefault 2 0 3\ndefault 2 1 1.5707963\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(1.0f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().x, 3.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlMoveBackAndForth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlMoveBackAndForth changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlMoveBackAndForth");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlShakePosition\ndefault 2 0 0.5\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 3; ++i) s.Update(0.1f);
-        CHECK(std::fabs(me->transform->Position().x) <= 0.5f + 1e-4f); CHECK(std::fabs(me->transform->Position().x) + std::fabs(me->transform->Position().z) > 0.0f);
-        if (!g_errs.empty()) { std::printf("  GlShakePosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlShakePosition: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlShakePosition\ndefault 2 0 0.5\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 3; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(std::fabs(me->transform->Position().x) <= 0.5f + 1e-4f); CHECK(std::fabs(me->transform->Position().x) + std::fabs(me->transform->Position().z) > 0.0f);
+                if (!g_errs.empty()) { std::printf("  GlShakePosition reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlShakePosition changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlShakePosition");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(1, -5, 2));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlKeepAboveHeight\ndefault 2 0 0\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->Position().y, 0.0f, 0.001f); CHECK_NEAR(me->transform->Position().x, 1.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlKeepAboveHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlKeepAboveHeight: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(1, -5, 2));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlKeepAboveHeight\ndefault 2 0 0\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().y, 0.0f, 0.001f); CHECK_NEAR(me->transform->Position().x, 1.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlKeepAboveHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlKeepAboveHeight changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlKeepAboveHeight");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(0, 9, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLimitHeight\ndefault 2 0 0\ndefault 2 1 4\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->Position().y, 4.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlLimitHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlLimitHeight: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(0, 9, 0));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlLimitHeight\ndefault 2 0 0\ndefault 2 1 4\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().y, 4.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlLimitHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlLimitHeight changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlLimitHeight");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetEulerAngles(Vec3(20, 70, 10));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlResetRotation\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->EulerAngles().y, 0.0f, 0.01f); CHECK_NEAR(me->transform->EulerAngles().x, 0.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlResetRotation reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlResetRotation: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetEulerAngles(Vec3(20, 70, 10));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlResetRotation\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->EulerAngles().y, 0.0f, 0.01f); CHECK_NEAR(me->transform->EulerAngles().x, 0.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlResetRotation reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlResetRotation changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlResetRotation");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSizeEvenly\ndefault 2 0 2.5\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->localScale.y, 2.5f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetSizeEvenly reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetSizeEvenly: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSizeEvenly\ndefault 2 0 2.5\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->localScale.y, 2.5f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetSizeEvenly reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetSizeEvenly changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetSizeEvenly");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFlipSide\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->localScale.x, -1.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlFlipSide reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFlipSide: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlFlipSide\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->localScale.x, -1.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlFlipSide reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFlipSide changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFlipSide");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(1, 2, 3));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCopyPositionFrom\ndefault 2 0 Goal\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->Position().y, 2.0f, 0.001f); CHECK_NEAR(me->transform->Position().z, 3.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlCopyPositionFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlCopyPositionFrom: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(1, 2, 3));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlCopyPositionFrom\ndefault 2 0 Goal\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().y, 2.0f, 0.001f); CHECK_NEAR(me->transform->Position().z, 3.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlCopyPositionFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlCopyPositionFrom changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlCopyPositionFrom");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(0, 0, 10));
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlStayAtDistanceFrom\ndefault 2 0 Goal\ndefault 2 1 3\ndefault 2 2 4\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(1.0f);
-        CHECK_NEAR(me->transform->Position().z, 4.0f, 0.05f);
-        if (!g_errs.empty()) { std::printf("  GlStayAtDistanceFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlStayAtDistanceFrom: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(0, 0, 10));
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlStayAtDistanceFrom\ndefault 2 0 Goal\ndefault 2 1 3\ndefault 2 2 4\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(1.0f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().z, 4.0f, 0.05f);
+                if (!g_errs.empty()) { std::printf("  GlStayAtDistanceFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlStayAtDistanceFrom changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlStayAtDistanceFrom");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(6, 0, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFaceObject\ndefault 2 0 Goal\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->transform->Forward().x > 0.95f);
-        if (!g_errs.empty()) { std::printf("  GlFaceObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFaceObject: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(6, 0, 0));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlFaceObject\ndefault 2 0 Goal\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->transform->Forward().x > 0.95f);
+                if (!g_errs.empty()) { std::printf("  GlFaceObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFaceObject changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFaceObject");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Right() * 6.0f);
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlTurnTowardObject\ndefault 2 0 Goal\ndefault 2 1 90\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        { Vec3 dd = goal->transform->Position() - me->transform->Position(); dd = dd * (1.0f / dd.Magnitude()); Vec3 ff = me->transform->Forward(); float c = ff.x * dd.x + ff.y * dd.y + ff.z * dd.z; CHECK_NEAR(std::acos(std::min(1.0f, std::max(-1.0f, c))) * 57.2957795f, 45.0f, 1.0f); }
-        if (!g_errs.empty()) { std::printf("  GlTurnTowardObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlTurnTowardObject: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(me->transform->Right() * 6.0f);
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlTurnTowardObject\ndefault 2 0 Goal\ndefault 2 1 90\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                { Vec3 dd = goal->transform->Position() - me->transform->Position(); dd = dd * (1.0f / dd.Magnitude()); Vec3 ff = me->transform->Forward(); float c = ff.x * dd.x + ff.y * dd.y + ff.z * dd.z; CHECK_NEAR(std::acos(std::min(1.0f, std::max(-1.0f, c))) * 57.2957795f, 45.0f, 1.0f); }
+                if (!g_errs.empty()) { std::printf("  GlTurnTowardObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlTurnTowardObject changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlTurnTowardObject");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlJump\ndefault 2 0 6\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.y, 6.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlJump reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlJump: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlJump\ndefault 2 0 6\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.y, 6.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlJump reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlJump changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlJump");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, -3, 0);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsFalling\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsFalling reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsFalling again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, -3, 0);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsFalling\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsFalling\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsFalling reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsFalling gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsFalling");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, 3, 0);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRising\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsRising reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsRising again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, 3, 0);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRising\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRising\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsRising reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsRising gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsRising");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(1, -2.5f, 1);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetVerticalSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), -2.5f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetVerticalSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetVerticalSpeed again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(1, -2.5f, 1);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetVerticalSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetVerticalSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), -2.5f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetVerticalSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetVerticalSpeed gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetVerticalSpeed");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(3, 9, 4);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFlatSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 5.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetFlatSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetFlatSpeed again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(3, 9, 4);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFlatSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFlatSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 5.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetFlatSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetFlatSpeed gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetFlatSpeed");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(6, 0, 8);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLimitSpeed\ndefault 2 0 5\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.Magnitude(), 5.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlLimitSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlLimitSpeed: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(6, 0, 8);
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlLimitSpeed\ndefault 2 0 5\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.Magnitude(), 5.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlLimitSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlLimitSpeed changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlLimitSpeed");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, 7, 0);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFlatSpeed\ndefault 2 0 2\ndefault 2 1 3\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.y, 7.0f, 0.001f); CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.z, 3.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetFlatSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetFlatSpeed: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, 7, 0);
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFlatSpeed\ndefault 2 0 2\ndefault 2 1 3\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.y, 7.0f, 0.001f); CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.z, 3.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetFlatSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetFlatSpeed changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetFlatSpeed");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHealPortion\ndefault 2 0 0.5\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        me->GetComponent<HealthStat>()->health = 10;
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 60.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlHealPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlHealPortion: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlHealPortion\ndefault 2 0 0.5\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<HealthStat>()->health = 10;
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->health, 60.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlHealPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlHealPortion changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlHealPortion");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlDamagePortion\ndefault 2 0 0.3\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 70.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlDamagePortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlDamagePortion: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlDamagePortion\ndefault 2 0 0.3\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->health, 70.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlDamagePortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlDamagePortion changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlDamagePortion");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetHealthPortion\ndefault 2 0 0.4\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 40.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetHealthPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetHealthPortion: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetHealthPortion\ndefault 2 0 0.4\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->health, 40.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetHealthPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetHealthPortion changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetHealthPortion");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->AddComponent<HealthStat>()->playDeathAnim = false;
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlReviveWithHealth\ndefault 2 0 0.5\ndefault 2 1 Goal\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        goal->GetComponent<HealthStat>()->Damage(1000.0f); CHECK(goal->GetComponent<HealthStat>()->IsDead());
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(!goal->GetComponent<HealthStat>()->IsDead()); CHECK_NEAR(goal->GetComponent<HealthStat>()->health, 50.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlReviveWithHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlReviveWithHealth: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->AddComponent<HealthStat>()->playDeathAnim = false;
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlReviveWithHealth\ndefault 2 0 0.5\ndefault 2 1 Goal\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            goal->GetComponent<HealthStat>()->Damage(1000.0f); CHECK(goal->GetComponent<HealthStat>()->IsDead());
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(!goal->GetComponent<HealthStat>()->IsDead()); CHECK_NEAR(goal->GetComponent<HealthStat>()->health, 50.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlReviveWithHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlReviveWithHealth changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlReviveWithHealth");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCriticalDamage\ndefault 2 0 10\ndefault 2 1 true\ndefault 2 2 2.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 25.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlCriticalDamage reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCriticalDamage\ndefault 2 0 10\ndefault 2 1 true\ndefault 2 2 2.5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 25.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlCriticalDamage reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlCriticalDamage");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlDamageFalloff\ndefault 2 0 100\ndefault 2 1 15\ndefault 2 2 10\ndefault 2 3 20\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 50.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlDamageFalloff reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlDamageFalloff\ndefault 2 0 100\ndefault 2 1 15\ndefault 2 2 10\ndefault 2 3 20\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 50.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlDamageFalloff reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlDamageFalloff");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); 
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInventoryEmpty\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsInventoryEmpty reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsInventoryEmpty again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); 
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInventoryEmpty\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsInventoryEmpty\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsInventoryEmpty reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsInventoryEmpty gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsInventoryEmpty");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlStacksNeeded\ndefault 2 0 25\ndefault 2 1 10\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 3.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlStacksNeeded reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlStacksNeeded\ndefault 2 0 25\ndefault 2 1 10\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 3.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlStacksNeeded reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlStacksNeeded");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); 
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlAddItemIfRoom\ndefault 2 0 \"coin\"\ndefault 2 1 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<Inventory>()->Count("coin") == 2);
-        if (!g_errs.empty()) { std::printf("  GlAddItemIfRoom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlAddItemIfRoom: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); 
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlAddItemIfRoom\ndefault 2 0 \"coin\"\ndefault 2 1 2\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<Inventory>()->Count("coin") == 2);
+                if (!g_errs.empty()) { std::printf("  GlAddItemIfRoom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlAddItemIfRoom changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlAddItemIfRoom");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 3);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlTakeOneItem\ndefault 2 0 \"coin\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<Inventory>()->Count("coin") == 2);
-        if (!g_errs.empty()) { std::printf("  GlTakeOneItem reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlTakeOneItem: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 3);
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlTakeOneItem\ndefault 2 0 \"coin\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<Inventory>()->Count("coin") == 2);
+                if (!g_errs.empty()) { std::printf("  GlTakeOneItem reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlTakeOneItem changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlTakeOneItem");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLevelFromExperience\ndefault 2 0 400\ndefault 2 1 100\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 3.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlLevelFromExperience reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLevelFromExperience\ndefault 2 0 400\ndefault 2 1 100\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 3.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlLevelFromExperience reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlLevelFromExperience");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlExperienceForLevel\ndefault 2 0 3\ndefault 2 1 100\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 400.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlExperienceForLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlExperienceForLevel\ndefault 2 0 3\ndefault 2 1 100\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 400.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlExperienceForLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlExperienceForLevel");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlExperienceToNextLevel\ndefault 2 0 250\ndefault 2 1 100\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 150.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlExperienceToNextLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlExperienceToNextLevel\ndefault 2 0 250\ndefault 2 1 100\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 150.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlExperienceToNextLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlExperienceToNextLevel");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGrowByLevel\ndefault 2 0 10\ndefault 2 1 0.1\ndefault 2 2 3\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 12.1f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGrowByLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGrowByLevel\ndefault 2 0 10\ndefault 2 1 0.1\ndefault 2 2 3\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 12.1f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGrowByLevel reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlGrowByLevel");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlPriceWithDiscount\ndefault 2 0 80\ndefault 2 1 0.25\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 60.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlPriceWithDiscount reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlPriceWithDiscount\ndefault 2 0 80\ndefault 2 1 0.25\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 60.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlPriceWithDiscount reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlPriceWithDiscount");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCooldownPortion\ndefault 2 0 3\ndefault 2 1 12\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.75f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlCooldownPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCooldownPortion\ndefault 2 0 3\ndefault 2 1 12\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.75f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlCooldownPortion reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlCooldownPortion");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlRollChance\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlRollChance reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlRollChance\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlRollChance reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlRollChance");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlTypewriterText\ndefault 2 0 \"Hello\"\ndefault 2 1 4\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK(me->GetComponent<TextRenderer>()->text == "He");
-        if (!g_errs.empty()) { std::printf("  GlTypewriterText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlTypewriterText: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlTypewriterText\ndefault 2 0 \"Hello\"\ndefault 2 1 4\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<TextRenderer>()->text == "He");
+                if (!g_errs.empty()) { std::printf("  GlTypewriterText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlTypewriterText changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlTypewriterText");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>(); GameObject* goal = s.CreateGameObject("Goal"); goal->AddComponent<HealthStat>()->maxHealth = 80;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowHealthInText\ndefault 2 0 \"HP: \"\ndefault 2 1 Goal\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<TextRenderer>()->text == "HP: 80");
-        if (!g_errs.empty()) { std::printf("  GlShowHealthInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlShowHealthInText: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>(); GameObject* goal = s.CreateGameObject("Goal"); goal->AddComponent<HealthStat>()->maxHealth = 80;
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowHealthInText\ndefault 2 0 \"HP: \"\ndefault 2 1 Goal\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<TextRenderer>()->text == "HP: 80");
+                if (!g_errs.empty()) { std::printf("  GlShowHealthInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlShowHealthInText changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlShowHealthInText");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowSessionTimeInText\ndefault 2 0 \"Time: \"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<TextRenderer>()->text.rfind("Time: ", 0) == 0);
-        if (!g_errs.empty()) { std::printf("  GlShowSessionTimeInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlShowSessionTimeInText: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowSessionTimeInText\ndefault 2 0 \"Time: \"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<TextRenderer>()->text.rfind("Time: ", 0) == 0);
+                if (!g_errs.empty()) { std::printf("  GlShowSessionTimeInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlShowSessionTimeInText changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlShowSessionTimeInText");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>(); me->GetComponent<TextRenderer>()->text = "gone";
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlClearText\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<TextRenderer>()->text.empty());
-        if (!g_errs.empty()) { std::printf("  GlClearText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlClearText: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>(); me->GetComponent<TextRenderer>()->text = "gone";
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlClearText\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<TextRenderer>()->text.empty());
+                if (!g_errs.empty()) { std::printf("  GlClearText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlClearText changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlClearText");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlFadeVolumeTo\ndefault 2 0 0\ndefault 2 1 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK_NEAR(me->GetComponent<AudioSource>()->volume, 0.5f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlFadeVolumeTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFadeVolumeTo: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlFadeVolumeTo\ndefault 2 0 0\ndefault 2 1 1\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<AudioSource>()->volume, 0.5f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlFadeVolumeTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFadeVolumeTo changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFadeVolumeTo");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlRandomizePitch\ndefault 2 0 1.3\ndefault 2 1 1.3\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<AudioSource>()->pitch, 1.3f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlRandomizePitch reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlRandomizePitch: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlRandomizePitch\ndefault 2 0 1.3\ndefault 2 1 1.3\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<AudioSource>()->pitch, 1.3f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlRandomizePitch reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlRandomizePitch changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlRandomizePitch");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlMuteSound\ndefault 2 0 true\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<AudioSource>()->volume, 0.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlMuteSound reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlMuteSound: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlMuteSound\ndefault 2 0 true\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<AudioSource>()->volume, 0.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlMuteSound reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlMuteSound changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlMuteSound");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); me->transform->SetPosition(Vec3(0, 5, -8));
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlCameraFollowObject\ndefault 2 0 Goal\ndefault 2 1 100\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(1.0f);
-        goal->transform->SetPosition(Vec3(10, 0, 0)); s.Update(1.0f); CHECK_NEAR(me->transform->Position().x, 10.0f, 0.05f); CHECK_NEAR(me->transform->Position().y, 5.0f, 0.05f);
-        if (!g_errs.empty()) { std::printf("  GlCameraFollowObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlCameraFollowObject: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); me->transform->SetPosition(Vec3(0, 5, -8));
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlCameraFollowObject\ndefault 2 0 Goal\ndefault 2 1 100\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(1.0f);
+            goal->transform->SetPosition(Vec3(10, 0, 0)); s.Update(1.0f);
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().x, 10.0f, 0.05f); CHECK_NEAR(me->transform->Position().y, 5.0f, 0.05f);
+                if (!g_errs.empty()) { std::printf("  GlCameraFollowObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlCameraFollowObject changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlCameraFollowObject");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(8, 0, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCameraLookAtObject\ndefault 2 0 Goal\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->transform->Forward().x > 0.95f);
-        if (!g_errs.empty()) { std::printf("  GlCameraLookAtObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlCameraLookAtObject: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(8, 0, 0));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlCameraLookAtObject\ndefault 2 0 Goal\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->transform->Forward().x > 0.95f);
+                if (!g_errs.empty()) { std::printf("  GlCameraLookAtObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlCameraLookAtObject changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlCameraLookAtObject");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlZoomSmoothlyTo\ndefault 2 0 2\ndefault 2 1 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK_NEAR(me->GetComponent<Camera>()->zoom, 1.5f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlZoomSmoothlyTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlZoomSmoothlyTo: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlZoomSmoothlyTo\ndefault 2 0 2\ndefault 2 1 1\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Camera>()->zoom, 1.5f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlZoomSmoothlyTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlZoomSmoothlyTo changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlZoomSmoothlyTo");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            for (int i = 0; i < 3; ++i) { GameObject* e = s.CreateGameObject("E" + std::to_string(i)); e->tag = "enemy"; e->transform->SetPosition(Vec3(2.0f * i + 1.5f, 0, 0)); }
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountTaggedInRange\ndefault 2 0 \"enemy\"\ndefault 2 1 5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 2.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlCountTaggedInRange reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlCountTaggedInRange again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        for (int i = 0; i < 3; ++i) { GameObject* e = s.CreateGameObject("E" + std::to_string(i)); e->tag = "enemy"; e->transform->SetPosition(Vec3(2.0f * i + 1.5f, 0, 0)); }
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountTaggedInRange\ndefault 2 0 \"enemy\"\ndefault 2 1 5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountTaggedInRange\ndefault 2 0 \"enemy\"\ndefault 2 1 5\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 2.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlCountTaggedInRange reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlCountTaggedInRange gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlCountTaggedInRange");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Input::FeedKeys({' '});
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsJumpHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsJumpHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsJumpHeld again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        Input::FeedKeys({' '});
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsJumpHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsJumpHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsJumpHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsJumpHeld gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsJumpHeld");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>()->maxHealth = 70;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSaveHealth\ndefault 2 0 \"hero\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Prefs::GetFloat("vs.health.hero", -1.0f), 70.0f, 0.01f); Prefs::Delete("vs.health.hero");
-        if (!g_errs.empty()) { std::printf("  GlSaveHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSaveHealth: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>()->maxHealth = 70;
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSaveHealth\ndefault 2 0 \"hero\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(Prefs::GetFloat("vs.health.hero", -1.0f), 70.0f, 0.01f); Prefs::Delete("vs.health.hero");
+                if (!g_errs.empty()) { std::printf("  GlSaveHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSaveHealth changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSaveHealth");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); Prefs::SetFloat("vs.health.back", 35.0f);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlLoadHealth\ndefault 2 0 \"back\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->health, 35.0f, 0.01f); Prefs::Delete("vs.health.back");
-        if (!g_errs.empty()) { std::printf("  GlLoadHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlLoadHealth: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); Prefs::SetFloat("vs.health.back", 35.0f);
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlLoadHealth\ndefault 2 0 \"back\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->health, 35.0f, 0.01f); Prefs::Delete("vs.health.back");
+                if (!g_errs.empty()) { std::printf("  GlLoadHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlLoadHealth changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlLoadHealth");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasTimePassed\ndefault 2 0 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlHasTimePassed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlHasTimePassed\ndefault 2 0 0\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlHasTimePassed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlHasTimePassed");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Time::SetTimeScale(0.5f);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetGameSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.5f, 0.001f); Time::SetTimeScale(1.0f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetGameSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetGameSpeed again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
         Time::SetTimeScale(1.0f);
         auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetGameSpeed\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
         s.Start();
-        
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetGameSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetGameSpeed gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetGameSpeed");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlRenameObject\ndefault 2 0 \"Hero\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->name == "Hero");
-        if (!g_errs.empty()) { std::printf("  GlRenameObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlRenameObject: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlRenameObject\ndefault 2 0 \"Hero\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->name == "Hero");
+                if (!g_errs.empty()) { std::printf("  GlRenameObject reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlRenameObject changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlRenameObject");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetInvincibleTime\ndefault 2 0 0.75\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->invincibleTime, 0.75f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetInvincibleTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetInvincibleTime: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetInvincibleTime\ndefault 2 0 0.75\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->invincibleTime, 0.75f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetInvincibleTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetInvincibleTime changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetInvincibleTime");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetLives\ndefault 2 0 3\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<HealthStat>()->lives == 3);
-        if (!g_errs.empty()) { std::printf("  GlSetLives reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetLives: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetLives\ndefault 2 0 3\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<HealthStat>()->lives == 3);
+                if (!g_errs.empty()) { std::printf("  GlSetLives reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetLives changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetLives");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetRespawnTime\ndefault 2 0 true\ndefault 2 1 4\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<HealthStat>()->respawn); CHECK_NEAR(me->GetComponent<HealthStat>()->respawnDelay, 4.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetRespawnTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetRespawnTime: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetRespawnTime\ndefault 2 0 true\ndefault 2 1 4\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<HealthStat>()->respawn); CHECK_NEAR(me->GetComponent<HealthStat>()->respawnDelay, 4.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetRespawnTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetRespawnTime changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetRespawnTime");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetResistance\ndefault 2 0 0.5\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        me->GetComponent<HealthStat>()->Damage(40); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 80.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetResistance reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetResistance: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetResistance\ndefault 2 0 0.5\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                me->GetComponent<HealthStat>()->Damage(40); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 80.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetResistance reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetResistance changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetResistance");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSmallestHit\ndefault 2 0 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        me->GetComponent<HealthStat>()->armor = 50; me->GetComponent<HealthStat>()->Damage(10); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 98.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetSmallestHit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetSmallestHit: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSmallestHit\ndefault 2 0 2\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                me->GetComponent<HealthStat>()->armor = 50; me->GetComponent<HealthStat>()->Damage(10); CHECK_NEAR(me->GetComponent<HealthStat>()->health, 98.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetSmallestHit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetSmallestHit changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetSmallestHit");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetOverhealLimit\ndefault 2 0 25\ndefault 2 1 3\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<HealthStat>()->overhealMax, 25.0f, 0.001f); CHECK_NEAR(me->GetComponent<HealthStat>()->overhealDecay, 3.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetOverhealLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetOverhealLimit: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetOverhealLimit\ndefault 2 0 25\ndefault 2 1 3\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<HealthStat>()->overhealMax, 25.0f, 0.001f); CHECK_NEAR(me->GetComponent<HealthStat>()->overhealDecay, 3.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetOverhealLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetOverhealLimit changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetOverhealLimit");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetRemoveOnDeath\ndefault 2 0 true\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<HealthStat>()->destroyOnDeath);
-        if (!g_errs.empty()) { std::printf("  GlSetRemoveOnDeath reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetRemoveOnDeath: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetRemoveOnDeath\ndefault 2 0 true\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<HealthStat>()->destroyOnDeath);
+                if (!g_errs.empty()) { std::printf("  GlSetRemoveOnDeath reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetRemoveOnDeath changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetRemoveOnDeath");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetMissingHealth\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<HealthStat>()->health = 70;
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 30.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetMissingHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetMissingHealth again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetMissingHealth\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetMissingHealth\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetMissingHealth reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetMissingHealth gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetMissingHealth");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>();
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsHealthAbove\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsHealthAbove reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsHealthAbove again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsHealthAbove\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsHealthAbove\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsHealthAbove reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsHealthAbove gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsHealthAbove");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->resistance = 0.4f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetResistance\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.4f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetResistance reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetResistance again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->resistance = 0.4f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetResistance\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetResistance\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.4f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetResistance reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetResistance gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetResistance");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); 
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetCarryLimit\ndefault 2 0 30\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Inventory>()->weightLimit, 30.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetCarryLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetCarryLimit: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); 
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetCarryLimit\ndefault 2 0 30\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Inventory>()->weightLimit, 30.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetCarryLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetCarryLimit changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetCarryLimit");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); 
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetStackLimit\ndefault 2 0 8\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<Inventory>()->maxStack == 8);
-        if (!g_errs.empty()) { std::printf("  GlSetStackLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetStackLimit: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); 
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetStackLimit\ndefault 2 0 8\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<Inventory>()->maxStack == 8);
+                if (!g_errs.empty()) { std::printf("  GlSetStackLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetStackLimit changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetStackLimit");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->weightLimit = 12.0f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCarryLimit\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 12.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetCarryLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetCarryLimit again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->weightLimit = 12.0f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCarryLimit\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCarryLimit\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 12.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetCarryLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetCarryLimit gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetCarryLimit");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); ItemDatabase::Get().Clear(); ItemDatabase::Get().LoadText("okayitems 1\nitem \"crate\"\n  name \"Crate\"\n  weight 4\nend\n"); me->GetComponent<Inventory>()->weightLimit = 5.0f; me->GetComponent<Inventory>()->Add("crate", 2);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsOverweight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsOverweight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsOverweight again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); 
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsOverweight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsOverweight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == false);
-        if (!g_errs.empty()) { std::printf("  GlIsOverweight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsOverweight gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsOverweight");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); ItemDatabase::Get().Clear(); ItemDatabase::Get().LoadText("okayitems 1\nitem \"crate\"\n  name \"Crate\"\n  weight 4\nend\n"); me->GetComponent<Inventory>()->weightLimit = 5.0f; me->GetComponent<Inventory>()->slowWhenOverWeight = true; me->GetComponent<Inventory>()->overWeightSpeed = 0.5f; me->GetComponent<Inventory>()->Add("crate", 2);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSlowdownFromWeight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.5f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetSlowdownFromWeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetSlowdownFromWeight again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); 
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSlowdownFromWeight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSlowdownFromWeight\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetSlowdownFromWeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetSlowdownFromWeight gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetSlowdownFromWeight");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 4); me->GetComponent<Inventory>()->Add("key", 2);
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountAllItems\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 6.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlCountAllItems reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlCountAllItems again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>(); me->GetComponent<Inventory>()->Add("coin", 4); me->GetComponent<Inventory>()->Add("key", 2);
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountAllItems\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountAllItems\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 6.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlCountAllItems reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlCountAllItems gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlCountAllItems");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetBodyType\ndefault 2 0 \"static\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<Rigidbody3D>()->bodyType == Rigidbody3D::BodyType::Static);
-        if (!g_errs.empty()) { std::printf("  GlSetBodyType reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetBodyType: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetBodyType\ndefault 2 0 \"static\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<Rigidbody3D>()->bodyType == Rigidbody3D::BodyType::Static);
+                if (!g_errs.empty()) { std::printf("  GlSetBodyType reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetBodyType changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetBodyType");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFallSpeedLimit\ndefault 2 0 15\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->maxFallSpeed, 15.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetFallSpeedLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetFallSpeedLimit: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFallSpeedLimit\ndefault 2 0 15\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->maxFallSpeed, 15.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetFallSpeedLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetFallSpeedLimit changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetFallSpeedLimit");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSurfaceFriction\ndefault 2 0 0.9\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->friction, 0.9f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetSurfaceFriction reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetSurfaceFriction: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSurfaceFriction\ndefault 2 0 0.9\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->friction, 0.9f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetSurfaceFriction reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetSurfaceFriction changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetSurfaceFriction");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFreezeAxis\ndefault 2 0 \"up\"\ndefault 2 1 true\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<Rigidbody3D>()->freezeY); CHECK(!me->GetComponent<Rigidbody3D>()->freezeX);
-        if (!g_errs.empty()) { std::printf("  GlFreezeAxis reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFreezeAxis: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlFreezeAxis\ndefault 2 0 \"up\"\ndefault 2 1 true\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<Rigidbody3D>()->freezeY); CHECK(!me->GetComponent<Rigidbody3D>()->freezeX);
+                if (!g_errs.empty()) { std::printf("  GlFreezeAxis reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFreezeAxis changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFreezeAxis");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlWakeBody\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        me->GetComponent<Rigidbody3D>()->sleeping = true;
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(!me->GetComponent<Rigidbody3D>()->sleeping);
-        if (!g_errs.empty()) { std::printf("  GlWakeBody reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlWakeBody: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlWakeBody\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<Rigidbody3D>()->sleeping = true;
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(!me->GetComponent<Rigidbody3D>()->sleeping);
+                if (!g_errs.empty()) { std::printf("  GlWakeBody reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlWakeBody changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlWakeBody");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(-3, 0, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlPushAwayFrom\ndefault 2 0 Goal\ndefault 2 1 4\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.x, 4.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlPushAwayFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlPushAwayFrom: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(-3, 0, 0));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlPushAwayFrom\ndefault 2 0 Goal\ndefault 2 1 4\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.x, 4.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlPushAwayFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlPushAwayFrom changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlPushAwayFrom");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>();
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsBodyMovable\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsBodyMovable reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsBodyMovable again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsBodyMovable\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsBodyMovable\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsBodyMovable reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsBodyMovable gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsBodyMovable");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlPlaySoundNow\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<AudioSource>()->IsPlaying());
-        if (!g_errs.empty()) { std::printf("  GlPlaySoundNow reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlPlaySoundNow: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlPlaySoundNow\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<AudioSource>()->IsPlaying());
+                if (!g_errs.empty()) { std::printf("  GlPlaySoundNow reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlPlaySoundNow changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlPlaySoundNow");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSound3D\ndefault 2 0 true\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<AudioSource>()->spatial);
-        if (!g_errs.empty()) { std::printf("  GlSetSound3D reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetSound3D: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetSound3D\ndefault 2 0 true\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<AudioSource>()->spatial);
+                if (!g_errs.empty()) { std::printf("  GlSetSound3D reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetSound3D changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetSound3D");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>(); me->GetComponent<AudioSource>()->pitch = 1.4f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetPitch\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.4f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetPitch reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetPitch again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>(); me->GetComponent<AudioSource>()->pitch = 1.4f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetPitch\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetPitch\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.4f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetPitch reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetPitch gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetPitch");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>(); me->GetComponent<AudioSource>()->loop = true;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsSoundLooping\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsSoundLooping reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsSoundLooping again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>(); me->GetComponent<AudioSource>()->loop = true;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsSoundLooping\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsSoundLooping\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsSoundLooping reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsSoundLooping gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsSoundLooping");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFlatCameraSize\ndefault 2 0 8\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Camera>()->orthographicSize, 8.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetFlatCameraSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetFlatCameraSize: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFlatCameraSize\ndefault 2 0 8\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Camera>()->orthographicSize, 8.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetFlatCameraSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetFlatCameraSize changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetFlatCameraSize");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>(); me->GetComponent<Camera>()->orthographicSize = 6.5f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFlatCameraSize\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 6.5f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetFlatCameraSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetFlatCameraSize again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>(); me->GetComponent<Camera>()->orthographicSize = 6.5f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFlatCameraSize\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFlatCameraSize\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 6.5f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetFlatCameraSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetFlatCameraSize gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetFlatCameraSize");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>(); me->GetComponent<Camera>()->zoom = 3.0f; me->GetComponent<Camera>()->dutch = 20.0f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlResetCamera\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<Camera>()->zoom, 1.0f, 0.001f); CHECK_NEAR(me->GetComponent<Camera>()->dutch, 0.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlResetCamera reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlResetCamera: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>(); me->GetComponent<Camera>()->zoom = 3.0f; me->GetComponent<Camera>()->dutch = 20.0f;
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlResetCamera\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<Camera>()->zoom, 1.0f, 0.001f); CHECK_NEAR(me->GetComponent<Camera>()->dutch, 0.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlResetCamera reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlResetCamera changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlResetCamera");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>(); me->GetComponent<Camera>()->zoom = 2.0f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsCameraZoomedIn\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsCameraZoomedIn reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsCameraZoomedIn again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>(); me->GetComponent<Camera>()->zoom = 2.0f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsCameraZoomedIn\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsCameraZoomedIn\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsCameraZoomedIn reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsCameraZoomedIn gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsCameraZoomedIn");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); } log->StartQuest("q1"); log->CompleteQuest("q1");
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountCompletedQuests\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlCountCompletedQuests reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlCountCompletedQuests again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); } log->StartQuest("q1"); log->CompleteQuest("q1");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountCompletedQuests\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlCountCompletedQuests\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlCountCompletedQuests reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlCountCompletedQuests gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlCountCompletedQuests");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); } log->StartQuest("q2");
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsAnyQuestActive\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsAnyQuestActive reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsAnyQuestActive again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); } log->StartQuest("q2");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsAnyQuestActive\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsAnyQuestActive\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsAnyQuestActive reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsAnyQuestActive gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsAnyQuestActive");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); } log->StartQuest("q1"); log->StartQuest("q2");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFailActiveQuests\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(s.Find("Quests")->GetComponent<QuestLog>()->ActiveIds().empty()); CHECK(s.Find("Quests")->GetComponent<QuestLog>()->Status("q2") == QuestStatus::Failed);
-        if (!g_errs.empty()) { std::printf("  GlFailActiveQuests reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFailActiveQuests: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); } log->StartQuest("q1"); log->StartQuest("q2");
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlFailActiveQuests\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Quests")->GetComponent<QuestLog>()->ActiveIds().empty()); CHECK(s.Find("Quests")->GetComponent<QuestLog>()->Status("q2") == QuestStatus::Failed);
+                if (!g_errs.empty()) { std::printf("  GlFailActiveQuests reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFailActiveQuests changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFailActiveQuests");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); } log->StartQuest("q1");
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFinishObjectives\ndefault 2 0 \"q1\"\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(s.Find("Quests")->GetComponent<QuestLog>()->IsCompleted("q1"));
-        if (!g_errs.empty()) { std::printf("  GlFinishObjectives reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFinishObjectives: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); } log->StartQuest("q1");
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlFinishObjectives\ndefault 2 0 \"q1\"\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(s.Find("Quests")->GetComponent<QuestLog>()->IsCompleted("q1"));
+                if (!g_errs.empty()) { std::printf("  GlFinishObjectives reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFinishObjectives changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFinishObjectives");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); }
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetObjectiveCount\ndefault 2 0 \"q1\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetObjectiveCount reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetObjectiveCount again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        GameObject* qo = s.CreateGameObject("Quests"); auto* log = qo->AddComponent<QuestLog>(); log->drawUI = false; log->showNotifications = false; for (int qi = 1; qi <= 2; ++qi) { QuestDef qd; qd.id = "q" + std::to_string(qi); qd.title = "Test"; QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.count = 3; qd.objectives.push_back(ob); log->quests.push_back(qd); }
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetObjectiveCount\ndefault 2 0 \"q1\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetObjectiveCount\ndefault 2 0 \"q1\"\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetObjectiveCount reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetObjectiveCount gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetObjectiveCount");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetTextOpacity\ndefault 2 0 0.3\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->GetComponent<TextRenderer>()->color.a, 0.3f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetTextOpacity reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetTextOpacity: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetTextOpacity\ndefault 2 0 0.3\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<TextRenderer>()->color.a, 0.3f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetTextOpacity reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetTextOpacity changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetTextOpacity");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>();
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlFadeTextTo\ndefault 2 0 0\ndefault 2 1 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK_NEAR(me->GetComponent<TextRenderer>()->color.a, 0.5f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlFadeTextTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFadeTextTo: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>();
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlFadeTextTo\ndefault 2 0 0\ndefault 2 1 1\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->GetComponent<TextRenderer>()->color.a, 0.5f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlFadeTextTo reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFadeTextTo changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFadeTextTo");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>();
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowTwoNumbersInText\ndefault 2 0 \"Coins: \"\ndefault 2 1 3\ndefault 2 2 \" of \"\ndefault 2 3 10\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->GetComponent<TextRenderer>()->text == "Coins: 3 of 10");
-        if (!g_errs.empty()) { std::printf("  GlShowTwoNumbersInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlShowTwoNumbersInText: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>();
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlShowTwoNumbersInText\ndefault 2 0 \"Coins: \"\ndefault 2 1 3\ndefault 2 2 \" of \"\ndefault 2 3 10\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<TextRenderer>()->text == "Coins: 3 of 10");
+                if (!g_errs.empty()) { std::printf("  GlShowTwoNumbersInText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlShowTwoNumbersInText changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlShowTwoNumbersInText");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlRiseAtSpeed\ndefault 2 0 2\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK_NEAR(me->transform->Position().y, 1.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlRiseAtSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlRiseAtSpeed: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlRiseAtSpeed\ndefault 2 0 2\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().y, 1.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlRiseAtSpeed reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlRiseAtSpeed changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlRiseAtSpeed");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveInCircle\ndefault 2 0 2\ndefault 2 1 1.5707963\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(1.0f);
-        CHECK_NEAR(me->transform->Position().x, 2.0f, 0.01f); CHECK_NEAR(me->transform->Position().z, 2.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlMoveInCircle reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlMoveInCircle: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlMoveInCircle\ndefault 2 0 2\ndefault 2 1 1.5707963\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(1.0f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().x, 2.0f, 0.01f); CHECK_NEAR(me->transform->Position().z, 2.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlMoveInCircle reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlMoveInCircle changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlMoveInCircle");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlChangeSizeOverTime\ndefault 2 0 1\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.5f);
-        CHECK_NEAR(me->transform->localScale.x, 1.5f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlChangeSizeOverTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlChangeSizeOverTime: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlChangeSizeOverTime\ndefault 2 0 1\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.5f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->localScale.x, 1.5f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlChangeSizeOverTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlChangeSizeOverTime changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlChangeSizeOverTime");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlMultiplySize\ndefault 2 0 3\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->localScale.z, 3.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlMultiplySize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlMultiplySize: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlMultiplySize\ndefault 2 0 3\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->localScale.z, 3.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlMultiplySize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlMultiplySize changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlMultiplySize");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(6, 0, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlFaceAwayFrom\ndefault 2 0 Goal\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(me->transform->Forward().x < -0.95f);
-        if (!g_errs.empty()) { std::printf("  GlFaceAwayFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlFaceAwayFrom: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            GameObject* goal = s.CreateGameObject("Goal"); goal->transform->SetPosition(Vec3(6, 0, 0));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlFaceAwayFrom\ndefault 2 0 Goal\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->transform->Forward().x < -0.95f);
+                if (!g_errs.empty()) { std::printf("  GlFaceAwayFrom reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlFaceAwayFrom changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlFaceAwayFrom");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetEulerAngles(Vec3(0, 40, 0));
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFacingAngle\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 40.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetFacingAngle reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetFacingAngle again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetEulerAngles(Vec3(0, 40, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFacingAngle\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetFacingAngle\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 40.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetFacingAngle reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetFacingAngle gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetFacingAngle");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFacingAngle\ndefault 2 0 75\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->EulerAngles().y, 75.0f, 0.01f);
-        if (!g_errs.empty()) { std::printf("  GlSetFacingAngle reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetFacingAngle: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetFacingAngle\ndefault 2 0 75\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->EulerAngles().y, 75.0f, 0.01f);
+                if (!g_errs.empty()) { std::printf("  GlSetFacingAngle reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetFacingAngle changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetFacingAngle");
     }
-    {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(2, 9, 4));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetHeight\ndefault 2 0 3.5\nexec 1 0 2\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(me->transform->Position().y, 3.5f, 0.001f); CHECK_NEAR(me->transform->Position().x, 2.0f, 0.001f);
-        if (!g_errs.empty()) { std::printf("  GlSetHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+    {   // GlSetHeight: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(2, 9, 4));
+            auto* v = Attach(me, real ? "node 1 OnStart\nentry OnStart 1\nnode 2 GlSetHeight\ndefault 2 0 3.5\nexec 1 0 2\n" : "node 1 OnStart\nentry OnStart 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK_NEAR(me->transform->Position().y, 3.5f, 0.001f); CHECK_NEAR(me->transform->Position().x, 2.0f, 0.001f);
+                if (!g_errs.empty()) { std::printf("  GlSetHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlSetHeight changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
         g_seen.insert("GlSetHeight");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(0, 2, 0));
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsAboveHeight\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsAboveHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsAboveHeight again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(0, 2, 0));
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsAboveHeight\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsAboveHeight\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsAboveHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsAboveHeight gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsAboveHeight");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->transform->SetPosition(Vec3(0, -2, 0));
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsBelowHeight\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsBelowHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsBelowHeight again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->transform->SetPosition(Vec3(0, -2, 0));
+        me->transform->SetPosition(Vec3(0, 5, 0));
         auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsBelowHeight\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
         s.Start();
-        
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsBelowHeight reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsBelowHeight gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsBelowHeight");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsFireHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == false);
-        if (!g_errs.empty()) { std::printf("  GlIsFireHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsFireHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == false);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsFireHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlIsFireHeld");
     }
     {
-        Scene s; s.physicsEnabled = false;
-        GameObject* me = s.CreateGameObject("Me");
-        
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsAimHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
-        
-        for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == false);
-        if (!g_errs.empty()) { std::printf("  GlIsAimHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsAimHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == false);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsAimHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
         g_seen.insert("GlIsAimHeld");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Input::FeedKeys({'e'});
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsInteractHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsInteractHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsInteractHeld again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        Input::FeedKeys({'e'});
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsInteractHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsInteractHeld\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsInteractHeld reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsInteractHeld gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsInteractHeld");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            Input::FeedKeys({'w'});
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetMoveStrength\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetMoveStrength reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetMoveStrength again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        Input::FeedKeys({'w'});
-        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetMoveStrength\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetMoveStrength\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetMoveStrength reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetMoveStrength gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetMoveStrength");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->lives = 4;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetLives\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 4.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetLives reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetLives again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->lives = 4;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetLives\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetLives\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 4.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetLives reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetLives gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetLives");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->respawn = true;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRespawnOn\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsRespawnOn reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsRespawnOn again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->respawn = true;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRespawnOn\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRespawnOn\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsRespawnOn reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsRespawnOn gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsRespawnOn");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->overhealMax = 30;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetOverhealLimit\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 30.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetOverhealLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetOverhealLimit again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->overhealMax = 30;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetOverhealLimit\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetOverhealLimit\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 30.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetOverhealLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetOverhealLimit gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetOverhealLimit");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->invincibleTime = 1.5f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetHitProtectionTime\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.5f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetHitProtectionTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetHitProtectionTime again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<HealthStat>(); me->GetComponent<HealthStat>()->invincibleTime = 1.5f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetHitProtectionTime\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetHitProtectionTime\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.5f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetHitProtectionTime reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetHitProtectionTime gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetHitProtectionTime");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->gravityScale = 0.4f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetGravityStrength\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.4f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetGravityStrength reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetGravityStrength again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->gravityScale = 0.4f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetGravityStrength\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetGravityStrength\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.4f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetGravityStrength reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetGravityStrength gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetGravityStrength");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->bounciness = 0.6f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetBounciness\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.6f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetBounciness reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetBounciness again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->bounciness = 0.6f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetBounciness\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetBounciness\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.6f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetBounciness reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetBounciness gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetBounciness");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->drag = 1.25f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetAirDrag\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 1.25f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetAirDrag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetAirDrag again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->drag = 1.25f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetAirDrag\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetAirDrag\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 1.25f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetAirDrag reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetAirDrag gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetAirDrag");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->friction = 0.7f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSurfaceFriction\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.7f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetSurfaceFriction reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetSurfaceFriction again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->friction = 0.7f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSurfaceFriction\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetSurfaceFriction\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.7f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetSurfaceFriction reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetSurfaceFriction gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetSurfaceFriction");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->freezeRotation = true;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRotationLocked\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsRotationLocked reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsRotationLocked again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Rigidbody3D>(); me->GetComponent<Rigidbody3D>()->freezeRotation = true;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRotationLocked\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsRotationLocked\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsRotationLocked reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsRotationLocked gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsRotationLocked");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<AudioSource>()->spatial = true;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsSoundPositional\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsSoundPositional reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsSoundPositional again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<AudioSource>()->spatial = true;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsSoundPositional\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlIsSoundPositional\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK(Var(v, "out").AsBool() == true);
-        if (!g_errs.empty()) { std::printf("  GlIsSoundPositional reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsSoundPositional gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlIsSoundPositional");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Camera>()->dutch = 15.0f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraTilt\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 15.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetCameraTilt reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetCameraTilt again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Camera>()->dutch = 15.0f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraTilt\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetCameraTilt\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 15.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetCameraTilt reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetCameraTilt gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetCameraTilt");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>()->color.a = 0.6f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetTextOpacity\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 0.6f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetTextOpacity reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetTextOpacity again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>()->color.a = 0.6f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetTextOpacity\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetTextOpacity\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 0.6f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetTextOpacity reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetTextOpacity gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetTextOpacity");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<TextRenderer>()->pixelSize = 2.5f;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetTextSize\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 2.5f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetTextSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetTextSize again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<TextRenderer>()->pixelSize = 2.5f;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetTextSize\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetTextSize\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 2.5f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetTextSize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetTextSize gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetTextSize");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>()->maxStack = 9;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetStackLimit\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 9.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetStackLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetStackLimit again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>()->maxStack = 9;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetStackLimit\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetStackLimit\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 9.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetStackLimit reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetStackLimit gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetStackLimit");
     }
     {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<Inventory>()->capacity = 12;
+            auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetInventorySize\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 12.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetInventorySize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetInventorySize again with no setup: the value must come from the scene, not be a constant.
         Scene s; s.physicsEnabled = false;
         GameObject* me = s.CreateGameObject("Me");
-        me->AddComponent<Inventory>()->capacity = 12;
-        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetInventorySize\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
-        g_errs.clear();
-        s.Start();
         
+        auto* v = Attach(me, "node 1 OnStart\nentry OnStart 1\nnode 2 GlGetInventorySize\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
         for (int i = 0; i < 1; ++i) s.Update(0.1f);
-        CHECK_NEAR(Var(v, "out").AsFloat(), 12.0f, 0.02f);
-        if (!g_errs.empty()) { std::printf("  GlGetInventorySize reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
-        Input::FeedKeys({});
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetInventorySize gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
         g_seen.insert("GlGetInventorySize");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<DialogueRunner>(); auto* dr = me->GetComponent<DialogueRunner>(); dr->drawUI = false; dr->typewriterSpeed = 0.0f; dr->SetGraph(TalkGraph()); 
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsDialogueRunning\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<DialogueRunner>()->StartDialogue();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsDialogueRunning reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsDialogueRunning again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsDialogueRunning\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsDialogueRunning gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlIsDialogueRunning");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<DialogueRunner>(); auto* dr = me->GetComponent<DialogueRunner>(); dr->drawUI = false; dr->typewriterSpeed = 0.0f; dr->SetGraph(TalkGraph()); 
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetDialogueLine\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<DialogueRunner>()->StartDialogue();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsString() == "Hello there");
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetDialogueLine reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetDialogueLine again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetDialogueLine\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetDialogueLine gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlGetDialogueLine");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<DialogueRunner>(); auto* dr = me->GetComponent<DialogueRunner>(); dr->drawUI = false; dr->typewriterSpeed = 0.0f; dr->SetGraph(TalkGraph()); 
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetDialogueSpeaker\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<DialogueRunner>()->StartDialogue();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsString() == "Smith");
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetDialogueSpeaker reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetDialogueSpeaker again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetDialogueSpeaker\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetDialogueSpeaker gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlGetDialogueSpeaker");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<DialogueRunner>(); auto* dr = me->GetComponent<DialogueRunner>(); dr->drawUI = false; dr->typewriterSpeed = 0.0f; dr->SetGraph(TalkGraph()); 
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsDialogueWaitingForChoice\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<DialogueRunner>()->StartDialogue(); me->GetComponent<DialogueRunner>()->Advance();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsBool() == true);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlIsDialogueWaitingForChoice reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlIsDialogueWaitingForChoice again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlIsDialogueWaitingForChoice\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlIsDialogueWaitingForChoice gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlIsDialogueWaitingForChoice");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<DialogueRunner>(); auto* dr = me->GetComponent<DialogueRunner>(); dr->drawUI = false; dr->typewriterSpeed = 0.0f; dr->SetGraph(TalkGraph()); 
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetDialogueOptionCount\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<DialogueRunner>()->StartDialogue(); me->GetComponent<DialogueRunner>()->Advance();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK_NEAR(Var(v, "out").AsFloat(), 2.0f, 0.02f);
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetDialogueOptionCount reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetDialogueOptionCount again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetDialogueOptionCount\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetDialogueOptionCount gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlGetDialogueOptionCount");
+    }
+    {
+        std::string outA;
+        {
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<DialogueRunner>(); auto* dr = me->GetComponent<DialogueRunner>(); dr->drawUI = false; dr->typewriterSpeed = 0.0f; dr->SetGraph(TalkGraph()); 
+            auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetDialogueOptionText\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<DialogueRunner>()->StartDialogue(); me->GetComponent<DialogueRunner>()->Advance();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            CHECK(Var(v, "out").AsString() == "No thanks");
+            outA = Str(Var(v, "out"));
+            if (!g_errs.empty()) { std::printf("  GlGetDialogueOptionText reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            Input::FeedKeys({});
+        }
+    {   // GlGetDialogueOptionText again with no setup: the value must come from the scene, not be a constant.
+        Scene s; s.physicsEnabled = false;
+        GameObject* me = s.CreateGameObject("Me");
+        
+        auto* v = Attach(me, "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlGetDialogueOptionText\ndefault 2 0 1\nnode 3 SetVar out\nexec 1 0 3\ndata 3 0 2 0\n");
+        s.Start();
+        for (int i = 0; i < 1; ++i) s.Update(0.1f);
+        CHECK(Str(Var(v, "out")) != outA);
+        if (Str(Var(v, "out")) == outA) std::printf("  GlGetDialogueOptionText gave the same value in an empty scene: %s\n", outA.c_str());
+        g_errs.clear();
+    }
+        g_seen.insert("GlGetDialogueOptionText");
+    }
+    {   // GlAdvanceDialogue: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<DialogueRunner>(); auto* dr = me->GetComponent<DialogueRunner>(); dr->drawUI = false; dr->typewriterSpeed = 0.0f; dr->SetGraph(TalkGraph()); 
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlAdvanceDialogue\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<DialogueRunner>()->StartDialogue();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<DialogueRunner>()->CurrentLine().choice);
+                if (!g_errs.empty()) { std::printf("  GlAdvanceDialogue reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlAdvanceDialogue changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlAdvanceDialogue");
+    }
+    {   // GlChooseDialogueOption: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<DialogueRunner>(); auto* dr = me->GetComponent<DialogueRunner>(); dr->drawUI = false; dr->typewriterSpeed = 0.0f; dr->SetGraph(TalkGraph()); 
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlChooseDialogueOption\ndefault 2 0 0\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<DialogueRunner>()->StartDialogue(); me->GetComponent<DialogueRunner>()->Advance();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(me->GetComponent<DialogueRunner>()->CurrentLine().text == "Glad to help");
+                if (!g_errs.empty()) { std::printf("  GlChooseDialogueOption reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlChooseDialogueOption changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlChooseDialogueOption");
+    }
+    {   // GlStopDialogue: the scene must differ from a run of the same graph without the node.
+        std::string snaps[2];
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool real = pass == 0;
+            Scene s; s.physicsEnabled = false;
+            GameObject* me = s.CreateGameObject("Me");
+            me->AddComponent<DialogueRunner>(); auto* dr = me->GetComponent<DialogueRunner>(); dr->drawUI = false; dr->typewriterSpeed = 0.0f; dr->SetGraph(TalkGraph()); 
+            auto* v = Attach(me, real ? "node 1 OnUpdate\nentry OnUpdate 1\nnode 2 GlStopDialogue\nexec 1 0 2\n" : "node 1 OnUpdate\nentry OnUpdate 1\n");
+            (void)v;
+            g_errs.clear();
+            s.Start();
+            me->GetComponent<DialogueRunner>()->StartDialogue();
+            for (int i = 0; i < 1; ++i) s.Update(0.1f);
+            
+            snaps[pass] = Snapshot(s);
+            if (real) {
+                CHECK(!me->GetComponent<DialogueRunner>()->IsActive());
+                if (!g_errs.empty()) { std::printf("  GlStopDialogue reported: %s\n", g_errs[0].c_str()); CHECK(g_errs.empty()); }
+            }
+            Input::FeedKeys({});
+        }
+        if (snaps[0] == snaps[1]) std::printf("  GlStopDialogue changed nothing compared with no node\n");
+        CHECK(snaps[0] != snaps[1]);
+        g_seen.insert("GlStopDialogue");
     }
     {   // Move Item To Object: the Moved branch, then Not Enough, then Too Full.
         Scene s; s.physicsEnabled = false;

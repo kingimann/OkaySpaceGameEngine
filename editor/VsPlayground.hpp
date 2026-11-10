@@ -59,6 +59,14 @@ inline const VsPlaygroundDemo* VsPlaygroundDemos(int* count = nullptr) {
          "The white cube eases back and forth. Smooth Step shapes the move."},
         {"logic_advanced", "Logic - Advanced", "logic_advanced.okayscene", "logic_advanced.okayvs", "Marker",
          "The white cube springs toward the option with the highest weighted score."},
+        {"flow_switch", "Flow - Switch Number", "flow_switch.okayscene", "flow_switch.okayvs", "Runner",
+         "Switch Number sends the flow out of the case that matches 5. The readout says case 3."},
+        {"flow_latch", "Flow - Latch Gate", "flow_latch.okayscene", "flow_latch.okayvs", "Runner",
+         "Latch Gate flips open and closed each frame. The readout counts what passed."},
+        {"flow_map", "Flow - For Each Map", "flow_map.okayscene", "flow_map.okayvs", "Runner",
+         "For Each Map adds up a map of three things. The readout shows 13."},
+        {"flow_run_graph", "Flow - Run Another Graph", "flow_run_graph.okayscene", "flow_run_graph.okayvs", "Runner",
+         "Run Another Graph runs a second file that sets a number. The readout shows 7."},
 #include "generated/gplib_demos.inc"
     };
     if (count) *count = (int)(sizeof(kDemos) / sizeof(kDemos[0]));
@@ -122,6 +130,10 @@ inline const char* VsPlaygroundForNode(const char* type) {
         {"AssertThis", "smart"}, {"LogOnce", "smart"}, {"DrawDebugLine", "smart"},
     };
     if (!type) return nullptr;
+    static const Row kFlowRows[] = {
+        {"SwitchCases", "flow_switch"}, {"LatchGate", "flow_latch"}, {"ForEachMap", "flow_map"}, {"RunGraph", "flow_run_graph"},
+    };
+    for (const Row& r : kFlowRows) if (std::strcmp(r.type, type) == 0) return r.demo;
     static const Row kGameplayLib[] = {
 #include "generated/gplib_playground.inc"
     };

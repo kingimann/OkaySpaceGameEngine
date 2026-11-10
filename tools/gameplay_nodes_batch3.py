@@ -249,7 +249,8 @@ def define(add, N, B, T, O, R):
         " o2->transform->SetPosition(o2->transform->Position() + (want - o2->transform->Position()) * k); }",
         reg="CAT_ACTION", exec_=True, defaults=["Goal", "100", None], update=True, dt=1.0,
         setup=goal + " me->transform->SetPosition(Vec3(0, 5, -8));",
-        check="goal->transform->SetPosition(Vec3(10, 0, 0)); s.Update(1.0f); CHECK_NEAR(me->transform->Position().x, 10.0f, 0.05f); CHECK_NEAR(me->transform->Position().y, 5.0f, 0.05f);",
+        drive="goal->transform->SetPosition(Vec3(10, 0, 0)); s.Update(1.0f);",
+        check="CHECK_NEAR(me->transform->Position().x, 10.0f, 0.05f); CHECK_NEAR(me->transform->Position().y, 5.0f, 0.05f);",
         demo="camera")
     add("GlCameraLookAtObject", "Look at Object With Camera", "Camera", "", "Basic", "Points this object, usually the camera, straight at another object.",
         [R("Object"), O()], [], "if (o && o2 && o->transform && o2->transform) o2->transform->LookAt(o->transform->Position());",
@@ -288,7 +289,7 @@ def define(add, N, B, T, O, R):
     add("GlHasTimePassed", "Has Time Passed", *TM, "Basic", "True once the game has been running for at least this many seconds.",
         [N("Seconds")], [B("Result")], "out = VsValue(Time::SessionTime() >= n0);", reg="CAT_LOGIC", defaults=["0"], expect=True, etype="b")
     add("GlGetGameSpeed", "Get Game Speed", *TM, "Basic", "How fast the game runs: 1 is normal, 0.5 half speed, 0 stopped.",
-        [], [N("Speed")], "out = VsValue(Time::TimeScale());", setup="Time::SetTimeScale(1.0f);", expect=1.0)
+        [], [N("Speed")], "out = VsValue(Time::TimeScale());", setup="Time::SetTimeScale(0.5f);", alt="Time::SetTimeScale(1.0f);", expect=0.5, check="CHECK_NEAR(Var(v, \"out\").AsFloat(), 0.5f, 0.001f); Time::SetTimeScale(1.0f);")
     G = ("Objects", "Groups")
     add("GlRenameObject", "Rename Object", *G, "Intermediate", "Gives this object a new name.",
         [T("Name"), O()], [], "if (o && !t0.empty()) o->name = t0;", reg="CAT_ACTION", exec_=True, defaults=['"Hero"', None],

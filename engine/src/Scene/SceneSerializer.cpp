@@ -322,6 +322,40 @@ std::string ReadQuoted(std::istream& in) {
     return out;
 }
 
+// A key code in the records that name a key as one token (charctrl2d, tdctrl, tdctrl2d, tpsctrl, ctmctrl). Older
+// builds wrote the raw character, so a space, a tab or Enter split the record and shifted every later field, and
+// '-' (which stood for "no key") read back as no key. Now a printable character other than '-' is still written
+// as itself (the form every build reads) and every other code is written by number as `#<0..255>`: space is
+// `#32`, '-' is `#45`, Shift is `#16`, F1 is `#128`. No key is `-`. A raw token is always one byte, so the
+// two forms cannot be confused; KeyFromToken reads both.
+std::string KeyToken(char key) {
+    const unsigned char c = static_cast<unsigned char>(key);
+    if (c == 0) return "-";
+    if (c > 32 && c < 127 && c != '-') return std::string(1, key);
+    return "#" + std::to_string(static_cast<int>(c));
+}
+char KeyFromToken(const std::string& t) {
+    if (t.empty() || t == "-") return 0;
+    if (t.size() > 1 && t[0] == '#') {
+        int v = 0;
+        bool ok = true;
+        for (std::size_t i = 1; i < t.size() && ok; ++i) {
+            if (t[i] < '0' || t[i] > '9') ok = false;
+            else { v = v * 10 + (t[i] - '0'); if (v > 255) ok = false; }
+        }
+        if (ok) return static_cast<char>(static_cast<unsigned char>(v));
+    }
+    return t[0];   // the raw character older builds wrote
+}
+
+// How much of a newer build's text is kept per object and per scene (a hostile file must not make a scene huge).
+constexpr std::size_t kMaxUnknownRecords = 256, kMaxUnknownRecordSize = 65536;
+
+// The last of a list of components (nullptr when empty): a follow-up record such as `particlesfx` belongs to the
+// component the record before it made, which is the newest one when an object holds several of a type.
+template <class T>
+T* LastOf(const std::vector<T*>& v) { return v.empty() ? nullptr : v.back(); }
+
 // An item name read from a scene, as an ItemDatabase id: legacy names / display
 // names map to their definition's id, and unknown names become loose definitions.
 std::string ItemId(const std::string& name) { return ItemDatabase::Get().Resolve(name); }
@@ -385,10 +419,40 @@ struct KvOut {
         return *this;
     }
 };
+// Read the rest of a record's line. A quoted value may itself contain line breaks (a quest description typed
+// into a multi-line box is written as it is, Quote escapes only the quote and the backslash), so a line that ends
+// inside a quote goes on to the next one until the quote closes. When it never closes (a hand-edited or damaged
+// file) the stream is put back and only the first line is taken, as before.
+std::string ReadRecordLine(std::istream& in) {
+    std::string line;
+    // Ask the buffer, not tellg(): tellg() fails once the stream has hit the end.
+    const std::streamoff start = in.rdbuf()->pubseekoff(0, std::ios::cur, std::ios::in);
+    std::getline(in, line);
+    auto endsInQuote = [](const std::string& l) {
+        bool open = false;
+        for (std::size_t i = 0; i < l.size(); ++i) {
+            if (open && l[i] == '\\') ++i;   // an escaped character
+            else if (l[i] == '"') open = !open;
+        }
+        return open;
+    };
+    if (!endsInQuote(line) || start < 0) return line;
+    std::string joined = line;
+    std::string next;
+    while (std::getline(in, next)) {
+        joined += '\n';
+        joined += next;
+        if (!endsInQuote(joined)) return joined;
+    }
+    in.clear();
+    in.rdbuf()->pubseekpos(start, std::ios::in);   // the quote never closed: only this line belongs to the record
+    std::getline(in, line);
+    return line;
+}
 struct KvIn {
     std::unordered_map<std::string, std::string> m;
     explicit KvIn(std::istream& in) {
-        std::string line; std::getline(in, line);
+        const std::string line = ReadRecordLine(in);
         std::istringstream ls(line);
         while (true) {
             ls >> std::ws;
@@ -573,7 +637,11 @@ bool AllowsMultiple(const Component* c) {
            dynamic_cast<const NetValidator*>(c) || dynamic_cast<const TweenAnimation*>(c) ||
            dynamic_cast<const AnimStateMachine*>(c) ||
            dynamic_cast<const Collider2D*>(c) || dynamic_cast<const Collider3D*>(c) ||   // compound colliders
-           dynamic_cast<const AudioSource*>(c);
+           dynamic_cast<const AudioSource*>(c) ||
+           dynamic_cast<const Joint2D*>(c) || dynamic_cast<const Joint3D*>(c) ||          // one joint per neighbour
+           dynamic_cast<const Spawner*>(c) || dynamic_cast<const Light*>(c) || dynamic_cast<const ParticleSystem*>(c) ||
+           dynamic_cast<const TriggerZone*>(c) || dynamic_cast<const UIAnimation*>(c) ||
+           dynamic_cast<const SequencePlayer*>(c) || dynamic_cast<const QuestTrigger*>(c);
 }
 
 // `compoff` records for every component that is switched off (per-component flags
@@ -1441,7 +1509,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                     << mr->tiling.x << " " << mr->tiling.y << "\n";
         }
     }
-    if (auto* li = go->GetComponent<Light>()) {
+    for (auto* li : go->GetComponents<Light>()) {   // every instance (a lamp with a point and a spot light)
         out << "  light " << li->color.r << " " << li->color.g << " " << li->color.b << " "
             << li->color.a << " " << li->ambient << " " << li->intensity
             << " " << (int)li->type << " " << li->range << " " << li->spotAngle
@@ -1512,7 +1580,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (rb->allowSleep ? 1 : 0)
             << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
-    if (auto* j = go->GetComponent<Joint3D>()) {
+    for (auto* j : go->GetComponents<Joint3D>()) {   // every instance: a chain link holds two joints
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
             << " " << j->anchor.x << " " << j->anchor.y << " " << j->anchor.z
             << " " << j->distance << " " << (j->autoConfigure ? 1 : 0)
@@ -1521,7 +1589,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << j->axis.x << " " << j->axis.y << " " << j->axis.z     // hinge (trailing)
             << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque << "\n";
     }
-    if (auto* j = go->GetComponent<Joint2D>()) {
+    for (auto* j : go->GetComponents<Joint2D>()) {   // every instance: a chain link holds two joints
         out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)
             << " " << j->anchor.x << " " << j->anchor.y
             << " " << j->distance << " " << (j->autoConfigure ? 1 : 0)
@@ -1823,7 +1891,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     if (auto* cc = go->GetComponent<CharacterController2D>()) {
         out << "  charctrl2d " << (int)cc->mode << " " << cc->speed << " " << cc->jumpForce
             // extended (optional, back-compatible trailing fields)
-            << " " << cc->runSpeed << " " << (cc->sprintKey ? cc->sprintKey : '-')
+            << " " << cc->runSpeed << " " << KeyToken(cc->sprintKey)
             << " " << cc->acceleration << " " << cc->deceleration
             << " " << (cc->normalizeDiagonal ? 1 : 0) << " " << (cc->useGamepad ? 1 : 0)
             << " " << (cc->flipSprite ? 1 : 0) << " " << cc->maxJumps
@@ -1963,6 +2031,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (ls->logoPulse ? 1 : 0) << " " << (ls->kenBurns ? 1 : 0) << " " << ls->tipInterval;
         wc(ls->cardColor);
         out << " " << Quote(ls->subtitle) << " " << Quote(ls->logoImage);
+        out << " " << (ls->asyncLoad ? 1 : 0) << " " << ls->objectsPerFrame;   // background loading (optional on read)
         out << "\n";
     }
     if (auto* ui = go->GetComponent<InventoryUI>()) {
@@ -2242,13 +2311,15 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  melee " << c->damage << " " << c->range << " " << c->arc << " " << c->cooldown
             << " " << (int)(unsigned char)c->attackKey << " " << (c->useMouse ? 1 : 0) << "\n";
     }
-    if (auto* c = go->GetComponent<Spawner>()) {
+    for (auto* c : go->GetComponents<Spawner>()) {   // every instance: one manager object spawns enemies and pickups
         out << "  spawner " << Quote(c->templateName) << " " << c->interval << " " << c->maxAlive
             << " " << c->totalToSpawn << " " << c->spawnRadius << " " << c->startDelay
             << " " << (c->deactivateTemplate ? 1 : 0)
             // Wave fields appended (numeric-peek guarded on read, old scenes fine).
             << " " << c->count << " " << c->waves << " " << c->waveDelay
-            << " " << (c->autoStart ? 1 : 0) << " " << Quote(c->prefabPath) << "\n";
+            << " " << (c->autoStart ? 1 : 0) << " " << Quote(c->prefabPath);
+        if (c->usePool) out << " 1";   // optional: older builds read it as an unknown field and warn
+        out << "\n";
     }
     if (auto* c = go->GetComponent<CraftingMenu>()) {
         out << "  craftmenu " << (int)(unsigned char)c->toggleKey << " " << (c->open ? 1 : 0)
@@ -2412,7 +2483,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
-            << (td->sprintKey ? td->sprintKey : '-') << " "
+            << KeyToken(td->sprintKey) << " "
             << (td->driveAnimation ? 1 : 0) << " " << (td->rotateToFace ? 1 : 0) << " " << td->turnSpeed << " "
             << td->acceleration << " " << td->deceleration << " " << (td->cameraRelative ? 1 : 0) << " "
             << td->cameraDistance << " " << td->cameraPitch << " " << td->cameraYaw << " "
@@ -2482,14 +2553,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     if (auto* t2 = go->GetComponent<TopDownController2D>()) {
-        out << "  tdctrl2d " << t2->speed << " " << t2->runSpeed << " " << (t2->sprintKey ? t2->sprintKey : '-')
+        out << "  tdctrl2d " << t2->speed << " " << t2->runSpeed << " " << KeyToken(t2->sprintKey)
             << " " << (t2->normalizeDiagonal ? 1 : 0) << " " << (t2->useGamepad ? 1 : 0)
             << " " << t2->acceleration << " " << t2->deceleration
-            << " " << (t2->dashKey ? t2->dashKey : '-') << " " << t2->dashSpeed << " " << t2->dashDuration << " " << t2->dashCooldown
+            << " " << KeyToken(t2->dashKey) << " " << t2->dashSpeed << " " << t2->dashDuration << " " << t2->dashCooldown
             << " " << t2->faceMode << " " << t2->spriteForward << " " << t2->turnSpeed << " " << (t2->driveAnimation ? 1 : 0)
             << " " << (t2->clampBounds ? 1 : 0) << " " << t2->boundsMin.x << " " << t2->boundsMin.y
             << " " << t2->boundsMax.x << " " << t2->boundsMax.y << " " << (t2->screenWrap ? 1 : 0)
-            << " " << t2->knockbackTime << " " << (t2->fireKey ? t2->fireKey : '-') << " " << t2->fireButton
+            << " " << t2->knockbackTime << " " << KeyToken(t2->fireKey) << " " << t2->fireButton
             << " " << t2->projectileSpeed << " " << t2->fireRate << " " << Quote(t2->projectile) << "\n";
     }
     if (auto* fr = go->GetComponent<FreeRoamController>()) {
@@ -2502,7 +2573,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     if (auto* ts = go->GetComponent<ThirdPersonShooterController>()) {
         out << "  tpsctrl " << ts->walkSpeed << " " << ts->runSpeed << " " << ts->jumpForce << " "
-            << (ts->sprintKey ? ts->sprintKey : '-') << " " << (ts->canJump ? 1 : 0) << " "
+            << KeyToken(ts->sprintKey) << " " << (ts->canJump ? 1 : 0) << " "
             << (ts->driveAnimation ? 1 : 0) << " " << ts->turnSpeed << " "
             << ts->acceleration << " " << ts->deceleration << " " << ts->airControl << " "
             << ts->coyoteTime << " " << ts->jumpBufferTime << " "
@@ -2526,7 +2597,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
-            << (cm->runKey ? cm->runKey : '-') << " " << cm->stopDistance << " " << cm->turnSpeed
+            << KeyToken(cm->runKey) << " " << cm->stopDistance << " " << cm->turnSpeed
             << " " << cm->mouseButton << " " << (cm->holdToMove ? 1 : 0) << " "
             << (cm->driveAnimation ? 1 : 0) << " " << (cm->usePlayerHeight ? 1 : 0)
             << " " << cm->groundY
@@ -2535,8 +2606,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << cm->minDistance << " " << cm->maxDistance << " " << cm->cameraYaw
             << " " << cm->cameraPitch << " " << cm->minPitch << " " << cm->maxPitch
             << " " << cm->rotateSpeed << " " << cm->keyRotateSpeed
-            << " " << (cm->rotateLeftKey ? cm->rotateLeftKey : '-')
-            << " " << (cm->rotateRightKey ? cm->rotateRightKey : '-')
+            << " " << KeyToken(cm->rotateLeftKey)
+            << " " << KeyToken(cm->rotateRightKey)
             << " " << cm->cameraDamping
             << " " << cm->arriveRadius                       // extended (back-compatible trailing field)
             << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0)
@@ -2578,7 +2649,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  jumppad " << jp->force << " " << (jp->useObjectUp ? 1 : 0) << " "
             << jp->forwardBoost << " " << jp->cooldown << " " << Quote(jp->triggerTag) << "\n";
     }
-    if (auto* tz = go->GetComponent<TriggerZone>()) {
+    for (auto* tz : go->GetComponents<TriggerZone>()) {   // every instance
         out << "  triggerzone " << tz->action << " " << Quote(tz->varName) << " " << tz->amount
             << " " << (tz->once ? 1 : 0) << " " << Quote(tz->targetName) << " " << Quote(tz->triggerTag) << "\n";
     }
@@ -2948,7 +3019,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << tt->borderColor.r << " " << tt->borderColor.g << " " << tt->borderColor.b << " " << tt->borderColor.a
             << " " << (tt->richText ? 1 : 0) << " " << tt->offset.x << " " << tt->offset.y << "\n";   // grok/ui-controls
     }
-    if (auto* ua = go->GetComponent<UIAnimation>()) {
+    for (auto* ua : go->GetComponents<UIAnimation>()) {   // every instance
         out << "  uianim " << (int)ua->intro << " " << (int)ua->loop << " " << (int)ua->outro << " "
             << ua->duration << " " << ua->delay << " " << ua->distance << " " << (int)ua->ease << " "
             << ua->loopSpeed << " " << ua->loopAmount << " " << (ua->playOnStart ? 1 : 0) << " "
@@ -3274,7 +3345,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (tg->interactable ? 1 : 0)
             << " " << tg->animSpeed << "\n";   // extended (back-compatible trailing field)
     }
-    if (auto* ps = go->GetComponent<ParticleSystem>()) {
+    for (auto* ps : go->GetComponents<ParticleSystem>()) {   // every instance; its particlesfx / particleswind lines follow it
         out << "  particles " << ps->emissionRate << " " << ps->maxParticles << " "
             << (ps->playing ? 1 : 0) << " " << ps->startLifetime << " " << ps->startSize << " "
             << ps->startColor.r << " " << ps->startColor.g << " " << ps->startColor.b << " "
@@ -3321,7 +3392,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (ps->windInfluence != 1.0f) out << "  particleswind " << ps->windInfluence << "\n";
     }
     // Sequence player (cutscenes). key=value record; the playback state is not saved.
-    if (auto* sp = go->GetComponent<SequencePlayer>()) {
+    for (auto* sp : go->GetComponents<SequencePlayer>()) {   // every instance
         out << "  sequenceplayer";
         KvOut k{out};
         k.str("path", sp->sequencePath).b("auto", sp->playOnStart).b("loop", sp->loop)("speed", sp->timeScale)
@@ -3440,7 +3511,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "\n";
         }
     }
-    if (auto* qt = go->GetComponent<QuestTrigger>()) {
+    for (auto* qt : go->GetComponents<QuestTrigger>()) {   // every instance
         out << "  questtrigger";
         KvOut{out}.str("zone", qt->zone).str("tag", qt->triggerTag).b("once", qt->once).str("quest", qt->questId)("obj", qt->objective);
         out << "\n";
@@ -3523,7 +3594,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
 // ReorderComponents) also writes a `comporder` record that puts them back. An object that already loads in its own
 // order writes no extra line, so a scene made of such objects is saved exactly as before; so is an object with one
 // component or none. An object that was arranged on purpose (HasCustomComponentOrder) always writes the record.
-void WriteComponents(std::ostream& out, GameObject* go) {
+void WriteComponentsOf(std::ostream& out, GameObject* go) {
     std::size_t others = 0;
     for (const auto& c : go->Components()) if (c.get() != static_cast<const Component*>(go->transform)) ++others;
     if (others < 2) { WriteComponentRecords(out, go); return; }
@@ -3535,6 +3606,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     out << text;
     if (!LoadsInStoredOrder(go, text)) WriteComponentOrderLine(out, go);
 }
+// The components, then the records this build did not understand when it read the object, as they were.
+void WriteComponents(std::ostream& out, GameObject* go) {
+    WriteComponentsOf(out, go);
+    for (const std::string& r : go->unknownRecords) out << "  " << r << "\n";
+}
 } // namespace
 
 std::string SceneSerializer::Serialize(const Scene& scene) {
@@ -3543,6 +3619,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     out << "okayscene 3\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
+    for (const std::string& r : scene.unknownRecords) out << r << "\n";   // what a newer build wrote at the top, as it was
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
     if (scene.HasCustomLayerCollisions()) {   // optional: older scenes have none (everything collides)
         out << "layermatrix";
@@ -3887,9 +3964,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
     }
     const int version = S.version;
     auto warn = [&](const std::string& what) { S.warnings.push_back(what); };
-    // Skip the rest of the current line: records are one per line, so an unknown
-    // one can be stepped over without knowing what its values mean.
-    auto skipLine = [&]() { std::string rest; std::getline(in, rest); };
+    // An unknown record is read with ReadRecordLine (one per line, a quoted value that spans lines is part of it),
+    // so it can be stepped over, and kept, without knowing what its values mean.
     auto& byIndex = S.byIndex;
     auto& parentLinks = S.parentLinks;
     auto& siblingHints = S.siblingHints;
@@ -5287,7 +5363,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     std::string rs, skTok, ac, de, nd, ug, fs, mj, vj, jc, ct, jb, air, mfs, efg;
                     if (in >> rs >> skTok >> ac >> de >> nd >> ug >> fs >> mj >> vj >> jc >> ct >> jb >> air >> mfs >> efg) {
                         cc->runSpeed = (float)std::atof(rs.c_str());
-                        cc->sprintKey = (skTok == "-" || skTok.empty()) ? 0 : skTok[0];
+                        cc->sprintKey = KeyFromToken(skTok);
                         cc->acceleration = (float)std::atof(ac.c_str());
                         cc->deceleration = (float)std::atof(de.c_str());
                         cc->normalizeDiagonal = (nd != "0");
@@ -5316,7 +5392,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> ws >> rs >> rk >> sd >> ts >> mb >> hold >> anim >> useH >> gy;
                     auto* cm = go->AddComponent<ClickToMoveController>();
                     cm->walkSpeed = ws; cm->runSpeed = rs;
-                    cm->runKey = (rk == "-" || rk.empty()) ? 0 : rk[0];
+                    cm->runKey = KeyFromToken(rk);
                     cm->stopDistance = sd; cm->turnSpeed = ts; cm->mouseButton = mb;
                     cm->holdToMove = (hold != 0); cm->driveAnimation = (anim != 0);
                     cm->usePlayerHeight = (useH != 0); cm->groundY = gy;
@@ -5329,8 +5405,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         cm->minDistance = mnd; cm->maxDistance = mxd; cm->cameraYaw = cy;
                         cm->cameraPitch = cpi; cm->minPitch = mnp; cm->maxPitch = mxp;
                         cm->rotateSpeed = rsp; cm->keyRotateSpeed = krs;
-                        cm->rotateLeftKey = (rlk == "-" || rlk.empty()) ? 0 : rlk[0];
-                        cm->rotateRightKey = (rrk == "-" || rrk.empty()) ? 0 : rrk[0];
+                        cm->rotateLeftKey = KeyFromToken(rlk);
+                        cm->rotateRightKey = KeyFromToken(rrk);
                         cm->cameraDamping = cdamp;
                         in >> std::ws; // optional arrival radius (added later)
                         if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->arriveRadius;
@@ -5488,6 +5564,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.i("alive", lt->maxAlive); k.str("event", lt->eventName);
                 } else if (field == "loadingscreen") {
                     auto* ls = go->AddComponent<LoadingScreen>();
+                    ls->asyncLoad = false;   // a screen saved before background loading existed keeps loading in one go
                     auto& bg = ls->backgroundColor; auto& tc = ls->textColor;
                     auto& bb = ls->barBackground; auto& bf = ls->barFill;
                     in >> bg.r >> bg.g >> bg.b >> bg.a >> tc.r >> tc.g >> tc.b >> tc.a
@@ -5522,6 +5599,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             ls->subtitle = ReadQuoted(in);
                             ls->logoImage = ReadQuoted(in);
                             ls->logoPulse = (lp != 0); ls->kenBurns = (kb != 0);
+                            in >> std::ws;   // optional background-loading block (added later)
+                            if (std::isdigit(in.peek())) {
+                                int al = 0, opf = ls->objectsPerFrame; in >> al >> opf;
+                                ls->asyncLoad = (al != 0); ls->objectsPerFrame = std::clamp(opf, 1, 100000);
+                            }
                         }
                     }
                 } else if (field == "inventoryui") {
@@ -5974,7 +6056,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> c->count >> c->waves >> c->waveDelay >> as;
                         c->autoStart = (as != 0);
                         in >> std::ws;
-                        if (in.peek() == '"') c->prefabPath = ReadQuoted(in);
+                        if (in.peek() == '"') {
+                            c->prefabPath = ReadQuoted(in);
+                            in >> std::ws;
+                            if (std::isdigit(in.peek())) { int up = 0; in >> up; c->usePool = (up != 0); }
+                        }
                     }
                 } else if (field == "craftmenu") {
                     auto* c = go->AddComponent<CraftingMenu>();
@@ -6227,7 +6313,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                        >> td->acceleration >> td->deceleration >> cr
                        >> td->cameraDistance >> td->cameraPitch >> td->cameraYaw
                        >> td->lookHeight >> td->cameraDamping;
-                    td->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
+                    td->sprintKey = KeyFromToken(sk);
                     td->driveAnimation = (da != 0); td->rotateToFace = (rf != 0); td->cameraRelative = (cr != 0);
                     in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; td->footIK = (fik != 0); }
                 } else if (field == "tdsctrl") {
@@ -6325,8 +6411,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                        >> dk >> t2->dashSpeed >> t2->dashDuration >> t2->dashCooldown
                        >> t2->faceMode >> t2->spriteForward >> t2->turnSpeed >> da
                        >> cb >> t2->boundsMin.x >> t2->boundsMin.y >> t2->boundsMax.x >> t2->boundsMax.y >> sw;
-                    t2->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
-                    t2->dashKey   = (dk == "-" || dk.empty()) ? 0 : dk[0];
+                    t2->sprintKey = KeyFromToken(sk);
+                    t2->dashKey   = KeyFromToken(dk);
                     t2->normalizeDiagonal = (nd != 0); t2->useGamepad = (ug != 0);
                     t2->driveAnimation = (da != 0); t2->clampBounds = (cb != 0); t2->screenWrap = (sw != 0);
                     // Combat fields (appended later): only present if the next token is numeric.
@@ -6334,7 +6420,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (pk == '-' || pk == '.' || std::isdigit(pk)) {
                         std::string fk = "-";
                         in >> t2->knockbackTime >> fk >> t2->fireButton >> t2->projectileSpeed >> t2->fireRate;
-                        t2->fireKey = (fk == "-" || fk.empty()) ? 0 : fk[0];
+                        t2->fireKey = KeyFromToken(fk);
                         in >> std::ws; if (in.peek() == '"') t2->projectile = ReadQuoted(in);
                     }
                 } else if (field == "frctrl") {
@@ -6356,7 +6442,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                        >> ts->shoulderOffset >> cc >> ts->cameraCollisionSkin
                        >> ts->aimButton >> ts->aimDistance >> ts->aimShoulder >> ts->aimSpeed
                        >> ts->fireButton >> af >> ts->fireRate >> lc;
-                    ts->sprintKey = (sk == "-" || sk.empty()) ? 0 : sk[0];
+                    ts->sprintKey = KeyFromToken(sk);
                     ts->canJump = (cj != 0); ts->driveAnimation = (da != 0); ts->invertY = (iy != 0);
                     ts->cameraCollision = (cc != 0); ts->autoFire = (af != 0); ts->lockCursor = (lc != 0);
                     // Optional lean block (absent in older scenes).
@@ -8041,12 +8127,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         }
                     }
                 } else if (field == "particleswind") {
-                    auto* ps = go->GetComponent<ParticleSystem>();
+                    auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one the `particles` record above made
                     if (!ps) ps = go->AddComponent<ParticleSystem>();
                     in >> ps->windInfluence;
                 } else if (field == "particlesfx") {
                     // Gradients/curves + motion modules (follows the "particles" line).
-                    auto* ps = go->GetComponent<ParticleSystem>();
+                    auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one that line made, when an object has several
                     if (!ps) ps = go->AddComponent<ParticleSystem>();
                     std::string rest; std::getline(in, rest);   // whole line: tolerant of short/extended data
                     std::istringstream rs(rest);
@@ -8329,9 +8415,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     std::istringstream ls(rest);
                     reg->read(*go, ls);
                 } else {
-                    // A newer build's field: one record per line, so step over it.
+                    // A newer build's field: one record per line, so step over it. Its text is kept on the object and
+                    // written back by the next save, so an older build does not drop what a newer one stored.
                     warn("skipped unknown field '" + field + "' on object " + std::to_string(idx));
-                    skipLine();
+                    const std::string rest = ReadRecordLine(in);
+                    if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
+                        go->unknownRecords.push_back(field + rest);
                 }
             }
             // A read that ran off the end (or choked) leaves the stream failed, so
@@ -8362,9 +8451,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 }
             }
         } else {
-            // A newer build's top-level record (see the field case above).
+            // A newer build's top-level record (see the field case above): kept by a full load, and only when it
+            // looks like a record name (a stray word in a damaged file is not worth carrying along).
             warn("skipped unknown record '" + token + "'");
-            skipLine();
+            const std::string rest = ReadRecordLine(in);
+            bool name = !token.empty() && token.size() < 64;
+            for (char ch : token) if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_')) name = false;
+            if (clear && name && scene.unknownRecords.size() < kMaxUnknownRecords && token.size() + rest.size() <= kMaxUnknownRecordSize)
+                scene.unknownRecords.push_back(token + rest);
         }
         if (in.fail()) return bad("malformed or truncated '" + token + "' record");
         if (token == "gameobject" && maxObjects > 0 && ++madeObjects >= maxObjects) {
@@ -8727,11 +8821,12 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     };
     for (const auto& go : scene.Objects()) {
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
-        if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
+        for (auto* au : go->GetComponents<AudioSource>())  add(au->clipPath);   // every source: a music bed and an effect can share an object
         if (auto* mp = go->GetComponent<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
         if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); }
         if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); }
-        if (auto* ps = go->GetComponent<ParticleSystem>())  add(ps->texture);
+        for (auto* ps : go->GetComponents<ParticleSystem>()) add(ps->texture);
+        for (auto* sw : go->GetComponents<Spawner>())       add(sw->prefabPath);   // the prefab a spawner makes ships with the scene
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
         if (auto* ri = go->GetComponent<UIRawImage>())      add(ri->texture);
         if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
@@ -8741,7 +8836,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         }
         if (auto* bm = go->GetComponent<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
-        if (auto* sp = go->GetComponent<SequencePlayer>()) {
+        for (auto* sp : go->GetComponents<SequencePlayer>()) {
             add(sp->sequencePath);
             Sequence seq;   // the sounds its audio cues play ship with it
             if (Sequence::LoadFromFile(sp->ResolvedPath(), seq))

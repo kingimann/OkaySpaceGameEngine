@@ -1596,6 +1596,11 @@ add_executable(test_scene_lifecycle test_scene_lifecycle.cpp)
 target_link_libraries(test_scene_lifecycle PRIVATE okay::engine)
 add_test(NAME scene_lifecycle COMMAND test_scene_lifecycle)
 
+# Scene lifecycle audit: event order across a swap, loads from callbacks, two loads at once, failed loads, DontDestroyOnLoad order, unloading the camera's scene
+add_executable(test_scene_lifecycle_audit test_scene_lifecycle_audit.cpp)
+target_link_libraries(test_scene_lifecycle_audit PRIVATE okay::engine)
+add_test(NAME scene_lifecycle_audit COMMAND test_scene_lifecycle_audit)
+
 add_executable(test_durable_saves test_durable_saves.cpp)
 target_link_libraries(test_durable_saves PRIVATE okay::engine)
 add_test(NAME durable_saves COMMAND test_durable_saves)
@@ -1705,6 +1710,11 @@ add_executable(test_scene_ids_prefabs test_scene_ids_prefabs.cpp)
 target_link_libraries(test_scene_ids_prefabs PRIVATE okay::engine)
 add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
 
+# Scene serializer audit: key bindings in the one-token records, several components of one type, asset paths, number and text round trips
+add_executable(test_scene_serializer_audit test_scene_serializer_audit.cpp)
+target_link_libraries(test_scene_serializer_audit PRIVATE okay::engine)
+add_test(NAME scene_serializer_audit COMMAND test_scene_serializer_audit)
+
 add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
 target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
 add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
@@ -1772,6 +1782,17 @@ set_tests_properties(scene_graph_wave5 PROPERTIES TIMEOUT 240)   # 300000 childr
 add_executable(test_object_pool_wave5 test_object_pool_wave5.cpp)
 target_link_libraries(test_object_pool_wave5 PRIVATE okay::engine)
 add_test(NAME object_pool_wave5 COMMAND test_object_pool_wave5)
+
+# Object pooling audit: idle objects not saved, Shrink, Scene::Despawn, resets, Spawner usePool, script pool calls
+add_executable(test_object_pool_audit test_object_pool_audit.cpp)
+target_link_libraries(test_object_pool_audit PRIVATE okay::engine)
+add_test(NAME object_pool_audit COMMAND test_object_pool_audit)
+
+# Loading Screen with a background load: progress, kept across the swap, failures, scenes saved before keep loading in one go
+add_executable(test_loading_screen_async test_loading_screen_async.cpp)
+target_link_libraries(test_loading_screen_async PRIVATE okay::engine)
+add_test(NAME loading_screen_async COMMAND test_loading_screen_async)
+
 # Optimization tools (27): mesh simplification, LOD chains, LOD group selection
 add_executable(test_optimize_simplify test_optimize_simplify.cpp)
 target_link_libraries(test_optimize_simplify PRIVATE okay::engine)

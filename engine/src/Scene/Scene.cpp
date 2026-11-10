@@ -6,6 +6,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Layers.hpp"
+#include "okay/Scene/ObjectPool.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -46,6 +47,7 @@ Scene::~Scene() {   // its scene variables and script statics go with it
     vs::ForgetSceneVariables(this);
     NextScriptVM::ForgetSceneStatics(this);
     ActionList::ForgetScene(this);
+    ObjectPool::ForgetScene(Uid());   // the pools scripts made for this scene (ObjectPool::ForPrefab) go with it
 }
 
 namespace {
@@ -175,6 +177,13 @@ void Scene::DestroyAllLive() {
     m_pending.clear();
 }
 
+bool Scene::Despawn(GameObject* go) {
+    if (!go) return false;
+    if (ObjectPool::ReleaseToOwner(*this, go)) return true;
+    Destroy(go);
+    return false;
+}
+
 void Scene::Clear() {
     if (m_busy > 0) { m_clearPending = true; return; }   // objects are in use right now: the end of the frame does it
     DestroyAllLive();   // OnDestroy for what the old scene still had running
@@ -198,6 +207,7 @@ void Scene::Clear() {
     m_physics3d.gravity = Vec3{0.0f, -9.81f, 0.0f};   // gravity is a scene setting: a new scene starts at the default
     m_physicsAcc = 0.0f;
     uiFont.clear();                            // the loaded scene sets its own, if any
+    unknownRecords.clear();                    // ... and brings the unknown records of its own file
     mainCamera = nullptr;
     ResetLayerCollisions();   // the layer matrix belongs to the scene being cleared
     // The pointer-dispatch state points at objects about to be freed: forget it,
@@ -309,11 +319,17 @@ void Scene::DetachKept(KeptState& k) {
     }
     k.marked = m_dontDestroy;
     if (k.keep.empty()) return;
+    k.order.reserve(m_objects.size());
+    for (const auto& up : m_objects) k.order.push_back(up.get());
+    k.activeOrder = m_active;
+    if (mainCamera && k.keep.count(mainCamera->gameObject)) k.mainCamera = mainCamera;
     for (const auto& up : m_objects) {   // a kept root must not hang off what is about to be freed
         GameObject* g = up.get();
         Transform* par = g->transform ? g->transform->Parent() : nullptr;
-        if (k.keep.count(g) && par && par->gameObject && !k.keep.count(par->gameObject))
+        if (k.keep.count(g) && par && par->gameObject && !k.keep.count(par->gameObject)) {
+            k.unparented.push_back({g, par, g->transform->GetSiblingIndex()});
             g->transform->SetParent(nullptr, /*worldPositionStays=*/true);
+        }
     }
     for (auto it = m_objects.begin(); it != m_objects.end();) {
         if (k.keep.count(it->get())) { k.objects.push_back(std::move(*it)); it = m_objects.erase(it); }
@@ -330,16 +346,53 @@ void Scene::DetachKept(KeptState& k) {
     ++m_structureVersion;
 }
 
-void Scene::ReattachKept(KeptState& k) {
+void Scene::ReattachKept(KeptState& k, bool undo) {
     if (k.objects.empty()) return;
     for (auto& up : k.objects) m_objects.push_back(std::move(up));
+    if (undo) {
+        // The load did not happen: the scene must be what it was. Objects stand in their old order again, and a kept
+        // object that was moved off a parent that stayed goes back under it, at its old place (the parents that
+        // were not kept are all still here: nothing was cleared).
+        std::unordered_map<const GameObject*, std::size_t> place;
+        for (std::size_t i = 0; i < k.order.size(); ++i) place[k.order[i]] = i;
+        std::stable_sort(m_objects.begin(), m_objects.end(), [&](const std::unique_ptr<GameObject>& a, const std::unique_ptr<GameObject>& b) {
+            auto ia = place.find(a.get()), ib = place.find(b.get());
+            const std::size_t pa = ia == place.end() ? place.size() : ia->second, pb = ib == place.end() ? place.size() : ib->second;
+            return pa < pb;
+        });
+        for (auto it = k.unparented.rbegin(); it != k.unparented.rend(); ++it)   // last taken off, first put back: each index was read after the ones before it left
+            if (it->go && it->go->transform && it->parent) it->go->transform->SetParent(it->parent, /*worldPositionStays=*/true, it->index);
+        if (k.mainCamera) mainCamera = k.mainCamera;
+    }
     m_dontDestroy = std::move(k.marked);
     m_active.insert(m_active.end(), k.active.begin(), k.active.end());
     m_pending.insert(m_pending.end(), k.pending.begin(), k.pending.end());
+    if (undo) {   // the update list is what it was too (the kept components updated in their old turn)
+        std::unordered_map<const Component*, std::size_t> turn;
+        for (std::size_t i = 0; i < k.activeOrder.size(); ++i) turn[k.activeOrder[i]] = i;
+        std::stable_sort(m_active.begin(), m_active.end(), [&](const Component* a, const Component* b) {
+            auto ia = turn.find(a), ib = turn.find(b);
+            return (ia == turn.end() ? turn.size() : ia->second) < (ib == turn.end() ? turn.size() : ib->second);
+        });
+    }
     if (m_hasOrdered)
         std::stable_sort(m_active.begin(), m_active.end(), [](const Component* a, const Component* b) {
             return (a ? a->ExecutionOrder() : 0) < (b ? b->ExecutionOrder() : 0);
         });
+    ++m_structureVersion;
+}
+
+void Scene::MoveKeptToEnd() {
+    std::unordered_set<const GameObject*> keep;
+    std::vector<Transform*> stack;
+    for (GameObject* g : m_dontDestroy) if (g && g->transform) stack.push_back(g->transform);
+    while (!stack.empty()) {
+        Transform* t = stack.back(); stack.pop_back();
+        if (!t->gameObject || !keep.insert(t->gameObject).second) continue;
+        for (Transform* ch : t->Children()) stack.push_back(ch);
+    }
+    if (keep.empty()) return;
+    std::stable_partition(m_objects.begin(), m_objects.end(), [&](const std::unique_ptr<GameObject>& up) { return !keep.count(up.get()); });
     ++m_structureVersion;
 }
 
@@ -428,7 +481,7 @@ void Scene::Update(float deltaTime) {
             m_lastLoadError = "could not load scene '" + path + "': " + (loadError.empty() ? "unknown error" : loadError);
             std::cerr << "[scene] " << m_lastLoadError << "\n";
         }
-        ReattachKept(kept);   // back in, whether or not the load worked
+        ReattachKept(kept, /*undo=*/!loaded);   // back in whether or not the load worked; a failed load leaves them where they stood
         if (loaded) {
             InventoryPersistence::AfterSceneLoad(*this);
             Start(); // run Awake/Start for the freshly loaded objects
@@ -732,6 +785,13 @@ void Scene::DontDestroyOnLoad(GameObject* go) {
 
 bool Scene::IsDontDestroyOnLoad(const GameObject* go) const {
     return std::find(m_dontDestroy.begin(), m_dontDestroy.end(), go) != m_dontDestroy.end();
+}
+
+bool Scene::CancelDontDestroyOnLoad(const GameObject* go) {
+    auto it = std::find(m_dontDestroy.begin(), m_dontDestroy.end(), go);
+    if (it == m_dontDestroy.end()) return false;
+    m_dontDestroy.erase(it);
+    return true;
 }
 
 void Scene::ResolveMainCamera() {
@@ -1317,6 +1377,20 @@ int Scene::BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts) {
         if (opts.onDone) opts.onDone(false);
         return 0;
     }
+    if (!opts.additive) {
+        // The last replacing request wins. A deferred load or text load still waiting is told it never ran, and a
+        // replacing load still in flight is stopped (what it made is removed) before the new one clears the scene.
+        if (m_hasPendingLoad || m_hasPendingText) {
+            auto done = std::move(m_pendingLoadDone);
+            m_hasPendingLoad = false; m_hasPendingText = false;
+            m_pendingLoad.clear(); m_pendingLoadDone = {};
+            m_pendingText.clear(); m_pendingTextAfter = {};
+            if (done) done(false);
+        }
+        std::vector<int> earlier;
+        for (const auto& r : m_loads) if (!r.finished && !r.opts.additive) earlier.push_back(r.handle);
+        for (int h : earlier) UnloadAdditive(h);
+    }
     LoadRecord r;
     r.handle = m_nextLoadHandle++;
     r.job = std::move(job);
@@ -1374,11 +1448,21 @@ bool Scene::UnloadAdditive(int handle) {
 }
 
 void Scene::StepAsyncLoads() {
-    for (std::size_t i = 0; i < m_loads.size();) {
-        if (m_loads[i].finished) { ++i; continue; }
+    // Each unfinished load is stepped once per frame, found again by its handle every time: a callback may start,
+    // unload or finish other loads, and the first step of a replacing load clears the scene and with it every other
+    // load in flight, so no position in the list can be trusted from one step to the next. A load started by a
+    // callback in this pass takes its first step in this pass too.
+    std::unordered_set<int> stepped;
+    const std::size_t limit = m_loads.size() * 4 + 64;   // a callback that begins a load as each one ends must not spin for ever
+    while (stepped.size() < limit) {
+        std::size_t i = 0;
+        for (; i < m_loads.size(); ++i) if (!m_loads[i].finished && !stepped.count(m_loads[i].handle)) break;
+        if (i >= m_loads.size()) break;
+        stepped.insert(m_loads[i].handle);
         LoadRecord rec = std::move(m_loads[i]);   // out of the list: callbacks and Clear() can't invalidate it
-        const int handle = rec.handle;
         m_loads.erase(m_loads.begin() + (long)i);
+        // Back in the list at its old place (clamped: the list may have shrunk meanwhile).
+        auto putBack = [&](LoadRecord&& r) { m_loads.insert(m_loads.begin() + (long)std::min(i, m_loads.size()), std::move(r)); };
 
         const bool first = !rec.job->Started();
         KeptState kept;
@@ -1395,15 +1479,14 @@ void Scene::StepAsyncLoads() {
         const std::size_t from = std::min(before, m_pending.size());
         for (std::size_t k = from; k < m_pending.size(); ++k) if (m_pending[k]) rec.held.push_back(m_pending[k]);
         m_pending.resize(from);
-        if (first && !rec.opts.additive) ReattachKept(kept);
+        if (first && !rec.opts.additive) ReattachKept(kept, /*undo=*/!ok);   // a load that failed before it began leaves the scene as it was
 
         if (!ok) {
             rec.held.clear();
             DestroyLoadedObjects(rec.job->AllIds());
             rec.finished = true; rec.ok = false;
             auto done = std::move(rec.opts.onDone);
-            m_loads.insert(m_loads.begin() + (long)i, std::move(rec));
-            ++i;
+            putBack(std::move(rec));
             if (done) done(false);
             continue;
         }
@@ -1415,15 +1498,14 @@ void Scene::StepAsyncLoads() {
             for (Component* c : rec.held) m_pending.push_back(c);
             rec.held.clear();
             if (!rec.opts.additive) InventoryPersistence::AfterSceneLoad(*this);
+            if (!rec.opts.additive && !m_dontDestroy.empty()) MoveKeptToEnd();   // the order a one-go load gives
             Start();   // Awake / Start for everything that came in
-            if (!rec.opts.additive && !kept.keep.empty()) ResolveMainCamera();
+            if (!rec.opts.additive && !m_dontDestroy.empty()) ResolveMainCamera();
         }
         auto done = finished ? std::move(rec.opts.onDone) : std::function<void(bool)>{};
-        m_loads.insert(m_loads.begin() + (long)i, std::move(rec));
-        ++i;
+        putBack(std::move(rec));
         if (progress) progress(p);
         if (done) done(true);
-        (void)handle;
     }
 }
 

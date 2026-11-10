@@ -3,9 +3,66 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include <algorithm>
 #include <fstream>
+#include <memory>
 #include <sstream>
 
 namespace okay {
+
+namespace {
+// Every live pool by the uid of its scene (so a scene can find the pool an object came from), and the pools
+// ForPrefab made. Held by a static pointer and never destroyed: a pool torn down at exit may still look here.
+struct Registry {
+    std::unordered_map<std::uint64_t, std::vector<ObjectPool*>> pools;
+    std::unordered_map<std::uint64_t, std::unordered_map<std::string, std::unique_ptr<ObjectPool>>> shared;
+};
+Registry& Reg() {
+    static Registry* r = new Registry;
+    return *r;
+}
+} // namespace
+
+ObjectPool::ObjectPool(Scene& scene) : m_scene(&scene), m_sceneUid(scene.Uid()) {
+    Reg().pools[m_sceneUid].push_back(this);
+}
+
+ObjectPool::~ObjectPool() {
+    auto it = Reg().pools.find(m_sceneUid);
+    if (it == Reg().pools.end()) return;
+    auto& v = it->second;
+    v.erase(std::remove(v.begin(), v.end(), this), v.end());
+    if (v.empty()) Reg().pools.erase(it);
+}
+
+ObjectPool* ObjectPool::ForPrefab(Scene& scene, const std::string& path) {
+    if (path.empty()) return nullptr;
+    auto& slot = Reg().shared[scene.Uid()][path];
+    if (!slot) {
+        auto pool = std::make_unique<ObjectPool>(scene);
+        if (!pool->SetPrefabFile(path)) {
+            Reg().shared[scene.Uid()].erase(path);
+            return nullptr;
+        }
+        slot = std::move(pool);
+    }
+    return slot.get();
+}
+
+bool ObjectPool::ReleaseToOwner(Scene& scene, GameObject* go) {
+    if (!go) return false;
+    auto it = Reg().pools.find(scene.Uid());
+    if (it == Reg().pools.end()) return false;
+    for (ObjectPool* p : it->second)
+        if (p->Owns(go)) return p->Release(go);
+    return false;
+}
+
+void ObjectPool::ForgetScene(std::uint64_t sceneUid) {
+    auto it = Reg().shared.find(sceneUid);
+    if (it == Reg().shared.end()) return;
+    auto doomed = std::move(it->second);   // the pools unregister themselves as they go: out of the map first
+    Reg().shared.erase(it);
+    doomed.clear();
+}
 
 bool ObjectPool::SetPrefabFile(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
@@ -91,6 +148,7 @@ void ObjectPool::Prewarm(int count) {
         GameObject* go = Make();
         if (!go) return;
         go->active = false;   // never seen live: its first Get starts it
+        go->transient = true; // a spare is not part of a saved scene
         m_owned[go->InstanceId()] = kIdle;
         m_idle.push_back(go->InstanceId());
     }
@@ -162,6 +220,7 @@ GameObject* ObjectPool::Get() {
         if (t->Parent()) t->SetParent(nullptr, /*worldPositionStays=*/false);
     }
     m_owned[go->InstanceId()] = kActive;
+    go->transient = false;   // in use again: an ordinary object (a saved scene carries it)
     go->active = true;
     return go;
 }
@@ -199,6 +258,7 @@ bool ObjectPool::Release(GameObject* go) {
     if (go->transform->Parent()) go->transform->SetParent(nullptr, /*worldPositionStays=*/false);
     m_scene->CancelDelayedDestroy(go);   // the old request belongs to the use that just ended
     go->active = false;                  // OnDisable follows at the start of the next frame
+    go->transient = true;                // a spare is not part of a saved scene
     if (go->HasLiveComponentInHierarchy()) {
         if (m_cooling.empty()) m_coolStamp = m_scene->UpdateCount();
         m_cooling.push_back(id);
@@ -218,6 +278,27 @@ void ObjectPool::Clear() {
         for (std::uint64_t id : *list) m_owned.erase(id);
     m_idle.clear();
     m_cooling.clear();
+}
+
+int ObjectPool::Shrink(int keep) {
+    Settle();
+    Prune();
+    if (keep < 0) keep = 0;
+    int remove = static_cast<int>(m_idle.size() + m_cooling.size()) - keep;
+    if (remove <= 0) return 0;
+    const int total = remove;
+    // The longest idle go first: the front of each list is the oldest.
+    for (std::vector<std::uint64_t>* list : {&m_idle, &m_cooling}) {
+        const int take = std::min(remove, static_cast<int>(list->size()));
+        for (int i = 0; i < take; ++i) {
+            const std::uint64_t id = (*list)[static_cast<std::size_t>(i)];
+            m_owned.erase(id);
+            if (GameObject* g = Lookup(id)) m_scene->Destroy(g);
+        }
+        list->erase(list->begin(), list->begin() + take);
+        remove -= take;
+    }
+    return total;
 }
 
 int ObjectPool::IdleCount() const {

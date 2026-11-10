@@ -3942,6 +3942,43 @@ struct OkayScriptVM::Impl {
                                                  a.size() > 3 ? a[3].AsFloat() : 0.0f};
             return Value{true};
         };
+        // ---- Object pools: reuse spawned objects instead of creating and freeing each one ----
+        // pool_get("Bullet.okayprefab", x, y [, z]) is spawn / spawn3 taken from this scene's pool for that prefab: an
+        // idle object when there is one (reset to a fresh copy of the prefab, its scripts start again), else a new one.
+        // Returns true on success. pool_release() hands THIS script's object back to its pool (destroyed when it did not
+        // come from one), so a bullet ends with it. pool_prewarm(prefab, n) makes n idle objects ahead of time and
+        // returns how many are idle; pool_idle(prefab) says how many are.
+        b["pool_get"] = [this](std::vector<Value>& a) {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{false};
+            Scene* sc = rt.host->gameObject->scene();
+            if (!sc) return Value{false};
+            ObjectPool* pool = ObjectPool::ForPrefab(*sc, a[0].AsString());
+            GameObject* go = pool ? pool->Get() : nullptr;
+            if (!go) return Value{false};
+            if (go->transform)
+                go->transform->localPosition = {a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                                 a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                                                 a.size() > 3 ? a[3].AsFloat() : 0.0f};
+            return Value{true};
+        };
+        b["pool_release"] = [this](std::vector<Value>&) {
+            GameObject* go = rt.host ? rt.host->gameObject : nullptr;
+            Scene* sc = go ? go->scene() : nullptr;
+            return Value{sc ? sc->Despawn(go) : false};
+        };
+        b["pool_prewarm"] = [this](std::vector<Value>& a) {
+            Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
+            if (!pool) return Value{0.0f};
+            const float n = a.size() > 1 ? a[1].AsFloat() : 1.0f;
+            pool->Prewarm(n > 0.0f && n < 100000.0f ? static_cast<int>(n) : 0);
+            return Value{static_cast<float>(pool->IdleCount())};
+        };
+        b["pool_idle"] = [this](std::vector<Value>& a) {
+            Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
+            return Value{pool ? static_cast<float>(pool->IdleCount()) : 0.0f};
+        };
         // Destroy this script's own GameObject (deferred to end of frame).
         b["destroy"] = [this](std::vector<Value>&) {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())

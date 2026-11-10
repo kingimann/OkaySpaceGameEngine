@@ -489,6 +489,8 @@ Intuitive names for common builtins so code reads naturally:
 | `every(seconds, "fn")` | Call `fn` repeatedly on an interval |
 | `cancel_timers()` | Clear all scheduled callbacks |
 | `spawn("prefab", x, y)` / `spawn3("prefab", x, y, z)` | Instantiate prefabs |
+| `pool_get("prefab", x, y [, z])` / `pool_release()` | Spawn from the scene's pool for a prefab (reused objects start fresh) / give this object back to its pool |
+| `pool_prewarm("prefab", n)` / `pool_idle("prefab")` | Make `n` idle objects ahead of time / count the idle ones |
 
 ### Physics queries
 | Function | Description |

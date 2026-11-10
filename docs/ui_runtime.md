@@ -54,7 +54,7 @@ floating damage numbers, a dialogue box, the UI Gallery, and the script and C++ 
 | Retro Pixel | square corners, 2 px white border, hard black drop shadow, instant changes |
 | Minimal | near-white, black buttons, hairline border |
 | Neon | dark violet, magenta and cyan glow |
-| Glass | see-through cards with a bright edge and a soft shadow, so the picture behind shows through. It does **not** blur what is behind it (the UI draw path cannot read the screen back), and it is not called frosted for that reason |
+| Glass | layered glass: a faint white-tinted card with a bright rim, a soft multi-tap shadow and a glow, over a deep blue gradient backdrop with colour blobs that show through the cards. It does **not** blur what is behind it (the UI draw path cannot read the screen back), so it is called Glass, not frosted. Scenes that name Glass still load |
 | Military | olive and khaki, square, gold accent |
 | Horror | near-black, dried-blood red, dark red glow |
 
@@ -90,8 +90,10 @@ in the text: `[color=#ffcc33]gold[/color]`, `[color=red]red[/color]`, `[b]bold[/
 `#rgb`, `#rrggbb`, `#rrggbbaa` or a name (white, black, red, green, blue, yellow, orange, gold, cyan, magenta,
 purple, pink, gray). Tags nest. A tag that is not one of these is shown as plain text, and `[[` shows a `[`.
 The tags take no room: wrapping, alignment, upper-casing and the typing effect all work on the plain text.
-Bold doubles the glyphs (every font); italic leans the built-in pixel font only, a font file ignores it. World
-(3D) text does not read tags. The tooltip's own `<b>` and `#rrggbb` tags are unchanged.
+On a font file (TTF) italic really slants every glyph (the quads are sheared about the baseline) and bold
+thickens the strokes with a three-tap smear; the built-in pixel font leans for italic and draws twice for bold.
+Rich Text works on **screen-space** text only: on world (3D) text the checkbox is greyed out with a note, and
+`ui_set_rich` ignores it. The tooltip's own `<b>` and `#rrggbb` tags are unchanged.
 
 **Readable in every look.** The themes promise a contrast of at least 3 to 1 between a button's label and
 what it sits on, for all 12 looks and all 7 roles. A Ghost or Outline button uses the accent for its label when
@@ -167,3 +169,22 @@ scene. File > Examples > UI Gallery does that in a fresh 2D scene. The same head
 `AddInventoryScreen`, `AddDialogueScreen`, `AddWindow`, `AddNameplate` and `ApplyThemePreset`.
 `BuildGallery(scene, preset, true)` (File > Examples > UI Gallery (phone)) lays the same widgets in one scrolling
 column on a 440 x 960 canvas inside a Safe Area, for portrait phones.
+
+The gallery also has working pieces, not just pictures: a "Gallery Bag" Inventory bound to the Slots grid with
+`UIInventoryBind`, and a **Talk** button that calls the dialogue box's **Restart** action. File > Examples
+saves the scene into the open project (`Assets/Scenes`, never overwriting an existing file), so Play works at
+once; with no project open it stays an unsaved scene.
+
+## What each control does (audit)
+
+| Piece | In the editor | Visible in Play | Test that fails if it did nothing | In the gallery |
+|---|---|---|---|---|
+| UITheme and 12 presets | UI Theme window, inspector | colours, shapes | `test_runtime_ui` (every role and theme pair) | yes |
+| UIStyleVariant | role chips, inspector | button/panel colours | `test_runtime_ui` | yes |
+| Theme files (.okaytheme) | UI Theme window | restyles the scene | `test_runtime_ui` (save, load, `ui_load_theme`) | by preset |
+| UIDamageNumbers | Add Component, inspector | floating numbers | `test_runtime_ui` | yes |
+| UIDialogueBox | Add Component, inspector | typed text, choices, Restart | `test_runtime_ui` | yes |
+| UIInventoryBind | Add Component, inspector | slots show the Inventory | `test_runtime_ui` | yes |
+| Radio toggles, draggable window | inspector | one on per group, window moves | `test_runtime_ui` | yes |
+| Nameplate | UI add menu | a static name and bar block | `test_runtime_ui` | yes; no live data binding |
+| `ui_*` script calls | text scripts | as above | `test_runtime_ui` | n/a |

@@ -104,6 +104,9 @@ add_library(okay_engine
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
     src/Components/UIBarBind.cpp
+    src/Components/UIDamageNumbers.cpp
+    src/Components/UIDialogueBox.cpp
+    src/Components/UIThemeAsset.cpp
     src/Components/UIDraggable.cpp
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
@@ -178,6 +181,8 @@ add_library(okay_engine
     src/Modeling/PolyOps.cpp
     src/Modeling/Modifiers.cpp
     src/Modeling/UVUnwrap.cpp
+    src/Components/LODGroup.cpp
+    src/Render/Visibility.cpp
     src/Optimize/MeshSimplify.cpp
     src/Optimize/LodGroup.cpp
     src/Optimize/OcclusionBuffer.cpp

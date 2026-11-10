@@ -10,8 +10,9 @@ namespace okay {
 
 /// Casts a point (canvas pixels) against every screen-space UI widget in the
 /// scene and returns the top-most one under it, or nullptr. "Top-most" follows
-/// draw order: later objects render over earlier ones, so the last matching
-/// widget in scene order wins — the one a player would actually click.
+/// draw order: the topmost matching
+/// widget under the point wins — the one a player would actually click. Draw order is the
+/// renderer's: Canvas sort order, then the widget's layer or uiDrawOrder, then hierarchy order.
 inline GameObject* UIRaycast(Scene& scene, const Vec2& point,
                              float canvasW = UICanvas::Width(),
                              float canvasH = UICanvas::Height()) {
@@ -19,7 +20,7 @@ inline GameObject* UIRaycast(Scene& scene, const Vec2& point,
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
         if (!go->active) continue;
-        if (UIScreenContains(go, point, canvasW, canvasH)) hit = go;
+        if (UIScreenContains(go, point, canvasW, canvasH) && (!hit || UIDrawsAbove(go, hit))) hit = go;
     }
     return hit;
 }

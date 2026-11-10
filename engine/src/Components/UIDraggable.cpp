@@ -15,15 +15,24 @@ void Fire(GameObject* go, const char* fn) {
         if (sc->VM()) sc->VM()->CallEvent(fn);
 }
 
-// Topmost UI widget under `p` (canvas pixels), excluding `self`.
+// Topmost UI widget under `p` (canvas pixels), excluding `self`: the one drawn over the others
+// (canvas order, layer, hierarchy), the same order the renderer paints in.
 GameObject* PickOther(Scene& scene, GameObject* self, const Vec2& p, float w, float h) {
     GameObject* hit = nullptr;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
         if (go == self || !go->active) continue;
-        if (UIScreenContains(go, p, w, h)) hit = go;   // last match = topmost
+        if (UIScreenContains(go, p, w, h) && (!hit || UIDrawsAbove(go, hit))) hit = go;
     }
     return hit;
+}
+
+// The widget a drag moves: this one, or (dragParent) its nearest UI ancestor.
+GameObject* Mover(GameObject* self, bool dragParent) {
+    if (!dragParent || !self || !self->transform) return self;
+    for (Transform* t = self->transform->Parent(); t; t = t->Parent())
+        if (t->gameObject && GetUIRect(t->gameObject).valid) return t->gameObject;
+    return self;
 }
 
 // Is `target` a valid drop for a draggable `self` (tag/anyTarget rules)?
@@ -39,7 +48,8 @@ GameObject* ValidTarget(GameObject* target, GameObject* self, bool anyTarget) {
 
 void UIDraggable::Update(float) {
     if (!gameObject || !gameObject->scene()) return;
-    UIRect r = GetUIRect(gameObject);
+    GameObject* mover = Mover(gameObject, dragParent);
+    UIRect r = GetUIRect(mover);
     if (!r.valid || !r.position) return;
     Scene& scene = *gameObject->scene();
     float w = UICanvas::Width(), h = UICanvas::Height();
@@ -55,7 +65,7 @@ void UIDraggable::Update(float) {
         float dx = m.x - m_press.x, dy = m.y - m_press.y;
         if (dx * dx + dy * dy >= dragThreshold * dragThreshold) {
             m_dragging = true; m_armed = false; m_prevMouse = m_press;
-            if (bringToFront && gameObject->scene()) gameObject->scene()->MoveToFront(gameObject);
+            if (bringToFront && gameObject->scene()) gameObject->scene()->MoveToFront(mover);
             Fire(gameObject, "on_drag_start");
             // Leaving the slot it was sitting in: tell that slot (on_remove).
             if (m_dropTarget) {
@@ -71,10 +81,19 @@ void UIDraggable::Update(float) {
     if (!m_dragging) return;
 
     if (Input::GetMouseButton(0)) {
-        float s = UIScaleFor(gameObject, w, h);
+        float s = UIScaleFor(mover, w, h);
         if (s < 1e-3f) s = 1.0f;
         if (axis != Axis::Vertical)   r.position->x += (m.x - m_prevMouse.x) / s;
         if (axis != Axis::Horizontal) r.position->y += (m.y - m_prevMouse.y) / s;
+        if (keepOnScreen) {          // keep the whole widget on the screen (screen pixels -> design pixels)
+            Vec2 o, sz;
+            if (GetUIScreenRect(mover, w, h, o, sz) && sz.x > 0.0f && sz.y > 0.0f) {
+                float dx = 0.0f, dy = 0.0f;
+                if (o.x < 0.0f) dx = -o.x; else if (o.x + sz.x > w) dx = w - (o.x + sz.x);
+                if (o.y < 0.0f) dy = -o.y; else if (o.y + sz.y > h) dy = h - (o.y + sz.y);
+                if (!r.Stretches()) { r.position->x += dx / s; r.position->y += dy / s; }
+            }
+        }
         m_prevMouse = m;
         // Highlight the slot we're hovering (clear the rest). The raw topmost target
         // is highlighted whether or not the tag matches, so the slot can show a

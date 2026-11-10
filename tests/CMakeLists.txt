@@ -683,6 +683,10 @@ add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
 
+add_executable(test_runtime_ui test_runtime_ui.cpp)
+target_link_libraries(test_runtime_ui PRIVATE okay::engine)
+add_test(NAME runtime_ui COMMAND test_runtime_ui)
+
 add_executable(test_ui_layering test_ui_layering.cpp)
 target_link_libraries(test_ui_layering PRIVATE okay::engine)
 add_test(NAME ui_layering COMMAND test_ui_layering)
@@ -1097,6 +1101,16 @@ add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
+
+add_executable(test_vs_node_docs test_vs_node_docs.cpp)
+target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
+add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
+
+add_executable(test_doc_recovery test_doc_recovery.cpp)
+target_include_directories(test_doc_recovery PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_doc_recovery PRIVATE okay::engine)
+add_test(NAME doc_recovery COMMAND test_doc_recovery)
 
 add_executable(test_anim_clip_tools test_anim_clip_tools.cpp)
 target_link_libraries(test_anim_clip_tools PRIVATE okay::engine)
@@ -1892,6 +1906,18 @@ target_link_libraries(test_optimize_streaming PRIVATE okay::engine)
 add_test(NAME optimize_streaming COMMAND test_optimize_streaming)
 
 # Optimization tools (27): scene optimization report (JSON / text)
+add_executable(test_camera_stack test_camera_stack.cpp)
+target_link_libraries(test_camera_stack PRIVATE okay::engine)
+add_test(NAME camera_stack COMMAND test_camera_stack)
+
+add_executable(test_visibility_lod test_visibility_lod.cpp)
+target_link_libraries(test_visibility_lod PRIVATE okay::engine)
+add_test(NAME visibility_lod COMMAND test_visibility_lod)
+
+add_executable(test_gltf_pbr_maps test_gltf_pbr_maps.cpp)
+target_link_libraries(test_gltf_pbr_maps PRIVATE okay::engine)
+add_test(NAME gltf_pbr_maps COMMAND test_gltf_pbr_maps)
+
 add_executable(test_optimize_report test_optimize_report.cpp)
 target_link_libraries(test_optimize_report PRIVATE okay::engine)
 add_test(NAME optimize_report COMMAND test_optimize_report)

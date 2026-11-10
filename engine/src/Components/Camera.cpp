@@ -22,10 +22,15 @@ void Camera::Awake() {
 void Camera::ScreenPointToRay(float screenX, float screenY, float screenW, float screenH,
                               Vec3& outOrigin, Vec3& outDir) const {
     // Unproject through the same view * projection the renderers use, so picking
-    // stays exact with zoom, dutch, lens shift and shake.
-    float aspect = screenH > 0.0f ? screenW / screenH : 1.0f;
-    float ndcX = screenW > 0.0f ? (2.0f * screenX / screenW - 1.0f) : 0.0f;
-    float ndcY = screenH > 0.0f ? (1.0f - 2.0f * screenY / screenH) : 0.0f;   // +Y up
+    // stays exact with zoom, dutch, lens shift and shake. Pixels are mapped
+    // through the viewport rect; a full-screen rect is the whole window.
+    float rx, ry, rw, rh;
+    ScreenRect(screenW, screenH, rx, ry, rw, rh);
+    float aspect = rh > 0.0f ? rw / rh : 1.0f;
+    const float lx = rw > 0.0f ? (screenX - rx) / rw : 0.5f;
+    const float ly = rh > 0.0f ? (screenY - ry) / rh : 0.5f;
+    float ndcX = 2.0f * lx - 1.0f;
+    float ndcY = 1.0f - 2.0f * ly;   // +Y up
     const Mat4 inv = (ProjectionMatrix(aspect) * ViewMatrix()).Inverse();
     auto unproject = [&](float z) {
         Vec4 p = inv * Vec4{ndcX, ndcY, z, 1.0f};

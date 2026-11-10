@@ -403,6 +403,8 @@ static void ApplyGltfMaterial(MeshRenderer& mr, const gltf_detail::GltfMat& gm) 
     if (!gm.baseColorTex.empty()) mr.texture   = gm.baseColorTex;
     if (!gm.normalTex.empty())    mr.normalMap = gm.normalTex;
     if (!gm.aoTex.empty())        mr.aoMap     = gm.aoTex;
+    if (!gm.metallicRoughnessTex.empty()) mr.metallicRoughnessMap = gm.metallicRoughnessTex;
+    if (!gm.emissiveTex.empty())  mr.emissiveMap = gm.emissiveTex;
     if (gm.hasBaseColorFactor)    mr.color     = Color(gm.baseColor[0], gm.baseColor[1], gm.baseColor[2], gm.baseColor[3]);
     if (gm.hasEmissiveFactor)     mr.emissive  = Color(gm.emissive[0], gm.emissive[1], gm.emissive[2], 1.0f);
     if (gm.hasMetalRough) {

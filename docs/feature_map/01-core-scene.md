@@ -323,14 +323,14 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **What:** Fullscreen, vsync and the Low/Medium/High quality preset the Settings screen drives.
 - **Parts:**
   - 1.15.1 Settings values - `Core/DisplaySettings` - Fullscreen, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
-  - 1.15.2 Quality preset - `Core/DisplaySettings` - `ApplyQuality` flips the shared shadow, per-pixel lighting, bloom, SSAO and FXAA switches (declared in `SoftwareRenderer.hpp`, some read by the GPU backends too)
+  - 1.15.2 Quality preset - `Core/DisplaySettings` - `ApplyQuality` flips shadows, per-pixel lighting, bloom, SSAO and FXAA, and sets shadow resolution, cascade count and shadow distance
 - **Code:** `Core/DisplaySettings`
 - **API:** `DisplaySettings::SetQuality`, `DisplaySettings::SetFullscreen`, `DisplaySettings::Generation`, `DisplaySettings::ApplyQuality`
 - **Editor:** none (the player reads it; Settings screen component, 12.8)
 - **Docs:** -
-- **Tests:** -
-- **Status:** Basic - read `DisplaySettings.cpp` (70 lines); no test of its own; the OpenGL and Direct3D 11 renderers also read `ShadowsEnabled()` and `BloomEnabled()` (OpenGL also `SSAOEnabled()`), so the presets reach them; `FXAAEnabled()` and `PerPixelLighting()` are read only by the software path (grep)
-- **Open:** a test; the preset does not change shadow resolution or distance; resolution and window mode options; the editor calls `ApplyQuality()` at start (editor/main.cpp), the player reads `DisplaySettings` too
+- **Tests:** `visibility_lod`
+- **Status:** Basic - Low/Medium/High now also set shadow map size, cascade count and distance (High matches the old 2048 / 80 m / 3 defaults); `FXAAEnabled()` and `PerPixelLighting()` are still read only by the software path
+- **Open:** resolution and window mode options; the editor calls `ApplyQuality()` at start (editor/main.cpp), the player reads `DisplaySettings` too
 - **Related:** 12.8, 38.1, 2.3, 2.5
 - **Words:** DisplaySettings, fullscreen, vsync, quality, graphics settings, Low Medium High, video settings
 - **Seen as:** the quality setting changes nothing on a GPU machine; fullscreen is not remembered

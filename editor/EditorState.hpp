@@ -122,6 +122,9 @@ public:
     /// history and its saved state exactly as they were (`error` says why). A loaded scene starts a
     /// fresh undo history, so Undo can never put the old scene's objects into the new file.
     bool Load(const std::string& path, std::string* error = nullptr);
+    /// Load scene text recovered from an autosave. The scene's path stays `keepPath`
+    /// and the scene is left unsaved, so the real file is not overwritten.
+    bool LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
     /// The open scene's file was renamed or moved: keep editing it under the new path.
     void FollowMovedFile(const std::string& newPath) { m_path = newPath; }

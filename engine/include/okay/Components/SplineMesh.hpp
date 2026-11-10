@@ -40,6 +40,7 @@ public:
     int   sides = 12;                ///< tube roundness
     std::vector<Vec2> customProfile;
     bool  closedProfile = false;     ///< Custom: join the last point back to the first
+    bool  capEnds = true;            ///< close the open ends of a road, tube or rail
     float segmentLength = 0.5f;      ///< spacing of the cross-sections along the curve
     float uvTileLength = 4.0f;       ///< the texture repeats every this many units along the length
     // ---- Repeat ----

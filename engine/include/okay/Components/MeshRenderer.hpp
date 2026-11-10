@@ -133,6 +133,13 @@ public:
     std::string aoMap;
     float aoStrength = 1.0f;
 
+    /// glTF packed metallic-roughness: the green channel is roughness, the blue
+    /// channel is metallic. Multiplied with `metallic` and the roughness implied
+    /// by `shininess`. Empty = the scalar fields alone (every older material).
+    std::string metallicRoughnessMap;
+    /// glTF emissive texture, multiplied with `emissive`. Empty = the colour alone.
+    std::string emissiveMap;
+
     /// Metalness [0,1]: metals lose their diffuse and tint both their specular
     /// highlight and their environment reflection by the albedo color (so gold
     /// reflects gold). 0 = dielectric (plastic/wood), 1 = pure metal.

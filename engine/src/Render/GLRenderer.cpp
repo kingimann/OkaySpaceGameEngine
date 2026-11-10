@@ -1,6 +1,8 @@
 #include "okay/Render/GLRenderer.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/Culling.hpp"
+#include "okay/Render/Visibility.hpp"
+#include "okay/Components/LODGroup.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shares the texture cache
 #include "okay/Render/ShadowSetup.hpp"
 #include "okay/Render/Atmosphere.hpp"         // sky palette, fog modes, post settings
@@ -253,6 +255,8 @@ const char* kFrag =
     "uniform sampler2D uNormalTex; uniform float uHasNormal; uniform float uNormalStrength;\n"  // bump/normal map
     "uniform sampler2D uSpecTex; uniform float uHasSpecMap;\n"                  // gloss map (per-texel specular)
     "uniform sampler2D uAoTex; uniform float uHasAo; uniform float uAoStrength;\n"  // ambient-occlusion map
+    "uniform sampler2D uMrTex; uniform float uHasMR;\n"                        // glTF packed metallic-roughness (G rough, B metal)
+    "uniform sampler2D uEmisTex; uniform float uHasEmis;\n"                    // glTF emissive texture
     "uniform float uMetallic; uniform float uReflectivity;\n"                  // PBR metalness + env reflection
     "uniform vec3 uSkyTop; uniform vec3 uSkyHor; uniform vec3 uSkyBot; uniform float uEnvOn;\n"  // sky for reflections
     // ---- Shadows ----
@@ -368,7 +372,17 @@ const char* kFrag =
     "  bool lin = uTonemap > 0.5;\n"
     "  if (lin) base = pow(max(base, vec3(0.0)), vec3(2.2));\n"
     "  vec3 emis = uEmissive;\n"
+    "  if (uHasEmis > 0.5) emis *= texture2D(uEmisTex, vUV).rgb;\n"
     "  if (lin) emis = pow(max(emis, vec3(0.0)), vec3(2.2));\n"
+    "  float shiny = uShininess; float metalK = uMetallic; float specK = uSpecular;\n"
+    "  if (uHasMR > 0.5) {\n"
+    "    vec4 mr = texture2D(uMrTex, vUV);\n"
+    "    metalK *= mr.b;\n"
+    "    float rough0 = clamp(1.0 - (uShininess - 4.0) / 124.0, 0.0, 1.0);\n"
+    "    float rough = clamp(rough0 * mr.g, 0.0, 1.0);\n"
+    "    shiny = 4.0 + (1.0 - rough) * 124.0;\n"
+    "    specK *= clamp(1.0 - rough, 0.04, 1.0);\n"
+    "  }\n"
     // Unlit: decode+encode cancel, so unlit colors look identical either way.
     "  if (uUnlit > 0.5) { vec3 uc = base + emis;\n"
     "    if (lin && uHdrOut < 0.5) uc = pow(max(uc, vec3(0.0)), vec3(1.0/2.2));\n"
@@ -385,7 +399,7 @@ const char* kFrag =
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "    lit += uLightColor * ndl * sh;\n"
     "    if (uSpecular > 0.0) { vec3 H = normalize(uLightDir + Vv);\n"
-    "      spec = vec3(pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * sh); }\n"
+    "      spec = vec3(pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * sh); }\n"
     "  } else {\n"
     "    for (int i = 0; i < 16; i++) { if (i >= uLightCount) break;\n"   // directional + point + spot
     "      vec3 ld; float at = 1.0;\n"
@@ -408,7 +422,7 @@ const char* kFrag =
     "      else if (recv && uLShadow[i].x > -0.5) lsh = localShadow(i, vWorld, Ns, ld, d);\n"     // spot / point / area shadow tiles
     "      lit += uLCol[i] * ndl * at * lsh;\n"
     "      if (uSpecular > 0.0) { vec3 H = normalize(ld + Vv);\n"   // highlights take the light's colour + intensity
-    "        spec += uLCol[i] * (pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at * lsh); }\n"
+    "        spec += uLCol[i] * (pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * at * lsh); }\n"
     "    }\n"
     "  }\n"
     "  if (uShaderMode > 7.5) lit += fz * fz * (lit) * 0.6;\n"     // Velvet: fuzzy grazing sheen
@@ -418,7 +432,7 @@ const char* kFrag =
     "    float ao = dot(texture2D(uAoTex, vUV).rgb, vec3(0.2126, 0.7152, 0.0722));\n"
     "    lit *= (1.0 - uAoStrength * (1.0 - ao));\n"
     "  }\n"
-    "  float metal = clamp(uMetallic, 0.0, 1.0);\n"               // metalness: kill diffuse, tint spec/reflection
+    "  float metal = clamp(metalK, 0.0, 1.0);\n"                 // metalness: kill diffuse, tint spec/reflection
     "  float diffK = 1.0 - 0.9 * metal;\n"
     "  vec3 f0 = mix(vec3(1.0), base, metal);\n"                  // dielectric = white, metal = albedo-tinted
     "  vec3 diff = base * lit * diffK;\n"
@@ -641,6 +655,10 @@ bool GLRenderer::EnsureProgram() {
     m_uAoTex = g.GetUniformLocation(m_prog, "uAoTex");
     m_uHasAo = g.GetUniformLocation(m_prog, "uHasAo");
     m_uAoStrength = g.GetUniformLocation(m_prog, "uAoStrength");
+    m_uMrTex = g.GetUniformLocation(m_prog, "uMrTex");
+    m_uHasMR = g.GetUniformLocation(m_prog, "uHasMR");
+    m_uEmisTex = g.GetUniformLocation(m_prog, "uEmisTex");
+    m_uHasEmis = g.GetUniformLocation(m_prog, "uHasEmis");
     m_uMetallic = g.GetUniformLocation(m_prog, "uMetallic");
     m_uReflectivity = g.GetUniformLocation(m_prog, "uReflectivity");
     m_uSkyTop = g.GetUniformLocation(m_prog, "uSkyTop");
@@ -680,6 +698,8 @@ bool GLRenderer::EnsureProgram() {
     g.UseProgram(m_prog);
     g.Uniform1i(m_uShadowTex, 4);
     g.Uniform1i(m_uLocalTex, 5);
+    g.Uniform1i(m_uMrTex, 6);
+    g.Uniform1i(m_uEmisTex, 7);
     g.UseProgram(0);
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
@@ -1302,6 +1322,7 @@ static std::uint64_t MeshKey(const SkinnedMesh* skin);   // defined with the mes
 // passes read it). Leaves the depth FBO bound and the depth test on.
 void GLRenderer::DrawLinearDepth(const Scene& scene, const Mat4& vp, const Vec3& eye, const GameObject* ignore,
                                  const Frustum& viewFr) {
+    (void)viewFr;   // the visibility frame already applied this frustum
     g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoDepthFbo);
     g.Viewport(0, 0, m_ssaoW, m_ssaoH);
     g.ClearColor(1.0f, 1.0f, 0.0f, 1.0f);            // far plane = no occlusion
@@ -1319,9 +1340,11 @@ void GLRenderer::DrawLinearDepth(const Scene& scene, const Mat4& vp, const Vec3&
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled) continue;
         if (mr->color.a < 0.999f) continue;           // transparents don't occlude
-        const Mesh& mesh = mr->DisplayMesh();
+        if (visibility::Current().ready && !visibility::Current().Visible(go)) continue;
+        const Mesh* shown = visibility::Current().ready ? visibility::Current().MeshFor(go) : &mr->DisplayMesh();
+        if (!shown) continue;
+        const Mesh& mesh = *shown;
         if (mesh.vertices.empty() || mesh.triangles.size() < 3) continue;
-        if (CulledByFrustum(viewFr, go, mr)) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();
         Mat4 mvp = vp * model;
         g.UniformMatrix4fv(m_usdMVP, 1, GL_FALSE, mvp.m);
@@ -1685,7 +1708,9 @@ void GLRenderer::DrawShadowCasters(const Scene& scene, const Mat4& lightVP, cons
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
         if (mr->color.a < 0.999f) continue;   // transparent meshes don't cast
-        const Mesh& mesh = mr->DisplayMesh();
+        const Mesh* lodMesh = visibility::Current().ShadowMesh(go, mr);
+        if (!lodMesh) continue;               // this camera's LOD dropped it
+        const Mesh& mesh = *lodMesh;
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
         if (CulledByFrustum(lightFr, go, mr)) continue;
@@ -1757,6 +1782,10 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             } else ++it;
         }
     }
+
+    // LOD / occlusion / batching for this camera, before shadows so casters use
+    // the same mesh the colour pass will (a culled LOD does not cast).
+    visibility::Build(scene, vp, eye, w, h, visibility::RenderViewFovY(), ignore);
 
     // ---- Shadow-map depth pre-passes -------------------------------------------
     // Sun: one ortho cascade per tile of the sun atlas. Local lights: one
@@ -2008,19 +2037,17 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         }
     }
 
-    // Skip what the camera can't see (main pass and the SSAO depth pass below).
+    // Frustum, occlusion, LOD and batching (Visibility.hpp). One camera with no
+    // LOD group and nothing safe to merge submits the same objects as before.
     const Frustum viewFr = Frustum::FromVP(vp);
-    int drawn = 0, culled = 0;
-    for (const auto& up : scene.Objects()) {
-        GameObject* go = up.get();
-        if (!go || !go->ActiveInHierarchy() || go->HiddenFromCamera(ignore)) continue;
-        if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
-        auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || mr->wireframe || !mr->enabled) continue;
-        const Mesh& mesh = mr->DisplayMesh();
+    const visibility::Frame& vis = visibility::Current();
+    int drawn = 0;
+    for (const visibility::Item& it : vis.items) {
+        GameObject* go = it.go;
+        auto* mr = it.mr;
+        const Mesh& mesh = *it.mesh;
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
-        if (CulledByFrustum(viewFr, go, mr)) { ++culled; continue; }
         ++drawn;
         unsigned int tex = TextureFor(mr->texture);
 
@@ -2029,11 +2056,11 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // every frame by a Character rebuild + re-upload dynamically.
         // SkinnedMesh is cached as well: re-expanded only when its version moves
         // (once per animated frame, shared by every view and pass).
-        const bool deformed = go->GetComponent<Character>() != nullptr;
+        const bool deformed = !it.batched && go->GetComponent<Character>() != nullptr;
         MeshVB* mvb = nullptr;
         const SkinnedMesh* gpuSkin = nullptr;
         if (!deformed) {
-            const auto* skin = go->GetComponent<SkinnedMesh>();
+            const auto* skin = it.batched ? nullptr : go->GetComponent<SkinnedMesh>();
             gpuSkin = skin;
             mvb = EnsureMeshVB(mesh, MeshKey(skin));
             if (!mvb) continue;                    // no drawable triangles
@@ -2042,12 +2069,14 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             if (m_verts.empty()) continue;
         }
 
-        Mat4 model = go->transform->LocalToWorldMatrix();
+        Mat4 model = it.model;
         Mat4 mvp = vp * model;
         g.UniformMatrix4fv(m_uMVP, 1, GL_FALSE, mvp.m);
         g.UniformMatrix4fv(m_uModel, 1, GL_FALSE, model.m);
         bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
-        g.Uniform3f(m_uColor, mr->color.r, mr->color.g, mr->color.b);
+        float tintR = 1, tintG = 1, tintB = 1;
+        if (it.lod >= 0) if (auto* lg = go->GetComponent<LODGroup>(); lg) lg->DebugTint(it.lod, tintR, tintG, tintB);
+        g.Uniform3f(m_uColor, mr->color.r * tintR, mr->color.g * tintG, mr->color.b * tintB);
         g.Uniform3f(m_uEmissive, mr->emissive.r, mr->emissive.g, mr->emissive.b);
         g.Uniform1f(m_uSpecular, unlit ? 0.0f : mr->specular);
         g.Uniform1f(m_uShininess, mr->shininess);
@@ -2114,6 +2143,21 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         } else {
             g.Uniform1f(m_uHasAo, 0.0f);
         }
+
+        unsigned int mrtex = mr->metallicRoughnessMap.empty() ? 0u : TextureFor(mr->metallicRoughnessMap);
+        if (mrtex) {
+            g.ActiveTexture(GL_TEXTURE0 + 6);
+            g.BindTexture(GL_TEXTURE_2D, mrtex);
+            g.Uniform1f(m_uHasMR, 1.0f);
+            g.ActiveTexture(GL_TEXTURE0);
+        } else g.Uniform1f(m_uHasMR, 0.0f);
+        unsigned int etex = mr->emissiveMap.empty() ? 0u : TextureFor(mr->emissiveMap);
+        if (etex) {
+            g.ActiveTexture(GL_TEXTURE0 + 7);
+            g.BindTexture(GL_TEXTURE_2D, etex);
+            g.Uniform1f(m_uHasEmis, 1.0f);
+            g.ActiveTexture(GL_TEXTURE0);
+        } else g.Uniform1f(m_uHasEmis, 0.0f);
 
         // PBR scalars + texture offset (slide/atlas). Metalness/reflection tint by albedo.
         g.Uniform1f(m_uMetallic, unlit ? 0.0f : mr->metallic);
@@ -2182,7 +2226,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         }
     }
 
-    LastCullCounters().drawn = drawn; LastCullCounters().culled = culled;
+    LastCullCounters().drawn = drawn;
     g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);   // skin inputs off for the post passes
     // Resolve MSAA into the single-sample texture.
     g.BindFramebuffer(GL_READ_FRAMEBUFFER, m_fbo);

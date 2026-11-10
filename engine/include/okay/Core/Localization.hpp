@@ -148,7 +148,9 @@ public:
     static std::string LanguageFont();
     /// The table language that best matches `preferred` (the OS locales, best
     /// first: "fr-CA", "fr_FR.UTF-8", "en"): an exact match, else the same base
-    /// language. The default language when nothing matches.
+    /// language (the one without a region first). Chinese keeps its script: zh-TW,
+    /// zh-HK and zh-Hant-TW pick a Traditional table language (zh-Hant), zh-CN and zh-SG
+    /// a Simplified one (zh-Hans). The default language when nothing matches.
     static std::string PickLanguage(const std::vector<std::string>& preferred);
 
     // ---- Player settings ----
@@ -170,7 +172,8 @@ public:
     /// for text that is localized once a project adds its key (dialogue, quests).
     static std::string GetOr(const std::string& key, const std::string& fallback);
     /// A name as part of a key: lower case, letters, digits, '_' and '-' kept,
-    /// anything else '_' ("Old Smith" -> "old_smith").
+    /// anything else '_' ("Old Smith" -> "old_smith"). Letters of other scripts stay as
+    /// they are (UTF-8), so names in Cyrillic or Chinese give different keys.
     static std::string KeyPart(const std::string& name);
     /// Get(key) with its {0} / {name} / plural placeholders filled in.
     static std::string LocalizeArgs(const std::string& key, const std::vector<LocArg>& args);
@@ -179,9 +182,12 @@ public:
     }
     /// Fill a pattern's placeholders: {0} or {name} is an argument's text,
     /// {0, plural, =0 {none} one {# coin} other {# coins}} picks a form by the
-    /// argument's number (# is the number), {{ and }} are literal braces. A
+    /// argument's number (# is the number), {who, select, male {...} other {...}} picks a
+    /// form by the argument's text, {0, number} writes the number the language's way
+    /// ("1,234,567.5"; styles `integer`, `percent` and a pattern like `#,##0.00`),
+    /// {0, currency, USD} writes money, {{ and }} are literal braces. A
     /// placeholder without an argument stays as written. `lang` picks the plural
-    /// rule ("" = the current language).
+    /// rule and the number format ("" = the current language).
     static std::string Format(const std::string& pattern, const std::vector<LocArg>& args,
                               const std::string& lang = "");
 
@@ -192,9 +198,10 @@ public:
     /// value). Built in: en, de, nl, sv, it... (one / other), fr and pt (0 and 1
     /// are "one"; millions "many"), es (millions "many"), ru and uk (one / few /
     /// many), pl (one / few / many), cs and sk (one / few / many for fractions),
-    /// ar (zero / one / two / few / many / other), and no plural (always other) for
-    /// ja, zh, ko, vi, th, id, ms. Other languages use one / other. SetPluralRule
-    /// overrides any of them.
+    /// ar (zero / one / two / few / many / other), hr / sr / bs (one / few / other by the
+    /// last digits), sl, lt, lv, ro, he, cy, ga, mt, is, mk, da, hi / bn / fa / gu / zu
+    /// (0 is "one"), and no plural (always other) for ja, zh, ko, vi, th, id, ms, lo, my,
+    /// km, jv. Other languages use one / other. SetPluralRule overrides any of them.
     static PluralForm Plural(const std::string& lang, double n);
     /// The plural form of a string-table key: looks up `key.one`, `key.few`...
     /// (the form `count` takes in the current language) in the current language,

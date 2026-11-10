@@ -839,6 +839,11 @@ add_executable(test_ui_input_guard test_ui_input_guard.cpp)
 target_link_libraries(test_ui_input_guard PRIVATE okay::engine)
 add_test(NAME ui_input_guard COMMAND test_ui_input_guard)
 
+# Display settings model: window modes, resolutions, vsync, quality preset (no window needed)
+add_executable(test_display_settings test_display_settings.cpp)
+target_link_libraries(test_display_settings PRIVATE okay::engine)
+add_test(NAME display_settings COMMAND test_display_settings)
+
 add_executable(test_char_anim test_char_anim.cpp)
 target_link_libraries(test_char_anim PRIVATE okay::engine)
 add_test(NAME char_anim COMMAND test_char_anim)
@@ -1012,6 +1017,11 @@ add_test(NAME localization COMMAND test_localization)
 add_executable(test_loc_tools test_loc_tools.cpp)
 target_link_libraries(test_loc_tools PRIVATE okay::engine)
 add_test(NAME loc_tools COMMAND test_loc_tools)
+
+# Localization runtime, second pass: keys, language matching, plural rules, number/select placeholders, CSV
+add_executable(test_loc_runtime test_loc_runtime.cpp)
+target_link_libraries(test_loc_runtime PRIVATE okay::engine)
+add_test(NAME loc_runtime COMMAND test_loc_runtime)
 
 # Accessibility: colour vision, safe palette, subtitles and captions, settings
 add_executable(test_accessibility test_accessibility.cpp)
@@ -1616,6 +1626,11 @@ add_test(NAME scene_lifecycle_audit COMMAND test_scene_lifecycle_audit)
 add_executable(test_durable_saves test_durable_saves.cpp)
 target_link_libraries(test_durable_saves PRIVATE okay::engine)
 add_test(NAME durable_saves COMMAND test_durable_saves)
+
+# Saves and prefs hardening: the shared atomic write, SaveFile checksum and backup, Prefs recovery, SaveGame listing
+add_executable(test_save_hardening test_save_hardening.cpp)
+target_link_libraries(test_save_hardening PRIVATE okay::engine)
+add_test(NAME save_hardening COMMAND test_save_hardening)
 
 # Save game framework: typed blocks, slot files + headers, migration chain, forward
 # compatibility, sync backends, menu model (no scene needed).

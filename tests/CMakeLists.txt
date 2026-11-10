@@ -729,6 +729,12 @@ target_include_directories(test_project_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/ed
 target_link_libraries(test_project_upgrade PRIVATE okay::engine)
 add_test(NAME project_upgrade COMMAND test_project_upgrade)
 
+# The Project panel's logic (editor/ProjectBrowser.*, ImGui-free): folder model, safe create / rename / move / copy / delete with undo, references rewritten, clipboard, failure injection at every file step.
+add_executable(test_project_panel test_project_panel.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_project_panel PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_project_panel PRIVATE okay::engine)
+add_test(NAME project_panel COMMAND test_project_panel)
+
 # Save coverage: every component type the engine has survives a scene save and load (and the Enabled switch with it); two colliders / audio sources on one object both do.
 add_executable(test_save_coverage test_save_coverage.cpp)
 target_link_libraries(test_save_coverage PRIVATE okay::engine)

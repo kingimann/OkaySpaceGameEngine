@@ -5925,8 +5925,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D is rendered on the GPU automatically — Direct3D 11 on Windows,\nOpenGL elsewhere — and falls back to software if no GPU is available.");
         }
 #ifdef OKAY_HAVE_OKAYUI
-        ImGui::MenuItem("Test UI", nullptr, &g_showTestUI);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
+        // A developer demo panel, not a feature: only offered with OKAY_DEV set.
+        if (const char* devEnv = std::getenv("OKAY_DEV"); devEnv && devEnv[0] && devEnv[0] != '0') {
+            ImGui::MenuItem("Test UI", nullptr, &g_showTestUI);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
+        }
 #endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
@@ -16994,7 +16997,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Window/taskbar icon. A PNG path; bundled into the build.");
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                 ImGui::Checkbox("Development build", &g_build.developmentBuild);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra logging; marks the build as non-final");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lets players of this build press F1 to open the developer Test UI panel.\nOff for a release build.");
                 ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
                 ImGui::Checkbox("Save to user folder", &g_build.saveToUserDir);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write game saves/prefs to a per-user app folder,\nfrom Company + Product name. Saving then works even from a read-only install\n(e.g. Program Files), and two games never overwrite each other.\nOff = save beside the .exe (old behaviour).");

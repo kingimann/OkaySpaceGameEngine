@@ -32,6 +32,11 @@ public:
     float dragThreshold = 0.0f;
     /// Draw on top of its siblings while being dragged.
     bool bringToFront = false;
+    /// Drag the nearest UI parent instead of this widget: put it on a window's title bar to make the
+    /// whole window draggable. The pointer is still tested against this widget.
+    bool dragParent = false;
+    /// Never let the dragged widget leave the screen (a window you can always grab again).
+    bool keepOnScreen = false;
 
     bool IsDragging() const { return m_dragging; }
     GameObject* LastDropTarget() const { return m_dropTarget; }

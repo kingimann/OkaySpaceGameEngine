@@ -63,6 +63,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
+    UIRuntimeTools.cpp                                                 # UI themes, runtime UI widgets, File > Examples > UI Gallery
     LocalizationWindow.cpp                                             # the Localization window (string table)
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget

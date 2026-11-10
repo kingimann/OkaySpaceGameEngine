@@ -372,7 +372,8 @@ static void TestRegistryBasics() {
         "NetworkPlayerSpawner", "UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown",
         "Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone",
         "Flashlight", "Joint2D", "Joint3D", "DayNightCycle", "Water", "Crosshair", "UIRadialProgress", "UIRating", "UIScrollView",
-        "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable"};
+        "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable",
+        "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

@@ -554,7 +554,9 @@ void RegisterUIPanel() {
      .AddBool("shadow", &UIPanel::shadow)
      .AddColor("shadowColor", &UIPanel::shadowColor).Range(0, 1, 0.01)
      .AddVec2("shadowOffset", &UIPanel::shadowOffset).Range(-10000, 10000, 1)
-     .AddFloat("shadowSoftness", &UIPanel::shadowSoftness).Range(0, 1000, 0.5);
+     .AddFloat("shadowSoftness", &UIPanel::shadowSoftness).Range(0, 1000, 0.5)
+     .Section("Input")
+     .AddBool("blocksPointer", &UIPanel::blocksPointer).Tooltip("Widgets drawn under this panel cannot be hovered or clicked through it");
     b.Commit();
 }
 

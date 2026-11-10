@@ -3,7 +3,7 @@
 `okay::AssetDatabase` (`okay/Core/AssetDatabase.hpp`) is the data layer an asset browser sits on: persistent GUIDs
 in a sidecar meta file per asset, move and rename tracking, a dependency graph, typed import settings, a
 thumbnail cache and a search / filter / sort / page query. There is no UI here; an editor window is a thin layer
-over these calls. Nothing in the engine or the editor uses it yet, and it does not change how assets are loaded
+over these calls. The editor's Project panel uses it (see `project_panel.md`); it does not change how assets are loaded
 (see `asset_manager.md` for that).
 
 Headers (none include `<mutex>`, `<thread>` or `<condition_variable>`):
@@ -227,7 +227,7 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
 
 ## Not covered
 
-- No UI and no consumers: the editor's Project panel and the build/export code do not call this yet.
+- No UI here. The editor's Project panel is the one consumer (see `project_panel.md`); the build/export code does not call this yet.
 - References are found by text scanning, not by loading. A path built at runtime, or stored in a binary file, is not
   seen; a name that happens to end in a known extension inside a quoted string can be taken for a path.
 - Binary formats are not parsed: a `.fbx` that points at external textures has no edges (a `.gltf` does).

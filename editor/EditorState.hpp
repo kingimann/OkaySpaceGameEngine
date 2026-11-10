@@ -126,6 +126,12 @@ public:
     /// and the scene is left unsaved, so the real file is not overwritten.
     bool LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
+    /// The open scene's file was renamed or moved: keep editing it under the new path.
+    void FollowMovedFile(const std::string& newPath) { m_path = newPath; }
+    /// An asset the scene uses was renamed or moved: pass the scene's text (live scene, undo and redo history
+    /// and the saved copy) through `rewrite`. A scene that had no unsaved changes still has none. Returns
+    /// true when the live scene changed.
+    bool RewriteAssetPaths(const std::function<std::string(const std::string&)>& rewrite);
 
     // ---- Unsaved changes --------------------------------------------------------
     /// The scene as it is now counts as saved: clears `dirty` and remembers what the scene looks like.
@@ -202,6 +208,11 @@ public:
     // ---- Undo / Redo (snapshot based) ---------------------------------
     /// Capture the current scene as an undo checkpoint (call before a change).
     void PushUndo();
+    /// Push `before` (scene text taken earlier with SceneSerializer::Serialize) as the undo step. For an
+    /// edit that only turns out to have changed something once it is over (see EditUndo.hpp).
+    void PushUndoText(std::string before);
+    /// Goes up on every PushUndo, PushUndoText, Undo and Redo: an unchanged value means "nothing touched the undo stack".
+    std::uint64_t UndoSerial() const { return m_undoSerial; }
     bool Undo();
     bool Redo();
     /// Load a scene snapshot, keeping the same objects selected afterwards.
@@ -323,6 +334,7 @@ private:
     bool m_dirtyAtPlay = false;           // `dirty` when Play started (Play-time edits are thrown away)
     static std::uint64_t Fingerprint(const std::string& sceneText);
     bool m_suppressUndo = false;
+    std::uint64_t m_undoSerial = 0;
     static constexpr std::size_t kMaxUndo = 100;
 };
 

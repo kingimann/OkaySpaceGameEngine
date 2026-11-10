@@ -776,3 +776,53 @@ launch hands its request to the first), which matters when you script it for scr
   TRANSLATED" in the generated code (the graph itself runs it).
 - **Hierarchy search by path**: typing `Parent/Child` lists every object that path names (`Scene::FindAllByPath`, in
   scene order, two siblings called "Door" both come back) next to the usual name and type matches.
+
+## What changed: Inspector and Hierarchy
+
+Plain list of what is new. Old scenes and projects load exactly as before (nothing was added to a file format).
+
+**Undo for every field.** Before, an Inspector or Hierarchy field only had an undo step if its own code remembered to
+push one (the Static box, Tag, Layer, Rename, most numbers, colours and text boxes did not). Now the editor watches the
+widget you press and, when you let go, records ONE undo step if the scene really changed. A drag over many frames is one
+step, a press that changes nothing is none, and a field that already made its own step does not get a second one.
+(`editor/EditUndo.hpp`, tested in `tests/test_inspector_model.cpp`.)
+
+**Hierarchy**
+- Search understands more than names. Words must all match (name, tag or a kind word like `camera`, `light`, `script`).
+  Prefixes narrow it: `t:enemy` (tag), `c:rigidbody` (component), `l:water` (layer), `is:off`, `is:locked`,
+  `is:static`, `is:prefab`. A leading `-` leaves matches out (`-t:enemy`). `Parent/Child` still lists a path.
+  Ctrl+click in the result list adds to the selection.
+- Dragging rows is one tested routine: drop on the middle of a row to make a child (it goes last, the world pose is
+  kept), near the top or bottom edge to place it before or after. A group of selected rows moves together in hierarchy
+  order, a selected parent brings its children, and nothing can be dropped into itself or its own child. Dropping on
+  empty space moves the whole selection to the top level. The row you dropped on opens so you see where things went.
+- Prefab instances read blue and have a small blue mark on the icon (lighter for objects inside an instance).
+- Drag a prefab, a model or a picture from the Project panel onto a row (child, or beside it near the edge) or onto
+  empty space to add it. Each is one undo step.
+- When you click an object in the Scene view that is scrolled out of the list, the Hierarchy scrolls to it.
+- Component badges on a row no longer cover a long name: they only draw where the name leaves room.
+
+**Inspector**
+- The panel's own "Lock" box is now "Lock Inspector" (the other "Lock" is the Scene-view lock of the object).
+- While you play, a note says changes made in the Inspector are not kept. They go away when you press Stop.
+- Component menu (the ... button or right click): **Copy Values**, **Paste Values** (same kind of component; goes to
+  every selected object that has one) and **Reset** (what a new component has). Each is one undo step.
+- A component with no hand-written Inspector (a plugin's, or a new one) is drawn from the property registry: every
+  property with its tooltip, drag to change numbers (range and step from the registry), colour picker, enum list,
+  file and object fields. With several objects selected, the edit goes to all of them; fields that differ show
+  `-` (a part of a vector that differs shows `-` on its own). Changing one part of a colour or vector keeps the
+  other parts of each object.
+- File fields (the older text boxes too) light up while you drag a file over them and have a small arrow:
+  click it, or right-click the box, for **Choose from project...** (a searchable list) and **Clear**. Drops from the
+  Project panel use the same `ASSET_PATH` payload as before. The registry field also checks the kind (an `image`
+  field takes pictures only). Object fields take a drag from the Hierarchy (`GO_PTR`), have a searchable picker and a
+  clear button.
+- Prefab: the banner stays. Under it, **Changed from the prefab** lists every record that differs (what changed, with
+  old and new value) with **Revert** and **Apply** per change, and **Revert All** / **Apply All** for the instance
+  root. A component header turns blue when its component is changed. Objects inside an instance say which prefab they
+  belong to. (Uses `PrefabTools::Diff`, `RevertOverride`, `ApplyToSource`.)
+- **Save as Prefab** in the Inspector header now saves into the project's `Assets` folder (it used to write into the
+  editor's working folder).
+
+Developer hook: `OKAY_DEV_FIELD_DEMO=1` (with `OKAY_DEV=1`) adds a demo component with one property of every kind
+and two objects that use it, to see the registry-driven card.

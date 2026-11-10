@@ -171,6 +171,31 @@ inline void DrawCategoryIcon(ImDrawList* dl, ImVec2 c, float r, int cat, ImU32 c
     }
 }
 
+/// True when a Registry row is the same job as a hand-written node of the same title
+/// (an engine-API binding such as Animator.Roll next to Roll). It is not listed twice.
+inline bool VsPaletteHidesAsDuplicate(const VsDef& d) {
+    const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
+    if (api) {
+        for (const auto& h : Registry()) {
+            if (std::strchr(h.type, '.') || &h == &d) continue;
+            if (VsApiDuplicatesHandNode(api->member.c_str(), h.type)) return true;
+            if (h.title && d.title && std::strcmp(h.title, d.title) == 0 && !std::strchr(h.type, '.')) return true;
+        }
+        // Two overloads of one binding with the same title: the first one is the row.
+        for (const auto& h : Registry()) {
+            if (&h == &d) break;
+            if (h.title && d.title && std::strcmp(h.title, d.title) == 0 && okay::vs::VsApiFind(h.type)) return true;
+        }
+    }
+    return false;
+}
+
+/// An Actions step with the same label as a hand-written node: the node is the one row.
+inline bool VsPaletteStepIsDuplicate(const std::string& label) {
+    for (const auto& h : Registry()) if (h.title && label == h.title) return true;
+    return false;
+}
+
 /// `addNode(def, arg)` places the node. `arg` is set for action steps.
 /// Topics (VisualScriptCategories.hpp) on the left, nodes in the middle, what the
 /// highlighted node does on the right. Levels filter the list.
@@ -218,13 +243,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (!fits(d)) continue;
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
-        bool dup = false;
-        if (api) {
-            for (const auto& h : Registry()) {
-                if (std::strchr(h.type, '.')) continue;
-                if (VsApiDuplicatesHandNode(api->member.c_str(), h.type)) { dup = true; break; }
-            }
-        }
+        if (VsPaletteHidesAsDuplicate(d)) continue;   // one row per job
+        const bool dup = false;
         Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type;
         e.cat = place.category ? place.category : "";
         e.sub = place.subcategory ? place.subcategory : "";
@@ -269,8 +289,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             for (const auto& si : *cat) {
                 if (si.listOnly) continue;
                 VsPlace place = VsPlaceForStep(si.op.c_str(), si.group.c_str());
-                bool sameAsNode = false;
-                for (const auto& h : Registry()) if (h.title && si.label == h.title) { sameAsNode = true; break; }
+                if (VsPaletteStepIsDuplicate(si.label)) continue;   // the hand-written node is the one row
+                const bool sameAsNode = false;
                 Entry e; e.def = sd; e.step = &si; e.cond = cond; e.title = si.label;
                 e.cat = place.category ? place.category : "";
                 e.sub = place.subcategory ? place.subcategory : "";

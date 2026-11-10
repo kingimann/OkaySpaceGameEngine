@@ -94,5 +94,23 @@ int main() {
     CHECK(seen.count("Basic") || seen.count("Look") || seen.count("Move"));
     std::printf("  steps checked: %d across %d old groups\n", steps, (int)seen.size());
 
+    // The Add Node list shows each job once: no two rows share a title in the same topic.
+    {
+        std::set<std::string> seen;
+        int shown = 0;
+        for (const VsDef& d : Registry()) {
+            if (VsPaletteHidesAsDuplicate(d)) continue;
+            const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
+            const VsPlace pl = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
+            const std::string key = std::string(pl.category ? pl.category : "") + "/" + (d.title ? d.title : "");
+            const bool fresh = seen.insert(key).second;
+            if (!fresh) std::printf("  two rows named %s (%s)\n", key.c_str(), d.type);
+            CHECK(fresh);
+            ++shown;
+        }
+        CHECK(shown > 500);
+        CHECK(VsPaletteStepIsDuplicate("Roll"));
+        CHECK(VsPaletteStepIsDuplicate("Dodge"));
+    }
     TEST_MAIN_RESULT();
 }

@@ -36,6 +36,9 @@
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Tween.hpp"
+#include "okay/Math/Easing.hpp"
+#include "okay/Math/Spring.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -642,6 +645,94 @@ struct ParticleBurstNode : VsNode {   // in0 = count (unwired: 20)
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr)
             ps->Emit((int)In(0, g, ctx, VsValue{20.0f}).AsFloat());
+        return 0;
+    }
+};
+// ---- Tweens, springs and eases (Core/Tween.hpp, Math/Spring.hpp, Math/Easing.hpp) ----
+// Ease With Curve: in0 = time 0..1 (NaN is 0, the rest is clamped). The text field is an ease by name or curve
+// ("OutBack", "cubic-bezier(0.4,0,0.2,1)", "steps(4)", the CSS names); text it does not know leaves the value as it is,
+// like the script ease_curve. A curve may overshoot 0..1 (Back, Elastic and a bezier with y outside it do).
+struct EaseCurveNode : VsNode {
+    EaseCurve curve;
+    bool known = false;
+    explicit EaseCurveNode(const std::string& text) { known = EaseCurve::Parse(text, curve); }
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        const float t = In(0, g, ctx).AsFloat();
+        const float u = t == t ? Mathf::Clamp01(t) : 0.0f;
+        return known ? curve.Evaluate(u) : u;
+    }
+};
+// Spring Step: moves a value toward in0 the way a spring would (Spring::Step), once each time it runs, by the frame
+// time. in1 = stiffness (unwired: 120), in2 = damping (unwired: 14); damping = 2 * sqrt(stiffness) never overshoots.
+// Out0 = the value, out1 = its velocity. The text field is where the value starts (empty: at the first target, so it does
+// not swing in). Run it once a frame (under On Update); a step of zero or less, or NaN, changes nothing.
+struct SpringStepNode : VsNode {
+    float pos = 0.0f, vel = 0.0f;
+    bool started = false, hasStart = false;
+    float start = 0.0f;
+    explicit SpringStepNode(const std::string& startText) {
+        if (!startText.empty()) {
+            char* end = nullptr;
+            const float f = std::strtof(startText.c_str(), &end);
+            if (end != startText.c_str() && std::isfinite(f)) { hasStart = true; start = f; }
+        }
+    }
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int outPin, NodeGraph&, VsContext&) override { return outPin == 1 ? vel : pos; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const float target = In(0, g, ctx).AsFloat();
+        if (!started) {
+            started = true;
+            pos = hasStart ? start : (std::isfinite(target) ? target : 0.0f);
+            vel = 0.0f;
+        }
+        Spring::Step(pos, vel, target, In(1, g, ctx, VsValue{120.0f}).AsFloat(), In(2, g, ctx, VsValue{14.0f}).AsFloat(), ctx.deltaTime);
+        return 0;
+    }
+};
+// Tween Move / Tween Move By Speed: this object's (or the Target's) local position goes to (x, y, z). An axis nobody
+// feeds stays where it is. in3 = seconds (By Speed: units a second, so the move lasts distance / speed; zero or less
+// is at once), in4 = the ease as text ("OutBack", "cubic-bezier(0.4,0,0.2,1)"; unwired or unknown: Out Quad). The text field
+// is a tag for Kill / Pause / Play Tweens With Tag. The tween starts on the next frame, like the tween_* script calls.
+struct TweenMoveNode : VsNode {
+    bool bySpeed;
+    std::string tag;
+    TweenMoveNode(bool speed, std::string t) : bySpeed(speed), tag(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        GameObject* go = ctx.gameObject;
+        if (!go || !go->transform || !go->scene()) return 0;
+        Vec3 to = go->transform->localPosition;
+        if (HasInput(0)) to.x = In(0, g, ctx).AsFloat();
+        if (HasInput(1)) to.y = In(1, g, ctx).AsFloat();
+        if (HasInput(2)) to.z = In(2, g, ctx).AsFloat();
+        const float amount = HasInput(3) ? In(3, g, ctx).AsFloat() : (bySpeed ? 5.0f : 1.0f);
+        auto t = DOTween::LocalMove(go, to, amount);
+        if (!t) return 0;
+        if (bySpeed) t->SetSpeedBased();
+        if (HasInput(4)) { const VsValue e = In(4, g, ctx); if (e.IsString()) t->SetEaseSpec(e.AsString()); }
+        if (!tag.empty()) t->SetTag(tag);
+        return 0;
+    }
+};
+// Kill / Pause / Play Tweens With Tag: every tween of the scene with the text field's tag (Tweener::SetTag, the
+// script tween_tag). Out0 = how many it touched. Kill: in0 = jump them to their end first (unwired: no).
+struct TweenTagNode : VsNode {
+    enum class Op { Kill, Pause, Play } op;
+    std::string tag;
+    int count = 0;
+    TweenTagNode(Op o, std::string t) : op(o), tag(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)count; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        Scene* scene = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+        count = 0;
+        if (!scene || tag.empty()) return 0;
+        switch (op) {
+            case Op::Kill:  count = scene->tweens().KillByTag(tag, HasInput(0) && In(0, g, ctx).AsBool()); break;
+            case Op::Pause: count = scene->tweens().PauseByTag(tag); break;
+            case Op::Play:  count = scene->tweens().PlayByTag(tag); break;
+        }
         return 0;
     }
 };

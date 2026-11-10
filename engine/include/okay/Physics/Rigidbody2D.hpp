@@ -78,6 +78,16 @@ public:
         WakeUp();
     }
 
+    /// Back to rest, as a fresh body starts: no velocity, no spin, no force or torque waiting for the next
+    /// step, awake, and no render-interpolation history (so a reused body is not drawn sliding in from
+    /// where it was last). Called by an ObjectPool when it hands the object out again.
+    void OnPoolReuse() override {
+        velocity = Vec2::Zero; angularVelocity = 0.0f;
+        m_forceAccum = Vec2::Zero; m_torqueAccum = 0.0f;
+        WakeUp();
+        poseHistory = PoseHistory{};
+    }
+
     /// 1/mass for dynamic bodies, 0 for kinematic/static (treated as infinite).
     float InvMass() const {
         return (bodyType == BodyType::Dynamic && mass > 0.0f) ? 1.0f / mass : 0.0f;

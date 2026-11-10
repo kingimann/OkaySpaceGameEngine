@@ -116,6 +116,11 @@ public:
     /// then it keeps its place in the hierarchy (and so its world pose), and its
     /// OnDestroy still sees its parent.
     void Destroy(GameObject* go);
+    /// End `go`'s life the way it should end: back into the ObjectPool it came from when it came from one that is
+    /// still there (it is switched off and kept for the next Get), else Destroy(go). Lifetime, Projectile3D and the
+    /// script call `pool_release()` use it, so pooled bullets and effects are reused instead of freed. Queued like
+    /// Destroy when the scene is busy. True when the object went back to a pool.
+    bool Despawn(GameObject* go);
     /// Destroy every child of `go` (and what is below them), keeping `go`: a list container emptying
     /// its rows, a pool recalling its bullets. Queued like Destroy. Returns how many direct children
     /// were asked (0 for null or a destroyed object).
@@ -124,6 +129,11 @@ public:
     /// Destroying it earlier cancels this; asking again keeps the sooner time.
     /// Zero, less or NaN destroys it like Destroy(go).
     void Destroy(GameObject* go, float seconds);
+    /// Take back a delayed destroy asked for with Destroy(go, seconds). True when one was waiting. It does
+    /// not touch an object already queued for the end of this frame (see IsDestroyPending).
+    bool CancelDelayedDestroy(const GameObject* go);
+    /// True when `go` is queued by Destroy for the end of this frame, or waits for a delayed Destroy(go, seconds).
+    bool IsDestroyPending(const GameObject* go) const;
     /// Destroy `go` and everything below it right now (OnDestroy runs, the objects are freed),
     /// together with anything else already queued by Destroy. From inside an Update, a physics
     /// callback or an OnDestroy the scene is walking its component lists, so there it does what
@@ -136,6 +146,8 @@ public:
     /// Timers, tweens and physics contacts of the old scene do not carry over.
     void DontDestroyOnLoad(GameObject* go);
     bool IsDontDestroyOnLoad(const GameObject* go) const;
+    /// Take `go` off the DontDestroyOnLoad list again (it is replaced with the scene by the next load). True when it was on it.
+    bool CancelDontDestroyOnLoad(const GameObject* go);
     /// Process the pending-destroy queue now (runs OnDestroy + frees the objects).
     /// Update() calls this each frame; the editor calls it in edit mode so deferred
     /// destroys (e.g. removing a rig) take effect without a full simulation tick.
@@ -182,6 +194,10 @@ public:
         std::function<void(float)> onProgress;   // 0..1, after each step
         std::function<void(bool)>  onDone;       // once: true = loaded, false = failed / cancelled
     };
+    /// A replacing load (additive false) is the newest word on what the scene should be: a deferred load or text
+    /// load still waiting, and a replacing load still in flight, are cancelled (their callbacks hear false; what a
+    /// load in flight made is removed) when this one begins. An additive load is not cancelled by it until the
+    /// replacing load clears the scene, which takes the additive content with it.
     /// Start loading a .okayscene over several frames: the file is read now and
     /// `objectsPerFrame` objects are made at the end of each Update, so a loading
     /// screen keeps running. Nothing in the new content Awakes or Starts until all of it
@@ -246,9 +262,16 @@ public:
     /// The pairs that do not collide, each once with first <= second (a layer that ignores itself is (n, n)).
     std::vector<std::pair<int, int>> DisabledLayerPairs() const;
     /// Look an object up by hierarchy path: "Parent/Child/Leaf" starts at a root object
-    /// called "Parent" and follows child names (the first match at each level). A leading
-    /// '/' is allowed. Find() also accepts a path when no object is literally named so.
+    /// called "Parent" and follows child names. Siblings with the same name are all tried (the
+    /// first complete match in scene and sibling order wins), names that contain '/' work, runs
+    /// of '/' count as one and a leading or trailing '/' is allowed. Find() also accepts a path
+    /// when no object is literally named so.
     GameObject* FindByPath(const std::string& path) const;
+    /// Every object a hierarchy path names, in scene order and sibling order. With two siblings called
+    /// "Door" a path through one of them that has no match below it goes on to the other one, which
+    /// FindByPath does too (it returns the first object of this list). Names may themselves contain '/':
+    /// an object called "a/b" at the top is found by "a/b" and by "a/b/c" for its child "c".
+    std::vector<GameObject*> FindAllByPath(const std::string& path) const;
     /// The objects with no parent, in scene order (the top level of the hierarchy).
     std::vector<GameObject*> Roots() const;
     /// Counts for an overlay or a log: objects, roots, depth, active ones, components per type, the
@@ -270,6 +293,10 @@ public:
     std::uint64_t ComponentVersion() const { return m_componentVersion; }
     /// A process-unique id for this scene (never reused), for caches keyed by scene.
     std::uint64_t Uid() const { return m_uid; }
+    /// How many times Update has delivered OnEnable / OnDisable to the components that were switched on or
+    /// off since the last one. A component that was switched off before the count moved has not heard
+    /// about it yet (an ObjectPool waits for the count to move before it reuses a released object).
+    std::uint64_t UpdateCount() const { return m_updateCount; }
 
     /// Layer a widget frontmost/backmost. UI draws in hierarchy order, so a parented
     /// object moves to the last/first slot among its SIBLINGS (last = on top); a root
@@ -473,6 +500,10 @@ public:
     /// bitmap font. A widget/Text with its own fontPath overrides this. Travels with
     /// the scene so the editor preview and the shipped player match.
     std::string uiFont;
+    /// Scene-level records of the file this build does not know (a setting a newer build wrote), each one whole
+    /// line, written back as they were by SceneSerializer::Serialize. Set by a full load (not by a merge or
+    /// Instantiate), cleared with the scene. See GameObject::unknownRecords for the per-object ones.
+    std::vector<std::string> unknownRecords;
 
     // ---- Lifecycle (driven by the Application) ------------------------
     /// Run Awake/Start on all components created so far.
@@ -518,6 +549,7 @@ private:
     const std::vector<GameObject*>* TagList(const std::string& tag) const;   // checked against what the objects carry now
     struct BusyScope;                  // marks the stretches where component lists are being walked
     int m_busy = 0;
+    std::uint64_t m_updateCount = 0;   // Updates that have passed the activation step (UpdateCount)
     bool m_clearPending = false;       // a Clear / RequestClear waiting for the end of the walk
     void ApplyPendingClear();          // runs it once nothing is being walked
     void FlushDestroyedNow();          // FlushDestroyed without the queued Clear
@@ -549,9 +581,20 @@ private:
         std::vector<std::unique_ptr<GameObject>> objects;
         std::vector<Component*> active, pending;
         std::vector<GameObject*> marked;
+        // What a load that did not happen must put back: where every object stood, and which kept objects
+        // were taken off a parent that is not kept (with their place among its children).
+        std::vector<const GameObject*> order;
+        std::vector<Component*> activeOrder;   // the update list as it was
+        Camera* mainCamera = nullptr;          // the main camera, when it is a kept one
+        struct Unparented { GameObject* go; Transform* parent; int index; };
+        std::vector<Unparented> unparented;
     };
     void DetachKept(KeptState& k);
-    void ReattachKept(KeptState& k);
+    /// Put the kept objects back. With `undo` (the load failed, the old scene stays) they also go back to the
+    /// places they stood in: the object order and the parents they were taken off.
+    void ReattachKept(KeptState& k, bool undo = false);
+    /// After a multi-frame replacing load: the kept objects come last again, as they do after a one-go load.
+    void MoveKeptToEnd();
     struct LoadRecord {
         int handle = 0;
         std::unique_ptr<SceneLoadJob> job;

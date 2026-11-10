@@ -2,6 +2,7 @@
 // Friendly names for visual-script nodes. The file token stays in the registry;
 // this table is the title, the pins, and the old words search still matches.
 // Rules: docs/visual_scripting_naming.md.
+#include "VisualScriptNodeDocs.hpp"   // VsLower
 #include <cctype>
 #include <cstring>
 #include <string>
@@ -127,11 +128,6 @@ inline std::string VsSearchKeywords(const char* type) {
 }
 
 // ---- The style check (docs/visual_scripting_naming.md) ----------------------
-inline std::string VsLower(std::string s) {
-    for (char& c : s) c = (char)std::tolower((unsigned char)c);
-    return s;
-}
-
 inline bool VsBannedWord(const std::string& lower) {
     static const char* k[] = {
         "anim", "api", "bool", "dt", "euler", "float", "fov", "fps", "gameobject", "id", "idx",

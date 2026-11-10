@@ -8,11 +8,13 @@
 #include "okay/Scene/PropertyBuilder.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cfloat>
 #include <climits>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
@@ -357,12 +359,21 @@ static void TestRegistryBasics() {
     const std::size_t count = PropertyRegistry::All().size();
     RegisterBuiltinProperties();   // idempotent
     CHECK(PropertyRegistry::All().size() == count);
-    CHECK(count >= 20);
+    CHECK(count >= 86);
 
     const char* expected[] = {"GameObject", "Transform", "Camera", "Light", "SpriteRenderer", "MeshRenderer", "Rigidbody2D", "Rigidbody3D",
         "BoxCollider2D", "CircleCollider2D", "CapsuleCollider2D", "EdgeCollider2D", "PolygonCollider2D",
         "BoxCollider3D", "SphereCollider3D", "CapsuleCollider3D", "CylinderCollider3D", "MeshCollider3D", "AudioSource", "ParticleSystem",
-        "Mover", "Spinner", "Lifetime", "CameraFollow", "Canvas", "UIPanel"};
+        "Mover", "Spinner", "Lifetime", "CameraFollow", "Canvas", "UIPanel",
+        "PlayerController", "PlayerView", "FirstPersonController", "ThirdPersonController", "CharacterController2D", "CharacterController3D",
+        "TopDownController", "TopDownController2D", "FreeRoamController", "ClickToMoveController", "ThirdPersonShooterController",
+        "TopDownShooterController", "Platformer25DController", "VehicleController", "VehicleController2D", "Projectile3D", "Spawner",
+        "MusicPlayer", "NavMeshAgent", "NavMeshObstacle", "NavMeshSurface", "NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar",
+        "NetworkPlayerSpawner", "UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown",
+        "Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone",
+        "Flashlight", "Joint2D", "Joint3D", "DayNightCycle", "Water", "Crosshair", "UIRadialProgress", "UIRating", "UIScrollView",
+        "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable", "LoadingScreen",
+        "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");
@@ -414,7 +425,7 @@ static void TestThreadSafeRegistration() {
     RUN_SUITE("registry: concurrent first use");
     PropertyRegistry::Clear();   // only the built-ins from here on
     const std::size_t count = PropertyRegistry::All().size();
-    CHECK(count >= 26);
+    CHECK(count >= 86);
 
     // A fresh table (as in a new process), four threads racing to be the first user:
     // every one of them must see the complete table, and it must hold each entry once.
@@ -971,6 +982,14 @@ static GameObject* MakeSubject(Scene& s, const ComponentTypeInfo& info) {
     return go;
 }
 
+// The serializer keeps these colors as red, green and blue only (alpha stays 1).
+static const std::set<std::string> kRgbOnly = {
+    "Light.ambientColor", "MeshRenderer.emissive", "MeshRenderer.gradientTop", "MeshRenderer.gradientBottom",
+    "MeshRenderer.rimColor", "MeshRenderer.outlineColor",
+    "Flashlight.color", "DayNightCycle.dayLight", "DayNightCycle.nightLight", "DayNightCycle.skyDay", "DayNightCycle.skyHorizon",
+    "DayNightCycle.skyNight", "Water.color",   // Water: its alpha is the opacity property, so `color` is red, green, blue only
+};
+
 static void TestEveryPropertyRoundTrip() {
     RUN_SUITE("every built-in property: get -> set -> get, text, change");
     RegisterBuiltinProperties();
@@ -1013,7 +1032,7 @@ static void TestEveryPropertyRoundTrip() {
             CHECK(fires == 0);
 
             // a different value goes in, comes out, and fires once with old and new
-            const PropertyValue v1 = MakeDifferent(d, v0, other->Guid(), false);
+            const PropertyValue v1 = MakeDifferent(d, v0, other->Guid(), kRgbOnly.count(path) != 0);
             CHECK(v1.IsValid());
             // A derived property is computed from others (euler angles from a quaternion):
             // it reads back within float error rather than bit for bit.
@@ -1041,7 +1060,7 @@ static void TestEveryPropertyRoundTrip() {
         }
     }
     std::cout << "  covered " << comps << " component types, " << props << " properties\n";
-    CHECK(comps >= 26 && props >= 300);
+    CHECK(comps >= 86 && props >= 1400);
 }
 
 // ---- Cross-check against the scene serializer ---------------------------------------------------------------
@@ -1050,11 +1069,6 @@ static void TestEveryPropertyRoundTrip() {
 // default flags (not read-only, runtime-only or derived) must survive Serialize
 // and Deserialize. Empty on purpose: every registered authored property is stored.
 static const std::set<std::string> kNotStored = {};
-// The serializer keeps these colors as red, green and blue only (alpha stays 1).
-static const std::set<std::string> kRgbOnly = {
-    "Light.ambientColor", "MeshRenderer.emissive", "MeshRenderer.gradientTop", "MeshRenderer.gradientBottom",
-    "MeshRenderer.rimColor", "MeshRenderer.outlineColor",
-};
 
 static void TestSerializerCrossCheck() {
     RUN_SUITE("cross-check against the scene serializer");
@@ -1105,16 +1119,13 @@ static void TestSerializerCrossCheck() {
               << " read-only/runtime/derived and " << skippedList << " listed; components:";
     for (const auto& c : coveredComponents) std::cout << " " << c;
     std::cout << "\n";
-    CHECK(checked >= 250);
+    CHECK(checked >= 1350);
 }
 
-static void TestSerializerCrossCheckIsolated() {
-    RUN_SUITE("cross-check, one property at a time (shows what the file stores unconditionally)");
-    RegisterBuiltinProperties();
-    // The scene file writes these only together with another field (see
-    // SceneSerializer.cpp: the shader record needs a non-Standard shader, the rim
-    // record a rim strength, ...), so alone they would be lost: each rides on its companion.
-    const std::map<std::string, std::pair<std::string, PropertyValue>> companion = {
+// Properties the scene file writes only together with another one: each rides on its
+// companion when it is set alone (see docs/properties.md, "What the cross-check showed").
+static const std::map<std::string, std::pair<std::string, PropertyValue>>& Companions() {
+    static const std::map<std::string, std::pair<std::string, PropertyValue>> companion = {
         {"MeshRenderer.toonBands", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},
         {"MeshRenderer.gradientTop", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},
         {"MeshRenderer.gradientBottom", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},
@@ -1124,7 +1135,27 @@ static void TestSerializerCrossCheckIsolated() {
         {"MeshRenderer.outlineWidth", {"MeshRenderer.outline", PropertyValue::MakeBool(true)}},
         {"MeshRenderer.normalStrength", {"MeshRenderer.normalMap", PropertyValue::MakeAssetPath("n.png")}},
         {"MeshRenderer.aoStrength", {"MeshRenderer.aoMap", PropertyValue::MakeAssetPath("ao.png")}},
+        // the vehicle's suspension record is written only while the suspension is on
+        {"VehicleController.rideHeight", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.springStrength", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.springDamping", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.suspensionTravel", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.wheelBase", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.trackWidth", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.bodyLean", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.maxTilt", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
+        {"VehicleController.tiltSmooth", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
     };
+    return companion;
+}
+
+static void TestSerializerCrossCheckIsolated() {
+    RUN_SUITE("cross-check, one property at a time (shows what the file stores unconditionally)");
+    RegisterBuiltinProperties();
+    // The scene file writes these only together with another field (see
+    // SceneSerializer.cpp: the shader record needs a non-Standard shader, the rim
+    // record a rim strength, ...), so alone they would be lost: each rides on its companion.
+    const auto& companion = Companions();
     int checked = 0, viaCompanion = 0;
     for (const auto& info : PropertyRegistry::All()) {
         for (const PropertyDesc& d : info->properties) {
@@ -1290,6 +1321,881 @@ static void TestCustomComponent() {
     CHECK(PropertyRegistry::FindByType(typeid(void)) == nullptr);
 }
 
+// ---- The controllers, navigation, networking and UI widget registrations ---------------------------------
+
+// Every property of every type, built-in or not, describes itself consistently.
+static void TestDescriptorsAreSane() {
+    RUN_SUITE("every registered descriptor: names, ranges, defaults, options");
+    RegisterBuiltinProperties();
+    int checked = 0;
+    for (const auto& info : PropertyRegistry::All()) {
+        for (const PropertyDesc& d : info->properties) {
+            ++checked;
+            const std::string path = info->name + "." + d.name;
+            // a name a path can address
+            CHECK(!d.name.empty() && d.name.find_first_of(".# \t") == std::string::npos);
+            if (d.hasRange) {
+                CHECK(std::isfinite(d.rangeMin) && std::isfinite(d.rangeMax) && d.rangeMin <= d.rangeMax);
+                CHECK(d.step >= 0.0);
+            }
+            if (d.type == PropertyType::Enum) {
+                CHECK(!d.enumOptions.empty());
+                std::set<std::string> seen;
+                for (const auto& o : d.enumOptions) CHECK(!o.empty() && seen.insert(o).second);
+            }
+            if (d.type == PropertyType::AssetPath) CHECK(!d.assetKind.empty());
+            // the value of a freshly made component is a value the descriptor accepts as it is
+            if (d.defaultValue.IsValid() && !d.IsReadOnly()) {
+                PropertyValue n;
+                const bool ok = d.Normalize(d.defaultValue, n);
+                if (!ok || n != d.defaultValue) std::cerr << "  DEFAULT " << path << ": '" << d.defaultValue.ToString() << "' is not accepted as it is\n";
+                CHECK(ok && n == d.defaultValue);
+            }
+        }
+    }
+    std::cout << "  " << checked << " descriptors\n";
+    CHECK(checked > 1350);
+}
+
+static void TestControllerRegistrations() {
+    RUN_SUITE("controllers: view mode, key bindings, nested settings");
+    RegisterBuiltinProperties();
+    auto find = [](const char* n) { return PropertyRegistry::FindByName(n); };
+    for (const char* name : {"PlayerController", "PlayerView", "FirstPersonController", "ThirdPersonController", "CharacterController2D",
+                             "CharacterController3D", "TopDownController", "TopDownController2D", "FreeRoamController", "ClickToMoveController",
+                             "ThirdPersonShooterController", "TopDownShooterController", "Platformer25DController"}) {
+        auto info = find(name);
+        CHECK(info != nullptr);
+        if (info) { CHECK(info->category == "Controllers" && info->add != nullptr && info->properties.size() >= 2); }
+    }
+
+    {   // PlayerController.viewMode adds and removes the parts, like the Inspector's View setting
+        Scene s("s");
+        GameObject* go = s.CreateGameObject("Player");
+        Component* pc = find("PlayerController")->add(*go);
+        CHECK(pc != nullptr && go->GetComponent<FirstPersonController>() && go->GetComponent<ThirdPersonController>() && go->GetComponent<PlayerView>());
+        CHECK(PropertyRegistry::GetPropertyText(*go, "PlayerController.viewMode") == "Both");
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.walkSpeed", PropertyValue::MakeFloat(6.5f)));
+        CHECK(PropertyRegistry::SetProperty(*go, "PlayerView.allowToggle", PropertyValue::MakeBool(false)));
+        int fires = 0;
+        const int hook = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++fires; });
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "PlayerController.viewMode", "Third"));
+        CHECK(fires == 1);
+        CHECK(go->GetComponent<ThirdPersonController>() && !go->GetComponent<FirstPersonController>() && !go->GetComponent<PlayerView>());
+        CHECK(!PropertyRegistry::GetProperty(*go, "FirstPersonController.walkSpeed").IsValid());   // gone with its view
+        CHECK(!PropertyRegistry::SetProperty(*go, "PlayerController.viewMode", PropertyValue::MakeEnum(3)));
+        PropertyRegistry::RemoveChangeHook(hook);
+        // survives the scene file, with the settings of the view that stayed
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.distance", PropertyValue::MakeFloat(7.5f)));
+        Scene s2("s2");
+        CHECK(SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s)));
+        GameObject* back = s2.FindByGuid(go->Guid());
+        CHECK(back != nullptr);
+        if (back) {
+            CHECK(PropertyRegistry::GetPropertyText(*back, "PlayerController.viewMode") == "Third");
+            CHECK(PropertyRegistry::GetProperty(*back, "ThirdPersonController.distance") == PropertyValue::MakeFloat(7.5f));
+            CHECK(!back->GetComponent<FirstPersonController>());
+        }
+        // "Both" again brings the other view back with its defaults
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "PlayerController.viewMode", "both"));
+        CHECK(go->GetComponent<FirstPersonController>() && go->GetComponent<PlayerView>());
+        CHECK(PropertyRegistry::GetProperty(*go, "FirstPersonController.walkSpeed") == PropertyValue::MakeFloat(FirstPersonController().walkSpeed));
+    }
+
+    {   // key bindings are key codes 0..255, any of them: Space, '-', Tab and Enter included
+        Scene s("s");
+        GameObject* go = s.CreateGameObject("Walker");
+        go->AddComponent<FirstPersonController>();
+        go->AddComponent<TopDownController>();
+        auto d = find("FirstPersonController")->Find("sprintKey");
+        CHECK(d && d->type == PropertyType::Int && d->hasRange && d->rangeMin == 0 && d->rangeMax == 255);
+        CHECK(PropertyRegistry::GetProperty(*go, "FirstPersonController.sprintKey") == PropertyValue::MakeInt((int)(unsigned char)Input::KeyShift));
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt('e')));
+        CHECK(go->GetComponent<FirstPersonController>()->sprintKey == 'e');
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt((int)(unsigned char)Input::KeyAlt)));   // a code above 127
+        CHECK(go->GetComponent<FirstPersonController>()->sprintKey == Input::KeyAlt);
+        CHECK(PropertyRegistry::GetProperty(*go, "FirstPersonController.sprintKey") == PropertyValue::MakeInt(150));
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt(0)) && go->GetComponent<FirstPersonController>()->sprintKey == 0);
+        CHECK(PropertyRegistry::SetProperty(*go, "FirstPersonController.sprintKey", PropertyValue::MakeInt(300)) && go->GetComponent<FirstPersonController>()->sprintKey == (char)255);   // clamped to the range
+        // the records that name a key as one token take every code too (Space, '-', Tab, Enter ...)
+        for (int code : std::vector<int>{' ', '-', 9, 10, 11, 12, 13, 'q'}) {
+            CHECK(PropertyRegistry::SetProperty(*go, "TopDownController.sprintKey", PropertyValue::MakeInt(code)));
+            CHECK(go->GetComponent<TopDownController>()->sprintKey == (char)code);
+        }
+    }
+
+    {   // all nine key bindings of the five records that write a key as one token: every code 0..255 survives save and load
+        static const char* kKeys[][2] = {
+            {"CharacterController2D", "sprintKey"}, {"TopDownController", "sprintKey"},
+            {"TopDownController2D", "sprintKey"}, {"TopDownController2D", "dashKey"}, {"TopDownController2D", "fireKey"},
+            {"ClickToMoveController", "runKey"}, {"ClickToMoveController", "rotateLeftKey"}, {"ClickToMoveController", "rotateRightKey"},
+            {"ThirdPersonShooterController", "sprintKey"},
+        };
+        int checked = 0;
+        for (int code = 0; code < 256; ++code) {
+            Scene a("a");
+            std::map<std::string, GameObject*> holder;
+            for (const auto& k : kKeys)
+                if (!holder.count(k[0])) holder[k[0]] = a.CreateGameObject(k[0]);
+            for (auto& kv : holder) CHECK(find(kv.first.c_str())->add(*kv.second) != nullptr);
+            // a different code in each field, so a shifted record would show
+            for (std::size_t i = 0; i < 9; ++i) {
+                const std::string path = std::string(kKeys[i][0]) + "." + kKeys[i][1];
+                CHECK(PropertyRegistry::SetProperty(*holder[kKeys[i][0]], path, PropertyValue::MakeInt((code + (int)i * 37) & 255)));
+            }
+            Scene b("b");
+            CHECK(SceneSerializer::Deserialize(b, SceneSerializer::Serialize(a)));
+            for (std::size_t i = 0; i < 9; ++i) {
+                GameObject* back = b.FindByGuid(holder[kKeys[i][0]]->Guid());
+                CHECK(back != nullptr);
+                if (!back) continue;
+                const std::string path = std::string(kKeys[i][0]) + "." + kKeys[i][1];
+                const int mine = (code + (int)i * 37) & 255;
+                ++checked;
+                const PropertyValue got = PropertyRegistry::GetProperty(*back, path);
+                if (got != PropertyValue::MakeInt(mine)) std::cerr << "    " << path << ": set " << mine << " read back " << got.ToString() << "\n";
+                CHECK(got == PropertyValue::MakeInt(mine));
+            }
+            // the other fields of the record did not shift (the old raw-character form split the record at a space)
+            GameObject* td = b.FindByGuid(holder["TopDownController"]->Guid());
+            if (td) CHECK(PropertyRegistry::GetProperty(*td, "TopDownController.turnSpeed") == PropertyValue::MakeFloat(TopDownController().turnSpeed));
+        }
+        CHECK(checked == 256 * 9);
+    }
+
+    {   // the dodge settings live in a struct member of the controller: flattened as dodge...
+        Scene s("s");
+        GameObject* go = s.CreateGameObject("Dodger");
+        go->AddComponent<ThirdPersonController>();
+        for (const char* n : {"canDodge", "dodgeKey", "dodgeImpulse", "dodgeDuration", "dodgeCooldown", "dodgeStamina", "dodgeIFrames"})
+            CHECK(PropertyRegistry::GetProperty(*go, std::string("ThirdPersonController.") + n).IsValid());
+        auto* tp = go->GetComponent<ThirdPersonController>();
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.canDodge", PropertyValue::MakeBool(true)) && tp->dodge.canDodge);
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.dodgeKey", PropertyValue::MakeInt('x')) && tp->dodge.key == 'x');
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.dodgeImpulse", PropertyValue::MakeFloat(9.0f)) && tp->dodge.impulse == 9.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.dodgeIFrames", PropertyValue::MakeBool(true)) && tp->dodge.iFrames);
+        CHECK(PropertyRegistry::SetProperty(*go, "ThirdPersonController.dodgeCooldown", PropertyValue::MakeFloat(-1.0f)) && tp->dodge.cooldown == 0.0f);
+        // the runtime timer next to them is not a property
+        CHECK(!PropertyRegistry::GetProperty(*go, "ThirdPersonController.timer").IsValid());
+    }
+
+    {   // enums keep the names of the enum they stand for
+        auto sh = find("TopDownShooterController");
+        CHECK(sh->Find("aimMode")->enumOptions == (std::vector<std::string>{"Mouse", "MoveDirection", "Auto"}));
+        CHECK(sh->Find("fireMode")->enumOptions == (std::vector<std::string>{"Bullets", "Prefab", "Hitscan"}));
+        CHECK(find("CharacterController2D")->Find("mode")->enumOptions == (std::vector<std::string>{"TopDown", "Platformer"}));
+        Scene s("s");
+        GameObject* go = s.CreateGameObject("Hero");
+        go->AddComponent<CharacterController2D>();
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "CharacterController2D.mode", "platformer"));
+        CHECK(go->GetComponent<CharacterController2D>()->mode == CharacterController2D::Mode::Platformer);
+        CHECK(PropertyRegistry::SetProperty(*go, "CharacterController2D.maxJumps", PropertyValue::MakeInt(0)) && go->GetComponent<CharacterController2D>()->maxJumps == 1);
+        CHECK(PropertyRegistry::SetProperty(*go, "CharacterController2D.maxJumps", PropertyValue::MakeInt(99)) && go->GetComponent<CharacterController2D>()->maxJumps == 16);
+        CHECK(PropertyRegistry::SetProperty(*go, "CharacterController2D.speed", PropertyValue::MakeFloat(1e9f)) && go->GetComponent<CharacterController2D>()->speed == 10000.0f);
+        CHECK(!PropertyRegistry::SetProperty(*go, "CharacterController2D.speed", PropertyValue::MakeFloat(NAN)));
+    }
+}
+
+static void TestNavNetUiRegistrations() {
+    RUN_SUITE("navigation, networking and UI widgets");
+    RegisterBuiltinProperties();
+    auto find = [](const char* n) { return PropertyRegistry::FindByName(n); };
+    for (const char* name : {"NavMeshAgent", "NavMeshObstacle", "NavMeshSurface"}) CHECK(find(name) && find(name)->category == "Navigation");
+    for (const char* name : {"NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar", "NetworkPlayerSpawner"}) CHECK(find(name) && find(name)->category == "Networking");
+    for (const char* name : {"UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown"})
+        CHECK(find(name) && find(name)->category == "UI");
+
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    {   // navigation: the agent's tuning, the obstacle box and the bake settings (a struct member, flattened)
+        go->AddComponent<NavMeshAgent>();
+        go->AddComponent<NavMeshObstacle>();
+        go->AddComponent<NavMeshSurface>();
+        auto* agent = go->GetComponent<NavMeshAgent>();
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.speed", PropertyValue::MakeFloat(6.0f)) && agent->speed == 6.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.avoidancePriority", PropertyValue::MakeInt(150)) && agent->avoidancePriority == 99);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.stoppingDistance", PropertyValue::MakeFloat(-3.0f)) && agent->stoppingDistance == 0.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.size", PropertyValue::MakeVec3(Vec3{2, 3, 4})) && go->GetComponent<NavMeshObstacle>()->size.z == 4.0f);
+        auto* surface = go->GetComponent<NavMeshSurface>();
+        CHECK(PropertyRegistry::GetProperty(*go, "NavMeshSurface.agentRadius") == PropertyValue::MakeFloat(surface->settings.agentRadius));
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.agentRadius", PropertyValue::MakeFloat(0.75f)) && surface->settings.agentRadius == 0.75f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.maxSlope", PropertyValue::MakeFloat(120.0f)) && surface->settings.maxSlope == 89.0f);   // the limits the bake itself applies
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.cellSize", PropertyValue::MakeFloat(0.0f)) && surface->settings.cellSize == 0.05f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.agentHeight", PropertyValue::MakeFloat(0.0f)) && surface->settings.agentHeight == 0.1f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.layerMask", PropertyValue::MakeInt(0x0F0F)) && surface->layerMask == 0x0F0Fu);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.layerMask", PropertyValue::MakeInt(-5)) && surface->layerMask == 0u);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.layerMask", PropertyValue::MakeInt(0xFFFFFFFFLL)) && surface->layerMask == 0xFFFFFFFFu);
+        // the baked mesh and the bake state are not properties
+        CHECK(!PropertyRegistry::GetProperty(*go, "NavMeshSurface.mesh").IsValid() && !PropertyRegistry::GetProperty(*go, "NavMeshSurface.sceneDir").IsValid());
+    }
+    {   // networking: ids and authority; an id may not hold the '/' that splits it from an RPC name
+        go->AddComponent<NetworkObject>();
+        go->AddComponent<NetworkSync>();
+        go->AddComponent<NetworkTransform>();
+        auto* no = go->GetComponent<NetworkObject>();
+        CHECK(PropertyRegistry::SetProperty(*go, "NetworkObject.netId", PropertyValue::MakeString("door-3")) && no->netId == "door-3");
+        std::string err;
+        CHECK(!PropertyRegistry::SetProperty(*go, "NetworkObject.netId", PropertyValue::MakeString("door/3"), &err) && no->netId == "door-3" && !err.empty());
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "NetworkObject.authority", "manual") && no->authority == NetworkObject::Authority::Manual);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "NetworkSync.authority", "Mine") && go->GetComponent<NetworkSync>()->authority == NetworkSync::Authority::Mine);
+        CHECK(PropertyRegistry::GetProperty(*go, "NetworkTransform.enabled") == PropertyValue::MakeBool(true));
+        CHECK(find("NetworkTransform")->properties.size() == 1);   // only `enabled`
+    }
+    {   // UI widgets: the same anchor and shape lists as the panel
+        for (const char* name : {"UIButton", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown", "TextRenderer"})
+            CHECK(find(name)->Find("anchor") && find(name)->Find("anchor")->enumOptions == find("UIPanel")->Find("anchor")->enumOptions);
+        for (const char* name : {"UIButton", "UIImage", "UIInputField", "UIStepper", "UIDropdown"})
+            CHECK(find(name)->Find("shape") && find(name)->Find("shape")->enumOptions == find("UIPanel")->Find("shape")->enumOptions);
+        CHECK(find("UIPanel")->Find("shape")->enumOptions.size() == (std::size_t)kUIShapeCount);
+        CHECK(find("UIPanel")->Find("shape")->enumOptions[(std::size_t)UIShape::Pill] == "Pill");
+        CHECK(find("UIPanel")->Find("shape")->enumOptions[(std::size_t)UIShape::ArrowDown] == "ArrowDown");
+
+        go->AddComponent<UIButton>();
+        go->AddComponent<UISlider>();
+        go->AddComponent<UIDropdown>();
+        auto* button = go->GetComponent<UIButton>();
+        CHECK(PropertyRegistry::SetProperty(*go, "UIButton.label", PropertyValue::MakeString("Play")) && button->label == "Play");
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIButton.color", "#ff0000") && button->color.r == 1.0f && button->color.g == 0.0f);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIButton.shape", "pill") && button->shape == UIShape::Pill);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIButton.anchor", "BottomRight") && button->anchor == UIAnchor::BottomRight);
+        CHECK(PropertyRegistry::SetProperty(*go, "UIButton.size.x", PropertyValue::MakeFloat(300.0f)) && button->size.x == 300.0f);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIButton.transitionEase", "EaseOut") && button->transitionEase == 2);
+        CHECK(PropertyRegistry::SetProperty(*go, "UIButton.icon", PropertyValue::MakeAssetPath("icons/play.png")) && button->icon == "icons/play.png");
+        CHECK(find("UIButton")->Find("icon")->assetKind == "image" && find("UIButton")->Find("fontPath")->assetKind == "font");
+        CHECK(!PropertyRegistry::GetProperty(*go, "UIButton.loc").IsValid());   // the string-table key is not a property
+        // the dropdown's index may be -1 (nothing chosen); its option list is a list, not a property
+        CHECK(PropertyRegistry::SetProperty(*go, "UIDropdown.value", PropertyValue::MakeInt(-5)) && go->GetComponent<UIDropdown>()->value == -1);
+        CHECK(!PropertyRegistry::GetProperty(*go, "UIDropdown.options").IsValid());
+        // a slider's own limits are properties; the value is held to what a slider can show
+        CHECK(PropertyRegistry::SetProperty(*go, "UISlider.maxValue", PropertyValue::MakeFloat(10.0f)) && PropertyRegistry::SetProperty(*go, "UISlider.value", PropertyValue::MakeFloat(4.0f)));
+        CHECK(go->GetComponent<UISlider>()->maxValue == 10.0f && go->GetComponent<UISlider>()->value == 4.0f);
+    }
+}
+
+static void TestGameplayAndEnvironmentRegistrations() {
+    RUN_SUITE("no-code gameplay, joints, environment and the remaining UI widgets");
+    RegisterBuiltinProperties();
+    auto find = [](const char* n) { return PropertyRegistry::FindByName(n); };
+    for (const char* name : {"Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone", "Flashlight"})
+        CHECK(find(name) && find(name)->category == "Gameplay");
+    CHECK(find("Joint2D")->category == "Physics 2D" && find("Joint3D")->category == "Physics 3D");
+    CHECK(find("Water")->category == "Environment" && find("DayNightCycle")->category == "Environment");
+
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    {   // a trigger zone's action is an enum with the names of the action it runs
+        go->AddComponent<TriggerZone>();
+        auto d = find("TriggerZone")->Find("action");
+        CHECK(d->enumOptions == (std::vector<std::string>{"SetVar", "AddVar", "ActivateTarget", "DeactivateTarget", "Win", "Lose", "Quit"}));
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "TriggerZone.action", "win") && go->GetComponent<TriggerZone>()->action == (int)TriggerZone::Action::Win);
+        CHECK(PropertyRegistry::SetProperty(*go, "TriggerZone.varName", PropertyValue::MakeString("coins")) && go->GetComponent<TriggerZone>()->varName == "coins");
+    }
+    {   // joints: a motor can spin either way, its torque limit cannot be negative; limits are relative angles
+        go->AddComponent<Joint2D>();
+        go->AddComponent<Joint3D>();
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint2D.motorSpeed", PropertyValue::MakeFloat(-90.0f)) && go->GetComponent<Joint2D>()->motorSpeed == -90.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint3D.motorSpeed", PropertyValue::MakeFloat(-90.0f)) && go->GetComponent<Joint3D>()->motorSpeed == -90.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint2D.maxMotorTorque", PropertyValue::MakeFloat(-5.0f)) && go->GetComponent<Joint2D>()->maxMotorTorque == 0.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint2D.minAngle", PropertyValue::MakeFloat(-45.0f)) && go->GetComponent<Joint2D>()->minAngle == -45.0f);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "Joint2D.mode", "hinge") && go->GetComponent<Joint2D>()->mode == (int)Joint2D::Mode::Hinge);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "Joint3D.axis", "0 0 1") && go->GetComponent<Joint3D>()->axis.z == 1.0f);
+    }
+    {   // the environment: the clock is 0..24 hours; water's colour is red, green and blue, its alpha is `opacity`
+        go->AddComponent<DayNightCycle>();
+        go->AddComponent<Water>();
+        CHECK(PropertyRegistry::SetProperty(*go, "DayNightCycle.time", PropertyValue::MakeFloat(30.0f)) && go->GetComponent<DayNightCycle>()->time == 24.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "DayNightCycle.time", PropertyValue::MakeFloat(-2.0f)) && go->GetComponent<DayNightCycle>()->time == 0.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Water.opacity", PropertyValue::MakeFloat(0.4f)));
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "Water.color", "0.1 0.2 0.3 0.9"));
+        const Color c = go->GetComponent<Water>()->color;
+        CHECK(c.r == 0.1f && c.g == 0.2f && c.b == 0.3f && c.a == 0.4f);   // the alpha stays the opacity
+        CHECK(PropertyRegistry::GetProperty(*go, "Water.color") == PropertyValue::MakeColor(Color{0.1f, 0.2f, 0.3f, 1.0f}));
+        CHECK(PropertyRegistry::SetProperty(*go, "Water.resolution", PropertyValue::MakeInt(5000)) && go->GetComponent<Water>()->resolution == 256);
+        CHECK(PropertyRegistry::SetProperty(*go, "Water.waveLength", PropertyValue::MakeFloat(0.0f)) && go->GetComponent<Water>()->waveLength == 0.01f);
+    }
+    {   // the remaining widgets
+        go->AddComponent<UIScrollView>();
+        go->AddComponent<UIKeybindField>();
+        go->AddComponent<UILayoutGroup>();
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIScrollView.barStyle", "thin") && go->GetComponent<UIScrollView>()->barStyle == 1);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UIScrollView.axis", "both"));
+        CHECK(PropertyRegistry::SetProperty(*go, "UIKeybindField.key", PropertyValue::MakeInt('k')) && go->GetComponent<UIKeybindField>()->key == 'k');
+        CHECK(PropertyRegistry::SetProperty(*go, "UIKeybindField.part", PropertyValue::MakeInt(9)) && go->GetComponent<UIKeybindField>()->part == 3);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "UILayoutGroup.direction", "FlexRow") && go->GetComponent<UILayoutGroup>()->direction == UILayoutGroup::Direction::FlexRow);
+        CHECK(PropertyRegistry::SetProperty(*go, "UILayoutGroup.columns", PropertyValue::MakeInt(0)) && go->GetComponent<UILayoutGroup>()->columns == 1);
+        CHECK(find("Crosshair")->Find("anchor")->enumOptions == find("UIPanel")->Find("anchor")->enumOptions);
+    }
+    {   // object pooling and background loading (saved as trailing fields of the spawner and loading screen records)
+        go->AddComponent<Spawner>();
+        go->AddComponent<LoadingScreen>();
+        auto* sp = go->GetComponent<Spawner>();
+        auto* ls = go->GetComponent<LoadingScreen>();
+        CHECK(PropertyRegistry::GetProperty(*go, "Spawner.usePool") == PropertyValue::MakeBool(false));
+        CHECK(PropertyRegistry::SetProperty(*go, "Spawner.usePool", PropertyValue::MakeBool(true)) && sp->usePool);
+        CHECK(PropertyRegistry::GetProperty(*go, "LoadingScreen.asyncLoad") == PropertyValue::MakeBool(true));
+        CHECK(PropertyRegistry::SetProperty(*go, "LoadingScreen.asyncLoad", PropertyValue::MakeBool(false)) && !ls->asyncLoad);
+        CHECK(PropertyRegistry::SetProperty(*go, "LoadingScreen.objectsPerFrame", PropertyValue::MakeInt(0)) && ls->objectsPerFrame == 1);   // the load makes at least one a frame
+        CHECK(PropertyRegistry::SetProperty(*go, "LoadingScreen.objectsPerFrame", PropertyValue::MakeInt(5000000)) && ls->objectsPerFrame == 100000);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "LoadingScreen.layout", "ring") && ls->layout == (int)LoadingScreen::Layout::Ring);
+        CHECK(PropertyRegistry::SetPropertyFromText(*go, "LoadingScreen.barStyle", "Indeterminate") && ls->barStyle == (int)LoadingScreen::BarStyle::Indeterminate);
+        CHECK(find("LoadingScreen")->Find("targetScene")->assetKind == "scene");
+        // the flags and the numbers come back from the file (a scene saved before pooling and background loading has neither)
+        CHECK(PropertyRegistry::SetProperty(*go, "LoadingScreen.objectsPerFrame", PropertyValue::MakeInt(17)));
+        Scene b("b");
+        CHECK(SceneSerializer::Deserialize(b, SceneSerializer::Serialize(s)));
+        GameObject* back = b.FindByGuid(go->Guid());
+        CHECK(back != nullptr);
+        if (back) {
+            CHECK(PropertyRegistry::GetProperty(*back, "Spawner.usePool") == PropertyValue::MakeBool(true));
+            CHECK(PropertyRegistry::GetProperty(*back, "LoadingScreen.asyncLoad") == PropertyValue::MakeBool(false));
+            CHECK(PropertyRegistry::GetProperty(*back, "LoadingScreen.objectsPerFrame") == PropertyValue::MakeInt(17));
+        }
+    }
+}
+
+// ---- Audit: hooks while firing, the type table, text coercion ---------------------------------------------
+
+static void TestAuditHooksWhileFiring() {
+    RUN_SUITE("audit: hooks added, removed and nested while a change is announced");
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    Light* light = go->AddComponent<Light>();
+
+    {   // a hook removed by an earlier hook of the same change does not run afterwards
+        int aCalls = 0, bCalls = 0, idB = 0;
+        const int idA = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++aCalls; PropertyRegistry::RemoveChangeHook(idB); });
+        idB = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++bCalls; });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(21.0f)));
+        CHECK(aCalls == 1 && bCalls == 0);
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(22.0f)));
+        CHECK(aCalls == 2 && bCalls == 0);   // and it stays gone
+        PropertyRegistry::RemoveChangeHook(idA);
+    }
+    {   // a hook added while a change is announced first sees the next change
+        int late = 0, lateId = 0;
+        const int idA = PropertyRegistry::AddChangeHook([&](const PropertyChange&) {
+            if (!lateId) lateId = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++late; });
+        });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(23.0f)));
+        CHECK(late == 0 && lateId > 0);
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(24.0f)));
+        CHECK(late == 1);
+        PropertyRegistry::RemoveChangeHook(idA);
+        PropertyRegistry::RemoveChangeHook(lateId);
+    }
+    {   // a hook that removes itself runs once; hooks run in the order they were added
+        std::string order;
+        int selfId = 0, selfCalls = 0;
+        const int first = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { order += 'a'; });
+        selfId = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { order += 'b'; ++selfCalls; PropertyRegistry::RemoveChangeHook(selfId); });
+        const int third = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { order += 'c'; });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(25.0f)));
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(26.0f)));
+        CHECK(order == "abcac" && selfCalls == 1);
+        PropertyRegistry::RemoveChangeHook(first);
+        PropertyRegistry::RemoveChangeHook(third);
+    }
+    {   // a hook that keeps writing the property it was told about ends: the writes happen,
+        // delivery stops at a fixed nesting depth instead of overflowing the stack
+        int calls = 0;
+        const int id = PropertyRegistry::AddChangeHook([&](const PropertyChange& c) {
+            if (c.path != "Light.range" || calls >= 1000) return;
+            ++calls;
+            PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(c.newValue.AsFloat() + 1.0f));
+        });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(100.0f)));
+        CHECK(calls >= 8 && calls <= 40);
+        CHECK(light->range >= 108.0f);
+        PropertyRegistry::RemoveChangeHook(id);
+        // afterwards the registry delivers normally again (the depth is not left raised)
+        int seen = 0;
+        const int id2 = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++seen; });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(5.0f)));
+        CHECK(seen == 1);
+        PropertyRegistry::RemoveChangeHook(id2);
+    }
+    {   // two hooks that undo each other's change end too
+        int calls = 0;
+        const int a = PropertyRegistry::AddChangeHook([&](const PropertyChange& c) {
+            if (c.path == "Light.range" && calls < 1000) { ++calls; PropertyRegistry::SetProperty(*go, "Light.ambient", PropertyValue::MakeFloat(c.newValue.AsFloat() > 50.0f ? 0.2f : 0.7f)); }
+        });
+        const int b = PropertyRegistry::AddChangeHook([&](const PropertyChange& c) {
+            if (c.path == "Light.ambient" && calls < 1000) { ++calls; PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(c.newValue.AsFloat() > 0.5f ? 90.0f : 10.0f)); }
+        });
+        CHECK(PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(70.0f)));
+        CHECK(calls <= 100);
+        PropertyRegistry::RemoveChangeHook(a);
+        PropertyRegistry::RemoveChangeHook(b);
+    }
+}
+
+static void TestAuditWriteResult() {
+    RUN_SUITE("audit: WriteProperty reports the old and the stored value");
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    go->AddComponent<Light>();
+    go->AddComponent<Camera>();
+    Camera* cam2 = go->AddComponent<Camera>();
+    cam2->depth = 3.0f;
+
+    int fires = 0;
+    const int hook = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { ++fires; });
+    PropertyWriteResult r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeFloat(2.5f));
+    CHECK(r.ok && r.changed && r.path == "Light.intensity" && r.error.empty());
+    CHECK(r.oldValue == PropertyValue::MakeFloat(1.0f) && r.newValue == PropertyValue::MakeFloat(2.5f));
+    CHECK(fires == 1);
+    // the stored value, not the asked-for one
+    r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeFloat(99999.0f));
+    CHECK(r.ok && r.changed && r.oldValue == PropertyValue::MakeFloat(2.5f) && r.newValue == PropertyValue::MakeFloat(1000.0f));
+    // the same value: accepted, nothing changed, no hook
+    fires = 0;
+    r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeFloat(5000.0f));
+    CHECK(r.ok && !r.changed && r.oldValue == r.newValue && fires == 0);
+    // a sub-field path reports the whole property
+    go->transform->localPosition = Vec3{1, 2, 3};
+    r = PropertyRegistry::WriteProperty(*go, "transform.POSITION.y", PropertyValue::MakeFloat(8.0f));
+    CHECK(r.ok && r.changed && r.path == "Transform.position");
+    CHECK(r.oldValue == PropertyValue::MakeVec3(Vec3{1, 2, 3}) && r.newValue == PropertyValue::MakeVec3(Vec3{1, 8, 3}));
+    // the second component of a type
+    r = PropertyRegistry::WriteProperty(*go, "camera#1.depth", PropertyValue::MakeFloat(4.0f));
+    CHECK(r.ok && r.path == "Camera#1.depth" && r.componentIndex == 1 && r.oldValue.AsFloat() == 3.0f && cam2->depth == 4.0f);
+    // refusals say why and leave both values invalid
+    r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeBool(true));
+    CHECK(!r.ok && !r.changed && !r.error.empty() && !r.oldValue.IsValid() && !r.newValue.IsValid());
+    r = PropertyRegistry::WriteProperty(*go, "Light.nope", PropertyValue::MakeFloat(1.0f));
+    CHECK(!r.ok && !r.error.empty());
+    r = PropertyRegistry::WriteProperty(*go, "Light.intensity", PropertyValue::MakeFloat(NAN));
+    CHECK(!r.ok && !r.error.empty());
+    // text
+    r = PropertyRegistry::WritePropertyFromText(*go, "Light.type", "spot");
+    CHECK(r.ok && r.changed && r.newValue.EnumName() == "Spot" && r.oldValue.EnumName() == "Directional");
+    r = PropertyRegistry::WritePropertyFromText(*go, "Light.type", "square");
+    CHECK(!r.ok && r.error.find("square") != std::string::npos);
+    // undoing with the reported old value puts everything back
+    r = PropertyRegistry::WriteProperty(*go, "Light.range", PropertyValue::MakeFloat(77.0f));
+    CHECK(r.ok && r.changed);
+    {
+        PropertyRegistry::ScopedHookSuppression quiet;
+        CHECK(PropertyRegistry::WriteProperty(*go, r.path, r.oldValue).ok);
+    }
+    CHECK(PropertyRegistry::GetProperty(*go, "Light.range") == r.oldValue);
+    PropertyRegistry::RemoveChangeHook(hook);
+}
+
+namespace {
+struct KeyWidget : Component {
+    struct Dodge { char key = 'x'; float power = 2.0f; };
+    char jump = ' ';
+    char sprint = 0;
+    Dodge dodge;
+};
+}
+
+static void TestBuilderKeyBindings() {
+    RUN_SUITE("builder: key bindings and fields of a struct member");
+    PropertyBuilder<KeyWidget> b("KeyWidget", "keywidget", "Test");
+    b.AddKey("jump", &KeyWidget::jump)
+     .AddKey("sprint", &KeyWidget::sprint)
+     .AddKey("dodgeKey", &KeyWidget::dodge, &KeyWidget::Dodge::key).Tooltip("Dodge key")
+     .AddFloat("dodgePower", &KeyWidget::dodge, &KeyWidget::Dodge::power).Range(0, 10);
+    b.Commit();
+    auto info = PropertyRegistry::FindByName("KeyWidget");
+    CHECK(info && info->properties.size() == 5);   // enabled + the four
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("w");
+    auto* w = go->AddComponent<KeyWidget>();
+    const PropertyDesc* d = info->Find("jump");
+    CHECK(d && d->type == PropertyType::Int && d->hasRange && d->rangeMin == 0 && d->rangeMax == 255 && !d->tooltip.empty());
+    CHECK(d->defaultValue == PropertyValue::MakeInt(' '));
+    CHECK(info->Find("dodgeKey")->tooltip == "Dodge key");
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt('q')) && w->jump == 'q');
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt(200)) && (unsigned char)w->jump == 200);
+    CHECK(PropertyRegistry::GetProperty(*go, "KeyWidget.jump") == PropertyValue::MakeInt(200));   // not -56
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt(1000)) && (unsigned char)w->jump == 255);
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeInt(' ')) && w->jump == ' ');   // an ordinary key accepts Space
+    CHECK(!PropertyRegistry::SetProperty(*go, "KeyWidget.jump", PropertyValue::MakeFloat(3.0f)));
+    // every code is accepted: white space and '-' included
+    for (int code = 0; code < 256; ++code) {
+        CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.sprint", PropertyValue::MakeInt(code)) && (unsigned char)w->sprint == (unsigned char)code);
+        CHECK(PropertyRegistry::GetProperty(*go, "KeyWidget.sprint") == PropertyValue::MakeInt(code));
+    }
+    // a field of a struct member reads and writes through the member
+    CHECK(PropertyRegistry::GetProperty(*go, "KeyWidget.dodgeKey") == PropertyValue::MakeInt('x'));
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.dodgeKey", PropertyValue::MakeInt('z')) && w->dodge.key == 'z');
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.dodgePower", PropertyValue::MakeFloat(50.0f)) && w->dodge.power == 10.0f);
+    CHECK(PropertyRegistry::GetProperty(*go, "KeyWidget.dodgePower") == PropertyValue::MakeFloat(10.0f));
+    // snapshot, diff and revert see them like any other property
+    const PropertySnapshot before = SnapshotProperties(*go);
+    CHECK(PropertyRegistry::SetProperty(*go, "KeyWidget.dodgeKey", PropertyValue::MakeInt('c')));
+    const auto diff = DiffProperties(before, SnapshotProperties(*go));
+    CHECK(diff.size() == 1 && diff[0].path == "KeyWidget.dodgeKey");
+    CHECK(ApplyPropertyDiff(*go, diff, false) == 1 && w->dodge.key == 'z');
+}
+
+static void TestAuditRegistryTable() {
+    RUN_SUITE("audit: registering types, names and duplicates");
+    PropertyRegistry::Clear();   // the built-ins only, whatever earlier suites added
+    RegisterBuiltinProperties();
+    const std::size_t before = PropertyRegistry::All().size();
+
+    // A type no path can name is not registered at all.
+    for (const char* name : {"", "Has Space", "a.b", "x#1", "tab\tname"}) {
+        ComponentTypeInfo info;
+        info.name = name;
+        info.type = std::type_index(typeid(Probe));
+        PropertyRegistry::Register(info);
+    }
+    CHECK(PropertyRegistry::All().size() == before);
+
+    // Property names a path cannot address are dropped, and a name appears once (the first stays).
+    ComponentTypeInfo info;
+    info.name = "AuditType";
+    info.recordName = "audit type";    // not addressable: the type still registers, without it
+    info.type = std::type_index(typeid(Probe));
+    auto named = [](const char* n, PropertyType t) { PropertyDesc d = MakeDesc(t); d.name = n; return d; };
+    info.properties = {named("a", PropertyType::Float), named("a", PropertyType::Int), named("b.c", PropertyType::Bool),
+                       named("has space", PropertyType::Bool), named("d#1", PropertyType::Bool), named("e", PropertyType::Bool)};
+    PropertyRegistry::Register(info);
+    auto got = PropertyRegistry::FindByName("AuditType");
+    CHECK(got != nullptr && got->properties.size() == 2);
+    if (got && got->properties.size() == 2) {
+        CHECK(got->properties[0].name == "a" && got->properties[0].type == PropertyType::Float);
+        CHECK(got->properties[1].name == "e");
+    }
+    CHECK(got && got->recordName.empty());
+    CHECK(PropertyRegistry::All().size() == before + 1);
+
+    // Registering the same name again replaces it; so does the same exact type under a new name,
+    // and the old names (type and record) stop resolving.
+    ComponentTypeInfo second = info;
+    second.recordName = "audit_one";
+    second.properties = {named("z", PropertyType::Float)};
+    PropertyRegistry::Register(second);
+    CHECK(PropertyRegistry::All().size() == before + 1);
+    CHECK(PropertyRegistry::FindByName("AuditType")->properties.size() == 1);
+    CHECK(PropertyRegistry::FindByName("audit_one") == PropertyRegistry::FindByName("AuditType"));
+    CHECK(PropertyRegistry::FindByName("AUDIT_ONE") == PropertyRegistry::FindByName("AuditType"));
+    ComponentTypeInfo renamed = second;
+    renamed.name = "AuditRenamed";
+    renamed.recordName = "audit_two";
+    PropertyRegistry::Register(renamed);
+    CHECK(PropertyRegistry::All().size() == before + 1);
+    CHECK(PropertyRegistry::FindByName("AuditType") == nullptr);
+    CHECK(PropertyRegistry::FindByName("audit_one") == nullptr);
+    CHECK(PropertyRegistry::FindByName("audit_two") && PropertyRegistry::FindByName("AuditRenamed") == PropertyRegistry::FindByName("audit_two"));
+    CHECK(PropertyRegistry::FindByType(typeid(Probe)) == PropertyRegistry::FindByName("AuditRenamed"));
+
+    // Lookups with odd names find nothing and never throw.
+    for (const char* name : {" ", " Light", "Light ", "Light.", "Light#1", "Li ght", "\n", "LIGHTS"})
+        CHECK(PropertyRegistry::FindByName(name) == nullptr);
+    CHECK(PropertyRegistry::FindByName(std::string(100000, 'x')) == nullptr);
+    CHECK(PropertyRegistry::FindByName("lIgHt") == PropertyRegistry::FindByName("Light"));
+
+    // Every built-in property is addressable, and no two share a name in any case.
+    for (const auto& type : PropertyRegistry::All()) {
+        std::set<std::string> seen;
+        for (const PropertyDesc& d : type->properties) {
+            std::string low = d.name;
+            for (char& c : low) c = (char)std::tolower((unsigned char)c);
+            CHECK(seen.insert(low).second);
+        }
+    }
+
+    // Two types can be registered from many threads while others look names up.
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t)
+        threads.emplace_back([t] {
+            for (int i = 0; i < 40; ++i) {
+                ComponentTypeInfo racer;
+                racer.name = "AuditRacer" + std::to_string(t);
+                racer.recordName = "auditracer" + std::to_string(t);
+                racer.properties = {[&] { PropertyDesc d = MakeDesc(PropertyType::Bool); d.name = "x"; return d; }()};
+                PropertyRegistry::Register(racer);
+                auto f = PropertyRegistry::FindByName("AUDITRACER" + std::to_string(t));
+                if (!f || f->properties.size() != 1) std::abort();
+                PropertyRegistry::FindByName("Light");
+                PropertyRegistry::All();
+            }
+        });
+    for (auto& th : threads) th.join();
+    CHECK(PropertyRegistry::All().size() == before + 1 + 4);
+    PropertyRegistry::Clear();
+    CHECK(PropertyRegistry::All().size() == before);
+}
+
+static void TestAuditBuilderEdges() {
+    RUN_SUITE("audit: builder modifiers before any property, empty accessors");
+    // A modifier before the first property used to write through back() of an empty list.
+    PropertyBuilder<TestWidget> early("AuditEarly", "auditearly", "Test", /*withEnabled=*/false);
+    early.Tooltip("nothing to describe yet").Range(0, 1).Group("g").ReadOnly().Hidden().Default(PropertyValue::MakeFloat(1.0f));
+    early.AddFloat("speed", &TestWidget::speed).Range(0, 10);
+    early.Commit();
+    auto info = PropertyRegistry::FindByName("AuditEarly");
+    CHECK(info && info->properties.size() == 1);
+    if (info && info->properties.size() == 1) {
+        const PropertyDesc& d = info->properties[0];
+        CHECK(d.name == "speed" && d.tooltip.empty() && d.group.empty() && !d.IsReadOnly() && !d.IsHidden());
+        CHECK(d.hasRange && d.rangeMax == 10.0);
+    }
+    // An empty getter makes no property (it used to throw when the value was read).
+    PropertyBuilder<TestWidget> empty("AuditEmpty", "", "Test", false);
+    empty.Custom("broken", PropertyType::Float, std::function<PropertyValue(const TestWidget&)>(), std::function<bool(TestWidget&, const PropertyValue&)>());
+    empty.CustomEnum("brokenEnum", {"A", "B"}, std::function<int(const TestWidget&)>(), std::function<bool(TestWidget&, int)>());
+    empty.AddFloat("ok", &TestWidget::speed);
+    empty.Commit();
+    auto e = PropertyRegistry::FindByName("AuditEmpty");
+    CHECK(e && e->properties.size() == 1 && e->properties[0].name == "ok");
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("w");
+    go->AddComponent<TestWidget>();
+    CHECK(PropertyRegistry::GetProperty(*go, "AuditEmpty.ok").IsValid());
+    CHECK(!PropertyRegistry::GetProperty(*go, "AuditEmpty.broken").IsValid());
+    PropertyRegistry::Clear();
+}
+
+static void TestAuditTextCoercion() {
+    RUN_SUITE("audit: text coercion per type");
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("Thing");
+    Light* light = go->AddComponent<Light>();
+    Camera* cam = go->AddComponent<Camera>();
+    SpriteRenderer* sprite = go->AddComponent<SpriteRenderer>();
+    std::string err;
+    auto set = [&](const char* path, const char* text) { return PropertyRegistry::SetPropertyFromText(*go, path, text, &err); };
+
+    // Int: plain decimal, a sign and spaces around are fine; nothing else is
+    CHECK(set("GameObject.layer", " 7 ") && go->layer == 7);
+    CHECK(set("GameObject.layer", "+9") && go->layer == 9);
+    CHECK(set("GameObject.layer", "-5") && go->layer == 0);     // clamped into 0..31
+    for (const char* bad : {"7.0", "1e1", "0x10", "7 8", "", " ", "--1", "+", "99999999999999999999", "seven", "7,5", "٣"}) {
+        go->layer = 4;
+        CHECK(!set("GameObject.layer", bad) && go->layer == 4);
+    }
+    // an integer wider than the field is clamped, not wrapped
+    CHECK(PropertyRegistry::SetProperty(*go, "Camera.cullingMask", PropertyValue::MakeInt(1LL << 40)) && cam->cullingMask == INT_MAX);
+    CHECK(PropertyRegistry::SetProperty(*go, "Camera.cullingMask", PropertyValue::MakeInt(-(1LL << 40))) && cam->cullingMask == INT_MIN);
+    CHECK(PropertyRegistry::SetProperty(*go, "Camera.cullingMask", PropertyValue::MakeInt(LLONG_MAX)) && cam->cullingMask == INT_MAX);
+
+    // Float
+    CHECK(set("Light.intensity", " 1.5 ") && light->intensity == 1.5f);
+    CHECK(set("Light.intensity", "1e2") && light->intensity == 100.0f);
+    CHECK(set("Light.intensity", ".5") && light->intensity == 0.5f);
+    CHECK(set("Light.intensity", "5.") && light->intensity == 5.0f);
+    CHECK(set("Light.intensity", "-0") && light->intensity == 0.0f);
+    light->intensity = 3.0f;
+    for (const char* bad : {"1,5", "inf", "-inf", "nan", "1e39", "0x1p3", "1.2.3", "1e", "e5", ".", "-", "1 2", "", "1f", "1_0"}) {
+        CHECK(!set("Light.intensity", bad) && light->intensity == 3.0f);
+    }
+
+    // Bool
+    sprite->flipX = false;
+    CHECK(set("SpriteRenderer.flipX", "TRUE") && sprite->flipX);
+    CHECK(set("SpriteRenderer.flipX", " off ") && !sprite->flipX);
+    CHECK(set("SpriteRenderer.flipX", "1") && sprite->flipX);
+    for (const char* bad : {"2", "", "yes please", "tru", "-1", "0.0"}) CHECK(!set("SpriteRenderer.flipX", bad) && sprite->flipX);
+
+    // Vectors and colors
+    CHECK(set("Transform.position", "[1, 2, 3]") && go->transform->localPosition.z == 3.0f);
+    CHECK(set("Transform.position", "{4 5 6}") && go->transform->localPosition.x == 4.0f);
+    CHECK(set("Transform.position", "  7,8,9  ") && go->transform->localPosition.y == 8.0f);
+    for (const char* bad : {"1 2", "1 2 3 4", "1,2,,3", "(1 2 3", "1 2 x", "nan 0 0", "inf 0 0", "", "1;2;3", "[[1 2 3]]"}) {
+        go->transform->localPosition = Vec3{1, 1, 1};
+        CHECK(!set("Transform.position", bad) && go->transform->localPosition.x == 1.0f);
+    }
+    CHECK(set("Light.color", "#ff8800") && light->color.r == 1.0f && std::fabs(light->color.g - 136.0f / 255.0f) < 1e-6f && light->color.b == 0.0f && light->color.a == 1.0f);
+    CHECK(set("Light.color", "#00000080") && std::fabs(light->color.a - 128.0f / 255.0f) < 1e-6f);
+    light->color = Color{0.25f, 0.25f, 0.25f, 1.0f};
+    for (const char* bad : {"#fff", "#ff88", "#gg0000", "ff8800", "#ff88001", "#", "1 2 3", ""}) CHECK(!set("Light.color", bad) && light->color.r == 0.25f);
+    // a color component past the range is clamped
+    CHECK(set("Light.color", "40 0.5 -3 1") && light->color.r == 16.0f && light->color.b == 0.0f);
+
+    // Enum: a name (any case), a number, or "number name"; a name that contradicts the number is refused
+    CHECK(set("Camera.projection", "orthographic") && cam->projection == Camera::Projection::Orthographic);
+    CHECK(set("Camera.projection", "1") && cam->projection == Camera::Projection::Perspective);
+    CHECK(set("Camera.projection", "0 Orthographic") && cam->projection == Camera::Projection::Orthographic);
+    CHECK(set("Camera.projection", "1 Perspective") && cam->projection == Camera::Projection::Perspective);
+    CHECK(set("Camera.projection", "0 gone_since_renamed") && cam->projection == Camera::Projection::Orthographic);   // an unknown name: the number decides
+    CHECK(!set("Camera.projection", "1 Orthographic") && cam->projection == Camera::Projection::Orthographic);
+    CHECK(!set("Camera.projection", "0 perspective") && cam->projection == Camera::Projection::Orthographic);
+    for (const char* bad : {"2", "-1", "Fisheye", "", "Orthographic 0", "1.0"}) CHECK(!set("Camera.projection", bad) && cam->projection == Camera::Projection::Orthographic);
+    {
+        PropertyValue v;
+        auto info = PropertyRegistry::FindByName("Camera");
+        const PropertyDesc* d = info->Find("projection");
+        CHECK(d->ParseText("1 Perspective", v) && v.AsEnum() == 1);
+        CHECK(!d->ParseText("1 Orthographic", v));
+        CHECK(d->ParseText(d->FormatText(PropertyValue::MakeEnum(1, "Perspective")), v) && v.AsEnum() == 1);
+    }
+
+    // Strings keep their spaces and symbols; control characters are refused
+    CHECK(set("GameObject.name", "  two  spaces # and \"quotes\" \\ ") && go->name == "  two  spaces # and \"quotes\" \\ ");
+    CHECK(set("GameObject.name", "") && go->name.empty());
+    go->name = "keep";
+    CHECK(!set("GameObject.name", "a\tb") && !set("GameObject.name", "a\nb") && !set("GameObject.name", "a\rb") && go->name == "keep");
+    CHECK(!PropertyRegistry::SetProperty(*go, "GameObject.name", PropertyValue::MakeString(std::string("nul\0x", 5))) && go->name == "keep");
+    CHECK(!PropertyRegistry::SetProperty(*go, "GameObject.name", PropertyValue::MakeString("del\x7f")) && go->name == "keep");
+
+    // Object references: only an object of the same scene, never a loop
+    GameObject* child = s.CreateGameObject("Child");
+    GameObject* grandchild = s.CreateGameObject("Grandchild");
+    CHECK(PropertyRegistry::SetProperty(*child, "Transform.parent", PropertyValue::MakeObjectRef(go->Guid())) && child->transform->Parent() == go->transform);
+    CHECK(PropertyRegistry::SetProperty(*grandchild, "Transform.parent", PropertyValue::MakeObjectRef(child->Guid())));
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.parent", PropertyValue::MakeObjectRef(grandchild->Guid())) && go->transform->Parent() == nullptr);   // a loop
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.parent", PropertyValue::MakeObjectRef(go->Guid())) && go->transform->Parent() == nullptr);          // itself
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.parent", PropertyValue::MakeObjectRef("deadbeef")) && go->transform->Parent() == nullptr);          // no such object
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.parent", PropertyValue::MakeObjectRef("NOT-A-GUID")));
+    CHECK(PropertyRegistry::SetProperty(*grandchild, "Transform.parent", PropertyValue::MakeObjectRef("")) && grandchild->transform->Parent() == nullptr);
+
+    // Quaternions: any non-zero finite one is normalised; a sub-field write that would zero it is refused
+    CHECK(set("Transform.rotation", "0 0 0 3") && go->transform->localRotation.w == 1.0f);
+    CHECK(set("Transform.rotation", "0, 3, 0, 4") && std::fabs(go->transform->localRotation.y - 0.6f) < 1e-6f);
+    CHECK(!set("Transform.rotation", "0 0 0 0") && std::fabs(go->transform->localRotation.y - 0.6f) < 1e-6f);
+    CHECK(set("Transform.rotation", "0 0 0 1"));
+    CHECK(!set("Transform.rotation.w", "0") && go->transform->localRotation.w == 1.0f);
+    CHECK(!set("Transform.rotation.w", "nan") && go->transform->localRotation.w == 1.0f);
+
+    // a type mismatch from code is always refused, for every property type
+    CHECK(!PropertyRegistry::SetProperty(*go, "Camera.projection", PropertyValue::MakeInt(1)));
+    CHECK(!PropertyRegistry::SetProperty(*go, "Light.intensity", PropertyValue::MakeInt(1)));
+    CHECK(!PropertyRegistry::SetProperty(*go, "GameObject.layer", PropertyValue::MakeFloat(1.0f)));
+    CHECK(!PropertyRegistry::SetProperty(*go, "GameObject.name", PropertyValue::MakeAssetPath("x")));
+    CHECK(!PropertyRegistry::SetProperty(*go, "SpriteRenderer.texture", PropertyValue::MakeString("x")));
+    CHECK(!PropertyRegistry::SetProperty(*go, "Light.color", PropertyValue::MakeVec4(Vec4{1, 1, 1, 1})));
+    CHECK(!PropertyRegistry::SetProperty(*go, "Transform.rotation", PropertyValue::MakeVec4(Vec4{0, 0, 0, 1})));
+    CHECK(!PropertyRegistry::SetProperty(*go, "SpriteRenderer.flipX", PropertyValue::MakeInt(1)));
+}
+
+
+// ---- Audit: what the scene file keeps at the edges of a property's range ---------------------------------
+
+// Set `v`, save the scene, load it and read the property back from the loaded object.
+// Empty result = it survived; otherwise what went wrong.
+static std::string SceneRoundTripOf(const ComponentTypeInfo& info, const PropertyDesc& d, const PropertyValue& v, const std::string& path, bool lenient) {
+    Scene s1("s1");
+    GameObject* go = MakeSubject(s1, info);
+    const auto comp = Companions().find(path);
+    if (comp != Companions().end() && !PropertyRegistry::SetProperty(*go, comp->second.first, comp->second.second)) return "companion refused";
+    std::string err;
+    if (!PropertyRegistry::SetProperty(*go, path, v, &err)) return "refused: " + err;
+    const PropertyValue want = PropertyRegistry::GetProperty(*go, path);
+    Scene s2("s2");
+    std::string loadErr;
+    if (!SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s1), &loadErr)) return "scene did not load: " + loadErr;
+    GameObject* back = s2.FindByGuid(go->Guid());
+    if (!back) return "object lost";
+    const PropertyValue got = PropertyRegistry::GetProperty(*back, path);
+    const bool same = lenient ? Close(got, want) : got == want;
+    if (same) return std::string();
+    (void)d;
+    return "set '" + want.ToString() + "' read back '" + got.ToString() + "'";
+}
+
+static void TestAuditSceneEdges() {
+    RUN_SUITE("audit: values at the edges of every range survive the scene file");
+    RegisterBuiltinProperties();
+    int cases = 0, failures = 0;
+    for (const auto& info : PropertyRegistry::All()) {
+        for (const PropertyDesc& d : info->properties) {
+            if (!Authored(d)) continue;
+            const std::string path = info->name + "." + d.name;
+            std::vector<PropertyValue> values;
+            const bool rgbOnly = kRgbOnly.count(path) != 0;
+            switch (d.type) {
+                case PropertyType::Bool: values = {PropertyValue::MakeBool(true), PropertyValue::MakeBool(false)}; break;
+                case PropertyType::Enum:
+                    for (int i = 0; i < (int)d.enumOptions.size(); ++i) values.push_back(PropertyValue::MakeEnum(i));
+                    break;
+                case PropertyType::Int:
+                    if (d.hasRange) { values.push_back(PropertyValue::MakeInt((long long)d.rangeMin)); values.push_back(PropertyValue::MakeInt((long long)d.rangeMax)); }
+                    values.push_back(PropertyValue::MakeInt(0));
+                    values.push_back(PropertyValue::MakeInt(-1));
+                    break;
+                case PropertyType::Float:
+                    if (d.hasRange) { values.push_back(PropertyValue::MakeFloat((float)d.rangeMin)); values.push_back(PropertyValue::MakeFloat((float)d.rangeMax)); }
+                    values.push_back(PropertyValue::MakeFloat(0.0f));
+                    break;
+                case PropertyType::Vec2: case PropertyType::Vec3: case PropertyType::Vec4: case PropertyType::Color: {
+                    if (!d.hasRange) break;
+                    for (double edge : {d.rangeMin, d.rangeMax}) {
+                        const float f = (float)edge;
+                        switch (d.type) {
+                            case PropertyType::Vec2: values.push_back(PropertyValue::MakeVec2(Vec2{f, f})); break;
+                            case PropertyType::Vec3: values.push_back(PropertyValue::MakeVec3(Vec3{f, f, f})); break;
+                            case PropertyType::Vec4: values.push_back(PropertyValue::MakeVec4(Vec4{f, f, f, f})); break;
+                            default: values.push_back(PropertyValue::MakeColor(Color{f, f, f, rgbOnly ? 1.0f : f})); break;
+                        }
+                    }
+                    break;
+                }
+                case PropertyType::String:
+                    for (const char* t : {"a b", "  lead and trail  ", "quote\"inside", "back\\slash", "caf\xC3\xA9 \xE2\x9C\x93", "#hash = x", "ends with backslash \\", "-", "0"})
+                        values.push_back(PropertyValue::MakeString(t));
+                    values.push_back(PropertyValue::MakeString(std::string(3000, 'q')));
+                    break;
+                case PropertyType::AssetPath:
+                    for (const char* t : {"a b/c d.png", "dir\\file.png", "quote\"in.png", "caf\xC3\xA9.png"})
+                        values.push_back(PropertyValue::MakeAssetPath(t));
+                    break;
+                default: break;
+            }
+            for (const PropertyValue& v : values) {
+                if (d.name == "tag" || (info->name == "GameObject" && d.name == "name" && v.AsString().empty())) continue;
+                ++cases;
+                const std::string why = SceneRoundTripOf(*info, d, v, path, true);
+                if (!why.empty()) {
+                    ++failures;
+                    std::cerr << "  EDGE " << path << " (" << v.ToString().substr(0, 40) << "): " << why << "\n";
+                }
+            }
+        }
+    }
+    std::cout << "  " << cases << " edge values checked\n";
+    CHECK(failures == 0);
+    CHECK(cases >= 600);
+}
+
+// Hooks, writers and lookups all at once from several threads: nothing crashes, no count is lost.
+static void TestAuditThreadedUse() {
+    RUN_SUITE("audit: concurrent writes, hooks and lookups");
+    RegisterBuiltinProperties();
+    std::atomic<int> announced{0};
+    const int hook = PropertyRegistry::AddChangeHook([&](const PropertyChange&) { announced.fetch_add(1); });
+    constexpr int kThreads = 4, kRounds = 200;
+    std::vector<std::unique_ptr<Scene>> scenes;
+    std::vector<GameObject*> objects;
+    for (int t = 0; t < kThreads; ++t) {
+        scenes.push_back(std::make_unique<Scene>("s" + std::to_string(t)));
+        GameObject* go = scenes.back()->CreateGameObject("o");
+        go->AddComponent<Light>();
+        objects.push_back(go);
+    }
+    std::atomic<int> wrong{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&, t] {
+            GameObject* go = objects[(std::size_t)t];
+            for (int i = 0; i < kRounds; ++i) {
+                // each thread writes its own object: every write is a change, so every one is announced
+                const float want = 1.0f + (float)i;
+                if (!PropertyRegistry::SetProperty(*go, "Light.range", PropertyValue::MakeFloat(want))) wrong.fetch_add(1);
+                if (PropertyRegistry::GetProperty(*go, "light.RANGE") != PropertyValue::MakeFloat(want)) wrong.fetch_add(1);
+                // hooks come and go while others are being announced
+                int mine = PropertyRegistry::AddChangeHook([](const PropertyChange&) {});
+                PropertyRegistry::RemoveChangeHook(mine);
+                if (!PropertyRegistry::FindByName("Camera")) wrong.fetch_add(1);
+                PropertyRegistry::All();
+                // a suppressed write on this thread is silent
+                PropertyRegistry::ScopedHookSuppression quiet;
+                PropertyRegistry::SetProperty(*go, "Light.ambient", PropertyValue::MakeFloat(i % 2 ? 0.25f : 0.75f));
+            }
+        });
+    }
+    for (auto& th : threads) th.join();
+    PropertyRegistry::RemoveChangeHook(hook);
+    CHECK(wrong.load() == 0);
+    CHECK(announced.load() == kThreads * kRounds);
+}
+
 int main() {
     TestValueRoundTrip();
     TestValueBadInput();
@@ -1303,6 +2209,18 @@ int main() {
     TestSerializerCrossCheck();
     TestSerializerCrossCheckIsolated();
     TestCustomComponent();
+    TestDescriptorsAreSane();
+    TestControllerRegistrations();
+    TestNavNetUiRegistrations();
+    TestGameplayAndEnvironmentRegistrations();
+    TestAuditHooksWhileFiring();
+    TestAuditWriteResult();
+    TestAuditBuilderEdges();
+    TestBuilderKeyBindings();
+    TestAuditTextCoercion();
+    TestAuditRegistryTable();
+    TestAuditSceneEdges();
+    TestAuditThreadedUse();
     TestThreadSafeRegistration();
     TEST_MAIN_RESULT();
 }

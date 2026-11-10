@@ -27,6 +27,20 @@ inline bool IsNavFocusable(GameObject* go) {
     if (auto* d = go->GetComponent<UIDropdown>())      return d->enabled && d->focusable;
     if (auto* tb = go->GetComponent<UITabs>())         return tb->enabled && tb->focusable && tb->interactable && tb->Count() > 0;
     if (auto* kb = go->GetComponent<UIKeybindField>()) return kb->enabled && kb->focusable && kb->interactable;
+    if (auto* st = go->GetComponent<UIStepper>())      return st->enabled && st->focusable && st->interactable;
+    if (auto* rt = go->GetComponent<UIRating>())       return rt->enabled && rt->focusable && !rt->readOnly;
+    return false;
+}
+
+/// True while a text field has the keyboard: typing letters, Space and Enter belong to the
+/// field, so menu navigation must stay out of the way (otherwise W/A/S/D move the focus ring
+/// and Space presses the focused button while the player types a name).
+inline bool UITextFieldHasKeyboard(Scene& scene) {
+    for (const auto& go : scene.Objects()) {
+        if (!go->active) continue;
+        auto* in = go->GetComponent<UIInputField>();
+        if (in && in->enabled && in->focused && !UIHidden(go.get())) return true;
+    }
     return false;
 }
 
@@ -70,9 +84,10 @@ inline std::vector<GameObject*> BuildFocusGraph(Scene& scene, FocusGraph& graph)
 /// (button/toggle/dropdown/keybind), or nullptr.
 inline GameObject* NavigateUI(Scene& scene) {
     // Collect focusable, interactable widgets and a quick type tag.
-    enum Kind { Button, Toggle, Slider, Dropdown, Tabs, Keybind };
+    enum Kind { Button, Toggle, Slider, Dropdown, Tabs, Keybind, Stepper, Rating };
     struct Item { GameObject* go; Kind kind; Vec2 origin; Vec2 size; Vec2 centre; };
     std::vector<Item> items;
+    if (UITextFieldHasKeyboard(scene)) return nullptr;       // the player is typing
     for (const auto& go : scene.Objects()) {
         if (auto* kb = go->GetComponent<UIKeybindField>(); kb && kb->IsListening())
             return nullptr;                                  // the keys are being captured
@@ -101,6 +116,8 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* d = go->GetComponent<UIDropdown>()) { if (d->enabled && d->focusable) items.push_back({go.get(), Dropdown, {}, {}, {}}); continue; }
         if (auto* tb = go->GetComponent<UITabs>())    { if (tb->enabled && tb->focusable && tb->interactable && tb->Count() > 0) items.push_back({go.get(), Tabs, {}, {}, {}}); continue; }
         if (auto* kb = go->GetComponent<UIKeybindField>()) { if (kb->enabled && kb->focusable && kb->interactable) items.push_back({go.get(), Keybind, {}, {}, {}}); continue; }
+        if (auto* st = go->GetComponent<UIStepper>()) { if (st->enabled && st->focusable && st->interactable) items.push_back({go.get(), Stepper, {}, {}, {}}); continue; }
+        if (auto* rt = go->GetComponent<UIRating>())  { if (rt->enabled && rt->focusable && !rt->readOnly) items.push_back({go.get(), Rating, {}, {}, {}}); continue; }
     }
     if (items.empty()) return nullptr;
 
@@ -129,6 +146,8 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* d = it.go->GetComponent<UIDropdown>()) return d->IsFocused();
         if (auto* tb = it.go->GetComponent<UITabs>())    return tb->IsFocused();
         if (auto* kb = it.go->GetComponent<UIKeybindField>()) return kb->IsFocused();
+        if (auto* st = it.go->GetComponent<UIStepper>()) return st->IsFocused();
+        if (auto* rt = it.go->GetComponent<UIRating>())  return rt->IsFocused();
         return false;
     };
     auto setFocused = [](const Item& it, bool f) {
@@ -138,6 +157,8 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* d = it.go->GetComponent<UIDropdown>()) d->SetFocused(f);
         if (auto* tb = it.go->GetComponent<UITabs>())    tb->SetFocused(f);
         if (auto* kb = it.go->GetComponent<UIKeybindField>()) kb->SetFocused(f);
+        if (auto* st = it.go->GetComponent<UIStepper>()) st->SetFocused(f);
+        if (auto* rt = it.go->GetComponent<UIRating>())  rt->SetFocused(f);
     };
 
     const int n = (int)items.size();
@@ -179,7 +200,7 @@ inline GameObject* NavigateUI(Scene& scene) {
     } else {
         // Left/Right belong to the focused slider / dropdown / tabs; otherwise they move.
         const Kind fk = items[focused].kind;
-        const bool valueKeys = fk == Slider || fk == Dropdown || fk == Tabs;
+        const bool valueKeys = fk == Slider || fk == Dropdown || fk == Tabs || fk == Stepper || fk == Rating;
         int to = -1;
         if (down)      { to = nearest(focused, 0.0f, 1.0f);  if (to < 0) to = 0; }
         else if (up)   { to = nearest(focused, 0.0f, -1.0f); if (to < 0) to = n - 1; }
@@ -247,6 +268,19 @@ inline GameObject* NavigateUI(Scene& scene) {
             auto* tb = it.go->GetComponent<UITabs>();
             if (right) tb->SelectNext();
             else if (left) tb->SelectPrevious();
+            break;
+        }
+        case Stepper: {
+            auto* st = it.go->GetComponent<UIStepper>();
+            if (right) st->Step(1.0f);
+            else if (left) st->Step(-1.0f);
+            break;
+        }
+        case Rating: {
+            auto* rt = it.go->GetComponent<UIRating>();
+            const float unit = rt->allowHalf ? 0.5f : 1.0f;
+            if (right) rt->SetValue(rt->value + unit);
+            else if (left) rt->SetValue(rt->value - unit);
             break;
         }
         case Keybind:

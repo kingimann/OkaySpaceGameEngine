@@ -22,6 +22,18 @@ namespace okay {
 
 // ---------------------------------------------------------------- Tweener ----
 
+namespace {
+// The tweens whose callbacks are on the stack right now. A callback that calls TweenManager::Update must not
+// advance the tween it is running in (that would run its callbacks again, inside themselves, with no end for a
+// zero step, and could finish and kill the tween before the outer render got to its completion).
+thread_local std::vector<const Tweener*> g_rendering;
+struct RenderGuard {
+    explicit RenderGuard(const Tweener* t) { g_rendering.push_back(t); }
+    ~RenderGuard() { g_rendering.pop_back(); }
+};
+bool IsRendering(const Tweener* t) { return std::find(g_rendering.begin(), g_rendering.end(), t) != g_rendering.end(); }
+}
+
 Tweener& Tweener::SetEaseBezier(float x1, float y1, float x2, float y2) {
     return SetEaseCurve([x1, y1, x2, y2](float t) { return Easing::CubicBezier(x1, y1, x2, y2, t); });
 }
@@ -63,6 +75,7 @@ void Tweener::Advance(float dt) {
 
 void Tweener::RenderAt(double time) {
     if (m_killed) return;
+    RenderGuard rendering(this);
     // Every callback below may Kill / Restart / Goto / Complete this tween, which
     // renders again (nested). Then this render is stale and must stop: carrying on
     // would fire callbacks for a state that no longer exists.
@@ -187,6 +200,7 @@ void Tweener::Kill(bool complete) {
         if (m_killed) return;   // a callback during the completion killed it (OnKill already ran)
     }
     m_killed = true;
+    DoKill();
     if (onKill) onKill();
 }
 
@@ -198,7 +212,7 @@ void Tweener::Goto(float seconds, bool andPlay) {
 }
 
 void Tweener::DropDying(const std::unordered_set<const GameObject*>& dying) {
-    if (target && dying.count(target)) m_killed = true;   // silent: its object is gone
+    if (target && dying.count(target)) EndSilently();   // silent: its object is gone
 }
 
 // ------------------------------------------------------------- ValueTween ----
@@ -380,6 +394,11 @@ void TweenSequence::DoLoopRestart() {
     m_prevT = -1.0f;
 }
 
+void TweenSequence::DoKill() {
+    // By index: ending a child runs no user code, but a nested sequence ends its own children the same way.
+    for (std::size_t i = 0; i < m_items.size(); ++i) m_items[i].tween->EndSilently();
+}
+
 void TweenSequence::DropDying(const std::unordered_set<const GameObject*>& dying) {
     Tweener::DropDying(dying);
     for (auto& it : m_items) it.tween->DropDying(dying);
@@ -497,7 +516,7 @@ void TweenManager::Update(float dt, float unscaledDt) {
     std::exception_ptr failure;
     for (m_cursor = 0; m_cursor < (std::ptrdiff_t)m_tweens.size(); ++m_cursor) {
         std::shared_ptr<Tweener> t = m_tweens[(std::size_t)m_cursor];   // keep alive through its callbacks
-        if (t->m_killed) continue;
+        if (t->m_killed || IsRendering(t.get())) continue;   // (a callback of this very tween called Update: leave it to the outer one)
         try {
             float step = t->unscaledTime ? unscaledDt : dt;
             if (!t->clock.empty()) {
@@ -511,7 +530,7 @@ void TweenManager::Update(float dt, float unscaledDt) {
             // A tween whose callback throws is ended (it would only throw again next frame);
             // the others still get their time and the first error is rethrown below.
             if (!failure) failure = std::current_exception();
-            t->m_killed = true;
+            t->EndSilently();
         }
     }
     m_cursor = outerCursor;
@@ -572,8 +591,21 @@ int TweenManager::Complete(const std::string& id) { int n = 0; for (auto& t : Wi
 int TweenManager::PauseTarget(const GameObject* go) { int n = 0; for (auto& t : OfTarget(go)) { t->Pause(); ++n; } return n; }
 int TweenManager::PlayTarget(const GameObject* go)  { int n = 0; for (auto& t : OfTarget(go)) { t->Play(); ++n; } return n; }
 
+bool TweenManager::KeepsRunningThroughPause(const Tweener& t) const {
+    // A tween on a channel follows that channel and nothing else (it wins over SetUpdate), so the channel
+    // decides: real time, not held by the game pause and not paused itself. "game" is the game's own time
+    // and "cinematic" stands still with it, so both are paused like scene time; a channel nobody has made
+    // yet is created on real time the first time a tween reads it.
+    if (!t.clock.empty()) {
+        const ClockSet& set = m_clocks ? *m_clocks : ClockSet::Global();
+        const Clock* c = set.Find(t.clock);
+        return !c || (c->GetSource() == Clock::Source::Unscaled && !c->HoldsWhileGamePaused() && !c->Paused());
+    }
+    return t.unscaledTime;
+}
+
 void TweenManager::PauseAll(bool keepUnscaled) {
-    for (auto& t : m_tweens) if (!(keepUnscaled && t->unscaledTime)) t->Pause();
+    for (auto& t : m_tweens) if (!(keepUnscaled && KeepsRunningThroughPause(*t))) t->Pause();
 }
 void TweenManager::PlayAll() {
     // Resume only: a tween that was playing backwards (a hover that is un-hovering) must go on backwards
@@ -649,7 +681,7 @@ void TweenManager::Clear() {
     // a pointer to a manager that is going away.
     std::vector<std::shared_ptr<Tweener>> all;
     all.swap(m_tweens);
-    for (auto& t : all) { t->m_killed = true; t->m_owner = nullptr; }
+    for (auto& t : all) { t->EndSilently(); t->m_owner = nullptr; }
 }
 
 // --------------------------------------------------------------- DOTween ----
@@ -705,7 +737,8 @@ float PunchCurve(float u, int vibrato, float elasticity, float decay) {
 
 // Shared by the shake tweens: random offsets every 1/vibrato, blended smoothly.
 Vec3 ShakeOffset(std::uint32_t seed, float u, float duration, int vibrato, bool fadeOut, float decay, const Vec3& strength) {
-    const float steps = std::max(1.0f, (float)std::max(1, vibrato) * std::max(duration, 0.05f));
+    // At most 1e8 steps: the step number is an int, and vibrato * duration can be far beyond it (INT_MAX * 1e7 s).
+    const float steps = std::min(1.0e8f, std::max(1.0f, (float)std::max(1, vibrato) * std::max(duration, 0.05f)));
     const float f = u * steps; const int i = (int)f; const float w = f - (float)i;
     const float sw = w * w * (3.0f - 2.0f * w);
     auto at = [&](int step, int axis) { return Noise(seed, step, axis); };

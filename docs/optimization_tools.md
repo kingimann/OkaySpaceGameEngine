@@ -124,9 +124,9 @@ for `minPixelHeight`, the viewport size; `LodView::FovHeightPx()` returns the
 "pixels covered by a one-unit object at distance 1" figure if that is what a
 caller has.
 
-A `LODGroup` component is not included: adding a component means registering it
-with the scene serializer and the component factory, which are outside this
-folder. `LodGroup` is exactly what such a component would hold.
+The `LODGroup` component (`Components/LODGroup`) holds the same numbers and
+asks `SelectLod` from the visibility pass. Level 0 is the Mesh Renderer mesh.
+Generate LODs fills the rest at 100/50/25/10 percent.
 
 ## 27.2 Occlusion culling
 

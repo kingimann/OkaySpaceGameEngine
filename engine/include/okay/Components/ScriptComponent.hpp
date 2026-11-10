@@ -59,6 +59,10 @@ public:
     /// during play (after it has started).
     void OnEnable() override;
     void OnDisable() override;
+    /// A pooled object that is reused runs its script from the top again: the script is compiled afresh (its
+    /// variables are the ones it started with, the inspector overrides are applied again) and its start() runs
+    /// before the next update(), as for a new object. Does nothing for a script that never ran.
+    void OnPoolReuse() override;
     /// FixedUpdate() runs at this fixed rate (steps per second), however fast the game draws.
     static constexpr float kFixedStep = 1.0f / 50.0f;
 

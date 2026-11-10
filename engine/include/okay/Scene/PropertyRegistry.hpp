@@ -61,6 +61,17 @@ struct PropertyRef {
     std::string subField;                     ///< "" or "x" / "r" ...
 };
 
+/// What one write did, for code that records it (an undo stack) without installing a hook.
+struct PropertyWriteResult {
+    bool ok = false;           ///< the value was accepted (it may equal what was there)
+    bool changed = false;      ///< the stored value is different from before
+    std::string path;          ///< the whole property: "Light.intensity", "Camera#1.depth" (a ".x" sub-field path gives "Transform.position")
+    int componentIndex = 0;
+    PropertyValue oldValue;    ///< the whole property before the write: set it back to undo
+    PropertyValue newValue;    ///< the whole property after it, as stored (after clamping or normalising)
+    std::string error;         ///< why, when `ok` is false
+};
+
 /// The table of component types and their properties. Every function is safe to
 /// call from any thread; hooks run on the thread that made the change.
 ///
@@ -74,8 +85,11 @@ public:
     using ChangeHook = std::function<void(const PropertyChange&)>;
 
     /// Add a component type, replacing the one with the same name (or, failing that,
-    /// the same exact type). Properties with no name, no type or no getter are
-    /// dropped. Third-party components call this (see PropertyBuilder.hpp) from startup code.
+    /// the same exact type). A type whose name a path could not address (empty, or with a
+    /// '.', a '#' or white space in it) is ignored, and so is a record name like that
+    /// (the type still registers without it). Properties with no such name, no type or no
+    /// getter are dropped, and when a property name appears twice the first one stays.
+    /// Third-party components call this (see PropertyBuilder.hpp) from startup code.
     static void Register(ComponentTypeInfo info);
     /// By type name or record name (see above). Null when unknown.
     static std::shared_ptr<const ComponentTypeInfo> FindByName(const std::string& name);
@@ -107,6 +121,11 @@ public:
     static bool SetProperty(GameObject& go, const std::string& path, const PropertyValue& value, std::string* error = nullptr);
     /// Parse `text` in the property's type (PropertyDesc::ParseText), then SetProperty.
     static bool SetPropertyFromText(GameObject& go, const std::string& path, const std::string& text, std::string* error = nullptr);
+    /// SetProperty that reports what was stored and what it replaced (see PropertyWriteResult).
+    /// The change hook fires exactly as for SetProperty. A refused write leaves `oldValue`
+    /// and `newValue` invalid.
+    static PropertyWriteResult WriteProperty(GameObject& go, const std::string& path, const PropertyValue& value);
+    static PropertyWriteResult WritePropertyFromText(GameObject& go, const std::string& path, const std::string& text);
     /// Same, starting from a component and a property name instead of an object and a path.
     static bool SetComponentProperty(Component& c, const std::string& property, const PropertyValue& value, std::string* error = nullptr);
     static PropertyValue GetComponentProperty(const Component& c, const std::string& property);
@@ -116,8 +135,20 @@ public:
     /// CopyProperties that changed a value calls the hook once per property. Writing a
     /// Derived property announces the stored properties it changed instead (writing
     /// Transform.eulerAngles announces Transform.rotation), so a subscriber sees each
-    /// stored value once and can put it back exactly. Returns an id for RemoveChangeHook. A hook may add or remove hooks and may set
-    /// properties (that fires the hooks again). Exceptions from a hook are swallowed.
+    /// stored value once and can put it back exactly. Returns an id for RemoveChangeHook
+    /// (0 for an empty hook).
+    ///
+    /// While a change is being announced:
+    ///  - hooks run in the order they were added;
+    ///  - a hook added now first sees the NEXT change, not this one;
+    ///  - a hook removed now (by itself or by an earlier hook) is not called for this
+    ///    change if it has not run yet. Once RemoveChangeHook returns, no new call of that
+    ///    hook starts on any thread (a call already running on another thread finishes);
+    ///  - a hook may set properties, which announces those changes to every hook again.
+    ///    Announcements nested deeper than 32 levels on one thread are not delivered (the
+    ///    writes still happen), so two hooks that keep undoing each other end instead of
+    ///    overflowing the stack;
+    ///  - an exception thrown by a hook is swallowed.
     static int AddChangeHook(ChangeHook hook);
     static void RemoveChangeHook(int id);
     /// While one of these lives on a thread, changes made on that thread fire no

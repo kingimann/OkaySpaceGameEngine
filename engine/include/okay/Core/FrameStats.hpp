@@ -76,6 +76,11 @@ public:
     double LastMs() const;
     /// Frame times of the window, oldest first (a graph's points).
     std::vector<double> Values() const;
+    /// Frames per second over the newest `frames` frames of the window: how many there were divided by how
+    /// long they took. (Not the mean of each frame's own rate, which a few very short frames inflate.) It reads
+    /// REAL frame times, so a stall counts as the stall it was. 0 with no frames, or when they took no time.
+    /// O(frames), no allocation: cheap enough for every frame.
+    double AverageFps(std::size_t frames) const;
 
     /// The window's figures; cheap enough for once per UI refresh.
     FrameStatsSnapshot Snapshot() const;

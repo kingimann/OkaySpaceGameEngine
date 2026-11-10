@@ -7,7 +7,7 @@
 
 namespace okay {
 
-/// Destroys its GameObject after a fixed number of seconds. The classic way to
+/// Destroys its GameObject after a fixed number of seconds (an object an ObjectPool made goes back to the pool instead). The classic way to
 /// clean up bullets, explosions, and other short-lived objects without scripts.
 /// Time counts only while the component runs: disabling it (or its object) pauses the
 /// timer, and the scene's time scale and pauses apply because it counts the frame times
@@ -22,7 +22,7 @@ public:
     void Update(float dt) override {
         if (std::isfinite(dt) && dt > 0.0f) m_elapsed += static_cast<double>(dt);   // a negative or NaN frame time is not time
         if (m_elapsed >= static_cast<double>(seconds) && gameObject && gameObject->scene())
-            gameObject->scene()->Destroy(gameObject);
+            gameObject->scene()->Despawn(gameObject);   // back into its ObjectPool when it came from one, else destroyed
     }
 
     float Elapsed() const { return static_cast<float>(m_elapsed); }
@@ -31,6 +31,8 @@ public:
     void SetElapsed(float lived) { if (std::isfinite(lived)) m_elapsed = std::max(0.0, static_cast<double>(lived)); }
     /// Start the timer again.
     void Restart() { m_elapsed = 0.0; }
+    /// A pooled object that is reused lives its full time again.
+    void OnPoolReuse() override { Restart(); }
 
 private:
     double m_elapsed = 0.0;

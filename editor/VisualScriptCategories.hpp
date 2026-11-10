@@ -133,8 +133,12 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsIs(type, "Sin") || VsIs(type, "Cos") || VsIs(type, "Tan") || VsIs(type, "Asin") || VsIs(type, "Acos") ||
         VsIs(type, "Atan2") || VsIs(type, "Deg2Rad") || VsIs(type, "Rad2Deg") || VsIs(type, "DeltaAngle"))
         return VsAt("Math", "Angles");
-    if (VsIs(type, "EaseIn") || VsIs(type, "EaseOut") || VsIs(type, "EaseInOut") || VsIs(type, "SmoothStep"))
+    if (VsIs(type, "EaseIn") || VsIs(type, "EaseOut") || VsIs(type, "EaseInOut") || VsIs(type, "SmoothStep") ||
+        VsIs(type, "EaseCurve") || VsIs(type, "SpringStep"))
         return VsAt("Math", "Curves");
+    if (VsIs(type, "TweenMove") || VsIs(type, "TweenMoveSpeed") || VsIs(type, "TweenKillTag") ||
+        VsIs(type, "TweenPauseTag") || VsIs(type, "TweenPlayTag"))
+        return VsAt("Movement", "Tweens");
     if (VsPre(type, "Vec") || VsIs(type, "MakeVec3") || VsIs(type, "ForwardVector") || VsIs(type, "RightVector") ||
         VsIs(type, "UpVector") || VsIs(type, "Distance2D")) return VsAt("Math", "Vectors");
     if (VsIs(type, "Random") || VsIs(type, "RandomRange") || VsIs(type, "RandomInt") || VsIs(type, "Chance") ||

@@ -455,7 +455,11 @@ Each maps a normalized `t` (0..1) to an eased 0..1 — feed the result to `lerp`
 
 `ease_in`, `ease_out`, `ease_in_out`, `ease_in_cubic`, `ease_out_cubic`,
 `ease_in_out_cubic`, `ease_back`, `ease_elastic`, `ease_bounce`,
-plus `fract(x)` for the fractional part.
+plus `fract(x)` for the fractional part. A NaN `t` counts as 0.
+
+`ease_curve(t, "OutBack")` is any ease by name or as curve text (`"cubic-bezier(0.4, 0, 0.2, 1)"`,
+`"steps(4)"`, `"ease-in-out"`; the text `tween_ease` takes). Text it does not know leaves `t` as it is; a curve
+may overshoot 0..1 (Back, Elastic, a bezier with y outside it).
 
 ### More string helpers
 
@@ -472,6 +476,10 @@ Intuitive names for common builtins so code reads naturally:
 `screen_width` / `screen_height`.
 | `upper lower split join substr replace trim str_len` | Strings |
 | `time()` / `dt()` / `fps()` | Timing |
+| `session_time()` / `session_unscaled_time()` / `session_frame_count()` | Game seconds, real seconds and frames since this Play began (`time()` keeps counting across Plays) |
+| `unscaled_dt()` / `is_paused()` / `hitch_count()` | Real frame time (a pause and slow motion do not change it), the pause, frames over 0.1 s |
+| `push_pause(reason)` / `pop_pause(reason)` / `is_paused_by(reason)` | Pause with a reason of your own; the game stays paused until every reason is let go (two scripts never resume each other) |
+| `hit_stop(seconds [, scale])` / `slow_motion(scale, seconds)` / `ramp_timescale(target, seconds)` | Freeze frame, bullet time, an eased time scale (real seconds; they end by themselves) |
 | `print(...)` | Log to the Console panel |
 
 ### Timers & spawning
@@ -481,6 +489,8 @@ Intuitive names for common builtins so code reads naturally:
 | `every(seconds, "fn")` | Call `fn` repeatedly on an interval |
 | `cancel_timers()` | Clear all scheduled callbacks |
 | `spawn("prefab", x, y)` / `spawn3("prefab", x, y, z)` | Instantiate prefabs |
+| `pool_get("prefab", x, y [, z])` / `pool_release()` | Spawn from the scene's pool for a prefab (reused objects start fresh) / give this object back to its pool |
+| `pool_prewarm("prefab", n)` / `pool_idle("prefab")` | Make `n` idle objects ahead of time / count the idle ones |
 
 ### Physics queries
 | Function | Description |

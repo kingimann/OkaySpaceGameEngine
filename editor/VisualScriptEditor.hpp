@@ -28,6 +28,7 @@
 #include "VisualScriptLevels.hpp"
 #include "VisualScriptTemplates.hpp"
 #include "VsCanvasTools.hpp"
+#include "DocRecovery.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cctype>
@@ -38,6 +39,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
@@ -334,6 +336,14 @@ inline const std::vector<VsDef>& Registry() {
         {"ParticlePlay",   "Play Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ParticleStop",   "Stop Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ParticleBurst",  "Burst Particles",     CAT_ACTION, true, {""}, {"Count"}, {}, 0, nullptr},
+        // --- Tweens, springs and eases (the engine's Tween / Spring / Easing code) ---
+        {"EaseCurve",      "Ease With Curve",     CAT_MATH, false, {}, {"Time"}, {"Value"}, 1, "ease (OutBack, cubic-bezier(..), steps(4))"},
+        {"SpringStep",     "Spring Step",         CAT_MATH, true, {""}, {"Target","Stiffness","Damping"}, {"Value","Velocity"}, 1, "start value (blank: first target)"},
+        {"TweenMove",      "Tween Move",          CAT_ACTION, true, {""}, {"X","Y","Z","Seconds","Ease"}, {}, 1, "tag"},
+        {"TweenMoveSpeed", "Tween Move By Speed", CAT_ACTION, true, {""}, {"X","Y","Z","Speed","Ease"}, {}, 1, "tag"},
+        {"TweenKillTag",   "Kill Tweens With Tag",  CAT_ACTION, true, {""}, {"Complete"}, {"Count"}, 1, "tag"},
+        {"TweenPauseTag",  "Pause Tweens With Tag", CAT_ACTION, true, {""}, {}, {"Count"}, 1, "tag"},
+        {"TweenPlayTag",   "Play Tweens With Tag",  CAT_ACTION, true, {""}, {}, {"Count"}, 1, "tag"},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -1350,6 +1360,10 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "CountWithTag")   return "count_with_tag(" + q(lit("Enemy")) + ")";
     if (t == "NearestWithTag") return "nearest_with_tag(" + q(lit("Enemy")) + ")";
     if (t == "Counter")        return "_cnt_" + std::to_string(nodeId);
+    // Tweens and eases. Ease With Curve is a script call; the tag nodes keep their count in a field; Spring Step has no
+    // script equivalent (it keeps a velocity between frames), so it is reported as not translated and reads 0 here.
+    if (t == "EaseCurve")      return "ease_curve(" + VsInput(g, nodeId, 0, "0") + ", " + q(lit("")) + ")";
+    if (t == "TweenKillTag" || t == "TweenPauseTag" || t == "TweenPlayTag") return "_tw_" + std::to_string(nodeId);
     return "0";
 }
 
@@ -1435,6 +1449,20 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="ParticlePlay") out += ind + "particles_on(true)\n";
     else if (t=="ParticleStop") out += ind + "particles_on(false)\n";
     else if (t=="ParticleBurst") out += ind + "emit(" + in(0, "20") + ")\n";
+    else if (t=="TweenMove" || t=="TweenMoveSpeed") {
+        // tween_move3(x, y, z, seconds[, ease]) goes to the local position; an axis nobody feeds stays where it is.
+        auto ax = [&](int p, const char* cur) { return VsInputLinkedOrSet(g, nodeId, p) ? in(p) : std::string(cur); };
+        std::string call = "tween_move3(" + ax(0, "transform.localPosition.x") + ", " + ax(1, "transform.localPosition.y") + ", " +
+                           ax(2, "transform.localPosition.z") + ", " + in(3, t=="TweenMoveSpeed" ? "5" : "1");
+        if (VsInputLinkedOrSet(g, nodeId, 4)) call += ", " + in(4, "\"\"");
+        call += ")";
+        if (t=="TweenMoveSpeed") call = "tween_speed_based(" + call + ")";
+        if (!n->arg.empty()) call = "tween_tag(" + call + ", " + q(n->arg) + ")";
+        out += ind + call + "\n";
+    }
+    else if (t=="TweenKillTag")  out += ind + "_tw_" + std::to_string(nodeId) + " = tween_kill_tag(" + q(arg("")) + ", " + in(0, "false") + ")\n";
+    else if (t=="TweenPauseTag") out += ind + "_tw_" + std::to_string(nodeId) + " = tween_pause_tag(" + q(arg("")) + ")\n";
+    else if (t=="TweenPlayTag")  out += ind + "_tw_" + std::to_string(nodeId) + " = tween_play_tag(" + q(arg("")) + ")\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);
@@ -1646,7 +1674,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         };
         for (const auto& n : g.nodes) {
             const int tp = okay::vs::TargetPinFor(n.type);
-            bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" ||
+            bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" || n.type == "SpringStep" ||
                              IsFunctionNode(n.type) || n.type == "SetLocal" || n.type == "GetLocal" || IsApiNode(n.type) ||
                              n.type == "ForEach" || n.type.rfind("List", 0) == 0 || n.type == "NewList" || n.type == "AllWithTag" ||
                              n.type.find("SceneVar") != std::string::npos || n.type.find("GlobalVar") != std::string::npos ||
@@ -1658,7 +1686,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         }
         if (!untranslated.empty()) {
             out += "    // NOT TRANSLATED - these nodes use object references, functions, engine-API nodes,\n"
-                   "    // lists or scene / global variables, which this generated code doesn't support yet\n"
+                   "    // lists, scene / global variables or a spring, which this generated code doesn't support yet\n"
                    "    // (the graph itself runs them;\n"
                    "    // an engine-API node's tooltip shows the C#-style line it equals):\n    //  ";
             for (std::size_t i = 0; i < untranslated.size(); ++i) out += (i ? ", " : "") + untranslated[i];
@@ -1683,6 +1711,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         if (n.type=="FlipFlop") fields += "    bool _ff_"+std::to_string(n.id)+" = false;\n";
         if (n.type=="DoN")      fields += "    int _don_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="Counter")  fields += "    int _cnt_"+std::to_string(n.id)+" = 0;\n";
+        if (n.type=="TweenKillTag" || n.type=="TweenPauseTag" || n.type=="TweenPlayTag") fields += "    int _tw_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="EveryN")   fields += "    int _evn_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="OnTimer")  fields += "    float _timer_"+std::to_string(n.id)+" = 0;\n";
     }
@@ -1919,7 +1948,27 @@ struct VsEditState {
     std::string checkedText; std::vector<okay::vs::VsIssue> issues;
     bool   showIssues = false;
     std::string refuseMsg; float refuseTime = 0.0f;   // why a wire was refused (shown a few seconds)
+    // Text last saved (or the text a new graph was created with). Dirty is true
+    // only while the graph differs from this, including after undo and redo.
+    std::string cleanText;
+    bool baselineSet = false;
+    bool missing = false;     // the file in `g.path` could not be read
+    int tabId = 0;
 };
+
+inline void VsRefreshDirty(VsEditState& st) {
+    if (!st.baselineSet) {
+        st.baselineSet = true;
+        st.cleanText = st.g.dirty ? std::string() : st.g.toText();
+    }
+    st.g.dirty = st.g.toText() != st.cleanText;
+}
+inline void VsMarkClean(VsEditState& st) {
+    st.cleanText = st.g.toText();
+    st.baselineSet = true;
+    st.g.dirty = false;
+    st.missing = false;
+}
 
 // ---- Pin types (from the engine's table) -------------------------------------
 inline okay::vs::PinType VsOutPinType(const VsEditGraph& g, int nodeId, int pin);
@@ -1954,7 +2003,83 @@ inline bool VsWireOk(const VsEditGraph& g, int consumer, int inPin, int producer
     return false;
 }
 
-inline VsEditState& State() { static VsEditState s; return s; }
+// Several graphs at once. Each tab is its own graph, undo list, selection, pan and zoom.
+struct VsSession {
+    std::vector<std::unique_ptr<VsEditState>> tabs;
+    int active = 0;
+    int nextId = 1;
+    bool restored = false;
+    enum class Ask { None, CloseTab, CloseOthers, CloseAll, CloseWindow, NewGraph } ask = Ask::None;
+    int askTab = -1;
+    bool newStarter = true;   ///< New graph vs New empty graph, once the save prompt is answered
+    bool forceSelect = false; ///< select `active` once; not every frame (that blocked tab clicks)
+};
+inline VsSession& Session() { static VsSession s; return s; }
+
+inline VsEditState& State() {
+    VsSession& s = Session();
+    if (s.tabs.empty()) {
+        auto t = std::make_unique<VsEditState>();
+        t->tabId = s.nextId++;
+        VsMarkClean(*t);
+        s.tabs.push_back(std::move(t));
+        s.active = 0;
+    }
+    if (s.active < 0 || s.active >= (int)s.tabs.size()) s.active = 0;
+    return *s.tabs[(std::size_t)s.active];
+}
+inline int VsFindTabByPath(const std::string& path) {
+    if (path.empty()) return -1;
+    const VsSession& s = Session();
+    for (int i = 0; i < (int)s.tabs.size(); ++i)
+        if (s.tabs[(std::size_t)i]->g.path == path) return i;
+    return -1;
+}
+inline VsEditState& VsAddTab() {
+    VsSession& s = Session();
+    auto t = std::make_unique<VsEditState>();
+    t->tabId = s.nextId++;
+    s.tabs.push_back(std::move(t));
+    s.active = (int)s.tabs.size() - 1;
+    s.forceSelect = true;
+    return *s.tabs.back();
+}
+inline bool VsAnyUnsaved() {
+    for (const auto& t : Session().tabs) if (t && t->baselineSet && t->g.dirty) return true;
+    return false;
+}
+inline void VsCollectUnsaved(std::vector<okay::editor::docrec::Buffer>& out) {
+    for (const auto& t : Session().tabs) {
+        if (!t || !t->g.dirty) continue;
+        okay::editor::docrec::Buffer b;
+        b.kind = "graph";
+        b.key = t->g.path.empty() ? "untitled:" + std::to_string(t->tabId) : t->g.path;
+        b.text = t->g.toText();
+        out.push_back(std::move(b));
+    }
+    for (const auto& c : okay::editor::docrec::ClosedStack()) {
+        if (c.kind != "graph") continue;
+        okay::editor::docrec::Buffer b;
+        b.kind = "closed"; b.key = c.key; b.text = c.text;
+        out.push_back(std::move(b));
+    }
+}
+
+// Open a graph in this window and frame one node. Diagnostics uses this when a
+// Problems row names a graph; the node browser does not.
+inline void ShowGraphText(const std::string& text, int nodeId) {
+    VsEditState& st = State();
+    st.g.fromText(text);
+    st.g.dirty = false;
+    if (nodeId >= 0) { st.focusNode = nodeId; st.sel = {nodeId}; st.selected = nodeId; }
+    else st.frameAll = true;
+}
+inline void ShowGraphFile(const std::string& path, int nodeId) {
+    VsEditState& st = State();
+    if (!st.g.load(path)) return;
+    if (nodeId >= 0) { st.focusNode = nodeId; st.sel = {nodeId}; st.selected = nodeId; }
+    else st.frameAll = true;
+}
 
 // ---- Debugger (Play mode) ----------------------------------------------------
 // Filled by the editor when the game freezes at a breakpoint or a step: where it
@@ -1983,6 +2108,10 @@ inline std::string VsDebugText(const okay::vs::VsValue& v) {
 // the host's logging so this header can be included at global scope.
 inline void (*LogFn)(const std::string&, int) = nullptr;
 inline void Log(const std::string& m, int lv = 0) { if (LogFn) LogFn(m, lv); }
+/// When set, saving a graph goes through this (backups + atomic write). Otherwise ofstream.
+inline bool (*SaveTextFile)(const std::string& path, const std::string& content) = nullptr;
+/// Host draws "Restore previous version" entries for this path (BackupManager).
+inline void (*VsBackupMenu)(const std::string& path) = nullptr;
 
 // ---- The Actions step library (the editor fills these in) -------------------
 // One graph editor covers both styles: wired nodes, and the no-code steps
@@ -2044,15 +2173,7 @@ inline void ResetEditState(VsEditState& st) {
     st.dragComment = st.resizeComment = st.renameComment = -1;
 }
 
-// Load a .okayvs into the editor's live graph (used to open one on double-click).
-inline void OpenFile(const std::string& path) {
-    VsEditState& st = State();
-    st.g.load(path);
-    ResetEditState(st);
-    st.boundGuids.clear();
-    st.publishedText = st.g.toText();
-    st.refHint.clear();
-}
+inline void VsSaveTabList();
 
 // Remember that `go` runs the graph currently open, even when the graph is
 // embedded (no file yet). Saving and Play push the editor text onto it.
@@ -2115,7 +2236,12 @@ inline bool PublishOpenGraph(EditorState& ed, bool forPlay) {
             for (int k = 2; fs::exists(p, mk); ++k) p = dir / (stem + std::to_string(k) + ".okayvs");
             g.path = p.string();
         }
-        if (!g.save(g.path)) return false;
+        bool ok = false;
+        if (SaveTextFile) ok = SaveTextFile(g.path, g.toText());
+        else ok = g.save(g.path);
+        if (!ok) return false;
+        VsMarkClean(st);
+        VsSaveTabList();
     }
     const std::string now = editorHasGraph ? g.toText() : std::string();
     if (editorHasGraph && (!g.path.empty() || !st.boundGuids.empty() || editorChanged)) {
@@ -2142,6 +2268,165 @@ inline bool PublishOpenGraph(EditorState& ed, bool forPlay) {
         okay::SceneSerializer::ClearPrefabCache();
     }
     return true;
+}
+
+inline std::string VsTabTitle(const VsEditState& st) {
+    if (st.g.path.empty()) return "Untitled";
+    return std::filesystem::path(st.g.path).filename().string();
+}
+inline void VsDirtyTitles(std::vector<std::string>& out) {
+    for (const auto& t : Session().tabs)
+        if (t && t->g.dirty) out.push_back(std::string("Graph: ") + VsTabTitle(*t));
+}
+inline void VsSaveTabList() {
+    std::ofstream f("okay_vs_tabs.txt");
+    const VsSession& s = Session();
+    f << s.active << "\n";
+    for (const auto& t : s.tabs)
+        if (t && !t->g.path.empty()) f << t->g.path << "\n";
+}
+/// Open `path` in its own tab, or focus the tab that already has it.
+/// A missing file becomes an error tab instead of throwing away the current graph.
+inline void OpenFile(const std::string& path) {
+    VsSession& s = Session();
+    const int have = VsFindTabByPath(path);
+    if (have >= 0) { s.active = have; s.forceSelect = true; return; }
+    VsEditState& st = VsAddTab();
+    ResetEditState(st);
+    if (!st.g.load(path)) {
+        st.g.clear();
+        st.g.path = path;
+        VsMarkClean(st);
+        st.missing = true;
+    } else {
+        VsMarkClean(st);
+        st.frameAll = true;
+    }
+    VsSaveTabList();
+}
+inline void NewGraph(bool starter) {
+    VsEditState& st = VsAddTab();
+    ResetEditState(st);
+    if (starter) SeedStarterGraph(st.g);
+    else st.g.clear();
+    VsMarkClean(st);
+    st.frameAll = true;
+    VsSaveTabList();
+}
+/// New keeps the current graph. When that graph is dirty, ask first, with Save
+/// as the focused button, so Enter does not skip the question.
+inline void RequestNewGraph(bool starter) {
+    VsSession& s = Session();
+    VsEditState* cur = (s.active >= 0 && s.active < (int)s.tabs.size()) ? s.tabs[(std::size_t)s.active].get() : nullptr;
+    if (cur && cur->baselineSet && cur->g.dirty) {
+        s.ask = VsSession::Ask::NewGraph;
+        s.askTab = s.active;
+        s.newStarter = starter;
+        return;
+    }
+    NewGraph(starter);
+}
+inline void VsCloseTab(int index, bool remember) {
+    VsSession& s = Session();
+    if (index < 0 || index >= (int)s.tabs.size()) return;
+    VsEditState& st = *s.tabs[(std::size_t)index];
+    if (remember && st.g.dirty) {
+        okay::editor::docrec::ClosedDoc c;
+        c.kind = "graph";
+        c.key = st.g.path.empty() ? "untitled:" + std::to_string(st.tabId) : st.g.path;
+        c.path = st.g.path;
+        c.text = st.g.toText();
+        c.baseline = st.cleanText;
+        okay::editor::docrec::RememberClosed(std::move(c));
+    }
+    s.tabs.erase(s.tabs.begin() + index);
+    if (s.tabs.empty()) State();
+    if (s.active >= (int)s.tabs.size()) s.active = std::max(0, (int)s.tabs.size() - 1);
+    if (s.askTab == index) s.ask = VsSession::Ask::None;
+    VsSaveTabList();
+}
+inline bool VsReopenClosedGraph() {
+    auto& stack = okay::editor::docrec::ClosedStack();
+    for (std::size_t i = 0; i < stack.size(); ++i) {
+        if (stack[i].kind != "graph") continue;
+        okay::editor::docrec::ClosedDoc c = std::move(stack[i]);
+        stack.erase(stack.begin() + (std::ptrdiff_t)i);
+        VsEditState& st = VsAddTab();
+        ResetEditState(st);
+        st.g.fromText(c.text);
+        st.g.path = c.path;
+        st.cleanText = c.baseline;
+        st.baselineSet = true;
+        st.g.dirty = st.g.toText() != st.cleanText;
+        st.frameAll = true;
+        VsSaveTabList();
+        return true;
+    }
+    return false;
+}
+inline void VsRestoreBuffer(const okay::editor::docrec::Buffer& b) {
+    if (b.kind != "graph" && b.kind != "closed") return;
+    const std::string path = (b.key.rfind("untitled:", 0) == 0) ? std::string() : b.key;
+    const int have = path.empty() ? -1 : VsFindTabByPath(path);
+    VsEditState* st = nullptr;
+    if (have >= 0) { Session().active = have; st = Session().tabs[(std::size_t)have].get(); }
+    else st = &VsAddTab();
+    ResetEditState(*st);
+    st->g.fromText(b.text);
+    st->g.path = path;
+    st->cleanText.clear();
+    st->baselineSet = true;
+    st->missing = false;
+    if (!path.empty()) {
+        std::ifstream f(path, std::ios::binary);
+        if (f) { std::stringstream ss; ss << f.rdbuf(); st->cleanText = ss.str(); }
+    }
+    st->g.dirty = st->g.toText() != st->cleanText;
+    st->frameAll = true;
+}
+inline void VsRestoreTabs() {
+    VsSession& s = Session();
+    if (s.restored) return;
+    s.restored = true;
+    std::ifstream f("okay_vs_tabs.txt");
+    if (!f) return;
+    int active = 0;
+    f >> active;
+    std::string line;
+    std::getline(f, line);
+    std::vector<std::string> paths;
+    while (std::getline(f, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (!line.empty()) paths.push_back(line);
+    }
+    if (paths.empty()) return;
+    if (s.tabs.size() == 1 && s.tabs[0]->g.nodes.empty() && s.tabs[0]->g.path.empty() && !s.tabs[0]->g.dirty)
+        s.tabs.clear();
+    for (const std::string& p : paths) OpenFile(p);
+    if (active >= 0 && active < (int)s.tabs.size()) s.active = active;
+    s.forceSelect = true;
+}
+/// Save every dirty tab. Untitled graphs land in Assets with a free name.
+inline int VsSaveAllTabs(const std::string& projectDir) {
+    int n = 0;
+    namespace fs = std::filesystem;
+    for (auto& tp : Session().tabs) {
+        if (!tp || !tp->g.dirty || tp->missing) continue;
+        VsEditState& st = *tp;
+        std::string p = st.g.path;
+        if (p.empty()) {
+            const fs::path dir = projectDir.empty() ? fs::path("Assets") : fs::path(projectDir) / "Assets";
+            std::error_code ec; fs::create_directories(dir, ec);
+            p = (dir / "Untitled.okayvs").string();
+            for (int k = 2; fs::exists(p, ec); ++k) p = (dir / ("Untitled" + std::to_string(k) + ".okayvs")).string();
+        }
+        bool ok = false;
+        if (SaveTextFile) { ok = SaveTextFile(p, st.g.toText()); if (ok) st.g.path = p; }
+        else ok = st.g.save(p);
+        if (ok) { VsMarkClean(st); ++n; }
+    }
+    if (n) VsSaveTabList();
+    return n;
 }
 
 // Pin geometry helpers (screen positions computed during draw).
@@ -2532,6 +2817,9 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
     }
     return changed;
 }
+}  // namespace okay::editor::vsed
+#include "VisualScriptPalette.hpp"
+namespace okay::editor::vsed {
 
 // ---- The editor window -----------------------------------------------------
 // Returns nothing; manages its own state. `ed` is used for "Attach to selected".
@@ -2542,9 +2830,92 @@ inline void Draw(EditorState& ed, bool* open) {
     // for the canvas: give it a usable size.
     if (!ImGui::IsWindowDocked() && (ImGui::GetWindowSize().y < 300.0f || ImGui::GetWindowSize().x < 500.0f))
         ImGui::SetWindowSize(ImVec2(std::max(ImGui::GetWindowSize().x, 980.0f), 600.0f));
+    VsRestoreTabs();
+    // Closes are applied on the next frame, before any reference to a tab is taken.
+    static std::vector<int> s_closeIds;
+    static bool s_closeRemember = false;
+    if (!s_closeIds.empty()) {
+        std::sort(s_closeIds.begin(), s_closeIds.end(), std::greater<int>());
+        for (int id : s_closeIds) VsCloseTab(id, s_closeRemember);
+        s_closeIds.clear();
+    }
+    for (auto& tab : Session().tabs) if (tab) VsRefreshDirty(*tab);
+    if (open && !*open && VsAnyUnsaved()) { *open = true; Session().ask = VsSession::Ask::CloseWindow; }
+    // Tabs first, so a click this frame selects that graph before the canvas is drawn.
+    // SetSelected every frame kept the old tab and the canvas never followed the click.
+    ImGuiIO& io = ImGui::GetIO();
+    const bool winFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    const bool typing = io.WantTextInput;
+    {
+        VsSession& ses = Session();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 8.0f));
+        if (ImGui::BeginTabBar("##vstabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+            for (int i = 0; i < (int)ses.tabs.size(); ++i) {
+                VsEditState& tab = *ses.tabs[(std::size_t)i];
+                std::string title = VsTabTitle(tab);
+                if (tab.missing) title += " (missing)";
+                if (tab.g.dirty) title += " \xE2\x97\x8F";
+                title += "###vstab" + std::to_string(tab.tabId);
+                bool openTab = true;
+                ImGuiTabItemFlags fl = (ses.forceSelect && i == ses.active) ? ImGuiTabItemFlags_SetSelected : 0;
+                if (ImGui::BeginTabItem(title.c_str(), &openTab, fl)) {
+                    ses.active = i;
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", tab.g.path.empty() ? "Not saved yet" : tab.g.path.c_str());
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                            if (tab.g.dirty) { ses.ask = VsSession::Ask::CloseTab; ses.askTab = i; }
+                            else s_closeIds.push_back(i);
+                        }
+                        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 12.0f)) {
+                            const float dx = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).x;
+                            if (dx > 56.0f && i + 1 < (int)ses.tabs.size()) {
+                                std::swap(ses.tabs[(std::size_t)i], ses.tabs[(std::size_t)i + 1]);
+                                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+                                VsSaveTabList();
+                            } else if (dx < -56.0f && i > 0) {
+                                std::swap(ses.tabs[(std::size_t)i], ses.tabs[(std::size_t)i - 1]);
+                                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+                                VsSaveTabList();
+                            }
+                        }
+                    }
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::MenuItem("Close")) {
+                            if (tab.g.dirty) { ses.ask = VsSession::Ask::CloseTab; ses.askTab = i; }
+                            else s_closeIds.push_back(i);
+                        }
+                        if (ImGui::MenuItem("Close others")) { ses.ask = VsSession::Ask::CloseOthers; ses.askTab = i; }
+                        if (ImGui::MenuItem("Close all")) ses.ask = VsSession::Ask::CloseAll;
+                        if (ImGui::MenuItem("Reopen closed tab", "Ctrl+Shift+T", false, !okay::editor::docrec::ClosedStack().empty()))
+                            VsReopenClosedGraph();
+                        ImGui::EndPopup();
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (!openTab) {
+                    if (tab.g.dirty) { ses.ask = VsSession::Ask::CloseTab; ses.askTab = i; }
+                    else { s_closeRemember = false; s_closeIds.push_back(i); }
+                }
+            }
+            ses.forceSelect = false;
+            if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) RequestNewGraph(true);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("New graph");
+            ImGui::EndTabBar();
+        }
+        ImGui::PopStyleVar();
+        if (winFocused && !typing && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            const int n = (int)ses.tabs.size();
+            if (n > 1) { ses.active = (ses.active + (io.KeyShift ? n - 1 : 1)) % n; ses.forceSelect = true; }
+        }
+        if (winFocused && !typing && io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_T)) VsReopenClosedGraph();
+        if (winFocused && !typing && io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_W)) {
+            if (ses.active >= 0 && ses.active < (int)ses.tabs.size() && ses.tabs[(std::size_t)ses.active]->g.dirty) {
+                ses.ask = VsSession::Ask::CloseTab; ses.askTab = ses.active;
+            } else if (ses.tabs.size() > 1) { s_closeRemember = false; s_closeIds.push_back(ses.active); }
+        }
+    }
     VsEditState& st = State();
     VsEditGraph& g = st.g;
-    ImGuiIO& io = ImGui::GetIO();
     // Names and paths already in the file become references when the scene
     // (or the file extension) tells us what they point at. Older files still run.
     if (VsUpgradeGraph(g, ed.scene())) g.dirty = true;
@@ -2556,18 +2927,18 @@ inline void Draw(EditorState& ed, bool* open) {
         if (st.undo.empty()) return;
         st.redo.push_back(g.toText());
         g.fromText(st.undo.back()); st.undo.pop_back();
-        g.dirty = true; st.lastText = g.toText(); st.pendingBase.clear();
+        st.lastText = g.toText(); st.pendingBase.clear();
+        VsRefreshDirty(st);
         st.sel.clear(); st.selected = -1;
     };
     auto doRedo = [&] {
         if (st.redo.empty()) return;
         st.undo.push_back(g.toText());
         g.fromText(st.redo.back()); st.redo.pop_back();
-        g.dirty = true; st.lastText = g.toText(); st.pendingBase.clear();
+        st.lastText = g.toText(); st.pendingBase.clear();
+        VsRefreshDirty(st);
         st.sel.clear(); st.selected = -1;
     };
-    const bool winFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-    const bool typing = io.WantTextInput;
 
     // ---- Toolbar: File / Edit / + Add / Templates ... Fit / zoom / View --------------
     // Kept short on purpose: everything else is a shortcut, the right-click menu,
@@ -2604,8 +2975,16 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::Button("Graph")) ImGui::OpenPopup("##vsfile");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("New, open, save, undo, align, and the panels");
     if (ImGui::BeginPopup("##vsfile")) {
-        if (ImGui::MenuItem("New graph")) { SeedStarterGraph(g); ResetEditState(st); st.frameAll = true; }
-        if (ImGui::MenuItem("New empty graph")) { g.clear(); ResetEditState(st); }
+        if (ImGui::MenuItem("New graph")) RequestNewGraph(true);
+        if (ImGui::MenuItem("New empty graph")) RequestNewGraph(false);
+        if (ImGui::MenuItem("Save all graphs")) VsSaveAllTabs(ed.projectDir());
+        if (ImGui::BeginMenu("Restore previous version", !g.path.empty())) {
+            // Filled by the host when backups are wired. The menu stays so the
+            // command is visible; the host draws the versions via VsBackupMenu.
+            if (VsBackupMenu) VsBackupMenu(g.path);
+            else ImGui::TextDisabled("No backups yet.");
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("Open")) {
             namespace fs = std::filesystem;
             fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
@@ -2614,7 +2993,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 for (auto& e : fs::recursive_directory_iterator(assets, ec)) {
                     if (!e.is_regular_file() || e.path().extension() != ".okayvs") continue;
                     ++shown;
-                    if (ImGui::MenuItem(fs::relative(e.path(), assets, ec).string().c_str())) { g.load(e.path().string()); ResetEditState(st); }
+                    if (ImGui::MenuItem(fs::relative(e.path(), assets, ec).string().c_str())) OpenFile(e.path().string());
                 }
             if (!shown) ImGui::TextDisabled("No graphs in Assets yet.");
             ImGui::EndMenu();
@@ -3296,6 +3675,18 @@ inline void Draw(EditorState& ed, bool* open) {
     // back when the pin does, and the checker reports them meanwhile.
     struct VsBadge { ImVec2 c; ImU32 col; std::string tips; };
     std::vector<VsBadge> badges;   // checker findings, drawn over the nodes
+    // The object this graph is attached to, so a node can warn about a missing component.
+    GameObject* vsOwner = nullptr;
+    if (!g.path.empty()) {
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up) continue;
+            for (auto* vc : up->GetComponents<VisualScriptComponent>())
+                if (vc->Path() == g.path) {
+                    if (up.get() == ed.selected()) vsOwner = up.get();
+                    else if (!vsOwner) vsOwner = up.get();
+                }
+        }
+    }
     // ---- Nodes ----------------------------------------------------------------------
     dl->ChannelsSetCurrent(2);
     int pendingDelete = -1, pendingDup = -1;
@@ -3312,7 +3703,17 @@ inline void Draw(EditorState& ed, bool* open) {
             if (is.severity == 0) { inlineMsg = is.message; inlineErr = true; break; }
             if (inlineMsg.empty()) inlineMsg = is.message;
         }
-        const float msgH = inlineMsg.empty() ? 0.0f : ROW_H * 1.35f;
+        bool targetWired = false;
+        for (int ti = 0; ti < (int)d->dataIn.size(); ++ti)
+            if (d->dataIn[ti] && std::strcmp(d->dataIn[ti], "Target") == 0) {
+                for (const auto& l : g.dataLinks) if (l.consumer == n.id && l.inPin == ti) targetWired = true;
+                auto pit = n.pinDefault.find(ti);
+                if (pit != n.pinDefault.end() && !pit->second.empty()) targetWired = true;
+            }
+        const VsReqGap reqGap = VsRequirementGap(vsOwner, VsNodeDocFor(n.type), targetWired);
+        const bool showAdd = reqGap.missing && inlineMsg.empty();
+        if (showAdd) inlineMsg = "Needs " + reqGap.addId;
+        const float msgH = inlineMsg.empty() ? 0.0f : (showAdd ? ROW_H * 2.4f : ROW_H * 1.35f);
         float bodyH = rows * ROW_H + (d->param ? ROW_H + 10.0f * z : 0) + PAD;
         float h = HEADER_H + bodyH + msgH;
         // Wider when it has data inputs: their value boxes sit between the input
@@ -3428,13 +3829,8 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             startNodeDrag = true;   // move every selected node together (after the loop)
         }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && d->cat != CAT_EVENT && !ImGui::IsItemActive())
-        {
-            if (const okay::vs::VsApiEntry* api = d->cat == CAT_API ? okay::vs::VsApiFind(d->type) : nullptr)
-                ImGui::SetTooltip("%s\n%s\nIn a script: %s", title.c_str(), api->doc.c_str(), api->code.c_str());
-            else
-                ImGui::SetTooltip("%s  (%s)", title.c_str(), d->type);
-        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive())
+            VsNodeTooltip(title.c_str(), VsNodeDocFor(n.type));
         if (ImGui::BeginPopupContextItem("##nctx")) {
             if (!st.sel.count(n.id)) { st.sel.clear(); st.sel.insert(n.id); st.selected = n.id; }
             // Applied after the loop: the node list mustn't change while it's iterated.
@@ -3475,7 +3871,12 @@ inline void Draw(EditorState& ed, bool* open) {
             ImVec2 pp(p0.x, ly + li * ROW_H + ROW_H * 0.5f);
             const bool linked = inputLinked(n.id, i);
             const okay::vs::PinType pt = VsInPinType(g, n.id, i);
-            dataDot(pp, linked, VsPinColor(pt));
+            bool badPin = false;
+            for (const auto& l : g.dataLinks)
+                if (l.consumer == n.id && l.inPin == i && !VsWireOk(g, l.consumer, l.inPin, l.producer, l.outPin)) badPin = true;
+            for (const auto& is : st.issues)
+                if (is.node == n.id && is.pin == i && is.pinDir == 0 && is.severity == 0) badPin = true;
+            dataDot(pp, linked || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
             const bool req = VsRequiredWhat(n.type, i) && !linked && n.pinDefault.count(i) == 0;
             if (req) dl->AddCircle(pp, PIN_R + 3.0f * z, IM_COL32(255, 80, 70, 255), 16, 2.0f * z);
             if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f) {
@@ -3523,10 +3924,15 @@ inline void Draw(EditorState& ed, bool* open) {
         }
         for (int i = 0; i < (int)d->dataOut.size(); ++i, ++ri) {
             ImVec2 pp(p1.x, ly + ri * ROW_H + ROW_H * 0.5f);
-            bool used = false;
-            for (const auto& l : g.dataLinks) if (l.producer == n.id && l.outPin == i) { used = true; break; }
+            bool used = false, badPin = false;
+            for (const auto& l : g.dataLinks) if (l.producer == n.id && l.outPin == i) {
+                used = true;
+                if (!VsWireOk(g, l.consumer, l.inPin, l.producer, l.outPin)) badPin = true;
+            }
+            for (const auto& is : st.issues)
+                if (is.node == n.id && is.pin == i && is.pinDir == 1 && is.severity == 0) badPin = true;
             const okay::vs::PinType pt = VsOutPinType(g, n.id, i);
-            dataDot(pp, used, VsPinColor(pt));
+            dataDot(pp, used || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
             if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
                 ImGui::SetTooltip("%s  (%s)", d->dataOut[i], okay::vs::PinTypeName(pt));
             ImVec2 ts = ImGui::CalcTextSize(d->dataOut[i]);
@@ -3730,7 +4136,16 @@ inline void Draw(EditorState& ed, bool* open) {
             }
             if (ImGui::IsItemHovered()) {
                 dl->AddCircle(pp, PIN_R + 3 * z, IM_COL32(255, 255, 255, 210), 18, 2.0f);
-                if (!st.dragging) ImGui::SetTooltip("Drag to wire%s. Alt+click: break wires.", side == 1 ? " (drop in empty space to add a node)" : "");
+                if (!st.dragging) {
+                    const bool input = side == 0, exec = kind == 0;
+                    std::string pname;
+                    if (!exec) pname = input ? (idx < (int)d->dataIn.size() ? d->dataIn[idx] : "") : (idx < (int)d->dataOut.size() ? d->dataOut[idx] : "");
+                    else if (!input && idx < (int)d->execOut.size()) pname = d->execOut[idx];
+                    const VsNodeDoc* nd = VsNodeDocFor(n.type);
+                    const VsPinDoc* pd = nd ? VsPinDocFor(*nd, input, exec, pname) : nullptr;
+                    const char* tn = exec ? "Flow" : okay::vs::PinTypeName(input ? VsInPinType(g, n.id, idx) : VsOutPinType(g, n.id, idx));
+                    VsPinTooltip(pd, pname.c_str(), tn);
+                }
             }
         };
         if (d->execIn) pinButton(pk(n.id, 0, 0, 0), 0, 0, 0);
@@ -3746,8 +4161,16 @@ inline void Draw(EditorState& ed, bool* open) {
             const float maxW = NODE_W - PAD * 2.0f;
             while (shown.size() > 4 && ImGui::CalcTextSize(shown.c_str()).x > maxW) shown.pop_back();
             if (shown.size() < inlineMsg.size()) shown += "...";
-            text(ImVec2(p0.x + PAD, my + (msgH - fs) * 0.5f), IM_COL32(255, 236, 228, 255), shown.c_str());
-            if (ImGui::IsMouseHoveringRect(ImVec2(p0.x, my), p1)) ImGui::SetTooltip("%s", inlineMsg.c_str());
+            text(ImVec2(p0.x + PAD, my + 4.0f * z), IM_COL32(255, 236, 228, 255), shown.c_str());
+            if (showAdd && VsAddComponentById && vsOwner) {
+                ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD, my + fs + 8.0f * z));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 3.0f));
+                if (ImGui::SmallButton(reqGap.addLabel.c_str())) VsAddComponentById(vsOwner, reqGap.addId.c_str());
+                ImGui::PopStyleVar();
+            }
+            if (ImGui::IsMouseHoveringRect(ImVec2(p0.x, my), p1) && !showAdd) ImGui::SetTooltip("%s", inlineMsg.c_str());
+            else if (showAdd && ImGui::IsMouseHoveringRect(ImVec2(p0.x, my), ImVec2(p1.x, my + fs + 6.0f)))
+                ImGui::SetTooltip("%s", reqGap.message.c_str());
         }
 
         ImGui::PopID();
@@ -4027,471 +4450,21 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
-    ImGui::SetNextWindowSize(ImVec2(860, 760), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(1180, 760), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 8.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 12.0f));
-        okay::vs::PinType dragged = okay::vs::PinType::Any;
-        if (st.linkPending && !st.linkExec)
-            dragged = st.linkFromOutput ? VsOutPinType(g, st.linkNode, st.linkPin)
-                                         : VsInPinType(g, st.linkNode, st.linkPin);
-        auto fits = [&](const VsDef& d) {
-            return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput, dragged);
-        };
-        auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
-        auto bright = [](ImU32 c) {   // the category colour, lifted so a dot reads on the dark list
-            ImVec4 v = ImGui::ColorConvertU32ToFloat4(c);
-            return ImGui::GetColorU32(ImVec4(v.x + (1 - v.x) * 0.45f, v.y + (1 - v.y) * 0.45f, v.z + (1 - v.z) * 0.45f, 1.0f));
-        };
-        // Every placeable thing: nodes, script-API nodes, and Actions steps, each in a topic.
-        struct Entry {
-            const VsDef* def = nullptr; const VsStepInfo* step = nullptr; bool cond = false;
-            std::string title, cat, sub, key, desc, keywords, helpLine, example;
-            VsLevel level = VsLevel::Intermediate;
-            int catIndex = 0, rank = 0; bool browse = true; ImU32 col = 0;
-        };
-        auto catColor = [&](int index) {
-            // Stable hues so a topic keeps its dot. Common topics stay in the documented order.
-            static const ImU32 cols[] = {
-                IM_COL32(158, 96, 102, 255), IM_COL32(86, 112, 158, 255), IM_COL32(72, 138, 116, 255),
-                IM_COL32(64, 132, 150, 255), IM_COL32(120, 150, 170, 255), IM_COL32(90, 140, 120, 255),
-                IM_COL32(176, 114, 78, 255), IM_COL32(70, 146, 146, 255), IM_COL32(90, 120, 170, 255),
-                IM_COL32(170, 110, 150, 255), IM_COL32(180, 140, 70, 255), IM_COL32(168, 132, 78, 255),
-                IM_COL32(110, 130, 180, 255), IM_COL32(150, 120, 90, 255), IM_COL32(100, 140, 100, 255),
-                IM_COL32(130, 130, 160, 255), IM_COL32(84, 114, 170, 255), IM_COL32(140, 140, 140, 255),
-                IM_COL32(120, 110, 150, 255),
-            };
-            const int n = (int)(sizeof cols / sizeof cols[0]);
-            return cols[(index >= 0 && index < n) ? index : 0];
-        };
-        std::vector<Entry> all;
-        for (const auto& d : Registry()) {
-            if (!fits(d)) continue;
-            const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
-            VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
-            bool dup = false;
-            if (api) {
-                for (const auto& h : Registry()) {
-                    if (std::strchr(h.type, '.')) continue;
-                    if (VsApiDuplicatesHandNode(api->member.c_str(), h.type)) { dup = true; break; }
-                }
-            }
-            Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type;
-            e.cat = place.category ? place.category : "";
-            e.sub = place.subcategory ? place.subcategory : "";
-            e.catIndex = VsPaletteCategoryIndex(place.category);
-            e.browse = place.browse && !dup;
-            e.level = d.level;
-            e.rank = api ? 2 : 0;
-            if (const char* what = VsNodeHelp(d.type)) e.helpLine = what;
-            else if (api && !api->doc.empty()) e.helpLine = api->doc;
-            else if (d.title && d.title[0]) e.helpLine = std::string(d.title) + ".";
-            if (const char* ex = VsNodeExample(d.type)) e.example = ex;
-            e.keywords = api ? "engine api" : "";
-            if (d.cat >= 0 && d.cat < CAT_COUNT) {
-                static const char* oldCat[] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API"};
-                if (!e.keywords.empty()) e.keywords += ' ';
-                e.keywords += oldCat[d.cat];
-            }
-            e.col = bright(catColor(e.catIndex));
-            // Built from the pins: what goes in, what comes out.
-            auto join = [](const std::vector<const char*>& v) {
-                std::string s; for (const char* p : v) if (p && *p) { if (!s.empty()) s += ", "; s += p; } return s;
-            };
-            const std::string in = join(d.dataIn), out = join(d.dataOut), ex = join(d.execOut);
-            // What it does in plain words (VisualScriptNodeHelp.hpp), then how it plugs in.
-            if (const char* what = VsNodeHelp(d.type)) e.desc = std::string(what) + " ";
-            if (api) e.desc = api->doc + " In a script: " + api->code + ". ";
-            if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc += "An event: starts a flow. ";
-            else if (d.execIn) e.desc += "Runs when the flow reaches it. ";
-            else e.desc += "Gives a value to other nodes. ";
-            if (!in.empty())  e.desc += "Takes: " + in + ". ";
-            if (!out.empty()) e.desc += "Gives: " + out + ". ";
-            if (!ex.empty())  e.desc += "Continues to: " + ex + ". ";
-            if (d.param && d.paramHint) e.desc += std::string("Setting: ") + d.paramHint + ".";
-            all.push_back(std::move(e));
-        }
-        for (int pass = 0; pass < 2; ++pass) {
-            const bool cond = pass == 1;
-            const VsDef* sd = FindDef(cond ? "Condition" : "Action");
-            if (!StepCatalog || !sd || !fits(*sd)) continue;
-            if (const auto* cat = StepCatalog(cond))
-                for (const auto& si : *cat) {
-                    if (si.listOnly) continue;
-                    VsPlace place = VsPlaceForStep(si.op.c_str(), si.group.c_str());
-                    bool sameAsNode = false;
-                    for (const auto& h : Registry()) if (h.title && si.label == h.title) { sameAsNode = true; break; }
-                    Entry e; e.def = sd; e.step = &si; e.cond = cond; e.title = si.label;
-                    e.cat = place.category ? place.category : "";
-                    e.sub = place.subcategory ? place.subcategory : "";
-                    e.catIndex = VsPaletteCategoryIndex(place.category);
-                    e.browse = place.browse && !sameAsNode;
-                    e.level = VsLevelForStep(si.op.c_str(), si.group.c_str());
-                    e.helpLine = si.desc;
-                    e.rank = 1;
-                    e.key = std::string(cond ? "c:" : "a:") + si.op; e.desc = si.desc;
-                    e.keywords = si.group + (cond ? " check something" : " do something");
-                    e.col = bright(catColor(e.catIndex));
-                    all.push_back(std::move(e));
-                }
-        }
-        // Favourites and recently added, remembered between sessions.
-        static std::vector<std::string> s_fav, s_recent;
-        static int s_filter = 0;   // VsLevelFilter: 0 all, 1 basic, 2 intermediate, 3 advanced
-        static bool s_loaded = false;
-        auto saveLists = [&] {
-            std::ofstream f("okay_vsnodes.txt");
-            f << "lvl " << s_filter << "\n";
-            for (const auto& k : s_fav) f << "fav " << k << "\n";
-            for (const auto& k : s_recent) f << "rec " << k << "\n";
-        };
-        if (!s_loaded) {
-            s_loaded = true;
-            std::ifstream f("okay_vsnodes.txt"); std::string kind, k;
-            while (f >> kind >> k) {
-                if (kind == "lvl") s_filter = std::clamp(std::atoi(k.c_str()), 0, 3);
-                else (kind == "fav" ? s_fav : s_recent).push_back(k);
-            }
-        }
-        const VsLevelFilter levelFilter = (VsLevelFilter)s_filter;
-        auto passesLevel = [&](VsLevel level) { return VsLevelPasses(level, levelFilter); };
-        auto isFav = [&](const std::string& k) { return std::find(s_fav.begin(), s_fav.end(), k) != s_fav.end(); };
-        auto add = [&](const Entry& e) {
-            if (e.step) addFromPalette(*e.def, okay::ActionList::EncodeItem({e.step->op, {}}));
-            else addFromPalette(*e.def);
-            s_recent.erase(std::remove(s_recent.begin(), s_recent.end(), e.key), s_recent.end());
-            s_recent.insert(s_recent.begin(), e.key);
-            if (s_recent.size() > 12) s_recent.resize(12);
-            saveLists();
-            ImGui::CloseCurrentPopup();
-        };
-
-        // Sidebar: -3 All, -2 Recent, -1 Favourites, otherwise a topic index. s_sub picks a subcategory.
-        static int s_side = -3;
-        static int s_sub = -1;
-        static std::string s_subName;
-        static int s_kb = 0;
-        static char search[64] = "";
-        if (ImGui::IsWindowAppearing()) {
-            search[0] = '\0'; s_kb = 0; ImGui::SetKeyboardFocusHere();
-            // A wire dropped on empty space: start on the whole list, compatible nodes first.
-            if (st.linkPending) { s_side = -3; s_sub = -1; s_subName.clear(); }
-        }
-        if (st.linkPending && st.linkExec)
-            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit this flow pin");
-        else if (st.linkPending)
-            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit a %s pin", okay::vs::PinTypeName(dragged));
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::InputTextWithHint("##vssearch", "Search nodes and actions...  (Up / Down, Enter to add)", search, sizeof search))
-            s_kb = 0;
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
-        const float filterW = (ImGui::GetContentRegionAvail().x - 18.0f) / 4.0f;
-        for (int fi = 0; fi < 4; ++fi) {
-            if (fi) ImGui::SameLine();
-            const bool on = s_filter == fi;
-            if (on) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 110, 160, 255));
-            if (ImGui::Button(VsLevelFilterName((VsLevelFilter)fi), ImVec2(filterW, 0))) {
-                s_filter = fi; s_kb = 0; saveLists();
-            }
-            if (on) ImGui::PopStyleColor();
-        }
-        ImGui::PopStyleVar();
-        const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
-        const std::string needle = lower(search);
-
-        // Fuzzy score: whole title > start > start of a word > anywhere > letters in
-        // order; type, category and description count a little. `hits` marks the
-        // matched letters of the title.
-        auto score = [&](const Entry& e, std::vector<int>& hits) -> int {
-            hits.clear();
-            if (needle.empty()) return 1;
-            const std::string t = lower(e.title);
-            if (t == needle) { for (int i = 0; i < (int)t.size(); ++i) hits.push_back(i); return 1000; }
-            std::size_t p = t.find(needle);
-            if (p != std::string::npos) {
-                for (std::size_t i = 0; i < needle.size(); ++i) hits.push_back((int)(p + i));
-                if (p == 0) return 800;
-                if (t[p - 1] == ' ' || t[p - 1] == '(') return 650;
-                return 500 - (int)p;
-            }
-            int run = 0, sc = 0; std::size_t j = 0;
-            for (std::size_t i = 0; i < t.size() && j < needle.size(); ++i) {
-                if (t[i] == needle[j]) { hits.push_back((int)i); ++j; run++; sc += 3 + run * 2 + (i == 0 || t[i - 1] == ' ' ? 6 : 0); }
-                else run = 0;
-            }
-            if (j == needle.size()) return 100 + sc;
-            hits.clear();
-            std::string pins;
-            if (e.def) {
-                for (int i = 0; i < (int)e.def->dataIn.size(); ++i)
-                    pins += std::string(okay::vs::PinTypeName(okay::vs::InputType(e.def->type, i))) + " ";
-                for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
-                    pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
-            }
-            const std::string extra = lower(e.cat + " " + e.sub + " " + e.keywords + " " +
-                                            (e.def ? e.def->type : "") + " " +
-                                            (e.def ? VsSearchKeywords(e.def->type) : std::string()) + " " +
-                                            (e.step ? e.step->op : "") + " " + e.desc + " " + pins);
-            return extra.find(needle) != std::string::npos ? 40 : 0;
-        };
-
-        // ---- Sidebar ----
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 1.0f));
-        ImGui::BeginChild("##vspside", ImVec2(214, -110), ImGuiChildFlags_Borders);
-        auto sideItem = [&](int id, const char* label, ImU32 dot, int count, bool selected, int indent) {
-            ImGui::PushID(id + 10);
-            const ImVec2 p = ImGui::GetCursorScreenPos();
-            if (indent) ImGui::Indent(12.0f);
-            if (ImGui::Selectable("##side", selected)) { s_kb = 0; }
-            ImDrawList* sdl = ImGui::GetWindowDrawList();
-            const float h = ImGui::GetTextLineHeight();
-            if (dot) sdl->AddCircleFilled(ImVec2(p.x + 6, p.y + h * 0.5f + 1), 3.5f, dot);
-            const float right = p.x + ImGui::GetContentRegionAvail().x;
-            char n[16] = ""; if (count >= 0) std::snprintf(n, sizeof n, "%d", count);
-            const float nw = ImGui::CalcTextSize(n).x;
-            sdl->PushClipRect(ImVec2(p.x, p.y), ImVec2(right - nw - 6, p.y + h + 4), true);   // long names stop before the count
-            sdl->AddText(ImVec2(p.x + 16 + (indent ? 14.0f : 0.0f), p.y), ImGui::GetColorU32(ImGuiCol_Text), label);
-            sdl->PopClipRect();
-            if (count >= 0) sdl->AddText(ImVec2(right - nw, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), n);
-            if (ImGui::IsItemHovered()) {
-                const char* blurb = (id >= 0 && id < VsPaletteCategoryCount()) ? kPaletteCategories[id].blurb
-                                  : id == -4 ? "The 26 nodes a first script is built from."
-                                  : id == -2 ? "Nodes you have added lately."
-                                  : nullptr;
-                if (blurb && *blurb) {
-                    ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
-                    ImGui::TextUnformatted(label); ImGui::TextDisabled("%s", blurb);
-                    ImGui::PopTextWrapPos(); ImGui::EndTooltip();
-                } else if (ImGui::CalcTextSize(label).x + 16 > right - nw - 6 - p.x) ImGui::SetTooltip("%s", label);
-            }
-            const bool clicked = ImGui::IsItemClicked();
-            if (indent) ImGui::Unindent(12.0f);
-            ImGui::PopID();
-            return clicked;
-        };
-        auto browseCount = [&](int cat, const std::string& sub, bool anySub) {
-            int n = 0;
-            for (const auto& e : all) {
-                if (!e.browse || !passesLevel(e.level) || e.catIndex != cat) continue;
-                if (!anySub && e.sub != sub) continue;
-                ++n;
-            }
-            return n;
-        };
-        int browseAll = 0, starterN = 0;
-        for (const auto& e : all) if (e.browse && passesLevel(e.level)) {
-            ++browseAll;
-            if (e.def && VsIsStarter(e.def->type)) ++starterN;
-        }
-        if (sideItem(-4, "Starter", 0, starterN, s_side == -4, 0)) { s_side = -4; s_sub = -1; s_subName.clear(); }
-        if (sideItem(-2, "Recently used", 0, -1, s_side == -2, 0)) { s_side = -2; s_sub = -1; s_subName.clear(); }
-        if (sideItem(-3, "All", 0, browseAll, s_side == -3, 0)) { s_side = -3; s_sub = -1; s_subName.clear(); }
-        if (sideItem(-1, "Favourites", 0, (int)s_fav.size(), s_side == -1, 0)) { s_side = -1; s_sub = -1; s_subName.clear(); }
-        ImGui::Separator();
-        for (int c = 0; c < VsPaletteCategoryCount(); ++c) {
-            const int n = browseCount(c, "", true);
-            if (!n) continue;
-            if (sideItem(c, kPaletteCategories[c].name, bright(catColor(c)), n, s_side == c && s_sub < 0, 0)) {
-                s_side = c; s_sub = -1; s_subName.clear();
-            }
-            if (s_side != c) continue;   // expanded: the topic you are in shows its subcategories
-            std::vector<std::pair<std::string, int>> subs;
-            for (const auto& e : all) {
-                if (!e.browse || !passesLevel(e.level) || e.catIndex != c || e.sub.empty()) continue;
-                bool found = false;
-                for (auto& s : subs) if (s.first == e.sub) { ++s.second; found = true; break; }
-                if (!found) subs.push_back({e.sub, 1});
-            }
-            if (subs.size() < 2) continue;
-            std::stable_sort(subs.begin(), subs.end(), [](const auto& a, const auto& b) {
-                const int ao = VsSubOrder(a.first.c_str()), bo = VsSubOrder(b.first.c_str());
-                if (ao != bo) return ao < bo;
-                return a.first < b.first;
-            });
-            for (int i = 0; i < (int)subs.size(); ++i) {
-                if (sideItem(1000 + c * 40 + i, subs[i].first.c_str(), 0, subs[i].second, s_side == c && s_sub == i, 1)) {
-                    s_side = c; s_sub = i; s_subName = subs[i].first;
-                }
-            }
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleVar(2);
-        ImGui::SameLine();
-
-        // ---- Results ----
-        struct Row { const Entry* e; int sc; std::vector<int> hits; };
-        std::vector<Row> rows;
-        auto recentRank = [&](const std::string& key) {
-            const auto it = std::find(s_recent.begin(), s_recent.end(), key);
-            return it == s_recent.end() ? 10000 : (int)(it - s_recent.begin());
-        };
-        for (const auto& e : all) {
-            if (!passesLevel(e.level)) continue;
-            if (needle.empty() && !e.browse) continue;
-            if (s_side == -4 && !(e.def && VsIsStarter(e.def->type))) continue;
-            if (s_side >= 0 && e.catIndex != s_side) continue;
-            if (s_side >= 0 && s_sub >= 0 && e.sub != s_subName) continue;
-            if (s_side == -1 && !isFav(e.key)) continue;
-            if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
-            Row r{&e, 0, {}};
-            r.sc = score(e, r.hits);
-            if (r.sc > 0) rows.push_back(std::move(r));
-        }
-        if (!needle.empty())
-            std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
-                return VsSearchRanksBefore(a.sc, a.e->level, recentRank(a.e->key),
-                                           b.sc, b.e->level, recentRank(b.e->key));
-            });
-        else if (s_side == -2)
-            std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
-                return std::find(s_recent.begin(), s_recent.end(), a.e->key) < std::find(s_recent.begin(), s_recent.end(), b.e->key);
-            });
-        else if (s_side == -4)
-            std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-                return VsStarterIndex(a.e->def ? a.e->def->type : "") < VsStarterIndex(b.e->def ? b.e->def->type : "");
-            });
-        else if (st.linkPending)
-            std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-                if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
-                if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
-                return a.e->rank < b.e->rank;
-            });
-        else
-            std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-                if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
-                const int ao = VsSubOrder(a.e->sub.c_str()), bo = VsSubOrder(b.e->sub.c_str());
-                if (ao != bo) return ao < bo;
-                if (a.e->sub != b.e->sub) return a.e->sub < b.e->sub;
-                if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
-                return a.e->rank < b.e->rank;
-            });
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) s_kb = std::min(s_kb + 1, (int)rows.size() - 1);
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   s_kb = std::max(s_kb - 1, 0);
-        if (s_kb >= (int)rows.size()) s_kb = std::max(0, (int)rows.size() - 1);
-
-        const Entry* hovered = nullptr;
-        const Entry* toAdd = nullptr;
-        ImGui::BeginChild("##vspres", ImVec2(0, -110), ImGuiChildFlags_Borders);
-        if (rows.empty()) {
-            ImGui::TextDisabled(s_side == -1 ? "No favourites yet: click the star on a node to add one."
-                              : s_side == -2 ? "Nodes you add show up here."
-                              : s_side == -4 ? "Nothing at this level in the starter set."
-                              : needle.empty() ? "Nothing here at this level." : "No node matches that.");
-        } else if (st.linkPending && needle.empty()) {
-            ImGui::TextDisabled("Suggested for this pin");
-        } else if (s_side == -4 && needle.empty()) {
-            ImGui::TextDisabled("Start here");
-        }
-        const float lh = ImGui::GetTextLineHeight();
-        std::string lastHeader;
-        for (int i = 0; i < (int)rows.size(); ++i) {
-            const Entry& e = *rows[i].e;
-            // Topic headers while browsing (not while searching). Inside a topic, the header is the subcategory.
-            if (needle.empty() && !st.linkPending && s_side != -1 && s_side != -2 && s_side != -4 && s_sub < 0) {
-                const std::string header = s_side < 0 ? e.cat : e.sub;
-                if (!header.empty() && header != lastHeader) {
-                    lastHeader = header;
-                    if (i) ImGui::Spacing();
-                    ImGui::TextDisabled("%s", header.c_str());
-                }
-            }
-            ImGui::PushID(i);
-            const ImVec2 p = ImGui::GetCursorScreenPos();
-            const bool kbSel = i == s_kb;
-            if (ImGui::Selectable("##row", kbSel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, lh + 14))) toAdd = &e;
-            if (ImGui::IsItemHovered()) {
-                hovered = &e;
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
-                ImGui::TextUnformatted(e.helpLine.empty() ? "No description." : e.helpLine.c_str());
-                if (!e.example.empty()) {
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("Example: %s", e.example.c_str());
-                }
-                ImGui::TextDisabled("%s", VsLevelName(e.level));
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
-            if (kbSel && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow))) ImGui::SetScrollHereY(0.5f);
-            ImDrawList* rdl = ImGui::GetWindowDrawList();
-            const float w = ImGui::GetContentRegionAvail().x;
-            rdl->AddCircleFilled(ImVec2(p.x + 8, p.y + (lh + 14) * 0.5f), 5.0f, e.col);
-            // Title, matched letters in the accent colour.
-            float x = p.x + 18;
-            const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = IM_COL32(110, 180, 255, 255);
-            for (int c = 0; c < (int)e.title.size(); ++c) {
-                const char buf[2] = {e.title[c], 0};
-                const bool h = std::find(rows[i].hits.begin(), rows[i].hits.end(), c) != rows[i].hits.end();
-                rdl->AddText(ImVec2(x, p.y + 2), h ? hit : normal, buf);
-                x += ImGui::CalcTextSize(buf).x;
-            }
-            // Level badge: Basic, then Inter, then Adv. Colour says which, the word says it too.
-            {
-                const char* badge = VsLevelBadge(e.level);
-                const ImVec2 bs = ImGui::CalcTextSize(badge);
-                const float bw = bs.x + 8.0f, bh = lh + 2.0f;
-                if (x + 8.0f + bw < p.x + w - ImGui::CalcTextSize(e.cat.c_str()).x - 36.0f) {
-                    const ImVec2 b0(x + 8.0f, p.y + 4.0f), b1(b0.x + bw, b0.y + bh);
-                    const ImU32 bg = e.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
-                                   : e.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255)
-                                   : IM_COL32(52, 78, 120, 255);
-                    rdl->AddRectFilled(b0, b1, bg, 3.0f);
-                    rdl->AddText(ImVec2(b0.x + 4.0f, b0.y + 1.0f), IM_COL32(230, 236, 244, 255), badge);
-                }
-            }
-            // Category on the right, then the favourite star.
-            const float catW = ImGui::CalcTextSize(e.cat.c_str()).x;
-            if (x + 20 < p.x + w - catW - 32)
-                rdl->AddText(ImVec2(p.x + w - catW - 32, p.y + 2), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.cat.c_str());
-            ImGui::SameLine(w - 18);
-            const bool fav = isFav(e.key);
-            const ImVec2 sp = ImGui::GetCursorScreenPos();
-            if (ImGui::InvisibleButton("##fav", ImVec2(22, lh + 14))) {
-                if (fav) s_fav.erase(std::remove(s_fav.begin(), s_fav.end(), e.key), s_fav.end());
-                else s_fav.push_back(e.key);
-                saveLists();
-            }
-            const bool sh = ImGui::IsItemHovered();
-            if (sh) ImGui::SetTooltip(fav ? "Remove from favourites" : "Add to favourites");
-            {   // a drawn star (the UI font has no star glyph)
-                const ImVec2 c(sp.x + 10, sp.y + (lh + 14) * 0.5f);
-                ImVec2 pts[10];
-                for (int k = 0; k < 10; ++k) {
-                    const float a = -1.5707963f + k * 0.6283185f, r = (k % 2) ? 2.6f : 6.0f;
-                    pts[k] = ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r);
-                }
-                const ImU32 sc = fav ? IM_COL32(255, 204, 64, 255) : sh ? IM_COL32(200, 200, 210, 200) : IM_COL32(120, 124, 134, 120);
-                if (fav) rdl->AddConcavePolyFilled(pts, 10, sc); else rdl->AddPolyline(pts, 10, sc, ImDrawFlags_Closed, 1.2f);
-            }
-            ImGui::PopID();
-        }
-        if (enter && !rows.empty()) toAdd = rows[std::clamp(s_kb, 0, (int)rows.size() - 1)].e;
-        ImGui::EndChild();
-
-        // ---- Details: the hovered (or keyboard) node ----
-        const Entry* info = hovered ? hovered : (!rows.empty() ? rows[std::clamp(s_kb, 0, (int)rows.size() - 1)].e : nullptr);
-        ImGui::BeginChild("##vspinfo", ImVec2(0, 0), ImGuiChildFlags_Borders);
-        if (info) {
-            ImGui::TextUnformatted(info->title.c_str());
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s · %s", VsLevelName(info->level), info->cat.c_str());
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("%s", info->desc.empty() ? "No description." : info->desc.c_str());
-            ImGui::PopTextWrapPos();
-        } else {
-            ImGui::TextDisabled("%d nodes and actions. Star the ones you use most.", (int)all.size());
-        }
-        ImGui::EndChild();
-        if (toAdd) add(*toAdd);
-        ImGui::PopStyleVar(3);
+        DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });
         ImGui::EndPopup();
-    } else if (st.linkPending && !openPaletteNow) {
+
+} else if (st.linkPending && !openPaletteNow) {
         st.linkPending = false;   // palette dismissed without a pick
     }
 
-    if (g.nodes.empty()) {
+    if (st.missing) {
+        const char* msg = "This graph file could not be opened.";
+        const std::string path = g.path.empty() ? std::string("(no path)") : g.path;
+        dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 24.0f), IM_COL32(255, 170, 150, 255), msg);
+        dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 48.0f), IM_COL32(200, 206, 216, 255), path.c_str());
+    } else if (g.nodes.empty()) {
         const float cardW = 480.0f, cardH = 220.0f;
         const ImVec2 c0((canvasMin.x + canvasMax.x - cardW) * 0.5f, (canvasMin.y + canvasMax.y - cardH) * 0.5f);
         const ImVec2 c1(c0.x + cardW, c0.y + cardH);
@@ -4667,28 +4640,16 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::Spacing();
             ImGui::TextWrapped("Select a node to see what it does, its pins, and any problems the checker found.");
         } else {
-            const VsDef* d = FindDef(sn->type);
+            const VsDef* d = VsDefFor(g, *sn);
             ImGui::TextUnformatted(d ? VsNodeTitle(*sn, *d).c_str() : sn->type.c_str());
             ImGui::Spacing();
-            if (d) ImGui::TextDisabled("%s", d->type);
-            if (const char* help = VsNodeHelp(sn->type.c_str())) {
-                ImGui::Spacing();
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextWrapped("%s", help);
-                ImGui::PopTextWrapPos();
-            }
-            if (d) {
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::TextUnformatted("Pins");
-                auto join = [](const std::vector<const char*>& v) {
-                    std::string s; for (const char* p : v) if (p && *p) { if (!s.empty()) s += ", "; s += p; } return s;
-                };
-                const std::string in = join(d->dataIn), out = join(d->dataOut);
-                if (!in.empty()) ImGui::TextWrapped("In: %s", in.c_str());
-                if (!out.empty()) ImGui::TextWrapped("Out: %s", out.c_str());
-                if (in.empty() && out.empty()) ImGui::TextDisabled("No data pins.");
-            }
+            bool targetWired = false;
+            if (d) for (int ti = 0; ti < (int)d->dataIn.size(); ++ti)
+                if (d->dataIn[ti] && std::strcmp(d->dataIn[ti], "Target") == 0) {
+                    for (const auto& l : g.dataLinks) if (l.consumer == sn->id && l.inPin == ti) targetWired = true;
+                }
+            if (const VsNodeDoc* doc = VsNodeDocFor(sn->type)) VsDrawDocBody(*doc, true, vsOwner, targetWired);
+            else ImGui::TextDisabled("No description for %s.", sn->type.c_str());
             bool anyIssue = false;
             for (const auto& is : st.issues) if (is.node == sn->id) {
                 if (!anyIssue) { ImGui::Spacing(); ImGui::Separator(); ImGui::TextUnformatted("Problems"); anyIssue = true; }
@@ -4711,11 +4672,94 @@ inline void Draw(EditorState& ed, bool* open) {
             st.lastText = std::move(now);
         }
         if (!st.pendingBase.empty() && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsAnyItemActive()) {
-            st.undo.push_back(std::move(st.pendingBase));
+            if (g.toText() != st.pendingBase) {
+                st.undo.push_back(std::move(st.pendingBase));
+                st.redo.clear();
+                if (st.undo.size() > 200) st.undo.erase(st.undo.begin());
+            }
             st.pendingBase.clear();
-            st.redo.clear();
-            if (st.undo.size() > 200) st.undo.erase(st.undo.begin());
+            VsRefreshDirty(st);
         }
+    }
+
+    // Save prompt. Save is the focused button. Don't Save is not.
+    if (Session().ask != VsSession::Ask::None) ImGui::OpenPopup("Save this graph?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Save this graph?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        VsSession& ses = Session();
+        auto dirtyIdx = [&]() {
+            std::vector<int> ids;
+            for (int i = 0; i < (int)ses.tabs.size(); ++i) {
+                if (!ses.tabs[(std::size_t)i]->g.dirty) continue;
+                if (ses.ask == VsSession::Ask::CloseTab && i != ses.askTab) continue;
+                if (ses.ask == VsSession::Ask::CloseOthers && i == ses.askTab) continue;
+                if (ses.ask == VsSession::Ask::NewGraph && i != ses.askTab) continue;
+                ids.push_back(i);
+            }
+            return ids;
+        };
+        const std::vector<int> ids = dirtyIdx();
+        if (ses.ask == VsSession::Ask::NewGraph)
+            ImGui::TextUnformatted("Save this graph before opening a new one?");
+        else if (ses.ask == VsSession::Ask::CloseWindow)
+            ImGui::TextUnformatted("Close the Visual Script window?");
+        else if (ids.empty())
+            ImGui::TextUnformatted("Close these graphs?");
+        else
+            ImGui::TextUnformatted("Save these graphs before closing?");
+        for (int i : ids) ImGui::BulletText("%s", VsTabTitle(*ses.tabs[(std::size_t)i]).c_str());
+        if (ses.ask == VsSession::Ask::CloseWindow && ids.empty())
+            ImGui::TextDisabled("Nothing unsaved. The window will hide; the tabs stay.");
+        ImGui::Spacing();
+        if (ImGui::Button("Save", ImVec2(120, 0))) {
+            VsSaveAllTabs(ed.projectDir());
+            s_closeRemember = false;
+            if (ses.ask == VsSession::Ask::NewGraph) {
+                const bool starter = ses.newStarter;
+                ses.ask = VsSession::Ask::None;
+                NewGraph(starter);
+                ImGui::CloseCurrentPopup();
+            } else if (ses.ask == VsSession::Ask::CloseTab) s_closeIds.push_back(ses.askTab);
+            else if (ses.ask == VsSession::Ask::CloseOthers) {
+                for (int i = 0; i < (int)ses.tabs.size(); ++i) if (i != ses.askTab) s_closeIds.push_back(i);
+            } else if (ses.ask == VsSession::Ask::CloseAll) {
+                for (int i = 0; i < (int)ses.tabs.size(); ++i) s_closeIds.push_back(i);
+            } else if (ses.ask == VsSession::Ask::CloseWindow && open) *open = false;
+            ses.ask = VsSession::Ask::None;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ses.ask = VsSession::Ask::None;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ses.ask == VsSession::Ask::CloseWindow) {
+            if (ImGui::Button("Hide", ImVec2(120, 0))) {
+                if (open) *open = false;
+                ses.ask = VsSession::Ask::None;
+                ImGui::CloseCurrentPopup();
+            }
+        } else if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+            if (ses.ask == VsSession::Ask::NewGraph) {
+                const bool starter = ses.newStarter;
+                ses.ask = VsSession::Ask::None;
+                NewGraph(starter);
+                ImGui::CloseCurrentPopup();
+            } else {
+                s_closeRemember = true;
+                if (ses.ask == VsSession::Ask::CloseTab) s_closeIds.push_back(ses.askTab);
+                else if (ses.ask == VsSession::Ask::CloseOthers) {
+                    for (int i = 0; i < (int)ses.tabs.size(); ++i) if (i != ses.askTab) s_closeIds.push_back(i);
+                } else if (ses.ask == VsSession::Ask::CloseAll) {
+                    for (int i = 0; i < (int)ses.tabs.size(); ++i) s_closeIds.push_back(i);
+                }
+                ses.ask = VsSession::Ask::None;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::End();

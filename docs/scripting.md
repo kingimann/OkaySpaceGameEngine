@@ -137,7 +137,7 @@ each one with a warning saying what to delete:
 | Lambdas | `x => x * 2`, `(a, b) => { ... }`, and defaults `(x = 3) => x + 1`, with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)` |
 | Coroutines | `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)` (`WaitForSecondsRealtime` ignores time scale), `yield return new WaitUntil(() => cond)`, `yield return new WaitWhile(() => cond)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
 | Components | `GetComponent<T>()` returns a usable reference: `Rigidbody2D`/`Rigidbody` (`velocity`, `AddForce`, `MovePosition`, `gravityScale`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
-| Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
+| Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Time.sessionTime/sessionFrameCount/unscaledDeltaTime/fps/paused`, `Time.HitStop/SlowMotion/RampTimeScale`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
 
 Objects are referenced by name under the hood, so `GameObject.Find("Enemy")`
 returns a reference you can pass to `Destroy`, compare with `null`, or read
@@ -175,7 +175,8 @@ What's supported:
   familiar code often pastes in unchanged.
 - **Dot properties**: `transform.position` / `.localPosition` / `.localScale`
   (and `.x/.y/.z`), `transform.eulerAngles.z`, `Time.deltaTime` / `Time.time` /
-  `Time.timeScale`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
+  `Time.timeScale` / `Time.unscaledDeltaTime` / `Time.sessionTime` /
+  `Time.sessionFrameCount` / `Time.fps` / `Time.paused`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
   `Input.mousePosition.x/y`, `Mathf.PI`, `Random.value`, `Vector3.zero/one/up/...`.
   Readable and assignable (`transform.position.x = 5;`).
 - **Dot methods**: `Input.GetKey/GetKeyDown/GetKeyUp/GetAxis/GetMouseButton...`,
@@ -396,6 +397,15 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `stop()` | zero this object's Rigidbody velocity |
 | `is_moving()` / `face_velocity()` | is the Rigidbody2D moving / turn to its heading |
 | `set_timescale(x)` / `timescale()` | global speed (0 = pause, 0.5 = slow-mo) |
+| `session_time()` / `session_unscaled_time()` / `session_frame_count()` | game seconds / real seconds / frames since this Play began (`time()` and `frame_count()` keep counting across Plays; these start from 0 each time) |
+| `unscaled_dt()` | real seconds of the last frame: not slowed by `set_timescale`, a hit stop or a pause (animate a menu with it) |
+| `is_paused()` | 1 while the game is paused (a menu, a cutscene, the pause button) |
+| `push_pause(reason)` / `pop_pause(reason)` / `is_paused_by(reason)` | pause with a reason of your own (`"dialogue"`, `"shop"`): the game stays paused until every reason is let go, so two scripts that pause never resume each other (`pause_game(bool)` is the one shared "manual" reason) |
+| `fps()` | real frames per second over the last half second (a pause or slow motion does not change it, a stall shows) |
+| `hitch_count()` | frames that took over a tenth of a second since this Play began |
+| `hit_stop(seconds [, scale])` | a freeze frame (scale 0, the default) or a brief slow-down for an impact; real time, ends by itself, composes with `set_timescale` |
+| `slow_motion(scale, seconds)` | bullet time: `slow_motion(0.2, 2)` runs at a fifth speed for two real seconds, then back to normal |
+| `ramp_timescale(target, seconds)` | ease the time scale to `target` over `seconds` real seconds, in a straight line |
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
 | `destroy()` | destroy this script's own GameObject |
@@ -412,6 +422,9 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `move_toward3(name, speed)` | move toward a named object in 3D by speed*dt (chase/homing) |
 | `look_at3(name)` | rotate forward (+Z) to face a named object in 3D |
 | `spawn3(prefab, x, y, z)` | instantiate a prefab at a 3D position |
+| `pool_get(prefab, x, y [, z])` | like `spawn` / `spawn3`, from the scene's pool for that prefab: an idle object is reused (reset, its scripts start again), else one is made. Returns true on success |
+| `pool_release()` | give this script's object back to its pool (it is destroyed when it did not come from one); a bullet's own script ends with it |
+| `pool_prewarm(prefab, n)` / `pool_idle(prefab)` | make `n` idle objects ahead of time (returns how many are idle) / how many are idle |
 | `set_scale3(x, y, z)` / `set_scale(s)` | set per-axis or uniform scale |
 | `scale_x()` / `scale_y()` / `scale_z()` | read this object's scale |
 | `set_rot3(x, y, z)` | set absolute 3D euler rotation (degrees) |
@@ -636,7 +649,7 @@ Smoothly animate this object over time. Every tween:
 | --- | --- |
 | `tween_delay(id, s)` | wait before starting |
 | `tween_ease(id, "out_back")` | change the ease; also takes a curve as text: `"cubic-bezier(0.4, 0, 0.2, 1)"`, `"steps(4)"`, `"ease-in-out"` (the ease argument of `tween_move` and the others takes the same) |
-| `tween_loops(id, n[, "restart" \| "yoyo" \| "incremental"])` | repeat (`-1` = forever) |
+| `tween_loops(id, n[, "restart" \| "yoyo" \| "incremental"])` | repeat (`-1` = forever; a NaN plays once; a count past two billion is two billion, not "forever") |
 | `tween_speed(id, x)` | play faster or slower |
 | `tween_unscaled(id)` | ignore the time scale (pause menus) |
 | `tween_clock(id, "ui")` | follow a named clock channel (`"game"`, `"ui"`, `"cinematic"`, or your own) instead of scene time; `""` goes back |
@@ -699,11 +712,19 @@ function start() {
 function arrived() { tween_punch_scale(0.3, 0.25); }    // pop on arrival
 ```
 
+`ease_curve(t, "OutBack")` gives the eased value of `t` (0 to 1) for any ease the tween functions
+take by name or as curve text (`"cubic-bezier(0.4, 0, 0.2, 1)"`, `"steps(4)"`, `"ease-in-out"`), for
+animating something by hand: `x = lerp(a, b, ease_curve(t, "out_back"))`. Text it does not know is a straight
+line, and a NaN `t` counts as 0 (the `ease_in` ... `ease_bounce` functions do the same).
+
 **Without code:** add a **Tween Animation** component (Add Component →
 Animation). Pick what to animate (move, scale, rotate, fade, colour, UI position
 or size, punch, shake, jump), plus the end value, duration, delay, ease and loops.
 It plays when the scene starts, or with `tween_play_id("Id")`. **Preview**
-plays it in the editor and puts the object back afterwards.
+plays it in the editor and puts the object back afterwards. It also has the settings of the
+tween functions above that have no field of their own in the first rows: a **clock** channel and a
+curve as text for the ease, **speed based** (the duration is a speed), **decay** (how a punch or shake dies away) and a
+**tag** (so `tween_kill_tag("tag")` and its friends reach it).
 
 From C++, `okay::DOTween::Move / Scale / Rotate / PunchScale / ShakePosition /
 Jump / Path / Fade / Text ...` return a tween you can chain:
@@ -773,6 +794,8 @@ they all call the same function, so use whichever reads best to you:
 | `call_later(secs, "fn")` | `after` |
 | `repeat_every(secs, "fn")` | `every` |
 | `time_elapsed()` / `frame_time()` | `time` / `dt` / `Time.time` / `Time.deltaTime` |
+| `Time.HitStop(s, scale)` / `Time.SlowMotion(scale, s)` / `Time.RampTimeScale(target, s)` | `hit_stop` / `slow_motion` / `ramp_timescale` |
+| `Time.PushPause(r)` / `Time.PopPause(r)` / `Time.IsPausedBy(r)` | `push_pause` / `pop_pause` / `is_paused_by` |
 | `set_tint(r,g,b)` | `set_color` |
 | `set_sprite("img.png")` | `set_texture` |
 | `set_background_color(r,g,b)` | `set_bg` |

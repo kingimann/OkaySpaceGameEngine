@@ -10,7 +10,12 @@
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
+#include "okay/Scene/ClearSpawn.hpp"
+#include "okay/Core/FrameOverlay.hpp"
+#include "okay/Core/TimerDebug.hpp"
 #include <filesystem>
+#include <fstream>
+#include "../shared/ProjectCreate.hpp"
 
 namespace {
 // Every new 3D primitive ships with a collider fitted to its mesh, so
@@ -49,15 +54,21 @@ EditorState::EditorState() : m_scene("Untitled") {
         } unpause(editorPaused);
         if (playTick) playTick(dt); else Tick(dt);
     };
+    // "Run N frames": the loop paused the game under the editor's own reason; let the toolbar's Pause flag follow.
+    m_loop.OnRunFramesDone = [this] { if (onRunFramesDone) onRunFramesDone(); };
+    MarkClean();   // an empty scene is nothing to save
 }
 
 bool EditorState::StartHost(std::uint16_t port) {
     StopNetwork();
     GameObject* go = m_scene.CreateGameObject("__Network");
+    go->transient = true;   // a preview session's plumbing: never saved into the scene
     m_net = go->AddComponent<NetworkManager>();
     m_net->SetLocalAvatar(go->transform, '@');
     m_net->SetRemoteFactory([this](std::uint32_t id, char) {
-        return m_scene.CreateGameObject("Peer" + std::to_string(id));
+        GameObject* peer = m_scene.CreateGameObject("Peer" + std::to_string(id));
+        peer->transient = true;
+        return peer;
     });
     return m_net->StartServer(port);
 }
@@ -65,10 +76,13 @@ bool EditorState::StartHost(std::uint16_t port) {
 bool EditorState::StartJoin(const std::string& host, std::uint16_t port) {
     StopNetwork();
     GameObject* go = m_scene.CreateGameObject("__Network");
+    go->transient = true;   // a preview session's plumbing: never saved into the scene
     m_net = go->AddComponent<NetworkManager>();
     m_net->SetLocalAvatar(go->transform, '@');
     m_net->SetRemoteFactory([this](std::uint32_t id, char) {
-        return m_scene.CreateGameObject("Peer" + std::to_string(id));
+        GameObject* peer = m_scene.CreateGameObject("Peer" + std::to_string(id));
+        peer->transient = true;
+        return peer;
     });
     return m_net->StartClient(host, port);
 }
@@ -223,6 +237,13 @@ void EditorState::AdoptCamera(Camera* cam) {
     dirty = true;
 }
 
+GameObject* EditorState::SettleSpawn(GameObject* go) {
+    if (!go || !go->transform) return go;
+    const Vec3 hint = (camTarget.x != 0.0f || camTarget.z != 0.0f) ? camTarget : Vec3::Zero;
+    go->transform->SetPosition(ClearFeetPosition(m_scene, go, hint));
+    return go;
+}
+
 GameObject* EditorState::CreateCube(const std::string& name) {
     PushUndo();
     GameObject* go = m_scene.CreateGameObject(name);
@@ -230,6 +251,7 @@ GameObject* EditorState::CreateCube(const std::string& name) {
     mr->mesh = Mesh::Cube();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
+    SettleSpawn(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -243,6 +265,7 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     mr->mesh = Mesh::Pyramid();
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
+    SettleSpawn(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -256,6 +279,7 @@ GameObject* EditorState::CreateMesh(const std::string& meshName) {
     mr->mesh = Mesh::FromName(meshName);
     mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
+    SettleSpawn(go);
     m_selected = go;
     view3D = true;
     dirty = true;
@@ -326,6 +350,26 @@ void EditorState::DeleteSelected() {
     dirty = true;
 }
 
+int EditorState::DeleteChildrenOfSelected() {
+    if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
+    const std::vector<GameObject*> targets = m_multi.empty() ? std::vector<GameObject*>(m_selected ? 1 : 0, m_selected) : m_multi;
+    bool any = false;
+    for (const GameObject* g : targets) if (g && g->transform && g->transform->ChildCount() > 0) any = true;
+    if (!any) return 0;
+    PushUndo();
+    int removed = 0;
+    for (GameObject* g : targets) {
+        if (!g || g->IsDestroyed() || !g->transform) continue;
+        // Anything below `g` leaves the selection before it is freed, so no selected pointer dangles.
+        for (const auto& up : m_scene.Objects())
+            if (up.get() != g && up->IsSelfOrDescendantOf(g)) Deselect(up.get());
+        removed += m_scene.DestroyChildren(g);
+    }
+    m_scene.FlushDestroyed();   // no simulated frame in edit mode (see DeleteSelected)
+    dirty = true;
+    return removed;
+}
+
 void EditorState::NewScene() {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     PushUndo();
@@ -344,7 +388,7 @@ void EditorState::NewScene() {
     m_scene.mainCamera = cam;
     Select(nullptr);   // Clear() freed every object; clear m_multi too (no dangling ptrs)
     m_path.clear();
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewScene2D() {
@@ -360,7 +404,7 @@ void EditorState::NewScene2D() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = sp;
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewScene3D() {
@@ -381,7 +425,9 @@ void EditorState::NewScene3D() {
         mr->color = Color::FromBytes(150, 154, 150);   // soft neutral, not pure gray
         mr->specular = 0.05f; mr->shininess = 16.0f;
         mr->groundShadow = false;                       // it IS the ground
-        ground->AddComponent<MeshCollider3D>();         // things rest on it
+        auto* groundCol = ground->AddComponent<MeshCollider3D>();
+        groundCol->autoFit = true;
+        FitColliders(ground);                         // the plane is the floor, not a 1 m box
     }
 
     // ---- Hero shapes on the ground ----
@@ -445,7 +491,7 @@ void EditorState::NewScene3D() {
     m_suppressUndo = false;
     view3D = true;
     m_selected = cube;
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewPlatformer() {
@@ -455,7 +501,7 @@ void EditorState::NewPlatformer() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewPlatformer3D() {
@@ -467,7 +513,7 @@ void EditorState::NewPlatformer3D() {
     camTarget = {0, 1, 0};
     camDist = 14.0f;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewFPS() {
@@ -479,7 +525,7 @@ void EditorState::NewFPS() {
     camTarget = {0, 1, 0};
     camDist = 10.0f;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewTerrainSandbox() {
@@ -491,7 +537,7 @@ void EditorState::NewTerrainSandbox() {
     camTarget = {0, 2, 0};
     camDist = 30.0f;
     m_selected = m_scene.Find("Terrain");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewVoxelSandbox() {
@@ -503,7 +549,7 @@ void EditorState::NewVoxelSandbox() {
     camTarget = {0, 4, 0};
     camDist = 36.0f;
     m_selected = m_scene.Find("Voxel Terrain");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewThirdPerson() {
@@ -515,7 +561,7 @@ void EditorState::NewThirdPerson() {
     camTarget = {0, 1, 0};
     camDist = 8.0f;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewHumanoid() {
@@ -527,7 +573,7 @@ void EditorState::NewHumanoid() {
     camTarget = {0, 1, 0};
     camDist = 8.0f;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewThirdPersonShooter() {
@@ -539,7 +585,7 @@ void EditorState::NewThirdPersonShooter() {
     camTarget = {0, 1, 0};
     camDist = 8.0f;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewPointAndClick() {
@@ -551,7 +597,7 @@ void EditorState::NewPointAndClick() {
     camTarget = {0, 1, 0};
     camDist = 14.0f;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewMultiplayer() {
@@ -561,7 +607,7 @@ void EditorState::NewMultiplayer() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewTopDown() {
@@ -571,7 +617,7 @@ void EditorState::NewTopDown() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewTopDownShooter() {
@@ -581,7 +627,7 @@ void EditorState::NewTopDownShooter() {
     m_suppressUndo = false;
     view3D = true;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewPlatformer25D() {
@@ -591,7 +637,7 @@ void EditorState::NewPlatformer25D() {
     m_suppressUndo = false;
     view3D = true;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewVehicle3D() {
@@ -603,7 +649,7 @@ void EditorState::NewVehicle3D() {
     camTarget = {0, 1, 0};
     camDist = 12.0f;
     m_selected = m_scene.Find("Car");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewVehicle2D() {
@@ -613,7 +659,7 @@ void EditorState::NewVehicle2D() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Car");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewCoinCollector() {
@@ -623,7 +669,7 @@ void EditorState::NewCoinCollector() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Player");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewMainMenu() {
@@ -633,7 +679,7 @@ void EditorState::NewMainMenu() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("StartButton");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewSnake() {
@@ -643,7 +689,7 @@ void EditorState::NewSnake() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Board");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewBrickBreaker() {
@@ -653,7 +699,7 @@ void EditorState::NewBrickBreaker() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Paddle");
-    dirty = false;
+    MarkClean();
 }
 
 void EditorState::NewInventory() {
@@ -663,7 +709,7 @@ void EditorState::NewInventory() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Bag");
-    dirty = false;
+    MarkClean();
 }
 
 int EditorState::SaveEditedMeshAssets(std::string* report) {
@@ -704,28 +750,78 @@ int EditorState::SaveEditedMeshAssets(std::string* report) {
     return written;
 }
 
-bool EditorState::Save(const std::string& path) {
-    SaveEditedMeshAssets();
-    if (!SceneSerializer::SaveToFile(m_scene, path)) return false;
-    m_path = path;
+std::uint64_t EditorState::Fingerprint(const std::string& text) {
+    std::uint64_t h = 1469598103934665603ull;   // FNV-1a
+    for (unsigned char c : text) { h ^= c; h *= 1099511628211ull; }
+    return h ^ ((std::uint64_t)text.size() << 1);
+}
+
+void EditorState::MarkClean() {
+    m_savedPrint = Fingerprint(SceneSerializer::Serialize(m_scene));
     dirty = false;
+}
+
+bool EditorState::HasUnsavedChanges() {
+    if (m_playing) return m_dirtyAtPlay || m_playPrint != m_savedPrint;   // the scene being edited, not the running copy
+    return dirty || Fingerprint(SceneSerializer::Serialize(m_scene)) != m_savedPrint;
+}
+
+bool EditorState::SyncDirty() {
+    if (m_playing) return m_dirtyAtPlay || m_playPrint != m_savedPrint;
+    if (dirty) return true;
+    if (Fingerprint(SceneSerializer::Serialize(m_scene)) != m_savedPrint) dirty = true;
+    return dirty;
+}
+
+bool EditorState::Save(const std::string& path, std::string* error) {
+    if (m_playing) {
+        if (error) *error = "Stop Play first: saving now would save the running game, not your scene.";
+        return false;
+    }
+    SaveEditedMeshAssets();
+    if (!SceneSerializer::SaveToFile(m_scene, path, error)) return false;
+    m_path = path;
+    MarkClean();
+    return true;
+}
+
+bool EditorState::LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error) {
+    const std::string tmp = keepPath.empty() ? std::string("okay_scene_recovery.okayscene") : keepPath + ".recovery-tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary);
+        if (!f) { if (error) *error = "couldn't write the recovery file"; return false; }
+        f << text;
+    }
+    if (!Load(tmp, error)) return false;
+    m_path = keepPath;
+    dirty = true;
+    std::error_code ec;
+    std::filesystem::remove(tmp, ec);
     return true;
 }
 
 bool EditorState::Load(const std::string& path, std::string* error) {
+    if (beforeLoad) {   // the project version gate: nothing is read, let alone changed, for a project nobody has answered for
+        std::string why;
+        if (!beforeLoad(path, &why)) { if (error) *error = why.empty() ? "This project can't be opened yet." : why; return false; }
+    }
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (m_playing) Stop();
-    PushUndo();
     StopNetwork();
-    if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;
+    if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;   // all or nothing: the scene is as it was
     m_path = path;
+    // A different scene is a different document: its undo history is its own. (Keeping the old one
+    // would let Undo put the previous scene's objects into this file.)
+    m_undo.clear();
+    m_redo.clear();
     // Re-home the project to the scene's own project folder (the parent of its
     // Assets/ dir), so opening another project's scene switches the Project panel
     // and asset paths over instead of keeping the previous project's files around.
     {
         namespace fs = std::filesystem;
-        for (fs::path p = fs::absolute(fs::path(path)).parent_path(); !p.empty(); p = p.parent_path()) {
-            if (p.filename() == "Assets") { m_projectDir = p.parent_path().string(); break; }
+        std::error_code ec;
+        for (fs::path p = fs::absolute(fs::path(path), ec).parent_path(); !p.empty(); p = p.parent_path()) {
+            if (p.filename() == "Assets") { setProjectDir(p.parent_path().string()); break; }
             if (p == p.parent_path()) break;   // reached the filesystem root
         }
     }
@@ -734,13 +830,66 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     for (const auto& up : m_scene.Objects())
         if (auto* ma = up->GetComponent<ModelAnimator>())
             PoseCapture::ImportFolder(*ma, PoseCapture::AssetBaseDir());
-    dirty = false;
+    MarkClean();
+    if (onSceneLoaded) onSceneLoaded();
     return true;
+}
+
+EditorState::NewProjectResult EditorState::CreateProject(const std::string& root, const std::string& sceneName, void (EditorState::*tpl)(),
+                                                         const std::function<bool(const std::string&, std::string&)>& writeFiles) {
+    namespace fs = std::filesystem;
+    NewProjectResult r;
+    if (m_playing) { r.error = "Stop Play first."; return r; }
+    if (finishFrozenTick) finishFrozenTick();
+    okayproj::Made made;
+    std::string err;
+    // 1. Folders and files first, while the open scene is still untouched: a failure here costs nothing.
+    if (!okayproj::MakeSkeleton(fs::path(root), made, err)) { r.error = err; return r; }
+    if (writeFiles && !writeFiles(root, err)) {
+        okayproj::Undo(made);
+        r.error = err;
+        return r;
+    }
+    // 2. Put the previous state aside, build the template, and save its first scene.
+    const std::string prevText = SceneSerializer::Serialize(m_scene);
+    const std::string prevPath = m_path, prevDir = m_projectDir, prevName = m_scene.Name();
+    const bool prevDirty = dirty;
+    const std::uint64_t prevPrint = m_savedPrint;
+    std::vector<std::string> prevUndo = std::move(m_undo), prevRedo = std::move(m_redo);
+    m_undo.clear(); m_redo.clear();
+    const std::string scenePath = (fs::path(root) / "Assets" / (sceneName + ".okayscene")).string();
+    (this->*tpl)();
+    m_scene.SetName(sceneName);
+    setProjectDir(root);
+    if (!Save(scenePath, &err)) {
+        // Put everything back exactly as it was.
+        StopNetwork();
+        SceneSerializer::Deserialize(m_scene, prevText);
+        m_scene.SetName(prevName);
+        Select(nullptr);
+        m_path = prevPath;
+        setProjectDir(prevDir);
+        m_undo = std::move(prevUndo);
+        m_redo = std::move(prevRedo);
+        dirty = prevDirty;
+        m_savedPrint = prevPrint;
+        okayproj::Undo(made);   // Save is atomic: a failed one wrote nothing, so only the folders and files made above go
+        r.error = err;
+        return r;
+    }
+    m_undo.clear();
+    m_redo.clear();
+    r.ok = true;
+    r.root = root;
+    r.scene = scenePath;
+    return r;
 }
 
 void EditorState::Play() {
     if (m_playing) return;
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
+    m_playPrint = Fingerprint(m_snapshot);            // what "unsaved changes" means while the game runs
+    m_dirtyAtPlay = dirty;
     m_scene.UseFixedStepPhysics(true);   // physics as the game runs it: fixed steps, drawn smoothly
     Character::SetAssetBaseDir(m_projectDir);   // a Character's project-relative clips file
     PoseCapture::SetAssetBaseDir(m_projectDir.empty() ? std::string() : m_projectDir + "/Assets");
@@ -756,6 +905,7 @@ void EditorState::Play() {
     // scale a script had left, so the next Play started frozen once the editor stepped Time), the clocks
     // at zero and SmoothDelta's history forgotten.
     m_loop.BeginSession();
+    m_loop.SetDebugTimeScale(1.0f);   // slow motion is a per-session debugging aid (BeginSession keeps it by design)
     // Audio files named on AudioSources play in Play mode without pressing Load.
     {
         std::vector<std::string> missing;
@@ -787,6 +937,7 @@ void EditorState::Stop() {
     m_playing = false;
     m_scene.UseFixedStepPhysics(false);
     m_loop.BeginSession();   // unpause, clear quit and any script's time scale, so the next Play starts clean
+    m_loop.SetDebugTimeScale(1.0f);   // and the toolbar's slow motion: a new Play never starts at 0.25x
     ActionList::DebugPaused() = false; ActionList::StepBudget() = 0;   // never leave Actions frozen after Stop
     // Deserialize rebuilds the scene, destroying every live component — including
     // any NetworkManager m_net points at. Drop the pointer first so TickServices
@@ -798,6 +949,7 @@ void EditorState::Stop() {
     for (const auto& up : m_scene.Objects())
         if (auto* ma = up->GetComponent<ModelAnimator>())
             PoseCapture::ImportFolder(*ma, PoseCapture::AssetBaseDir());
+    dirty = m_dirtyAtPlay;   // edits made to the running game are thrown away, so they leave no mark
     if (okay::FirstPersonHands::RestoreApplied(m_scene)) dirty = true;   // Apply during Play
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
 }
@@ -826,6 +978,63 @@ bool EditorState::StepFrame(float seconds) {
     if (!m_playing) return false;
     SetPaused(true);
     return m_loop.RequestStep(1, seconds);
+}
+
+float EditorState::StepDebugTimeScale(int direction) {
+    if (!m_playing) return m_loop.DebugTimeScale();
+    m_loop.SetDebugTimeScale(GameLoop::NextDebugTimeScale(m_loop.DebugTimeScale(), direction));
+    return m_loop.DebugTimeScale();
+}
+
+void EditorState::ResetDebugTimeScale() {
+    m_loop.SetDebugTimeScale(1.0f);
+}
+
+bool EditorState::RunFrames(int frames, float frameSeconds) {
+    if (!m_playing || frames < 1) return false;
+    // The loop pauses under the editor's own reason, so the Pause button (Game::PushPause("editor")) and the
+    // loop agree when the run ends; already paused, it steps the frames and stays paused.
+    return m_loop.RunFrames(frames, frameSeconds, kPauseReason);
+}
+
+std::vector<std::string> EditorState::PerfLines() const {
+    return m_playing ? FrameOverlay::Lines(m_loop) : std::vector<std::string>();
+}
+
+std::vector<std::string> EditorState::SceneLines(int maxComponentTypes) const {
+    return m_scene.Stats().Lines(maxComponentTypes);
+}
+
+std::vector<std::string> EditorState::StatsLines(int maxComponentTypes) const {
+    std::vector<std::string> lines = PerfLines();
+    for (std::string& l : SceneLines(maxComponentTypes)) lines.push_back(std::move(l));
+    return lines;
+}
+
+std::string EditorState::FpsLabel() const {
+    return FrameOverlay::FpsLabel(m_loop);
+}
+
+std::vector<float> EditorState::RecentFps(std::size_t count) const {
+    return FrameOverlay::RecentFps(m_loop.Stats(), count);
+}
+
+std::vector<std::string> EditorState::TimerLines(std::size_t maxChars) {
+    TimerDebug::Options o;
+    o.topGroups = 3;
+    o.topOldest = 1;
+    // The scene's own timers and tweens (a scene change or Clear drops them), then the process-wide scheduler
+    // (Scheduler::Global(), which survives scene loads) when something is in it.
+    std::vector<std::string> lines = TimerDebug::BuildLines(&m_scene.scheduler(), &m_scene.tweens(), o);
+    if (Scheduler::Global().ActiveCount() > 0) {
+        std::vector<std::string> global = TimerDebug::BuildLines(&Scheduler::Global(), nullptr, o);
+        if (!global.empty()) global[0] = "Global " + global[0];
+        for (std::string& l : global) lines.push_back(std::move(l));
+    }
+    if (maxChars >= 4)
+        for (std::string& l : lines)
+            if (l.size() > maxChars) { l.resize(maxChars - 3); l += "..."; }
+    return lines;
 }
 
 } // namespace okay::editor

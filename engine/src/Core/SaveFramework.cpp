@@ -382,7 +382,7 @@ bool SaveStore::ValidSlot(const std::string& slot) {
     if (slot.empty() || slot.size() > 64) return false;
     for (char c : slot)
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '_')) return false;
-    return true;
+    return !savefmt::IsReservedDeviceName(slot);   // "con", "nul", "com1"... are devices on Windows
 }
 
 long long SaveStore::NowMs() const {
@@ -440,8 +440,11 @@ bool SaveStore::Install(const std::string& slot, const std::string& bytes, std::
             }
         }
     }
-    if (!savefmt::AtomicWrite(path, bytes)) {
-        if (error) *error = "Couldn't write " + path;
+    savefmt::WriteOptions wopt;
+    wopt.sync = true;
+    std::string werr;
+    if (!savefmt::AtomicWriteChecked(path, bytes, &werr, wopt)) {
+        if (error) *error = "Couldn't write " + path + ": " + werr + " (the slot was not changed)";
         return false;
     }
     return true;
@@ -679,7 +682,8 @@ bool SaveStore::UpdateInfo(const std::string& slot, const std::function<void(Sav
     };
     if (!RewriteHeader(bytes, edit, out, &why)) { if (error) *error = "Slot \"" + slot + "\": " + why; return false; }
     if (newer) { if (error) *error = "Slot \"" + slot + "\" was saved by a newer version of the game and can't be edited here"; return false; }
-    if (!savefmt::AtomicWrite(path, out)) { if (error) *error = "Couldn't write " + path; return false; }
+    std::string werr;
+    if (!savefmt::AtomicWriteChecked(path, out, &werr)) { if (error) *error = "Couldn't write " + path + ": " + werr; return false; }
     return true;
 }
 

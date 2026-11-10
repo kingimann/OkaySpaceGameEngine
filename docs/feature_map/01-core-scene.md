@@ -323,14 +323,14 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **What:** Fullscreen, vsync and the Low/Medium/High quality preset the Settings screen drives.
 - **Parts:**
   - 1.15.1 Settings values - `Core/DisplaySettings` - Fullscreen, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
-  - 1.15.2 Quality preset - `Core/DisplaySettings` - `ApplyQuality` flips the shared shadow, per-pixel lighting, bloom, SSAO and FXAA switches (declared in `SoftwareRenderer.hpp`, some read by the GPU backends too)
+  - 1.15.2 Quality preset - `Core/DisplaySettings` - `ApplyQuality` flips shadows, per-pixel lighting, bloom, SSAO and FXAA, and sets shadow resolution, cascade count and shadow distance
 - **Code:** `Core/DisplaySettings`
 - **API:** `DisplaySettings::SetQuality`, `DisplaySettings::SetFullscreen`, `DisplaySettings::Generation`, `DisplaySettings::ApplyQuality`
 - **Editor:** none (the player reads it; Settings screen component, 12.8)
 - **Docs:** -
-- **Tests:** -
-- **Status:** Basic - read `DisplaySettings.cpp` (70 lines); no test of its own; the OpenGL and Direct3D 11 renderers also read `ShadowsEnabled()` and `BloomEnabled()` (OpenGL also `SSAOEnabled()`), so the presets reach them; `FXAAEnabled()` and `PerPixelLighting()` are read only by the software path (grep)
-- **Open:** a test; the preset does not change shadow resolution or distance; resolution and window mode options; the editor calls `ApplyQuality()` at start (editor/main.cpp), the player reads `DisplaySettings` too
+- **Tests:** `visibility_lod`
+- **Status:** Basic - Low/Medium/High now also set shadow map size, cascade count and distance (High matches the old 2048 / 80 m / 3 defaults); `FXAAEnabled()` and `PerPixelLighting()` are still read only by the software path
+- **Open:** resolution and window mode options; the editor calls `ApplyQuality()` at start (editor/main.cpp), the player reads `DisplaySettings` too
 - **Related:** 12.8, 38.1, 2.3, 2.5
 - **Words:** DisplaySettings, fullscreen, vsync, quality, graphics settings, Low Medium High, video settings
 - **Seen as:** the quality setting changes nothing on a GPU machine; fullscreen is not remembered
@@ -368,11 +368,11 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.17.6 Native FixedUpdate, load errors and speed - `Scene/Component`, `Scene/Scene`, `Scene/SceneManager`, `Scene/SceneSerializer` - `Component::FixedUpdate(dt)` once per physics step; `Clear()` runs OnDisable/OnDestroy for awakened components; `Scene::LastLoadError()`; `ActiveIndex` moves only after a successful load; `gravity3` record; floats written in the shortest exact form; a cache of 32 decoded prefab files (`ClearPrefabCache`); linear-time mass `Destroy`
 - **Code:** `Scene/SceneValidation`, `Scene/GameObject`, `Scene/Scene`, `Scene/Transform`, `Scene/Component`, `Scene/SceneManager`, `Scene/SceneSerializer`, `Testing/SceneValidator`
 - **API:** `scene.Validate("Assets")`, `SceneValidationReport`, `SceneSerializer::ValidateFile`, `Scene::FindByPath`, `Scene::Roots`, `GameObject::ActiveInHierarchy`, `GetComponentInChildren<T>`, `Component::FixedUpdate`, `Scene::LastLoadError`, `Transform::LookAt`, `SceneSerializer::ClearPrefabCache`, `SceneValidator::Validate`
-- **Editor:** none yet (the editor's only scene check at Play is the visual-script validator, 33.2; no Validate button or window)
+- **Editor:** Problems panel (15.11.8, 33.2) lists these checks in edit mode; Build blocks on errors
 - **Docs:** `docs/scene_hierarchy_search.md`, `docs/automated_testing.md`
 - **Tests:** `scene_hierarchy_search`, `scene_validator`
 - **Status:** Works - merged in #575 with tests; read `scene_hierarchy_search.md`, `Scene.hpp` and where `ActiveInHierarchy` is called (Scene, both physics worlds, GL, D3D11, D3D12 and the software renderer); `SceneValidation.cpp` itself was not read in depth
-- **Open:** possible duplicate: `Testing/SceneValidator` (semantic checks, area 33) and `Scene/SceneValidation` (format checks) both report missing assets, and `AssetDatabase::FindMissing` is a third (33.2); unknown keys inside a known key=value record are skipped silently by the loader and not reported (docs); no editor use of `Validate` or `FindByPath`
+- **Open:** `Testing/SceneValidator` (semantic checks, area 33) and `Scene/SceneValidation` (format checks) both report missing assets; `CollectProjectDiagnostics` drops the duplicate missing-asset row and also reports `AssetDatabase::FindMissing` as `asset.db.missing`; unknown keys inside a known key=value record are skipped silently by the loader and not reported (docs)
 - **Related:** 1.3, 1.4, 1.5, 33, 28
 - **Words:** scene validation, validator, missing asset, broken link, FindByPath, hierarchy active, ActiveInHierarchy, FixedUpdate, GetComponentInChildren, LastLoadError, Roots, LookAt
 - **Seen as:** a disabled parent does not disable its children's scripts; a scene opens with missing textures and no warning; a child still collides under a switched-off parent; a failed load leaves no reason

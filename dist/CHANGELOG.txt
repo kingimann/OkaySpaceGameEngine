@@ -1,5 +1,296 @@
 OkaySpace Game Engine — Changelog
 
+v2.858.0
+  Visual Script
+  - The add-node panel searches name, category, keywords and description,
+    including a short typo, and documents every registered node. Graphs stay
+    open in tabs, and New, Open, Play, Stop and quit ask before throwing away
+    an unsaved graph (#597).
+  Rendering
+  - The Game view, Play mode and the player draw every camera, lowest depth
+    first, each in its own rectangle. An LOD Group switches to a cheaper mesh
+    with distance, and an imported glTF model keeps its metallic-roughness
+    and emissive textures (#599).
+
+v2.857.0
+  Properties
+  - A key binding in the property registry can be any key, including Space,
+    Tab and Enter. Spawner pooling is registered, and the Loading Screen is
+    registered as its own type. The registry now covers 1405 properties on
+    86 types (#615).
+  Launcher
+  - The Versions page installs and removes editor versions, with checksums
+    checked before a version is moved into place. Latest or LTS is a channel
+    choice. An update keeps the previous editor, and a project can be opened
+    with the editor version it was saved with (#617).
+
+v2.856.0
+  Projects: upgrade or keep your version (editor)
+  - Every project now records the editor version that last saved it
+    (engine_version in project.okayproj). Opening a project made with an older
+    version asks first: Upgrade, Keep that version, or Cancel. Nothing in the
+    project is touched before you answer. A project with no recorded version
+    (made before this) can be upgraded or cancelled. Two patches of one line,
+    such as 2.850.0 and 2.850.1, never ask (#614).
+  - Upgrade checks every scene and prefab first, makes a complete backup next
+    to the project ("My Game (backup v2.850.0)"), rewrites only the files that
+    change and stamps the new version last. If anything fails, the project is
+    put back exactly as it was. File > Project Upgrade... re-runs it and
+    restores a backup (#614).
+  - A project saved by a newer version warns that this editor may drop data it
+    does not understand: Cancel, Open anyway (a backup is made first) or Update
+    OkaySpace. Keep v2.850.x opens the project with that version's editor when
+    it is installed (#614).
+  Editor
+  - The Game view in Play has a Stats overlay (fps graph, min, max, 1% low,
+    object and component counts) and a Timers box (scheduler tasks, tweens,
+    tags). Playback speed from 0.05x to 32x and Run N frames then pause sit
+    beside Step. The PLAYING pill no longer overlaps the size readout (#606).
+  - Tween Animation has Speed based, Decay and Tag. The Script Editor lists the
+    new Time members (sessionTime, fps, hitchCount, paused, HitStop, SlowMotion,
+    RampTimeScale, PushPause and more) with descriptions and call signatures.
+    The visual-script search has the seven tween nodes. Hierarchy search finds
+    objects by path (Cube/Sphere), and Delete Children is in the right-click
+    menu (#606).
+  - Project Settings has Tags and Layers: Strict tags, a tag list you can
+    rename and remove from, a warning with Add them when a scene uses a tag that
+    is not on the list, and 32 named layers (#606).
+  Scene lifecycle, serializer and pooling
+  - Key bindings of the five controller records no longer corrupt a scene:
+    Space, Tab, Enter or - used to shift every later field or cut the record
+    short. Old files still load (#613).
+  - A scene load started from another load's callback (a chained loading
+    screen) no longer corrupts memory; when two loads overlap the last
+    replacing one wins; a failed load leaves the scene and its
+    DontDestroyOnLoad objects as they were (#613).
+  - A quoted value with a line break inside a record (a two-line quest
+    description) is read whole. Unknown object fields and records from a newer
+    build are kept and written back instead of dropped. Joints, spawners,
+    lights, particle systems, trigger zones, UI animations, sequence players
+    and quest triggers save every instance, not only the first (#613).
+  - Pooling: Scene.Despawn returns a pooled object to its pool, Spawner has a
+    Use pool option, scripts get pool_get, pool_release, pool_prewarm and
+    pool_idle, and scripts, projectiles, trails, particle systems and sprite
+    animators reset when reused. The Loading Screen can load the next scene in
+    the background and follow the real progress (#613).
+  Core runtime
+  - Fixes in events and ECS (adding or clearing a system from inside a running
+    system, entity ids and order, a throwing event handler), logging and the
+    profiler (log file rotation, failed writes, the Chrome trace), data assets
+    and data packs (a byte order mark, NaN and infinite numbers, a damaged
+    pack), the scene validators (built-in textures reported as missing, fonts
+    and second components never checked) and the console (a command that runs
+    itself, range checks on console variables) (#608).
+  - New: console variable flags (read-only, cheat, restart required), a
+    console exec command, Log.Flush, DataAsset GetInt and GetBool, and a shared
+    asset-exists rule for both validators (#608).
+  Property registry
+  - The property registry covers 85 component types and 1358 properties (was 26
+    and 336): the controllers, vehicles, projectile, spawner, music, joints, the
+    no-code gameplay components, navigation, networking, day and night, water
+    and 19 UI widgets, each checked by a save and load round trip. A property
+    write now reports its old and new value for undo (#609).
+  - Hooks removed during a change no longer run, hooks that keep writing the
+    same property stop after 32 levels, and unaddressable names are refused
+    (#609).
+  Saves, display and localization
+  - Saves and preferences are written crash-safe by one shared writer: writers
+    to one file take turns, a damaged or half-written file recovers from its
+    backup instead of loading empty, infinity and NaN no longer save as 0, and
+    a failed write says why ("the disk is full", "permission denied") (#611).
+  - Save slots: a long label no longer breaks the date, slots from a newer
+    build and damaged slots are listed and flagged, saving an older build over
+    a newer slot keeps a backup, and Windows device names are refused. New
+    script calls: save_slots, save_valid, save_scene, save_play_time,
+    save_play_text, save_date, save_ago (#611).
+  - Display settings: saved video settings now reach the window at start; there
+    are window modes (windowed, borderless, fullscreen) and a resolution list;
+    the Low, Medium and High presets now change shadow size, distance, cascades
+    and softness (#611).
+  - Localization: non-Latin names no longer collapse to the same key,
+    Traditional and Simplified Chinese players get the right language, plural
+    rules for about 25 more languages, {0, number}, currency and select
+    placeholders, and UTF-16 CSV import (#611).
+  Animation, camera and Play
+  - The camera orbit stays above the ground, with clamped and tunable pitch.
+    Play takes the keyboard even when an Inspector field was focused. Pressing
+    Esc in Play releases the mouse even on a quick tap, a click in the game view
+    no longer lands on Stop, and Ctrl+P stops Play with the Script Editor
+    focused (#554).
+  - Spawn clearance no longer pushes a body through a single solid (#554).
+  - Locomotion keeps its settings (playback speed, fallback clip, foot and
+    full-body IK weights, look weight, loop, mirror, root motion) when the clip
+    blend updates, and a remote player's action message can carry a direction
+    or swim speed (#554).
+  Release channels
+  - The update server now supports a long-term-support (LTS) line next to the
+    latest version, with versions.json listing every release with sizes and
+    checksums. The launcher side comes in a later release (#612).
+
+v2.855.0
+  Projects, saving and loading (editor)
+  - File > New Project... checks the name as you type, shows the full path
+    and what each of the 21 templates contains, and offers recent locations.
+    The same form is in the startup chooser. File > Open Project Folder is
+    new, and a project that was moved or deleted shows as "missing" with a
+    Forget button (#607).
+  - Project Settings, tags, layer names and Build Settings are now stored
+    inside each project, so one project no longer leaks its settings into
+    another. Build Settings survive a restart even without a saved profile,
+    and Save Project no longer erases the build profiles (#607).
+  - Creating a project and saving a scene are all or nothing: a failed Create
+    leaves no half-made folder and keeps your open scene, a failed save never
+    loses the file that was there, and a read-only file or missing folder is
+    refused with the reason. Project, build and preference files are written
+    atomically (#607).
+  - Save changes? (Save / Don't Save / Cancel) now appears before anything
+    that replaces the open scene: New Scene, Open, Open Recent, the Project
+    panel, the Scene Manager, drops, and the launcher hand-off, which used to
+    discard a never-saved scene. An edit that forgot to mark the scene dirty
+    is no longer lost on quit (#607).
+  - The status bar shows project / scene, a green "Saved", an amber
+    "unsaved" and a red "Save failed" with a popup that says why. The window
+    title shows the project, scene and an asterisk (#607).
+  - Save is refused while the game is playing, Build and Export stop Play
+    first, and Play edits no longer mark the scene dirty, so the running game
+    is never saved or shipped by mistake. The network helper object created
+    by hosting is no longer saved into the scene (#607).
+  - Open starts a fresh undo history, so Undo can no longer paste the
+    previous scene's objects into the file you just opened. Opening another
+    project's scene reloads its item database and string table (#607).
+  - Two or more colliders (all 10 kinds) or audio sources on one object now
+    save every one, not only the first. Older files still load. Scene files
+    are written with LF line endings on Windows; they load either way, but the
+    first save of an old CRLF scene changes every line (#607).
+  Loop and time
+  - Scripts can read the clock: Time.sessionTime, fps, hitchCount, paused,
+    unscaledDeltaTime and fixedDeltaTime, and can use HitStop, SlowMotion,
+    RampTimeScale and PushPause / PopPause / IsPausedBy, in both the typed
+    language and OkayScript. unscaledDeltaTime, fixedDeltaTime and fps used to
+    return the scaled value, which is 0 in a pause (#603).
+  - Random is safe to use from several threads (it used to race and could
+    deadlock). A game saved in the middle of a time-scale ramp keeps the ramp.
+    A countdown of a day or a week no longer runs 6% off or never finishes
+    (#603).
+  - Replays can reproduce recorded pauses and the random state, also on every
+    lap of a looping replay. Frame recordings stay version 1 and old files
+    load (#603).
+  - New: GameLoop.Current, FrameStats.AverageFps, FrameOverlay.FpsLabel (the
+    player's show_fps now shows real frame times) and TimeBudget, which spends
+    at most N milliseconds a frame on a job (#603).
+  - Fixes: time.debug_scale, time.step and time.run reject bad numbers instead
+    of truncating them, a NaN frame time no longer zeroes every later delta,
+    and a tiny target fps no longer plans a sleep of 1e30 seconds (#603).
+  Timers and tweens
+  - A tween or timer callback that updates its own scheduler or tween manager
+    no longer loses a repeat, steps a tween twice, recurses without end or
+    kills a tween before its complete callback (#604).
+  - Pausing the game (PauseAll) no longer freezes tweens that run on a
+    real-time channel such as "ui", so a pause menu can animate. A tween on
+    the "game" channel stays paused even with SetUpdate(true) (#604).
+  - Ending a sequence (Kill, Clear, a scene load, its object dying) now ends
+    its children too; a held child handle can no longer write into a freed
+    scene (#604).
+  - Tween Animation gets speedBased, decay and tag, saved as an optional
+    tail of its record (old files load, older readers warn and skip). New
+    script ease_curve(t, "OutBack" | "cubic-bezier(..)" | "steps(4)"), and
+    seven visual-script nodes: EaseCurve, SpringStep, TweenMove,
+    TweenMoveSpeed, TweenKillTag, TweenPauseTag, TweenPlayTag (#604).
+  - Fixes: a NaN or huge loop count in tween_loops no longer loops for ever
+    or goes negative, shake and punch counts cannot overflow, and the timer
+    debug view is two to three times cheaper on 10000 timers (#604).
+  Scene graph
+  - Component order is now saved for every object whose components would
+    load in a different order, and prefab diff and merge understand the
+    record. Scenes already in writer order save exactly as before; an
+    editor scene with 2 or more components in another order gains one
+    comporder line on its next save (#605).
+  - Detaching 300000 children one at a time takes about 31 ms instead of
+    growing with the list; GetSiblingIndex is a lookup (#605).
+  - Object pools reset what the last use left behind: velocity, spin, forces
+    and sleep on rigidbodies, a waiting delayed destroy, tag, layer, active
+    state, enabled flags and child poses. An object queued for destruction can
+    no longer be handed out and vanish (#605).
+  - Cloned joints pull on their own clone instead of the original, through the
+    new FindNearest. FindByPath tries every sibling match and finds names
+    containing /; FindAllByPath is new (#605).
+  - Tags and layer names are counted in characters, so a 22-character
+    Japanese tag is accepted, and layer names compare case-insensitively for
+    Latin, Greek and Cyrillic (#605).
+  - New: GetOrAddComponent, ForEachDescendant, Transform LookDirection,
+    LookAtYaw, LookAt2D, RotateTowards and LookAt(Transform) (#605).
+
+v2.854.0
+  Updater
+  - After an update, the editor and the launcher start again. The new process
+    waits until the old one has exited, so it is not turned away by the
+    single-instance lock, and it keeps the original arguments and folder,
+    including paths with spaces and parentheses. A failed install puts the
+    previous program back and writes okay_update.log (#584).
+  Loop and time
+  - Game.TogglePause now works while a cutscene or menu holds a pause: it
+    flips the player's own pause hold, so the game stays paused when the
+    cutscene ends if the player paused it (#594).
+  - New session clocks (Time.SessionTime, SessionUnscaledTime,
+    SessionFrameCount) count from the start of the current Play session;
+    elapsed time and frame count still never rewind (#594).
+  - Run N frames then pause (GameLoop.RunFrames), slower and faster presets
+    from 0.05x to 32x, and the console commands time.run and time.overlay
+    (#594).
+  - The player's F3 overlay and the console share one text builder: fps, 1%
+    low, hitches, dropped frames, time scale, hit stop and who paused the
+    game (#594).
+  - Random: pick k different items (SampleIndices), blue-noise points
+    (PoissonDisk2D), and shuffle bags and weighted tables can save and load
+    their position, so a reloaded game does not re-roll the next draw
+    (#594).
+  - Fixes: a huge frame time no longer pushes elapsed time to infinity,
+    smoothed fps no longer turns into NaN, a tiny target fps no longer asks
+    for a sleep of years, the tick pacer and the fixed step no longer
+    overflow or spin two billion steps, Gaussian and point helpers return
+    numbers for NaN or infinite input, restoring a time snapshot without a
+    scale keeps the current scale, and a frame recording with an extreme
+    marker loads again (#594).
+  Timers and tweens
+  - Timers stay fast with many of them: cancelling by handle, owner or tag
+    took seconds for 10000 timers and now takes about a tenth of a second
+    for 100000 (#595).
+  - A tween with a delay such as 0.1 no longer freezes just short of its
+    end, endless and long tweens stay exact after hours (the timeline is now
+    a double), and NaN or infinite values never reach an object (#595).
+  - New: tween by speed, retarget a running tween, tween Vec2, Vec3, Color
+    and Quat values, tag tweens and kill, pause, play or complete them by
+    tag, decay easing for punch and shake, tween along a spline, and Prepend
+    and JoinCallback on sequences (#595).
+  - A timers debug view builds overlay lines for the scheduler and the
+    tweens (#595).
+  - Scripts get tween_tag, tween_speed_based, tween_decay, tween_kill_tag,
+    tween_pause_tag, tween_play_tag, tween_complete_tag, tween_rewind_id,
+    seq_prepend and seq_join_callback, and after(NaN) or every(NaN) no
+    longer makes a timer that never fires (#595).
+  Scene graph
+  - Very deep and very wide hierarchies stay fast: the active state is
+    cached and destroying a big subtree is one pass (a 50000-deep chain took
+    over two minutes to destroy before) (#596).
+  - Calling Clear, LoadFromFile or Deserialize from inside Update,
+    OnDisable, OnDestroy or Awake no longer frees the running component; the
+    change is applied at the end of the frame (#596).
+  - Components moved in the inspector keep their order in the saved scene
+    (an optional record, older files load as before) (#596).
+  - Fixes: InverseTransformPoint on a zero-scale object, SetPosition under a
+    sheared parent chain, a Lifetime longer than six days never ending,
+    Instantiate of a destroyed object, and Scene.Update with a NaN time
+    (#596).
+  - New: Scene.Stats, DestroyChildren, GetComponentsInParent,
+    SetPositionAndRotation and SetParent with a sibling index (#596).
+  Docs
+  - The docs index lists every page, and the properties page has the right
+    counts (#593).
+  CI
+  - The Windows build retries the SDL2 and libsodium downloads and checks
+    that the archives actually arrived (#592).
+
+
 v2.853.0
   Editor
   - Play mode in the editor now runs on the shared game loop, like the built

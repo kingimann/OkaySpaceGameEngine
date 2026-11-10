@@ -252,7 +252,9 @@ public:
     /// maxParticles) can't trigger length_error / bad_alloc.
     int SafeMax() const { return maxParticles < 0 ? 0 : (maxParticles > 100000 ? 100000 : maxParticles); }
 
-    void Awake() override { m_rng.Seed(seed); m_particles.assign(SafeMax(), Particle{}); m_age = 0.0f; m_burstFired = false; m_hasLast = false; }
+    void Awake() override { m_rng.Seed(seed); m_particles.assign(SafeMax(), Particle{}); m_age = 0.0f; m_burstFired = false; m_hasLast = false; m_playOnReuse = playing; m_awake = true; }
+    /// A pooled effect that is reused starts again: no particle of the last use is left and it plays if it did at the start.
+    void OnPoolReuse() override { if (!m_awake) return; Restart(); m_hasLast = false; playing = m_playOnReuse; }
 
     /// Begin/stop emitting (existing particles keep living when stopped).
     void Play()  { playing = true; }
@@ -647,6 +649,7 @@ private:
     }
 
     std::vector<Particle> m_particles;
+    bool m_playOnReuse = true, m_awake = false;   // `playing` as the object was made (a pool puts it back)
     float m_accum = 0.0f;
     float m_age = 0.0f;        // seconds into the current cycle
     bool  m_burstFired = false;

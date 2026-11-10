@@ -14,6 +14,8 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/Atmosphere.hpp"   // fog modes, sky colours
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture, EnvSky, SceneLights
+#include "okay/Render/Visibility.hpp"
+#include "okay/Components/LODGroup.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
 
@@ -60,6 +62,8 @@ const char* kHLSL12 =
     "Texture2D uSpecTex : register(t2);\n"
     "Texture2D uAoTex : register(t3);\n"
     "Texture2D uShadowTex : register(t4);\n"        // directional shadow map (depth)
+    "Texture2D uMrTex : register(t5);\n"            // glTF metallic-roughness (G rough, B metal)
+    "Texture2D uEmisTex : register(t6);\n"          // glTF emissive
     "SamplerState uSamp : register(s0);\n"
     "SamplerState uShadowSamp : register(s1);\n"    // clamp sampler for the shadow map
     "float shadowFactor(float3 wpos, float3 n){\n"  // 0=shadowed .. 1=lit (4-tap PCF)
@@ -123,7 +127,18 @@ const char* kHLSL12 =
     "  bool holo = uShaderMode > 5.5 && uShaderMode < 6.5;\n"
     "  if (holo) base *= 0.18 * (0.55 + 0.45 * sin(i.world.y * 40.0));\n"
     "  if (uShaderMode > 6.5) base = floor(base * 5.0) / 5.0;\n"
-    "  if (uUnlit > 0.5) return float4(base + uEmissive, uAlpha);\n"
+    "  float3 emis = uEmissive;\n"
+    "  if (uLightCount.z > 0.5) emis *= uEmisTex.Sample(uSamp, i.uv).rgb;\n"
+    "  float shiny = uShininess; float metalK = uPbr.x; float specK = uSpecular;\n"
+    "  if (uLightCount.y > 0.5) {\n"
+    "    float4 mr = uMrTex.Sample(uSamp, i.uv);\n"
+    "    metalK *= mr.b;\n"
+    "    float rough0 = saturate(1.0 - (uShininess - 4.0) / 124.0);\n"
+    "    float rough = saturate(rough0 * mr.g);\n"
+    "    shiny = 4.0 + (1.0 - rough) * 124.0;\n"
+    "    specK *= clamp(1.0 - rough, 0.04, 1.0);\n"
+    "  }\n"
+    "  if (uUnlit > 0.5) return float4(base + emis, uAlpha);\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  float3 amb = uAmbient * lerp(0.55, 1.15, saturate(N.y * 0.5 + 0.5));\n"
     "  float3 lit = amb; float spec = 0.0;\n"
@@ -133,7 +148,7 @@ const char* kHLSL12 =
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "    lit += uLightColor * ndl * sh;\n"
     "    if (uSpecular > 0.0) { float3 H = normalize(uLightDir + Vv);\n"
-    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * sh; }\n"
+    "      spec = pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * sh; }\n"
     "  } else {\n"
     "    for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"
     "      float4 d0 = uLights[li*4+0]; float4 d1 = uLights[li*4+1];\n"
@@ -149,7 +164,7 @@ const char* kHLSL12 =
     "      float ndl = max(dot(N, ld), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "      lit += d2.xyz * ndl * at * lsh;\n"
     "      if (uSpecular > 0.0) { float3 H = normalize(ld + Vv);\n"
-    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at * lsh; }\n"
+    "        spec += pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * at * lsh; }\n"
     "    }\n"
     "  }\n"
     "  if (uShaderMode > 7.5) lit += fz * fz * lit * 0.6;\n"
@@ -159,14 +174,14 @@ const char* kHLSL12 =
     "    float ao = dot(uAoTex.Sample(uSamp, i.uv).rgb, float3(0.2126, 0.7152, 0.0722));\n"
     "    lit *= (1.0 - uPbr2.x * (1.0 - ao));\n"
     "  }\n"
-    "  float metal = saturate(uPbr.x);\n"
+    "  float metal = saturate(metalK);\n"
     "  float diffK = 1.0 - 0.9 * metal;\n"
     "  float3 f0 = lerp(float3(1,1,1), base, metal);\n"
     "  float3 diff = base * lit * diffK;\n"
     "  float3 rim = float3(0,0,0);\n"
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
     "  if (rs > 0.0) rim = uRimColor * (fz*fz*fz * rs);\n"
-    "  float3 col = diff + (spec * gloss) * f0 + rim + uEmissive;\n"
+    "  float3 col = diff + (spec * gloss) * f0 + rim + emis;\n"
     "  float reflAmt = max(uPbr.y, metal);\n"
     "  float reflK = reflAmt * gloss;\n"
     "  if (reflK > 0.0 && uPbr2.y > 0.5) {\n"
@@ -389,7 +404,7 @@ bool D3D12Renderer::Init() {
     // Root signature: b0 = CBV (root descriptor), table of t0..t3 (SRV), static sampler s0.
     D3D12_DESCRIPTOR_RANGE srvRange{};
     srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    srvRange.NumDescriptors = 5; srvRange.BaseShaderRegister = 0;   // t0..t3 material + t4 shadow map
+    srvRange.NumDescriptors = 7; srvRange.BaseShaderRegister = 0;   // t0..t3 material, t4 shadow, t5 MR, t6 emissive
     srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
     D3D12_ROOT_PARAMETER params[2]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -681,6 +696,8 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
     p->alloc->Reset();
     p->list->Reset(p->alloc, p->psoOpaque);
 
+    visibility::Build(scene, vp, eye, w, h, visibility::RenderViewFovY(), ignore);
+
     // ---- Shadow-map depth pre-pass (directional cast shadows) -----------------
     // Render scene depth from the sun into the shadow texture, which the main pass
     // samples (PCF) for real cast shadows. Opt-in via ShadowsEnabled().
@@ -707,7 +724,9 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
                 auto* mr = go->GetComponent<MeshRenderer>();
                 if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
                 if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
-                const Mesh& mesh = mr->DisplayMesh();
+                const Mesh* lodMesh = visibility::Current().ShadowMesh(go, mr);
+                if (!lodMesh) continue;
+                const Mesh& mesh = *lodMesh;
                 const auto& Vv = mesh.vertices; const auto& T = mesh.triangles;
                 if (Vv.empty() || T.size() < 3) continue;
                 const int nv = (int)Vv.size();
@@ -801,15 +820,15 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
     D3D12_GPU_DESCRIPTOR_HANDLE srvGpu0 = p->srvHeap->GetGPUDescriptorHandleForHeapStart();
     D3D12_CPU_DESCRIPTOR_HANDLE srvCpu0 = p->srvHeap->GetCPUDescriptorHandleForHeapStart();
 
-    for (const auto& upo : scene.Objects()) {
-        GameObject* go = upo.get();
-        if (!go || !go->ActiveInHierarchy() || go->HiddenFromCamera(ignore)) continue;
-        if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
-        auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || mr->wireframe || !mr->enabled) continue;
-        const Mesh& mesh = mr->DisplayMesh();
+    const visibility::Frame& vis = visibility::Current();
+    int drawnN = 0;
+    for (const visibility::Item& it : vis.items) {
+        GameObject* go = it.go;
+        auto* mr = it.mr;
+        const Mesh& mesh = *it.mesh;
         const auto& Vv = mesh.vertices; const auto& T = mesh.triangles;
         if (Vv.empty() || T.size() < 3) continue;
+        ++drawnN;
         const bool hasN = mesh.HasNormals();
         const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == Vv.size();
         const bool faceCols = mesh.HasFaceColors();
@@ -879,12 +898,14 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         // Fill the constant buffer for this draw.
         if (p->cbNext + p->cbStride > p->cbCap) continue;   // cap: skip extra draws
         CB cb; std::memset(&cb, 0, sizeof(cb));
-        Mat4 model = go->transform->LocalToWorldMatrix();
+        Mat4 model = it.model;
         Mat4 mvp = vp * model;
         std::memcpy(cb.mvp, mvp.m, sizeof(cb.mvp));
         std::memcpy(cb.model, model.m, sizeof(cb.model));
         bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
-        cb.color[0]=mr->color.r; cb.color[1]=mr->color.g; cb.color[2]=mr->color.b;
+        float tintR = 1, tintG = 1, tintB = 1;
+        if (it.lod >= 0) if (auto* lg = go->GetComponent<LODGroup>(); lg) lg->DebugTint(it.lod, tintR, tintG, tintB);
+        cb.color[0]=mr->color.r * tintR; cb.color[1]=mr->color.g * tintG; cb.color[2]=mr->color.b * tintB;
         cb.specular = unlit ? 0.0f : mr->specular; cb.shininess = mr->shininess;
         cb.emissive[0]=mr->emissive.r; cb.emissive[1]=mr->emissive.g; cb.emissive[2]=mr->emissive.b;
         cb.lightDir[0]=toLight.x; cb.lightDir[1]=toLight.y; cb.lightDir[2]=toLight.z;
@@ -910,6 +931,8 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.sky[4]=sky.horizon.x; cb.sky[5]=sky.horizon.y; cb.sky[6]=sky.horizon.z;
         cb.sky[8]=sky.bottom.x; cb.sky[9]=sky.bottom.y; cb.sky[10]=sky.bottom.z;
         cb.lightCount[0]=(float)frameLightCount;
+        cb.lightCount[1]= mr->metallicRoughnessMap.empty()?0.0f:1.0f;
+        cb.lightCount[2]= mr->emissiveMap.empty()?0.0f:1.0f;
         std::memcpy(cb.lights, frameLights, sizeof(frameLights));
         {
             const auto& rs = scene.renderSettings;
@@ -928,16 +951,18 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         p->list->SetGraphicsRootConstantBufferView(0, cbBase + cbOff);
 
         // Bind the 5 SRVs (base, normal, spec, ao, shadow map) into the SRV ring.
-        if (p->srvRingNext + 5 > p->srvRingCap) p->srvRingNext = 0;   // wrap (frame-local)
-        UINT ringStart = p->srvRingNext; p->srvRingNext += 5;
-        D3D12_CPU_DESCRIPTOR_HANDLE src[5] = {
+        if (p->srvRingNext + 7 > p->srvRingCap) p->srvRingNext = 0;   // wrap (frame-local)
+        UINT ringStart = p->srvRingNext; p->srvRingNext += 7;
+        D3D12_CPU_DESCRIPTOR_HANDLE src[7] = {
             p->TextureFor(baseTex),
             mr->normalMap.empty()   ? p->whiteSrv : p->TextureFor(mr->normalMap),
             mr->specularMap.empty() ? p->whiteSrv : p->TextureFor(mr->specularMap),
             mr->aoMap.empty()       ? p->whiteSrv : p->TextureFor(mr->aoMap),
             (shadowOn && p->shadowSrvCpu.ptr) ? p->shadowSrvCpu : p->whiteSrv,
+            mr->metallicRoughnessMap.empty() ? p->whiteSrv : p->TextureFor(mr->metallicRoughnessMap),
+            mr->emissiveMap.empty() ? p->whiteSrv : p->TextureFor(mr->emissiveMap),
         };
-        for (int s = 0; s < 5; ++s) {
+        for (int s = 0; s < 7; ++s) {
             D3D12_CPU_DESCRIPTOR_HANDLE d = srvCpu0; d.ptr += (size_t)(ringStart + s) * p->srvInc;
             p->dev->CopyDescriptorsSimple(1, d, src[s], D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         }
@@ -1001,6 +1026,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
             std::memcpy(&p->pixels[(std::size_t)y * w], mapped + (size_t)y * p->readbackPitch, (size_t)w * 4);
         D3D12_RANGE wr{0, 0}; p->readback->Unmap(0, &wr);
     }
+    LastCullCounters().drawn = drawnN;
     return p->pixels.data();
 }
 

@@ -16,9 +16,10 @@ namespace okay {
 ///     Console::Execute("r.shadows");        // print it
 ///
 /// Built-in commands: help [name], list [prefix], set <name> <value>, get <name>,
-/// toggle <bool-cvar>, reset <name>, history, echo <text>.
+/// toggle <bool-cvar>, reset <name>, history, echo <text>, exec <file> (run a script file's lines).
 /// A line is split into words on spaces; "double quotes" keep spaces in one word. Blank
-/// lines and lines starting with # or // do nothing. Main thread only.
+/// lines and lines starting with # or // do nothing. Main thread only. A command may call Execute
+/// itself (up to 32 levels deep; deeper gives an "error:" result instead of overflowing the stack).
 class Console {
 public:
     /// A command receives its words (without the command name) and returns text to show

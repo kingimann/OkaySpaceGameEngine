@@ -267,6 +267,7 @@ inline const VsName kVsNames[] = {
     {"AssertThis",       VsNameKind::Action,      "Assert This", "Assert This", "", nullptr, 0, nullptr, 0},
     {"LogOnce",          VsNameKind::Action,      "Log Once", "Log Once", "", nullptr, 0, nullptr, 0},
     {"DrawDebugLine",    VsNameKind::Action,      "Draw Debug Line", "Draw Debug Line", "", nullptr, 0, nullptr, 0},
+#include "generated/library_names.inc"
 };
 
 struct VsExecLabels { const char* type; const char* const* pins; int count; };

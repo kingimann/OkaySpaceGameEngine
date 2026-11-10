@@ -234,6 +234,9 @@ inline VsPlace VsPlaceForNewNode(const char* type) {
 // Hand-written nodes (no '.' in the type). Unknown types come back with a null category.
 inline VsPlace VsPlaceForNode(const char* type) {
     if (!type || !type[0]) return {};
+    if (VsPre(type, "Lb")) {
+#include "generated/library_place.inc"
+    }
     if (VsPre(type, "Fn.")) return VsPlaceForBuiltin(type + 3);
     // Events that belong with the thing they listen to.
     if (VsPre(type, "OnKey")) return VsAt("Input", "Keys");

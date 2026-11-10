@@ -606,6 +606,7 @@ inline const char* VsNodeHelp(const char* type) {
         {"AssertThis", "Reports an error on this node when Condition is false, then continues. Message is the text of that error."},
         {"LogOnce", "Writes Value to the log the first time, and passes only that time. Reset arms it again."},
         {"DrawDebugLine", "Draws a line from From to To on this object while playing. Adds a line renderer if there is not one."},
+#include "generated/library_help.inc"
     };
     if (!type) return nullptr;
     auto it = help.find(type);

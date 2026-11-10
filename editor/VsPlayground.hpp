@@ -50,6 +50,8 @@ inline const VsPlaygroundDemo* VsPlaygroundDemos(int* count = nullptr) {
          "The cube steps on even counts, then the state becomes done."},
         {"smart", "Smart Logic", "smart.okayscene", "smart.okayvs", "Guide",
          "A cube slides, a guide walks toward a post, and a chooser moves because that score won."},
+        {"library", "Logic Library", "library.okayscene", "library.okayvs", "Marker",
+         "The white cube approaches the right. The rest of the logic library is in the graph."},
     };
     if (count) *count = (int)(sizeof(kDemos) / sizeof(kDemos[0]));
     return kDemos;
@@ -112,6 +114,7 @@ inline const char* VsPlaygroundForNode(const char* type) {
         {"AssertThis", "smart"}, {"LogOnce", "smart"}, {"DrawDebugLine", "smart"},
     };
     if (!type) return nullptr;
+    if (std::strncmp(type, "Lb", 2) == 0) return "library";
     for (const Row& r : kRows) if (std::strcmp(r.type, type) == 0) return r.demo;
     return nullptr;
 }

@@ -480,6 +480,7 @@ inline const std::vector<VsDef>& Registry() {
         {"AssertThis", "Assert This", CAT_ACTION, true, {""}, {"Condition","Message"}, {}, 0, nullptr},
         {"LogOnce", "Log Once", CAT_ACTION, true, {""}, {"Value","Reset"}, {}, 0, nullptr},
         {"DrawDebugLine", "Draw Debug Line", CAT_ACTION, true, {""}, {"From","To"}, {}, 0, nullptr},
+#include "generated/library_reg.inc"
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},

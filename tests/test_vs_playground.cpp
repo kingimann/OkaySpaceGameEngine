@@ -79,7 +79,7 @@ int main() {
         "movement.okayscene", "animation.okayscene", "interaction.okayscene", "combat.okayscene",
         "ai.okayscene", "spawning.okayscene", "gameflow.okayscene", "ui.okayscene",
         "camera.okayscene", "audio.okayscene", "input.okayscene", "random.okayscene", "math.okayscene",
-        "logic.okayscene", "smart.okayscene",
+        "logic.okayscene", "smart.okayscene", "library.okayscene",
     };
     vs::SetRuntimeErrorHook(&OnErr);
     Time::SetTimeScale(1);
@@ -112,7 +112,7 @@ int main() {
         CHECK(g_errs.empty());
         ++ran;
     }
-    CHECK(ran == 15);
+    CHECK(ran == 16);
     vs::SetRuntimeErrorHook(nullptr);
     Time::SetTimeScale(1);
     TEST_MAIN_RESULT();

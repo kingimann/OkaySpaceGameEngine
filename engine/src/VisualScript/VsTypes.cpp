@@ -560,6 +560,7 @@ const Row kRows[] = {
         {"AssertThis", true, "BT", ""},
         {"LogOnce", true, "AB", ""},
         {"DrawDebugLine", true, "VV", ""},
+#include "okay/VisualScript/library_rows.inc"
 };
 
 const std::unordered_map<std::string, NodeSignature>& Table() {

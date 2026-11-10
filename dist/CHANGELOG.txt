@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.858.0
+  Visual Script
+  - The add-node panel searches name, category, keywords and description,
+    including a short typo, and documents every registered node. Graphs stay
+    open in tabs, and New, Open, Play, Stop and quit ask before throwing away
+    an unsaved graph (#597).
+  Rendering
+  - The Game view, Play mode and the player draw every camera, lowest depth
+    first, each in its own rectangle. An LOD Group switches to a cheaper mesh
+    with distance, and an imported glTF model keeps its metallic-roughness
+    and emissive textures (#599).
+
 v2.857.0
   Properties
   - A key binding in the property registry can be any key, including Space,

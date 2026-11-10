@@ -66,6 +66,8 @@ int main() {
             CHECK(launcher.find("okayproj::Templates()") != std::string::npos);
             CHECK(launcher.find("kTpl[]") == std::string::npos);
             CHECK(launcher.find("More options") != std::string::npos);
+            CHECK(launcher.find("BeginPopupModal(\"New Project\"") != std::string::npos);
+            CHECK(launcher.find("+  New Project") != std::string::npos);
             CHECK(launcher.find("--project-version") != std::string::npos);
             CHECK(editor.find("--project-version") != std::string::npos);
             auto section = [](const std::string& text, const char* start) {
@@ -307,23 +309,29 @@ int main() {
         CHECK(Has(CheckProjectVersion(std::string(32, '1')), "too long"));
         CHECK(CheckProjectVersion(std::string(31, '1')).empty());
 
-        CreatePageState page;
-        page.moreOpen = true;
-        page.allTemplates = true;
-        page.fieldActive = true;
-        page.selected = 4;
-        CHECK(ApplyCreateKeys(true, false, true, page) == CreateKeyAction::None);   // another field owns Enter
-        CHECK(page.moreOpen);
-        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::Back);
-        CHECK(!page.moreOpen && page.allTemplates && page.fieldActive && page.selected == 4);
-        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::Back);
-        CHECK(!page.allTemplates && page.fieldActive);
-        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::Back);
-        CHECK(!page.fieldActive && page.selected == 4);
-        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::Back);
-        CHECK(page.selected == 0);
-        CHECK(ApplyCreateKeys(false, true, false, page) == CreateKeyAction::None);
-        CHECK(ApplyCreateKeys(true, false, false, page) == CreateKeyAction::Create);
+        NewProjectWizard w;
+        CHECK(WizardOpen(w) == WizardMove::Opened && w.open && w.step == 0 && !w.creating);
+        CHECK(WizardCanAdvance(w));                                          // a template is already chosen
+        CHECK(WizardNext(w) == WizardMove::Next && w.step == 1);
+        w.detailsOk = false;
+        CHECK(!WizardCanAdvance(w));
+        CHECK(WizardNext(w) == WizardMove::None && w.step == 1);             // invalid details block Next
+        CHECK(ApplyWizardInput(true, false, false, w) == WizardMove::None);
+        w.detailsOk = true;
+        CHECK(WizardNext(w) == WizardMove::Next && w.step == 2);
+        CHECK(WizardNext(w) == WizardMove::None && w.step == 2);             // review has Create, not another Next
+        CHECK(ApplyWizardInput(true, false, true, w) == WizardMove::None);   // another field owns Enter
+        CHECK(!w.creating);
+        w.moreOpen = true;
+        CHECK(ApplyWizardInput(false, true, false, w) == WizardMove::Back);
+        CHECK(!w.moreOpen && w.open && w.step == 2);
+        CHECK(ApplyWizardInput(true, false, false, w) == WizardMove::Create && w.creating);
+        CHECK(ApplyWizardInput(false, true, false, w) == WizardMove::None);  // Esc does not cancel mid-create
+        w.creating = false;
+        CHECK(WizardBack(w) == WizardMove::Back && w.step == 1);
+        CHECK(WizardBack(w) == WizardMove::Back && w.step == 0);
+        CHECK(WizardBack(w) == WizardMove::None && w.step == 0);
+        CHECK(ApplyWizardInput(false, true, false, w) == WizardMove::Closed && !w.open);
     }
 
     TEST_MAIN_RESULT();

@@ -423,28 +423,74 @@ inline std::string CheckProjectVersion(const std::string& raw) {
     return "";
 }
 
-/// What Enter and Esc do on the Create page. Esc walks back one step: More options, then
-/// All templates, then the name field, then the selected template. Enter creates, unless the
-/// key belongs to some other text field on the page.
-enum class CreateKeyAction { None, Create, Back };
+/// The New Project popup. It is a three-step wizard (template, details, review). Creating is
+/// never one click from the home: Next stays disabled until the current step is valid, and
+/// Create exists only on the review step.
+enum class WizardMove { None, Opened, Closed, Next, Back, Create };
 
-struct CreatePageState {
-    bool moreOpen = false;
+struct NewProjectWizard {
+    bool open = false;
+    int step = 0;             ///< 0 template, 1 details, 2 review
+    bool creating = false;
     bool allTemplates = false;
-    bool fieldActive = false;
+    bool moreOpen = false;
     int selected = 0;
+    bool detailsOk = false;   ///< name, location and version all passed their checks
 };
 
-inline CreateKeyAction ApplyCreateKeys(bool enter, bool escape, bool typingElsewhere, CreatePageState& page) {
+inline bool WizardCanAdvance(const NewProjectWizard& w) {
+    if (!w.open || w.creating) return false;
+    if (w.step <= 0) return w.selected >= 0;
+    if (w.step == 1) return w.detailsOk;
+    return w.detailsOk && w.selected >= 0;
+}
+
+inline WizardMove WizardOpen(NewProjectWizard& w) {
+    w.open = true;
+    w.step = 0;
+    w.creating = false;
+    w.moreOpen = false;
+    return WizardMove::Opened;
+}
+
+inline WizardMove WizardClose(NewProjectWizard& w) {
+    if (!w.open || w.creating) return WizardMove::None;
+    w.open = false;
+    w.moreOpen = false;
+    return WizardMove::Closed;
+}
+
+inline WizardMove WizardNext(NewProjectWizard& w) {
+    if (!WizardCanAdvance(w) || w.step >= 2) return WizardMove::None;
+    ++w.step;
+    w.moreOpen = false;
+    return WizardMove::Next;
+}
+
+inline WizardMove WizardBack(NewProjectWizard& w) {
+    if (!w.open || w.creating || w.step <= 0) return WizardMove::None;
+    --w.step;
+    return WizardMove::Back;
+}
+
+inline WizardMove WizardBeginCreate(NewProjectWizard& w) {
+    if (w.step != 2 || !WizardCanAdvance(w)) return WizardMove::None;
+    w.creating = true;
+    return WizardMove::Create;
+}
+
+/// Enter moves forward when the step is valid (and starts creation on the review step).
+/// Esc cancels the popup. If More options is open, Esc only closes that section.
+/// Keys that belong to another text field are ignored.
+inline WizardMove ApplyWizardInput(bool enter, bool escape, bool typingElsewhere, NewProjectWizard& w) {
+    if (!w.open || w.creating) return WizardMove::None;
     if (escape) {
-        if (page.moreOpen) { page.moreOpen = false; return CreateKeyAction::Back; }
-        if (page.allTemplates) { page.allTemplates = false; return CreateKeyAction::Back; }
-        if (page.fieldActive) { page.fieldActive = false; return CreateKeyAction::Back; }
-        if (page.selected != 0) { page.selected = 0; return CreateKeyAction::Back; }
-        return CreateKeyAction::None;
+        if (w.moreOpen) { w.moreOpen = false; return WizardMove::Back; }
+        return WizardClose(w);
     }
-    if (enter && !typingElsewhere) return CreateKeyAction::Create;
-    return CreateKeyAction::None;
+    if (!enter || typingElsewhere) return WizardMove::None;
+    if (w.step < 2) return WizardNext(w);
+    return WizardBeginCreate(w);
 }
 
 }  // namespace okayproj

@@ -18021,55 +18021,49 @@ int main(int argc, char** argv) {
                 s_projScanned = "\x01";
                 if (!editor.empty()) { LaunchEditor(editor, "", "", sc); Toast("Opening " + root.filename().string(), 1); }
             };
-            // ---- Editor missing: one card, then the same create form ----
+            // ---- Home: two actions. Making a project happens in the popup, never from one click here. ----
             if (editor.empty()) {
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, crCardBg);
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 18));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 16.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 16));
                 ImGui::BeginChild("##crhero", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                                   ImGuiWindowFlags_NoScrollbar);
-                ImGui::SetWindowFontScale(1.2f);
                 ImGui::TextUnformatted("Get the OkaySpace editor");
-                ImGui::SetWindowFontScale(1.0f);
                 ImGui::Dummy(ImVec2(0, 4));
                 ImGui::TextDisabled("The editor isn't next to the launcher yet. It's a free download.");
-                ImGui::Dummy(ImVec2(0, 10));
+                ImGui::Dummy(ImVec2(0, 8));
                 const UpState ust = GetState();
                 const bool ubusy = ust == Up_Checking || ust == Up_Downloading;
                 ImGui::BeginDisabled(ubusy);
-                if (PrimaryButton(ubusy ? "Downloading\xE2\x80\xA6" : "Get the editor", ImVec2(200, 44))) { g_upRepairMissing = true; StartUpdateCheck(true); }
+                if (PrimaryButton(ubusy ? "Downloading\xE2\x80\xA6" : "Get the editor", ImVec2(200, 42))) { g_upRepairMissing = true; StartUpdateCheck(true); }
                 ImGui::EndDisabled();
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor();
-                ImGui::Dummy(ImVec2(0, 18));
+                ImGui::Dummy(ImVec2(0, 16));
             }
-
-            // ---- New project: a few large cards, then the name, then Create ----
+            static okayproj::NewProjectWizard s_wiz;
             static int s_tpl = 0;
-            static bool s_allTpl = false;
-            static bool s_more = false;
             static bool s_git = false;
-            static int s_gpu = 0;                 // 0 = GPU, 1 = software
+            static int s_gpu = 0;
             static char s_ver[32] = "1.0.0";
             static char s_tplQ[64] = "";
-            static bool s_projSearchActive = false;
             static std::string s_planKey;
             static Uint32 s_planAt = 0;
+            static Uint32 s_createAt = 0;
             static okayproj::Plan s_plan;
+            static std::map<std::string, Uint32> s_openedAt;
             const auto& s_tpls = okayproj::Templates();
             if (s_tpl < 0 || s_tpl >= (int)s_tpls.size()) s_tpl = 0;
-            {
+            auto refreshPlan = [&]() {
                 const std::string key = std::string(npName) + "\n" + npLoc;
                 const Uint32 now = SDL_GetTicks();
-                if (key != s_planKey || now - s_planAt > 1500) {
+                if (key != s_planKey || now - s_planAt > 1200) {
                     s_plan = okayproj::PlanProject(npLoc[0] ? npLoc : ".", npName);
                     s_planKey = key;
                     s_planAt = now;
                 }
-            }
-            const std::string verProblem = okayproj::CheckProjectVersion(s_ver);
-            const bool canCreate = s_plan.ok() && verProblem.empty() && !editor.empty();
+            };
             auto doCreate = [&]() {
                 s_plan = okayproj::PlanProject(npLoc[0] ? npLoc : ".", npName);
                 s_planKey = std::string(npName) + "\n" + npLoc;
@@ -18082,169 +18076,27 @@ int main(int argc, char** argv) {
                                                        editor, s_ver, s_gpu == 0 ? 1 : 0, s_git);
                 if (!root.empty())
                     Toast("Created " + fs::path(root).filename().string() + " (" + std::string(s_tpls[(std::size_t)s_tpl].title) + ") \xE2\x80\x94 opening the editor", 1);
-                s_planAt = 0;   // the new folder changes what the next name resolves to
             };
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 10));
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 10));
-            ImGui::SetWindowFontScale(1.15f);
-            ImGui::TextUnformatted("Template");
-            ImGui::SetWindowFontScale(1.0f);
-            bool nameEnter = false, locEnter = false, verEnter = false;
-            bool nameActive = false, locActive = false, verActive = false;
-            bool tplSearchActive = false;
-            {
-                std::string needle;
-                for (const char* c = s_tplQ; *c; ++c) needle += (char)std::tolower((unsigned char)*c);
-                std::vector<int> shownIds;
-                for (int i = 0; i < (int)s_tpls.size(); ++i) {
-                    if (!s_allTpl && !okayproj::IsStarterTemplate(s_tpls[(std::size_t)i])) continue;
-                    if (s_allTpl && !needle.empty()) {
-                        std::string hay = std::string(s_tpls[(std::size_t)i].title) + " " + s_tpls[(std::size_t)i].blurb;
-                        for (char& ch : hay) ch = (char)std::tolower((unsigned char)ch);
-                        if (hay.find(needle) == std::string::npos) continue;
-                    }
-                    shownIds.push_back(i);
-                }
-                const float availW = ImGui::GetContentRegionAvail().x, gap = 16.0f;
-                int cols = availW >= 1040.0f ? 3 : availW >= 560.0f ? 2 : 1;
-                if (!s_allTpl) cols = std::min(cols, std::max(1, (int)shownIds.size()));
-                const float cardW = std::max(160.0f, (availW - gap * (cols - 1)) / cols);
-                const float cardH = 136.0f;
-                const ImVec2 g0 = ImGui::GetCursorScreenPos();
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                for (int n = 0; n < (int)shownIds.size(); ++n) {
-                    const int i = shownIds[(std::size_t)n];
-                    const ImVec2 cp(g0.x + (n % cols) * (cardW + gap), g0.y + (n / cols) * (cardH + gap));
-                    ImGui::PushID(i);
-                    ImGui::SetCursorScreenPos(cp);
-                    const bool clicked = ImGui::InvisibleButton("##tplcard", ImVec2(cardW, cardH));
-                    const bool hov = ImGui::IsItemHovered();
-                    const bool on = s_tpl == i;
-                    dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(crCardBg), 14.0f);
-                    if (hov || on)
-                        dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, on ? 16 : 8), 14.0f);
-                    dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH),
-                                ImGui::GetColorU32(on || hov ? kAccent : ImVec4(1, 1, 1, 0.06f)), 14.0f, 0, on ? 2.0f : 1.0f);
-                    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                    const ImVec2 tp(cp.x + 16, cp.y + (cardH - 72) * 0.5f);
-                    dl->AddRectFilled(tp, ImVec2(tp.x + 72, tp.y + 72), IM_COL32(255, 255, 255, 14), 12.0f);
-                    TemplateGlyph(dl, s_tpls[(std::size_t)i].title, ImVec2(tp.x + 8, tp.y + 8), 56.0f,
-                                  ImGui::GetColorU32(ImVec4(0.90f, 0.93f, 0.98f, 1.0f)));
-                    const float tx = tp.x + 72 + 14, tr = cp.x + cardW - 16;
-                    const float titleSz = ImGui::GetFontSize() * 1.12f;
-                    dl->AddText(ImGui::GetFont(), titleSz, ImVec2(tx, cp.y + 26), crText,
-                                FitText(s_tpls[(std::size_t)i].title, tr - tx).c_str());
-                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, cp.y + 26 + titleSz + 6), crDim,
-                                s_tpls[(std::size_t)i].blurb, nullptr, tr - tx);
-                    if (clicked) s_tpl = i;
-                    ImGui::PopID();
-                }
-                if (!shownIds.empty()) {
-                    const int rows = ((int)shownIds.size() + cols - 1) / cols;
-                    ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + rows * (cardH + gap) - gap));
-                    ImGui::Dummy(ImVec2(availW, 0));
-                } else {
-                    ImGui::TextDisabled("No templates match \"%s\".", s_tplQ);
-                }
-            }
-            if (ImGui::Button(s_allTpl ? "Fewer templates" : "All templates")) { s_allTpl = !s_allTpl; if (!s_allTpl) s_tplQ[0] = '\0'; }
-            if (s_allTpl) {
-                if (ImGui::GetContentRegionAvail().x >= 200) ImGui::SameLine(0, 12);
-                ImGui::SetNextItemWidth(std::min(280.0f, ImGui::GetContentRegionAvail().x));
-                ImGui::InputTextWithHint("##tplq", "Search templates", s_tplQ, sizeof(s_tplQ));
-                tplSearchActive = ImGui::IsItemActive();
-            }
-            ImGui::Dummy(ImVec2(0, 8));
-            ImGui::TextUnformatted("Project name");
-            ImGui::SetNextItemWidth(-1);
-            nameEnter = ImGui::InputText("##npname", npName, sizeof(npName), ImGuiInputTextFlags_EnterReturnsTrue);
-            nameActive = ImGui::IsItemActive();
-            if (!s_plan.nameProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.nameProblem.c_str());
-            else if (s_plan.renamed) ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1), "That folder is taken, so this one will be called %s.", s_plan.folder.c_str());
-            ImGui::Dummy(ImVec2(0, 2));
-            ImGui::TextUnformatted("Location");
             {
                 const float avail = ImGui::GetContentRegionAvail().x;
-                const bool stack = avail < 460.0f;
-                ImGui::SetNextItemWidth(stack ? -1.0f : std::max(80.0f, avail - 130.0f));
-                locEnter = ImGui::InputText("##nploc", npLoc, sizeof(npLoc), ImGuiInputTextFlags_EnterReturnsTrue);
-                locActive = ImGui::IsItemActive();
-                if (ImGui::IsItemDeactivatedAfterEdit()) { g_projectsDir = npLoc; SavePrefs(); s_planAt = 0; }
-                if (!stack) ImGui::SameLine(0, 12);
-                if (ImGui::Button("Browse", ImVec2(stack ? -1 : 110, 0))) {
-                    if (const char* picked = tinyfd_selectFolderDialog("Where new projects go", npLoc)) {
-                        if (*picked) { std::snprintf(npLoc, sizeof(npLoc), "%s", picked); g_projectsDir = npLoc; SavePrefs(); s_planAt = 0; }
-                    }
-                }
-            }
-            if (!s_plan.locationProblem.empty()) {
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.locationProblem.c_str());
-                ImGui::PopTextWrapPos();
-            } else if (s_plan.nameProblem.empty() && !s_plan.pathProblem.empty()) {
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.pathProblem.c_str());
-                ImGui::PopTextWrapPos();
-            } else if (s_plan.ok()) {
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextDisabled("%s", FitText(s_plan.root.string(), ImGui::GetContentRegionAvail().x).c_str());
-                ImGui::PopTextWrapPos();
+                const bool stack = avail < 520.0f;
+                const float gap = 14.0f;
+                const float bw = stack ? avail : (avail - gap) * 0.5f;
+                const float bh = 58.0f;
+                if (PrimaryButton("+  New Project", ImVec2(bw, bh))) okayproj::WizardOpen(s_wiz);
+                if (!stack) ImGui::SameLine(0, gap);
+                if (ImGui::Button("Open Project", ImVec2(bw, bh))) openFolder();
             }
             ImGui::Dummy(ImVec2(0, 6));
-            ImGui::BeginDisabled(!canCreate);
-            bool created = false;
-            if (PrimaryButton("Create project", ImVec2(std::min(280.0f, ImGui::GetContentRegionAvail().x), 48))) { doCreate(); created = true; }
-            ImGui::EndDisabled();
-            if (!canCreate && editor.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Install the editor first");
-            ImGui::Dummy(ImVec2(0, 4));
-            ImGui::SetNextItemOpen(s_more, ImGuiCond_Always);
-            s_more = ImGui::CollapsingHeader("More options");
-            if (s_more) {
-                ImGui::Dummy(ImVec2(0, 4));
-                ImGui::TextUnformatted("Version");
-                ImGui::SetNextItemWidth(std::min(220.0f, ImGui::GetContentRegionAvail().x));
-                verEnter = ImGui::InputText("##npver", s_ver, sizeof(s_ver), ImGuiInputTextFlags_EnterReturnsTrue);
-                verActive = ImGui::IsItemActive();
-                if (!verProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", verProblem.c_str());
-                ImGui::Dummy(ImVec2(0, 4));
-                ImGui::TextUnformatted("Renderer");
-                ImGui::SetNextItemWidth(std::min(280.0f, ImGui::GetContentRegionAvail().x));
-                ImGui::Combo("##npgpu", &s_gpu, "GPU (recommended)\0Software\0");
-                ImGui::Dummy(ImVec2(0, 4));
-                ImGui::BeginDisabled(!GitAvailable());
-                ImGui::Checkbox("Initialize a Git repository", &s_git);
-                ImGui::EndDisabled();
-                if (!GitAvailable() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("Install Git to use this");
-                ImGui::Dummy(ImVec2(0, 6));
-                if (ImGui::Button("Open a project folder\xE2\x80\xA6")) openFolder();
-            }
-            ImGui::PopStyleVar(2);
-            {
-                okayproj::CreatePageState keys;
-                keys.moreOpen = s_more;
-                keys.allTemplates = s_allTpl;
-                keys.fieldActive = nameActive || locActive || verActive;
-                keys.selected = s_tpl;
-                const bool typingElsewhere = (s_projSearchActive || tplSearchActive) && !keys.fieldActive;
-                const bool enter = nameEnter || locEnter || verEnter ||
-                    ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
-                const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape);
-                if (!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup)) {
-                    const okayproj::CreateKeyAction act = okayproj::ApplyCreateKeys(enter, esc, typingElsewhere, keys);
-                    s_more = keys.moreOpen;
-                    s_allTpl = keys.allTemplates;
-                    s_tpl = keys.selected;
-                    if (act == okayproj::CreateKeyAction::Back && !keys.fieldActive) ImGui::ClearActiveID();
-                    if (act == okayproj::CreateKeyAction::Create && !created) doCreate();
-                }
-            }
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("New Project asks for a template and a name before anything is created.");
+            ImGui::PopTextWrapPos();
 
             // ---- Your projects ----
             ImGui::Dummy(ImVec2(0, 22));
             static char projQ[64] = "";
             static int s_projSort = 0;   // 0 recent, 1 name
+            static bool s_projSearchActive = false;
             {
                 const float rowStart = ImGui::GetCursorPosX();
                 auto fits = [&](float need) {
@@ -18254,7 +18106,7 @@ int main(int argc, char** argv) {
                 };
                 ImGui::SetWindowFontScale(1.15f);
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted("Your projects");
+                ImGui::TextUnformatted("Recent projects");
                 ImGui::SetWindowFontScale(1.0f);
                 if (!s_projects.empty()) {
                     ImGui::SameLine(0, 10);
@@ -18342,8 +18194,11 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
                 ImGui::BeginChild("##noproj", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+                ImGui::SetWindowFontScale(1.15f);
                 ImGui::TextUnformatted("No projects yet");
-                ImGui::TextDisabled("A project you create shows up here.");
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::TextDisabled("When you create or open a project, it shows up here.");
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor();
@@ -18351,10 +18206,11 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("No projects match \"%s\".", projQ);
             }
             {
-                const float availW = ImGui::GetContentRegionAvail().x, gap = 10.0f, cardH = 76.0f;
-                int cols = (int)((availW + gap) / 300.0f);
-                cols = std::clamp(cols, 1, 3);
+                const float availW = ImGui::GetContentRegionAvail().x, gap = 14.0f;
+                int cols = availW >= 760.0f ? 2 : 1;
                 const float cardW = (availW - gap * (cols - 1)) / cols;
+                const bool stackBtns = cardW < 520.0f;
+                const float cardH = stackBtns ? 148.0f : 112.0f;
                 int idx = 0;
                 for (const CrProj* prp : projList) {
                     const CrProj& pr = *prp;
@@ -18363,46 +18219,38 @@ int main(int argc, char** argv) {
                     ImGui::PushID(pr.scene.c_str());
                     const bool isNew = pr.name == s_highlight;
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, isNew ? ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.16f) : crCardBg);
-                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
                     ImGui::BeginChild("##proj", ImVec2(cardW, cardH), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-                    const bool hov = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows);
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     const ImVec2 wp = ImGui::GetWindowPos();
-                    if (hov) {
-                        dl->AddRectFilled(wp, ImVec2(wp.x + cardW, wp.y + cardH), IM_COL32(255, 255, 255, 10), 10.0f);
-                        dl->AddRect(wp, ImVec2(wp.x + cardW, wp.y + cardH), ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.55f)), 10.0f, 0, 1.2f);
+                    ImGui::SetCursorPos(ImVec2(16, 18));
+                    DrawGameIcon(pr.scene, pr.name, 64.0f);
+                    fs::path root = fs::path(pr.scene).parent_path();
+                    if (root.filename() == "Assets") root = root.parent_path();
+                    std::string when;
+                    if (s_openedAt.count(pr.scene)) when = "Opened just now";
+                    else if (pr.missing) when = "Folder not found";
+                    else if (!pr.ready) when = "Setting up\xE2\x80\xA6";
+                    else {
+                        const std::string ago = ModifiedAgo(fs::path(pr.scene));
+                        when = ago.empty() ? "Not opened yet" : "Last changed " + ago;
                     }
-                    ImGui::SetCursorPos(ImVec2(14, (cardH - 44) * 0.5f));
-                    IconTile(pr.name, 44.0f);
-                    const float btnW = hov ? 168.0f : 0.0f;   // Play + Open + More appear on hover
-                    const float tx = wp.x + 14 + 44 + 12, tmax = wp.x + cardW - 14 - btnW;
-                    const float lh = ImGui::GetTextLineHeight();
-                    dl->AddText(ImVec2(tx, wp.y + cardH * 0.5f - lh - 1), crText, FitText(pr.name, tmax - tx).c_str());
-                    std::string sub;
-                    if (pr.missing) sub = "Folder not found";
-                    else if (!pr.ready) sub = "Setting up\xE2\x80\xA6";
-                    else { std::string ago = ModifiedAgo(fs::path(pr.scene)); sub = ago.empty() ? std::string("Project") : "Edited " + ago; }
-                    if (pr.extra) sub += "  \xC2\xB7  elsewhere";
-                    dl->AddText(ImVec2(tx, wp.y + cardH * 0.5f + 2), crDim, FitText(sub, tmax - tx).c_str());
-                    if (hov) {
-                        ImGui::SetCursorPos(ImVec2(cardW - 14 - 168, (cardH - 30) * 0.5f));
-                        ImGui::BeginDisabled(player.empty() || !pr.ready);
-                        if (ImGui::Button("Play", ImVec2(60, 30))) playProject(pr);
-                        ImGui::EndDisabled();
-                        ImGui::SameLine(0, 6);
-                        ImGui::BeginDisabled(editor.empty() || !pr.ready);
-                        if (PrimaryButton("Open", ImVec2(66, 30))) openProject(pr);
-                        ImGui::EndDisabled();
-                        ImGui::SameLine(0, 6);
-                        if (RoundIconButton("##projmore", kRibMore, 30.0f, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 34), crText, "More"))
-                            ImGui::OpenPopup("projctx");
-                        if (!ImGui::IsAnyItemHovered()) {
-                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openProject(pr);
-                        }
-                    }
+                    const float tx = wp.x + 16 + 64 + 14;
+                    const float textRight = wp.x + cardW - 16 - (stackBtns ? 0.0f : 250.0f);
+                    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.08f, ImVec2(tx, wp.y + 16), crText, FitText(pr.name, textRight - tx).c_str());
+                    dl->AddText(ImVec2(tx, wp.y + 40), crDim, FitText(root.string(), textRight - tx).c_str());
+                    dl->AddText(ImVec2(tx, wp.y + 62), crDim, FitText(when, textRight - tx).c_str());
+                    if (stackBtns) ImGui::SetCursorPos(ImVec2(16, cardH - 40));
+                    else ImGui::SetCursorPos(ImVec2(cardW - 16 - 246, (cardH - 34) * 0.5f));
+                    ImGui::BeginDisabled(editor.empty() || !pr.ready);
+                    if (PrimaryButton("Open", ImVec2(78, 34))) { s_openedAt[pr.scene] = SDL_GetTicks(); openProject(pr); }
+                    ImGui::EndDisabled();
+                    ImGui::SameLine(0, 8);
+                    if (ImGui::Button("Remove", ImVec2(88, 34))) { forgetProject(pr.scene, pr.extra); Toast("Removed " + pr.name + " from the list", 1); }
+                    ImGui::SameLine(0, 8);
+                    if (ImGui::Button("More", ImVec2(64, 34))) ImGui::OpenPopup("projctx");
                     if (ImGui::BeginPopupContextWindow("projctx", ImGuiPopupFlags_MouseButtonRight)) {
-                        if (ImGui::MenuItem("Open in editor", nullptr, false, !editor.empty() && pr.ready)) openProject(pr);
+                        if (ImGui::MenuItem("Open in editor", nullptr, false, !editor.empty() && pr.ready)) { s_openedAt[pr.scene] = SDL_GetTicks(); openProject(pr); }
                         if (ImGui::MenuItem("Play (no export)", nullptr, false, !player.empty() && pr.ready)) playProject(pr);
                         ImGui::Separator();
                         if (ImGui::MenuItem("Show in Explorer", nullptr, false, !pr.missing))
@@ -18445,6 +18293,210 @@ int main(int argc, char** argv) {
                     ImGui::PopID();
                 }
             }
+            // ---- New Project popup: three steps, never a one-click create ----
+            {
+                refreshPlan();
+                const std::string verProblem = okayproj::CheckProjectVersion(s_ver);
+                s_wiz.selected = s_tpl;
+                s_wiz.detailsOk = s_plan.ok() && verProblem.empty();
+                if (s_wiz.open && !ImGui::IsPopupOpen("New Project")) ImGui::OpenPopup("New Project");
+                const ImVec2 vp = ImGui::GetMainViewport()->Size;
+                const float mw = std::clamp(vp.x - 48.0f, 340.0f, 820.0f);
+                const float mh = std::clamp(vp.y - 48.0f, 420.0f, 680.0f);
+                ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+                ImGui::SetNextWindowSize(ImVec2(mw, mh), ImGuiCond_Always);
+                ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.02f, 0.03f, 0.06f, 0.66f));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 18));
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 9));
+                bool popOpen = s_wiz.open;
+                if (ImGui::BeginPopupModal("New Project", &popOpen, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+                    const char* stepName[] = {"Template", "Details", "Review"};
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    ImGui::SetWindowFontScale(1.2f);
+                    ImGui::TextUnformatted("New Project");
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("  %s", stepName[std::clamp(s_wiz.step, 0, 2)]);
+                    ImGui::Dummy(ImVec2(0, 8));
+                    const ImVec2 dots = ImGui::GetCursorScreenPos();
+                    for (int i = 0; i < 3; ++i) {
+                        const float x = dots.x + i * 118.0f;
+                        const bool on = s_wiz.step == i, done = s_wiz.step > i;
+                        const ImU32 col = ImGui::GetColorU32(on || done ? kAccent : ImVec4(1, 1, 1, 0.18f));
+                        dl->AddCircleFilled(ImVec2(x + 8, dots.y + 8), 8.0f, col, 16);
+                        dl->AddText(ImVec2(x + 22, dots.y), on ? crText : crDim, stepName[i]);
+                        if (i < 2) dl->AddLine(ImVec2(x + 92, dots.y + 8), ImVec2(x + 112, dots.y + 8), col, 2.0f);
+                    }
+                    ImGui::Dummy(ImVec2(0, 26));
+                    const float footerH = 78.0f;
+                    const float bodyH = std::max(80.0f, ImGui::GetContentRegionAvail().y - footerH);
+                    if (s_wiz.creating) {
+                        ImGui::Dummy(ImVec2(0, bodyH * 0.28f));
+                        ImGui::SetWindowFontScale(1.25f);
+                        ImGui::TextUnformatted("Creating your project");
+                        ImGui::SetWindowFontScale(1.0f);
+                        ImGui::Dummy(ImVec2(0, 8));
+                        ImGui::TextDisabled("The editor opens when the folder is ready.");
+                        const float frac = std::min(1.0f, (SDL_GetTicks() - s_createAt) / 400.0f);
+                        ImGui::Dummy(ImVec2(0, 14));
+                        ImGui::ProgressBar(frac, ImVec2(-1, 8), "");
+                        if (SDL_GetTicks() - s_createAt >= 400) {
+                            doCreate();
+                            s_wiz.creating = false;
+                            s_wiz.open = false;
+                            ImGui::CloseCurrentPopup();
+                        }
+                    } else if (s_wiz.step <= 0) {
+                        ImGui::BeginChild("##wiztpl", ImVec2(0, bodyH), false);
+                        if (ImGui::Button(s_wiz.allTemplates ? "Fewer templates" : "All templates")) {
+                            s_wiz.allTemplates = !s_wiz.allTemplates;
+                            if (!s_wiz.allTemplates) s_tplQ[0] = '\0';
+                        }
+                        bool searchActive = false;
+                        if (s_wiz.allTemplates) {
+                            if (ImGui::GetContentRegionAvail().x >= 220) ImGui::SameLine(0, 12);
+                            ImGui::SetNextItemWidth(std::min(260.0f, ImGui::GetContentRegionAvail().x));
+                            ImGui::InputTextWithHint("##wizq", "Search templates", s_tplQ, sizeof(s_tplQ));
+                            searchActive = ImGui::IsItemActive();
+                        }
+                        ImGui::Dummy(ImVec2(0, 8));
+                        std::string needle;
+                        for (const char* c = s_tplQ; *c; ++c) needle += (char)std::tolower((unsigned char)*c);
+                        std::vector<int> ids;
+                        for (int i = 0; i < (int)s_tpls.size(); ++i) {
+                            if (!s_wiz.allTemplates && !okayproj::IsStarterTemplate(s_tpls[(std::size_t)i])) continue;
+                            if (s_wiz.allTemplates && !needle.empty()) {
+                                std::string hay = std::string(s_tpls[(std::size_t)i].title) + " " + s_tpls[(std::size_t)i].blurb;
+                                for (char& ch : hay) ch = (char)std::tolower((unsigned char)ch);
+                                if (hay.find(needle) == std::string::npos) continue;
+                            }
+                            ids.push_back(i);
+                        }
+                        const float gap = 12.0f, availW = ImGui::GetContentRegionAvail().x;
+                        const int cols = availW >= 640.0f ? 2 : 1;
+                        const float cardW = (availW - gap * (cols - 1)) / cols;
+                        const float cardH = 118.0f;
+                        const ImVec2 g0 = ImGui::GetCursorScreenPos();
+                        for (int n = 0; n < (int)ids.size(); ++n) {
+                            const int i = ids[(std::size_t)n];
+                            const ImVec2 cp(g0.x + (n % cols) * (cardW + gap), g0.y + (n / cols) * (cardH + gap));
+                            ImGui::PushID(i + 1000);
+                            ImGui::SetCursorScreenPos(cp);
+                            if (ImGui::InvisibleButton("##wtpl", ImVec2(cardW, cardH))) s_tpl = i;
+                            const bool on = s_tpl == i, hov = ImGui::IsItemHovered();
+                            dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(crCardBg), 14.0f);
+                            if (on || hov) dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, on ? 18 : 8), 14.0f);
+                            dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(on ? kAccent : ImVec4(1, 1, 1, 0.08f)), 14.0f, 0, on ? 2.2f : 1.0f);
+                            const ImVec2 tp(cp.x + 14, cp.y + (cardH - 72) * 0.5f);
+                            dl->AddRectFilled(tp, ImVec2(tp.x + 72, tp.y + 72), IM_COL32(255, 255, 255, 16), 12.0f);
+                            TemplateGlyph(dl, s_tpls[(std::size_t)i].title, ImVec2(tp.x + 8, tp.y + 8), 56.0f, ImGui::GetColorU32(ImVec4(0.92f, 0.94f, 0.98f, 1)));
+                            const float tx = tp.x + 86, tr = cp.x + cardW - 14;
+                            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 1.12f, ImVec2(tx, cp.y + 28), crText, FitText(s_tpls[(std::size_t)i].title, tr - tx).c_str());
+                            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, cp.y + 52), crDim, s_tpls[(std::size_t)i].blurb, nullptr, tr - tx);
+                            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            ImGui::PopID();
+                        }
+                        if (!ids.empty()) {
+                            const int rows = ((int)ids.size() + cols - 1) / cols;
+                            ImGui::SetCursorScreenPos(ImVec2(g0.x, g0.y + rows * (cardH + gap)));
+                            ImGui::Dummy(ImVec2(1, 1));
+                        } else ImGui::TextDisabled("No templates match \"%s\".", s_tplQ);
+                        ImGui::EndChild();
+                        (void)searchActive;
+                    } else if (s_wiz.step == 1) {
+                        ImGui::BeginChild("##wizdet", ImVec2(0, bodyH), false);
+                        ImGui::TextUnformatted("Project name");
+                        ImGui::SetNextItemWidth(-1);
+                        const bool nameEnter = ImGui::InputText("##wizname", npName, sizeof(npName), ImGuiInputTextFlags_EnterReturnsTrue);
+                        if (!s_plan.nameProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.nameProblem.c_str());
+                        else if (s_plan.renamed) ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1), "That folder is taken, so this one will be called %s.", s_plan.folder.c_str());
+                        ImGui::Dummy(ImVec2(0, 6));
+                        ImGui::TextUnformatted("Location");
+                        const bool stack = ImGui::GetContentRegionAvail().x < 460.0f;
+                        ImGui::SetNextItemWidth(stack ? -1.0f : ImGui::GetContentRegionAvail().x - 120.0f);
+                        const bool locEnter = ImGui::InputText("##wizloc", npLoc, sizeof(npLoc), ImGuiInputTextFlags_EnterReturnsTrue);
+                        if (ImGui::IsItemDeactivatedAfterEdit()) { g_projectsDir = npLoc; SavePrefs(); s_planAt = 0; }
+                        if (!stack) ImGui::SameLine(0, 10);
+                        if (ImGui::Button("Browse", ImVec2(stack ? -1 : 100, 0))) {
+                            if (const char* picked = tinyfd_selectFolderDialog("Where new projects go", npLoc))
+                                if (*picked) { std::snprintf(npLoc, sizeof(npLoc), "%s", picked); g_projectsDir = npLoc; SavePrefs(); s_planAt = 0; }
+                        }
+                        if (!s_plan.locationProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.locationProblem.c_str());
+                        else if (!s_plan.pathProblem.empty() && s_plan.nameProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.pathProblem.c_str());
+                        ImGui::Dummy(ImVec2(0, 8));
+                        ImGui::SetNextItemOpen(s_wiz.moreOpen, ImGuiCond_Always);
+                        s_wiz.moreOpen = ImGui::CollapsingHeader("More options");
+                        bool verEnter = false;
+                        if (s_wiz.moreOpen) {
+                            ImGui::TextUnformatted("Version");
+                            ImGui::SetNextItemWidth(std::min(220.0f, ImGui::GetContentRegionAvail().x));
+                            verEnter = ImGui::InputText("##wizver", s_ver, sizeof(s_ver), ImGuiInputTextFlags_EnterReturnsTrue);
+                            if (!verProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", verProblem.c_str());
+                            ImGui::TextUnformatted("Renderer");
+                            ImGui::SetNextItemWidth(std::min(280.0f, ImGui::GetContentRegionAvail().x));
+                            ImGui::Combo("##wizgpu", &s_gpu, "GPU\0Software\0");
+                            ImGui::BeginDisabled(!GitAvailable());
+                            ImGui::Checkbox("Initialize a Git repository", &s_git);
+                            ImGui::EndDisabled();
+                            if (!GitAvailable() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                                ImGui::SetTooltip("Install Git to use this");
+                        }
+                        ImGui::EndChild();
+                        (void)nameEnter; (void)locEnter; (void)verEnter;
+                    } else {
+                        ImGui::BeginChild("##wizrev", ImVec2(0, bodyH), false);
+                        ImGui::TextDisabled("TEMPLATE");
+                        ImGui::TextUnformatted(s_tpls[(std::size_t)s_tpl].title);
+                        ImGui::TextDisabled("%s", s_tpls[(std::size_t)s_tpl].blurb);
+                        ImGui::Dummy(ImVec2(0, 8));
+                        ImGui::TextDisabled("PROJECT");
+                        ImGui::TextUnformatted(s_plan.folder.c_str());
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextWrapped("%s", s_plan.root.string().c_str());
+                        ImGui::PopTextWrapPos();
+                        ImGui::Dummy(ImVec2(0, 8));
+                        ImGui::TextDisabled("OPTIONS");
+                        ImGui::Text("Version %s", s_ver);
+                        ImGui::TextUnformatted(s_gpu == 0 ? "GPU renderer" : "Software renderer");
+                        ImGui::TextUnformatted(s_git ? "A Git repository will be created" : "No Git repository");
+                        ImGui::EndChild();
+                    }
+                    if (!s_wiz.creating) {
+                        ImGui::Separator();
+                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::BeginDisabled(s_wiz.step <= 0);
+                        if (ImGui::Button("Back", ImVec2(110, 40))) okayproj::WizardBack(s_wiz);
+                        ImGui::EndDisabled();
+                        const char* go = s_wiz.step >= 2 ? "Create project" : "Next";
+                        const float gw = 170.0f;
+                        ImGui::SameLine(std::max(120.0f, ImGui::GetWindowWidth() - gw - 36.0f));
+                        ImGui::BeginDisabled(!okayproj::WizardCanAdvance(s_wiz));
+                        const bool pressed = s_wiz.step >= 2
+                            ? PrimaryButton(go, ImVec2(gw, 40))
+                            : ImGui::Button(go, ImVec2(gw, 40));
+                        ImGui::EndDisabled();
+                        const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+                        const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape);
+                        if (pressed) {
+                            if (s_wiz.step >= 2) { s_createAt = SDL_GetTicks(); okayproj::WizardBeginCreate(s_wiz); }
+                            else okayproj::WizardNext(s_wiz);
+                        } else if (enter) {
+                            const auto act = okayproj::ApplyWizardInput(true, false, false, s_wiz);
+                            if (act == okayproj::WizardMove::Create) s_createAt = SDL_GetTicks();
+                        }
+                        if (esc) {
+                            const auto act = okayproj::ApplyWizardInput(false, true, false, s_wiz);
+                            if (act == okayproj::WizardMove::Closed) ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    ImGui::EndPopup();
+                }
+                ImGui::PopStyleVar(3);
+                ImGui::PopStyleColor();
+                if (!popOpen && s_wiz.open && !s_wiz.creating) okayproj::WizardClose(s_wiz);
+            }
+
             // ---- Delete project: remove from the list, or delete the folder ----
             static std::string delWhy;
             static bool delEditor = false;

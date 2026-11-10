@@ -362,12 +362,15 @@ private:
         SetShape(10.0f, UICornerAll, 2.0f, true, true, 22.0f, {0.0f, 0.0f}, 2.0f, false, 16.0f, 1.04f);
     }
     void GlassPalette() {
-        SetLook(C::FromBytes(255, 255, 255, 46), C::FromBytes(255, 255, 255, 18), C::FromBytes(140, 200, 255),
+        // Glass is built from layers, not a blur: a see-through fill that fades from a bright top to almost
+        // clear, a bright hairline edge, a second soft ring just outside it, a lit top band and a deep soft
+        // shadow. Whatever is behind the card shows through it.
+        SetLook(C::FromBytes(255, 255, 255, 44), C::FromBytes(255, 255, 255, 10), C::FromBytes(150, 210, 255),
                 C::White, C::FromBytes(225, 232, 245, 210), C::FromBytes(255, 255, 255, 56),
                 C::FromBytes(255, 255, 255, 96), C::FromBytes(255, 255, 255, 30), C::White,
                 C::FromBytes(255, 255, 255, 20), C::FromBytes(255, 120, 120), C::FromBytes(120, 240, 190),
-                C::FromBytes(255, 255, 255, 120), C::FromBytes(0, 0, 0, 70), C::FromBytes(255, 255, 255, 0));
-        SetShape(20.0f, UICornerAll, 1.0f, true, true, 24.0f, {0.0f, 12.0f}, 0.0f, true, 14.0f, 1.02f);
+                C::FromBytes(255, 255, 255, 190), C::FromBytes(8, 16, 48, 120), C::FromBytes(255, 255, 255, 70));
+        SetShape(22.0f, UICornerAll, 1.5f, true, true, 30.0f, {0.0f, 16.0f}, 1.5f, true, 14.0f, 1.02f);
     }
     void MilitaryPalette() {
         SetLook(C::FromBytes(52, 60, 42, 250), C::FromBytes(36, 42, 30, 250), C::FromBytes(200, 170, 60),

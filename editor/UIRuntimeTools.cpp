@@ -1,5 +1,6 @@
 #include "UIRuntimeTools.hpp"
 #include "ConsolePanel.hpp"
+#include "ExampleScenes.hpp"
 #include "imgui.h"
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
@@ -328,6 +329,15 @@ bool DrawRuntimeUIComponentInspector(Component* comp, EditorState& ed, Component
         }
         return true;
     }
+    if (auto* ib = dynamic_cast<UIInventoryBind*>(comp)) {
+        if (hooks.header("UI Inventory Bind", ib, toRemove, true)) {
+            DrawProps(*ib, ed);
+            if (!ib->gameObject->GetComponent<UISlotGrid>()) Hint("Put this on the object with the UI Slot Grid: its slots then show the items of an Inventory.");
+            else if (!ib->FindInventory()) Hint("No Inventory found. Add an Inventory to the Player (or name another object above).");
+            else Hint("The slots show the items of the Inventory, the stack size after the name. Click a slot, then ask SelectedItem().");
+        }
+        return true;
+    }
     return false;
 }
 
@@ -373,13 +383,11 @@ void DrawUIAddMenuExtras(EditorState& ed, GameObject* parent, bool& created) {
 }
 
 void OpenUIGalleryExample(EditorState& ed, bool portrait) {
-    ed.NewScene2D();
-    ed.PushUndo();
-    GameObject* root = UIGallery::BuildGallery(ed.scene(), (int)UITheme::Preset::ModernFlat, portrait);
-    ed.Select(root);
-    ed.dirty = false;   // an example is not "unsaved work"
-    ConsoleLog(portrait ? "Opened the UI Gallery for phones. Press Play, pick a phone in the Game view, and scroll."
-                        : "Opened the UI Gallery. Press Play to try the widgets; pick a theme at the top right.");
+    std::string where, err;
+    if (!BuildUIGalleryExample(ed, portrait, &where, &err)) ConsoleLog("Could not save the example into the project: " + err, 1);
+    ConsoleLog(std::string(portrait ? "Opened the UI Gallery for phones. Press Play, pick a phone in the Game view, and scroll."
+                                    : "Opened the UI Gallery. Press Play to try the widgets; pick a theme at the top right.") +
+               (where.empty() ? std::string() : " Saved as " + where + "."));
 }
 
 void DrawExamplesMenu(EditorState& ed, const std::function<void(const std::function<void()>&)>& afterSavePrompt) {

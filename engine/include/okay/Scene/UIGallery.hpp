@@ -58,12 +58,14 @@ inline void ApplyThemePreset(Scene& scene, int preset) {
         ip->color = c; ip->useGradient = false; ip->shadow = false; ip->topHighlight = false;
         ip->borderColor = th->border;
     }
+    for (const auto& o : scene.Objects())              // colour behind the cards, so a see-through look has something to show
+        if (o->name.rfind("SwatchBlob", 0) == 0) o->active = th->preset == (int)UITheme::Preset::Glass;
     if (GameObject* bg = scene.Find("SwatchBackdrop"))
         if (auto* p = bg->GetComponent<UIPanel>()) {
             const bool lightLook = (th->panel.r + th->panel.g + th->panel.b) > 2.1f;
             Color c = lightLook ? Color(th->panel.r * 0.86f, th->panel.g * 0.86f, th->panel.b * 0.86f, 1.0f)
                                 : Color(th->panel.r * 0.45f, th->panel.g * 0.45f, th->panel.b * 0.45f, 1.0f);
-            if (th->preset == (int)UITheme::Preset::Glass) c = Color::FromBytes(58, 82, 140);   // glass needs something to see through
+            if (th->preset == (int)UITheme::Preset::Glass) c = Color::FromBytes(22, 34, 78);   // glass needs something to see through (see the blobs)
             if (th->preset == (int)UITheme::Preset::Neon)  c = Color::FromBytes(6, 2, 16);
             c.a = 1.0f;
             p->color = c; p->colorBottom = c; p->useGradient = false;
@@ -196,6 +198,19 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
     // On a phone everything but the backdrop sits in a Safe Area, clear of the notch and the home bar.
     GameObject* content = root;
     if (portrait) { content = Child(scene, root, "SafeArea"); content->AddComponent<UISafeArea>(); }
+    {   // bright shapes behind the cards: only shown in the Glass look
+        struct Blob { const char* name; Color col; Vec2 pos, size; };
+        const Blob blobs[] = {
+            {"SwatchBlobA", Color::FromBytes(255, 70, 150), portrait ? Vec2{20, 160} : Vec2{150, 150}, {320, 320}},
+            {"SwatchBlobB", Color::FromBytes(60, 190, 255), portrait ? Vec2{150, 520} : Vec2{560, 330}, {360, 360}},
+            {"SwatchBlobC", Color::FromBytes(255, 190, 60), portrait ? Vec2{40, 800} : Vec2{960, 120}, {300, 300}}};
+        for (const Blob& b : blobs) {
+            GameObject* g = Panel(scene, root, b.name, UIAnchor::TopLeft, b.pos, b.size, b.col, 0.0f);
+            auto* bp = g->GetComponent<UIPanel>();
+            bp->shape = UIShape::Circle; bp->borderWidth = 0.0f;
+            g->active = false;
+        }
+    }
     const float titleX = portrait ? 24.0f : 32.0f;
     Text(scene, content, "Title", "UI Gallery", UIAnchor::TopLeft, {titleX, 14}, {360, 40}, 30.0f, slate::Text(), 0, true);
     Text(scene, content, "Subtitle", portrait ? "Scroll down. Pick a look below." : "Every widget, in any theme. Pick a look on the right.",
@@ -322,8 +337,18 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         GameObject* g = Child(scene, c3, "Slots"); auto* sg = g->AddComponent<UISlotGrid>();
         sg->anchor = UIAnchor::TopLeft; sg->position = {20, 64}; sg->columns = 6; sg->rows = 2; sg->cell = {50, 50}; sg->gap = 8; sg->value = 1;
         sg->color = slate::Field(); sg->hoverColor = slate::FieldHover(); sg->selectedColor = slate::Accent();
-        const char* items[] = {"Axe", "Pot", "Key", "Bow", "Map", "Gem", "Rope", "Torch", "Ring", "Herb", "Coin", "Egg"};
-        for (int i = 0; i < 12; ++i) sg->SetLabel(i, items[i]);
+        // A real bag (the engine's Inventory) that the grid shows while the game runs.
+        GameObject* bag = Child(scene, root, "Gallery Bag");
+        auto* inv = bag->AddComponent<Inventory>();
+        inv->capacity = 12;
+        const struct { const char* item; int n; } stock[] = {{"Axe", 1}, {"Potion", 3}, {"Key", 1}, {"Bow", 1}, {"Map", 1},
+                                                             {"Gem", 5}, {"Rope", 2}, {"Torch", 12}, {"Ring", 1}};
+        for (const auto& st : stock) inv->slots.push_back({st.item, st.n, {}});
+        auto* ib = g->AddComponent<UIInventoryBind>();
+        ib->inventoryName = "Gallery Bag"; ib->slotFontScale = 1.0f;
+        sg->fontScale = 1.0f; sg->numberEmptySlots = false;
+        for (int i = 0; i < 12; ++i)                       // the same labels in the editor, before Play
+            sg->SetLabel(i, i < (int)inv->slots.size() ? UIInventoryBind::SlotText(inv->slots[(std::size_t)i], 5) : std::string());
         sg->Rebuild();
     }
     gx::Label(scene, c3, "DialogueLabel", "Dialogue box", {20, 190}, 200);
@@ -339,6 +364,11 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         body->wrap = true; body->vcenter = false; body->richText = true;
         Button(scene, box, "Choice1", "I had help", UIAnchor::TopLeft, {14, 96}, {160, 36}, ButtonKind::Secondary);
         Button(scene, box, "Choice2", "Mind your business", UIAnchor::TopLeft, {182, 96}, {158, 36}, ButtonKind::Ghost);
+        db->Prime("Mara", body->text, {"I had help", "Mind your business"});
+        // Talk plays the line again from its first letter; the choices come back when it has finished typing.
+        GameObject* talk = gx::Btn(scene, c3, "Talk", "Talk", {292, 186}, {80, 26}, (int)UITheme::Variant::Outline);
+        auto* tb = talk->GetComponent<UIButton>();
+        tb->clickTarget = "DialogueBox"; tb->clickFunction = "Restart";
     }
     gx::Label(scene, c3, "WindowLabel", "Window (drag the title bar)", {20, 380}, 300);
     {

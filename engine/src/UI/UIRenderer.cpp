@@ -212,14 +212,20 @@ void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
 
 // Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
-                 float ox, float oy, float px, RGBA col, float letterSp, float lineSp) {
+                 float ox, float oy, float px, RGBA col, float letterSp, float lineSp,
+                 bool italic, float boldOffset) {
     f->Prepare(text);   // bake new characters before the atlas is uploaded
     Tex tex = r.FontAtlas(f);
     if (!tex) return;
     r.SetTextureColorMod(tex, col.r, col.g, col.b);
     r.SetTextureAlphaMod(tex, col.a);
+    int atlasW = 0, atlasH = 0;
+    if (italic) r.QueryTexture(tex, &atlasW, &atlasH);
+    const bool shear = italic && atlasW > 0 && atlasH > 0;
     const float s = px * (float)okay::Font8x8::Height / f->BakeHeight();
     const float baseline = f->Ascent((float)okay::Font8x8::Height) * px;
+    const float kSlant = 0.22f;                       // how far the top of a glyph leans, per unit of height
+    const int taps = boldOffset > 0.0f ? 3 : 1;
     float penX = ox, penY = oy;
     for (std::size_t i = 0; i < text.size();) {
         const std::uint32_t ch = okay::utf8::Next(text, i);
@@ -229,8 +235,24 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
             Rect src{g->x0, g->y0, gw, gh};
-            FRect dst{penX + g->xoff * s, penY + baseline + g->yoff * s, gw * s, gh * s};
-            r.CopyF(tex, &src, &dst);
+            for (int t = 0; t < taps; ++t) {
+                const float dx = taps > 1 ? boldOffset * 0.5f * (float)t : 0.0f;
+                FRect dst{penX + dx + g->xoff * s, penY + baseline + g->yoff * s, gw * s, gh * s};
+                if (!shear) { r.CopyF(tex, &src, &dst); continue; }
+                // Shear about the baseline: points higher above it lean further right.
+                const float base = penY + baseline;
+                const float topLean = (base - dst.y) * kSlant, botLean = (base - (dst.y + dst.h)) * kSlant;
+                const float u0 = (float)g->x0 / (float)atlasW, u1 = (float)g->x1 / (float)atlasW;
+                const float v0 = (float)g->y0 / (float)atlasH, v1 = (float)g->y1 / (float)atlasH;
+                const RGBA white{255, 255, 255, 255};
+                Vertex v[4] = {
+                    {FPoint{dst.x + topLean, dst.y}, white, FPoint{u0, v0}},
+                    {FPoint{dst.x + dst.w + topLean, dst.y}, white, FPoint{u1, v0}},
+                    {FPoint{dst.x + dst.w + botLean, dst.y + dst.h}, white, FPoint{u1, v1}},
+                    {FPoint{dst.x + botLean, dst.y + dst.h}, white, FPoint{u0, v1}}};
+                const int idx[6] = {0, 1, 2, 0, 2, 3};
+                r.Geometry(tex, v, 4, idx, 6);
+            }
         }
         penX += g->xadvance * s + letterSp * px;
     }
@@ -255,12 +277,15 @@ float UITextW(const std::string& text, float px) {
 // the TTF atlas is used instead (same sizing space).
 void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
                 float px, RGBA col, float letterSp, float lineSp,
-                bool italic, bool gradient, RGBA col2, TtfFont* ttf) {
+                bool italic, bool gradient, RGBA col2, TtfFont* ttf, bool bold) {
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
     ttf = FontForText(ttf, text);      // a font with the text's characters (other languages)
     if (px < 0.15f) px = 0.15f;   // a smooth font scales below one font pixel; the 8x8 font can't
-    if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
+    if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp, italic, bold ? (px * 8.0f >= 30.0f ? 1.5f : 1.0f) : 0.0f); return; }
     if (px < 1.0f) px = 1.0f;
+    if (bold) {   // the 8x8 font has one weight: draw it again one font pixel to the right
+        DrawUIText(r, text, ox + px, oy, px, col, letterSp, lineSp, italic, gradient, col2, nullptr, false);
+    }
     if (!gradient) r.SetDrawColor(col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
     float cx = ox;
@@ -315,8 +340,7 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
             RGBA col = base;
             if (runStyle.hasColor) col = RGBA{runStyle.r, runStyle.g, runStyle.b, (std::uint8_t)(runStyle.a * base.a / 255)};
             const bool it = italic || runStyle.italic;
-            DrawUIText(r, run, x, y, px, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf);
-            if (bold || runStyle.bold) DrawUIText(r, run, x + boldOff, y, px, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf);
+            DrawUIText(r, run, x, y, px, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
         };
         for (std::size_t i = 0; i < line.size();) {
             const std::size_t at = i;
@@ -1544,12 +1568,11 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             DrawUIText(p, disp, o.x, o.y - fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
             DrawUIText(p, disp, o.x, o.y + fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
         }
-        if (tr->richText && RichTextHasTags(tr->text)) {
+        if (tr->richText && tr->screenSpace && RichTextHasTags(tr->text)) {
             const okay::RichText rt = okay::ParseRichText(tr->text);
             DrawRichRuns(p, disp, rt.styles, o.x, o.y, ps, col, ls, lp, it, tr->bold, fo, fnt);
         } else {
-            DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
-            if (tr->bold) DrawUIText(p, disp, o.x + fo, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
+            DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt, tr->bold);
         }
     }
         else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)

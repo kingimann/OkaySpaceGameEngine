@@ -685,7 +685,15 @@ add_test(NAME uicapture_look COMMAND test_uicapture_look)
 
 add_executable(test_runtime_ui test_runtime_ui.cpp)
 target_link_libraries(test_runtime_ui PRIVATE okay::engine)
+target_compile_definitions(test_runtime_ui PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME runtime_ui COMMAND test_runtime_ui)
+
+# File > Examples: the UI Gallery builds and saves itself into the project (ImGui-free part of the editor).
+add_executable(test_example_scenes test_example_scenes.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+target_include_directories(test_example_scenes PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_example_scenes PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(test_example_scenes PRIVATE okay::engine)
+add_test(NAME example_scenes COMMAND test_example_scenes)
 
 add_executable(test_ui_layering test_ui_layering.cpp)
 target_link_libraries(test_ui_layering PRIVATE okay::engine)

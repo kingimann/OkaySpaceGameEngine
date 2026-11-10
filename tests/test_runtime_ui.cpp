@@ -7,6 +7,7 @@
 #include "okay/Components/EventSystem.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include <cstdint>
+#include <memory>
 #include <set>
 
 using namespace okay;
@@ -59,7 +60,7 @@ struct RecordPainter : okay::ui2d::Painter {
     int atlasDummy = 0;
     bool atlas = false;
     Tex FontAtlas(okay::TtfFont*) override { return atlas ? &atlasDummy : nullptr; }
-    void QueryTexture(Tex, int* w, int* h) override { *w = *h = 0; }
+    void QueryTexture(Tex, int* w, int* h) override { *w = *h = 512; }
     std::uint8_t mr = 0, mg = 0, mb = 0;
     void SetTextureColorMod(Tex, std::uint8_t r, std::uint8_t g, std::uint8_t b) override { mr = r; mg = g; mb = b; }
     void SetTextureAlphaMod(Tex, std::uint8_t) override {}
@@ -67,7 +68,11 @@ struct RecordPainter : okay::ui2d::Painter {
     void CopyF(Tex, const URect*, const okay::ui2d::FRect* d) override { if (d) fills.push_back({(int)d->x, (int)d->y, mr, mg, mb}); }
     void CopyEx(Tex, const URect*, const URect*, double, const okay::ui2d::Point*, int) override {}
     void CopyExF(Tex, const URect*, const okay::ui2d::FRect*, double, const okay::ui2d::FPoint*, int) override {}
-    void Geometry(Tex, const okay::ui2d::Vertex*, int, const int*, int) override {}
+    struct Quad { float topLeftX, bottomLeftX, topY, bottomY; };
+    std::vector<Quad> quads;     // sheared glyphs: where their top-left and bottom-left corners are
+    void Geometry(Tex, const okay::ui2d::Vertex* v, int nv, const int*, int) override {
+        if (v && nv >= 4) quads.push_back({v[0].position.x, v[3].position.x, v[0].position.y, v[3].position.y});
+    }
     Tex UploadAtlas(const okay::Image&, int, Tex existing) override { return existing; }
     int CountColor(std::uint8_t r, std::uint8_t g, std::uint8_t b) const {
         int n = 0; for (const Fill& f : fills) if (f.r == r && f.g == g && f.b == b) ++n; return n;
@@ -820,6 +825,156 @@ int main() {
         const int y1 = minY();
         CHECK(y0 < (1 << 29) && y1 < (1 << 29));
         CHECK(y0 - y1 == 60);                                         // moved up by the scroll, like the other widgets
+    }
+
+
+    // ---- Italic and bold really change smooth (TTF) text ----
+    {
+        Scene s("Style");
+        s.uiFont = "";                                             // the built-in smooth font
+        auto* tr = s.CreateGameObject("T")->AddComponent<TextRenderer>();
+        tr->screenSpace = true; tr->richText = true; tr->pixelSize = 3.0f; tr->shadow = false; tr->outline = false;
+        auto draw = [&](const char* text) {
+            tr->text = text;
+            auto* rp = new RecordPainter(); rp->atlas = true;
+            okay::ui2d::RenderSceneUI(s, *rp, 640, 360);
+            return std::unique_ptr<RecordPainter>(rp);
+        };
+        auto plain = draw("H");
+        auto ital = draw("[i]H[/i]");
+        auto bold = draw("[b]H[/b]");
+        CHECK(plain->quads.empty() && !plain->fills.empty());          // upright text is plain quads
+        CHECK(!ital->quads.empty());                                   // italic text is sheared quads
+        for (const auto& q : ital->quads) CHECK(q.topLeftX > q.bottomLeftX + 1.0f && q.topY < q.bottomY);   // the top leans right
+        CHECK(bold->fills.size() == 3 * plain->fills.size());          // three taps across the stroke
+        const float w1 = bold->fills.back().x - bold->fills.front().x;
+        CHECK(w1 > 0.0f && w1 < 4.0f);                                 // spread over a pixel or two, not a second letter
+        // the pixel font leans too (it always did) and doubles for bold
+        s.uiFont = "pixel";
+        auto pit = draw("[i]I[/i]"), pplain = draw("I"), pbold = draw("[b]I[/b]");
+        int minXi = 1 << 30, minXp = 1 << 30;
+        for (auto& f : pit->fills) minXi = std::min(minXi, f.x);
+        for (auto& f : pplain->fills) minXp = std::min(minXp, f.x);
+        CHECK(pit->fills.size() == pplain->fills.size());
+        CHECK(pbold->fills.size() == 2 * pplain->fills.size());
+        (void)minXi; (void)minXp;
+    }
+
+    // ---- 3D text does not read tags, and says so ----
+    {
+        Scene s("World");
+        auto* tr = s.CreateGameObject("W")->AddComponent<TextRenderer>();   // world text: screenSpace is off
+        tr->text = "[color=red]x[/color]"; tr->richText = true;
+        CHECK(tr->DisplayText() == "[color=red]x[/color]");                // the switch changes nothing there
+        auto* ctrl = s.CreateGameObject("Ctrl")->AddComponent<ScriptComponent>("okayscript");
+        auto* scr = s.CreateGameObject("S")->AddComponent<TextRenderer>(); scr->screenSpace = true; scr->text = "[b]y[/b]";
+        ctrl->LoadSource("var done = 0; function update() { if (done == 0) { done = 1; ui_set_rich(\"S\", true); ui_set_rich(\"W\", true); } }\n");
+        tr->richText = false;
+        s.Start(); s.Update(0.016f);
+        CHECK(scr->richText && scr->DisplayText() == "y");                // the script turned it on for screen text
+        CHECK(!tr->richText);                                             // and refused for world text
+    }
+
+    // ---- Glass is a look of its own, built from layers (no blur is claimed) ----
+    {
+        UITheme g; g.ApplyPreset((int)UITheme::Preset::Glass);
+        CHECK(g.panel.a < 0.25f && g.panelBottom.a < g.panel.a);          // see-through, clearer toward the bottom
+        CHECK(g.border.a > 0.6f && g.borderWidth >= 1.5f && g.glow > 0.0f && g.sheen && g.gradient);   // bright edge, outer ring, lit top
+        for (int p = 1; p < UITheme::kPresetCount; ++p)
+            if (p != (int)UITheme::Preset::Glass) { UITheme o; o.ApplyPreset(p); CHECK(o.panel.a > 0.5f); }   // no other look is see-through
+        // a scene that was saved with Glass still loads as Glass
+        Scene a("OldGlass");
+        auto* th = a.CreateGameObject("T")->AddComponent<UITheme>(); th->ApplyPreset(10);
+        const std::string txt = SceneSerializer::Serialize(a);
+        Scene b("Load"); std::string err;
+        CHECK(SceneSerializer::Deserialize(b, txt, &err, nullptr));
+        CHECK(b.Find("T")->GetComponent<UITheme>()->preset == (int)UITheme::Preset::Glass);
+        CHECK(std::string(UITheme::PresetName(b.Find("T")->GetComponent<UITheme>()->preset)) == "Glass");
+        // the gallery shows colour behind the cards in this look only
+        Scene gal("G");
+        UIGallery::BuildGallery(gal, (int)UITheme::Preset::Dark);
+        CHECK(gal.Find("SwatchBlobA") && !gal.Find("SwatchBlobA")->active);
+        UIGallery::ApplyThemePreset(gal, (int)UITheme::Preset::Glass);
+        CHECK(gal.Find("SwatchBlobA")->active && gal.Find("SwatchBlobB")->active && gal.Find("SwatchBlobC")->active);
+        UIGallery::ApplyThemePreset(gal, (int)UITheme::Preset::Neon);
+        CHECK(!gal.Find("SwatchBlobA")->active);
+    }
+
+    // ---- Theme files: save, load, and the script call ----
+    {
+        UITheme a; a.ApplyPreset((int)UITheme::Preset::Horror); a.cornerRadius = 7.5f; a.fontPath = "Assets/F.ttf"; a.themeName = "Mine";
+        const std::string text = UIThemeToText(a);
+        CHECK(text.rfind("okaytheme", 0) == 0);
+        UITheme b; std::string err;
+        CHECK(UIThemeFromText(b, text, &err));
+        CHECK(b.preset == a.preset && b.cornerRadius == 7.5f && b.fontPath == "Assets/F.ttf" && b.themeName == "Mine");
+        CHECK(b.accent.r == a.accent.r && b.panel.a == a.panel.a);
+        CHECK(!UIThemeFromText(b, "not a theme", &err) && !err.empty());
+        CHECK(UIThemeFromText(b, "okaytheme 1\nunknownField=3\ncornerRadius=banana\nglow=2.5\n", &err));   // unknown / bad lines skipped
+        CHECK(b.glow == 2.5f && b.cornerRadius == 7.5f);
+        const std::string path = std::string(OKAY_TEST_OUTPUT_DIR) + "/mine.okaytheme";
+        CHECK(SaveUIThemeAsset(a, path));
+        UITheme c; CHECK(LoadUIThemeAsset(c, path) && c.preset == a.preset && c.border.a == a.border.a);
+        CHECK(!LoadUIThemeAsset(c, path + ".missing", &err));
+        // the script call loads it into the scene's theme and restyles the widgets
+        Scene s("File");
+        GameObject* root = s.CreateGameObject("Root");
+        auto* th = root->AddComponent<UITheme>(); th->ApplyPreset((int)UITheme::Preset::Light);
+        UIButton* btn = MakeButton(s, "B", {0, 0}, {100, 40}, root);
+        auto* ctrl = s.CreateGameObject("Ctrl")->AddComponent<ScriptComponent>("okayscript");
+        ctrl->LoadSource("var ok = -1; function update() { if (ok < 0) { ok = ui_load_theme(\"" + std::string(path) + "\"); } }\n");
+        s.Start(); s.Update(0.016f); s.Update(0.016f);
+        CHECK_NEAR(ctrl->VM()->GetGlobal("ok").AsFloat(), 1.0f, 1e-4f);
+        CHECK(th->preset == a.preset);
+        CHECK_NEAR(btn->color.r, a.button.r, 1e-3f);                    // the Horror button colour is on the widget
+    }
+
+    // ---- The dialogue box: Talk replays the line, the script can ask if it is open ----
+    {
+        Scene s("Talk");
+        UIGallery::BuildGallery(s, (int)UITheme::Preset::Dark);
+        auto* db = s.Find("DialogueBox")->GetComponent<UIDialogueBox>();
+        GameObject* talk = s.Find("Talk");
+        auto* tb = talk->GetComponent<UIButton>();
+        CHECK(tb && tb->clickFunction == "Restart" && tb->clickTarget == "DialogueBox");
+        auto* ctrl = s.CreateGameObject("Ctrl")->AddComponent<ScriptComponent>("okayscript");
+        ctrl->LoadSource("var open0 = -1; var open1 = -1; var n = 0;\n"
+                         "function update() { n = n + 1; if (n == 1) { open0 = ui_dialogue_open(); } if (n == 3) { open1 = ui_dialogue_open(); } }\n");
+        s.Start();
+        CHECK(!db->IsOpen());                                           // the sample line is on the page but not "open"
+        s.Update(0.016f);
+        CHECK(InvokeNativeUIAction(s.Find("DialogueBox"), tb->clickFunction, 0.0f));   // what the button does
+        CHECK(db->IsOpen() && db->IsTyping());                           // the line types out again from its first letter
+        auto* body = s.Find("DialogueBox")->transform->Find("Box/Body")->gameObject->GetComponent<TextRenderer>();
+        CHECK(body->visibleChars == 0 && body->text.find("[color=") != std::string::npos);
+        s.Update(0.016f); s.Update(0.016f);
+        CHECK_NEAR(ctrl->VM()->GetGlobal("open0").AsFloat(), 0.0f, 1e-4f);
+        CHECK_NEAR(ctrl->VM()->GetGlobal("open1").AsFloat(), 1.0f, 1e-4f);
+        for (int i = 0; i < 40; ++i) s.Update(0.1f);                     // typing done: the two choices are there
+        CHECK(!db->IsTyping() && s.Find("Choice1")->active && s.Find("Choice2")->active);
+        CHECK(s.Find("Choice1")->GetComponent<UIButton>()->clickTarget == "DialogueBox");
+        CHECK(InvokeNativeUIAction(s.Find("DialogueBox"), "Choose", 0.0f));
+        CHECK(db->LastChoice() == 0);
+        UIDialogueBox fresh;
+        CHECK(!fresh.Restart());                                         // nothing to replay on a box that never held a line
+    }
+
+    // ---- The gallery's inventory is a real bag the grid follows ----
+    {
+        Scene s("GalBag");
+        UIGallery::BuildGallery(s, (int)UITheme::Preset::Dark);
+        GameObject* grid = s.Find("Slots");
+        auto* sg = grid->GetComponent<UISlotGrid>();
+        auto* ib = grid->GetComponent<UIInventoryBind>();
+        auto* bag = s.Find("Gallery Bag") ? s.Find("Gallery Bag")->GetComponent<Inventory>() : nullptr;
+        CHECK(ib && bag && ib->FindInventory() == bag);
+        CHECK(sg->Label(0) == "Axe" && sg->Label(1) == "Po. 3");        // the editor shows the bag too, before Play
+        CHECK(sg->Label(11).empty());
+        s.Start(); s.Update(0.016f);
+        bag->Add("Egg", 4);
+        s.Update(0.016f);
+        bool found = false; for (int i = 0; i < sg->Count(); ++i) if (sg->Label(i) == "Egg 4") found = true;
+        CHECK(found);                                                    // a change to the bag shows on the grid
     }
 
     // ---- Save and load: new fields, old scenes ----

@@ -28,6 +28,7 @@ option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
 option(OKAY_BUILD_IMUI     "Build okay::imui, our own immediate-mode UI core (side by side with Dear ImGui, small, no dependencies)" ON)
+option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
 if(MSVC)

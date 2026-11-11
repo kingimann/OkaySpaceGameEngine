@@ -44,3 +44,24 @@ if(WIN32)
     set_target_properties(okayui_d3d11_demo PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
+
+# ---- Headless harness: software backend, tests, demo ---------------------------------------
+# OkayUI's draw list (OkayUI::GetDrawData) rasterised on the CPU into an RGBA bitmap, so the toolkit
+# is tested with no window, GPU or display: behaviour tests (synthetic mouse, keys and text fed to
+# OkayUI::BeginFrame), golden images, a fuzz test. See docs/own_ui_toolkit.md.
+if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
+    add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp)
+    target_include_directories(okay_ui_soft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/soft)
+    target_link_libraries(okay_ui_soft PUBLIC okay_ui)
+
+    # What the tests need: the shared test framework header and the committed golden images.
+    foreach(t okayui_soft okayui_behaviour)
+        add_executable(test_${t} tests/test_${t}.cpp)
+        target_link_libraries(test_${t} PRIVATE okay_ui_soft)
+        target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        target_compile_definitions(test_${t} PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
+        add_test(NAME ${t} COMMAND test_${t})
+        # No window, no GPU: make sure SDL never tries to open a display.
+        set_tests_properties(${t} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    endforeach()
+endif()

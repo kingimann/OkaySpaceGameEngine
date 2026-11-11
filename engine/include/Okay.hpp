@@ -191,6 +191,7 @@
 #include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
+#include "okay/Components/UIInventoryBind.hpp"
 #include "okay/Components/UIDraggable.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/UIElement.hpp"

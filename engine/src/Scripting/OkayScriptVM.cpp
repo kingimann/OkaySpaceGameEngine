@@ -1,3 +1,4 @@
+#include "okay/Scene/UIGallery.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -4846,7 +4847,14 @@ struct OkayScriptVM::Impl {
             if (!th) return Value{0.0f};
             th->ApplyPreset(p);
             th->Apply();
+            UIGallery::StyleGalleryExtras(*s, th);   // the UI Gallery's slots, insets and Glass blobs follow too
             return Value{1.0f};
+        };
+        // ui_set_rich("Label", true): read [color=...] [b] [i] tags in that screen-space text.
+        b["ui_set_rich"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tr = g->GetComponent<TextRenderer>()) if (tr->screenSpace) tr->richText = a[1].AsBool();   // world text does not read tags
+            return Value{};
         };
         // ui_load_theme("Assets/UI/Forest.okaytheme") loads a saved theme into the scene's theme and restyles the UI.
         b["ui_load_theme"] = [sceneOf](std::vector<Value>& a) {

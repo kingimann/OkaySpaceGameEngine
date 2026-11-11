@@ -36535,6 +36535,14 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
+            {
+                ImGui::BeginDisabled(!tr->screenSpace);
+                if (ImGui::Checkbox("Rich Text##txt", &tr->richText)) ed.dirty = true;
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip(tr->screenSpace ? "Colour and style tags inside the text:\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]\nThe tags take no room. Use [[ for a literal [."
+                                                      : "Rich text works on screen-space text only.\n3D text is drawn by the scene renderer, which does not read tags.");
+            }
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             oked::FieldTip("Letter Spacing##txt");
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
@@ -39433,6 +39441,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIStyleVariant>(), "UI Style Variant (theme role)")) { go->AddComponent<UIStyleVariant>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDamageNumbers>(), "UI Damage Numbers (floating text)")) { go->AddComponent<UIDamageNumbers>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDialogueBox>(), "UI Dialogue Box (typing text + choices)")) { go->AddComponent<UIDialogueBox>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIInventoryBind>() && go->GetComponent<UISlotGrid>(), "UI Inventory Bind (slot grid shows the Inventory)")) { go->AddComponent<UIInventoryBind>(); ed.dirty = true; }
           } EndCat(o); }
 
         if (!acShown)

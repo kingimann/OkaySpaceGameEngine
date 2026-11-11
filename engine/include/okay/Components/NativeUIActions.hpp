@@ -115,6 +115,7 @@ inline bool InvokeNativeUIAction(GameObject* go, const std::string& fn, float ar
     if (auto* c = go->GetComponent<UIDialogueBox>()) {   // a dialogue box's own buttons
         if (fn == "Choose")  { c->Choose((int)arg); return true; }   // Amount = choice index
         if (fn == "Advance") { c->Advance();        return true; }
+        if (fn == "Restart") { return c->Restart(); }              // show the last line again (a Talk button)
         if (fn == "Close")   { c->Close();          return true; }
     }
     if (auto* c = go->GetComponent<UIDamageNumbers>()) {   // floating combat text from a button, no script
@@ -152,7 +153,7 @@ inline std::vector<std::string> NativeUIActionNames(GameObject* go) {
     if (go->GetComponent<SurvivalSave>())    add({"Save", "Load"});
     if (go->GetComponent<Crafting>())        add({"Craft"});
     if (go->GetComponent<UIModal>())         add({"Open", "Close"});
-    if (go->GetComponent<UIDialogueBox>())   add({"Choose", "Advance", "Close"});
+    if (go->GetComponent<UIDialogueBox>())   add({"Choose", "Advance", "Restart", "Close"});
     if (go->GetComponent<UIDamageNumbers>()) add({"Hit", "Crit", "Heal", "Miss", "Info"});
     return out;
 }

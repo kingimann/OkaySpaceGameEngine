@@ -17,6 +17,10 @@
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIRating.hpp"
 #include "okay/Components/UISlotGrid.hpp"
+#include "okay/Components/UIInventoryBind.hpp"
+#include "okay/Components/UISafeArea.hpp"
+#include "okay/Components/UIBarBind.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
 #include <string>
 
 namespace okay { namespace UIGallery {
@@ -34,10 +38,11 @@ inline UITheme* EnsureTheme(Scene& scene, int preset) {
     return th;
 }
 
-/// Restyle everything in the scene with a built-in look. The page background follows the look.
-inline void ApplyThemePreset(Scene& scene, int preset) {
-    UITheme* th = EnsureTheme(scene, preset);
-    th->Apply();
+/// The gallery's own pieces after any theme apply (also from `ui_theme_preset` in Play): slot grids
+/// restyle, inset boxes take a shade, the Glass blobs show, the page backdrop follows the look.
+/// It only touches slot grids and objects whose names start with Swatch, so other scenes are unaffected.
+inline void StyleGalleryExtras(Scene& scene, UITheme* th) {
+    if (!th) return;
     for (const auto& o : scene.Objects())            // slot buttons take their colours from the grid
         if (auto* sg = o->GetComponent<UISlotGrid>()) sg->Rebuild();
     // Panels that sit ON a card (inset boxes, title bars) keep a different shade from it: the theme
@@ -53,19 +58,29 @@ inline void ApplyThemePreset(Scene& scene, int preset) {
         if (!inset && !title) continue;
         Color c = mix(th->panel, title ? th->accent : th->text, title ? 0.30f : 0.09f);
         c.a = th->panel.a < 0.5f ? 0.35f : 1.0f;                      // a glass look stays see-through
+        if (th->panel.a < 0.5f && inset) c = Color(0.04f, 0.07f, 0.17f, 0.55f);   // a dark glass tint so light text reads over any blob
         ip->color = c; ip->useGradient = false; ip->shadow = false; ip->topHighlight = false;
         ip->borderColor = th->border;
     }
+    for (const auto& o : scene.Objects())              // colour behind the cards, so a see-through look has something to show
+        if (o->name.rfind("SwatchBlob", 0) == 0) o->active = th->preset == (int)UITheme::Preset::Glass;
     if (GameObject* bg = scene.Find("SwatchBackdrop"))
         if (auto* p = bg->GetComponent<UIPanel>()) {
             const bool lightLook = (th->panel.r + th->panel.g + th->panel.b) > 2.1f;
             Color c = lightLook ? Color(th->panel.r * 0.86f, th->panel.g * 0.86f, th->panel.b * 0.86f, 1.0f)
                                 : Color(th->panel.r * 0.45f, th->panel.g * 0.45f, th->panel.b * 0.45f, 1.0f);
-            if (th->preset == (int)UITheme::Preset::Glass) c = Color::FromBytes(58, 82, 140);   // glass needs something to see through
+            if (th->preset == (int)UITheme::Preset::Glass) c = Color::FromBytes(22, 34, 78);   // glass needs something to see through (see the blobs)
             if (th->preset == (int)UITheme::Preset::Neon)  c = Color::FromBytes(6, 2, 16);
             c.a = 1.0f;
             p->color = c; p->colorBottom = c; p->useGradient = false;
         }
+}
+
+/// Restyle everything in the scene with a built-in look. The page background follows the look.
+inline void ApplyThemePreset(Scene& scene, int preset) {
+    UITheme* th = EnsureTheme(scene, preset);
+    th->Apply();
+    StyleGalleryExtras(scene, th);
 }
 
 namespace gx {
@@ -109,6 +124,7 @@ inline GameObject* AddInventoryScreen(Scene& scene) {
     const char* names[] = {"Sword", "Shield", "Potion", "Bow", "Key", "Map", "Gem", "Rope"};
     for (int i = 0; i < 8; ++i) g->SetLabel(i, names[i]);
     g->Rebuild();
+    grid->AddComponent<UIInventoryBind>();   // shows the Player's Inventory (the names above are samples until there is one)
     Text(scene, root, "Info", "Click a slot to select it", UIAnchor::BottomLeft, {28, -24}, {320, 24}, 15.0f, slate::Dim());
     Button(scene, root, "Close", "Close", UIAnchor::BottomRight, {-24, -20}, {110, 40}, ButtonKind::Secondary);
     IntroAnim(root, UIAnimation::Intro::Pop);
@@ -127,7 +143,7 @@ inline GameObject* AddDialogueScreen(Scene& scene) {
     Avatar(scene, box, "Portrait", "Mara", UIAnchor::TopLeft, {24, 24}, 64.0f);
     Text(scene, box, "Speaker", "Speaker", UIAnchor::TopLeft, {108, 22}, {500, 26}, 19.0f, slate::Accent(), 0, true);
     auto* body = Text(scene, box, "Body", "Line of dialogue...", UIAnchor::TopLeft, {108, 52}, {730, 70}, 17.0f)->GetComponent<TextRenderer>();
-    body->wrap = true; body->vcenter = false;
+    body->wrap = true; body->vcenter = false; body->richText = true;
     for (int i = 0; i < 3; ++i) {
         const std::string nm = "Choice" + std::to_string(i + 1);
         GameObject* c = Button(scene, box, nm.c_str(), nm, UIAnchor::TopLeft, {108.0f + i * 250.0f, 140}, {238, 44}, ButtonKind::Secondary);
@@ -165,21 +181,32 @@ inline GameObject* AddWindow(Scene& scene, GameObject* parent, const char* name,
     return win;
 }
 
-/// A nameplate: a name, a level badge and a thin health bar. Put it under a character as a
-/// world-space UI object (it follows the character and faces the camera).
+/// Make a nameplate's health bar live: it fills from the `healthFrac` value that a Health Stat
+/// publishes (the player's health), so it moves as the character takes damage or heals.
+inline void BindNameplateHealth(GameObject* bar) {
+    if (!bar) return;
+    auto* b = bar->AddComponent<UIBarBind>();
+    b->var = "healthFrac"; b->min = 0.0f; b->max = 1.0f;
+}
+
+/// A nameplate: a name, a level badge and a thin health bar that follows the Health Stat. Add it as a
+/// world-space UI object and make it a child of the character: it follows and faces the camera.
 inline GameObject* AddNameplate(Scene& scene, bool inWorld) {
     GameObject* root = inWorld ? scene.CreateGameObject("Nameplate") : Child(scene, EnsureCanvas(scene), "Nameplate");
     if (inWorld) root->AddComponent<WorldSpaceUI>();
     GameObject* card = Panel(scene, root, "SwatchPlate", UIAnchor::TopLeft, {0, 0}, {180, 46}, Color::FromBytes(16, 18, 24, 190), 10.0f);
     Text(scene, card, "Name", "Goblin", UIAnchor::TopLeft, {10, 4}, {110, 22}, 15.0f, slate::Text(), 0, true);
     Badge(scene, card, "SwatchLevel", "Lv 7", UIAnchor::TopRight, {-8, 4}, slate::Warning());
-    gx::Bar(scene, card, "Health", {10, 30}, {160, 8}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger);
+    BindNameplateHealth(gx::Bar(scene, card, "Health", {10, 30}, {160, 8}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger));
     return root;
 }
 
 /// Pick the widgets of one preset: a dropdown in the header that restyles the scene.
-inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset::ModernFlat) {
+/// `portrait` lays the three cards out one under the other in a scroll view, on a 440 x 960 canvas, for phones.
+inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset::ModernFlat, bool portrait = false) {
     GameObject* canvas = EnsureCanvas(scene);
+    if (portrait)
+        if (auto* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {440.0f, 960.0f};
     GameObject* root = Group(scene, canvas, "UI Gallery");
     // Page background: kept as-is by the theme (the name starts with Swatch).
     Panel(scene, root, "SwatchBackdrop", UIAnchor::StretchFull, {0, 0}, {0, 0}, slate::Backdrop(), 0.0f);
@@ -187,23 +214,60 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         auto* bp = scene.Find("SwatchBackdrop")->GetComponent<UIPanel>();
         bp->borderWidth = 0.0f;
     }
-    Text(scene, root, "Title", "UI Gallery", UIAnchor::TopLeft, {32, 16}, {360, 40}, 30.0f, slate::Text(), 0, true);
-    Text(scene, root, "Subtitle", "Every widget, in any theme. Pick a look on the right.", UIAnchor::TopLeft, {34, 52}, {560, 20}, 14.0f, slate::Dim());
-    gx::Label(scene, root, "ThemeLabel", "Theme", {880, 24}, 80, slate::Dim(), 14.0f);
+    // On a phone everything but the backdrop sits in a Safe Area, clear of the notch and the home bar.
+    GameObject* content = root;
+    if (portrait) { content = Child(scene, root, "SafeArea"); content->AddComponent<UISafeArea>(); }
+    {   // bright shapes behind the cards: only shown in the Glass look
+        struct Blob { const char* name; Color col; Vec2 pos, size; };
+        const Blob blobs[] = {
+            {"SwatchBlobA", Color::FromBytes(255, 70, 150), portrait ? Vec2{20, 160} : Vec2{150, 150}, {320, 320}},
+            {"SwatchBlobB", Color::FromBytes(60, 190, 255), portrait ? Vec2{150, 520} : Vec2{560, 330}, {360, 360}},
+            {"SwatchBlobC", Color::FromBytes(255, 190, 60), portrait ? Vec2{40, 800} : Vec2{960, 120}, {300, 300}}};
+        for (const Blob& b : blobs) {
+            GameObject* g = Panel(scene, root, b.name, UIAnchor::TopLeft, b.pos, b.size, b.col, 0.0f);
+            auto* bp = g->GetComponent<UIPanel>();
+            bp->shape = UIShape::Circle; bp->borderWidth = 0.0f;
+            g->active = false;
+        }
+    }
+    const float titleX = portrait ? 24.0f : 32.0f;
+    Text(scene, content, "Title", "UI Gallery", UIAnchor::TopLeft, {titleX, 14}, {360, 40}, 30.0f, slate::Text(), 0, true);
+    Text(scene, content, "Subtitle", portrait ? "Scroll down. Pick a look below." : "Every widget, in any theme. Pick a look on the right.",
+         UIAnchor::TopLeft, {titleX + 2, 50}, {portrait ? 400.0f : 560.0f, 20}, 14.0f, slate::Dim());
+    if (!portrait) gx::Label(scene, content, "ThemeLabel", "Theme", {880, 24}, 80, slate::Dim(), 14.0f);
     {   // theme picker
-        GameObject* pick = Child(scene, root, "ThemePick");
+        GameObject* pick = Child(scene, content, "ThemePick");
+        {   // its own Canvas layer above the window's, so the open list draws over every card and the window
+            Canvas* page = OwningCanvas(content);
+            auto* pc = pick->AddComponent<Canvas>();
+            if (page) {
+                pc->scaleMode = page->scaleMode; pc->referenceResolution = page->referenceResolution;
+                pc->screenMatch = page->screenMatch; pc->matchWidthOrHeight = page->matchWidthOrHeight;
+                pc->scaleFactor = page->scaleFactor;
+            }
+            pc->sortOrder = (page ? page->sortOrder : 0) + 2;
+        }
         auto* dd = pick->AddComponent<UIDropdown>();
-        dd->anchor = UIAnchor::TopLeft; dd->position = {944, 14}; dd->size = {304, 38};
+        dd->anchor = UIAnchor::TopLeft; dd->position = portrait ? Vec2{24, 76} : Vec2{944, 14}; dd->size = portrait ? Vec2{392, 38} : Vec2{304, 38};
         dd->options.clear();
         for (int i = 1; i < UITheme::kPresetCount; ++i) dd->options.push_back(UITheme::PresetName(i));
-        dd->maxVisible = 7;
+        // every look is listed (maxVisible would hide the last ones: the list does not scroll)
         dd->value = preset >= 1 && preset < UITheme::kPresetCount ? preset - 1 : 0;
         pick->AddComponent<ScriptComponent>()->LoadSource(
             "function on_change() { ui_theme_preset(ui_dropdown_value(\"ThemePick\") + 1); }\n");
     }
+    GameObject* cardParent = content;
+    if (portrait) {   // the cards scroll: one column, one card after the other
+        GameObject* sv = Child(scene, content, "SwatchScroll");
+        auto* sc = sv->AddComponent<UIScrollView>();
+        sc->anchor = UIAnchor::TopLeft; sc->position = {0, 124}; sc->size = {440, 780};
+        sc->background = Color(0, 0, 0, 0); sc->autoContent = true; sc->contentHeight = 3 * 640.0f + 8.0f;
+        cardParent = sv;
+    }
+    auto cardAt = [&](int i) { return portrait ? Vec2{24.0f, 8.0f + 640.0f * i} : Vec2{32.0f + 416.0f * i, 86.0f}; };
 
     // ---- Column 1: buttons and inputs ----
-    GameObject* c1 = gx::Card(scene, root, "Buttons", "Buttons and inputs", {32, 86}, {392, 618});
+    GameObject* c1 = gx::Card(scene, cardParent, "Buttons", "Buttons and inputs", cardAt(0), {392, 618});
     gx::Btn(scene, c1, "Primary", "Primary", {20, 40}, {170, 40}, (int)UITheme::Variant::Primary);
     gx::Btn(scene, c1, "Secondary", "Secondary", {202, 40}, {170, 40}, (int)UITheme::Variant::Secondary);
     gx::Btn(scene, c1, "Danger", "Danger", {20, 90}, {170, 40}, (int)UITheme::Variant::Danger);
@@ -248,7 +312,7 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
     Button(scene, c1, "Play", "Play", UIAnchor::TopLeft, {20, 556}, {352, 44}, ButtonKind::Primary)->AddComponent<UIStyleVariant>()->variant = (int)UITheme::Variant::Pill;
 
     // ---- Column 2: bars and feedback ----
-    GameObject* c2 = gx::Card(scene, root, "Bars", "Bars and feedback", {448, 86}, {392, 618});
+    GameObject* c2 = gx::Card(scene, cardParent, "Bars", "Bars and feedback", cardAt(1), {392, 618});
     gx::Label(scene, c2, "HealthLabel", "Health", {20, 40}, 100, slate::Text(), 14.0f);
     gx::Label(scene, c2, "ManaLabel", "Mana", {20, 86}, 100, slate::Text(), 14.0f);
     gx::Label(scene, c2, "StaminaLabel", "Stamina", {20, 132}, 100, slate::Text(), 14.0f);
@@ -296,14 +360,24 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
     }
 
     // ---- Column 3: game pieces ----
-    GameObject* c3 = gx::Card(scene, root, "Game", "Game pieces", {864, 86}, {392, 618});
+    GameObject* c3 = gx::Card(scene, cardParent, "Game", "Game pieces", cardAt(2), {392, 618});
     gx::Label(scene, c3, "SlotLabel", "Inventory", {20, 40}, 200);
     {
         GameObject* g = Child(scene, c3, "Slots"); auto* sg = g->AddComponent<UISlotGrid>();
         sg->anchor = UIAnchor::TopLeft; sg->position = {20, 64}; sg->columns = 6; sg->rows = 2; sg->cell = {50, 50}; sg->gap = 8; sg->value = 1;
         sg->color = slate::Field(); sg->hoverColor = slate::FieldHover(); sg->selectedColor = slate::Accent();
-        const char* items[] = {"Axe", "Pot", "Key", "Bow", "Map", "Gem", "Rope", "Torch", "Ring", "Herb", "Coin", "Egg"};
-        for (int i = 0; i < 12; ++i) sg->SetLabel(i, items[i]);
+        // A real bag (the engine's Inventory) that the grid shows while the game runs.
+        GameObject* bag = Child(scene, root, "Gallery Bag");
+        auto* inv = bag->AddComponent<Inventory>();
+        inv->capacity = 12;
+        const struct { const char* item; int n; } stock[] = {{"Axe", 1}, {"Potion", 3}, {"Key", 1}, {"Bow", 1}, {"Map", 1},
+                                                             {"Gem", 5}, {"Rope", 2}, {"Torch", 12}, {"Ring", 1}};
+        for (const auto& st : stock) inv->slots.push_back({st.item, st.n, {}});
+        auto* ib = g->AddComponent<UIInventoryBind>();
+        ib->inventoryName = "Gallery Bag"; ib->slotFontScale = 1.0f;
+        sg->fontScale = 1.0f; sg->numberEmptySlots = false;
+        for (int i = 0; i < 12; ++i)                       // the same labels in the editor, before Play
+            sg->SetLabel(i, i < (int)inv->slots.size() ? UIInventoryBind::SlotText(inv->slots[(std::size_t)i], 5) : std::string());
         sg->Rebuild();
     }
     gx::Label(scene, c3, "DialogueLabel", "Dialogue box", {20, 190}, 200);
@@ -314,11 +388,16 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         GameObject* box = Panel(scene, dlg, "Box", UIAnchor::TopLeft, {20, 214}, {352, 150}, Color::FromBytes(255, 255, 255, 16), 12.0f);
         Avatar(scene, box, "Portrait", "Mara", UIAnchor::TopLeft, {14, 14}, 40.0f);
         Text(scene, box, "Speaker", "Mara", UIAnchor::TopLeft, {64, 12}, {200, 20}, 15.0f, slate::Accent(), 0, true);
-        auto* body = Text(scene, box, "Body", "You found the old road? Then you are braver than you look.",
+        auto* body = Text(scene, box, "Body", "You found the [color=#ffcc33]old road[/color]? Then you are [b]braver[/b] than you look.",
                           UIAnchor::TopLeft, {64, 34}, {278, 44}, 14.0f)->GetComponent<TextRenderer>();
-        body->wrap = true; body->vcenter = false;
+        body->wrap = true; body->vcenter = false; body->richText = true;
         Button(scene, box, "Choice1", "I had help", UIAnchor::TopLeft, {14, 96}, {160, 36}, ButtonKind::Secondary);
         Button(scene, box, "Choice2", "Mind your business", UIAnchor::TopLeft, {182, 96}, {158, 36}, ButtonKind::Ghost);
+        db->Prime("Mara", body->text, {"I had help", "Mind your business"});
+        // Talk plays the line again from its first letter; the choices come back when it has finished typing.
+        GameObject* talk = gx::Btn(scene, c3, "Talk", "Talk", {292, 186}, {80, 26}, (int)UITheme::Variant::Outline);
+        auto* tb = talk->GetComponent<UIButton>();
+        tb->clickTarget = "DialogueBox"; tb->clickFunction = "Restart";
     }
     gx::Label(scene, c3, "WindowLabel", "Window (drag the title bar)", {20, 380}, 300);
     {
@@ -331,7 +410,22 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         GameObject* plate = Panel(scene, c3, "SwatchInsetNameplate", UIAnchor::TopLeft, {244, 410}, {128, 46}, Color::FromBytes(16, 18, 24, 190), 10.0f);
         Text(scene, plate, "Name", "Goblin", UIAnchor::TopLeft, {10, 4}, {70, 22}, 14.0f, slate::Text(), 0, true);
         Badge(scene, plate, "SwatchLevel", "Lv 7", UIAnchor::TopRight, {-6, 5}, slate::Warning());
-        gx::Bar(scene, plate, "Health", {10, 32}, {108, 7}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger);
+        BindNameplateHealth(gx::Bar(scene, plate, "Health", {10, 32}, {108, 7}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger));
+        // The goblin the plate shows: a Health Stat (full at Play start) that heals back slowly. The two buttons hurt and heal it.
+        GameObject* gob = Child(scene, root, "Goblin");
+        auto* hs = gob->AddComponent<HealthStat>();
+        hs->maxHealth = 100.0f; hs->regenPerSecond = 4.0f; hs->regenDelay = 1.5f;
+        hs->respawn = true; hs->respawnDelay = 1.0f; hs->playDeathAnim = false;
+        hs->publishPrefs = false; hs->sendMessages = false; hs->publishBar = false;
+        const char* pn[] = {"PlateHit", "PlateHeal"};
+        const char* pl[] = {"Hit", "Heal"};
+        const char* pf[] = {"Damage", "Heal"};
+        const int pv[] = {(int)UITheme::Variant::Danger, (int)UITheme::Variant::Outline};
+        for (int i = 0; i < 2; ++i) {
+            GameObject* b = gx::Btn(scene, c3, pn[i], pl[i], {244.0f + i * 68.0f, 462}, {60, 28}, pv[i]);
+            auto* ub = b->GetComponent<UIButton>();
+            ub->clickTarget = "Goblin"; ub->clickFunction = pf[i]; ub->clickArg = 15.0f;
+        }
     }
     gx::Label(scene, c3, "FloatLabel", "Floating numbers (click)", {20, 548}, 300);
     {

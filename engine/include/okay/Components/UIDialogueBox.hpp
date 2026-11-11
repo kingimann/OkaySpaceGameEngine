@@ -31,6 +31,19 @@ public:
     /// Show a line. `choices` (up to 4) turn into buttons once the line has finished typing.
     void Show(const std::string& speaker, const std::string& text,
               const std::vector<std::string>& choices = {});
+    /// Remember a line without showing it (a box laid out in the editor with its first words). Restart() then
+    /// shows it, from the start, with the typing effect.
+    void Prime(const std::string& speaker, const std::string& text, const std::vector<std::string>& choices = {}) {
+        m_speaker = speaker; m_text = text; m_choices.assign(choices.begin(), choices.begin() + (std::ptrdiff_t)(choices.size() < 4 ? choices.size() : 4));
+        m_primed = true;
+    }
+    /// Show the last line again from its first letter (a Talk button). False when no line was ever shown or primed.
+    bool Restart() {
+        if (!m_primed && m_text.empty()) return false;
+        const std::string sp = m_speaker, tx = m_text; const std::vector<std::string> ch = m_choices;
+        Show(sp, tx, ch);
+        return true;
+    }
     /// Finish the typing, or (when already finished and there are no choices) move on.
     void Advance();
     /// Pick a choice (0-based). False when there is no such choice or the line is still typing.
@@ -59,6 +72,7 @@ private:
     int  m_lastChoice = -1;
     float m_shown = 0.0f;
     unsigned m_serial = 0;
+    bool  m_primed = false;
     bool  m_justShown = false;
 };
 

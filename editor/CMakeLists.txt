@@ -72,13 +72,11 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
     VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
-    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)  # native file dialogs
+    ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
+    ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})
 target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared
-    ${CMAKE_CURRENT_SOURCE_DIR}/vendor
-    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd)
-set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c
-    PROPERTIES COMPILE_OPTIONS "-w")
+    ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 # The vendored widget isn't -Wall/-Wextra clean; silence its warnings only.
 set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})

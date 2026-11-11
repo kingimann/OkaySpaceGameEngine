@@ -18,7 +18,7 @@
 #include "okay/Input/Input.hpp"
 #include "imgui.h"
 #include "imgui_internal.h"
-#include "tinyfiledialogs.h"
+#include "FileDialog.hpp"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -393,17 +393,24 @@ bool LoadGraphFile(EditorState& ed, const std::string& path) {
     Revalidate(ed);
     return true;
 }
+static bool WriteGraphFile(EditorState& ed, std::string path);
+// Saves to the graph's file, or asks where first (the answer may arrive on a later frame with the built-in browser).
 bool SaveGraphFile(EditorState& ed, bool as) {
     Ui& u = U();
-    std::string path = u.path;
-    if (as || path.empty()) {
-        const char* filters[] = {"*.okaydialog"};
+    if (as || u.path.empty()) {
         const std::string def = (fs::path(AssetsDir(ed)) / ((u.graph.name.empty() ? std::string("dialogue") : u.graph.name) + ".okaydialog")).string();
-        const char* p = tinyfd_saveFileDialog("Save dialogue", def.c_str(), 1, filters, "Dialogue graph (.okaydialog)");
-        if (!p || !*p) return false;
-        path = p;
-        if (fs::path(path).extension() != ".okaydialog") path += ".okaydialog";
+        EditorState* edp = &ed;
+        okay::filedialog::SaveOne("Save dialogue", def, okay::filedialog::Filters("Dialogue graph (.okaydialog)", {"*.okaydialog"}), [edp](const std::string& p) {
+            std::string path = p;
+            if (fs::path(path).extension() != ".okaydialog") path += ".okaydialog";
+            WriteGraphFile(*edp, path);
+        });
+        return false;   // nothing written yet
     }
+    return WriteGraphFile(ed, u.path);
+}
+static bool WriteGraphFile(EditorState& ed, std::string path) {
+    Ui& u = U();
     if (!u.graph.Save(path)) { ConsoleLog("Couldn't save " + path, 2); return false; }
     u.path = path; u.dirty = false;
     ConsoleLog("Saved " + path);
@@ -567,15 +574,17 @@ void DrawNodeInspector(EditorState& ed, DialogueNode& n) {
             if (ImGui::IsItemActivated()) PushUndo();
             ImGui::SameLine();
             if (ImGui::SmallButton("...##pb")) {
-                const char* f[] = {"*.png", "*.jpg", "*.jpeg", "*.tga", "*.bmp"};
-                if (const char* sel = tinyfd_openFileDialog("Portrait image", AssetsDir(ed).c_str(), 5, f, "Images", 0)) { PushUndo(); n.portrait = ProjectRelative(ed, sel); Changed(ed); }
+                EditorState* edp = &ed; DialogueNode* np = &n;
+                okay::filedialog::OpenOne("Portrait image", AssetsDir(ed), okay::filedialog::Filters("Images", {"*.png", "*.jpg", "*.jpeg", "*.tga", "*.bmp"}),
+                    [edp, np](const std::string& sel) { PushUndo(); np->portrait = ProjectRelative(*edp, sel); Changed(*edp); });
             }
             if (TextEdit("Sound##s", n.sound, "audio path (optional)")) Changed(ed);
             if (ImGui::IsItemActivated()) PushUndo();
             ImGui::SameLine();
             if (ImGui::SmallButton("...##sb")) {
-                const char* f[] = {"*.wav", "*.ogg", "*.mp3", "*.flac"};
-                if (const char* sel = tinyfd_openFileDialog("Line sound", AssetsDir(ed).c_str(), 4, f, "Audio", 0)) { PushUndo(); n.sound = ProjectRelative(ed, sel); Changed(ed); }
+                EditorState* edp = &ed; DialogueNode* np = &n;
+                okay::filedialog::OpenOne("Line sound", AssetsDir(ed), okay::filedialog::Filters("Audio", {"*.wav", "*.ogg", "*.mp3", "*.flac"}),
+                    [edp, np](const std::string& sel) { PushUndo(); np->sound = ProjectRelative(*edp, sel); Changed(*edp); });
             }
             if (ImGui::DragFloat("Auto-advance (s)##a", &n.autoAdvance, 0.05f, 0.0f, 60.0f, "%.2f")) Changed(ed);
             if (ImGui::IsItemActivated()) PushUndo();
@@ -1320,8 +1329,9 @@ void DrawDialogueTab(EditorState& ed) {
     if (ImGui::Button("New")) NewGraph(ed);
     ImGui::SameLine();
     if (ImGui::Button("Open...")) {
-        const char* filters[] = {"*.okaydialog"};
-        if (const char* p = tinyfd_openFileDialog("Open dialogue", AssetsDir(ed).c_str(), 1, filters, "Dialogue graph (.okaydialog)", 0)) LoadGraphFile(ed, p);
+        EditorState* edp = &ed;
+        okay::filedialog::OpenOne("Open dialogue", AssetsDir(ed), okay::filedialog::Filters("Dialogue graph (.okaydialog)", {"*.okaydialog"}),
+            [edp](const std::string& p) { LoadGraphFile(*edp, p); });
     }
     ImGui::SameLine();
     if (ImGui::Button(u.dirty ? "Save*" : "Save")) SaveGraphFile(ed, false);
@@ -1556,17 +1566,23 @@ bool LoadQuestFile(const std::string& path) {
     u.questIssues = QuestFile::Validate(u.quests, nullptr);
     return true;
 }
+static bool WriteQuestFile(EditorState& ed, std::string path);
 bool SaveQuestFile(EditorState& ed, bool as) {
     Ui& u = U();
-    std::string path = u.questPath;
-    if (as || path.empty()) {
-        const char* filters[] = {"*.okayquest"};
+    if (as || u.questPath.empty()) {
         const std::string def = (fs::path(AssetsDir(ed)) / "quests.okayquest").string();
-        const char* p = tinyfd_saveFileDialog("Save quests", def.c_str(), 1, filters, "Quest file (.okayquest)");
-        if (!p || !*p) return false;
-        path = p;
-        if (fs::path(path).extension() != ".okayquest") path += ".okayquest";
+        EditorState* edp = &ed;
+        okay::filedialog::SaveOne("Save quests", def, okay::filedialog::Filters("Quest file (.okayquest)", {"*.okayquest"}), [edp](const std::string& p) {
+            std::string path = p;
+            if (fs::path(path).extension() != ".okayquest") path += ".okayquest";
+            WriteQuestFile(*edp, path);
+        });
+        return false;   // nothing written yet
     }
+    return WriteQuestFile(ed, u.questPath);
+}
+static bool WriteQuestFile(EditorState& ed, std::string path) {
+    Ui& u = U();
     if (!QuestFile::Save(path, u.quests)) { ConsoleLog("Couldn't save " + path, 2); return false; }
     u.questPath = path; u.questDirty = false;
     ConsoleLog("Saved " + path);
@@ -1583,8 +1599,8 @@ void DrawQuestsTab(EditorState& ed) {
     if (ImGui::Button("New file")) { u.quests.clear(); u.questPath.clear(); u.questDirty = false; u.questUndo.clear(); u.questRedo.clear(); u.questSel = -1; u.questIssues.clear(); }
     ImGui::SameLine();
     if (ImGui::Button("Open...")) {
-        const char* filters[] = {"*.okayquest"};
-        if (const char* p = tinyfd_openFileDialog("Open quests", AssetsDir(ed).c_str(), 1, filters, "Quest file (.okayquest)", 0)) LoadQuestFile(p);
+        okay::filedialog::OpenOne("Open quests", AssetsDir(ed), okay::filedialog::Filters("Quest file (.okayquest)", {"*.okayquest"}),
+            [](const std::string& p) { LoadQuestFile(p); });
     }
     ImGui::SameLine();
     if (ImGui::Button(u.questDirty ? "Save*" : "Save")) SaveQuestFile(ed, false);
@@ -1773,8 +1789,9 @@ void DialogueRunnerInspector(EditorState& ed, DialogueRunner& dr) {
     if (ImGui::IsItemActivated()) ed.PushUndo();
     ImGui::SameLine();
     if (ImGui::SmallButton("...##drb")) {
-        const char* f[] = {"*.okaydialog"};
-        if (const char* p = tinyfd_openFileDialog("Dialogue graph", AssetsDir(ed).c_str(), 1, f, "Dialogue graph (.okaydialog)", 0)) { ed.PushUndo(); dr.graphFile = ProjectRelative(ed, p); ed.dirty = true; }
+        EditorState* edp = &ed; DialogueRunner* drp = &dr;
+        okay::filedialog::OpenOne("Dialogue graph", AssetsDir(ed), okay::filedialog::Filters("Dialogue graph (.okaydialog)", {"*.okaydialog"}),
+            [edp, drp](const std::string& p) { edp->PushUndo(); drp->graphFile = ProjectRelative(*edp, p); edp->dirty = true; });
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("Edit##dre")) {
@@ -1836,8 +1853,9 @@ void QuestLogInspector(EditorState& ed, QuestLog& ql) {
     if (ImGui::IsItemActivated()) ed.PushUndo();
     ImGui::SameLine();
     if (ImGui::SmallButton("...##qlb")) {
-        const char* f[] = {"*.okayquest"};
-        if (const char* p = tinyfd_openFileDialog("Quest file", AssetsDir(ed).c_str(), 1, f, "Quest file (.okayquest)", 0)) { ed.PushUndo(); ql.questFile = ProjectRelative(ed, p); ql.LoadFile(nullptr); ed.dirty = true; }
+        EditorState* edp = &ed; QuestLog* qlp = &ql;
+        okay::filedialog::OpenOne("Quest file", AssetsDir(ed), okay::filedialog::Filters("Quest file (.okayquest)", {"*.okayquest"}),
+            [edp, qlp](const std::string& p) { edp->PushUndo(); qlp->questFile = ProjectRelative(*edp, p); qlp->LoadFile(nullptr); edp->dirty = true; });
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("Edit##qle")) { if (ql.questFile.empty()) g_showDialogue = true; else OpenStoryAsset(ql.ResolvedFile()); }

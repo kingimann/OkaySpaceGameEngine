@@ -55,7 +55,7 @@
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
-#include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
+#include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
 
 #include <numeric>
 #include <algorithm>
@@ -6065,9 +6065,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Merge Scene into Current...")) {
             // Combine scenes: append another scene's objects into this one (kept),
             // tagged with its name so the Hierarchy shows where it starts/ends.
-            const char* filt[1] = {"*.okayscene"};
-            const char* p = tinyfd_openFileDialog("Merge scene into current", "", 1, filt, "OkaySpace scene", 0);
-            if (p) MergeSceneIntoCurrent(ed, p);
+            EditorState* edp = &ed;
+            okay::filedialog::OpenOne("Merge scene into current", "", okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}),
+                                      [edp](const std::string& p) { MergeSceneIntoCurrent(*edp, p); });
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Combine another scene into this one to build a seamless world.\n"
@@ -7552,6 +7552,20 @@ static void ToggleFavFolder(const std::string& p) {
 
 // A friendly category for a file extension, for import logging / quick validation.
 // "etc" types (anything not recognized) still import — this is just for the message.
+// ---- File pickers: the answer may arrive on a later frame (the built-in browser), so every result is handled in a callback.
+// The *Into helpers write the chosen path into a character buffer, which must outlive the call (a global or a static).
+static void PickOpenInto(const char* title, const std::string& start, std::vector<okay::filedialog::Filter> filters, char* buf, size_t cap) {
+    okay::filedialog::OpenOne(title, start, filters, [buf, cap](const std::string& p) { std::snprintf(buf, cap, "%s", p.c_str()); });
+}
+static void PickSaveInto(const char* title, const std::string& start, std::vector<okay::filedialog::Filter> filters, char* buf, size_t cap) {
+    okay::filedialog::SaveOne(title, start, filters, [buf, cap](const std::string& p) { std::snprintf(buf, cap, "%s", p.c_str()); });
+}
+static void PickFolderInto(const char* title, const std::string& start, char* buf, size_t cap) {
+    okay::filedialog::FolderOne(title, start, [buf, cap](const std::string& p) { std::snprintf(buf, cap, "%s", p.c_str()); });
+}
+// The answer of the Animation window's Export / Import clips pickers, picked up by the window on the next frame (it holds locals a callback can't keep).
+static std::string g_animExportPick, g_animImportPick;
+
 // Every model format this build can import (built-in + Assimp's own list).
 static bool IsModelExt(const std::string& extLower) {
     static const std::string list = " " + okay::ImportableExtensions() + " ";
@@ -7566,11 +7580,11 @@ static const std::vector<std::string>& ModelFilterPatterns() {
     }
     return pats;
 }
-// File picker for any importable model (multi-select returns '|'-separated paths).
-static const char* OpenModelFileDialog(const char* title, bool multi = false) {
+// File picker for any importable model (multi-select hands every chosen path to the callback).
+static void OpenModelFileDialog(const char* title, bool multi, okay::filedialog::Callback cb) {
     std::vector<const char*> filt;
     for (const auto& f : ModelFilterPatterns()) filt.push_back(f.c_str());
-    return tinyfd_openFileDialog(title, "", (int)filt.size(), filt.data(), "3D models", multi ? 1 : 0);
+    okay::filedialog::Open(title, "", okay::filedialog::Filters("3D models", filt.data(), (int)filt.size()), multi, std::move(cb));
 }
 // Pre-import `path` into a scratch scene and open the Import Model settings
 // dialog on what was found.
@@ -7602,7 +7616,7 @@ static void ScanModelForImport(const std::string& path) {
     g_showImportObj = true;
 }
 static void PickAndImportModel() {
-    if (const char* p = OpenModelFileDialog("Import model")) ScanModelForImport(p);
+    OpenModelFileDialog("Import model", false, [](const std::vector<std::string>& v) { if (!v.empty()) ScanModelForImport(v[0]); });
 }
 static const char* ImportKindLabel(const std::string& extLower) {
     if (extLower==".png"||extLower==".jpg"||extLower==".jpeg"||extLower==".bmp"||extLower==".tga"||extLower==".gif") return "texture";
@@ -7701,8 +7715,7 @@ static void CharacterModelTools(EditorState& ed, GameObject* go, const char* id)
     char lbl[64];
     std::snprintf(lbl, sizeof(lbl), "Set Character Model...##%s", id);
     if (ImGui::Button(lbl)) {
-        if (const char* p = OpenModelFileDialog("Set character model"))
-            QueueCharacterModel(go, p);
+        OpenModelFileDialog("Set character model", false, [go](const std::vector<std::string>& v) { if (!v.empty()) QueueCharacterModel(go, v[0]); });
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this player's body: auto-sized,\nfeet grounded, turned to face forward, collider fitted and its\nidle/walk/run clips wired. Or drop a model asset onto this object.");
     GameObject* model = okay::FindCharacterModelRoot(ed.scene(), go);
@@ -10596,19 +10609,17 @@ void DrawProject(EditorState& ed) {
         bool openCreate = IconButton("##pcreate", TbIcon::Plus, "Create an asset in this folder");
         ImGui::SameLine();
         if (ImGui::Button("Import")) {
-            const char* picks = tinyfd_openFileDialog("Import asset(s)", "", 0, nullptr, "All files", /*multiSelect=*/1);
-            if (picks && picks[0]) {
-                // tinyfd returns multiple selections separated by '|'.
-                std::string all(picks), one; int n = 0;
-                auto importOne = [&](const std::string& path) {
-                    if (path.empty()) return;
-                    std::string out = ImportAssetFile(path, dir);
+            // May answer on a later frame (the built-in browser): the folder is copied, and `selected` is a file-static.
+            const fs::path importDir = dir;
+            okay::filedialog::Open("Import asset(s)", "", {}, /*multi=*/true, [importDir](const std::vector<std::string>& picks) {
+                int n = 0;
+                for (const std::string& path : picks) {
+                    if (path.empty()) continue;
+                    std::string out = ImportAssetFile(path, importDir);
                     if (!out.empty()) { selected = out; ++n; }
-                };
-                for (char ch : all) { if (ch == '|') { importOne(one); one.clear(); } else one += ch; }
-                importOne(one);
-                ConsoleLog("Imported " + std::to_string(n) + " file(s) into " + dir.filename().string());
-            }
+                }
+                ConsoleLog("Imported " + std::to_string(n) + " file(s) into " + importDir.filename().string());
+            });
         }
         bool importHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
         ImGui::EndDisabled();
@@ -11086,9 +11097,9 @@ void DrawMaterialEditor(EditorState& ed) {
     }
     ImGui::SameLine(0, 4);
     if (ImGui::Button("...##mattexbrowse")) {
-        const char* imgFilt[3] = {"*.png", "*.jpg", "*.bmp"};
-        if (const char* p = tinyfd_openFileDialog("Choose a texture image", "", 3, imgFilt, "Image", 0))
-            mat.texture = p;
+        Material* matp = &mat;
+        okay::filedialog::OpenOne("Choose a texture image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
+                                  [matp](const std::string& p) { matp->texture = p; });
     }
     ImGui::SameLine(0, 4);
     ImGui::TextUnformatted("Texture");
@@ -16762,9 +16773,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::InputText("##sspath", g_ssPathBuf, sizeof(g_ssPathBuf));
         ImGui::SameLine(0, 4);
         if (ImGui::Button("...##ssbrowse")) {
-            const char* filt[4] = {"*.png", "*.jpg", "*.jpeg", "*.bmp"};
-            if (const char* p = tinyfd_openFileDialog("Sprite sheet", "", 4, filt, "Image", 0))
-                std::snprintf(g_ssPathBuf, sizeof(g_ssPathBuf), "%s", p);
+            PickOpenInto("Sprite sheet", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.jpeg", "*.bmp"}), g_ssPathBuf, sizeof(g_ssPathBuf));
         }
         ImGui::SetNextItemWidth(120); ImGui::InputInt("Columns", &g_ssCols);
         ImGui::SetNextItemWidth(120); ImGui::InputInt("Rows", &g_ssRows);
@@ -16923,9 +16932,7 @@ void DrawFileDialogs(EditorState& ed) {
                                        ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0, 4);
         if (ImGui::Button("...##openbrowse")) {
-            const char* filt[1] = {"*.okayscene"};
-            if (const char* p = tinyfd_openFileDialog("Open scene", "", 1, filt, "OkaySpace scene", 0))
-                std::snprintf(g_pathBuf, sizeof(g_pathBuf), "%s", p);
+            PickOpenInto("Open scene", "", okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}), g_pathBuf, sizeof(g_pathBuf));
         }
         if (ImGui::Button("Open", ImVec2(120, 0)) || openGo) {
             RequestLoad(ed, g_pathBuf);
@@ -16944,10 +16951,8 @@ void DrawFileDialogs(EditorState& ed) {
                                        ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0, 4);
         if (ImGui::Button("...##savebrowse")) {
-            const char* filt[1] = {"*.okayscene"};
-            const char* def = g_pathBuf[0] ? g_pathBuf : "scene.okayscene";
-            if (const char* p = tinyfd_saveFileDialog("Save scene as", def, 1, filt, "OkaySpace scene"))
-                std::snprintf(g_pathBuf, sizeof(g_pathBuf), "%s", p);
+            const std::string def = g_pathBuf[0] ? g_pathBuf : "scene.okayscene";
+            PickSaveInto("Save scene as", def, okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}), g_pathBuf, sizeof(g_pathBuf));
         }
         if (ImGui::Button("Save", ImVec2(120, 0)) || saveGo) {
             if (ed.Save(g_pathBuf)) { ConsoleLog("Saved " + std::string(g_pathBuf)); AddRecent(g_pathBuf); ed.Achievement("FIRST_SAVE"); }
@@ -16968,9 +16973,7 @@ void DrawFileDialogs(EditorState& ed) {
                                          ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0, 4);
         if (ImGui::Button("...##prefabbrowse")) {
-            const char* filt[1] = {"*.okayprefab"};
-            if (const char* p = tinyfd_openFileDialog("Instantiate prefab", "", 1, filt, "OkaySpace prefab", 0))
-                std::snprintf(g_prefabBuf, sizeof(g_prefabBuf), "%s", p);
+            PickOpenInto("Instantiate prefab", "", okay::filedialog::Filters("OkaySpace prefab", {"*.okayprefab"}), g_prefabBuf, sizeof(g_prefabBuf));
         }
         if (ImGui::Button("Instantiate", ImVec2(120, 0)) || prefabGo) {
             ed.PushUndo();
@@ -17298,17 +17301,14 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(388); ImGui::InputText("##bdir", g_buildDirBuf, sizeof(g_buildDirBuf));
                 ImGui::SameLine(0, 4);
                 if (ImGui::Button("...##bdir")) {   // native folder picker
-                    if (const char* p = tinyfd_selectFolderDialog("Choose the build output folder",
-                                                                  g_buildDirBuf[0] ? g_buildDirBuf : nullptr))
-                        std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", p);
+                    PickFolderInto("Choose the build output folder", g_buildDirBuf, g_buildDirBuf, sizeof(g_buildDirBuf));
                 }
                 ImGui::SameLine(0, 6); ImGui::TextUnformatted("Output folder");
-                const char* pngFilt[] = {"*.png"};
+                const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
                 ImGui::SetNextItemWidth(388); ImGui::InputText("##bicon", g_build.icon, sizeof(g_build.icon));
                 ImGui::SameLine(0, 4);
                 if (ImGui::Button("...##bicon")) {
-                    if (const char* p = tinyfd_openFileDialog("Choose the game icon", "", 1, pngFilt, "PNG image", 0))
-                        std::snprintf(g_build.icon, sizeof(g_build.icon), "%s", p);
+                    PickOpenInto("Choose the game icon", "", pngFilt, g_build.icon, sizeof(g_build.icon));
                 }
                 ImGui::SameLine(0, 6); ImGui::TextUnformatted("Icon (PNG)");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Window/taskbar icon. A PNG path; bundled into the build.");
@@ -17322,8 +17322,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(388); ImGui::InputText("##bsplash", g_build.splash, sizeof(g_build.splash));
                 ImGui::SameLine(0, 4);
                 if (ImGui::Button("...##bsplash")) {
-                    if (const char* p = tinyfd_openFileDialog("Choose the splash image", "", 1, pngFilt, "PNG image", 0))
-                        std::snprintf(g_build.splash, sizeof(g_build.splash), "%s", p);
+                    PickOpenInto("Choose the splash image", "", pngFilt, g_build.splash, sizeof(g_build.splash));
                 }
                 ImGui::SameLine(0, 6); ImGui::TextUnformatted("Splash image (PNG)");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A logo shown at startup (fades in/out, skippable). Leave blank for none. Bundled into the build.");
@@ -17895,21 +17894,23 @@ static std::string DefaultProjectsLocation() {
 // Pick a project folder and open it (its first scene). The chooser and File > Open Project Folder share this.
 static void OpenProjectFolderDialog(EditorState& ed, const std::string& startDir) {
     namespace fs = std::filesystem;
-    const char* picked = tinyfd_selectFolderDialog("Open a project folder", startDir.c_str());
-    if (!picked || !*picked) return;
-    fs::path root(picked);
-    if (root.filename() == "Assets") root = root.parent_path();
-    std::string scene;
-    std::error_code ec;
-    for (const fs::path& dir : {root / "Assets", root})
-        if (scene.empty() && fs::is_directory(dir, ec))
-            for (auto& f : fs::directory_iterator(dir, ec))
-                if (f.path().extension() == ".okayscene") { scene = f.path().string(); break; }
-    if (scene.empty()) {
-        ShowErrorPopup("That isn't an OkaySpace project", "There is no .okayscene file in \"" + root.string() + "\". Pick the project's folder (the one that holds Assets).");
-        return;
-    }
-    RunAfterSavePrompt(ed, "opening another project", [scene] { g_openScenePath = scene; });
+    EditorState* edp = &ed;
+    okay::filedialog::FolderOne("Open a project folder", startDir, [edp](const std::string& picked) {
+        EditorState& ed = *edp;
+        fs::path root(picked);
+        if (root.filename() == "Assets") root = root.parent_path();
+        std::string scene;
+        std::error_code ec;
+        for (const fs::path& dir : {root / "Assets", root})
+            if (scene.empty() && fs::is_directory(dir, ec))
+                for (auto& f : fs::directory_iterator(dir, ec))
+                    if (f.path().extension() == ".okayscene") { scene = f.path().string(); break; }
+        if (scene.empty()) {
+            ShowErrorPopup("That isn't an OkaySpace project", "There is no .okayscene file in \"" + root.string() + "\". Pick the project's folder (the one that holds Assets).");
+            return;
+        }
+        RunAfterSavePrompt(ed, "opening another project", [scene] { g_openScenePath = scene; });
+    });
 }
 
 // ---- The New Project form (used by File > New Project... and by the chooser) ----
@@ -17974,7 +17975,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
     if (locBad) { ImGui::PopStyleVar(); ImGui::PopStyleColor(); }
     ImGui::SameLine();
     if (ImGui::Button("Browse\xE2\x80\xA6##np", ImVec2(-1, 0)))
-        if (const char* picked = tinyfd_selectFolderDialog("Where new projects go", f.loc)) if (*picked) std::snprintf(f.loc, sizeof(f.loc), "%s", picked);
+        PickFolderInto("Where new projects go", f.loc, f.loc, sizeof(f.loc));
     const std::vector<std::string> recent = RecentLocations();
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + labelW);
     if (!plan.locationProblem.empty()) {
@@ -18081,8 +18082,8 @@ static void DrawNewProjectDialog(EditorState& ed) {
 // new project. (OKAY_ALLOW_NO_PROJECT=1 skips it for tools and tests.)
 void DrawProjectGate(EditorState& ed) {
     static const bool allow = std::getenv("OKAY_ALLOW_NO_PROJECT") != nullptr;
-    if (allow || !ed.projectDir().empty() || !g_openScenePath.empty() || !g_newProjectRoot.empty() ||
-        !g_newProjectTemplate.empty() || ed.isPlaying() || ProjectGateBusy() || g_openUpdatePopup || ImGui::IsPopupOpen("Engine Update"))
+    if (allow || !ed.projectDir().empty() || !g_openScenePath.empty() || !g_newProjectRoot.empty() ||   // (g_savePromptOpen: the "Save changes?" question is on screen; two modals each re-opening every frame would fight)
+        !g_newProjectTemplate.empty() || ed.isPlaying() || ProjectGateBusy() || okay::filedialog::BuiltinOpen() || g_savePromptOpen || g_openUpdatePopup || ImGui::IsPopupOpen("Engine Update"))
         return;   // (a question, or the update window the question's "Update OkaySpace" opened, is on screen: the chooser waits)
     namespace fs = std::filesystem;
     ImGui::OpenPopup("Open a project");
@@ -18450,14 +18451,13 @@ void DrawProjectSettings(EditorState& ed) {
         if (ImGui::CollapsingHeader("Tags and Layers")) DrawTagsAndLayersSettings(ed);
         if (ImGui::CollapsingHeader("Loading screen")) {
             ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
-            const char* pngFilt[] = {"*.png"};
+            const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
             ImGui::SetNextItemWidth(360);
             ImGui::InputTextWithHint("##pssplashlogo", "Logo image (PNG) — blank = built-in cube",
                                      g_project.splashLogo, sizeof(g_project.splashLogo));
             ImGui::SameLine();
             if (ImGui::Button("...##pssplash")) {
-                if (const char* p = tinyfd_openFileDialog("Choose the splash logo", "", 1, pngFilt, "PNG image", 0))
-                    std::snprintf(g_project.splashLogo, sizeof(g_project.splashLogo), "%s", p);
+                PickOpenInto("Choose the splash logo", "", pngFilt, g_project.splashLogo, sizeof(g_project.splashLogo));
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Clear##pssplash")) g_project.splashLogo[0] = '\0';
@@ -21580,9 +21580,14 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     // Write every clip of the character to a .okayanim file (the edited one included).
     auto exportClips = [&] {
         ch->AddClip(clip);
-        const char* filt[] = {"*.okayanim"};
         std::string def = ch->clipsFile.empty() ? (clip.name + ".okayanim") : ch->ResolvedClipsFile();
-        if (const char* p = tinyfd_saveFileDialog("Save animation clips", def.c_str(), 1, filt, "OkaySpace animation")) {
+        // The answer may come on a later frame (built-in browser): it is picked up below, where `ch` and `ed` are in hand again.
+        okay::filedialog::SaveOne("Save animation clips", def, okay::filedialog::Filters("OkaySpace animation", {"*.okayanim"}),
+                                  [](const std::string& p) { g_animExportPick = p; });
+    };
+    auto finishExport = [&](const std::string& pStr) {
+        const char* p = pStr.c_str();
+        {
             std::string werr;
             if (ch->SaveClipsToFile(p, &werr)) {
                 // Keep the path project-relative so the scene still finds it when the
@@ -21602,9 +21607,11 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     // Add the clips of a .okayanim file to the character (a name already in use
     // gets a number, nothing is overwritten) and open the first one.
     auto importClips = [&] {
-        const char* filt[] = {"*.okayanim"};
-        const char* p = tinyfd_openFileDialog("Import animation clips", "", 1, filt, "OkaySpace animation", 0);
-        if (!p || !*p) return;
+        okay::filedialog::OpenOne("Import animation clips", "", okay::filedialog::Filters("OkaySpace animation", {"*.okayanim"}),
+                                  [](const std::string& p) { g_animImportPick = p; });
+    };
+    auto finishImport = [&](const std::string& pStr) {
+        const char* p = pStr.c_str();
         std::ifstream fin(p);
         std::stringstream ss; if (fin) ss << fin.rdbuf();
         std::string err;
@@ -21621,6 +21628,8 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
                    std::filesystem::path(p).filename().string());
         loadClip(got.front());
     };
+    if (!g_animExportPick.empty()) { const std::string p = std::move(g_animExportPick); g_animExportPick.clear(); finishExport(p); }
+    if (!g_animImportPick.empty()) { const std::string p = std::move(g_animImportPick); g_animImportPick.clear(); finishImport(p); }
 
     // ---- The Scene view's rotate gizmo on a rig part: the part was turned since
     //      the preview posed it last frame, so pull the turn into the authored pose
@@ -22906,23 +22915,23 @@ static void StopModelScenePreview(EditorState& ed) {
 
 // "Add animations from file..." (Mixamo-style: one character + one file per
 // animation). Opens a multi-select picker and adds every clip to `modelRoot`.
-void AddAnimationsFromFilesUI(EditorState& ed, GameObject* modelRoot) {
-    const char* picked = OpenModelFileDialog("Add animations (Mixamo FBX, glTF, DAE, BVH...)", true);
-    if (!picked || !*picked) return;
-    ed.PushUndo();
-    std::string all = picked; int total = 0;
-    std::size_t start = 0;
-    while (start <= all.size()) {   // tinyfd separates multiple picks with '|'
-        std::size_t bar = all.find('|', start);
-        std::string one = all.substr(start, bar == std::string::npos ? std::string::npos : bar - start);
-        start = bar == std::string::npos ? all.size() + 1 : bar + 1;
-        if (one.empty()) continue;
-        std::string log;
-        int n = okay::AddAnimationsFromFile(ed.scene(), modelRoot, one, &log);
-        total += n;
-        ConsoleLog(std::filesystem::path(one).filename().string() + ": " + log, n > 0 ? 0 : 1);
-    }
-    if (total > 0) { ed.dirty = true; ConsoleLog("Added " + std::to_string(total) + " animation" + (total == 1 ? "" : "s") + " — pick them in the Clip list."); }
+void AddAnimationsFromFilesUI(EditorState& ed, GameObject* modelRoot, std::function<void()> onDone) {
+    EditorState* edp = &ed;
+    OpenModelFileDialog("Add animations (Mixamo FBX, glTF, DAE, BVH...)", true, [edp, modelRoot, onDone](const std::vector<std::string>& picked) {
+        if (picked.empty()) return;
+        EditorState& ed = *edp;
+        ed.PushUndo();
+        int total = 0;
+        for (const std::string& one : picked) {
+            if (one.empty()) continue;
+            std::string log;
+            int n = okay::AddAnimationsFromFile(ed.scene(), modelRoot, one, &log);
+            total += n;
+            ConsoleLog(std::filesystem::path(one).filename().string() + ": " + log, n > 0 ? 0 : 1);
+        }
+        if (total > 0) { ed.dirty = true; ConsoleLog("Added " + std::to_string(total) + " animation" + (total == 1 ? "" : "s") + " — pick them in the Clip list."); }
+        if (onDone) onDone();
+    });
 }
 
 static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
@@ -28658,10 +28667,9 @@ void DrawInspector(EditorState& ed) {
             if (AcceptAssetPathField(sr->texture)) ed.dirty = true;   // drop from Project
             ImGui::SameLine(0, 4);
             if (ImGui::Button("...##spritetexbrowse")) {
-                const char* imgFilt[3] = {"*.png", "*.jpg", "*.bmp"};
-                if (const char* p = tinyfd_openFileDialog("Choose a sprite image", "", 3, imgFilt, "Image", 0)) {
-                    sr->texture = p; ed.dirty = true;
-                }
+                EditorState* edp = &ed; auto* srp = sr;
+                okay::filedialog::OpenOne("Choose a sprite image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
+                                          [edp, srp](const std::string& p) { srp->texture = p; edp->dirty = true; });
             }
             ImGui::SameLine(0, 4);
             ImGui::TextUnformatted("Texture");
@@ -29029,10 +29037,9 @@ void DrawInspector(EditorState& ed) {
             if (AcceptAssetPathField(mr->texture)) ed.dirty = true;   // drop from Project
             ImGui::SameLine(0, 4);
             if (ImGui::Button("...##meshtexbrowse")) {
-                const char* imgFilt[3] = {"*.png", "*.jpg", "*.bmp"};
-                if (const char* p = tinyfd_openFileDialog("Choose a texture image", "", 3, imgFilt, "Image", 0)) {
-                    mr->texture = p; ed.dirty = true;
-                }
+                EditorState* edp = &ed; auto* mrp = mr;
+                okay::filedialog::OpenOne("Choose a texture image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
+                                          [edp, mrp](const std::string& p) { mrp->texture = p; edp->dirty = true; });
             }
             ImGui::SameLine(0, 4);
             ImGui::TextUnformatted("Texture");
@@ -29329,23 +29336,22 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Heightmap (World Machine / Gaea / Photoshop)");
             if (ImGui::Button("Import PNG...##terhm")) {
-                const char* filt[] = {"*.png", "*.jpg", "*.bmp"};
-                const char* p = tinyfd_openFileDialog("Import heightmap", "", 3, filt, "Image", 0);
-                if (p && p[0]) {
-                    if (tr->ImportHeightmap(p, g_terrainHmLow, g_terrainHmHigh)) {
-                        tr->Apply(); ed.dirty = true; ConsoleLog("Imported heightmap");
+                EditorState* edp = &ed; auto* trp = tr;
+                okay::filedialog::OpenOne("Import heightmap", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}), [edp, trp](const std::string& p) {
+                    if (trp->ImportHeightmap(p, g_terrainHmLow, g_terrainHmHigh)) {
+                        trp->Apply(); edp->dirty = true; ConsoleLog("Imported heightmap");
                     } else ConsoleLog("Failed to import heightmap");
-                }
+                });
             }
             ImGui::SameLine();
             if (ImGui::Button("Export PNG...##terhm")) {
-                const char* p = tinyfd_saveFileDialog("Export heightmap", "heightmap.png", 0, nullptr, "PNG");
-                if (p && p[0]) {
+                auto* trp = tr;
+                okay::filedialog::SaveOne("Export heightmap", "heightmap.png", {}, [trp](const std::string& p) {
                     std::string path = p;
                     if (path.size() < 4 || path.substr(path.size() - 4) != ".png") path += ".png";
-                    if (tr->ExportHeightmap(path)) ConsoleLog("Exported heightmap to " + path);
+                    if (trp->ExportHeightmap(path)) ConsoleLog("Exported heightmap to " + path);
                     else ConsoleLog("Failed to export heightmap");
-                }
+                });
             }
             ImGui::DragFloatRange2("Import Low/High##terhm", &g_terrainHmLow, &g_terrainHmHigh,
                                    0.2f, -100.0f, 200.0f, "%.1f");
@@ -35912,13 +35918,13 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine(0, 4);
             // Browse for an audio file and load it now so Play previews it in-editor.
             if (ImGui::Button("...##audiobrowse")) {
-                const char* audioFilt[3] = {"*.wav", "*.ogg", "*.mp3"};
-                if (const char* p = tinyfd_openFileDialog("Choose an audio file", "", 3, audioFilt, "Audio (WAV, OGG, MP3)", 0)) {
-                    a->clipPath = p; ed.dirty = true;
+                EditorState* edp = &ed; auto* ap = a;
+                okay::filedialog::OpenOne("Choose an audio file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3)", {"*.wav", "*.ogg", "*.mp3"}), [edp, ap](const std::string& p) {
+                    ap->clipPath = p; edp->dirty = true;
                     std::string werr;
-                    if (a->clip.Load(p, &werr)) ConsoleLog("Loaded " + std::string(p));
+                    if (ap->clip.Load(p, &werr)) ConsoleLog("Loaded " + p);
                     else ConsoleLog("Audio load failed: " + werr, 2);
-                }
+                });
             }
             ImGui::SameLine(0, 4);
             ImGui::TextUnformatted("Audio File");
@@ -35964,10 +35970,10 @@ void DrawInspector(EditorState& ed) {
                 if (AcceptAssetPathField(mp->tracks[i])) ed.dirty = true;   // drop from Project
                 ImGui::SameLine(0, 4);
                 if (ImGui::SmallButton("...")) {
-                    const char* filt[3] = {"*.wav", "*.ogg", "*.mp3"};
-                    if (const char* f = tinyfd_openFileDialog("Choose a music file", "", 3, filt, "Audio (WAV, OGG, MP3)", 0)) {
-                        mp->tracks[i] = f; ed.dirty = true;
-                    }
+                    EditorState* edp = &ed; auto* mpp = mp; const std::size_t ti = (std::size_t)i;
+                    okay::filedialog::OpenOne("Choose a music file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3)", {"*.wav", "*.ogg", "*.mp3"}), [edp, mpp, ti](const std::string& f) {
+                        if (ti < mpp->tracks.size()) { mpp->tracks[ti] = f; edp->dirty = true; }
+                    });
                 }
                 ImGui::SameLine(0, 4);
                 if (ImGui::SmallButton("x")) removeAt = (int)i;
@@ -45576,9 +45582,10 @@ static void SaveSceneAsCmd(EditorState& ed) {
     const std::string def = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::path(def).parent_path(), ec);   // so the dialog opens there
-    const char* filt[1] = {"*.okayscene"};
-    if (const char* p = tinyfd_saveFileDialog("Save Scene As", def.c_str(), 1, filt, "OkaySpace scene"))
-        if (!SaveSceneTo(ed, p)) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor.");
+    EditorState* edp = &ed;
+    okay::filedialog::SaveOne("Save Scene As", def, okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}), [edp](const std::string& p) {
+        if (!SaveSceneTo(*edp, p)) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor.");
+    });
 }
 static void SaveSceneCmd(EditorState& ed) {
     if (ed.isPlaying()) { ConsoleLog("Stop Play first: saving now would save the running game, not your scene.", 1); return; }
@@ -48101,6 +48108,7 @@ int main(int argc, char** argv) {
                 c, 0.0f, 0, 3.0f);
         }
 
+        okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);

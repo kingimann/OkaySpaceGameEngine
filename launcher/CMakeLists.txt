@@ -68,7 +68,8 @@ target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
     ${CMAKE_SOURCE_DIR}/engine/include
     ${CMAKE_SOURCE_DIR}/engine/third_party/stb)    # stb_image for game cover art
-target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
+# okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.
+target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL} okay::platform)
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)
     target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + file dialogs, voice UDP, native HTTPS

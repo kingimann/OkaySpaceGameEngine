@@ -7,6 +7,7 @@
 // game is just <Game>.exe + game.okayscene (+ any assets).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
@@ -454,7 +455,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
                     OkayUI::PushID(i);
                     const std::string label = fit(std::string(e.info.password ? "(locked) " : "") + (e.info.name.empty() ? e.info.Address() : e.info.name), nameW);
                     if (OkayUI::Selectable(label.c_str(), sel == i)) {
-                        const Uint32 now = SDL_GetTicks();
+                        const Uint32 now = okay::platform::TicksMs32();
                         if (lastClickRow == i && now - lastClick < 400 && !e.info.password) joinLink(e.Link());   // double-click joins
                         lastClick = now; lastClickRow = i; sel = i;
                     }
@@ -552,7 +553,7 @@ static void DrawMatchmakingBanner(SDL_Window* window) {
     if (st != okay::Matchmaker::State::Found) foundAt = 0;
     if (st != okay::Matchmaker::State::Failed) failedAt = 0;
     if (st == okay::Matchmaker::State::Idle) return;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (st == okay::Matchmaker::State::Found) { if (!foundAt) foundAt = now; if (now - foundAt > 4000) return; }
     if (st == okay::Matchmaker::State::Failed) { if (!failedAt) failedAt = now; if (now - failedAt > 8000) { mm.Cancel(); return; } }
     int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
@@ -1735,7 +1736,7 @@ int main(int argc, char** argv) {
     std::string presenceLast;
     std::map<std::string, Uint32> playedWith;   // who we've logged this run (key -> when)
     auto pumpPresence = [&]() {
-        const Uint32 now = SDL_GetTicks();
+        const Uint32 now = okay::platform::TicksMs32();
         if (now - presenceAt < 1000) return;
         presenceAt = now;
         okay::NetworkManager* nm = scene.FindObjectOfType<okay::NetworkManager>();
@@ -1784,13 +1785,13 @@ int main(int argc, char** argv) {
         }
     };
 #endif
-    Uint64 last = SDL_GetPerformanceCounter();
+    Uint64 last = okay::platform::PerfCounter();
     bool windowFocused = true;   // Run In Background / mute-on-focus-loss
     bool cursorReleased = false; // Esc / focus loss freed a game-locked cursor; a click re-locks it
     // Debugger / injected-module / speedhack checks (Windows; idle elsewhere and when off).
     okayac::RuntimeGuard acGuard(acMode, okayac::SystemGuardProbes(acRoot, acHaveManifest ? &acManifest : nullptr), acLog);
     auto frame = [&]() {
-        Uint64 fStart = SDL_GetPerformanceCounter();
+        Uint64 fStart = okay::platform::PerfCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
 #ifdef OKAY_HAVE_OKAYUI
         g_uiText[0] = '\0'; g_uiBack = false; g_uiWheel = 0.0f;
@@ -1989,8 +1990,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        Uint64 now = SDL_GetPerformanceCounter();
-        const float measuredDt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
+        Uint64 now = okay::platform::PerfCounter();
+        const float measuredDt = (float)((now - last) / (double)okay::platform::PerfFrequency());
         last = now;
         if (okay::devlog::Active()) hitchWatch.Frame(measuredDt);
         // The game steps by an evened-out frame time (vsync: whole refresh
@@ -2704,10 +2705,10 @@ int main(int argc, char** argv) {
         // Optional frame-rate cap: sleep the remainder of the frame budget.
         if (cfg.fpsCap > 0) {
             double budget = 1.0 / cfg.fpsCap;
-            double freq = (double)SDL_GetPerformanceFrequency();
-            double elapsed = (SDL_GetPerformanceCounter() - fStart) / freq;
+            double freq = (double)okay::platform::PerfFrequency();
+            double elapsed = (okay::platform::PerfCounter() - fStart) / freq;
             double remain = budget - elapsed;
-            if (remain > 0.0015) SDL_Delay((Uint32)((remain - 0.0005) * 1000.0));
+            if (remain > 0.0015) okay::platform::DelayMs((Uint32)((remain - 0.0005) * 1000.0));
         }
     };
 
@@ -2722,12 +2723,12 @@ int main(int argc, char** argv) {
     // out, before the game proper. Skippable with a key/click; closing quits.
     if (running && !cfg.splash.empty()) {
         if (SDL_Texture* stex = GetTexture(renderer, cfg.splash, baseDir, textureCache)) {
-            Uint64 t0 = SDL_GetPerformanceCounter();
+            Uint64 t0 = okay::platform::PerfCounter();
             const double dur = cfg.splashTime > 0.1f ? cfg.splashTime : 2.0;
             const double fade = std::min(0.5, dur * 0.3);
             bool done = false;
             while (running && !done) {
-                double el = (double)(SDL_GetPerformanceCounter() - t0) / (double)SDL_GetPerformanceFrequency();
+                double el = (double)(okay::platform::PerfCounter() - t0) / (double)okay::platform::PerfFrequency();
                 if (el >= dur) break;
                 SDL_Event e;
                 while (SDL_PollEvent(&e)) {
@@ -2751,7 +2752,7 @@ int main(int argc, char** argv) {
                     SDL_RenderCopy(renderer, stex, nullptr, &dst);
                 }
                 SDL_RenderPresent(renderer);
-                SDL_Delay(8);
+                okay::platform::DelayMs(8);
             }
         }
     }

@@ -15,6 +15,7 @@
 // No echo cancellation: headphones are recommended.
 #pragma once
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -227,7 +228,7 @@ public:
         m_room = room; m_uid = myUid; m_name = myName;
         m_key = Sha256("okayspace-voice-v1|" + keyText);
         std::random_device rd; m_sid = ((std::uint32_t)rd() << 1) | 1u; m_seq = 0;
-        m_state = Connecting; m_error.clear(); m_since = 0; m_startTicks = SDL_GetTicks();
+        m_state = Connecting; m_error.clear(); m_since = 0; m_startTicks = okay::platform::TicksMs32();
         m_mySlot = m_hubSlot = 0;
         m_cookie.fill(0); m_v1Hello = m_relayAnswered = false; m_unanswered = 0;
         if (!m_udp.Open() || !m_udp.Resolve(relayHost, relayPort)) { m_state = Failed; m_error = "Can't reach the voice server " + relayHost; m_udp.Close(); return false; }
@@ -280,7 +281,7 @@ public:
         std::vector<PeerView> out;
         if (!m_mx) return out;
         SDL_LockMutex(m_mx);
-        const Uint32 now = SDL_GetTicks();
+        const Uint32 now = okay::platform::TicksMs32();
         for (auto& [slot, p] : m_peers) {
             if (now - p.lastHeard > 5000) continue;
             PeerView v; v.slot = slot; v.uid = p.uid; v.name = p.name.empty() ? "Connecting\xE2\x80\xA6" : p.name;
@@ -372,7 +373,7 @@ private:
         // I'm the hub: send to every member I've heard from.
         std::vector<std::uint32_t> dests;
         SDL_LockMutex(m_mx);
-        const Uint32 now = SDL_GetTicks();
+        const Uint32 now = okay::platform::TicksMs32();
         for (auto& [slot, p] : m_peers) if (now - p.lastHeard < 5000) dests.push_back(slot);
         SDL_UnlockMutex(m_mx);
         for (std::uint32_t d : dests) SendTo(d, kind, m_mySlot, body);
@@ -405,7 +406,7 @@ private:
         if (amHub && src != m_mySlot) {   // relay it to everyone else in the room
             std::vector<std::uint32_t> dests;
             SDL_LockMutex(m_mx);
-            const Uint32 now = SDL_GetTicks();
+            const Uint32 now = okay::platform::TicksMs32();
             m_peers[src].lastHeard = now;
             for (auto& [slot, p] : m_peers) if (slot != src && now - p.lastHeard < 5000) dests.push_back(slot);
             SDL_UnlockMutex(m_mx);
@@ -418,7 +419,7 @@ private:
         const std::uint8_t* b = body.data() + 4; const std::size_t bl = body.size() - 4;
         SDL_LockMutex(m_mx);
         Peer& p = m_peers[origin];
-        p.lastHeard = SDL_GetTicks();
+        p.lastHeard = okay::platform::TicksMs32();
         if (p.sid != sid) { p.sid = sid; p.dec = AdpcmState{}; p.lastSeq = 0; p.jitter.clear(); p.primed = false; }
         if (kind == kInfo && bl >= 3) {
             p.muted = b[0] & 1; p.deaf = (b[0] & 2) != 0;
@@ -434,7 +435,7 @@ private:
                 p.dec.pred = (std::int16_t)(b[1] | (b[2] << 8)); p.dec.index = std::min<int>(b[3], 88);
                 std::array<std::int16_t, kFrame> pcm{};
                 AdpcmDecode(b + 4, kFrame, p.dec, pcm.data());
-                if (b[0] > 0) p.lastVoice = SDL_GetTicks();
+                if (b[0] > 0) p.lastVoice = okay::platform::TicksMs32();
                 p.jitter.push_back(pcm);
                 while (p.jitter.size() > 12) { p.jitter.pop_front(); p.readPos = 0; }   // cap latency
             }
@@ -450,7 +451,7 @@ private:
         Uint32 nextHello = 0, nextInfo = 0, lastWelcome = 0, voiceUntil = 0;
         AdpcmState enc;
         while (s->m_run) {
-            const Uint32 now = SDL_GetTicks();
+            const Uint32 now = okay::platform::TicksMs32();
             if (now >= nextHello) { s->SendHello(); nextHello = now + 1000; }
             int n;
             while ((n = s->m_udp.Recv(buf.data(), buf.size())) > 0) {
@@ -492,8 +493,8 @@ private:
                 const float rms = (float)std::sqrt(e / kFrame);
                 const float db = 20.0f * std::log10(std::max(1.0f, rms) / 32768.0f);
                 s->m_selfLevel = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
-                if (db > s->m_gateDb) voiceUntil = SDL_GetTicks() + 350;
-                const bool talk = SDL_GetTicks() < voiceUntil;
+                if (db > s->m_gateDb) voiceUntil = okay::platform::TicksMs32() + 350;
+                const bool talk = okay::platform::TicksMs32() < voiceUntil;
                 s->m_selfSpeaking = talk;
                 if (!talk || s->m_muted || s->m_deaf || s->m_state != Connected) continue;
                 std::vector<std::uint8_t> b(4 + kFrame / 2, 0);
@@ -502,7 +503,7 @@ private:
                 AdpcmEncode(fr.data(), kFrame, enc, b.data() + 4);
                 s->Broadcast(kAudio, b);
             }
-            SDL_Delay(4);
+            okay::platform::DelayMs(4);
         }
         if (s->m_mySlot) { s->Broadcast(kLeave, {}); std::uint8_t bye = kBye; s->m_udp.Send(&bye, 1); }
         return 0;
@@ -518,7 +519,7 @@ private:
     std::uint32_t m_sid = 0, m_seq = 0;
     volatile std::uint32_t m_mySlot = 0, m_hubSlot = 0;
     volatile int m_state = Idle;
-    Uint32 m_since = 0, m_startTicks = SDL_GetTicks();
+    Uint32 m_since = 0, m_startTicks = okay::platform::TicksMs32();
     volatile bool m_muted = false, m_deaf = false, m_selfSpeaking = false;
     volatile float m_selfLevel = 0.0f, m_gateDb = -46.0f;
     int m_badKey = 0;

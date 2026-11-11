@@ -7,6 +7,7 @@
 // sitting next to it, and launches them. Built with Dear ImGui + SDL2.
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
@@ -166,7 +167,7 @@ SDL_atomic_t g_upStepIdx;        // current step index (0-based)
 SDL_atomic_t g_upStepTotal;      // total steps for this run
 SDL_atomic_t g_upBytesNow;       // bytes downloaded for the current file
 SDL_atomic_t g_upBytesTotal;     // total bytes for the current file (0 = unknown)
-SDL_atomic_t g_upStartMs;        // SDL_GetTicks() when the run started
+SDL_atomic_t g_upStartMs;        // okay::platform::TicksMs32() when the run started
 std::string  g_upFromVer;        // installed version at run start   (g_upMutex)
 std::string  g_upToVer;          // target/published version         (g_upMutex)
 std::string  g_upStepName;       // human label for the current step (g_upMutex)
@@ -423,7 +424,7 @@ void ProcKill(Proc* p) {
 long long HeadSize(const std::string& url) {
     if (!ShellSafeUrl(url)) return 0;
     std::error_code ec;
-    fs::path hdr = fs::temp_directory_path(ec) / ("okay_dlhead_" + std::to_string(SDL_GetTicks()) + ".txt");
+    fs::path hdr = fs::temp_directory_path(ec) / ("okay_dlhead_" + std::to_string(okay::platform::TicksMs32()) + ".txt");
 #if defined(_WIN32)
     std::string devnull = "NUL";
 #else
@@ -490,7 +491,7 @@ int DlWorker(void* data) {
         }
         long long got = FileSizeSafe(d->part);
         set([&]{ d->received = got; });
-        SDL_Delay(200);
+        okay::platform::DelayMs(200);
     }
     long long got = FileSizeSafe(d->part);
     if (code == 0 && got > 0) {
@@ -670,7 +671,7 @@ static fs::path LauncherDirPath() {
 long long RemoteSize(const std::string& url) {
     if (!ShellSafeUrl(url)) return 0;
     std::error_code ec;
-    fs::path hf = fs::temp_directory_path(ec) / ("okay_head_" + std::to_string(SDL_GetTicks()) + ".txt");
+    fs::path hf = fs::temp_directory_path(ec) / ("okay_head_" + std::to_string(okay::platform::TicksMs32()) + ".txt");
     std::string u = BustCache(url);
 #if defined(_WIN32)
     std::string c = "curl -sIL \"" + u + "\" -o \"" + hf.string() + "\"";
@@ -718,7 +719,7 @@ bool DownloadProgress(const std::string& url, const fs::path& out) {
     while (SDL_AtomicGet(&d.done) == 0) {
         std::error_code ec; auto sz = fs::file_size(out, ec);
         SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
-        SDL_Delay(90);
+        okay::platform::DelayMs(90);
     }
     SDL_WaitThread(th, nullptr);
     std::error_code ec; auto sz = fs::file_size(out, ec);
@@ -927,7 +928,7 @@ bool g_upRepairMissing = false;   // "Get the editor": same-version re-download 
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
 int RunUpdateCheck(void*) {
-    SDL_AtomicSet(&g_upStartMs, (int)SDL_GetTicks());
+    SDL_AtomicSet(&g_upStartMs, (int)okay::platform::TicksMs32());
     std::string local = LocalVersion();
     SetUpVers(local, "");
     SetUpStep("Contacting the update server", 0, 1);
@@ -1174,7 +1175,7 @@ static std::string PlaytimeLabel(std::string s) {   // safe for the '|' file and
 }
 // Start `exe args` and track how long it runs. False if it couldn't start.
 static bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title) {
-    PlayProc pp; pp.key = PlaytimeLabel(key); pp.title = PlaytimeLabel(title); pp.lastCredit = SDL_GetTicks();
+    PlayProc pp; pp.key = PlaytimeLabel(key); pp.title = PlaytimeLabel(title); pp.lastCredit = okay::platform::TicksMs32();
 #if defined(_WIN32)
     std::string cmd = "\"" + exe + "\"" + (args.empty() ? std::string() : " " + args);
     std::vector<char> buf(cmd.begin(), cmd.end()); buf.push_back('\0');
@@ -1195,7 +1196,7 @@ static bool SpawnTracked(const std::string& exe, const std::string& args, const 
 }
 // Once a second or so: credit running games, close out the ones that ended.
 static void PumpPlaytime() {
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     for (std::size_t i = 0; i < g_playProcs.size(); ) {
         PlayProc& pp = g_playProcs[i];
 #if defined(_WIN32)
@@ -1291,7 +1292,7 @@ static bool AntiCheatAllowsLaunch(const fs::path& gameRoot, const std::string& n
     const okayac::LaunchDecision d = okayac::CheckLaunch(gameRoot, mode, official ? okayac::TrustedKeys() : okayac::TrustedKeySet{});
     if (d.result.ok) return true;
     std::fprintf(stderr, "[anti-cheat] %s: %s\n", name.c_str(), d.result.Summary().c_str());
-    g_toastHoldUntil = SDL_GetTicks() + 6000;
+    g_toastHoldUntil = okay::platform::TicksMs32() + 6000;
     Toast(name + ": " + (d.allow ? d.result.Summary() : d.message), 2);
     return d.allow;
 }
@@ -1596,7 +1597,7 @@ std::vector<fs::path> FindWebGames();
 int LibraryGameCount(const std::vector<fs::path>& scenes) {
     static int cached = 0; static std::size_t lastN = (std::size_t)-1; static Uint32 lastAt = 0;
     if (g_webGameCount < 0) g_webGameCount = (int)FindWebGames().size();
-    Uint32 now = SDL_GetTicks();
+    Uint32 now = okay::platform::TicksMs32();
     if (scenes.size() != lastN || now - lastAt > 2000) {
         cached = (int)std::count_if(scenes.begin(), scenes.end(), IsBuiltGame);
         lastN = scenes.size(); lastAt = now;
@@ -1745,7 +1746,7 @@ std::string g_toastMsg;
 Uint32 g_toastUntil = 0;
 int g_toastKind = 0;
 void Toast(const std::string& m, int kind = 0) {
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (kind < 2 && now < g_toastHoldUntil) return;   // keep an anti-cheat warning readable
     g_toastMsg = m; g_toastKind = kind;
     g_toastUntil = now + std::max<Uint32>(2600, now < g_toastHoldUntil ? g_toastHoldUntil - now : 0);
@@ -1804,8 +1805,8 @@ void SyncChatSeen(const std::string& user) {
         savedSum = ChatSeenSum();
         return;
     }
-    if (user.empty() || SDL_GetTicks() < nextCheck) return;
-    nextCheck = SDL_GetTicks() + 2000;
+    if (user.empty() || okay::platform::TicksMs32() < nextCheck) return;
+    nextCheck = okay::platform::TicksMs32() + 2000;
     const long sum = ChatSeenSum();
     if (sum == savedSum) return;
     std::ofstream f(ChatSeenFile(user), std::ios::trunc);
@@ -1877,7 +1878,7 @@ void LoadNotifs() {
     std::ifstream f(fs::path(g_exeDir) / "notifications.cfg");
     if (!f) return;
     const long nowW = (long)std::time(nullptr);
-    const Uint32 t0 = SDL_GetTicks();
+    const Uint32 t0 = okay::platform::TicksMs32();
     std::string line;
     while (std::getline(f, line)) {
         std::vector<std::string> c;
@@ -1916,7 +1917,7 @@ bool UpsertNotif(const std::string& key, const std::string& title,
         }
     if (g_notifGoneSigs.count(sig)) return false;   // cleared: don't bring it back
     Notif n; n.key = key; n.title = title; n.body = body; n.kind = kind;
-    n.time = SDL_GetTicks(); n.wall = (long)std::time(nullptr); n.gotoTab = gotoTab;
+    n.time = okay::platform::TicksMs32(); n.wall = (long)std::time(nullptr); n.gotoTab = gotoTab;
     n.read = g_notifReadSigs.count(sig) != 0;      // already seen in an earlier session
     g_notifs.insert(g_notifs.begin(), n);
     if (g_notifs.size() > 50) g_notifs.pop_back();
@@ -1942,7 +1943,7 @@ static fs::path CrashDir() {
 static void RefreshCrashes(bool force = false) {
     static Uint32 nextCheck = 0;
     static std::string lastSig;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (!force && now < nextCheck) return;
     nextCheck = now + 2000;
     const fs::path dir = CrashDir();
@@ -3550,7 +3551,7 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
     if (w) *w = a.w;
     if (h) *h = a.h;
     if (a.frames.size() == 1 || a.total <= 0) return a.frames[0];
-    int t = (int)(SDL_GetTicks() % (Uint32)a.total);
+    int t = (int)(okay::platform::TicksMs32() % (Uint32)a.total);
     for (std::size_t i = 0; i < a.ends.size(); ++i) if (t < a.ends[i]) return a.frames[i];
     return a.frames.back();
 }
@@ -4780,7 +4781,7 @@ static bool VoiceRecording() { return g_recDev != 0 || g_recFake; }
 static bool VoiceRecordingFor(const std::string& uid, long gid, long channel = 0) {
     return VoiceRecording() && g_recToUid == uid && g_recToGroup == gid && g_recToChannel == channel;
 }
-static float VoiceRecSeconds() { return VoiceRecording() ? (SDL_GetTicks() - g_recStart) / 1000.0f : 0.0f; }
+static float VoiceRecSeconds() { return VoiceRecording() ? (okay::platform::TicksMs32() - g_recStart) / 1000.0f : 0.0f; }
 static bool StartVoiceRecord(const std::string& toUid, long toGroup, long toChannel = 0) {
     if (VoiceRecording()) return false;
     if (g_attBusy) { Toast("An upload is already in progress", 2); return false; }
@@ -4790,7 +4791,7 @@ static bool StartVoiceRecord(const std::string& toUid, long toGroup, long toChan
     g_recDev = SDL_OpenAudioDevice(nullptr, 1, &want, &have, 0);   // SDL converts to our format
     if (!g_recDev) { Toast("No microphone found", 2); return false; }
     g_recPcm.clear(); g_recLevels.clear();
-    g_recToUid = toUid; g_recToGroup = toGroup; g_recToChannel = toChannel; g_recStart = SDL_GetTicks();
+    g_recToUid = toUid; g_recToGroup = toGroup; g_recToChannel = toChannel; g_recStart = okay::platform::TicksMs32();
     SDL_PauseAudioDevice(g_recDev, 0);
     return true;
 }
@@ -4828,7 +4829,7 @@ static void FinishVoiceRecord(bool send) {
     std::error_code ec;
     fs::path dir = fs::temp_directory_path(ec) / "okayspace_voice";
     fs::create_directories(dir, ec);
-    fs::path file = dir / ("voice-" + std::to_string(SDL_GetTicks()) + ".wav");
+    fs::path file = dir / ("voice-" + std::to_string(okay::platform::TicksMs32()) + ".wav");
     if (!WriteWav16(file.string(), pcm, kVoiceRate)) { Toast("Couldn't save the recording", 2); return; }
     int secs = (int)((pcm.size() + kVoiceRate / 2) / kVoiceRate);
     StartChatUpload(file.string(), g_recToUid, g_recToGroup, std::max(1, secs), g_recToChannel);
@@ -5168,8 +5169,8 @@ static void PlayChatChime() {
     static SDL_AudioDeviceID dev = 0;
     static std::vector<Sint16> pcm;
     static Uint32 lastAt = 0;
-    if (SDL_GetTicks() - lastAt < 1200 && lastAt) return;   // a burst of messages = one chime
-    lastAt = SDL_GetTicks();
+    if (okay::platform::TicksMs32() - lastAt < 1200 && lastAt) return;   // a burst of messages = one chime
+    lastAt = okay::platform::TicksMs32();
     const int rate = 22050;
     if (pcm.empty()) {
         const float notes[2] = {880.0f, 1318.5f};             // A5 -> E6
@@ -5307,7 +5308,7 @@ static void ChatPinToggle(bool group, long id) {
     auto& m = group ? g_pinsGroup : g_pinsDm;
     const bool on = m.count(id) == 0;
     if (on) m[id] = (long)std::time(nullptr); else m.erase(id);
-    g_pinsTouchedMs = SDL_GetTicks();
+    g_pinsTouchedMs = okay::platform::TicksMs32();
     if (g_pinsShared && !ChatDemo()) ChatPinAsync(group, id, on);
     else SavePrefs();
     Toast(on ? "Message pinned" : "Message unpinned", 1);
@@ -5328,7 +5329,7 @@ static void ChatApplyPolledPins(const std::map<long, long>& dmPins, const std::m
         SavePrefs();   // drops the device-only copies
         return;
     }
-    if (SDL_GetTicks() - g_pinsTouchedMs < 3000) return;
+    if (okay::platform::TicksMs32() - g_pinsTouchedMs < 3000) return;
     g_pinsDm = dmPins; g_pinsGroup = grPins;
 }
 
@@ -5714,8 +5715,8 @@ static void PumpStatus(bool signedIn) {
     if (!signedIn) return;
     if (!g_myStatusKnown && !g_statusBusy && !ChatDemo() && !g_pollCfgDir.empty()) {
         static Uint32 nextTry = 0;
-        if (SDL_GetTicks() >= nextTry) {
-            nextTry = SDL_GetTicks() + 30000;
+        if (okay::platform::TicksMs32() >= nextTry) {
+            nextTry = okay::platform::TicksMs32() + 30000;
             g_statusBusy = true;
             if (SDL_Thread* t = SDL_CreateThread(StatusFetchWorker, "okay-statusget", nullptr)) SDL_DetachThread(t);
             else g_statusBusy = false;
@@ -5940,7 +5941,7 @@ static std::vector<OutMsg> OutboxForChannel(long channelId, const std::function<
     std::vector<OutMsg> pend;
     if (!g_outMutex || channelId <= 0) return pend;
     SDL_LockMutex(g_outMutex);
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& o) {
         return o.toChannel == channelId && o.state == 1 && (inLog(o.body, o.when) || now - o.sentAt > 15000);
     }), g_outbox.end());
@@ -5969,7 +5970,7 @@ static int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, 
     if (!g_outMutex) return 0;
     std::vector<OutMsg> pend;
     SDL_LockMutex(g_outMutex);
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& o) {
         return o.toChannel == 0 && o.state == 1 && (inLog(o.body, o.when) || now - o.sentAt > 15000);
     }), g_outbox.end());
@@ -6110,7 +6111,7 @@ static void PollTally(bool group, long id, std::size_t n, const std::map<std::st
     }
     auto it = g_pollLocal.find({group ? 1 : 0, id});
     if (it == g_pollLocal.end()) return;
-    if (it->second.choice == myChoice || SDL_GetTicks() - it->second.at > 15000) { g_pollLocal.erase(it); return; }
+    if (it->second.choice == myChoice || okay::platform::TicksMs32() - it->second.at > 15000) { g_pollLocal.erase(it); return; }
     if (myChoice >= 0 && out[(std::size_t)myChoice] > 0) --out[(std::size_t)myChoice];
     myChoice = it->second.choice;
     if (myChoice >= 0 && myChoice < (int)n) ++out[(std::size_t)myChoice];
@@ -6179,7 +6180,7 @@ static void RenderChatPoll(const ChatPollInfo& p, bool group, long id, const std
         const int next = clicked == myChoice ? -1 : clicked;
         ChatReactAsync(group, id, myChoice >= 0 ? "poll:" + std::to_string(myChoice) : std::string(),
                        next >= 0 ? "poll:" + std::to_string(next) : std::string());
-        g_pollLocal[{group ? 1 : 0, id}] = PollLocalVote{next, SDL_GetTicks()};
+        g_pollLocal[{group ? 1 : 0, id}] = PollLocalVote{next, okay::platform::TicksMs32()};
     }
 }
 static bool IsPollReaction(const std::string& k) { return k.rfind("poll:", 0) == 0; }
@@ -6445,7 +6446,7 @@ static void DrawGroupConversation(
     const int memberCount = gp ? gp->members : 0;
     const std::string gkey = "g:" + std::to_string(gid);
     const ImVec4 myBubble = ChatThemeFor(gkey);   // this group's theme colour for my bubbles
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     const bool demo = ChatDemo();
 
     // Members of this group (names, avatars, read position) from the poller.
@@ -7286,7 +7287,7 @@ static bool VoiceJoin(const std::string& room, const std::string& key) {
 }
 static void VoiceHangup() {
     if (g_call.kind == 1) {
-        const long secs = g_call.answered && g_voice.ConnectedSince() ? (long)(SDL_GetTicks() - g_voice.ConnectedSince()) / 1000 : 0;
+        const long secs = g_call.answered && g_voice.ConnectedSince() ? (long)(okay::platform::TicksMs32() - g_voice.ConnectedSince()) / 1000 : 0;
         OutboxSend(g_call.peerUid, 0, "[CallEnd] " + g_call.code + " " + std::to_string(g_call.answered ? std::max(1L, secs) : 0));
     }
     g_voice.Stop();
@@ -7298,21 +7299,21 @@ static void VoiceStartDm(const std::string& uid, const std::string& name, const 
     if (!VoiceJoin("dm-" + code, key)) return;
     OutboxSend(uid, 0, "[Call] " + code + " " + key);
     g_call = VoiceCall{}; g_call.kind = 1; g_call.peerUid = uid; g_call.peerName = name; g_call.peerAvatar = avatar;
-    g_call.code = code; g_call.title = name; g_call.outgoing = true; g_call.started = SDL_GetTicks();
+    g_call.code = code; g_call.title = name; g_call.outgoing = true; g_call.started = okay::platform::TicksMs32();
 }
 static void VoiceJoinDmCall(const std::string& uid, const std::string& name, const std::string& avatar,
                             const std::string& code, const std::string& key) {
     if (g_call.kind) VoiceHangup();
     if (!VoiceJoin("dm-" + code, key)) return;
     g_call = VoiceCall{}; g_call.kind = 1; g_call.peerUid = uid; g_call.peerName = name; g_call.peerAvatar = avatar;
-    g_call.code = code; g_call.title = name; g_call.answered = true; g_call.started = SDL_GetTicks();
+    g_call.code = code; g_call.title = name; g_call.answered = true; g_call.started = okay::platform::TicksMs32();
 }
 static void VoiceJoinServer(long serverId, const std::string& serverName, const std::string& invite) {
     if (g_call.kind == 2 && g_call.serverId == serverId) return;
     if (g_call.kind) VoiceHangup();
     if (!VoiceJoin("sv-" + std::to_string(serverId), "server|" + std::to_string(serverId) + "|" + invite)) return;
     g_call = VoiceCall{}; g_call.kind = 2; g_call.serverId = serverId; g_call.title = serverName;
-    g_call.answered = true; g_call.started = SDL_GetTicks();
+    g_call.answered = true; g_call.started = okay::platform::TicksMs32();
 }
 // Once a frame: failures, no-answer timeouts, the other side leaving.
 static void VoicePump() {
@@ -7324,7 +7325,7 @@ static void VoicePump() {
         return;
     }
     if (g_call.kind != 1) return;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     const bool anyone = !g_voice.Peers().empty();
     if (anyone && !g_call.answered) g_call.answered = true;
     if (g_call.outgoing && !g_call.answered && now - g_call.started > 45000) { VoiceHangup(); Toast("No answer", 0); return; }
@@ -7372,7 +7373,7 @@ static int CallPollWorker(void*) {
                 SDL_LockMutex(g_callSigMutex); g_callSigs = std::move(out); g_callSigReady = true; SDL_UnlockMutex(g_callSigMutex);
             }
         } catch (...) {}
-        for (int i = 0; i < 15 && g_callPollRun; ++i) SDL_Delay(200);
+        for (int i = 0; i < 15 && g_callPollRun; ++i) okay::platform::DelayMs(200);
     }
     return 0;
 }
@@ -7396,7 +7397,7 @@ static void VoiceHandleSignals() {
         if (now - c.s.when > 45 || g_blockedUsers.count(c.s.from)) continue;
         if (g_callsFrom == 2 || (g_callsFrom == 1 && !g_friendUids.empty() && !g_friendUids.count(c.s.from))) continue;   // privacy
         if (g_call.kind == 1 && g_call.code == b.code) continue;
-        g_incoming = IncomingCall{c.s.from, c.name.empty() ? std::string("Someone") : c.name, c.avatar, b.code, b.key, c.s.id, SDL_GetTicks()};
+        g_incoming = IncomingCall{c.s.from, c.name.empty() ? std::string("Someone") : c.name, c.avatar, b.code, b.key, c.s.id, okay::platform::TicksMs32()};
     }
 }
 
@@ -7461,7 +7462,7 @@ static void VoiceAvatar(const std::string& avatar, const std::string& name, floa
 // Incoming call card: top-centre of whichever window is drawing.
 static void DrawIncomingCall() {
     if (g_incoming.code.empty()) return;
-    if (SDL_GetTicks() - g_incoming.ringStart > 45000) { g_incoming = IncomingCall{}; return; }   // missed
+    if (okay::platform::TicksMs32() - g_incoming.ringStart > 45000) { g_incoming = IncomingCall{}; return; }   // missed
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 18), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
     ImGui::SetNextWindowSize(ImVec2(320, 0));
@@ -7471,7 +7472,7 @@ static void DrawIncomingCall() {
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.26f, 0.71f, 0.51f, 0.8f));
     if (ImGui::Begin("##incomingcall", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing)) {
-        const float pulse = 0.5f + 0.5f * std::sin((float)SDL_GetTicks() * 0.008f);
+        const float pulse = 0.5f + 0.5f * std::sin((float)okay::platform::TicksMs32() * 0.008f);
         ImVec2 ap = ImGui::GetCursorScreenPos();
         ImGui::GetWindowDrawList()->AddCircle(ImVec2(ap.x + 22, ap.y + 22), 24.0f + pulse * 4.0f, IM_COL32(67, 181, 129, (int)(160 * (1.0f - pulse))), 28, 2.0f);
         DrawAvatar(g_incoming.fromAvatar, g_incoming.fromName, 44.0f);
@@ -7518,7 +7519,7 @@ static void DrawVoicePanel(float width, bool compact) {
     // signal bars + status
     for (int b = 0; b < 3; ++b) d->AddRectFilled(ImVec2(p.x + 10 + b * 4.5f, p.y + 18 - 4 - b * 3.0f), ImVec2(p.x + 13 + b * 4.5f, p.y + 18), connected ? green : IM_COL32(150, 156, 170, 255), 1.0f);
     d->AddText(ImVec2(p.x + 28, p.y + 6), connected && !ringing ? green : IM_COL32(220, 200, 120, 255), status.c_str());
-    const long secs = connected && g_voice.ConnectedSince() ? (long)(SDL_GetTicks() - g_voice.ConnectedSince()) / 1000 : 0;
+    const long secs = connected && g_voice.ConnectedSince() ? (long)(okay::platform::TicksMs32() - g_voice.ConnectedSince()) / 1000 : 0;
     const std::string clock = CallClock(secs);
     const float cw = ImGui::CalcTextSize(clock.c_str()).x;
     if (!compact) d->AddText(ImVec2(p.x + 28 + ImGui::CalcTextSize(status.c_str()).x + 8, p.y + 6), IM_COL32(150, 156, 170, 255), clock.c_str());
@@ -7632,8 +7633,8 @@ void DrawChatWindow(okay::account::AccountService& account) {
     static int scrollHits = 0;                       // frames spent aiming at scrollToId
     {   // a jump target that never shows up (deleted message) stops blocking auto-scroll
         static long target = 0; static Uint32 since = 0;
-        if (scrollToId != target) { target = scrollToId; since = SDL_GetTicks(); scrollHits = 0; }
-        if (scrollToId != 0 && SDL_GetTicks() - since > 4000) { scrollToId = 0; target = 0; }
+        if (scrollToId != target) { target = scrollToId; since = okay::platform::TicksMs32(); scrollHits = 0; }
+        if (scrollToId != 0 && okay::platform::TicksMs32() - since > 4000) { scrollToId = 0; target = 0; }
     }
     static std::map<std::string,std::string> drafts;  // unsent text per conversation (kept on switch)
     static std::string lightboxUrl;                   // image shown fullscreen (empty = none)
@@ -7754,7 +7755,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     if (VoiceClip* c = VoiceClipFor(u1)) { PlayVoiceAt(u1, *c, 0.42f); SDL_PauseAudioDevice(g_playDev, 1); g_playPaused = true; }
                 }
                 if (std::getenv("OKAY_CHAT_DEMO_REC")) {    // composer in recording mode
-                    g_recFake = true; g_recToUid = "demo-uid"; g_recToGroup = 0; g_recStart = SDL_GetTicks() - 4200;
+                    g_recFake = true; g_recToUid = "demo-uid"; g_recToGroup = 0; g_recStart = okay::platform::TicksMs32() - 4200;
                     for (int i = 0; i < 160; ++i) g_recLevels.push_back(std::max(0.05f, std::fabs(std::sin(i * 0.37f) * std::sin(i * 0.11f + 0.4f))));
                 }
             }
@@ -7933,7 +7934,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImGui::End(); return;
         }
         okay::Messages dm(account);
-        Uint32 now = SDL_GetTicks();
+        Uint32 now = okay::platform::TicksMs32();
         const std::string myName = kChatDemo ? std::string(std::getenv("OKAY_UI_DEMO_USER") ? std::getenv("OKAY_UI_DEMO_USER") : "You") : account.CurrentSession().username;
         // Friends + conversations come from the background chat poller (no UI block).
         (void)friendsNext; (void)convsNext;
@@ -8919,7 +8920,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             peerTyping = g_chatPeerTyping;
             // We're looking at this conversation (window focused, not minimised):
             // lets the poller mark it read and tell the peer we're in the chat.
-            if (!selUid.empty() && SDL_GetKeyboardFocus() != nullptr) g_chatViewMs = SDL_GetTicks();
+            if (!selUid.empty() && SDL_GetKeyboardFocus() != nullptr) g_chatViewMs = okay::platform::TicksMs32();
             // Mark everything seen locally (clears the unread dot for this chat).
             long firstUnread = 0;
             for (const auto& m : log) {
@@ -9370,7 +9371,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::SetCursorPosX(baseX);
                 ImVec2 hp = ImGui::GetCursorScreenPos();
                 const float sz = 26.0f, a = hereAnim;
-                const float pulse = 0.5f + 0.5f * std::sin((float)SDL_GetTicks() * 0.004f);
+                const float pulse = 0.5f + 0.5f * std::sin((float)okay::platform::TicksMs32() * 0.004f);
                 const ImVec2 hc(hp.x + sz * 0.5f, hp.y + sz * 0.5f);
                 dl->AddCircleFilled(hc, sz * 0.5f + 3.0f + pulse * 2.0f, IM_COL32(120, 200, 110, (int)(40 * a)), 28);
                 dl->AddCircle(hc, sz * 0.5f + 1.5f, IM_COL32(120, 200, 110, (int)(230 * a)), 28, 2.0f);
@@ -9399,7 +9400,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImVec2 tp = ImGui::GetCursorScreenPos();
                 float bw = 54.0f, bh = 26.0f;
                 dl->AddRectFilled(tp, ImVec2(tp.x + bw, tp.y + bh), IM_COL32(52, 60, 78, 255), 11.0f);
-                float t = (float)(SDL_GetTicks() % 1200) / 1200.0f;
+                float t = (float)(okay::platform::TicksMs32() % 1200) / 1200.0f;
                 for (int d = 0; d < 3; ++d) {
                     float ph = t - d * 0.18f; if (ph < 0) ph += 1.0f;
                     float a = 0.35f + 0.65f * (0.5f + 0.5f * std::sin(ph * 6.2831853f));
@@ -9945,7 +9946,7 @@ static int PollWorker(void*) {
         } catch (...) { /* transient network error — try again next cycle */ }
         ++cycle;
         // Wait ~10s, in short steps so shutdown is prompt.
-        for (int i = 0; i < 50 && g_pollRun; ++i) SDL_Delay(200);
+        for (int i = 0; i < 50 && g_pollRun; ++i) okay::platform::DelayMs(200);
     }
     return 0;
 }
@@ -10194,8 +10195,8 @@ static std::string MpGameTitle() { return g_myGame.running ? g_myGame.title : st
 struct MpLibGame { std::string title, scene; };
 static std::vector<MpLibGame> MpLibrary(bool refresh = false) {
     static std::vector<MpLibGame> cache; static Uint32 at = 0;
-    if (refresh || cache.empty() || SDL_GetTicks() - at > 15000) {
-        cache.clear(); at = SDL_GetTicks();
+    if (refresh || cache.empty() || okay::platform::TicksMs32() - at > 15000) {
+        cache.clear(); at = okay::platform::TicksMs32();
         std::set<std::string> seen;
         for (const auto& sc : FindScenes()) {
             if (!IsBuiltGame(sc)) continue;   // exported games only, not editor projects / loose scenes
@@ -10370,7 +10371,7 @@ static int MpPublishWorker(void* p) {
 static void PumpMultiplayer() {
     static Uint32 next = 0, lastPub = 0;
     static std::string pubText = "\x01", pubJoin;   // last published (impossible start value)
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (now < next) return;
     next = now + 1000;
     if (!g_presMutex) g_presMutex = SDL_CreateMutex();
@@ -10511,8 +10512,8 @@ static void MpRefresh(int tab) {
 static void MpFetchFriends() {
     static Uint32 last = 0;   // an empty list stays empty: don't refetch every frame
     if (g_frFetching || !g_presenceAccount || !g_presenceAccount->IsLoggedIn()) return;
-    if (last && SDL_GetTicks() - last < 30000) return;
-    last = SDL_GetTicks();
+    if (last && okay::platform::TicksMs32() - last < 30000) return;
+    last = okay::platform::TicksMs32();
     if (!g_frMutex) g_frMutex = SDL_CreateMutex();
     g_frFetching = true;
     if (SDL_Thread* t = SDL_CreateThread(FriendsListWorker, "okay-frlist", nullptr)) SDL_DetachThread(t);
@@ -10541,7 +10542,7 @@ static bool PartyDemo() { return std::getenv("OKAY_MP_DEMO") != nullptr; }
 static int PartyPollWorker(void*) {
     Uint32 next = 0;
     while (g_partyPollRun) {
-        const Uint32 now = SDL_GetTicks();
+        const Uint32 now = okay::platform::TicksMs32();
         if (now >= next || g_partyForce) {
             g_partyForce = false;
             bool inParty = false;
@@ -10559,9 +10560,9 @@ static int PartyPollWorker(void*) {
                     }
                 }
             } catch (...) {}
-            next = SDL_GetTicks() + (inParty ? 3000 : 15000);
+            next = okay::platform::TicksMs32() + (inParty ? 3000 : 15000);
         }
-        SDL_Delay(100);
+        okay::platform::DelayMs(100);
     }
     return 0;
 }
@@ -10680,8 +10681,8 @@ static void PumpParty() {
     if (PartyIsLeader()) {   // members follow whatever session I'm in
         const std::string game = MpCanInvite() ? g_myGame.title : std::string();
         const std::string link = MpCanInvite() ? g_myGame.invite : std::string();
-        if ((game != g_party.game || link != g_party.joinLink) && SDL_GetTicks() - lastSync > 3000) {
-            lastSync = SDL_GetTicks();
+        if ((game != g_party.game || link != g_party.joinLink) && okay::platform::TicksMs32() - lastSync > 3000) {
+            lastSync = okay::platform::TicksMs32();
             g_party.game = game; g_party.joinLink = link;   // optimistic; the next poll confirms
             PartyRun(kPartySession, game, link);
         }
@@ -10744,7 +10745,7 @@ static void DrawInvitePopups() {
         ChatInviteInfo ci;
         const bool party = f.body.rfind("[Party] ", 0) == 0;
         if (!party && !ParseChatInvite(f.body, ci)) continue;
-        pops.push_back({f, SDL_GetTicks()});
+        pops.push_back({f, okay::platform::TicksMs32()});
         if (pops.size() > 3) pops.erase(pops.begin());
         UpsertNotif("invite:" + std::to_string(f.id), party ? f.fromName + " invited you to their party"
                                                             : f.fromName + " invited you to play " + ci.title,
@@ -10757,7 +10758,7 @@ static void DrawInvitePopups() {
     float y = vp->WorkPos.y + vp->WorkSize.y - 70.0f;
     for (int i = (int)pops.size() - 1; i >= 0; --i) {
         Pop& pp = pops[i];
-        if (SDL_GetTicks() - pp.shownAt > 60000) { pops.erase(pops.begin() + i); continue; }
+        if (okay::platform::TicksMs32() - pp.shownAt > 60000) { pops.erase(pops.begin() + i); continue; }
         y -= h + 10;
         ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - w - 18, y));
         ImGui::SetNextWindowSize(ImVec2(w, h));
@@ -11266,7 +11267,7 @@ static void DrawRecentPlayers(bool signedIn, bool reload) {
     static std::vector<okay::PlayedWith> local;
     static Uint32 localAt = 0;
     static bool asked = false;
-    if (reload || !localAt || SDL_GetTicks() - localAt > 5000) { local = okay::GameIpc::ReadPlayedWith(); localAt = SDL_GetTicks(); }
+    if (reload || !localAt || okay::platform::TicksMs32() - localAt > 5000) { local = okay::GameIpc::ReadPlayedWith(); localAt = okay::platform::TicksMs32(); }
     if (signedIn && (reload || !asked) && !MpDemo()) { asked = true; MrQueue(0); }
 
     std::vector<Row> rows;
@@ -12314,7 +12315,7 @@ static int TokenRefreshWorker(void*) {
 }
 static void PumpTokenRefresh(okay::account::AccountService& account) {
     static Uint32 next = 0;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (now < next || g_tokRefreshBusy || !account.IsLoggedIn() || !account.UsesEmail() || g_pollCfgDir.empty()) return;
     next = now + 30000;
     account.ReloadSessionToken();   // a finished refresh (ours or the editor's) lands here
@@ -12330,7 +12331,7 @@ static void PumpRoleCheck(bool signedIn) {
     if (std::getenv("OKAY_UI_DEMO_USER")) { g_myRank = 3; return; }
     if (!g_roleMutex) g_roleMutex = SDL_CreateMutex();
     if (!signedIn) { g_myRank = -1; g_myBan = okay::MyBanInfo(); wasIn = false; return; }
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (!wasIn) { wasIn = true; next = 0; }
     if (now >= next && !g_roleCheckBusy && !g_pollCfgDir.empty()) {
         next = now + 300000;
@@ -12938,7 +12939,7 @@ static void PumpAcMyBans(bool signedIn) {
     }
     if (!g_acMeMutex) g_acMeMutex = SDL_CreateMutex();
     if (!signedIn) { g_acMyBans.clear(); wasIn = false; return; }
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (!wasIn) { wasIn = true; next = 0; }
     if (now >= next && !g_acMeBusy && !g_pollCfgDir.empty()) { next = now + 300000; AcMeQueue(new AcMeJob); }
     SDL_LockMutex(g_acMeMutex);
@@ -14864,7 +14865,7 @@ static int OutboxWorker(void*) {
             else ok = job.toGroup > 0 ? dm.SendGroup(job.toGroup, job.body, job.replyTo) : dm.Send(job.toUid, job.body, job.replyTo);
         } catch (...) {}
         SDL_LockMutex(g_outMutex);
-        for (auto& o : g_outbox) if (o.localId == job.localId) { o.state = ok ? 1 : -1; o.sentAt = SDL_GetTicks(); }
+        for (auto& o : g_outbox) if (o.localId == job.localId) { o.state = ok ? 1 : -1; o.sentAt = okay::platform::TicksMs32(); }
         SDL_UnlockMutex(g_outMutex);
         if (ok) { if (job.toChannel > 0) g_srvForce = true; else g_chatForceLog = true; }   // pull the real message in right away
     }
@@ -14920,13 +14921,13 @@ static int ChatPollWorker(void*) {
     Uint32 nextHere = 0, nextSeen = 0, nextPins = 0, nextGMem = 0;
     std::string lastUid; long lastGid = 0, lastMark = 0, peerLastSeen = 0;
     while (g_chatPollRun) {
-        if (!g_chatWinOpen) { SDL_Delay(200); continue; }
-        Uint32 now = SDL_GetTicks();
+        if (!g_chatWinOpen) { okay::platform::DelayMs(200); continue; }
+        Uint32 now = okay::platform::TicksMs32();
         std::string uid; long gid = 0;
         if (g_chatMutex) { SDL_LockMutex(g_chatMutex); uid = g_chatSelUid; gid = g_chatSelGroup; SDL_UnlockMutex(g_chatMutex); }
         if (uid != lastUid) { lastUid = uid; nextLog = 0; nextTyping = 0; nextHere = 0; nextSeen = 0; lastMark = 0; peerLastSeen = 0; }   // conversation changed → poll now
         // Only an open, focused conversation counts as read / "in the chat".
-        const bool viewing = SDL_GetTicks() - g_chatViewMs < 1500;
+        const bool viewing = okay::platform::TicksMs32() - g_chatViewMs < 1500;
         if (gid != lastGid) { lastGid = gid; nextGLog = 0; nextGMem = 0; }   // group switched → poll now
         if (g_chatForceLog) { g_chatForceLog = false; nextLog = 0; nextConv = 0; nextGLog = 0; nextGroups = 0; nextPins = 0; }  // a user action wants a fresh view
         try {
@@ -15019,7 +15020,7 @@ static int ChatPollWorker(void*) {
                 }
             }
         } catch (...) { /* transient — retry next tick */ }
-        SDL_Delay(250);
+        okay::platform::DelayMs(250);
     }
     return 0;
 }
@@ -15048,8 +15049,8 @@ static int ServerPollWorker(void*) {
     Uint32 nextChan = 0, nextMem = 0, nextMsg = 0;
     long lastSel = 0, lastChan = 0;
     while (g_srvPollRun) {
-        Uint32 now = SDL_GetTicks();
-        if (now - g_srvActiveMs > 2500) { SDL_Delay(200); continue; }   // only while viewing Servers
+        Uint32 now = okay::platform::TicksMs32();
+        if (now - g_srvActiveMs > 2500) { okay::platform::DelayMs(200); continue; }   // only while viewing Servers
         long sel = g_srvSel, chan = g_srvChan;
         if (sel != lastSel)  { lastSel = sel;  nextChan = 0; nextMem = 0; }
         if (chan != lastChan) { lastChan = chan; nextMsg = 0; }
@@ -15078,7 +15079,7 @@ static int ServerPollWorker(void*) {
                 nextMsg = now + 4000;
             }
         } catch (...) { /* transient — retry next tick */ }
-        SDL_Delay(250);
+        okay::platform::DelayMs(250);
     }
     return 0;
 }
@@ -15112,8 +15113,8 @@ static void ServerActionAsync(int kind, long id, const std::string& body = std::
 // Toast notification (bottom-right, auto-fading), drawn in whichever window is
 // being rendered (the launcher, and the chat window when it has its own).
 static void DrawToastOverlay() {
-    if (SDL_GetTicks() < g_toastUntil && !g_toastMsg.empty()) {
-        float remain = (float)(g_toastUntil - SDL_GetTicks());
+    if (okay::platform::TicksMs32() < g_toastUntil && !g_toastMsg.empty()) {
+        float remain = (float)(g_toastUntil - okay::platform::TicksMs32());
         float alpha = remain > 400.0f ? 1.0f : remain / 400.0f;   // fade out
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImVec2 wp = vp->WorkPos, ws = vp->WorkSize;
@@ -15281,7 +15282,7 @@ static int PlaytimeSyncWorker(void*) {
 }
 static void PlaytimeTick(bool loggedIn) {
     static Uint32 nextPump = 0, nextSync = 0;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (now >= nextPump) { nextPump = now + 1000; PumpPlaytime(); }
     if (g_playtimeDirty && g_sharePlaytime && loggedIn && !g_playtimeSyncing && now >= nextSync && !g_pollCfgDir.empty()) {
         g_playtimeDirty = false; nextSync = now + 120000;   // at most every 2 minutes
@@ -15423,7 +15424,7 @@ static bool OfficialFetchFile(const std::string& url, const fs::path& out, long 
             if (OfficialCancelled()) { ProcKill(&p); fs::remove(out, ec); return false; }
             const long long got = FileSizeSafe(out.string());
             OffLocked([&] { g_off.bytesNow = before + got; });
-            SDL_Delay(120);
+            okay::platform::DelayMs(120);
         }
     }
     if (code != 0) {
@@ -15523,7 +15524,7 @@ static int OfficialWorker(void* data) {
         OffLocked([&] { running = g_off.gameRunning; cancel = g_off.cancelReq; g_off.job = running ? Off_Waiting : Off_Applying; });
         if (cancel) { discard(); return finish("Update canceled", 0, false); }
         if (!running) break;
-        SDL_Delay(500);
+        okay::platform::DelayMs(500);
     }
     std::string err;
     if (!og::Apply(root, next, plan, &err))
@@ -15549,7 +15550,7 @@ static void StartOfficialJob(bool install, bool manual) {
     auto* a = new OfficialJobArgs;
     a->install = install; a->manual = manual; a->autoInstall = g_officialAutoUpdate;
     a->hasInstalled = g_offIsInstalled; a->installed = g_offInstalled;
-    g_offLastCheck = SDL_GetTicks();
+    g_offLastCheck = okay::platform::TicksMs32();
     g_offThread = SDL_CreateThread(OfficialWorker, "okay-official", a);
     if (!g_offThread) { delete a; OffLocked([&] { g_off.job = Off_Idle; g_off.install = false; }); }
 }
@@ -15639,7 +15640,7 @@ static void UninstallOfficial() {
 static void OfficialTick(bool onPlayPage) {
     static bool started = false, wasOnPlay = false;
     static Uint32 startCheckAt = 0, nextRunCheck = 0;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (!started) {
         started = true;
         g_offMutex = SDL_CreateMutex();
@@ -15891,7 +15892,7 @@ struct OaJobArgs {
 // the players' launchers; writes and listings use the admin's own session.
 static okay::account::ApiResponse OaGet(const okay::account::AccountService& a, const std::string& rel) {
     return a.Api("/storage/v1/object/public/releases/official/" + og::UrlEncodePath(rel) + "?cb=" +
-                 std::to_string((long long)std::time(nullptr)) + "-" + std::to_string(SDL_GetTicks()), "GET");
+                 std::to_string((long long)std::time(nullptr)) + "-" + std::to_string(okay::platform::TicksMs32()), "GET");
 }
 static okay::account::ApiResponse OaUpload(const okay::account::AccountService& a, const std::string& rel, const fs::path& file,
                                   const char* type, int cacheSec) {
@@ -15901,7 +15902,7 @@ static okay::account::ApiResponse OaUpload(const okay::account::AccountService& 
 static bool OaUploadText(const okay::account::AccountService& a, const std::string& rel, const std::string& text,
                          const char* type, int cacheSec, okay::account::ApiResponse* resp) {
     std::error_code ec;
-    const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_oa_" + std::to_string(SDL_GetTicks()) + "_" +
+    const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_oa_" + std::to_string(okay::platform::TicksMs32()) + "_" +
                                                         std::to_string(std::rand()) + ".txt");
     { std::ofstream o(tmp, std::ios::binary | std::ios::trunc); o << text; if (!o) return false; }
     *resp = OaUpload(a, rel, tmp, type, cacheSec);
@@ -16553,7 +16554,7 @@ static const okayversionsui::Host& VersionsHost() {
     static okayversionsui::Host h;
     static Uint32 builtAt = 0;
     static bool wired = false;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (!wired) {
         wired = true;
         h.toast = [](const std::string& m, int kind) { Toast(m, kind); };
@@ -16781,7 +16782,7 @@ int main(int argc, char** argv) {
             SDL_PumpEvents();   // keep the window responsive (and mapped) while we wait
             int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
             okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
-            SDL_Delay(16);
+            okay::platform::DelayMs(16);
         }
         if (vt) SDL_WaitThread(vt, nullptr);
     }
@@ -16846,11 +16847,11 @@ int main(int argc, char** argv) {
         else VoiceJoinDmCall("demo-uid", "Alex Rivera", "", "test", "secret");
     }
     if (std::getenv("OKAY_VOICE_DEMO_RING"))
-        g_incoming = IncomingCall{"u-maya", "Maya Chen", "", "ring", "k", 1, SDL_GetTicks()};
+        g_incoming = IncomingCall{"u-maya", "Maya Chen", "", "ring", "k", 1, okay::platform::TicksMs32()};
     bool running = true;
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
-        Uint64 frameStart = SDL_GetPerformanceCounter();   // for the frame-rate cap below
+        Uint64 frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
@@ -17009,8 +17010,8 @@ int main(int argc, char** argv) {
         // swapped in). Give the toast a moment, then relaunch and quit.
         if (g_upRelaunchNeeded && GetState() == Up_Updated) {
             static Uint32 relaunchAt = 0;
-            if (relaunchAt == 0) relaunchAt = SDL_GetTicks() + 1600;
-            else if (SDL_GetTicks() >= relaunchAt) {
+            if (relaunchAt == 0) relaunchAt = okay::platform::TicksMs32() + 1600;
+            else if (okay::platform::TicksMs32() >= relaunchAt) {
                 relaunchAt = 0xFFFFFFFFu;   // one attempt; a failure must not spawn a helper every frame
                 if (EditorRunning()) g_afterEditor = 3;
                 else if (BeginUpdatedRestart()) running = false;
@@ -17020,8 +17021,8 @@ int main(int argc, char** argv) {
         // `--versions` from a second launcher (the editor's "Open launcher"): bring this window forward and open the Versions page.
         {
             static Uint32 nextHandoff = 0;
-            if (SDL_GetTicks() >= nextHandoff) {
-                nextHandoff = SDL_GetTicks() + 400;
+            if (okay::platform::TicksMs32() >= nextHandoff) {
+                nextHandoff = okay::platform::TicksMs32() + 400;
                 okayversions::LauncherArgs ha;
                 if (okayversions::TakeHandoff(okayversions::HandoffFile(), (long long)std::time(nullptr), &ha)) {
                     okayversionsui::RequestPage(ha.version);
@@ -17039,7 +17040,7 @@ int main(int argc, char** argv) {
             // Look for a newer version shortly after start, then every 5 min, and again
             // whenever the launcher window comes back into focus (at most once a minute).
             // Each look only fetches the tiny VERSION.txt.
-            static Uint32 nextPoll = SDL_GetTicks() + 10u * 1000u;
+            static Uint32 nextPoll = okay::platform::TicksMs32() + 10u * 1000u;
             if (static bool demoUp = false; !demoUp) {   // dev screenshot hook: pretend a newer version was found
                 demoUp = true;
                 if (const char* v = std::getenv("OKAY_UI_DEMO_UPDATE")) {
@@ -17052,11 +17053,11 @@ int main(int argc, char** argv) {
             static Uint32 lastPoll = 0;
             if (g_launcherRefocused) {
                 g_launcherRefocused = false;
-                if (lastPoll == 0 || SDL_GetTicks() - lastPoll > 60u * 1000u) nextPoll = SDL_GetTicks();
+                if (lastPoll == 0 || okay::platform::TicksMs32() - lastPoll > 60u * 1000u) nextPoll = okay::platform::TicksMs32();
             }
-            if (SDL_GetTicks() >= nextPoll) {
-                nextPoll = SDL_GetTicks() + 5u * 60u * 1000u;
-                lastPoll = SDL_GetTicks();
+            if (okay::platform::TicksMs32() >= nextPoll) {
+                nextPoll = okay::platform::TicksMs32() + 5u * 60u * 1000u;
+                lastPoll = okay::platform::TicksMs32();
                 if (us != Up_Checking && us != Up_Downloading && us != Up_Updated) StartUpdatePoll();
             }
             std::string latest; bool done = false;
@@ -17094,8 +17095,8 @@ int main(int argc, char** argv) {
         OfficialTick(tab == 1);                // the official game: results, update checks, is it running
         if (!g_incoming.code.empty()) {   // ring (and get the user's attention) while a call waits
             static Uint32 nextRing = 0;
-            if (SDL_GetTicks() >= nextRing) {
-                PlayChatChime(); nextRing = SDL_GetTicks() + 2200;
+            if (okay::platform::TicksMs32() >= nextRing) {
+                PlayChatChime(); nextRing = okay::platform::TicksMs32() + 2200;
 #if SDL_VERSION_ATLEAST(2, 0, 16)
                 SDL_FlashWindow(g_chatHost.shown ? g_chatHost.win : window, SDL_FLASH_BRIEFLY);
 #endif
@@ -17106,8 +17107,8 @@ int main(int argc, char** argv) {
         if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
             if (g_chatHost.shown && !(SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED)) {
                 ChatHostFrame(account);   // the chat window keeps going on its own
-                SDL_Delay(ChatHostFocused() ? 15 : 45);
-            } else SDL_Delay(120);
+                okay::platform::DelayMs(ChatHostFocused() ? 15 : 45);
+            } else okay::platform::DelayMs(120);
             continue;
         }
 
@@ -17180,7 +17181,7 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("Your project is saved first - nothing is lost.");
                     ImGui::Dummy(ImVec2(0, 8));
                     if (ImGui::Button(openWith ? "Save project, close editor & open" : upd ? "Save project, close editor & update" : "Save project & close editor", ImVec2(300, 32))) {
-                        if (RequestEditorSaveQuit()) { s_closing = true; s_sentAt = SDL_GetTicks(); }
+                        if (RequestEditorSaveQuit()) { s_closing = true; s_sentAt = okay::platform::TicksMs32(); }
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Cancel", ImVec2(110, 32)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
@@ -17192,8 +17193,8 @@ int main(int argc, char** argv) {
                     if (ImGui::Button("OK", ImVec2(110, 30))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
                 } else {
                     static const char* kDots[] = {"", ".", "..", "..."};
-                    ImGui::Text("Saving your project and closing the editor%s", kDots[(SDL_GetTicks() / 400) % 4]);
-                    if (SDL_GetTicks() - s_sentAt > 15000)
+                    ImGui::Text("Saving your project and closing the editor%s", kDots[(okay::platform::TicksMs32() / 400) % 4]);
+                    if (okay::platform::TicksMs32() - s_sentAt > 15000)
                         ImGui::TextDisabled("Still open - it may be waiting for you. Check the editor window.");
                     ImGui::Dummy(ImVec2(0, 6));
                     if (ImGui::Button("Cancel", ImVec2(110, 30))) { g_afterEditor = 0; s_closing = false; ImGui::CloseCurrentPopup(); }
@@ -17290,7 +17291,7 @@ int main(int argc, char** argv) {
                 // Elapsed time.
                 int startMs = SDL_AtomicGet(&g_upStartMs);
                 if (startMs && us != Up_Idle) {
-                    int el = ((int)SDL_GetTicks() - startMs) / 1000; if (el < 0) el = 0;
+                    int el = ((int)okay::platform::TicksMs32() - startMs) / 1000; if (el < 0) el = 0;
                     ImGui::TextDisabled("Elapsed: %d:%02d", el / 60, el % 60);
                 }
 
@@ -17370,7 +17371,7 @@ int main(int argc, char** argv) {
                     {"demo:news", "What's new in v2.776", "Servers get channel tabs, faster chat and a refreshed notifications panel.", 0, 3 * 1440, false, 0},
                     {"demo:dl", "Download finished", "Orbit Hopper (42 MB) is ready to play in your Library.", 3, 5 * 1440, false, 1},
                 };
-                const Uint32 t0 = SDL_GetTicks();
+                const Uint32 t0 = okay::platform::TicksMs32();
                 for (const Seed& s : seed) {
                     Notif n; n.key = s.key; n.title = s.title; n.body = s.body; n.kind = s.kind;
                     n.time = t0 - s.agoMin * 60000u;   // may wrap: ages are always computed as (now - time) mod 2^32
@@ -17521,7 +17522,7 @@ int main(int argc, char** argv) {
             ImGui::PopStyleVar();
             {
                 ImDrawList* ld = ImGui::GetWindowDrawList();
-                const Uint32 nowT = SDL_GetTicks();
+                const Uint32 nowT = okay::platform::TicksMs32();
                 const long nowUnix = (long)std::time(nullptr);
                 const long today = DayKey(nowUnix), yday = DayKey(nowUnix - 86400);
                 static const int kFilterKind[] = {-1, -1, 1, 2, 3, 0};
@@ -18202,10 +18203,10 @@ int main(int argc, char** argv) {
             // editor saves its first scene, and highlight it during that window.
             static Uint32 s_watchUntil = 0;
             static std::string s_highlight;
-            if (!g_projectJustMade.empty()) { s_watchUntil = SDL_GetTicks() + 8000; s_highlight = g_projectJustMade; g_projectJustMade.clear(); }
-            if (s_watchUntil && SDL_GetTicks() < s_watchUntil) {
+            if (!g_projectJustMade.empty()) { s_watchUntil = okay::platform::TicksMs32() + 8000; s_highlight = g_projectJustMade; g_projectJustMade.clear(); }
+            if (s_watchUntil && okay::platform::TicksMs32() < s_watchUntil) {
                 static Uint32 t = 0;
-                if (SDL_GetTicks() - t > 1000) { t = SDL_GetTicks(); s_projScanned = "\x01"; }
+                if (okay::platform::TicksMs32() - t > 1000) { t = okay::platform::TicksMs32(); s_projScanned = "\x01"; }
             } else { s_watchUntil = 0; s_highlight.clear(); }
 
             // Open `pr` with the editor of `version` ("" = this launcher's). One editor runs at a time, so when the open one is another
@@ -18297,7 +18298,7 @@ int main(int argc, char** argv) {
             if (s_tpl < 0 || s_tpl >= (int)s_tpls.size()) s_tpl = 0;
             auto refreshPlan = [&]() {
                 const std::string key = std::string(npName) + "\n" + npLoc;
-                const Uint32 now = SDL_GetTicks();
+                const Uint32 now = okay::platform::TicksMs32();
                 if (key != s_planKey || now - s_planAt > 1200) {
                     s_plan = okayproj::PlanProject(npLoc[0] ? npLoc : ".", npName);
                     s_planKey = key;
@@ -18309,7 +18310,7 @@ int main(int argc, char** argv) {
             auto doCreate = [&]() -> std::string {
                 s_plan = okayproj::PlanProject(npLoc[0] ? npLoc : ".", npName);
                 s_planKey = std::string(npName) + "\n" + npLoc;
-                s_planAt = SDL_GetTicks();
+                s_planAt = okay::platform::TicksMs32();
                 if (!s_plan.ok()) return s_plan.Problem();
                 const std::string verBad = okayproj::CheckProjectVersion(s_ver);
                 if (!verBad.empty()) return verBad;
@@ -18512,14 +18513,14 @@ int main(int argc, char** argv) {
                     if (stackBtns) ImGui::SetCursorPos(ImVec2(16, cardH - 40));
                     else ImGui::SetCursorPos(ImVec2(cardW - 16 - 246, (cardH - 34) * 0.5f));
                     ImGui::BeginDisabled(editor.empty() || !pr.ready);
-                    if (PrimaryButton("Open", ImVec2(78, 34))) { s_openedAt[pr.scene] = SDL_GetTicks(); openProject(pr); }
+                    if (PrimaryButton("Open", ImVec2(78, 34))) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
                     ImGui::EndDisabled();
                     ImGui::SameLine(0, 8);
                     if (ImGui::Button("Remove", ImVec2(88, 34))) { forgetProject(pr.scene, pr.extra); Toast("Removed " + pr.name + " from the list", 1); }
                     ImGui::SameLine(0, 8);
                     if (ImGui::Button("More", ImVec2(64, 34))) ImGui::OpenPopup("projctx");
                     if (ImGui::BeginPopupContextWindow("projctx", ImGuiPopupFlags_MouseButtonRight)) {
-                        if (ImGui::MenuItem("Open in editor", nullptr, false, !editor.empty() && pr.ready)) { s_openedAt[pr.scene] = SDL_GetTicks(); openProject(pr); }
+                        if (ImGui::MenuItem("Open in editor", nullptr, false, !editor.empty() && pr.ready)) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProject(pr); }
                         {   // Open with an editor of another version (the Versions page installs them)
                             const std::vector<okayversions::EditorChoice> choices = pr.ready
                                 ? okayversions::OpenWithChoices(pr.ver, okayversionsui::InstalledVersionsCached(LauncherDirPath()), LocalVersion())
@@ -18528,7 +18529,7 @@ int main(int argc, char** argv) {
                                 if (choices.empty()) ImGui::TextDisabled("No other versions are installed.");
                                 for (const okayversions::EditorChoice& c : choices) {
                                     const std::string label = "v" + c.version + (c.sameLine ? "   (this project's version)" : "");
-                                    if (ImGui::MenuItem(label.c_str())) { s_openedAt[pr.scene] = SDL_GetTicks(); openProjectWith(pr, c.version); }
+                                    if (ImGui::MenuItem(label.c_str())) { s_openedAt[pr.scene] = okay::platform::TicksMs32(); openProjectWith(pr, c.version); }
                                 }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("Get more versions\xE2\x80\xA6")) { tab = 15; g_lastTab = 15; if (!pr.ver.empty()) okayversionsui::RequestPage(pr.ver); }
@@ -18617,10 +18618,10 @@ int main(int argc, char** argv) {
                         ImGui::SetWindowFontScale(1.0f);
                         ImGui::Dummy(ImVec2(0, 8));
                         ImGui::TextDisabled("The editor opens when the folder is ready.");
-                        const float frac = std::min(1.0f, (SDL_GetTicks() - s_createAt) / 400.0f);
+                        const float frac = std::min(1.0f, (okay::platform::TicksMs32() - s_createAt) / 400.0f);
                         ImGui::Dummy(ImVec2(0, 14));
                         ImGui::ProgressBar(frac, ImVec2(-1, 8), "");
-                        if (SDL_GetTicks() - s_createAt >= 400) {
+                        if (okay::platform::TicksMs32() - s_createAt >= 400) {
                             const std::string why = doCreate();
                             s_wiz.creating = false;
                             if (why.empty()) {
@@ -18777,11 +18778,11 @@ int main(int argc, char** argv) {
                         const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
                         const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape);
                         if (pressed) {
-                            if (s_wiz.step >= 2) { s_createAt = SDL_GetTicks(); okayproj::WizardBeginCreate(s_wiz); }
+                            if (s_wiz.step >= 2) { s_createAt = okay::platform::TicksMs32(); okayproj::WizardBeginCreate(s_wiz); }
                             else okayproj::WizardNext(s_wiz);
                         } else if (enter) {
                             const auto act = okayproj::ApplyWizardInput(true, false, false, s_wiz);
-                            if (act == okayproj::WizardMove::Create) s_createAt = SDL_GetTicks();
+                            if (act == okayproj::WizardMove::Create) s_createAt = okay::platform::TicksMs32();
                         }
                         if (esc) {
                             const auto act = okayproj::ApplyWizardInput(false, true, false, s_wiz);
@@ -21608,8 +21609,8 @@ int main(int argc, char** argv) {
             static std::vector<okay::Achievement> achs;
             static Uint32 achNext = 0;
             static PfLocalShowcase achShow;
-            if (SDL_GetTicks() >= achNext) {
-                achNext = SDL_GetTicks() + 1500;
+            if (okay::platform::TicksMs32() >= achNext) {
+                achNext = okay::platform::TicksMs32() + 1500;
                 achShow = LoadLocalShowcase();
                 if (!kAchDemo) achs = okay::Achievements::All();
                 else if (achs.empty()) {
@@ -21884,7 +21885,7 @@ int main(int argc, char** argv) {
                 static Uint32 flNext = 0;
                 static char flAddBuf[48] = "";
                 {
-                    const Uint32 tnow = SDL_GetTicks();
+                    const Uint32 tnow = okay::platform::TicksMs32();
                     if (kFrDemo) {
                         static bool flSeeded = false;
                         if (!flSeeded) {
@@ -21918,7 +21919,7 @@ int main(int argc, char** argv) {
                 // the full public profile page (OpenPublicProfile).
                 static Uint32 fNextRefresh = 0;
                 static int fView = std::getenv("OKAY_UI_DEMO_FRVIEW") ? std::atoi(std::getenv("OKAY_UI_DEMO_FRVIEW")) : 0;   // 0 Online, 1 All, 2 Pending, 3 Add friend, 4 Following, 5 Followers (env: dev screenshot hook)
-                Uint32 now = SDL_GetTicks();
+                Uint32 now = okay::platform::TicksMs32();
                 if (kFrDemo) {
                     static bool seeded = false;
                     if (!seeded) {
@@ -22526,7 +22527,7 @@ int main(int argc, char** argv) {
             if (g_openPublishForm) { wShowPublish = true; g_openPublishForm = false; }
             if (std::getenv("OKAY_UI_DEMO_PUBLISH")) { static bool once = true; if (once) { once = false; wShowPublish = true; wKind = 2;
                 std::snprintf(wTitle, sizeof(wTitle), "Low-poly space props pack"); } }
-            Uint32 now = SDL_GetTicks();
+            Uint32 now = okay::platform::TicksMs32();
             // Refresh the marketplace list/ratings in the background (no hitch).
             if (!g_wsMutex) g_wsMutex = SDL_CreateMutex();
             if (now >= wNextRefresh && !g_wsFetching) {
@@ -22991,7 +22992,7 @@ int main(int argc, char** argv) {
                     if (ws.SubmitReview(rvItem, rvStars, rvBody, &rvErr)) {
                         Toast("Review posted", 1);
                         rvList = ws.Reviews(rvItem);
-                        wRatings = ws.Ratings(); wNextRefresh = SDL_GetTicks() + 15000;
+                        wRatings = ws.Ratings(); wNextRefresh = okay::platform::TicksMs32() + 15000;
                         rvErr.clear();
                     }
                 }
@@ -23002,7 +23003,7 @@ int main(int argc, char** argv) {
                         ws.RemoveMyReview(rvItem);
                         rvStars = 5; rvBody[0] = '\0';
                         rvList = ws.Reviews(rvItem);
-                        wRatings = ws.Ratings(); wNextRefresh = SDL_GetTicks() + 15000;
+                        wRatings = ws.Ratings(); wNextRefresh = okay::platform::TicksMs32() + 15000;
                     }
                 }
                 if (!rvErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f,0.45f,0.45f,1));
@@ -23058,7 +23059,7 @@ int main(int argc, char** argv) {
                 struct SvTab { long sel = 0, chan = 0; std::string chanName, srvName; };
                 static std::vector<SvTab> svTabs;
                 static long svTabSkipSel = 0, svTabSkipChan = 0;   // last tab was closed: don't re-add this view
-                Uint32 now = SDL_GetTicks();
+                Uint32 now = okay::platform::TicksMs32();
                 if (kSvDemo) {
                     static bool seeded = false;
                     if (!seeded) {
@@ -24105,7 +24106,7 @@ int main(int argc, char** argv) {
             static long foNewSection = -1;            // section picked in the composer (-1 = follow foSection)
             static bool foCreateOpen = false, foAdminOpen = false, foStaffOpen = false;
             static std::vector<okay::ForumMember> foAdmMembers; static std::vector<okay::ForumBan> foAdmBans;
-            Uint32 tnow = SDL_GetTicks();
+            Uint32 tnow = okay::platform::TicksMs32();
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
             const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
             const bool canAct = fo.Available() || kFoDemo;
@@ -25171,9 +25172,9 @@ int main(int argc, char** argv) {
             Uint32 flags = SDL_GetWindowFlags(window);
             bool focused = (flags & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS)) != 0 || ChatHostFocused();
             double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
-            double elapsed = (double)(SDL_GetPerformanceCounter() - frameStart) * 1000.0
-                           / (double)SDL_GetPerformanceFrequency();
-            if (elapsed < targetMs) SDL_Delay((Uint32)(targetMs - elapsed));
+            double elapsed = (double)(okay::platform::PerfCounter() - frameStart) * 1000.0
+                           / (double)okay::platform::PerfFrequency();
+            if (elapsed < targetMs) okay::platform::DelayMs((Uint32)(targetMs - elapsed));
         }
     }
 

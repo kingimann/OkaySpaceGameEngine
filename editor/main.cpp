@@ -607,6 +607,7 @@ int main(int argc, char** argv) {
 // `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
@@ -1205,12 +1206,12 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // the software rasterizer. A self-heal counter disables the GPU path after
     // repeated failures so the viewport is never stuck.
     const std::uint32_t* px = nullptr;
-    Uint64 g_renderT0 = SDL_GetPerformanceCounter();   // GPU/software render time (read-back is synchronous)
+    Uint64 g_renderT0 = okay::platform::PerfCounter();   // GPU/software render time (read-back is synchronous)
     // After repeated GPU failures, rest on the software renderer briefly and then
     // RETRY — previously one bad spell disabled the GPU for the whole session,
     // silently leaving big scenes to the CPU rasterizer at 1 FPS.
     static Uint32 s_gpuRetryAt = 0;
-    if (g_gpuRender && SDL_GetTicks() >= s_gpuRetryAt) {
+    if (g_gpuRender && okay::platform::TicksMs32() >= s_gpuRetryAt) {
 #if defined(_WIN32)
         // Zero-copy: render straight into the SDL texture the panel shows.
         // (The small Animation preview, slot 3, keeps the read-back path: it renders
@@ -1222,8 +1223,8 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                     SDL_RenderFlush(g_sdlRenderer);   // SDL's queued draws go first
                     if (g_d3dRenderer->RenderToTexture(scene, vp, eye, rw, rh, 4, 0.0f, 0.0f, 0.0f, 0.0f, dst, ignore)) {
                         okay::SceneOcclusionDepth().valid = false;
-                        Uint64 r1 = SDL_GetPerformanceCounter();
-                        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)SDL_GetPerformanceFrequency() * 1000.0);
+                        Uint64 r1 = okay::platform::PerfCounter();
+                        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)okay::platform::PerfFrequency() * 1000.0);
                         return t;
                     }
                 }
@@ -1258,7 +1259,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         if (!px) {
             if (++s_gpuFails >= 3) {
                 s_gpuFails = 0;
-                s_gpuRetryAt = SDL_GetTicks() + 5000;   // rest 5s on software, then retry
+                s_gpuRetryAt = okay::platform::TicksMs32() + 5000;   // rest 5s on software, then retry
                 ConsoleLog("GPU renderer failing; using the software renderer briefly, will retry.", 1);
             }
         } else s_gpuFails = 0;
@@ -1284,8 +1285,8 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     }
     if (!px) return nullptr;   // every renderer failed — don't feed SDL a null buffer
     {   // Record the (synchronous) render time as the profiler's GPU proxy.
-        Uint64 r1 = SDL_GetPerformanceCounter();
-        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)SDL_GetPerformanceFrequency() * 1000.0);
+        Uint64 r1 = okay::platform::PerfCounter();
+        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)okay::platform::PerfFrequency() * 1000.0);
     }
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh || g_view3DIsTarget[slot]) {
         if (g_view3DTex[slot]) DestroyViewTexture(slot);
@@ -2394,7 +2395,7 @@ float  g_docAutosaveSec = 30.0f;     // seconds between recovery copies (graphs,
 bool   g_autosaveToFile = false;     // also overwrite the real file (off unless chosen)
 double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI)
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
-Uint64 g_lastSavedAt = 0;        // SDL_GetTicks64() of the last successful scene save (0 = none this session)
+Uint64 g_lastSavedAt = 0;        // okay::platform::TicksMs() of the last successful scene save (0 = none this session)
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
 std::vector<std::string> g_recent; // recently opened/saved scene paths
 std::string g_clipboard;         // serialized GameObject for copy/paste
@@ -6080,7 +6081,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::SliderFloat("Interval (s)", &g_docAutosaveSec, 5.0f, 300.0f, "%.0f")) SaveSettings();
             if (g_autosaveStamp > 0.0)
                 ImGui::TextDisabled("Last autosave: %.0fs ago",
-                                    SDL_GetTicks64() / 1000.0 - g_autosaveStamp);
+                                    okay::platform::TicksMs() / 1000.0 - g_autosaveStamp);
             ImGui::TextDisabled("Unsaved graphs, scripts and the scene go to the");
             ImGui::TextDisabled("recovery folder. Real files stay as you saved them.");
             ImGui::TextDisabled("A leftover <scene>.autosave is still offered on open");
@@ -6914,7 +6915,7 @@ void DrawStatusBar(EditorState& ed) {
         ImGui::SameLine(0, 4);
         ImGui::TextColored(amber, "unsaved");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene has unsaved changes (Ctrl+S to save)");
-    } else if (!ed.isPlaying() && g_lastSaveError.empty() && g_lastSavedAt && SDL_GetTicks64() - g_lastSavedAt < 5000) {
+    } else if (!ed.isPlaying() && g_lastSaveError.empty() && g_lastSavedAt && okay::platform::TicksMs() - g_lastSavedAt < 5000) {
         // A short confirmation after a save (it fades after five seconds; the Console keeps the record).
         ImGui::SameLine(0, 12);
         const ImVec4 ok(0.45f, 0.82f, 0.56f, 1.0f);
@@ -8148,7 +8149,7 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
     static std::map<std::string, std::pair<Uint32, std::vector<TreeSub>>> s_treeCache;
     std::string dkey = dir.string();
     auto& cached = s_treeCache[dkey];
-    Uint32 nowMs = SDL_GetTicks();
+    Uint32 nowMs = okay::platform::TicksMs32();
     if (nowMs >= cached.first) {
         cached.first = nowMs + 1000;
         cached.second.clear();
@@ -8351,7 +8352,7 @@ static void DrawAssetManager(EditorState& ed) {
     static char s_search[96] = "";
     static int s_cat = -1;          // -1 = all
     static bool s_grid = false;
-    if (SDL_GetTicks() >= s_nextScan) { s_items = ScanDownloadedAssets(); s_nextScan = SDL_GetTicks() + 3000; }
+    if (okay::platform::TicksMs32() >= s_nextScan) { s_items = ScanDownloadedAssets(); s_nextScan = okay::platform::TicksMs32() + 3000; }
     const ImGuiStyle& st = ImGui::GetStyle();
     const float fh = ImGui::GetFrameHeight();
 
@@ -8830,7 +8831,7 @@ static void SetPluginEnabled(EditorPlugin& p, bool on) {
 static void TickPlugins(EditorState& ed) {
     EnsurePluginPrefs();
     static Uint32 nextScan = 0;
-    if (g_pluginsProject != ed.projectDir() || SDL_GetTicks() >= nextScan) { ScanPlugins(ed); nextScan = SDL_GetTicks() + 1000; }
+    if (g_pluginsProject != ed.projectDir() || okay::platform::TicksMs32() >= nextScan) { ScanPlugins(ed); nextScan = okay::platform::TicksMs32() + 1000; }
     g_pluginEd = &ed;
     static GameObject* lastSel = nullptr;
     const bool selChanged = ed.selected() != lastSel;
@@ -9345,7 +9346,7 @@ void DrawProject(EditorState& ed) {
     if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
     {   // keep the asset index fresh without a thread: re-scan when due (cheap; waits 30x as long as the scan took)
         static std::string s_changedSig;
-        if (pb.Poll(SDL_GetTicks())) s_changedSig.clear();
+        if (pb.Poll(okay::platform::TicksMs32())) s_changedSig.clear();
     }
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
@@ -9439,8 +9440,8 @@ void DrawProject(EditorState& ed) {
     {
         static std::string s_cntRoot; static Uint32 s_cntNext = 0;
         static int s_cnt[9] = {0}; static int s_cntRecent = 0;
-        if (s_cntRoot != root.string() || SDL_GetTicks() >= s_cntNext) {
-            s_cntRoot = root.string(); s_cntNext = SDL_GetTicks() + 3000;
+        if (s_cntRoot != root.string() || okay::platform::TicksMs32() >= s_cntNext) {
+            s_cntRoot = root.string(); s_cntNext = okay::platform::TicksMs32() + 3000;
             for (int& c : s_cnt) c = 0;
             s_cntRecent = 0;
             std::error_code ce;
@@ -9647,7 +9648,7 @@ void DrawProject(EditorState& ed) {
     auto mkMaterial = [&]{
         askCreate("New material", "How a surface looks.", "New Material", ".okaymat", "material", [](const std::string& d, const std::string& n) {
             std::error_code te;
-            fs::path tmp = fs::temp_directory_path(te) / ("okay_newmat_" + std::to_string(SDL_GetTicks()) + ".okaymat");
+            fs::path tmp = fs::temp_directory_path(te) / ("okay_newmat_" + std::to_string(okay::platform::TicksMs32()) + ".okaymat");
             std::string text;
             if (Material{}.SaveToFile(tmp.string())) text = extide::ReadFile(tmp.string());
             fs::remove(tmp, te);
@@ -9761,7 +9762,7 @@ void DrawProject(EditorState& ed) {
     static Uint32 s_scanNext = 0;
     static std::vector<fs::directory_entry> s_scanEntries;
     {
-        Uint32 nowMs = SDL_GetTicks();
+        Uint32 nowMs = okay::platform::TicksMs32();
         static int s_scanSmart = -2;
         static bool s_scanAll = false;
         bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort ||
@@ -17915,7 +17916,7 @@ static NewProjectForm g_npForm;
 
 static const okayproj::Plan& NewProjectPlan(NewProjectForm& f, bool force = false) {
     const std::string key = std::string(f.name) + "\n" + f.loc;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (force || key != f.lastKey || now - f.planAt > 1500) {   // looks at the disk, so not every frame
         f.plan = okayproj::PlanProject(f.loc, f.name);
         f.lastKey = key; f.planAt = now;
@@ -18208,7 +18209,7 @@ void DrawNewProjectPopup(EditorState& ed) {
     }
     NoteProjectCreated(r.root);   // made in this session: never asked about
     AddRecent(r.scene);
-    g_lastSavedAt = SDL_GetTicks64();
+    g_lastSavedAt = okay::platform::TicksMs();
     ConsoleLog("Created project \"" + plan.folder + "\" at " + r.root);
 }
 
@@ -22797,7 +22798,7 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go,
     static GameObject* s_lastGo = nullptr;
     static Vec3 s_lastEye; static float s_lastW = 0.0f; static Uint32 s_lastAt = 0;
     const bool reuse = poseUnchanged && s_lastGo == go && s_lastW == w && g_view3DTex[3] &&
-                       (s_lastEye - eye).Magnitude() < 1e-5f && SDL_GetTicks() - s_lastAt < 500;
+                       (s_lastEye - eye).Magnitude() < 1e-5f && okay::platform::TicksMs32() - s_lastAt < 500;
     SDL_Texture* tex = nullptr;
     if (reuse) tex = g_view3DTex[3];
     else {
@@ -22813,7 +22814,7 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go,
         tex = Render3DTexture(ed.scene(), proj * view, eye, (int)w, (int)h, /*slot=*/3);
         for (GameObject* g : hidden) g->active = true;
         if (restore) restore();
-        s_lastGo = go; s_lastEye = eye; s_lastW = w; s_lastAt = SDL_GetTicks();
+        s_lastGo = go; s_lastEye = eye; s_lastW = w; s_lastAt = okay::platform::TicksMs32();
     }
     if (tex) {
         {   // a soft backdrop so the transparent clear never reads as a black hole
@@ -45559,7 +45560,7 @@ static bool SaveSceneTo(EditorState& ed, std::string p) {
         return false;
     }
     g_lastSaveError.clear();
-    g_lastSavedAt = SDL_GetTicks64();
+    g_lastSavedAt = okay::platform::TicksMs();
     ConsoleLog("Saved scene: " + p);
     StampProjectAfterSave(ed.projectDir());   // project.okayproj says which version last saved the project
     AddRecent(p); ed.Achievement("FIRST_SAVE");
@@ -45842,7 +45843,7 @@ static bool SaveEverything(EditorState& ed) { return SaveProject(ed, false); }
 // never while a field is being typed in. `force` skips the wait (leaving, quitting).
 static void SyncProjectFiles(EditorState& ed, bool force = false) {
     static Uint32 last = 0;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (!force && (now - last < 1000 || ImGui::IsAnyItemActive())) return;
     last = now;
     if (ed.projectDir().empty()) return;   // no project: nothing of ours to keep up to date
@@ -46194,7 +46195,7 @@ static std::string LauncherIpcPath(const char* file) {
 }
 static void PollLauncherRequest(EditorState& ed, bool& running) {
     static Uint32 last = 0;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (now - last < 400) return;
     last = now;
     namespace fs = std::filesystem;
@@ -46762,7 +46763,7 @@ int main(int argc, char** argv) {
 
     bool running = true;
     std::string lastTitle;
-    Uint64 last = SDL_GetPerformanceCounter();
+    Uint64 last = okay::platform::PerfCounter();
     DocRecovery().SetInterval(g_docAutosaveSec);
     DocRecovery().SetEnabled(true);
     DocRecovery().SetProvider([&](std::string& payload, std::string& label) {
@@ -46796,7 +46797,7 @@ int main(int argc, char** argv) {
     });
     if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
     while (running) {
-        Uint64 g_frameT0 = SDL_GetPerformanceCounter();
+        Uint64 g_frameT0 = okay::platform::PerfCounter();
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
         okay::Prof().enabled = g_showProfiler || kPerfDump;   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
@@ -46889,8 +46890,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        Uint64 now = SDL_GetPerformanceCounter();
-        float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
+        Uint64 now = okay::platform::PerfCounter();
+        float dt = (float)((now - last) / (double)okay::platform::PerfFrequency());
         last = now;
 
         // Edit-mode particle preview: simulate
@@ -47310,7 +47311,7 @@ int main(int argc, char** argv) {
         DocRecovery().SetInterval(g_docAutosaveSec);
         DocRecovery().SetEnabled(g_autosave);
         if (g_autosave && DocRecovery().Tick(dt)) {
-            g_autosaveStamp = SDL_GetTicks64() / 1000.0;
+            g_autosaveStamp = okay::platform::TicksMs() / 1000.0;
             if (g_autosaveToFile) {
                 okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
                 for (okay::ScriptComponent* t : g_scriptTabs) {
@@ -48221,8 +48222,8 @@ int main(int argc, char** argv) {
         }
 
         {   // Close out the profiler frame (total wall time incl. present).
-            Uint64 f1 = SDL_GetPerformanceCounter();
-            double frameMs = (double)(f1 - g_frameT0) / (double)SDL_GetPerformanceFrequency() * 1000.0;
+            Uint64 f1 = okay::platform::PerfCounter();
+            double frameMs = (double)(f1 - g_frameT0) / (double)okay::platform::PerfFrequency() * 1000.0;
             okay::Prof().EndFrame(frameMs);
             if (kPerfDump) {   // every ~2 s: average ms per section (inclusive), biggest first
                 static std::map<std::string, double> acc; static double accFrame = 0; static int n = 0;

@@ -1,0 +1,311 @@
+; FBX 7.4.0 project file
+; ------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "okay gen_fbx_fixtures.py"
+}
+
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "", 1.0
+		P: "UpAxisSign", "int", "Integer", "", 1.0
+		P: "FrontAxis", "int", "Integer", "", 2.0
+		P: "FrontAxisSign", "int", "Integer", "", 1.0
+		P: "CoordAxis", "int", "Integer", "", 0.0
+		P: "CoordAxisSign", "int", "Integer", "", 1.0
+		P: "UnitScaleFactor", "double", "Number", "", 1.0
+	}
+}
+
+Definitions:  {
+	Version: 100
+	Count: 23
+}
+
+Objects:  {
+	Geometry: 1001, "Geometry::Tube", "Mesh" {
+		Vertices: *48 {
+			a: -0.5,0.0,0.5,0.5,0.0,0.5,0.5,0.0,-0.5,-0.5,0.0,-0.5,-0.5,1.0,0.5,0.5,1.0,0.5,0.5,1.0,-0.5,-0.5,1.0,-0.5,-0.5,2.0,0.5,0.5,2.0,0.5,0.5,2.0,-0.5,-0.5,2.0,-0.5,-0.5,3.0,0.5,0.5,3.0,0.5,0.5,3.0,-0.5,-0.5,3.0,-0.5
+		}
+		PolygonVertexIndex: *48 {
+			a: 0,1,5,-5,1,2,6,-6,2,3,7,-7,3,0,4,-8,4,5,9,-9,5,6,10,-10,6,7,11,-11,7,4,8,-12,8,9,13,-13,9,10,14,-14,10,11,15,-15,11,8,12,-16
+		}
+		GeometryVersion: 124
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "UVMap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "IndexToDirect"
+			UV: *8 {
+				a: 0,0,1,0,1,1,0,1
+			}
+			UVIndex: *48 {
+				a: 0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+		}
+	}
+	Model: 1002, "Model::Tube", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 1.0, 1.0
+		}
+	}
+	Material: 1003, "Material::Skin", "" {
+		Version: 102
+		ShadingModel: "phong"
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A", 0.3, 0.6, 0.9
+		}
+	}
+	Model: 1004, "Model::Bone0", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 1.0, 1.0
+		}
+	}
+	Model: 1005, "Model::Bone1", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 1.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 1.0, 1.0
+			P: "PreRotation", "Vector3D", "Vector", "", 0.0, 0.0, 10.0
+		}
+	}
+	Model: 1006, "Model::Bone2", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 1.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 1.0, 1.0
+			P: "RotationOrder", "enum", "", "", 5.0
+		}
+	}
+	Deformer: 1007, "Deformer::Skin", "Skin" {
+		Version: 101
+	}
+	Deformer: 1008, "SubDeformer::Cluster0", "Cluster" {
+		Version: 100
+		Indexes: *8 {
+			a: 0,1,2,3,4,5,6,7
+		}
+		Weights: *8 {
+			a: 1.0,1.0,1.0,1.0,0.5,0.5,0.5,0.5
+		}
+		Transform: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+		}
+		TransformLink: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0.0,0,1
+		}
+	}
+	Deformer: 1009, "SubDeformer::Cluster1", "Cluster" {
+		Version: 100
+		Indexes: *8 {
+			a: 4,5,6,7,8,9,10,11
+		}
+		Weights: *8 {
+			a: 0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5
+		}
+		Transform: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+		}
+		TransformLink: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,1.0,0,1
+		}
+	}
+	Deformer: 1010, "SubDeformer::Cluster2", "Cluster" {
+		Version: 100
+		Indexes: *8 {
+			a: 8,9,10,11,12,13,14,15
+		}
+		Weights: *8 {
+			a: 0.5,0.5,0.5,0.5,1.0,1.0,1.0,1.0
+		}
+		Transform: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+		}
+		TransformLink: *16 {
+			a: 1,0,0,0,0,1,0,0,0,0,1,0,0,2.0,0,1
+		}
+	}
+	Deformer: 1011, "Deformer::Morph", "BlendShape" {
+		Version: 100
+	}
+	Deformer: 1012, "SubDeformer::Fat", "BlendShapeChannel" {
+		Version: 100
+		DeformPercent: 0.0
+		FullWeights: *1 {
+			a: 100.0
+		}
+		Properties70:  {
+			P: "DeformPercent", "Number", "", "A", 25.0
+		}
+	}
+	Geometry: 1013, "Geometry::FatShape", "Shape" {
+		Version: 100
+		Indexes: *4 {
+			a: 12,13,14,15
+		}
+		Vertices: *12 {
+			a: -0.2,0,0.2,0.2,0,0.2,0.2,0,-0.2,-0.2,0,-0.2
+		}
+		Normals: *12 {
+			a: 0,0,0,0,0,0,0,0,0,0,0,0
+		}
+	}
+	AnimationStack: 1014, "AnimStack::Take 001", "" {
+		Properties70: 
+	}
+	AnimationLayer: 1015, "AnimLayer::BaseLayer", ""
+	AnimationCurve: 1016, "AnimCurve::b1rz", "" {
+		Default: 0.0
+		KeyVer: 4008
+		KeyTime: *4 {
+			a: 0,23093079000,46186158000,69279237000
+		}
+		KeyValueFloat: *4 {
+			a: 0.0,45.0,0.0,-45.0
+		}
+		KeyAttrFlags: *1 {
+			a: 1032
+		}
+		KeyAttrDataFloat: *4 {
+			a: 30.0,30.0,0,0
+		}
+		KeyAttrRefCount: *1 {
+			a: 4
+		}
+	}
+	AnimationCurveNode: 1017, "AnimCurveNode::R", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A", 0.0
+			P: "d|Y", "Number", "", "A", 0.0
+			P: "d|Z", "Number", "", "A", 0.0
+		}
+	}
+	AnimationCurve: 1018, "AnimCurve::b2ty", "" {
+		Default: 1.0
+		KeyVer: 4008
+		KeyTime: *2 {
+			a: 0,92372316000
+		}
+		KeyValueFloat: *2 {
+			a: 1.0,1.5
+		}
+		KeyAttrFlags: *1 {
+			a: 4
+		}
+		KeyAttrDataFloat: *4 {
+			a: 0,0,0,0
+		}
+		KeyAttrRefCount: *1 {
+			a: 2
+		}
+	}
+	AnimationCurveNode: 1019, "AnimCurveNode::T", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A", 0.0
+			P: "d|Y", "Number", "", "A", 1.0
+			P: "d|Z", "Number", "", "A", 0.0
+		}
+	}
+	AnimationCurve: 1020, "AnimCurve::b0sx", "" {
+		Default: 1.0
+		KeyVer: 4008
+		KeyTime: *3 {
+			a: 0,46186158000,92372316000
+		}
+		KeyValueFloat: *3 {
+			a: 1.0,1.0,2.0
+		}
+		KeyAttrFlags: *1 {
+			a: 2
+		}
+		KeyAttrDataFloat: *4 {
+			a: 0,0,0,0
+		}
+		KeyAttrRefCount: *1 {
+			a: 3
+		}
+	}
+	AnimationCurveNode: 1021, "AnimCurveNode::S", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A", 1.0
+			P: "d|Y", "Number", "", "A", 1.0
+			P: "d|Z", "Number", "", "A", 1.0
+		}
+	}
+	AnimationCurve: 1022, "AnimCurve::fat", "" {
+		Default: 0.0
+		KeyVer: 4008
+		KeyTime: *2 {
+			a: 0,92372316000
+		}
+		KeyValueFloat: *2 {
+			a: 0.0,100.0
+		}
+		KeyAttrFlags: *1 {
+			a: 4
+		}
+		KeyAttrDataFloat: *4 {
+			a: 0,0,0,0
+		}
+		KeyAttrRefCount: *1 {
+			a: 2
+		}
+	}
+	AnimationCurveNode: 1023, "AnimCurveNode::Fat", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A", 0.0
+			P: "d|Y", "Number", "", "A", 0.0
+			P: "d|Z", "Number", "", "A", 0.0
+		}
+	}
+}
+
+Connections:  {
+	C: "OO", 1002, 0
+	C: "OO", 1001, 1002
+	C: "OO", 1003, 1002
+	C: "OO", 1004, 0
+	C: "OO", 1005, 1004
+	C: "OO", 1006, 1005
+	C: "OO", 1007, 1001
+	C: "OO", 1008, 1007
+	C: "OO", 1004, 1008
+	C: "OO", 1009, 1007
+	C: "OO", 1005, 1009
+	C: "OO", 1010, 1007
+	C: "OO", 1006, 1010
+	C: "OO", 1011, 1001
+	C: "OO", 1012, 1011
+	C: "OO", 1013, 1012
+	C: "OO", 1015, 1014
+	C: "OP", 1017, 1005, "Lcl Rotation"
+	C: "OP", 1016, 1017, "d|Z"
+	C: "OP", 1019, 1006, "Lcl Translation"
+	C: "OP", 1018, 1019, "d|Y"
+	C: "OP", 1021, 1004, "Lcl Scaling"
+	C: "OP", 1020, 1021, "d|X"
+	C: "OP", 1023, 1012, "DeformPercent"
+	C: "OP", 1022, 1023, "d|X"
+	C: "OO", 1017, 1015
+	C: "OO", 1019, 1015
+	C: "OO", 1021, 1015
+	C: "OO", 1023, 1015
+}

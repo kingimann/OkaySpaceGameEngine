@@ -1,0 +1,104 @@
+; FBX 7.4.0 project file
+; ------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "okay gen_fbx_fixtures.py"
+}
+
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "", 2.0
+		P: "UpAxisSign", "int", "Integer", "", 1.0
+		P: "FrontAxis", "int", "Integer", "", 1.0
+		P: "FrontAxisSign", "int", "Integer", "", -1.0
+		P: "CoordAxis", "int", "Integer", "", 0.0
+		P: "CoordAxisSign", "int", "Integer", "", 1.0
+		P: "UnitScaleFactor", "double", "Number", "", 1.0
+	}
+}
+
+Definitions:  {
+	Version: 100
+	Count: 4
+}
+
+Objects:  {
+	Geometry: 1001, "Geometry::CubeGeo", "Mesh" {
+		Vertices: *24 {
+			a: -1,-1,1,1,-1,1,1,1,1,-1,1,1,-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1
+		}
+		PolygonVertexIndex: *24 {
+			a: 0,1,2,-4,5,4,7,-7,4,0,3,-8,1,5,6,-3,3,2,6,-8,4,5,1,-1
+		}
+		GeometryVersion: 124
+		LayerElementNormal: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: *72 {
+				a: 0,0,1,0,0,1,0,0,1,0,0,1,0,0,-1,0,0,-1,0,0,-1,0,0,-1,-1,0,0,-1,0,0,-1,0,0,-1,0,0,1,0,0,1,0,0,1,0,0,1,0,0,0,1,0,0,1,0,0,1,0,0,1,0,0,-1,0,0,-1,0,0,-1,0,0,-1,0
+			}
+		}
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "UVMap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "IndexToDirect"
+			UV: *8 {
+				a: 0,0,1,0,1,1,0,1
+			}
+			UVIndex: *24 {
+				a: 0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3
+			}
+		}
+		LayerElementMaterial: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "AllSame"
+			ReferenceInformationType: "IndexToDirect"
+			Materials: *1 {
+				a: 0
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+		}
+	}
+	Model: 1002, "Model::Cube", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 10.0, 20.0, 30.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 30.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 2.0, 1.0
+		}
+	}
+	Material: 1003, "Material::Red", "" {
+		Version: 102
+		ShadingModel: "phong"
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A", 0.9, 0.1, 0.1
+			P: "EmissiveColor", "Color", "", "A", 0.1, 0.0, 0.0
+			P: "ShininessExponent", "Number", "", "A", 25.0
+		}
+	}
+	Texture: 1004, "Texture::Diffuse", "" {
+		Type: "TextureVideoClip"
+		FileName: "C:\art\red.png"
+		RelativeFilename: "C:\art\red.png"
+	}
+}
+
+Connections:  {
+	C: "OO", 1002, 0
+	C: "OP", 1004, 1003, "DiffuseColor"
+	C: "OO", 1001, 1002
+	C: "OO", 1003, 1002
+}

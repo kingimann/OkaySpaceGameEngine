@@ -4,12 +4,13 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-11-10 05:05 UTC_
+_Last updated: 2026-11-11 01:05 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.859.0 | Visual Script: topic palette, named-pin dropdowns, refused wires, object slots, Save-then-Play (#628), 241 gameplay nodes with every node proven (#629); runtime UI themes, widgets and UI Gallery (#622); Project panel create, rename, move, delete with undo, favourites and safe import (#619, #627); Inspector and Hierarchy overhaul (#621, #626); import settings for model normals and animations (#634); launcher Create tab wizard (#624); real Development build log and head-bob sway (#635); unfinished features hidden (#632) |
 | 2.858.0 | Visual Script: searchable add-node panel with docs for every node, graph tabs, and prompts so New, Open, Play and quit do not discard unsaved graphs (#597); editor and player render the camera stack, LOD and occlusion, and keep glTF metallic-roughness and emissive maps (#599) |
 | 2.857.0 | Property registry accepts every key binding, and Spawner pooling plus the Loading Screen are registered (1405 properties on 86 types) (#615); launcher Versions page with Latest and LTS, kept previous editors, and Open with a version (#617) |
 | 2.856.0 | Project upgrade: every project records its editor version and opening an older one asks Upgrade, Keep or Cancel, with a verified backup, safe rollback and File > Project Upgrade... restore (#614); editor wiring: Game view Stats and Timers, slow motion and Run N frames, Tween Animation speed/decay/tag, tween nodes, Time help, path search, tags and layers (#606); scene lifecycle, serializer and pooling: key-binding records fixed, chained and overlapping loads safe, unknown records kept, more per-instance saving, pool support and a background Loading Screen (#613); runtime utilities: ECS, logging, data assets, validators, cvar flags and console fixes (#608); property registry on 85 types with undo reporting (#609); crash-safe saves and prefs, display settings, localization fixes (#611); release channels tooling for an LTS line and versions.json (#612); animation and IK integration: camera orbit above ground, Play keyboard and mouse release fixes, spawn clearance, locomotion settings kept (#554) |

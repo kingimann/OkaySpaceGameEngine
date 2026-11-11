@@ -13,9 +13,9 @@ None of them uses threads or timers. Time is passed in (`Tick(dt)`), and each cl
 takes an injectable clock, so tests are deterministic. They are not thread safe:
 call them from the thread that owns the data.
 
-Status: these are the engine side only. The editor's own undo is still the full
-scene snapshot described in [editor.md](editor.md); see "Adopting it in the
-editor" at the end of this page.
+Status: the editor now uses `UndoStack` for scene edits (commands in `editor/SceneUndo.hpp`); see
+[editor_undo.md](editor_undo.md) for how, and for the audit of which edits are covered.
+"Adopting it in the editor" below is kept as the engine-side recipe.
 
 Include them directly (`#include <okay/Core/Undo.hpp>`, and so on).
 
@@ -307,18 +307,18 @@ The editor needs no data model change to start:
 
 ## What the editor does today
 
-The editor has not adopted the three classes above yet. It uses its own simpler pieces, which this page
+The editor uses `UndoStack` for scene undo (not yet `RecoveryManager` / `BackupManager` as one piece), and its own simpler pieces elsewhere, which this page
 documents so the two are not confused (the user-facing description is in [editor.md](editor.md#projects-saving-and-loading)):
 
 | Need | What the editor does |
 | --- | --- |
-| Undo | `EditorState::PushUndo` keeps up to 100 whole-scene text snapshots. Opening a scene (`Load`) clears the history: it belongs to one scene, and keeping it let Undo put the previous scene's objects into the new file. A failed `Load` changes nothing, history included. |
+| Undo | `EditorState::PushUndo` opens a step; it is recorded as a scene-text delta command on an `UndoStack` (up to 100 steps, see [editor_undo.md](editor_undo.md)). Opening a scene (`Load`) clears the history: it belongs to one scene, and keeping it let Undo put the previous scene's objects into the new file. A failed `Load` changes nothing, history included. |
 | Dirty state | `EditorState::dirty` (set by edits), plus `HasUnsavedChanges()`: the scene's saved text is fingerprinted at every save, load and new scene and compared at the moments that matter (quit, opening another scene or project, autosave), so an edit that forgot to raise the flag is still found. `SyncDirty()` raises the flag when they differ. While Play runs it answers for the scene being edited, and `Stop` puts `dirty` back, so changes to the running game never count. |
 | Saving | `EditorState::Save` refuses during Play, writes through `SceneSerializer::SaveToFile` (a `.savetmp` file, checked, renamed over the target, one rolling `.bak` copy of the previous file) and reports why it failed. Project, build and preference files use `okayproj::WriteTextAtomic` (`shared/ProjectCreate.hpp`): the same write-then-rename, and a read-only target is refused. |
 | Autosave | `RecoveryManager` writes dirty graphs, scripts and the scene into `okay_recovery` (default 30 s, and when the window loses focus). The real file is overwritten only when **Also save the real file** is on. A leftover `<scene>.autosave` from an older editor is still offered when it is newer than the scene, and new sessions do not write one. |
 | Recovery of a failed new project | `EditorState::CreateProject` makes folders and files, builds the template, saves it, and on any failure puts the previous scene, path, project and undo history back and removes what it made (`okayproj::Made` / `Undo`). |
 
-Scene undo is still the editor's snapshot stack. Document autosave and the last five saves per file go through `RecoveryManager` and `BackupManager` (steps 4 and 5 above).
+Scene undo is the `UndoStack` described in [editor_undo.md](editor_undo.md). Document autosave and the last five saves per file go through `RecoveryManager` and `BackupManager` (steps 4 and 5 above).
 
 ## Tests
 

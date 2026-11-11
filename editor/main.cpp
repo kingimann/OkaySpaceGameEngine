@@ -6095,8 +6095,32 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !g_meshUndo.empty() || ed.CanUndo())) { if (!MeshUndo(false)) ed.Undo(); ed.dirty = true; ConsoleLog("Undo"); }
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !g_meshRedo.empty() || ed.CanRedo())) { if (!MeshUndo(true)) ed.Redo(); ed.dirty = true; ConsoleLog("Redo"); }
+        {   // First frame the menu is open: also pick up edits no window announced, so the names and the greying are true.
+            static int s_lastFrame = -10;
+            if (ImGui::GetFrameCount() != s_lastFrame + 1) ed.CaptureUnannouncedEdits();
+            s_lastFrame = ImGui::GetFrameCount();
+        }
+        {   // The label says what Ctrl+Z would do; both are greyed out when there is nothing to do.
+            const bool meshU = !g_meshUndo.empty(), meshR = !g_meshRedo.empty();
+            const std::string un = meshU ? std::string("Mesh Edit") : ed.UndoName(), rn = meshR ? std::string("Mesh Edit") : ed.RedoName();
+            const std::string ul = un.empty() ? std::string("Undo") : "Undo " + un, rl = rn.empty() ? std::string("Redo") : "Redo " + rn;
+            if (ImGui::MenuItem(ul.c_str(), "Ctrl+Z", false, meshU || ed.CanUndo())) {
+                if (MeshUndo(false)) { ed.dirty = true; ConsoleLog("Undo " + un); }
+                else if (ed.Undo()) ConsoleLog("Undo " + un);
+                else ConsoleLog("Can't undo " + un + ": " + ed.UndoError(), 1);
+            }
+            if (ed.isPlaying() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Undo is off while the game runs: what you change in Play is thrown away when you press Stop.");
+            if (ImGui::MenuItem(rl.c_str(), "Ctrl+Y", false, meshR || ed.CanRedo())) {
+                if (MeshUndo(true)) { ed.dirty = true; ConsoleLog("Redo " + rn); }
+                else if (ed.Redo()) ConsoleLog("Redo " + rn);
+                else ConsoleLog("Can't redo " + rn + ": " + ed.UndoError(), 1);
+            }
+            if (ed.isPlaying() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Redo is off while the game runs.");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ed.isPlaying())
+                ImGui::SetTooltip("Scene edits. The Project panel, Timeline, string table and the code editors have their own Undo while they have focus.");
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Project Settings...")) g_showProjectSettings = true;
         ImGui::EndMenu();
@@ -7196,13 +7220,15 @@ void DrawCrashLog() {
 void DrawHistory(EditorState& ed) {
     if (!g_showHistory) return;
     if (!ImGui::Begin("History", &g_showHistory)) { ImGui::End(); return; }
+    ed.CommitUndo();
+    const std::vector<std::string> histUndo = ed.UndoNames(200), histRedo = ed.RedoNames(200);
     ImGui::BeginDisabled(!ed.CanUndo());
-    if (ImGui::Button("Undo##hist")) { ed.Undo(); ed.dirty = true; }
+    if (ImGui::Button("Undo##hist")) ed.Undo();
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Z");
     ImGui::SameLine();
     ImGui::BeginDisabled(!ed.CanRedo());
-    if (ImGui::Button("Redo##hist")) { ed.Redo(); ed.dirty = true; }
+    if (ImGui::Button("Redo##hist")) ed.Redo();
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y");
     ImGui::SameLine();
@@ -7227,7 +7253,7 @@ void DrawHistory(EditorState& ed) {
                      ImGui::GetColorU32(ImGuiCol_Border), 1.0f);
     }
     auto histRow = [&](const char* lbl, bool current, bool ahead) {
-        char pad[72]; std::snprintf(pad, sizeof(pad), "     %s", lbl);
+        char pad[220]; std::snprintf(pad, sizeof(pad), "     %s", lbl);
         bool hit = ImGui::Selectable(pad, current);
         ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
         float cy = (mn.y + mx.y) * 0.5f;
@@ -7245,22 +7271,22 @@ void DrawHistory(EditorState& ed) {
     // state; then the past, most recent first. Click any row to jump there.
     bool jumped = false;
     for (int i = ed.RedoDepth(); i >= 1 && !jumped; --i) {
-        char lbl[48]; std::snprintf(lbl, sizeof(lbl), "%d step%s ahead##hr%d", i, i == 1 ? "" : "s", i);
+        char lbl[160]; std::snprintf(lbl, sizeof(lbl), "After: %s##hr%d", (size_t)i <= histRedo.size() ? histRedo[(size_t)i - 1].c_str() : "Edit", i);
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
         bool hit = histRow(lbl, false, true);
         ImGui::PopStyleColor();
         if (hit) {
             for (int k = 0; k < i && ed.CanRedo(); ++k) ed.Redo();
-            ed.dirty = true; jumped = true;
+            jumped = true;
         }
     }
     if (!jumped) {
         histRow("Current state", true, false);
         for (int i = 1; i <= ed.UndoDepth() && !jumped; ++i) {
-            char lbl[48]; std::snprintf(lbl, sizeof(lbl), "%d step%s back##hu%d", i, i == 1 ? "" : "s", i);
+            char lbl[160]; std::snprintf(lbl, sizeof(lbl), "Before: %s##hu%d", (size_t)i <= histUndo.size() ? histUndo[(size_t)i - 1].c_str() : "Edit", i);
             if (histRow(lbl, false, false)) {
                 for (int k = 0; k < i && ed.CanUndo(); ++k) ed.Undo();
-                ed.dirty = true; jumped = true;
+                jumped = true;
             }
         }
     }
@@ -8464,10 +8490,11 @@ static void DrawAssetManager(EditorState& ed) {
     auto rowMenu = [&](const DlAsset& a) {
         if (ImGui::BeginPopupContextItem("##amctx")) {
             if (ImGui::MenuItem("Show in folder")) extide::RevealInFiles(fs::path(a.path).parent_path().string());
-            if (ImGui::MenuItem("Delete download")) {
+            if (ImGui::MenuItem("Delete download (permanent, no Undo)")) {
                 std::error_code ec; fs::remove(a.path, ec); fs::remove(a.path + ".okayasset", ec);
                 s_nextScan = 0;
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Deletes the downloaded file from disk for good. It does not go to the trash and Ctrl+Z cannot bring it back; you can download it again.");
             ImGui::EndPopup();
         }
     };
@@ -9257,7 +9284,8 @@ static void ProjectApplyMoves(const okaypb::Result& r) {
     if (!ed.path().empty() && newScene != oldScene) ed.FollowMovedFile(NativePath(newScene));
     const okaypb::PathMap map = r.moved;
     const std::string root = g_pb->Root();
-    ed.RewriteAssetPaths([&](const std::string& text) { return okaypb::RewriteReferences(text, oldScene, newScene, map, root); });
+    if (ed.RewriteAssetPaths([&](const std::string& text) { return okaypb::RewriteReferences(text, oldScene, newScene, map, root); }))
+        ConsoleLog("The open scene uses what was moved, so its asset paths were updated and its scene Undo history was cleared (the Project panel's own Undo still moves the file back).", 1);
 }
 
 // Search words "t:model", "t:folder"... -> a project filter id (-2 folder, -1 unknown).
@@ -16657,14 +16685,14 @@ void HandleShortcuts(EditorState& ed) {
         else if (TimelineFocused() && TimelineUndo(false)) ConsoleLog("Undo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
-        else if (ed.Undo()) ConsoleLog("Undo");
+        else { const std::string un = ed.UndoName(); if (ed.Undo()) ConsoleLog("Undo " + un); }
     }
     if (ctrl && (ImGui::IsKeyPressed(ImGuiKey_Y, false) ||
                  (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
         if (TimelineFocused() && TimelineUndo(true)) ConsoleLog("Redo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(true)) ConsoleLog("Redo (string table)");
         else if (MeshUndo(true)) { ConsoleLog("Redo (mesh edit)"); ed.dirty = true; }
-        else if (ed.Redo()) ConsoleLog("Redo");
+        else { const std::string rn = ed.RedoName(); if (ed.Redo()) ConsoleLog("Redo " + rn); }
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) g_showOpen = true;
     if (ctrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
@@ -21154,11 +21182,25 @@ struct AnimDraft {
 };
 static std::unordered_map<std::string, AnimDraft> g_animDrafts;
 static std::vector<Vec3> g_animPoseClipboard;   // Copy Pose / Paste Pose, across characters too
-// Draft undo rides the editor's snapshot undo: each draft edit pushes a scene
-// snapshot too and remembers the undo depth; when Ctrl+Z pops that snapshot the
-// depth drops below the mark and the tab restores the draft as it was.
-struct AnimDraftUndo { std::string key; AnimDraft draft; int depth; };
-static std::vector<AnimDraftUndo> g_animDraftUndo;
+// Draft undo: the draft lives in the editor, not in the scene text, so each draft edit is its own command in
+// the same undo step as the scene change made with it (EditorState::PushUndo with an extra command). Undo puts
+// the draft back as it was before the edit; Redo gives the edited one back.
+class AnimDraftCommand : public okay::ICommand {
+public:
+    AnimDraftCommand(std::string key, AnimDraft before) : m_key(std::move(key)), m_before(std::move(before)) {}
+    bool Do() override { g_animDrafts[m_key] = m_after; return true; }
+    bool Undo() override {
+        auto it = g_animDrafts.find(m_key);
+        if (it != g_animDrafts.end()) m_after = it->second;   // what Redo gives back
+        g_animDrafts[m_key] = m_before;
+        return true;
+    }
+    std::string Name() const override { return "Edit Animation"; }
+    std::size_t MemoryBytes() const override { return 4096; }
+private:
+    std::string m_key;
+    AnimDraft m_before, m_after;
+};
 
 static std::string AnimDraftKey(GameObject* go) {
     std::string k;
@@ -21168,16 +21210,7 @@ static std::string AnimDraftKey(GameObject* go) {
 }
 
 static void PushAnimDraftUndo(EditorState& ed, const std::string& key, const AnimDraft& before) {
-    ed.PushUndo();
-    g_animDraftUndo.push_back({key, before, ed.UndoDepth()});
-    if (g_animDraftUndo.size() > 200) g_animDraftUndo.erase(g_animDraftUndo.begin());
-}
-
-static void RestoreAnimDraftsAfterUndo(EditorState& ed) {
-    while (!g_animDraftUndo.empty() && ed.UndoDepth() < g_animDraftUndo.back().depth) {
-        g_animDrafts[g_animDraftUndo.back().key] = g_animDraftUndo.back().draft;
-        g_animDraftUndo.pop_back();
-    }
+    ed.PushUndo("Edit Animation", std::make_unique<AnimDraftCommand>(key, before));
 }
 
 // A clip name not yet used on the character ("Walk", "Walk2", ...).
@@ -21426,7 +21459,6 @@ static float  AnimComp(const Vec3& v, int c) { return c == 0 ? v.x : c == 1 ? v.
 static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, int focusBone = -1) {
     static std::unordered_map<std::string, int> lastFocus;   // follow the part selected in the hierarchy / Scene view
     const int nb = Character::BoneCount();
-    RestoreAnimDraftsAfterUndo(ed);
     const std::string key = AnimDraftKey(ch->gameObject);
     AnimDraft& d = g_animDrafts[key];
     AnimClip& clip = d.clip;
@@ -47394,6 +47426,10 @@ int main(int argc, char** argv) {
             }
         }
         ApplyPendingLayoutIni();   // a saved layout picked last frame
+        // The last frame's edit is finished once no mouse button is down and no widget is active: close the
+        // open undo step now, so the Edit menu names the real last action and the scene is compared once.
+        if (GImGui && GImGui->ActiveId == 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
+            ed.CommitUndo();
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
             ImGui::NewFrame();

@@ -175,19 +175,20 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **What:** The CPU side of text and pictures: the built-in 8x8 font, TrueType fonts baked into glyph atlases, the compiled-in UI font, the RGBA image buffer, and the world and screen text component.
 - **Parts:**
   - 2.9.1 Bitmap font - `Graphics/Font` - `Font8x8` built-in hand-drawn 8x8 monochrome ASCII glyphs (printable 32-126), `Pixel`, `MeasureWidth`
-  - 2.9.2 TrueType fonts - `Graphics/TtfFont` - stb_truetype atlas, any glyph baked on first use, atlas grows, `Generation()` tells hosts to re-upload
+  - 2.9.2 TrueType fonts - `Graphics/TtfFont` - glyph atlas over our own reader, any glyph baked on first use, atlas grows, `Generation()` tells hosts to re-upload
+  - 2.9.6 TrueType reader and rasterizer - `Graphics/TtfRaster` - our own sfnt parser (TrueType, OpenType CFF, .ttc; cmap 0/4/6/12/13; glyf with composite glyphs; CFF Type 2 charstrings incl. CID-keyed) and exact-area anti-aliased glyph rasterizer, unhinted; every read bounds-checked so a corrupt font loads as nothing instead of crashing; `ShelfPacker` and `BakeGlyph` for atlases
   - 2.9.3 Built-in UI font - `Graphics/EmbeddedFont` - the launcher's Roboto font compiled in as base85
   - 2.9.4 Images - `Graphics/Image` - RGBA8 buffer, load PNG, JPG, BMP, TGA and more through stb_image, save PNG through our own encoder (`Core/ImageWrite`), get/set pixel, fill
   - 2.9.5 Text component - `Components/TextRenderer` - world or screen-space text, pixel size, alignment, wrap, auto size, shadow, outline, gradient, typewriter reveal, localized text
-- **Code:** `Graphics/Font`, `Graphics/TtfFont`, `Graphics/EmbeddedFont`, `Graphics/Image`, `Components/TextRenderer`
-- **API:** `Font8x8`, `TtfFont`, `Image::Load`, `Image::Save`, `TextRenderer`, `TextRenderer::text`, `TextRenderer::screenSpace`
+- **Code:** `Graphics/Font`, `Graphics/TtfFont`, `Graphics/TtfRaster`, `Graphics/EmbeddedFont`, `Graphics/Image`, `Components/TextRenderer`
+- **API:** `Font8x8`, `TtfFont`, `ttf::Face`, `ttf::BakeGlyph`, `Image::Load`, `Image::Save`, `TextRenderer`, `TextRenderer::text`, `TextRenderer::screenSpace`
 - **Editor:** Text Renderer inspector section; Lighting panel "UI Font" (editor/main.cpp); thumbnails in the Project panel
 - **Docs:** `docs/localization.md` (Fonts section)
-- **Tests:** `text`, `ttf`, `image`, `loaders_robust`
-- **Status:** Works - read the headers; the `ttf` test skips its assertions when no system font exists, so CI proves less than a dev box
-- **Open:** right-to-left scripts draw unshaped and left to right (docs/localization.md); the pixel font is ASCII only; no signed-distance-field text; `loaders_robust` also guards an image header claiming gigapixels
+- **Tests:** `text`, `ttf`, `ttf_rasterizer`, `image`, `loaders_robust`
+- **Status:** Works - read the headers; the `ttf` test skips its assertions when no system font exists, so CI proves less than a dev box; `ttf_rasterizer` needs no system font (synthetic fonts, DejaVu from assets/fonts, fuzzed files)
+- **Open:** fonts are not hinted, and kerning, GPOS/GSUB, variable fonts and colour or bitmap glyph tables (emoji fonts like Noto Color Emoji) are not read; where two contours of one glyph overlap, the overlap's anti-aliased edge pixels can be a little too dark; right-to-left scripts draw unshaped and left to right (docs/localization.md); the pixel font is ASCII only; no signed-distance-field text; `loaders_robust` also guards an image header claiming gigapixels
 - **Related:** 1.8, 12.2, 2.2, 1.12
-- **Words:** font, TTF, TtfFont, Font8x8, bitmap font, Image, PNG, texture load, TextRenderer, text, glyph atlas, Roboto, fonts
+- **Words:** font, TTF, OTF, TTC, TrueType, OpenType, CFF, glyf, cmap, rasterizer, TtfFont, TtfRaster, Font8x8, bitmap font, Image, PNG, texture load, TextRenderer, text, glyph atlas, Roboto, fonts
 - **Seen as:** letters show as boxes; text is blurry at some sizes; a huge image crashes the load; text sits in the wrong corner
 - **Ask me like:** "Use a pixel font for the score and Roboto for the menu"; "Why does Japanese text fall back to another font?"
 

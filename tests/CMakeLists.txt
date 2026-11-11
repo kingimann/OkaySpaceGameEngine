@@ -219,6 +219,13 @@ add_executable(test_ttf test_ttf.cpp)
 target_link_libraries(test_ttf PRIVATE okay::engine)
 add_test(NAME ttf COMMAND test_ttf)
 
+# Our own TrueType reader / rasterizer: synthetic fonts, DejaVu references, fuzzed files.
+add_executable(test_ttf_rasterizer test_ttf_rasterizer.cpp)
+target_link_libraries(test_ttf_rasterizer PRIVATE okay::engine)
+target_compile_definitions(test_ttf_rasterizer PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ttf_rasterizer COMMAND test_ttf_rasterizer)
+set_tests_properties(ttf_rasterizer PROPERTIES TIMEOUT 120)
+
 add_executable(test_block_builder test_block_builder.cpp)
 target_link_libraries(test_block_builder PRIVATE okay::engine)
 add_test(NAME block_builder COMMAND test_block_builder)

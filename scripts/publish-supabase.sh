@@ -43,7 +43,8 @@ BUCKET="${BUCKET:-releases}"
 SUPABASE_URL="${SUPABASE_URL:-$(grep -m1 '^set(OKAY_DEFAULT_ACCOUNT_URL' CMakeLists.txt | grep -oE 'https://[a-z0-9]+\.supabase\.co')}"
 SUPABASE_URL="${SUPABASE_URL%/}"
 REF="$(printf '%s' "$SUPABASE_URL" | sed -E 's#https://([a-z0-9]+)\.supabase\.co#\1#')"
-MAX_BYTES=$((50 * 1024 * 1024))   # Supabase's per-file upload limit on this plan
+MAX_MB="${MAX_MB:-100}"   # per-file limit; the Supabase project and bucket limits were raised to 100 MB (project Settings > Storage)
+MAX_BYTES=$((MAX_MB * 1024 * 1024))
 
 die() { echo "publish-supabase: $*" >&2; exit 1; }
 
@@ -61,7 +62,7 @@ for n in "${NAMES[@]}"; do
     f="${SRC[$n]}"
     [ -f "$f" ] || die "missing $f"
     sz=$(stat -c %s "$f")
-    [ "$sz" -le "$MAX_BYTES" ] || die "$n is $((sz / 1048576)) MB, over Supabase's 50 MB file limit (is its debug info split off?)"
+    [ "$sz" -le "$MAX_BYTES" ] || die "$n is $((sz / 1048576)) MB, over the $MAX_MB MB file limit (is its debug info split off, or raise MAX_MB and the Supabase storage limit?)"
     head -c2 "$f" | grep -q '^MZ' || die "$f isn't a Windows program"
 done
 

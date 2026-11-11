@@ -25,10 +25,15 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
   move, paste or duplicate.
 - **Find References.** Right-click an asset: lists what uses it and what it uses. Click a line to show it.
 - **Import Settings.** For textures and models, the info strip has an Import Settings button (stored in the asset's
-  `.okaymeta`). A texture's **Largest side** is used when the picture is loaded (the editor and a built game; the
-  settings file is copied into the build beside the picture). A model's **Scale** multiplies its size when you add
-  it to a scene. Nothing else is offered, because nothing else reads it yet. The same box is available to other
-  windows as `oked::projectpanel::DrawImportSettings`.
+  `.okaymeta`). Everything offered has an effect, and the settings file is copied into a build beside the asset.
+  Textures: **Largest side** (the picture is made smaller when loaded). Filter, Wrap and Mipmaps are honoured by the
+  software and OpenGL renderers but are hidden here until the Direct3D renderers read them (the `.okaymeta` keys and
+  the code stay; one flag, `kShowTextureSamplerSettings` in `ProjectPanelUI.cpp`, shows them again).
+  Models: **Scale** and **Normals** (from the file, calculated with a **Smoothing angle**, or flat) and **Import
+  animations** (off drops the clips and leaves the rest pose). Models apply when the model is added to a scene (rigged
+  parts keep the file's normals); parts already in a scene are not changed. **Apply** reloads the picture right away
+  and redraws a model's preview. Not offered because nothing reads them: sRGB, Compress, and the audio options. The
+  same box is available to other windows as `oked::projectpanel::DrawImportSettings`.
 - **Favourites.** Right-click a file or folder > Add to Favourites. Starred items show a star and are listed under
   FAVOURITES on the left. They are kept in the project (`.okay/favourites.txt`) and follow renames and moves.
 - **Reimport** reads a file again after you changed it in another program.

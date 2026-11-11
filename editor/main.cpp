@@ -1656,9 +1656,22 @@ static SDL_Texture* GetPrimitiveThumb(const char* name) {
 // throwaway scene (same pipeline as drag-drop, so materials/rigs apply) and
 // snapshot it. Import can be slow, so it's cached until the file changes and
 // oversized files are skipped rather than stalling the Project browser.
+struct ModelThumbEntry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
+static std::unordered_map<std::string, ModelThumbEntry>& ModelThumbCache() {
+    static std::unordered_map<std::string, ModelThumbEntry> cache;
+    return cache;
+}
+// A model's import settings changed: draw its preview again.
+static void ForgetModelThumb(const std::string& path) {
+    auto& cache = ModelThumbCache();
+    auto it = cache.find(path);
+    if (it == cache.end()) return;
+    if (it->second.tex) SDL_DestroyTexture(it->second.tex);
+    cache.erase(it);
+}
 static SDL_Texture* GetModelThumb(const std::string& path) {
-    struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
-    static std::unordered_map<std::string, Entry> cache;
+    using Entry = ModelThumbEntry;
+    auto& cache = ModelThumbCache();
     std::error_code ec;
     auto mt = std::filesystem::last_write_time(path, ec);
     auto it = cache.find(path);
@@ -4090,7 +4103,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         if (dst.has_parent_path()) fs::create_directories(dst.parent_path(), aec);
         fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
         if (!aec) { ++copied; std::error_code se; assetBytes += fs::file_size(dst, se); }
-        { std::error_code me; fs::path ms = src; ms += ".okaymeta";   // its import settings (a texture's largest side) travel with it
+        { std::error_code me; fs::path ms = src; ms += ".okaymeta";   // its import settings (texture filter / wrap / mipmaps / largest side, model normals ...) travel with it
           if (!aec && fs::is_regular_file(ms, me)) { fs::path md = dst; md += ".okaymeta"; fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me); } }
     }
     // Window icon: copy it beside the config in Data/.
@@ -10386,7 +10399,7 @@ void DrawProject(EditorState& ed) {
         if (ImGui::BeginPopup("##impset")) {
             ImGui::Text("%s", sp.filename().string().c_str());
             ImGui::Separator();
-            if (oked::projectpanel::HasImportSettings(pb, selected)) oked::projectpanel::DrawImportSettings(pb, selected);
+            if (oked::projectpanel::HasImportSettings(pb, selected)) { if (oked::projectpanel::DrawImportSettings(pb, selected)) ForgetModelThumb(selected); }
             else ImGui::TextDisabled("This file has no import settings.");
             ImGui::EndPopup();
         }
@@ -28032,7 +28045,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled(bytes >= 1048576.0 ? "%.1f MB" : "%.1f KB", bytes >= 1048576.0 ? bytes / 1048576.0 : bytes / 1024.0);
             if (ImGui::SmallButton("Show in Project")) { g_pingAsset = s_seenAsset; g_showProject = true; ImGui::SetWindowFocus("Project"); }
             ImGui::Separator();
-            if (oked::projectpanel::HasImportSettings(*g_pb, s_seenAsset)) oked::projectpanel::DrawImportSettings(*g_pb, s_seenAsset);
+            if (oked::projectpanel::HasImportSettings(*g_pb, s_seenAsset)) { if (oked::projectpanel::DrawImportSettings(*g_pb, s_seenAsset)) ForgetModelThumb(s_seenAsset); }
             else ImGui::TextDisabled("This file has no import settings.");
             ImGui::PopStyleVar(3);
             ImGui::End();

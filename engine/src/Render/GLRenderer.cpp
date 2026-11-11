@@ -1480,6 +1480,12 @@ bool GLRenderer::EnsureTargets(int w, int h, int samples, bool hdr) {
 // images appear. Returns 0 (cached) when the texture is missing, so we don't retry.
 unsigned int GLRenderer::TextureFor(const std::string& name) {
     if (name.empty()) return 0;
+    if (m_texGen != TextureCacheGeneration()) {   // a picture was reimported / its import settings changed
+        for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
+        m_texCache.clear();
+        m_texInfo.clear();
+        m_texGen = TextureCacheGeneration();
+    }
     auto it = m_texCache.find(name);
     if (it != m_texCache.end()) return it->second;
     unsigned int tex = 0;
@@ -1489,17 +1495,26 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
         g.BindTexture(GL_TEXTURE_2D, tex);
         g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
-        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        if (g.GenerateMipmap) {
+        // The picture's own Filter / Wrap / Mipmaps import settings (defaults: repeat, trilinear, mipmapped).
+        const TextureSampling ts = TextureImportSampling(name);
+        m_texInfo[tex] = ts;
+        const int wrapMode = ts.wrap == TextureSampling::Clamp ? GL_CLAMP_TO_EDGE
+                           : ts.wrap == TextureSampling::Mirror ? 0x8370 /*GL_MIRRORED_REPEAT*/ : GL_REPEAT;
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
+        const bool point = ts.filter == TextureSampling::Point;
+        g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, point ? 0x2600 /*GL_NEAREST*/ : GL_LINEAR);
+        if (g.GenerateMipmap && ts.mipmaps) {
             g.GenerateMipmap(GL_TEXTURE_2D);
-            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            const int minF = point ? 0x2700 /*GL_NEAREST_MIPMAP_NEAREST*/
+                           : ts.filter == TextureSampling::Bilinear ? 0x2701 /*GL_LINEAR_MIPMAP_NEAREST*/
+                                                                    : GL_LINEAR_MIPMAP_LINEAR;
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minF);
             // Anisotropic filtering: keeps textured floors/terrain sharp at grazing
             // angles instead of blurring into the distance (no-op if unsupported).
-            g.TexParameteri(GL_TEXTURE_2D, 0x84FE /*GL_TEXTURE_MAX_ANISOTROPY_EXT*/, 8);
+            if (!point) g.TexParameteri(GL_TEXTURE_2D, 0x84FE /*GL_TEXTURE_MAX_ANISOTROPY_EXT*/, 8);
         } else {
-            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, point ? 0x2600 : GL_LINEAR);
         }
     }
     m_texCache[name] = tex;
@@ -2093,10 +2108,17 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.BindTexture(GL_TEXTURE_2D, tex);
             // Per-material filter: Pixel = crisp nearest (no up-close blur); Smooth =
             // trilinear. Set on the bound texture each draw so one cache serves both.
-            bool pixel = mr->texFilter == MeshRenderer::TexFilter::Pixel;
+            // The picture's own import settings (Filter / Mipmaps) apply too: a Point picture is crisp
+            // whatever the material says, and a picture without mipmaps must not ask for them.
+            TextureSampling ts;
+            if (auto ti = m_texInfo.find(tex); ti != m_texInfo.end()) ts = ti->second;
+            const bool pixel = mr->texFilter == MeshRenderer::TexFilter::Pixel || ts.filter == TextureSampling::Point;
+            const int minF = !ts.mipmaps ? (pixel ? GL_NEAREST : GL_LINEAR)
+                           : pixel ? GL_NEAREST_MIPMAP_NEAREST
+                           : ts.filter == TextureSampling::Bilinear ? 0x2701 /*GL_LINEAR_MIPMAP_NEAREST*/
+                                                                    : GL_LINEAR_MIPMAP_LINEAR;
             g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, pixel ? GL_NEAREST : GL_LINEAR);
-            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                            pixel ? GL_NEAREST_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_LINEAR);
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minF);
             g.Uniform1i(m_uTex, 0);
             g.Uniform1f(m_uUseTex, 1.0f);
             g.Uniform2f(m_uTiling, mr->tiling.x, mr->tiling.y);
@@ -2480,6 +2502,7 @@ void GLRenderer::Destroy() {
     DestroyPostTargets();
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
     m_texCache.clear();
+    m_texInfo.clear();
     for (auto& kv : m_meshVB) if (kv.second.vbo) g.DeleteBuffers(1, &kv.second.vbo);
     m_meshVB.clear();
     if (m_vbo) { g.DeleteBuffers(1, &m_vbo); m_vbo = 0; }

@@ -1,4 +1,5 @@
 #include "ProjectPanelUI.hpp"
+#include "okay/Render/SoftwareRenderer.hpp"   // InvalidateAllTextureCaches
 
 #include <imgui.h>
 
@@ -228,6 +229,10 @@ bool Combo(const char* label, int& value, std::initializer_list<const char*> ite
 }
 } // namespace
 
+// Texture Filter / Wrap / Mipmaps work in the software and OpenGL renderers only. The Direct3D renderers (the
+// default on Windows) do not read them yet, so the controls stay hidden until they do. Turn this on then.
+constexpr bool kShowTextureSamplerSettings = false;
+
 bool HasImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
     (void)browser;
     const okay::AssetType k = okay::AssetTypeFromPath(assetPath);
@@ -257,12 +262,35 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             for (int i = 0; i < 11; ++i) if (sizes[i] == e.texture.maxSize) si = i;
             if (Combo("Largest side", si, {"No limit", "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192", "16384"})) e.texture.maxSize = sizes[si];
             ImGui::TextDisabled("Bigger pictures are made smaller when loaded.");
+            if (kShowTextureSamplerSettings) {
+            int fi = static_cast<int>(e.texture.filter);
+            if (Combo("Filter", fi, {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)"})) e.texture.filter = static_cast<ok::TextureImportSettings::Filter>(fi);
+            ImGui::TextDisabled("Point keeps hard pixel edges.");
+            int wi = static_cast<int>(e.texture.wrap);
+            if (Combo("Wrap", wi, {"Repeat", "Clamp", "Mirror"})) e.texture.wrap = static_cast<ok::TextureImportSettings::Wrap>(wi);
+            ImGui::TextDisabled("What is drawn past the picture's edge.");
+            ImGui::Checkbox("Mipmaps", &e.texture.mipmaps);
+            ImGui::TextDisabled("Smaller copies for far away. Off: always full size.");
+            ImGui::TextDisabled("Applies in the editor view and OpenGL / software games.");
+            }
             break;
         }
         case ok::AssetType::Model: {
             ImGui::SetNextItemWidth(160);
             ImGui::DragFloat("Scale", &e.model.scale, 0.01f, 0.0001f, 10000.0f, "%.4f");
             ImGui::TextDisabled("Multiplies its size when you add it to a scene.");
+            int ni = static_cast<int>(e.model.normals);
+            if (Combo("Normals", ni, {"From the file", "Calculate (smooth)", "Flat (faceted)"})) e.model.normals = static_cast<ok::ModelImportSettings::Normals>(ni);
+            if (e.model.normals == ok::ModelImportSettings::Normals::Calculate) {
+                ImGui::SetNextItemWidth(160);
+                ImGui::DragFloat("Smoothing angle", &e.model.smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg");
+                ImGui::TextDisabled("Sharper edges stay hard. Not for rigged parts.");
+            } else if (e.model.normals == ok::ModelImportSettings::Normals::Flat) {
+                ImGui::TextDisabled("Each face shaded alone. Not for rigged parts.");
+            }
+            ImGui::Checkbox("Import animations", &e.model.importAnimations);
+            ImGui::TextDisabled("Off: no clips, rest pose.");
+            ImGui::TextDisabled("Used when the model is next added to a scene.");
             break;
         }
         default: return false;
@@ -274,7 +302,10 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
     ImGui::BeginDisabled(!dirty);
     if (ImGui::Button("Apply")) {
         std::string err;
-        if (browser.SetImportSettings(assetPath, e, &err)) { g_imp.original = e; applied = true; }
+        if (browser.SetImportSettings(assetPath, e, &err)) {
+            g_imp.original = e; applied = true;
+            if (e.kind == ok::AssetType::Texture) ok::InvalidateAllTextureCaches();   // the scene view reads the picture again
+        }
         else { failMsg = err.empty() ? "The settings could not be saved." : err; ImGui::OpenPopup("##impfail"); }
     }
     ImGui::SameLine();

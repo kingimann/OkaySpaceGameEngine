@@ -51,7 +51,7 @@ struct TextureImportSettings {
     enum class Filter { Point, Bilinear, Trilinear };
     enum class Wrap { Repeat, Clamp, Mirror };
     bool   sRGB = true;                    ///< the pixels are colour (gamma) data, not linear data like normal maps
-    Filter filter = Filter::Bilinear;
+    Filter filter = Filter::Trilinear;   // what a picture with no settings file renders with
     Wrap   wrap = Wrap::Repeat;
     int    maxSize = 2048;                 ///< 0, or 32..16384
     bool   mipmaps = true;

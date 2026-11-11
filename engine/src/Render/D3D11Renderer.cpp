@@ -664,6 +664,10 @@ struct D3D11Renderer::Impl {
     unsigned targetUse = 0;
     void ReleaseSet(TargetSet& t);
     std::unordered_map<std::string, ID3D11ShaderResourceView*> texCache;
+    unsigned texGen = 0;                                      // TextureCacheGeneration() texCache was built for
+    std::unordered_map<std::string, TextureSampling> texSampling;   // a picture's import Filter / Wrap
+    std::unordered_map<int, ID3D11SamplerState*> sampCombo;   // sampler per (filter, wrap) combination
+    ID3D11SamplerState* SamplerFor(const std::string& name, bool pixel);
     std::vector<float> verts;
     std::vector<std::uint32_t> pixels;
 
@@ -1249,6 +1253,12 @@ D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh,
 
 ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& name) {
     if (name.empty()) return nullptr;
+    if (texGen != TextureCacheGeneration()) {   // a picture was reimported / its import settings changed
+        for (auto& kv : texCache) if (kv.second) kv.second->Release();
+        texCache.clear();
+        texSampling.clear();
+        texGen = TextureCacheGeneration();
+    }
     auto it = texCache.find(name);
     if (it != texCache.end()) return it->second;
     ID3D11ShaderResourceView* srv = nullptr;
@@ -1268,6 +1278,36 @@ ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& nam
     }
     texCache[name] = srv;   // cache failures (nullptr) too
     return srv;
+}
+
+// The sampler for a picture: its own import Filter / Wrap (Point, Bilinear, Trilinear; Repeat, Clamp, Mirror),
+// or the material's Pixel override. The default (Trilinear, Repeat) is the renderer's long-standing sampler.
+ID3D11SamplerState* D3D11Renderer::Impl::SamplerFor(const std::string& name, bool pixel) {
+    auto ti = texSampling.find(name);
+    if (ti == texSampling.end()) ti = texSampling.emplace(name, TextureImportSampling(name)).first;
+    const TextureSampling ts = ti->second;
+    const bool point = pixel || ts.filter == TextureSampling::Point;
+    if (ts.wrap == TextureSampling::Repeat) {
+        if (point && sampPoint) return sampPoint;
+        if (!point && ts.filter == TextureSampling::Trilinear) return samp;
+    }
+    const int key = (point ? 3 : ts.filter) * 3 + ts.wrap;
+    auto it = sampCombo.find(key);
+    if (it != sampCombo.end()) return it->second ? it->second : samp;
+    D3D11_SAMPLER_DESC sd; std::memset(&sd, 0, sizeof(sd));
+    sd.Filter = point ? D3D11_FILTER_MIN_MAG_MIP_POINT
+              : ts.filter == TextureSampling::Bilinear ? D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT
+                                                       : D3D11_FILTER_ANISOTROPIC;
+    sd.MaxAnisotropy = (!point && ts.filter == TextureSampling::Trilinear) ? 8 : 1;
+    const D3D11_TEXTURE_ADDRESS_MODE am = ts.wrap == TextureSampling::Clamp ? D3D11_TEXTURE_ADDRESS_CLAMP
+                                        : ts.wrap == TextureSampling::Mirror ? D3D11_TEXTURE_ADDRESS_MIRROR
+                                                                             : D3D11_TEXTURE_ADDRESS_WRAP;
+    sd.AddressU = sd.AddressV = sd.AddressW = am;
+    sd.MaxLOD = D3D11_FLOAT32_MAX;
+    ID3D11SamplerState* made = nullptr;
+    if (FAILED(dev->CreateSamplerState(&sd, &made))) made = nullptr;
+    sampCombo[key] = made;
+    return made ? made : samp;
 }
 
 namespace {
@@ -1802,7 +1842,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         if (mrsrv) c->PSSetShaderResources(6, 1, &mrsrv);
         if (emsrv) c->PSSetShaderResources(7, 1, &emsrv);
         // Per-material texture filter (Pixel = nearest, Smooth = aniso/linear).
-        ID3D11SamplerState* useSamp = (mr->texFilter == MeshRenderer::TexFilter::Pixel && p->sampPoint) ? p->sampPoint : p->samp;
+        const bool pixelMat = mr->texFilter == MeshRenderer::TexFilter::Pixel;
+        ID3D11SamplerState* useSamp = mr->texture.empty() ? ((pixelMat && p->sampPoint) ? p->sampPoint : p->samp)
+                                                          : p->SamplerFor(mr->texture, pixelMat);
         c->PSSetSamplers(0, 1, &useSamp);
 
         UINT stride = 14 * sizeof(float), offset = 0;
@@ -2031,6 +2073,9 @@ void D3D11Renderer::Destroy() {
     p->pipes.clear();
     for (auto& kv : p->texCache) if (kv.second) kv.second->Release();
     p->texCache.clear();
+    p->texSampling.clear();
+    for (auto& kv : p->sampCombo) if (kv.second) kv.second->Release();
+    p->sampCombo.clear();
     for (auto& kv : p->meshVB) if (kv.second.vbuf) kv.second.vbuf->Release();
     p->meshVB.clear();
     p->sunAtlas.Release();

@@ -22,6 +22,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Core/ImportSidecar.hpp"   // TextureSampling
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -195,6 +196,8 @@ private:
     // GPU texture cache (texture name/path -> GL texture object), shared shape with
     // the software renderer's cache so the same material textures appear.
     std::unordered_map<std::string, unsigned int> m_texCache;
+    std::unordered_map<unsigned int, TextureSampling> m_texInfo;   // GL texture -> its import Filter / Wrap / Mipmaps
+    unsigned m_texGen = 0;   // TextureCacheGeneration() the cache above was built for
     unsigned int TextureFor(const std::string& name);   // upload-on-first-use
 
     // Per-mesh vertex-buffer cache: static geometry (imported OBJ/glTF models,

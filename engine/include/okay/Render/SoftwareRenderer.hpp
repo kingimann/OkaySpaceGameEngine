@@ -142,6 +142,12 @@ inline Vec3 SampleEnvSky(const Vec3& dir) {
 /// triangles occlude correctly (unlike a painter's-algorithm sort). It fills an
 /// ABGR8888 pixel buffer that both the player (SDL texture) and the editor
 /// (ImGui image) display. Flat-shaded; this is the engine's reference 3D path.
+// A texture's mip levels plus how it is sampled (from the asset's import settings: Filter and Wrap).
+struct MipChain : std::vector<Image> {
+    int filter = TextureSampling::Trilinear;
+    int wrap = TextureSampling::Repeat;
+};
+
 class Raster {
 public:
     int width = 0, height = 0;
@@ -312,11 +318,28 @@ public:
     /// Textured triangle: perspective-correct UVs (pass u/w, v/w and 1/w per
     /// vertex). Samples `img` (wrapped), multiplies by `tint` and lighting
     /// `shade`, adds `spec` + emissive `(er,eg,eb)`. Depth-tested per pixel.
+    // Texture address modes (the texture's "Wrap" import setting).
+    static int WrapIndex(int a, int n, int mode) {
+        if (mode == TextureSampling::Clamp) return a < 0 ? 0 : (a >= n ? n - 1 : a);
+        if (mode == TextureSampling::Mirror) {
+            const int period = 2 * n;
+            int m = a % period; if (m < 0) m += period;
+            return m < n ? m : period - 1 - m;
+        }
+        a %= n; return a < 0 ? a + n : a;
+    }
+    // Nearest-texel lookup (the "Point" filter), one mip level.
+    static Color NearestWrap(const Image& img, float u, float v, int wrap) {
+        const int tw = img.Width(), th = img.Height();
+        if (tw <= 0 || th <= 0) return Color(1, 1, 1, 1);
+        Color c = img.GetPixel(WrapIndex((int)std::floor(u * tw), tw, wrap), WrapIndex((int)std::floor(v * th), th, wrap));
+        return Color(c.r, c.g, c.b, 1.0f);
+    }
     // Bilinear texture lookup with wrapping (one mip level).
-    static Color BilerpWrap(const Image& img, float u, float v) {
+    static Color BilerpWrap(const Image& img, float u, float v, int wrap = TextureSampling::Repeat) {
         int tw = img.Width(), th = img.Height();
         if (tw <= 0 || th <= 0) return Color(1, 1, 1, 1);
-        auto wr = [](int a, int n) { a %= n; return a < 0 ? a + n : a; };
+        auto wr = [wrap](int a, int n) { return WrapIndex(a, n, wrap); };
         // v = 0 is the image's top row, as on the GPU renderers and in glTF.
         float fu = u * tw - 0.5f, fv = v * th - 0.5f;
         int x0 = (int)std::floor(fu), y0 = (int)std::floor(fv);
@@ -328,17 +351,23 @@ public:
         float b0 = c00.b + (c10.b - c00.b) * ax, b1 = c01.b + (c11.b - c01.b) * ax;
         return Color(r0 + (r1 - r0) * ay, g0 + (g1 - g0) * ay, b0 + (b1 - b0) * ay, 1.0f);
     }
-    // Trilinear mipmap sample: bilinear within the two nearest mip levels, blended.
-    static Color SampleMips(const std::vector<Image>& mips, float u, float v, float lod) {
+    // Sample a mip chain the way its texture's import settings say: Trilinear blends the two nearest levels,
+    // Bilinear smooths within the nearest level, Point takes the nearest texel of the nearest level.
+    // `wrap` is Repeat / Clamp / Mirror. A chain with one level (mipmaps off) always reads the full picture.
+    static Color SampleMips(const MipChain& mips, float u, float v, float lod) {
         int n = (int)mips.size();
         if (n == 0) return Color(1, 1, 1, 1);
         float maxl = (float)(n - 1);
         lod = lod < 0 ? 0 : (lod > maxl ? maxl : lod);
+        if (mips.filter != TextureSampling::Trilinear) {
+            const Image& lv = mips[(int)(lod + 0.5f)];
+            return mips.filter == TextureSampling::Point ? NearestWrap(lv, u, v, mips.wrap) : BilerpWrap(lv, u, v, mips.wrap);
+        }
         int l0 = (int)lod, l1 = l0 + 1 < n ? l0 + 1 : l0;
         float f = lod - l0;
-        Color a = BilerpWrap(mips[l0], u, v);
+        Color a = BilerpWrap(mips[l0], u, v, mips.wrap);
         if (f <= 0.001f || l1 == l0) return a;
-        Color b = BilerpWrap(mips[l1], u, v);
+        Color b = BilerpWrap(mips[l1], u, v, mips.wrap);
         return Color(a.r + (b.r - a.r) * f, a.g + (b.g - a.g) * f, a.b + (b.b - a.b) * f, 1.0f);
     }
     // Per-vertex screen-space gradients of the (perspective) barycentric-weighted
@@ -369,7 +398,7 @@ public:
 
     void TriangleTex(const float* X, const float* Y, const float* D,
                      const float* IW, const float* U, const float* V,
-                     const std::vector<Image>& mips, const Color& tint,
+                     const MipChain& mips, const Color& tint,
                      const float* LR, const float* LG, const float* LB, const float* SP,
                      float er, float eg, float eb,
                      const float* FOG, float fr, float fg, float fb,
@@ -440,13 +469,13 @@ public:
                        const float* U, const float* V,
                        const float* NXa, const float* NYa, const float* NZa,
                        const float* WXa, const float* WYa, const float* WZa,
-                       const std::vector<Image>* mips, const Color& base, const Color& tint, const Vec3& eye,
+                       const MipChain* mips, const Color& base, const Color& tint, const Vec3& eye,
                        float shininess, float specularK, float er, float eg, float eb,
                        const float* FOG, float fr, float fg, float fb,
-                       const std::vector<Image>* normalMips = nullptr,
+                       const MipChain* normalMips = nullptr,
                        const Vec3& tangent = Vec3{1, 0, 0}, float normalStrength = 1.0f,
                        float reflectivity = 0.0f,
-                       const std::vector<Image>* specMips = nullptr,
+                       const MipChain* specMips = nullptr,
                        float metallic = 0.0f,
                        int toonBands = 0,
                        float matRimStr = 0.0f, float matRimPow = 3.0f,
@@ -454,7 +483,7 @@ public:
                        bool triplanar = false, float triTileX = 1.0f, float triTileY = 1.0f,
                        int clipY0 = 0, int clipY1 = (1 << 30),
                        int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
-                       const std::vector<Image>* aoMips = nullptr, float aoStrength = 1.0f,
+                       const MipChain* aoMips = nullptr, float aoStrength = 1.0f,
                        bool receiveShadows = true) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
@@ -762,6 +791,9 @@ inline std::unordered_map<std::string, Image>& TextureCacheMap() {
     return cache;
 }
 
+// Bumped whenever a cached picture is dropped, so GPU renderers that keep their own copy re-upload it.
+inline unsigned& TextureCacheGeneration() { static unsigned g = 0; return g; }
+
 // Register an in-memory image under a name so it can be used without a file on
 // disk (e.g. an embedded/procedural matcap that ships inside the exe). Names
 // conventionally start with '@' to avoid colliding with real file paths.
@@ -783,6 +815,10 @@ inline Image* GetCachedTexture(const std::string& path) {
     }
     return it->second.Width() > 0 ? &it->second : nullptr;
 }
+
+// Forget a picture's cached pixels and mip chain so the next draw reads the file and its import settings again
+// (the editor calls this after Apply on the Import Settings box or a reimport).
+inline void InvalidateTextureCache(const std::string& path);
 
 // Build the mipmap pyramid for `levels` (which already holds the base at [0]):
 // box-downsample by 2 until 1x1. Mip levels let the renderer pick a smaller,
@@ -810,20 +846,37 @@ inline void BuildMips(std::vector<Image>& levels) {
     }
 }
 
-inline std::unordered_map<std::string, std::vector<Image>>& MipCacheMap() {
-    static std::unordered_map<std::string, std::vector<Image>> cache;
+inline std::unordered_map<std::string, MipChain>& MipCacheMap() {
+    static std::unordered_map<std::string, MipChain> cache;
     return cache;
 }
 
 // A texture's mip chain (built lazily from the base image). Returns null if the
 // texture failed to load / is empty.
-inline const std::vector<Image>* GetCachedMips(const std::string& path) {
+inline void InvalidateTextureCache(const std::string& path) {
+    TextureCacheMap().erase(path);
+    MipCacheMap().erase(path);
+    ++TextureCacheGeneration();
+}
+
+// Drop every picture loaded from a file (pictures registered by name, "@...", are kept: they have no file to
+// read again). For when the caller does not know which cache key a file went in under.
+inline void InvalidateAllTextureCaches() {
+    auto& tex = TextureCacheMap();
+    for (auto it = tex.begin(); it != tex.end();) { if (!it->first.empty() && it->first[0] == '@') ++it; else it = tex.erase(it); }
+    MipCacheMap().clear();
+    ++TextureCacheGeneration();
+}
+
+inline const MipChain* GetCachedMips(const std::string& path) {
     auto& cache = MipCacheMap();
     auto it = cache.find(path);
     if (it == cache.end()) {
-        std::vector<Image> levels;
+        MipChain levels;
         Image* base = GetCachedTexture(path);
-        if (base && base->Width() > 0) { levels.push_back(*base); BuildMips(levels); }
+        const TextureSampling ts = TextureImportSampling(path);   // the asset's Filter / Wrap / Mipmaps
+        levels.filter = ts.filter; levels.wrap = ts.wrap;
+        if (base && base->Width() > 0) { levels.push_back(*base); if (ts.mipmaps) BuildMips(levels); }
         it = cache.emplace(path, std::move(levels)).first;
     }
     return (!it->second.empty() && it->second[0].Width() > 0) ? &it->second : nullptr;
@@ -1577,10 +1630,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const auto& t = drawMesh.triangles;
         const bool hasUV = drawMesh.uvs.size() == v.size();
         const bool faceCols = drawMesh.HasFaceColors();   // per-triangle colors?
-        const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
-        const std::vector<Image>* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
-        const std::vector<Image>* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
-        const std::vector<Image>* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
+        const MipChain* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
+        const MipChain* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
+        const MipChain* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
+        const MipChain* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
         Image* mcap = (mr->matcap.empty() || unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
         const bool useMatcap = mcap && drawMesh.HasNormals();

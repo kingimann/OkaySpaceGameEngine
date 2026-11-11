@@ -1,0 +1,21 @@
+# name sampleRate channels gainLog2 trimGapless  (reference = ffmpeg s16le decode of <name>.mp3 times 2^gainLog2)
+stereo_44k_cbr128 44100 2 0 1
+joint_48k_cbr192 48000 2 0 1
+stereo_32k_vbr 32000 2 0 1
+mono_44k_cbr64 44100 1 0 1
+stereo_22k_mpeg2 22050 2 0 1
+mono_16k_mpeg2 16000 1 0 1
+mono_11k_mpeg25 11025 1 0 1
+mono_8k_mpeg25 8000 1 0 1
+noxing_44k 44100 2 0 0
+crc_44k 44100 2 0 1
+id3v2_44k 44100 2 0 1
+abr_44k 44100 2 0 1
+synth_mpeg1_intensity 44100 2 -5 0
+synth_mpeg1_ms_intensity_mixed 48000 2 -5 0
+synth_mpeg1_ms_short 44100 2 -5 0
+synth_mpeg1_dual_scfsi 32000 2 -4 0
+synth_mpeg2_intensity 22050 2 -5 0
+synth_mpeg2_mixed_mono 24000 1 -4 0
+synth_mpeg25_8k_mixed_stereo 8000 2 -5 0
+synth_mpeg25_11k_intensity 11025 2 -6 0

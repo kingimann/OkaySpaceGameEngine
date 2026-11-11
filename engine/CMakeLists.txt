@@ -140,6 +140,8 @@ add_library(okay_engine
     src/Audio/AudioMixer.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
+    src/Audio/VorbisDecoder.cpp
+    src/Audio/Mp3Decoder.cpp
     src/AI/Pathfinding.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
@@ -213,17 +215,13 @@ target_include_directories(okay_engine PUBLIC
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/dr_libs
 )
 # ufbx (FBX importer, MIT/public domain) is a single C file: no warnings, optimised
 # even in debug builds (parsing big FBX files unoptimised is painfully slow).
 if(MSVC)
     set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
-    set_source_files_properties(src/Audio/AudioDecode.cpp PROPERTIES COMPILE_OPTIONS "/w;/O2")
 else()
     set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
-    # The vendored OGG/MP3 decoders (stb_vorbis, dr_mp3) build inside this file.
-    set_source_files_properties(src/Audio/AudioDecode.cpp PROPERTIES COMPILE_OPTIONS "-w;-O2")
 endif()
 # Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
 # is required in addition to `-w`: vendored tables (stb) may initialise `char`

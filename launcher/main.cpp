@@ -84,6 +84,7 @@
 #  include <csignal>
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait until this process exits, then relaunch once
+#include "UpdaterCore.hpp"   // updater rules: checksum required, stage then swap, reasons (tests/test_launcher_versions.cpp)
 #include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/launcher_versions.md)
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
@@ -726,37 +727,28 @@ bool DownloadProgress(const std::string& url, const fs::path& out) {
     return SDL_AtomicGet(&d.ok) == 1;
 }
 
-bool g_upChecksumFailed = false;   // the last download did not match versions.json (worker thread only)
-// `check`: the size and SHA-256 versions.json lists for this file (null = the index has none, as before it existed). A file that
-// does not match is never swapped in: the live file stays as it is.
-bool ReplaceFile(const std::string& url, const fs::path& dest, bool inUse,
-                 bool progress = false, const okayversions::FileInfo* check = nullptr) {
-    fs::path tmp = dest; tmp += ".new";
-    bool got = progress ? DownloadProgress(url, tmp) : Download(url, tmp);
-    std::error_code ec;
-    if (!got) { fs::remove(tmp, ec); return false; }   // no empty .new left behind
-    if (check && (check->size != 0 || !check->sha256.empty())) {
-        const std::string why = okayversions::VerifyFile(tmp, check->size, check->sha256);
-        if (!why.empty()) {
-            okay::restart::AppendLog(dest.parent_path() / "okay_update.log",
-                                     "checksum failed for " + okay::restart::Utf8(dest) + ": " + why);
-            fs::remove(tmp, ec);
-            g_upChecksumFailed = true;
-            return false;
-        }
-    }
-    fs::path old = dest; old += ".old";
-    // Move the live file aside first and put it back if the staged file can't
-    // take its place. Deleting it first left no program when the install failed.
-    const okay::restart::SwapResult sw =
-        okay::restart::SwapFile(dest, tmp, old, 100000, /*keepBackup=*/inUse);
-    if (!sw.ok) {
-        okay::restart::AppendLog(dest.parent_path() / "okay_update.log",
-                                 "replace failed for " + okay::restart::Utf8(dest) + ": " + sw.error);
-        if (fs::exists(tmp, ec)) fs::remove(tmp, ec);
-        return false;
-    }
-    return true;
+std::string g_upFailReason;   // why the last update did not install, in plain words (worker thread only; "" = no failure)
+void UpFail(const std::string& reason) {
+    if (g_upFailReason.empty()) g_upFailReason = reason;   // the first failure is the cause
+    okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "update failed: " + reason);
+}
+// Download `url` to `dest`.new and check it against versions.json (the rules are in UpdaterCore.hpp: no checksum = refuse).
+// The live file is not touched here; CommitFile swaps it in once every file has been staged.
+bool StageFile(const std::string& name, const std::string& url, const fs::path& dest, bool progress,
+               const okayversions::FileInfo* check) {
+    const okayupdater::Outcome o = okayupdater::Stage(name, url, dest, check,
+        [&](const std::string& u, const fs::path& to, std::string& err) {
+            const bool got = progress ? DownloadProgress(u, to) : Download(u, to);
+            if (!got) err = "the server could not be reached or the file was not found";
+            return got;
+        });
+    if (!o.ok) UpFail(o.reason);
+    return o.ok;
+}
+bool CommitFile(const std::string& name, const fs::path& dest, bool inUse) {
+    const okayupdater::Outcome o = okayupdater::Commit(name, dest, 100000, /*keepBackup=*/inUse);
+    if (!o.ok) UpFail(o.reason);
+    return o.ok;
 }
 
 // Fetch the latest GitHub release's notes and stash the first few bullet
@@ -934,7 +926,7 @@ int RunUpdateCheck(void*) {
     SetState(Up_Checking);
     SetUpMsg("Checking for updates...");
     FetchReleaseNews();   // refresh the What's-new card while we're online anyway
-    g_upChecksumFailed = false;
+    g_upFailReason.clear();
     std::string base; bool fromSupabase = false;
     const UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase);   // by channel (Latest unless the person chose LTS)
     const std::string latest = target.version;
@@ -983,10 +975,11 @@ int RunUpdateCheck(void*) {
 
     SetState(Up_Downloading);
     bool ok = true;
+    bool launcherOk = false;
     // Three download steps: engine, player, launcher.
     const int kSteps = 3;
-    // versions.json lists the size and SHA-256 of every file: what is downloaded is checked against it before it replaces anything.
-    // No index (offline, or an older server) just means no check, as before.
+    // versions.json lists the size and SHA-256 of every file and the update REQUIRES them: no index, no entry for this version or a
+    // file without a checksum is a refusal with a reason (never "skip the check"). See launcher/UpdaterCore.hpp.
     const okayversions::Index vindex = okayversions::LoadIndex(VersionSources(), FetchTextFile);
     const okayversions::Entry* ventry = vindex.ok ? vindex.Find(latest) : nullptr;
     auto checkFor = [&](const char* name) -> const okayversions::FileInfo* {
@@ -994,6 +987,13 @@ int RunUpdateCheck(void*) {
         const auto it = ventry->files.find(name);
         return it == ventry->files.end() ? nullptr : &it->second;
     };
+    if (const std::string why = okayupdater::IndexProblem(vindex, ventry, latest); !why.empty()) {
+        UpFail(why);
+        SetUpMsg(why);
+        SetUpStep("Update refused: no checksums", 0, kSteps);
+        SetState(Up_Failed);
+        return 0;
+    }
     // Keep the editor this update replaces, so projects made with it can still be opened (Versions page). Never blocks the update.
     std::string keepNote;
     bool keptNow = false;
@@ -1005,6 +1005,9 @@ int RunUpdateCheck(void*) {
         if (!kr.ok() && kr.outcome != okayversions::Outcome::Skipped) okay::restart::AppendLog(dir / "okay_update.log", kr.message);
         if (kr.outcome == okayversions::Outcome::Skipped || kr.outcome == okayversions::Outcome::Failed) keepNote = kr.message;
     }
+    // Stage and verify every file first; only when all of them are good is anything replaced.
+    struct Item { std::string name; fs::path dest; bool inUse; };
+    std::vector<Item> items;
     {
         // Write each exe back to wherever it currently lives (e.g. Tools/), so an
         // update preserves the organized layout instead of scattering exes to the
@@ -1016,25 +1019,43 @@ int RunUpdateCheck(void*) {
         if (!repair || FindExe({"OkayEngine.exe"}).empty()) {
             SetUpMsg("Downloading engine v" + latest + "...");
             SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
-            ok = ReplaceFile(base + "OkayEngine.exe",
-                             destOf("OkayEngine.exe"), false, /*progress=*/true, checkFor("OkayEngine.exe")) && ok;
+            const fs::path d = destOf("OkayEngine.exe");
+            if (StageFile("OkayEngine.exe", base + "OkayEngine.exe", d, true, checkFor("OkayEngine.exe"))) items.push_back({"OkayEngine.exe", d, false});
+            else ok = false;
         }
-        if (!repair || FindExe({"OkaySpacePlayer.exe"}).empty()) {
+        if (ok && (!repair || FindExe({"OkaySpacePlayer.exe"}).empty())) {
             SetUpMsg("Downloading player runtime v" + latest + "...");
             SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
-            ok = ReplaceFile(base + "OkaySpacePlayer.exe",
-                             destOf("OkaySpacePlayer.exe"), false, /*progress=*/true, checkFor("OkaySpacePlayer.exe")) && ok;
+            const fs::path d = destOf("OkaySpacePlayer.exe");
+            if (StageFile("OkaySpacePlayer.exe", base + "OkaySpacePlayer.exe", d, true, checkFor("OkaySpacePlayer.exe"))) items.push_back({"OkaySpacePlayer.exe", d, false});
+            else ok = false;
         }
     }
     // Only self-update the launcher on a genuine version bump.
-    bool launcherOk = false;
-    if (newer) {
+    if (ok && newer) {
         SetUpMsg("Updating launcher...");
         SetUpStep("Updating launcher (OkaySpace)", 2, kSteps);
         fs::path selfExe = okay::restart::CurrentExecutable();
         if (selfExe.empty() && !g_selfPath.empty()) selfExe = fs::path(g_selfPath);
-        launcherOk = !selfExe.empty() &&
-            ReplaceFile(base + "OkaySpace.exe", selfExe, true, /*progress=*/true, checkFor("OkaySpace.exe"));
+        if (selfExe.empty()) {
+            UpFail("Could not find the launcher's own file to update. Nothing was installed and your current version is unchanged.");
+            ok = false;
+        } else if (StageFile("OkaySpace.exe", base + "OkaySpace.exe", selfExe, true, checkFor("OkaySpace.exe"))) {
+            items.push_back({"OkaySpace.exe", selfExe, true});
+        } else ok = false;
+    }
+    if (!ok) {
+        for (const Item& it : items) okayupdater::Discard(it.dest);   // nothing was replaced: the install is as it was
+    } else {
+        SetUpMsg("Installing...");
+        for (const Item& it : items) {
+            if (!CommitFile(it.name, it.dest, it.inUse)) {
+                ok = false;
+                for (const Item& rest : items) okayupdater::Discard(rest.dest);   // (a failed swap already put its old file back)
+                break;
+            }
+            if (it.name == "OkaySpace.exe") launcherOk = true;
+        }
     }
 
     if (ok) {
@@ -1057,9 +1078,9 @@ int RunUpdateCheck(void*) {
         SetState(Up_Updated);
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
-        SetUpMsg(g_upChecksumFailed ? "A downloaded file did not match its checksum, so nothing was installed. Try again later."
-                                    : "Download failed — check your internet connection.");
-        SetUpStep(g_upChecksumFailed ? "A download did not match its checksum" : "Download failed — check your connection and retry", 0, kSteps);
+        const std::string why = g_upFailReason.empty() ? std::string("The update did not install for an unknown reason. Your current version is unchanged.") : g_upFailReason;
+        SetUpMsg("Update failed. " + why);
+        SetUpStep("Update failed: nothing was changed", 0, kSteps);
         SetState(Up_Failed);
     }
     return 0;
@@ -16757,10 +16778,16 @@ int main(int argc, char** argv) {
     // would otherwise knock the launcher offline — only an http(s) URL counts.
     if (serverUrl.rfind("http", 0) != 0) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
     if (apiKey.empty())                  apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
+    // Where the emailed reset link should land (docs/password-reset.md). Empty = none set up.
+    std::string resetUrl = fromEnvOrFile("OKAY_PASSWORD_RESET_URL", "password_reset_url.txt");
+#ifdef OKAY_DEFAULT_PASSWORD_RESET_URL
+    if (resetUrl.rfind("http", 0) != 0) resetUrl = OKAY_DEFAULT_PASSWORD_RESET_URL;
+#endif
     // Held by pointer so the Settings tab can rebuild it live when the server
     // config changes.
     fs::path acctCfgDir = acct::DefaultConfigDir(fs::path(g_exeDir));
     auto accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, serverUrl, apiKey);
+    accountPtr->SetResetRedirect(resetUrl);
     g_presenceAccount = accountPtr.get();   // RecordPlayed broadcasts playing-presence through this
     // If we resumed a saved session against an online server, make sure it's
     // still valid (the token may have been revoked/expired); this signs the
@@ -20718,8 +20745,17 @@ int main(int argc, char** argv) {
                     if (ImGui::SmallButton("Forgot password?")) {
                         acct::Result r = account.RequestPasswordReset(acctUser);
                         acctMessageError = !r.ok;
-                        acctMessage = r.ok ? "Password reset email sent — check your inbox."
-                                           : r.error;
+                        if (!r.ok) acctMessage = r.error;
+                        else if (account.HasResetRedirect())
+                            acctMessage = "Password reset email sent. Open the link in it to choose a new password.";
+                        else {
+                            // Truth: with no landing page the link opens the server's default Site URL.
+                            acctMessage = "Reset email sent, but no reset page is set up for this build, so its link "
+                                          "opens the server's default web address instead of a password form. "
+                                          "The owner must host the page and set OKAY_PASSWORD_RESET_URL "
+                                          "(docs/password-reset.md).";
+                            acctMessageError = true;
+                        }
                     }
                 }
 

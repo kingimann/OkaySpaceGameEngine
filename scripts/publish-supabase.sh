@@ -11,9 +11,12 @@
 #   v<ver>/OkaySpace.exe, v<ver>/OkayEngine.exe, v<ver>/OkaySpacePlayer.exe,
 #   v<ver>/CHANGELOG.txt     the version's files, in their own folder
 #   NOTES.txt                "what's new" bullet lines (the launcher's card)
-#   VERSION.txt              uploaded LAST, so nobody sees a version before its files
-#   versions.json            index of every released version with sizes and SHA-256
-#                            (scripts/versions_index.py; a failure here only warns)
+#   versions.json            index of every released version with sizes and SHA-256 of OkayEngine.exe,
+#                            OkaySpacePlayer.exe and OkaySpace.exe (scripts/versions_index.py). The launcher
+#                            REFUSES to update a file that has no checksum there, so the publish FAILS if any
+#                            checksum cannot be written or does not read back from the bucket (checked before
+#                            VERSION.txt goes out, so nobody is offered a version they cannot install)
+#   VERSION.txt              uploaded LAST, so nobody sees a version before its files and its checksums
 # Older version folders beyond the newest $KEEP are deleted, except the LTS line.
 #
 # Channels (CHANNEL, default latest). Releases are numbered 2.<build>.<patch>:
@@ -106,6 +109,14 @@ fi
 AUTH=(-H "Authorization: Bearer $KEY" -H "apikey: $KEY")
 RESP="$(mktemp)"; trap 'rm -f "$RESP"' EXIT
 
+# ---- Checksums: the updater refuses files without one, so refuse to publish without them -----------------------
+# (runs before DRY_RUN returns and before anything is uploaded; no network)
+PRE=(merge --version "$VER" --channel "$CHANNEL" --repo "$ARCHIVE_REPO" --out "$RESP.preflight")
+for n in "${NAMES[@]}"; do PRE+=(--file "$n=${SRC[$n]}"); done
+python3 scripts/versions_index.py "${PRE[@]}" ||
+    die "cannot compute a size and SHA-256 for every file; the launcher would refuse this release"
+rm -f "$RESP.preflight"
+
 echo "Publishing v$VER to $SUPABASE_URL (bucket '$BUCKET', channel $CHANNEL)"
 if [ "${DRY_RUN:-0}" = 1 ]; then echo "DRY_RUN: everything checks out; nothing uploaded."; exit 0; fi
 
@@ -136,16 +147,12 @@ CHANGELOG="$NOTES"   # the editor's update dialog shows this
 upload "$CHANGELOG" "v$VER/CHANGELOG.txt" "text/plain; charset=utf-8" 3600
 if [ "$CHANNEL" = lts ]; then NOTES_NAME=NOTES-LTS.txt; VERSION_NAME=LTS.txt; else NOTES_NAME=NOTES.txt; VERSION_NAME=VERSION.txt; fi
 upload "$NOTES" "$NOTES_NAME" "text/plain; charset=utf-8" 30
-printf '%s\n' "$VER" > "$RESP.ver"
-upload "$RESP.ver" "$VERSION_NAME" text/plain 30
-rm -f "$RESP.ver"
 
-# ---- Keep only the newest $KEEP versions (latest channel only) -----------------
-# The LTS line is never pruned: its versions are what "stay on LTS" installs.
 list() {   # list <prefix>  -> one name per line
     curl -sS -X POST "$SUPABASE_URL/storage/v1/object/list/$BUCKET" "${AUTH[@]}" -H "Content-Type: application/json" \
         -d "{\"prefix\":\"$1\",\"limit\":1000}" | python3 -c 'import sys, json; [print(o["name"]) for o in json.load(sys.stdin)]'
 }
+# Which old versions go (latest channel only; the LTS line is never pruned: its versions are what "stay on LTS" installs).
 OLD=()
 if [ "$CHANNEL" = latest ]; then
     LTS_RE='^$'   # matches no version: nothing is protected
@@ -153,6 +160,40 @@ if [ "$CHANNEL" = latest ]; then
     mapfile -t OLD < <(list "" | grep -E '^v[0-9.]+$' | sed 's/^v//' | { grep -vE "$LTS_RE" || true; } |
         sort -t. -k1,1n -k2,2n -k3,3n | head -n -"$KEEP")
 fi
+
+# ---- versions.json: every released version with sizes and SHA-256 ---------------
+# REQUIRED: the launcher's updater refuses a version whose files have no checksum here. It goes up BEFORE VERSION.txt and is read
+# back from the bucket and compared with the files that were uploaded; any failure stops the publish (VERSION.txt is not written,
+# so no launcher is offered this version). Re-running the publish is safe.
+update_index() {
+    local old="$RESP.idx.in" new="$RESP.idx.out" back="$RESP.idx.back" latest="$CUR_LATEST" lts="$CUR_LTS" n
+    if [ "$CHANNEL" = lts ]; then lts="$VER"; else latest="$VER"; fi
+    curl -fsS --max-time 20 "$PUBLIC/versions.json" -o "$old" 2>/dev/null || rm -f "$old"   # (no index yet is fine: the first publish)
+    local inbucket v
+    inbucket="$(list "" | grep -E '^v[0-9.]+$' | sed 's/^v//')" || die "could not list the bucket for versions.json"
+    for v in "${OLD[@]}"; do inbucket="$(printf '%s\n' "$inbucket" | grep -vxF "$v" || true)"; done   # (about to be pruned)
+    inbucket="$(printf '%s\n' "$inbucket" | tr '\n' ' ')"
+    local args=(merge --existing "$old" --version "$VER" --channel "$CHANNEL" --date "$(date -u +%F)"
+                --repo "$ARCHIVE_REPO" --bucket-versions "$inbucket" --out "$new")
+    [ -n "$latest" ] && args+=(--latest "$latest")
+    [ -n "$lts" ] && args+=(--lts "$lts")
+    local fargs=()
+    for n in "${NAMES[@]}"; do args+=(--file "$n=${SRC[$n]}"); fargs+=(--file "$n=${SRC[$n]}"); done
+    python3 scripts/versions_index.py "${args[@]}" || die "versions.json could not be built with a checksum for every file"
+    upload "$new" versions.json "application/json" 30
+    curl -fsS --max-time 30 -H 'Cache-Control: no-cache' "$PUBLIC/versions.json?nocache=$(date +%s)" -o "$back" ||
+        die "versions.json cannot be read back from the bucket"
+    python3 scripts/versions_index.py check --index "$back" --version "$VER" "${fargs[@]}" ||
+        die "the published versions.json does not carry the checksums of the uploaded files"
+    rm -f "$old" "$new" "$back"
+}
+update_index   # (die exits the whole script: no VERSION.txt, no pruning)
+
+printf '%s\n' "$VER" > "$RESP.ver"
+upload "$RESP.ver" "$VERSION_NAME" text/plain 30
+rm -f "$RESP.ver"
+
+# ---- Keep only the newest $KEEP versions ------------------------------------------
 for v in "${OLD[@]}"; do
     mapfile -t FILES < <(list "v$v/")
     [ "${#FILES[@]}" -gt 0 ] || continue
@@ -160,24 +201,5 @@ for v in "${OLD[@]}"; do
     curl -sS -o /dev/null -X DELETE "$SUPABASE_URL/storage/v1/object/$BUCKET" "${AUTH[@]}" -H "Content-Type: application/json" -d "$body"
     echo "  removed old v$v"
 done
-
-# ---- versions.json: every released version with sizes and SHA-256 ---------------
-# Not needed for an update to work (VERSION.txt already went out), so a failure only warns.
-update_index() {
-    local old="$RESP.idx.in" new="$RESP.idx.out" latest="$CUR_LATEST" lts="$CUR_LTS" n
-    if [ "$CHANNEL" = lts ]; then lts="$VER"; else latest="$VER"; fi
-    curl -fsS --max-time 20 "$PUBLIC/versions.json" -o "$old" 2>/dev/null || rm -f "$old"
-    local inbucket
-    inbucket="$(list "" | grep -E '^v[0-9.]+$' | sed 's/^v//' | tr '\n' ' ')" || return 1
-    local args=(merge --existing "$old" --version "$VER" --channel "$CHANNEL" --date "$(date -u +%F)"
-                --repo "$ARCHIVE_REPO" --bucket-versions "$inbucket" --out "$new")
-    [ -n "$latest" ] && args+=(--latest "$latest")
-    [ -n "$lts" ] && args+=(--lts "$lts")
-    for n in "${NAMES[@]}"; do args+=(--file "$n=${SRC[$n]}"); done
-    python3 scripts/versions_index.py "${args[@]}" || return 1
-    upload "$new" versions.json "application/json" 30
-    rm -f "$old" "$new"
-}
-( update_index ) || echo "warning: versions.json was not updated (the release itself is published)" >&2   # (subshell: a failed upload exits only it)
 
 echo "Done: launchers will see v$VER at $PUBLIC/$VERSION_NAME"

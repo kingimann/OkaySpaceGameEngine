@@ -2236,6 +2236,14 @@ add_executable(test_image_write test_image_write.cpp)
 target_link_libraries(test_image_write PRIVATE okay::engine)
 add_test(NAME image_write COMMAND test_image_write)
 
+# Our own image decoder (Core/ImageDecode): PNG / JPEG / BMP / TGA / GIF / HDR / PSD fixtures vs reference pixels
+# (tests/data/images), the inflater, and truncated / bit-flipped / absurd input.
+add_executable(test_image_decoder test_image_decoder.cpp)
+target_compile_definitions(test_image_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(test_image_decoder PRIVATE okay::engine)
+add_test(NAME image_decoder COMMAND test_image_decoder)
+set_tests_properties(image_decoder PROPERTIES TIMEOUT 300)
+
 # shared/FileDialog: our own open / save / folder dialogs (replaced the vendored tinyfiledialogs): path and glob helpers,
 # argument lists for zenity / kdialog / osascript (no injection), result parsing, extension enforcing, the built-in browser's
 # model and queue, and a run through fake helper programs on PATH. No window.

@@ -41,14 +41,9 @@
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — `code` in chat
 #include "FileDialog.hpp"       // native file picker (chat attachments), or the built-in browser
 
-// stb_image for optional per-game cover art. STATIC keeps its symbols file-local
-// (the launcher doesn't link the engine, so there's no clash, but this is tidy).
-#define STB_IMAGE_STATIC
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_PNG
-#define STBI_ONLY_JPEG
-#define STBI_ONLY_GIF        // animated GIFs in chat (stbi_load_gif_from_memory)
-#include "stb_image.h"
+// Our own image decoder (engine/src/Core/ImageDecode*.cpp, compiled straight into the
+// launcher: it doesn't link the engine) for cover art, avatars, chat images and emoji.
+#include "okay/Core/ImageDecode.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -57,6 +52,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -3131,9 +3127,20 @@ static void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a,
     TemplateGlyph(d, title, ImVec2(a.x + (b.x - a.x - s) * 0.5f, a.y + (b.y - a.y - s) * 0.36f), s, IM_COL32(248, 250, 255, 235));
 }
 
+// Decodes an image file to a malloc'd RGBA8 buffer (free with std::free); nullptr on failure.
+static unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h) {
+    okay::DecodedImage img;
+    if (!okay::DecodeImageFile(path, img) || img.rgba.empty()) return nullptr;
+    unsigned char* px = static_cast<unsigned char*>(std::malloc(img.rgba.size()));
+    if (!px) return nullptr;
+    std::memcpy(px, img.rgba.data(), img.rgba.size());
+    *w = img.width; *h = img.height;
+    return px;
+}
+
 // ---- Optional per-game cover art -----------------------------------------
 // A game can ship a cover image next to its .okayscene (cover.png/.jpg, or
-// <stem>.png/.jpg). We load it once via stb_image, upload an SDL texture, and
+// <stem>.png/.jpg). We load it once via okay::DecodeImage, upload an SDL texture, and
 // cache it by game path. nullptr (cached) means "no cover — draw the initial".
 std::map<std::string, SDL_Texture*> g_coverCaches[2];
 #define g_coverCache g_coverCaches[g_rslot]
@@ -3151,13 +3158,13 @@ SDL_Texture* GameCover(const std::string& gamePath) {
         for (const char* n : names) cands.push_back(dir / n);
         for (const auto& c : cands) {
             if (!fs::exists(c, ec)) continue;
-            int w = 0, h = 0, ch = 0;
-            unsigned char* px = stbi_load(c.string().c_str(), &w, &h, &ch, 4);
+            int w = 0, h = 0;
+            unsigned char* px = LoadRgbaFile(c.string(), &w, &h);
             if (!px) continue;
             SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
                 px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
             if (surf) { tex = SDL_CreateTextureFromSurface(g_renderer, surf); SDL_FreeSurface(surf); }
-            stbi_image_free(px);
+            std::free(px);
             break;
         }
     }
@@ -3177,7 +3184,7 @@ void DrawGameIcon(const std::string& gamePath, const std::string& name, float si
 }
 
 // ---- Profile-picture (avatar) textures, loaded from a public URL ----------
-// Downloaded once to a per-URL cache file, decoded via stb_image, cached as an
+// Downloaded once to a per-URL cache file, decoded via okay::DecodeImage, cached as an
 // SDL texture. nullptr (cached) means "no avatar — draw the initial".
 std::map<std::string, SDL_Texture*> g_avatarCaches[2];
 #define g_avatarCache g_avatarCaches[g_rslot]
@@ -3217,12 +3224,12 @@ SDL_Texture* AvatarTexture(const std::string& url) {
     if (fs::exists(cache, ec)) {
         // Already downloaded: decode + upload here (fast), then cache the texture.
         SDL_Texture* tex = nullptr;
-        int w = 0, h = 0, ch = 0;
-        unsigned char* px = stbi_load(cache.string().c_str(), &w, &h, &ch, 4);
+        int w = 0, h = 0;
+        unsigned char* px = LoadRgbaFile(cache.string(), &w, &h);
         if (px) {
             SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
             if (s) { tex = SDL_CreateTextureFromSurface(g_renderer, s); SDL_FreeSurface(s); }
-            stbi_image_free(px);
+            std::free(px);
         }
         if (tex) { g_avatarCache[url] = tex; return tex; }
     }
@@ -3365,7 +3372,7 @@ static std::map<std::string, std::pair<int, int>> g_emojiParsedCells;
 
 static int EmojiParseWorker(void*) {
     std::vector<EmojiInfo> list; std::map<std::string, std::pair<int, int>> cells;
-    unsigned char* px = nullptr; int w = 0, h = 0, ch = 0;
+    unsigned char* px = nullptr; int w = 0, h = 0;
     try {
         std::ifstream f(MediaCachePath(kEmojiJsonUrl, ".json"), std::ios::binary);
         std::stringstream ss; ss << f.rdbuf();
@@ -3414,7 +3421,7 @@ static int EmojiParseWorker(void*) {
         std::stable_sort(list.begin(), list.end(), [](const EmojiInfo& a, const EmojiInfo& b) {
             return a.cat != b.cat ? a.cat < b.cat : a.sort < b.sort;
         });
-        px = stbi_load(MediaCachePath(kEmojiSheetUrl, ".png").string().c_str(), &w, &h, &ch, 4);
+        px = LoadRgbaFile(MediaCachePath(kEmojiSheetUrl, ".png").string(), &w, &h);
     } catch (...) {}
     SDL_LockMutex(g_emojiMutex);
     g_emojiParsedList.swap(list); g_emojiParsedCells.swap(cells);
@@ -3516,9 +3523,11 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
         if (st > 0) {
             std::ifstream f(p, std::ios::binary);
             std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            int* delays = nullptr; int fw = 0, fh = 0, frames = 0, comp = 0;
-            unsigned char* px = data.empty() ? nullptr :
-                stbi_load_gif_from_memory((const stbi_uc*)data.data(), (int)data.size(), &delays, &fw, &fh, &frames, &comp, 4);
+            okay::DecodedAnimation anim;
+            if (!data.empty()) okay::DecodeGifFrames((const std::uint8_t*)data.data(), data.size(), anim);
+            const unsigned char* px = anim.frames.empty() ? nullptr : anim.frames.data();
+            const int* delays = anim.delaysMs.empty() ? nullptr : anim.delaysMs.data();
+            const int fw = anim.width, fh = anim.height, frames = anim.FrameCount();
             if (px && fw > 0 && fh > 0 && frames > 0) {
                 // Keep memory sane: skip frames on huge GIFs (merging their delays).
                 const long long budget = 24LL * 1000 * 1000;   // pixels across all frames
@@ -3530,7 +3539,7 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
                     if (d < 20) d = 100;   // browsers treat 0-10ms frames as 100ms
                     acc += d;
                     if (i % step != 0 && i != frames - 1) continue;
-                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(px + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
+                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(const_cast<unsigned char*>(px) + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
                     if (!sf) continue;
                     SDL_Texture* tx = SDL_CreateTextureFromSurface(g_renderer, sf);
                     SDL_FreeSurface(sf);
@@ -3540,8 +3549,6 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
                 }
                 a.w = fw; a.h = fh; a.ok = !a.frames.empty();
             }
-            if (px) stbi_image_free(px);
-            if (delays) stbi_image_free(delays);
         }
         it = g_animImages.find(url);
     }
@@ -16656,13 +16663,13 @@ int main(int argc, char** argv) {
     // platform's show-vs-present ordering.
     // Load the user's custom splash logo (if any) so the first frame can show it.
     if (!g_splashLogo.empty()) {
-        int lw = 0, lh = 0, lch = 0;
-        if (unsigned char* px = stbi_load(g_splashLogo.c_str(), &lw, &lh, &lch, 4)) {
+        int lw = 0, lh = 0;
+        if (unsigned char* px = LoadRgbaFile(g_splashLogo, &lw, &lh)) {
             if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, lw, lh, 32, lw * 4, SDL_PIXELFORMAT_ABGR8888)) {
                 g_splashLogoTex = SDL_CreateTextureFromSurface(renderer, s);
                 SDL_FreeSurface(s);
             }
-            stbi_image_free(px);
+            std::free(px);
         }
     }
     // Build the splash style from the user's loading-screen preferences.

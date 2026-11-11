@@ -1,0 +1,8 @@
+okaydialog 1
+name "Talk"
+start 0
+speaker "Smith"
+node id=0 kind="line" x=0 y=0 speaker="Smith" text="Hello there" next=1
+node id=1 kind="choice" x=200 y=0 n=2 c0t="Yes please" c0to=2 c1t="No thanks" c1to=3
+node id=2 kind="line" x=400 y=-60 speaker="Smith" text="Glad to help" next=3
+node id=3 kind="end" x=600 y=0

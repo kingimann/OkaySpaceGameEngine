@@ -746,10 +746,10 @@ exec 2 0 3
 entry OnStart 0
 )VS");
         g_log.clear(); s.Start(); Tick(s, 3, 1.0f);
-        CHECK(Logged("can't pause inside a function"));
+        CHECK(Logged("after delay"));                 // the function waited, then continued
         CHECK(Logged("no function named 'Missing'"));
         CHECK(Logged("event done"));
-        CHECK(!Logged("after delay"));
+        CHECK(!Logged("can't pause inside a function"));
     }
     // ---- Function graphs survive save -> reload --------------------------------
     {

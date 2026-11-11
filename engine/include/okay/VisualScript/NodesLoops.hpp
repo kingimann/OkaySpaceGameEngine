@@ -16,18 +16,31 @@ namespace okay::vs {
 // each run - then continues from Done (out1). A condition that never turns
 // false is stopped by the event's step budget, like any runaway loop.
 struct WhileNode : VsNode {
+    VsLoopLatch latch;
     int ExecOutCount() const override { return 2; }
+    void OnSuspendRejected() override { latch.Finish(); }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!latch.busy) return false;
+        latch.Save(r);
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph& g) override { latch.Load(r, g); }
     int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (!latch.Begin(g)) return -1;   // already parked; Resume owns the rest
         const int body = Next(0);
         g.EnterLoop();
-        while (!g.Aborted() && In(0, g, ctx).AsBool()) {
-            if (body < 0) {
-                g.Error(this, ctx, "Cond is true but nothing is wired to Body, so it would loop forever; the loop was skipped");
-                break;
+        while (!g.Aborted()) {
+            if (!latch.inBody) {
+                if (!In(0, g, ctx).AsBool()) break;
+                if (body < 0) {
+                    g.Error(this, ctx, "Cond is true but nothing is wired to Body, so it would loop forever; the loop was skipped");
+                    break;
+                }
             }
-            g.Run(body, ctx);
-            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak) break;
+            if (latch.Step(g, ctx, body) == NodeGraph::kSuspend) { g.LeaveLoop(); return NodeGraph::kSuspend; }
+            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted()) break;
         }
+        latch.Finish();
         g.LeaveLoop();
         return 1;
     }
@@ -39,24 +52,51 @@ struct WhileNode : VsNode {
 struct ForEachNode : VsNode {
     VsValue item;
     int index = -1;
+    VsLoopLatch latch;
+    std::vector<VsValue> items;   // kept so the next For Each reuses the buffer
     int ExecOutCount() const override { return 2; }
     VsValue Eval(int pin, NodeGraph&, VsContext&) override { return pin == 0 ? item : VsValue((float)index); }
+    void OnSuspendRejected() override { latch.Finish(); }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!latch.busy) return false;
+        latch.Save(r);
+        r.i0 = index;
+        r.values = items;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph& g) override {
+        latch.Load(r, g);
+        index = r.i0;
+        items = r.values;
+        if (index >= 0 && index < (int)items.size()) item = items[(std::size_t)index];
+    }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const VsValue list = In(0, g, ctx);
-        const auto arr = list.AsArray();
-        if (!arr) {
-            if (HasInput(0)) g.Error(this, ctx, "its List input isn't a list (wire in New List, All With Tag, an Overlap's Objects...)");
-            return 1;
-        }
-        const VsValue::Array items = *arr;
+        if (!latch.Begin(g)) return -1;
         const int body = Next(0);
-        g.EnterLoop();
-        for (std::size_t i = 0; i < items.size() && body >= 0; ++i) {
-            item = items[i];
-            index = (int)i;
-            g.Run(body, ctx);
-            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted()) break;
+        if (!g.Resuming()) {
+            items.clear();
+            const VsValue list = In(0, g, ctx);
+            const auto arr = list.AsArray();
+            if (!arr) {
+                if (HasInput(0)) {
+                    const char* extra = list.IsMap() ? " (a map needs For Each Map)" : "";
+                    g.Error(this, ctx, std::string("its List input isn't a list (wire in New List, All With Tag, an Overlap's Objects...)") + extra);
+                }
+                latch.Finish();
+                return 1;
+            }
+            items.assign(arr->begin(), arr->end());
+            index = items.empty() ? -1 : 0;
         }
+        g.EnterLoop();
+        while (body >= 0 && index >= 0 && index < (int)items.size() && !g.Aborted()) {
+            item = items[(std::size_t)index];
+            if (latch.Step(g, ctx, body) == NodeGraph::kSuspend) { g.LeaveLoop(); return NodeGraph::kSuspend; }
+            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted()) break;
+            if (index + 1 >= (int)items.size()) break;
+            ++index;
+        }
+        latch.Finish();
         g.LeaveLoop();
         return 1;
     }
@@ -71,7 +111,7 @@ struct LoopJumpNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (!g.InLoop()) {
             g.Error(this, ctx, std::string(isBreak ? "Break" : "Continue") +
-                               " isn't inside the Body of a loop (For Loop, Repeat, While, For Each), so there's nothing to " +
+                               " isn't inside the Body of a loop (For Loop, Repeat, While, For Each, For Each Map), so there's nothing to " +
                                (isBreak ? "leave" : "skip"));
             return -1;
         }

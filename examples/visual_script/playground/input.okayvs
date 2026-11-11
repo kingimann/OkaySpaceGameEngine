@@ -1,0 +1,47 @@
+# Input. WASD moves. Click fires, release Space, hold E.
+node 1 OnUpdate
+pos 1 40 80
+entry OnUpdate 1
+node 2 GetMoveAxis
+pos 2 40 280
+node 3 VecX
+pos 3 300 220
+node 4 VecY
+pos 4 300 380
+node 5 Mul
+pos 5 520 220
+default 5 1 0.08
+node 6 Mul
+pos 6 520 380
+default 6 1 0.08
+node 7 Translate
+pos 7 780 260
+node 8 OnAction fire
+pos 8 40 560
+entry OnAction:fire 8
+node 9 SetVar fired
+pos 9 360 560
+default 9 0 1
+node 10 OnActionUp jump
+pos 10 40 740
+entry OnActionUp:jump 10
+node 11 SetVar released
+pos 11 380 740
+default 11 0 1
+node 12 OnActionHeld interact
+pos 12 40 920
+entry OnActionHeld:interact 12
+node 13 SetVar held
+pos 13 400 920
+default 13 0 1
+exec 1 0 7
+data 3 0 2 0
+data 4 0 2 0
+data 5 0 3 0
+data 6 0 4 0
+data 7 0 5 0
+data 7 2 6 0
+exec 8 0 9
+exec 10 0 11
+exec 12 0 13
+comment 20 1100 1200 80 1 "Move pins show the live axis. Click is fire, Space is jump, E is interact."

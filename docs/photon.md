@@ -1,5 +1,9 @@
 # Photon Realtime transport (opt-in)
 
+> Extension point only. It works only in a C++ build you make yourself with
+> Photon's SDK, and nothing in the editor or the scripts selects it. See
+> [net_providers.md](net_providers.md).
+
 OkaySpace multiplayer normally runs on its own transport (direct UDP or the
 bundled relay — see `multiplayer` docs). For games that want to ride
 **Photon Cloud** instead — no servers or relays of your own, rooms hosted on
@@ -73,5 +77,6 @@ unconditionally is fine).
 The adapter covers the transport verbs (rooms, messaging, RPC). Photon's
 higher-level products (Fusion, Quantum, Photon Matchmaking/Party) are out of
 scope — for a server browser, keep the Native services backend
-(`NetBackend`), which also pairs with the PlayFab backend for auth, cloud
-saves and leaderboards (see `visual_scripting.md` ▸ PlayFab).
+(`NetBackend`). For PlayFab auth, cloud saves and leaderboards use the
+`playfab_*` script calls (they work on their own; there is no PlayFab
+`NetBackend` adapter). See [net_providers.md](net_providers.md).

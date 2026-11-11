@@ -39,3 +39,4 @@ winbuild.log
 
 # Mixamo sample rigs fetched by GameObject > Spawn Mixamo Player
 mixamo-cache/
+__pycache__/

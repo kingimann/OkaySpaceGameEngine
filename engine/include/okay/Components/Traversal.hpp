@@ -41,12 +41,33 @@ inline std::unordered_map<GameObject*, TraverseJob>& TraverseJobs() {
     return jobs;
 }
 
-inline bool TraverseBusy(GameObject* go) { return go && TraverseJobs().count(go) != 0; }
-
 inline std::unordered_map<GameObject*, Vec3>& HangPoints() {
     static std::unordered_map<GameObject*, Vec3> pts;
     return pts;
 }
+inline std::unordered_map<GameObject*, float>& HangGravity();
+
+/// These maps are keyed by object address. A scene that ends (or an object destroyed) in the middle of a
+/// move leaves its entries behind, and the next object to be given that address would look busy or hanging.
+/// Each key remembers the instance id it was made for; a different id means the entry is stale and is dropped.
+inline std::unordered_map<GameObject*, std::uint64_t>& TraverseOwners() {
+    static std::unordered_map<GameObject*, std::uint64_t> owners;
+    return owners;
+}
+inline void TraverseValidate(GameObject* go) {
+    if (!go) return;
+    auto& owners = TraverseOwners();
+    auto it = owners.find(go);
+    if (it != owners.end() && it->second == go->InstanceId()) return;
+    if (it != owners.end()) {   // a different object lived here: forget everything kept for it
+        TraverseJobs().erase(go);
+        HangPoints().erase(go);
+        HangGravity().erase(go);
+    }
+    owners[go] = go->InstanceId();
+}
+
+inline bool TraverseBusy(GameObject* go) { TraverseValidate(go); return go && TraverseJobs().count(go) != 0; }
 
 /// Gravity to put back when a hang ends. The ledge move leaves gravity at 0.
 inline std::unordered_map<GameObject*, float>& HangGravity() {
@@ -56,6 +77,7 @@ inline std::unordered_map<GameObject*, float>& HangGravity() {
 
 inline void RestoreHangGravity(GameObject* go) {
     if (!go) return;
+    TraverseValidate(go);
     auto& m = HangGravity();
     auto it = m.find(go);
     if (it == m.end()) return;
@@ -105,6 +127,7 @@ inline TraverseProbe ProbeTraverse(GameObject* go, const Vec3& fwd, bool airborn
 
 inline void BeginTraverse(GameObject* go, const TraverseProbe& p) {
     if (!go || p.kind == TraverseKind::None) return;
+    TraverseValidate(go);
     TraverseJob job;
     job.from = p.from; job.to = p.to; job.dur = p.duration;
     if (auto* rb = go->GetComponent<Rigidbody3D>()) {
@@ -123,6 +146,7 @@ inline void BeginTraverse(GameObject* go, const TraverseProbe& p) {
 }
 
 inline void TickTraverse(GameObject* go, float dt) {
+    TraverseValidate(go);
     auto& jobs = TraverseJobs();
     auto it = jobs.find(go);
     if (it == jobs.end()) return;

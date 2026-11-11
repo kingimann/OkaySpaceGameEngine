@@ -2,6 +2,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Core/ImportSidecar.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -1055,7 +1056,7 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     return root;
 }
 
-GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
+static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bool* ok) {
     using namespace gltf_detail;
     std::string p = Lower(path);
     bool isGltf = EndsWith(p, ".gltf") || EndsWith(p, ".glb");
@@ -1425,6 +1426,32 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     NormalizeImportedClips(root);
     AutoNormalizeImportScale(scene, root);
     if (ok) *ok = true;
+    return root;
+}
+
+// The model's own import settings (`<model>.okaymeta`): Normals / Smoothing angle / Import animations.
+// Rigged (skinned) parts and meshes with blend shapes keep the file's normals: their vertices are shared with the
+// skin weights and the shapes, so they are not rebuilt.
+GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
+    GameObject* root = ImportModelSceneRaw(scene, path, ok);
+    if (!root) return root;
+    const ModelImportOptions opt = ReadModelImportOptions(path);
+    if (opt.normals != ModelImportOptions::Import) {
+        for (MeshRenderer* mr : root->GetComponentsInChildren<MeshRenderer>(true)) {
+            GameObject* host = mr->gameObject;
+            if (!host || host->GetComponent<SkinnedMesh>() || host->GetComponent<BlendShapes>()) continue;
+            if (opt.normals == ModelImportOptions::Calculate) mr->mesh.ComputeAutoSmoothNormals(opt.smoothingAngle);
+            else { mr->mesh.normals.clear(); mr->mesh.autoSmoothAngle = 0.0f; }   // flat: one normal per face
+        }
+    }
+    if (!opt.importAnimations) {
+        std::vector<GameObject*> all{root};
+        root->ForEachDescendant([&](GameObject& g) { all.push_back(&g); });
+        for (GameObject* g : all) {
+            if (auto* ma = g->GetComponent<ModelAnimator>()) g->RemoveComponent(ma);
+            if (auto* an = g->GetComponent<Animator>()) g->RemoveComponent(an);
+        }
+    }
     return root;
 }
 

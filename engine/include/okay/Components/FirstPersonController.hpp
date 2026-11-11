@@ -71,12 +71,12 @@ public:
     float capturedPixelCap = 220.0f;
     float minPitch = -89.0f, maxPitch = 89.0f;
     bool  invertY = false;              // invert vertical mouse look
-    // View bob: up and down only, in step with walking. No sideways sway and no
-    // roll — those tilt the horizon. Scales with speed; smooths out when idle.
+    // View bob: up and down, in step with walking. Scales with speed; smooths
+    // out when idle. bobSway adds an optional side-to-side roll (off by default).
     bool  headBob   = true;
     float bobAmount = 0.035f;           // bob height (world units)
     float bobSpeed  = 9.0f;             // bob cadence (≈ footstep rate)
-    float bobSway   = 0.0f;             // kept so old scenes still load; not applied
+    float bobSway   = 0.0f;             // roll sway in degrees, once per stride, in step with the bob (0 = off)
     float bobRunScale = 0.8f;           // bob size at run speed (x the walking bob)
     float bobBlend  = 8.0f;             // how fast the bob fades in / out as you start / stop
     float bobGroundGrace = 0.12f;       // s the bob and landing dip still count you as grounded (stairs, slopes)
@@ -757,11 +757,10 @@ public:
                 cam->localPosition = transform->InverseTransformPoint(cleared);
             }
         }
-        // The stride never rolls the view. Pitch and the up/down bob are the
-        // only head motion; Q/E lean is the only roll.
+        // Roll: Q/E lean plus the optional stride sway (bobSway; 0 = none).
         {
             const float shownPitch = lookSmoothing > 0.0f ? m_smooth.Pitch() : pitch;
-            cam->localRotation = Quat::Euler(shownPitch, 0.0f, -m_lean * leanAngle);
+            cam->localRotation = Quat::Euler(shownPitch, 0.0f, -m_lean * leanAngle + m_sway * bobW);
         }
         {
             Vec3 eye = cam->Position();
@@ -890,13 +889,15 @@ private:
     void ApplyHeadBob(float dt, bool grounded, float hSpeed) {
         const float ref = Mathf::Max(0.1f, walkSpeed);
         const bool walking = grounded && hSpeed > 0.3f && m_slideT <= 0.0f;
-        float want = 0.0f;
+        float want = 0.0f, wantSway = 0.0f;
         if (walking && headBob) {
             const float run = runSpeed > walkSpeed ? Mathf::Clamp((hSpeed - walkSpeed) / (runSpeed - walkSpeed), 0.0f, 1.0f) : 0.0f;
             want = bobAmount * Mathf::Min(1.0f, hSpeed / ref) * (1.0f + (bobRunScale - 1.0f) * run);
+            wantSway = bobSway * Mathf::Min(1.0f, hSpeed / ref) * (1.0f + (bobRunScale - 1.0f) * run);
         }
         m_bobAmp += (want - m_bobAmp) * EaseFactor(bobBlend, dt);
-        if (walking || m_bobAmp > 1e-4f) {
+        m_swayAmp += (wantSway - m_swayAmp) * EaseFactor(bobBlend, dt);
+        if (walking || m_bobAmp > 1e-4f || std::fabs(m_swayAmp) > 1e-3f) {
             const float prev = m_bobPhase;
             float cadence = bobSpeed * Mathf::Max(0.4f, hSpeed / ref);
             if (Character* ch = FindCharacter()) {
@@ -910,10 +911,12 @@ private:
                 if (onFootstep) onFootstep((m_steps & 1) != 0);
             }
         } else {
-            m_bobAmp = 0.0f; m_bobPhase = 0.0f;
+            m_bobAmp = 0.0f; m_swayAmp = 0.0f; m_bobPhase = 0.0f;
         }
         m_bob  = std::sin(m_bobPhase) * m_bobAmp;
-        m_sway = 0.0f;
+        // One roll cycle per stride (left foot, right foot), a quarter cycle
+        // behind the bob. Fades with the bob, so airborne it eases out smoothly.
+        m_sway = std::cos(m_bobPhase * 0.5f) * m_swayAmp;
     }
 
     Vec2 m_lastMouse{0, 0};
@@ -934,7 +937,8 @@ private:
     bool  m_drove = false;           // simulated at least once
     bool  m_owned = false;           // this controller ran last frame
     float m_bobPhase = 0.0f, m_bob = 0.0f;   // walking view-bob state
-    float m_bobAmp = 0.0f, m_sway = 0.0f;    // the bob's eased size, the sideways sway
+    float m_bobAmp = 0.0f, m_sway = 0.0f;    // the bob's eased size, the sway roll (degrees)
+    float m_swayAmp = 0.0f;                  // the sway's eased size (degrees)
     float m_sinceGround = 0.0f;              // s since grounded (bobGroundGrace)
     float m_stepOffsetY = 0.0f;              // eye smoothing: the step still being eased out
     float m_lastBodyY = 0.0f; bool m_haveBodyY = false;

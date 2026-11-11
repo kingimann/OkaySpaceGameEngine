@@ -105,7 +105,7 @@ void RegisterFirstPersonController() {
      .AddBool("headBob", &FirstPersonController::headBob).Tooltip("Up-and-down view bob while walking")
      .AddFloat("bobAmount", &FirstPersonController::bobAmount).Range(0, 1000, 0.01).Tooltip("Bob height (world units)")
      .AddFloat("bobSpeed", &FirstPersonController::bobSpeed).Range(0, 10000, 0.1).Tooltip("Bob cadence (≈ footstep rate)")
-     .AddFloat("bobSway", &FirstPersonController::bobSway).Range(-kBig, kBig, 0.1).Tooltip("Unused; kept so older scenes still load")
+     .AddFloat("bobSway", &FirstPersonController::bobSway).Range(0, 15, 0.1).Tooltip("Side-to-side camera roll while walking, in degrees, once per stride in step with the bob (0 = off). Fades out in the air and when you stop")
      .AddFloat("bobRunScale", &FirstPersonController::bobRunScale).Range(0, 1000, 0.01).Tooltip("Bob size at run speed (x the walking bob)")
      .AddFloat("bobBlend", &FirstPersonController::bobBlend).Range(0, 1000, 0.1).Tooltip("How fast the bob fades in / out as you start / stop")
      .AddFloat("bobGroundGrace", &FirstPersonController::bobGroundGrace).Range(0, 3600, 0.05).Tooltip("S the bob and landing dip still count you as grounded (stairs, slopes)")

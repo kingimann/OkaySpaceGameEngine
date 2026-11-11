@@ -396,6 +396,11 @@ static void TestRegistryBasics() {
     SubLight* sl = go->AddComponent<SubLight>();
     CHECK(PropertyRegistry::FindFor(*sl) == nullptr);
 
+    {   // bobSway is a real, editable setting now
+        auto fpc = PropertyRegistry::FindByName("FirstPersonController");
+        CHECK(fpc && fpc->Find("bobSway") && !fpc->Find("bobSway")->IsHidden());
+        CHECK(fpc && fpc->Find("bobAmount") && !fpc->Find("bobAmount")->IsHidden());
+    }
     CHECK(light->Find("intensity") != nullptr);
     CHECK(light->Find("Intensity") == light->Find("intensity"));
     CHECK(light->Find("nothing") == nullptr);

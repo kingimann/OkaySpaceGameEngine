@@ -77,6 +77,11 @@ inline std::string VsDefaultFor(okay::vs::PinType t) {
     }
 }
 
+// Set by VisualScriptFriendly.hpp: renames the pins of an engine-API doc to the
+// plain-English names the editor shows, and documents the text-script builtin nodes.
+inline void (*VsApiDocFixup)(const okay::vs::VsApiEntry&, VsNodeDoc&) = nullptr;
+inline const VsNodeDoc* (*VsExtraDocFor)(const std::string& type) = nullptr;
+
 inline const VsNodeDoc* VsApiDoc(const okay::vs::VsApiEntry& e) {
     static std::unordered_map<std::string, VsNodeDoc> cache;
     auto it = cache.find(e.type);
@@ -125,6 +130,7 @@ inline const VsNodeDoc* VsApiDoc(const okay::vs::VsApiEntry& e) {
         d.pins.push_back({false, false, p.name, typ,
                           p.name + " (" + typ + "), the value " + e.code + " gives back.", ""});
     }
+    if (VsApiDocFixup) VsApiDocFixup(e, d);
     auto placed = cache.emplace(e.type, std::move(d));
     return &placed.first->second;
 }
@@ -133,6 +139,7 @@ inline const VsNodeDoc* VsNodeDocFor(const std::string& type) {
     auto it = VsHandDocs().find(type);
     if (it != VsHandDocs().end()) return &it->second;
     if (const okay::vs::VsApiEntry* e = okay::vs::VsApiFind(type)) return VsApiDoc(*e);
+    if (VsExtraDocFor) return VsExtraDocFor(type);
     return nullptr;
 }
 

@@ -1,0 +1,84 @@
+okayscene 1
+name "VS Playground: Movement"
+gravity 0 0
+gravity3 0 0 0
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 9 -16 0 0 0 1 1 1 1
+    camera 1 5 52 0.11 0.13 0.17 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Instructions"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    text "Press Play. Blue orbits the pillar, green bobs and spins, yellow walks a square, white follows green, purple tweens, orange is knocked away. Select a cube and watch its pins." 1 0.96 0.82 1 2.15 1 18 16 0 1 0 0 0 0.72 1 1 0 0 0 0 0 1 0 1080 150 0 1 0.05 0.06 0.09 0.9 0 1.15 0 1
+end
+gameobject 2 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.15 2 0 0 0 1 16 0.3 16
+    mesh "Cube" 0.18 0.2 0.24 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 3 "Centre"
+  active 1
+  parent -1
+  transform 0 1.0 0 0 0 0 1 0.7 2.2 0.7
+    mesh "Cylinder" 0.55 0.58 0.62 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 4 "Orbiter"
+  active 1
+  parent -1
+  transform 3.2 0.5 0 0 0 0 1 1 1 1
+    mesh "Cube" 0.25 0.55 0.95 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    visualscript ""
+    visualscriptpath "movement.okayvs"
+end
+gameobject 5 "Bobber"
+  active 1
+  parent -1
+  transform -3.2 0.5 1.5 0 0 0 1 1 1 1
+    mesh "Cube" 0.3 0.82 0.4 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    visualscript ""
+    visualscriptpath "movement.okayvs"
+end
+gameobject 6 "Walker"
+  active 1
+  parent -1
+  transform 0 0.5 0.2 0 0 0 1 0.7 0.7 0.7
+    mesh "Cube" 0.95 0.8 0.25 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    visualscript ""
+    visualscriptpath "movement.okayvs"
+end
+gameobject 7 "Follower"
+  active 1
+  parent -1
+  transform -1.5 0.5 -3 0 0 0 1 0.7 0.7 0.7
+    mesh "Cube" 0.92 0.92 0.95 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    visualscript ""
+    visualscriptpath "movement.okayvs"
+end
+gameobject 8 "Tween"
+  active 1
+  parent -1
+  transform 2 0.5 -3 0 0 0 1 1 1 1
+    mesh "Cube" 0.72 0.4 0.9 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    visualscript ""
+    visualscriptpath "movement.okayvs"
+end
+gameobject 9 "Knocker"
+  active 1
+  parent -1
+  transform -2.2 0.5 3.2 0 0 0 1 0.6 0.6 0.6
+    mesh "Cube" 0.95 0.45 0.2 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    visualscript ""
+    visualscriptpath "movement.okayvs"
+end

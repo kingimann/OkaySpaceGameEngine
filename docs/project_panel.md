@@ -24,13 +24,27 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
   30 deletions are kept), so **Ctrl+Z** in the Project panel brings them back. Ctrl+Z also undoes a create, rename,
   move, paste or duplicate.
 - **Find References.** Right-click an asset: lists what uses it and what it uses. Click a line to show it.
-- **Import Settings.** For textures, models and audio, the info strip has an Import Settings button (stored in the
-  asset's `.okaymeta`). The same panel is available to other windows as `oked::projectpanel::DrawImportSettings`.
+- **Import Settings.** For textures and models, the info strip has an Import Settings button (stored in the asset's
+  `.okaymeta`). Everything offered has an effect, and the settings file is copied into a build beside the asset.
+  Textures: **Largest side** (the picture is made smaller when loaded). Filter, Wrap and Mipmaps are honoured by the
+  software and OpenGL renderers but are hidden here until the Direct3D renderers read them (the `.okaymeta` keys and
+  the code stay; one flag, `kShowTextureSamplerSettings` in `ProjectPanelUI.cpp`, shows them again).
+  Models: **Scale** and **Normals** (from the file, calculated with a **Smoothing angle**, or flat) and **Import
+  animations** (off drops the clips and leaves the rest pose). Models apply when the model is added to a scene (rigged
+  parts keep the file's normals); parts already in a scene are not changed. **Apply** reloads the picture right away
+  and redraws a model's preview. Not offered because nothing reads them: sRGB, Compress, and the audio options. The
+  same box is available to other windows as `oked::projectpanel::DrawImportSettings`.
+- **Favourites.** Right-click a file or folder > Add to Favourites. Starred items show a star and are listed under
+  FAVOURITES on the left. They are kept in the project (`.okay/favourites.txt`) and follow renames and moves.
 - **Reimport** reads a file again after you changed it in another program.
 - **Keyboard.** Arrow keys move the selection (Shift adds), Enter opens, Backspace goes up a folder, Home and End jump,
-  Ctrl+A selects all.
+  Ctrl+A selects all. After you click in the folder tree, Up and Down walk the folders, Right opens a folder (then
+  steps into it) and Left closes it (then goes up).
 - **Drag and drop.** Drag assets into the Scene view, the Hierarchy and the Inspector's asset fields (payload `ASSET_PATH`).
-  Drop files from your file manager onto the editor to import them into the folder you are looking at.
+  Drop files or folders from your file manager onto the editor to import them into the folder you are looking at
+  (copied under a free name, all or nothing, and Ctrl+Z takes them out again).
+- **Previews.** Images get a cached thumbnail. Prefabs, scenes and models are rendered into a small picture (a few per
+  frame); if one cannot be drawn, the type icon shows instead.
 - Changes made outside the editor show up on their own (the panel checks again every couple of seconds, and waits
   longer on big projects).
 
@@ -43,17 +57,17 @@ spaces and non-English letters are fine; names the operating system would refuse
 ## How it is built
 
 - `editor/ProjectBrowser.hpp/.cpp`: all of the logic, with no window code: folder listing and sorting, file
-  operations with undo, reference rewriting, delete reference lists, the clipboard. It is built on
-  `okay::AssetDatabase` (see `asset_database.md`). A test hook makes any file step fail.
+  operations with undo, reference rewriting, delete reference lists, favourites, import from outside, the clipboard.
+  Metas and GUIDs come from `okay::AssetDatabase` (see `asset_database.md`). A test hook makes any file step fail.
 - `editor/ProjectPanelUI.hpp/.cpp`: the name prompt, delete confirmation, references list and import-settings editor.
 - `DrawProject` in `editor/main.cpp` draws the panel and calls the above.
 - Tests: `tests/test_project_panel.cpp` (ctest name `project_panel`).
 
 ## Things to know
 
-- The first time the panel opens a project, the asset database indexes it and writes a small `.okaymeta` file next to
-  every asset (it holds the GUID, labels and import settings). Commit them with the assets. They are never shown in
-  the panel.
-- Import settings are stored and signalled, but the importers do not read them yet.
+- Opening a project writes nothing. A `.okaymeta` file (the asset's GUID and import settings) is made only for an
+  asset that is given non-default import settings. Commit those with the asset. They are never shown in the panel.
 - Rewriting finds references by reading text assets (scenes, prefabs, materials, clips, dialogue, ...). A path built in
-  a script at run time, or stored in a binary file, is not found.
+  a script at run time, or stored in a binary file, is not found. The panel keeps a small index of what each text
+  asset names and refreshes it when the files change.
+- The **Scenes In Build** list follows a renamed or moved scene.

@@ -44,6 +44,7 @@
 #include "OkayScriptUIBridge.hpp"
 #include "OkayTestPanel.hpp"
 #endif
+#include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -1277,6 +1278,7 @@ int main(int argc, char** argv) {
         bool runInBackground = true;
         bool fullscreenToggle = true;    // Alt+Enter / F11 switches fullscreen
         bool muteOnFocusLoss = false;
+        bool development = false;        // Build Settings > Development build: allows the F1 developer test panel
         bool startMaximized = false;
         int  minWidth = 0, minHeight = 0;
         std::string company = "OkaySpace";
@@ -1320,6 +1322,7 @@ int main(int argc, char** argv) {
             else if (k == "quit_on_escape") cfg.quitOnEscape = std::atoi(v.c_str()) != 0;
             else if (k == "volume")     cfg.volume = (float)std::atof(v.c_str());
             else if (k == "show_fps")   cfg.showFps = std::atoi(v.c_str()) != 0;
+            else if (k == "development") cfg.development = std::atoi(v.c_str()) != 0;
             else if (k == "lock_cursor") cfg.lockCursor = std::atoi(v.c_str()) != 0;
             else if (k == "cursor_lock") {
                 cfg.sawCursorMode = true;
@@ -1466,9 +1469,17 @@ int main(int argc, char** argv) {
     Scene scene("Game");
     scene.UseFixedStepPhysics(true);   // same physics at any frame rate, drawn smoothly
     std::string err;
+    // Development build: write <game>.log (see shared/DevLog.hpp). Release builds write nothing.
+    const bool devPanels = cfg.development || (std::getenv("OKAY_DEV") && std::getenv("OKAY_DEV")[0] && std::getenv("OKAY_DEV")[0] != '0');
+    okay::devlog::Start(devPanels, okay::devlog::LogPathFor(argv[0], baseDir), saveDir + "game.log",
+                        cfg.title, "", scenePath);
+    okay::devlog::HitchWatch hitchWatch;
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
         SDL_Log("Could not load %s: %s", scenePath.c_str(), err.c_str());
+        okay::Log::Error("[scene] could not load '", scenePath, "': ", err);
         // Keep running with an empty scene rather than failing outright.
+    } else {
+        okay::Log::Info("[scene] loaded '", scenePath, "'");
     }
     if (dedicatedServer) {   // headless: run the scene as the server until stopped
         std::printf("[server] scene %s\n", scenePath.c_str());
@@ -1684,7 +1695,7 @@ int main(int argc, char** argv) {
 
     bool running = true;
 #ifdef OKAY_HAVE_OKAYUI
-    bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
+    bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay (development builds only)
     if (std::getenv("OKAY_TESTUI")) g_testUI = true;   // dev screenshot hook
     // Safe-area insets (fractions of the screen: "left,top,right,bottom") for UI Safe
     // Area containers, from the platform / a launcher, or to test a phone layout.
@@ -1788,7 +1799,7 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
 #ifdef OKAY_HAVE_OKAYUI
-            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F1) g_testUI = !g_testUI;
+            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F1 && devPanels) g_testUI = !g_testUI;
             if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F3) g_statsUI = !g_statsUI;
             if (e.type == SDL_MOUSEWHEEL) g_uiWheel += (float)e.wheel.y;   // for OkayUI scrolling
             if (g_testUI || okay::ServerBrowser::Shared().windowOpen) {   // OkayUI text fields need the typing
@@ -1981,6 +1992,7 @@ int main(int argc, char** argv) {
         Uint64 now = SDL_GetPerformanceCounter();
         const float measuredDt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
+        if (okay::devlog::Active()) hitchWatch.Frame(measuredDt);
         // The game steps by an evened-out frame time (vsync: whole refresh
         // periods; the loop does it). The refresh rate is re-read now and then
         // (the window can move to another display).
@@ -2756,6 +2768,7 @@ int main(int argc, char** argv) {
     }
 
     AudioMixer::SaveSettings();
+    okay::devlog::Stop();
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 
     for (auto& kv : textureCache)

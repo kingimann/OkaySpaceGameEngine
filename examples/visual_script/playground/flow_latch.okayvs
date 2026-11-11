@@ -1,0 +1,22 @@
+# Latch Gate: Toggle is true every frame, so the gate flips open and closed. It passes every second frame.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 LatchGate
+pos 2 320 40
+default 2 2 true
+exec 1 0 2
+node 3 AddVar passes
+pos 3 600 40
+default 3 0 1
+exec 2 0 3
+node 4 GetVar passes
+pos 4 600 240
+node 5 Concat
+pos 5 860 240
+default 5 0 "Latch Gate passes: "
+data 5 1 4 0
+node 6 SetText Readout
+pos 6 1120 40
+exec 3 0 6
+data 6 0 5 0

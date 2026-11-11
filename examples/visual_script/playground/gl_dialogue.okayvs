@@ -1,0 +1,58 @@
+# Gameplay library: dialogue. Every node below is declared here; the first chain runs in Play.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 StartDialogue
+pos 2 300 40
+exec 1 0 2
+node 3 GlGetDialogueLine
+pos 3 560 240
+node 4 SetVar line
+pos 4 560 40
+exec 2 0 4
+data 4 0 3 0
+node 5 GlAdvanceDialogue
+pos 5 820 40
+exec 4 0 5
+node 6 GlGetDialogueOptionCount
+pos 6 820 240
+node 7 SetVar options
+pos 7 1080 40
+exec 5 0 7
+data 7 0 6 0
+node 8 GlChooseDialogueOption
+pos 8 1340 40
+default 8 0 0
+exec 7 0 8
+node 9 GlGetDialogueLine
+pos 9 1340 240
+node 10 SetVar answer
+pos 10 1600 40
+exec 8 0 10
+data 10 0 9 0
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 106
+exec 106 0 107
+exec 107 0 108
+node 100 GlIsDialogueRunning
+pos 100 40 520
+node 101 GlGetDialogueLine
+pos 101 300 520
+node 102 GlGetDialogueSpeaker
+pos 102 560 520
+node 103 GlIsDialogueWaitingForChoice
+pos 103 820 520
+node 104 GlGetDialogueOptionCount
+pos 104 1080 520
+node 105 GlGetDialogueOptionText
+pos 105 1340 520
+default 105 0 1
+node 106 GlAdvanceDialogue
+pos 106 40 710
+node 107 GlChooseDialogueOption
+pos 107 300 710
+default 107 0 0
+node 108 GlStopDialogue
+pos 108 560 710

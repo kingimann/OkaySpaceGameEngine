@@ -1,0 +1,100 @@
+# Interaction. Branches are named after the objects they run on.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 GetName
+pos 2 40 240
+node 3 SwitchString "Player, Door, Lever, Coin, Zone, Carrier"
+pos 3 340 40
+node 4 DoorOpen
+pos 4 760 40
+default 4 0 80
+default 4 1 0.6
+node 5 DoorClose
+pos 5 1040 40
+default 5 0 0.5
+node 6 Lever
+pos 6 760 200
+node 7 Collect
+pos 7 760 340
+default 7 0 5
+node 8 FindObject Gem
+pos 8 40 420
+node 9 PickUp
+pos 9 760 480
+node 10 Drop
+pos 10 1040 480
+node 11 OnUpdate
+pos 11 40 680
+entry OnUpdate 11
+node 12 SwitchString "Player, Door, Lever, Coin, Zone, Carrier"
+pos 12 340 680
+node 13 FindObject Door
+pos 13 40 860
+node 14 Proximity
+pos 14 760 680
+default 14 1 8
+node 15 SetVar near_door
+pos 15 1040 680
+node 16 OnInteract
+pos 16 40 1040
+entry OnInteract 16
+node 17 SwitchString "Player, Door, Lever, Coin, Zone, Carrier"
+pos 17 340 1040
+node 18 Other
+pos 18 340 1220
+node 19 PickUp
+pos 19 760 1040
+node 20 OnTagEnter player
+pos 20 40 1400
+entry OnTagEnter:player 20
+node 21 SwitchString "Player, Door, Lever, Coin, Zone, Carrier"
+pos 21 340 1400
+node 22 SetVar entered
+pos 22 760 1400
+default 22 0 1
+node 23 OnTagStay player
+pos 23 40 1600
+entry OnTagStay:player 23
+node 24 SwitchString "Player, Door, Lever, Coin, Zone, Carrier"
+pos 24 340 1600
+node 25 SetVar staying
+pos 25 760 1600
+default 25 0 1
+node 26 OnTagExit player
+pos 26 40 1800
+entry OnTagExit:player 26
+node 27 SwitchString "Player, Door, Lever, Coin, Zone, Carrier"
+pos 27 340 1800
+node 28 SetVar left
+pos 28 760 1800
+default 28 0 1
+exec 1 0 3
+data 3 0 2 0
+exec 3 1 4
+exec 4 0 5
+exec 3 2 6
+exec 3 3 7
+exec 3 5 9
+data 9 0 8 0
+exec 9 0 10
+data 10 0 8 0
+exec 11 0 12
+data 12 0 2 0
+exec 12 0 15
+data 15 0 14 0
+data 14 0 13 0
+exec 16 0 17
+data 17 0 2 0
+exec 17 0 19
+data 19 0 18 0
+exec 20 0 21
+data 21 0 2 0
+exec 21 4 22
+exec 23 0 24
+data 24 0 2 0
+exec 24 4 25
+exec 26 0 27
+data 27 0 2 0
+exec 27 4 28
+comment 20 1980 1500 80 4 "Press E near something to pick it up. The door swings on its own."

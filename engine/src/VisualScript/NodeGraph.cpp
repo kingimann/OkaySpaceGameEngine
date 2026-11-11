@@ -1,4 +1,5 @@
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/NodeAliases.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
@@ -11,9 +12,17 @@
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
 #include "okay/VisualScript/NodesStory.hpp"
+#include "okay/VisualScript/NodesLogic.hpp"
+#include "okay/VisualScript/NodesGameplay.hpp"
+#include "okay/VisualScript/NodesLogicRound.hpp"
+#include "okay/VisualScript/NodesSmart.hpp"
+#include "okay/VisualScript/NodesLibrary.hpp"
+#include "okay/VisualScript/NodesGameplayLib.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -98,27 +107,70 @@ VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     return v;
 }
 
-bool NodeGraph::CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
-                             const VsNode* caller, VsContext& ctx) {
+NodeGraph::CallResult NodeGraph::CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
+                                                  const VsNode* caller, VsContext& ctx, int* suspendedAt) {
     const int start = FunctionNode(name);
     if (start < 0) {
         ReportError(caller, ctx, name.empty() ? std::string("no function is picked to call")
                                               : "there's no function named '" + name + "' in this graph");
-        return false;
+        return CallResult::Failed;
     }
     if ((int)m_frames.size() >= kMaxCallDepth) {
         ReportError(caller, ctx, "function '" + name + "' was called more than " + std::to_string(kMaxCallDepth) +
                                  " deep (a function calling itself with no way to stop?); the call was skipped");
-        return false;
+        return CallResult::Failed;
     }
     Frame f; f.name = name; f.args = std::move(args);
     m_frames.push_back(std::move(f));
-    // The body runs as a nested chain: it shares the event's step budget, so a
-    // function looping forever is stopped like any other runaway loop.
-    Run(start, ctx);
-    rets = std::move(m_frames.back().rets);
-    m_frames.pop_back();
-    return !m_abort;
+    // Propagate a pause so a Delay in the body waits the caller instead of being refused.
+    const RunStatus st = Run(start, ctx, false, true);
+    if (st == RunStatus::Suspended) {
+        if (suspendedAt) *suspendedAt = TakeSuspendNode();
+        return CallResult::Suspended;
+    }
+    if (!m_frames.empty()) {
+        rets = std::move(m_frames.back().rets);
+        m_frames.pop_back();
+    }
+    return m_abort ? CallResult::Failed : CallResult::Done;
+}
+
+void NodeGraph::StashFrames(int depthBefore, std::vector<VsHeldFrame>& out) {
+    out.clear();
+    if (depthBefore < 0) depthBefore = 0;
+    if ((int)m_frames.size() <= depthBefore) return;
+    for (int i = depthBefore; i < (int)m_frames.size(); ++i) {
+        Frame& f = m_frames[(std::size_t)i];
+        VsHeldFrame h;
+        h.name = std::move(f.name);
+        h.args = std::move(f.args);
+        h.rets = std::move(f.rets);
+        h.returned = f.returned;
+        h.locals.assign(f.locals.begin(), f.locals.end());
+        std::sort(h.locals.begin(), h.locals.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        out.push_back(std::move(h));
+    }
+    m_frames.resize((std::size_t)depthBefore);
+}
+
+void NodeGraph::RestoreFrames(std::vector<VsHeldFrame>& in) {
+    for (VsHeldFrame& h : in) {
+        Frame f;
+        f.name = std::move(h.name);
+        f.args = std::move(h.args);
+        f.rets = std::move(h.rets);
+        f.returned = h.returned;
+        for (auto& kv : h.locals) f.locals.emplace(std::move(kv.first), std::move(kv.second));
+        m_frames.push_back(std::move(f));
+    }
+    in.clear();
+}
+
+void NodeGraph::FinishCall(int depthBefore, std::vector<VsValue>& rets) {
+    if (depthBefore < 0) depthBefore = 0;
+    if ((int)m_frames.size() > depthBefore)
+        rets = std::move(m_frames[(std::size_t)depthBefore].rets);
+    if ((int)m_frames.size() > depthBefore) m_frames.resize((std::size_t)depthBefore);
 }
 
 bool NodeGraph::ResolveTarget(VsNode* n, VsContext& ctx, GameObject*& out) {
@@ -140,6 +192,12 @@ std::string VsObjectName(std::uint64_t id) {
 }
 bool VsObjectAlive(std::uint64_t id) { return id && GameObject::FromInstanceId(id) != nullptr; }
 
+namespace {
+VsRuntimeErrorHook g_errorHook = nullptr;
+}
+
+void SetRuntimeErrorHook(VsRuntimeErrorHook hook) { g_errorHook = hook; }
+
 void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& what) {
     const int nodeId = n ? n->fileId : -1;
     ++m_errorCount;
@@ -147,12 +205,56 @@ void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& 
     m_lastError = what;
     m_lastErrorNode = nodeId;
     std::string where;
-    if (n && !n->type.empty()) where = " at node '" + n->type + "' (#" + std::to_string(n->fileId) + ")";
+    if (!debugKey.empty()) where += " (" + debugKey + ")";
+    if (n && !n->type.empty()) where += " at node '" + n->type + "' (#" + std::to_string(n->fileId) + ")";
     const std::string obj = ctx.gameObject ? ctx.gameObject->name : std::string("?");
     Log::Error("Visual Script on '", obj, "'", where, ": ", what);
+    if (g_errorHook) {
+        VsRuntimeError e;
+        e.graphKey = debugKey;
+        e.event = m_event;
+        e.fileId = nodeId;
+        e.nodeType = n ? n->type : std::string();
+        e.objectName = obj;
+        e.message = what;
+        g_errorHook(e);
+    }
 }
 
-void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
+void NodeGraph::CancelSuspended() {
+    for (int id : m_suspended)
+        if (VsNode* n = Node(id)) n->OnSuspendRejected();
+    m_suspended.clear();
+}
+
+void NodeGraph::CaptureFlow(std::vector<VsFlowRecord>& flows, std::vector<int>& suspendedFileIds) const {
+    flows.clear();
+    suspendedFileIds.clear();
+    for (const auto& n : m_nodes) {
+        if (!n || n->fileId < 0) continue;
+        VsFlowRecord r;
+        r.fileId = n->fileId;
+        r.type = n->type;
+        if (n->SaveFlow(r)) flows.push_back(std::move(r));
+    }
+    for (int id : m_suspended)
+        if (VsNode* n = Node(id))
+            if (n->fileId >= 0) suspendedFileIds.push_back(n->fileId);
+}
+
+void NodeGraph::RestoreFlow(const std::vector<VsFlowRecord>& flows, const std::vector<int>& suspendedFileIds) {
+    for (const VsFlowRecord& r : flows) {
+        VsNode* n = Node(NodeByFileId(r.fileId));
+        if (!n || n->type != r.type) continue;
+        n->LoadFlow(r, *this);
+    }
+    for (int fid : suspendedFileIds) {
+        const int id = NodeByFileId(fid);
+        if (id >= 0 && !IsSuspended(id)) m_suspended.push_back(id);
+    }
+}
+
+NodeGraph::RunStatus NodeGraph::Run(int entryNode, VsContext& ctx, bool resume, bool propagateSuspend) {
     // One budget per event: a top-level Run starts it, loop bodies and sequence
     // outputs (nested Runs) share it, so nested loops can't freeze the game.
     if (m_runDepth == 0) { m_steps = 0; m_reads = 0; m_abort = false; m_loops.clear(); m_loopSignal = kLoopNone; }
@@ -162,11 +264,13 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         ReportError(Node(entryNode), ctx, "loops and sequences are nested more than " + std::to_string(kMaxRunDepth) +
                                           " deep (a loop's Body wired back into the loop itself?); the event stopped");
         m_abort = true;
-        return;
+        return RunStatus::Done;
     }
     ++m_runDepth;
+    m_suspendAt = -1;
     int cur = entryNode;
     bool first = true;
+    RunStatus status = RunStatus::Done;
     while (cur >= 0 && !Aborted()) {
         VsNode* n = Node(cur);
         if (!n) break;
@@ -209,12 +313,11 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
             m_resuming = false;
         }
         first = false;
-        if (outPin == kSuspend && !m_frames.empty()) {
-            // A function has to finish before its caller carries on: there's no
-            // caller to come back to next frame.
-            ReportError(n, ctx, "Delay / Wait can't pause inside a function (a function runs to the end at once); "
-                                "the function stopped here");
-            m_frames.back().returned = true;
+        // A pause inside a function is a latent call: propagate it so the Call
+        // Function node can park and keep the frame. The caller waits.
+        if (outPin == kSuspend && propagateSuspend) {
+            m_suspendAt = cur;
+            status = RunStatus::Suspended;
             break;
         }
         if (outPin == kSuspend) {   // park here; Resume() continues from this node
@@ -225,6 +328,7 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         cur = (outPin < (int)n->execOut.size()) ? n->execOut[outPin] : -1;
     }
     --m_runDepth;
+    return status;
 }
 
 int TargetPinFor(const std::string& type) {
@@ -278,6 +382,8 @@ int ArgInt(const std::string& a, int def) {
 std::unique_ptr<VsNode> MakeNode(const std::string& type,
                                  const std::vector<std::string>& argsIn,
                                  std::string* err) {
+    if (const std::string canon = CanonicalNodeType(type); canon != type)
+        return MakeNode(canon, argsIn, err);
     // A node whose text field was left blank gets a sensible default instead of
     // failing — one empty "Set Var" used to stop the whole graph from loading.
     std::vector<std::string> args = argsIn;
@@ -309,6 +415,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "OnLanguageChanged") return std::make_unique<EventNode>();   // Event Name = the new language
     // Engine-API nodes ("Transform.Translate/3"): generated from the script bindings.
     if (auto api = MakeApiNode(type)) return api;
+    // Fn.<builtin> and the property / method / snippet escape hatches.
+    if (auto cov = MakeCoverageNode(type, args)) return cov;
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
         type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||
@@ -609,9 +717,17 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     // Loops, lists, scene / global variables (NodesLoops.hpp).
     if (type == "While")          return std::make_unique<WhileNode>();
     if (type == "ForEach")        return std::make_unique<ForEachNode>();
+    if (type == "ForEachMap")     return std::make_unique<ForEachMapNode>();
     if (type == "Break")          return std::make_unique<LoopJumpNode>(true);
     if (type == "Continue")       return std::make_unique<LoopJumpNode>(false);
     if (type == "NewList")        return std::make_unique<NewListNode>();
+    if (type == "NewMap")         return std::make_unique<NewMapNode>();
+    if (type == "MapSet")         return std::make_unique<MapSetNode>();
+    if (type == "MapRemove")      return std::make_unique<MapRemoveNode>();
+    if (type == "MapGet")         return std::make_unique<MapGetNode>();
+    if (type == "MapHas")         return std::make_unique<MapHasNode>();
+    if (type == "MapKeys")        return std::make_unique<MapKeysNode>();
+    if (type == "MapValues")      return std::make_unique<MapValuesNode>();
     if (type == "ListAdd")        return std::make_unique<ListAddNode>();
     if (type == "ListRemoveAt")   return std::make_unique<ListRemoveAtNode>();
     if (type == "ListGet")        return std::make_unique<ListGetNode>();
@@ -639,6 +755,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "FindObject")     return std::make_unique<FindObjectNode>(argOr(""));
     if (type == "GetName")        return std::make_unique<ObjectInfoNode>(false);
     if (type == "GetTag")         return std::make_unique<ObjectInfoNode>(true);
+    if (type == "MouseGround") return std::make_unique<MouseGroundNode>();
     if (type == "MouseButton" || type == "MouseButtonDown") {
         // 0/1/2 or left/right/middle (what the editor's button picker writes is 0/1/2).
         int b = 0;
@@ -714,6 +831,16 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "Gate")       return std::make_unique<GateNode>();
     if (type == "DoN")        return std::make_unique<DoNNode>(args.empty() ? 1 : ArgInt(args[0], 1));
     if (type == "SwitchInt")  return std::make_unique<SwitchIntNode>();
+    if (type == "SwitchString" || type == "SwitchCases" || type == "LatchGate" || type == "CallScript" || type == "RunGraph") {
+        std::string text;
+        for (const auto& a : args) { if (!text.empty()) text += ' '; text += a; }
+        if (type == "SwitchString") return std::make_unique<SwitchStringNode>(text);
+        if (type == "SwitchCases")  return std::make_unique<SwitchCasesNode>(text);
+        if (type == "LatchGate")    return std::make_unique<LatchGateNode>(text);
+        if (type == "CallScript")   return std::make_unique<CallScriptNode>(text.empty() ? std::string("main") : text);
+        return std::make_unique<RunGraphNode>(text);
+    }
+    if (type == "IsValid")      return std::make_unique<IsValidNode>();
     if (type == "RandomInt")  return std::make_unique<RandomIntNode>();
     using M3 = MathFn3Node::Op;
     if (type == "Ceil")       return std::make_unique<MathFn3Node>(M3::Ceil);
@@ -763,6 +890,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "SetTimeScale")   return std::make_unique<SetTimeScaleNode>();
     if (type == "SetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), true);
     if (type == "GetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), false);
+    if (auto play = MakeGameplayNode(type, args)) return play;
+    if (auto logic = MakeLogicRoundNode(type, args)) return logic;
+    if (auto smart = MakeSmartNode(type, args)) return smart;
+    if (auto lib = MakeLibraryNode(type)) return lib;
+    if (auto gl = MakeGameplayLibNode(type)) return gl;
     if (type == "MouseWheel")  return std::make_unique<EngineReadNode>(EngineReadNode::Op::MouseWheel);
     if (type == "TimeScale")   return std::make_unique<EngineReadNode>(EngineReadNode::Op::TimeScale);
     if (type == "FrameCount")  return std::make_unique<EngineReadNode>(EngineReadNode::Op::FrameCount);
@@ -944,6 +1076,10 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             if (!pinOk(x.pin)) return fail("default " + pinRange);
             x.v = ParseValue(tok[3]);
             defaults.push_back(x);
+        } else if (kind == "var") {
+            // var <name> <value>: a starting value, shown in the Inspector.
+            if (tok.size() < 3) return fail("var needs <name> <value>");
+            graph->AddExposedVar(tok[1], ParseValue(tok[2]));
         } else if (kind == "pos" || kind == "comment") {
             // Editor layout (node positions, comment frames): nothing to run.
         } else {
@@ -979,6 +1115,19 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         int n = resolve(en.fileId, ok);
         if (!ok) return fail("entry references unknown node");
         graph->SetEntry(en.name, n);
+    }
+    // Old Switch (name) / Switch (cases) files put Default on pin 4. Fewer than
+    // four cases now put Default on the pin just after the last case.
+    for (const auto& node : graph->m_nodes) {
+        int ncases = -1;
+        if (auto* s = dynamic_cast<SwitchStringNode*>(node.get())) ncases = s->CaseCount();
+        else if (auto* s = dynamic_cast<SwitchCasesNode*>(node.get())) ncases = s->CaseCount();
+        if (ncases < 0 || ncases >= kLegacySwitchDefault) continue;
+        if (kLegacySwitchDefault >= (int)node->execOut.size() || node->execOut[kLegacySwitchDefault] < 0) continue;
+        if (ncases < (int)node->execOut.size() && node->execOut[ncases] >= 0) continue;
+        const int to = node->execOut[kLegacySwitchDefault];
+        node->execOut[kLegacySwitchDefault] = -1;
+        graph->ConnectExec(node->id, ncases, to);
     }
     return graph;
 }

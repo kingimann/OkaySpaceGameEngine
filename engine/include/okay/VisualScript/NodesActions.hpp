@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/Components/ActionList.hpp"
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
@@ -63,10 +64,20 @@ struct DelayNode : VsNode {
     bool  waiting = false;
     explicit DelayNode(float s) : seconds(s) {}
     int ExecOutCount() const override { return 1; }
+    void OnSuspendRejected() override { waiting = false; }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!waiting) return false;
+        r.b0 = true; r.f0 = left; r.f1 = seconds;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override {
+        waiting = r.b0; left = r.f0;
+        if (r.f1 > 0.0f) seconds = r.f1;
+    }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (!g.Resuming()) {
             if (waiting) return -1;   // already counting down
-            if (seconds <= 0.0f) return 0;
+            if (!(seconds > 0.0f)) return 0;   // zero, negative, or not a real number: don't park the chain
             waiting = true; left = seconds;
             return NodeGraph::kSuspend;
         }

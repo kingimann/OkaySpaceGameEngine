@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -81,7 +82,9 @@ struct BinaryOpNode : VsNode {
             case Op::Add: return a + b;
             case Op::Sub: return a - b;
             case Op::Mul: return a * b;
-            case Op::Div: return b != 0.0f ? a / b : 0.0f;
+            case Op::Div:
+                if (b == 0.0f) { g.Error(this, ctx, "divided by zero; the result is 0"); return 0.0f; }
+                return a / b;
         }
         return 0.0f;
     }
@@ -91,8 +94,29 @@ struct CompareNode : VsNode {
     enum class Op { Gt, Lt, Ge, Le, Eq, Ne } op;
     explicit CompareNode(Op o) : op(o) {}
     VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
-        float a = In(0, g, ctx).AsFloat();
-        float b = In(1, g, ctx).AsFloat();
+        const VsValue av = In(0, g, ctx);
+        const VsValue bv = In(1, g, ctx);
+        if (av.IsObject() || bv.IsObject()) {
+            if (op != Op::Eq && op != Op::Ne) {
+                g.Error(this, ctx, "objects can only be compared as the same or not the same");
+                return false;
+            }
+            const bool eq = av.IsObject() && bv.IsObject() && av.AsObjectId() == bv.AsObjectId();
+            return op == Op::Eq ? eq : !eq;
+        }
+        if (av.IsString() || bv.IsString()) {
+            const int c = av.AsString().compare(bv.AsString());
+            switch (op) {
+                case Op::Gt: return c > 0;
+                case Op::Lt: return c < 0;
+                case Op::Ge: return c >= 0;
+                case Op::Le: return c <= 0;
+                case Op::Eq: return c == 0;
+                case Op::Ne: return c != 0;
+            }
+        }
+        const float a = av.AsFloat();
+        const float b = bv.AsFloat();
         switch (op) {
             case Op::Gt: return a > b;
             case Op::Lt: return a < b;
@@ -133,7 +157,9 @@ struct MathFnNode : VsNode {
         float a = In(0, g, ctx).AsFloat();
         float b = In(1, g, ctx).AsFloat();
         switch (op) {
-            case Op::Mod: return b != 0.0f ? std::fmod(a, b) : 0.0f;
+            case Op::Mod:
+                if (b == 0.0f) { g.Error(this, ctx, "modulo by zero; the result is 0"); return 0.0f; }
+                return std::fmod(a, b);
             case Op::Min: return a < b ? a : b;
             case Op::Max: return a > b ? a : b;
             case Op::Pow: return std::pow(a, b);
@@ -445,7 +471,10 @@ struct SequenceNode : VsNode {
 struct OnceNode : VsNode {
     bool fired = false;
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext&) override {
+    bool SaveFlow(VsFlowRecord& r) const override { if (!fired) return false; r.b0 = true; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { fired = r.b0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (In(0, g, ctx, VsValue{false}).AsBool()) { fired = false; return -1; }   // Reset
         if (fired) return -1;
         fired = true;
         return 0;
@@ -460,10 +489,21 @@ struct TimerNode : VsNode {
     float acc = 0.0f;
     explicit TimerNode(float s) : interval(s > 0.0f ? s : 0.0f) {}
     int ExecOutCount() const override { return 1; }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (acc == 0.0f) return false;
+        r.f0 = acc;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { acc = r.f0; }
     int Exec(NodeGraph&, VsContext& ctx) override {
+        // Zero or negative means "every time". A long frame keeps the leftover,
+        // so the next pass is not a full interval late.
+        if (!(interval > 0.0f)) return 0;
         acc += ctx.deltaTime;
-        if (acc >= interval) { acc = 0.0f; return 0; }
-        return -1;
+        if (acc < interval) return -1;
+        acc -= interval;
+        if (acc > interval * 4.0f) acc = interval * 4.0f;
+        return 0;
     }
 };
 
@@ -471,6 +511,8 @@ struct TimerNode : VsNode {
 struct FlipFlopNode : VsNode {
     bool state = false;
     int ExecOutCount() const override { return 2; }
+    bool SaveFlow(VsFlowRecord& r) const override { if (!state) return false; r.b0 = true; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { state = r.b0; }
     int Exec(NodeGraph&, VsContext&) override {
         state = !state;
         return state ? 0 : 1;
@@ -482,15 +524,34 @@ struct FlipFlopNode : VsNode {
 // spawning N things or repeating an effect.
 struct RepeatNode : VsNode {
     int count;
+    int left = 0;
+    VsLoopLatch latch;
     explicit RepeatNode(int c) : count(c < 0 ? 0 : c) {}
     int ExecOutCount() const override { return 1; }
+    void OnSuspendRejected() override { latch.Finish(); }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!latch.busy) return false;
+        latch.Save(r);
+        r.i0 = left;
+        r.i1 = count;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph& g) override {
+        latch.Load(r, g);
+        left = r.i0;
+        count = r.i1;
+    }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        int nx = Next(0);
+        if (!latch.Begin(g)) return -1;
+        if (!g.Resuming()) left = count;
+        const int nx = Next(0);
         g.EnterLoop();
-        for (int i = 0; i < count && nx >= 0 && !g.Aborted(); ++i) {
-            g.Run(nx, ctx);
-            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak) break;
+        while (left > 0 && nx >= 0 && !g.Aborted()) {
+            if (latch.Step(g, ctx, nx) == NodeGraph::kSuspend) { g.LeaveLoop(); return NodeGraph::kSuspend; }
+            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted()) break;
+            --left;
         }
+        latch.Finish();
         g.LeaveLoop();
         return -1;
     }
@@ -534,9 +595,10 @@ struct SpawnPrefabNode : VsNode {
     int Exec(NodeGraph& gr, VsContext& ctx) override {
         spawned = 0;
         if (ctx.gameObject && ctx.gameObject->scene()) {
-            GameObject* g = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), path);
+            const std::string file = VsBareAsset(path);
+            GameObject* g = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), file);
             if (!g) {
-                gr.Error(this, ctx, "couldn't spawn '" + path + "': the prefab file is missing or invalid");
+                gr.Error(this, ctx, "couldn't spawn '" + file + "': the prefab file is missing or invalid");
                 return 0;
             }
             if (g->transform) {
@@ -562,11 +624,21 @@ struct WaitNode : VsNode {
     bool  waiting = false, done = false;
     explicit WaitNode(float s) : seconds(s) {}
     int ExecOutCount() const override { return 1; }
+    void OnSuspendRejected() override { waiting = false; }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!waiting && !done) return false;
+        r.b0 = waiting; r.b1 = done; r.f0 = acc; r.f1 = seconds;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override {
+        waiting = r.b0; done = r.b1; acc = r.f0;
+        if (r.f1 > 0.0f) seconds = r.f1;
+    }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (done) return 0;
         if (!g.Resuming()) {
             if (waiting) return -1;
-            if (seconds <= 0.0f) { done = true; return 0; }
+            if (!(seconds > 0.0f)) { done = true; return 0; }   // zero, negative, or not a real number
             waiting = true; acc = 0.0f;
             return NodeGraph::kSuspend;
         }
@@ -584,6 +656,14 @@ inline NetworkManager* VsNet(VsContext& ctx, bool create = false) {
     Scene* s = ctx.gameObject->scene();
     NetworkManager* n = s->FindObjectOfType<NetworkManager>();
     if (!n && create) n = s->CreateGameObject("__Network")->AddComponent<NetworkManager>();
+    return n;
+}
+
+// The same, for a node that has to do something: with no network session it says so (the flow carries on)
+// instead of quietly doing nothing, so a graph that forgot Host / Join shows the problem in Problems.
+inline NetworkManager* VsNetOrSay(VsNode* node, NodeGraph& g, VsContext& ctx) {
+    NetworkManager* n = VsNet(ctx);
+    if (!n) g.Error(node, ctx, "there is no network session in this scene yet: run Host or Join first");
     return n;
 }
 
@@ -612,34 +692,42 @@ struct NetHostNode : VsNode {
     int port;
     explicit NetHostNode(int p) : port(p) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx, true)) n->StartServer((std::uint16_t)port); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true))
+            if (!n->StartServer((std::uint16_t)port)) g.Error(this, ctx, "could not start the server on port " + std::to_string(port) + " (is it already in use?)");
+        return 0;
+    }
 };
 struct NetJoinNode : VsNode {
     std::string host; int port;
     NetJoinNode(std::string h, int p) : host(std::move(h)), port(p) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx, true)) n->StartClient(host, (std::uint16_t)port); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNet(ctx, true))
+            if (!n->StartClient(host, (std::uint16_t)port)) g.Error(this, ctx, "could not connect to " + host + ":" + std::to_string(port));
+        return 0;
+    }
 };
 struct NetSendNode : VsNode {
     std::string channel;
     explicit NetSendNode(std::string c) : channel(std::move(c)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Send(channel, In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Send(channel, In(0, g, ctx).AsString()); return 0; }
 };
 struct NetSetVarNode : VsNode {
     std::string key;
     explicit NetSetVarNode(std::string k) : key(std::move(k)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->SetVar(key, In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->SetVar(key, In(0, g, ctx).AsString()); return 0; }
 };
 struct NetDisconnectNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Stop(); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Stop(); return 0; }
 };
 // Broadcast a chat line (in0 = text).
 struct NetChatNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Chat(In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Chat(In(0, g, ctx).AsString()); return 0; }
 };
 // RPC on this object's NetworkObject (in0 = payload). The name is local to the object.
 struct NetObjRpcNode : VsNode {
@@ -647,9 +735,10 @@ struct NetObjRpcNode : VsNode {
     explicit NetObjRpcNode(std::string nm) : name(std::move(nm)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject)
-            if (auto* o = ctx.gameObject->GetComponent<NetworkObject>())
-                o->Rpc(name, In(0, g, ctx).AsString());
+        if (ctx.gameObject) {
+            if (auto* o = ctx.gameObject->GetComponent<NetworkObject>()) o->Rpc(name, In(0, g, ctx).AsString());
+            else g.Error(this, ctx, "this object has no Network Object to send the RPC from");
+        }
         return 0;
     }
 };
@@ -664,7 +753,7 @@ struct SyncVarSetNode : VsNode {
         if (!ctx.gameObject) return 0;
         for (auto* sv : ctx.gameObject->GetComponents<SyncVar>())
             if (sv->name == varName) { sv->Set(val); return 0; }
-        if (auto* n = VsNet(ctx)) {
+        if (auto* n = VsNetOrSay(this, g, ctx)) {
             auto* o = ctx.gameObject->GetComponent<NetworkObject>();
             if (!o || o->IsLocallyOwned()) {
                 const std::string id = o ? o->Id() : ctx.gameObject->name;
@@ -693,33 +782,33 @@ struct NetRpcNode : VsNode {
     std::string name;
     explicit NetRpcNode(std::string nm) : name(std::move(nm)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Rpc(name, In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Rpc(name, In(0, g, ctx).AsString()); return 0; }
 };
 // Spawn a prefab THIS peer owns + auto-syncs, at this object's position.
 struct NetSpawnOwnedNode : VsNode {
     std::string path;
     explicit NetSpawnOwnedNode(std::string p) : path(std::move(p)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
-        if (auto* n = VsNet(ctx))
-            n->SpawnOwned(path, ctx.transform ? ctx.transform->localPosition : Vec3::Zero);
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* n = VsNetOrSay(this, g, ctx))
+            n->SpawnOwned(VsBareAsset(path), ctx.transform ? ctx.transform->localPosition : Vec3::Zero);
         return 0;
     }
 };
 // Despawn a SpawnOwned object on every peer (in0 = its sync id).
 struct NetDespawnNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Despawn(In(0, g, ctx).AsString()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->Despawn(In(0, g, ctx).AsString()); return 0; }
 };
 // Mark this peer ready / not ready in the lobby (in0 = bool).
 struct NetReadyNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->SetReady(In(0, g, ctx).AsBool()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->SetReady(In(0, g, ctx).AsBool()); return 0; }
 };
 // Host only: start the match for everyone in the room.
 struct NetStartMatchNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->StartMatch(); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNetOrSay(this, g, ctx)) n->StartMatch(); return 0; }
 };
 // True once the match has started for this peer's room.
 struct NetMatchStartedNode : VsNode {

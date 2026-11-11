@@ -9,6 +9,7 @@
 #include "okay/Scene/ObjectPool.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneLocalization.hpp"
 #include "okay/Components/ActionList.hpp"   // per-scene variable pools follow this scene
@@ -476,10 +477,10 @@ void Scene::Update(float deltaTime) {
         DetachKept(kept);
         std::string loadError;
         const bool loaded = SceneSerializer::LoadFromFile(*this, path, &loadError);
-        if (loaded) m_lastLoadError.clear();
+        if (loaded) { m_lastLoadError.clear(); Log::Info("[scene] loaded '", path, "'"); }
         else {
             m_lastLoadError = "could not load scene '" + path + "': " + (loadError.empty() ? "unknown error" : loadError);
-            std::cerr << "[scene] " << m_lastLoadError << "\n";
+            Log::Error("[scene] ", m_lastLoadError);
         }
         ReattachKept(kept, /*undo=*/!loaded);   // back in whether or not the load worked; a failed load leaves them where they stood
         if (loaded) {
@@ -505,7 +506,7 @@ void Scene::Update(float deltaTime) {
             if (after) after(*this);
         } else {
             m_lastLoadError = "could not load scene text: " + (textError.empty() ? std::string("unknown error") : textError);
-            std::cerr << "[scene] " << m_lastLoadError << "\n";
+            Log::Error("[scene] ", m_lastLoadError);
         }
     }
 
@@ -1389,7 +1390,9 @@ void Scene::ReorderSibling(GameObject* go, GameObject* anchor, bool after) {
 int Scene::BeginAsyncLoad(const std::string& path, AsyncLoadOptions opts) {
     std::string err;
     auto job = SceneLoadJob::OpenFile(path, opts.additive, opts.offset, &err);
+    Log::Info("[scene] loading '", path, "'", opts.additive ? " (additive)" : "");
     if (!job) {
+        Log::Error("[scene] cannot open scene '", path, "': ", err);
         if (opts.onDone) opts.onDone(false);
         return 0;
     }
@@ -1500,6 +1503,7 @@ void Scene::StepAsyncLoads() {
         if (!ok) {
             rec.held.clear();
             DestroyLoadedObjects(rec.job->AllIds());
+            Log::Error("[scene] a scene load failed after ", rec.job->ObjectsCreated(), " objects");
             rec.finished = true; rec.ok = false;
             auto done = std::move(rec.opts.onDone);
             putBack(std::move(rec));
@@ -1511,6 +1515,7 @@ void Scene::StepAsyncLoads() {
         const float p = finished ? 1.0f : rec.job->Progress();
         if (finished) {
             rec.finished = true; rec.ok = true;
+            Log::Info("[scene] loaded ", rec.job->ObjectsCreated(), " objects", rec.opts.additive ? " (additive)" : "");
             for (Component* c : rec.held) m_pending.push_back(c);
             rec.held.clear();
             if (!rec.opts.additive) InventoryPersistence::AfterSceneLoad(*this);

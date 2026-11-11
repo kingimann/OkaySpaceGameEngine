@@ -55,7 +55,7 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     target_link_libraries(okay_ui_soft PUBLIC okay_ui)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_fuzz)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_fuzz)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_soft)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -64,4 +64,11 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
         # No window, no GPU: make sure SDL never tries to open a display.
         set_tests_properties(${t} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endforeach()
+endif()
+
+if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
+    # Renders a window of widgets to a PNG: okayui_headless_demo [out.png] [classic|launcher]
+    add_executable(okayui_headless_demo demo/okayui_headless_demo.cpp)
+    target_link_libraries(okayui_headless_demo PRIVATE okay_ui_soft)
+    target_include_directories(okayui_headless_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 endif()

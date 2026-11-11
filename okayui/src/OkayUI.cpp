@@ -602,10 +602,17 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
     }
     float penX = x;
     for (const char* p = str; *p; ++p) {
-        for (int gy = 0; gy < fH(); ++gy)
-            for (int gx = 0; gx < fW(); ++gx)
-                if (fPix(*p, gx, gy))
-                    quad(penX + gx * s, y + gy * s, s, s, c);
+        // One quad per horizontal run of lit pixels (not per pixel): the same pixels with about a
+        // third of the vertices, so a screen of classic-look text fits the fixed batch.
+        for (int gy = 0; gy < fH(); ++gy) {
+            int gx = 0;
+            while (gx < fW()) {
+                if (!fPix(*p, gx, gy)) { ++gx; continue; }
+                const int g0 = gx;
+                while (gx < fW() && fPix(*p, gx, gy)) ++gx;
+                quad(penX + g0 * s, y + gy * s, (float)(gx - g0) * s, s, c);
+            }
+        }
         penX += fW() * s;
     }
 }
@@ -2082,7 +2089,10 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
             if (ih) g_hot = iid;
             if (g_active == iid) { if (g_released) { if (ih) { *current = k; changed = true; *open = false; } g_active = 0; } }
             else if (ih && g_pressed) g_active = iid;
-            quad(x, ry, boxW, h, ih ? g_theme.bgHover : g_theme.panel);
+            // Opaque rows: the theme's panel colour is slightly translucent, and widgets under the
+            // list showed through it.
+            const unsigned char rowBg[4] = { g_theme.panel[0], g_theme.panel[1], g_theme.panel[2], 255 };
+            quad(x, ry, boxW, h, ih ? g_theme.bgHover : rowBg);
             drawText(x + 6.0f, ry + (h - textH()) * 0.5f, items[k], s, g_theme.text);
         }
         g_toOverlay = false;

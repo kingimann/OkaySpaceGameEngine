@@ -213,6 +213,13 @@ private:
 
 struct PeerView { std::uint32_t slot = 0; std::string uid, name; bool speaking = false, muted = false, deafened = false; };
 
+// Open a named device through okay::platform (empty name = the system default).
+inline std::unique_ptr<okay::platform::AudioDevice> OpenDevice(const std::string& name, bool capture,
+                                                               const okay::platform::AudioSpec& spec) {
+    okay::platform::Backend* b = okay::platform::Default();
+    return b ? b->OpenAudio(spec, capture, name.empty() ? nullptr : name.c_str(), nullptr) : nullptr;
+}
+
 // ---- One voice room session ------------------------------------------------------
 class Session {
 public:
@@ -232,20 +239,20 @@ public:
         m_mySlot = m_hubSlot = 0;
         m_cookie.fill(0); m_v1Hello = m_relayAnswered = false; m_unanswered = 0;
         if (!m_udp.Open() || !m_udp.Resolve(relayHost, relayPort)) { m_state = Failed; m_error = "Can't reach the voice server " + relayHost; m_udp.Close(); return false; }
-        // Audio devices (SDL converts to/from our 16 kHz mono s16).
-        SDL_AudioSpec want{}; want.freq = kRate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = kFrame;
-        want.callback = &Session::CaptureCb; want.userdata = this;
-        m_cap = SDL_OpenAudioDevice(m_inDev.empty() ? nullptr : m_inDev.c_str(), 1, &want, nullptr, 0);
-        if (!m_cap && !m_inDev.empty()) m_cap = SDL_OpenAudioDevice(nullptr, 1, &want, nullptr, 0);   // unplugged: default
-        SDL_AudioSpec pw = want; pw.callback = &Session::PlayCb;
-        m_play = SDL_OpenAudioDevice(m_outDev.empty() ? nullptr : m_outDev.c_str(), 0, &pw, nullptr, 0);
-        if (!m_play && !m_outDev.empty()) m_play = SDL_OpenAudioDevice(nullptr, 0, &pw, nullptr, 0);
+        // Audio devices (the platform layer converts to/from our 16 kHz mono s16).
+        okay::platform::AudioSpec want; want.freq = kRate; want.format = okay::platform::SampleFormat::S16; want.channels = 1; want.frames = kFrame;
+        want.callback = &Session::CaptureCb; want.user = this;
+        m_cap = OpenDevice(m_inDev, true, want);
+        if (!m_cap && !m_inDev.empty()) m_cap = OpenDevice(std::string(), true, want);   // unplugged: default
+        okay::platform::AudioSpec pw = want; pw.callback = &Session::PlayCb;
+        m_play = OpenDevice(m_outDev, false, pw);
+        if (!m_play && !m_outDev.empty()) m_play = OpenDevice(std::string(), false, pw);
         if (!m_play) { m_state = Failed; m_error = "No audio output device"; Stop(); return false; }
         if (!m_cap) m_error = "No microphone found \xE2\x80\x94 you can listen but not talk";
         m_run = true;
         m_thread = SDL_CreateThread(&Session::NetThread, "okay-voice", this);
-        if (m_cap) SDL_PauseAudioDevice(m_cap, 0);
-        SDL_PauseAudioDevice(m_play, 0);
+        if (m_cap) m_cap->Pause(false);
+        m_play->Pause(false);
         return true;
     }
     void Stop() {
@@ -253,8 +260,8 @@ public:
             m_run = false;
             if (m_thread) { SDL_WaitThread(m_thread, nullptr); m_thread = nullptr; }
         }
-        if (m_cap) { SDL_CloseAudioDevice(m_cap); m_cap = 0; }
-        if (m_play) { SDL_CloseAudioDevice(m_play); m_play = 0; }
+        m_cap.reset();
+        m_play.reset();
         m_udp.Close();
         if (m_mx) { SDL_LockMutex(m_mx); m_peers.clear(); m_capQ.clear(); SDL_UnlockMutex(m_mx); }
         if (m_state != Failed) m_state = Idle;
@@ -513,7 +520,7 @@ private:
     SDL_mutex* m_mx = nullptr;
     SDL_Thread* m_thread = nullptr;
     volatile bool m_run = false;
-    SDL_AudioDeviceID m_cap = 0, m_play = 0;
+    std::unique_ptr<okay::platform::AudioDevice> m_cap, m_play;
     std::array<std::uint8_t, 32> m_key{};
     std::string m_room, m_uid, m_name, m_error;
     std::uint32_t m_sid = 0, m_seq = 0;
@@ -540,24 +547,24 @@ public:
     bool Start(const std::string& inDev, const std::string& outDev, bool loopback, float gain) {
         Stop();
         m_gain = gain;
-        SDL_AudioSpec want{}; want.freq = kRate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = 512;
-        want.callback = &MicTest::Cb; want.userdata = this;
-        m_cap = SDL_OpenAudioDevice(inDev.empty() ? nullptr : inDev.c_str(), 1, &want, nullptr, 0);
+        okay::platform::AudioSpec want; want.freq = kRate; want.format = okay::platform::SampleFormat::S16; want.channels = 1; want.frames = 512;
+        want.callback = &MicTest::Cb; want.user = this;
+        m_cap = OpenDevice(inDev, true, want);
         if (!m_cap) return false;
         if (loopback) {
-            SDL_AudioSpec pw = want; pw.callback = nullptr; pw.userdata = nullptr;
-            m_out = SDL_OpenAudioDevice(outDev.empty() ? nullptr : outDev.c_str(), 0, &pw, nullptr, 0);
-            if (m_out) SDL_PauseAudioDevice(m_out, 0);
+            okay::platform::AudioSpec pw = want; pw.callback = nullptr; pw.user = nullptr;
+            m_out = OpenDevice(outDev, false, pw);
+            if (m_out) m_out->Pause(false);
         }
-        SDL_PauseAudioDevice(m_cap, 0);
+        m_cap->Pause(false);
         return true;
     }
     void Stop() {
-        if (m_cap) { SDL_CloseAudioDevice(m_cap); m_cap = 0; }
-        if (m_out) { SDL_CloseAudioDevice(m_out); m_out = 0; }
+        m_cap.reset();
+        m_out.reset();
         m_level = 0.0f;
     }
-    bool Running() const { return m_cap != 0; }
+    bool Running() const { return m_cap != nullptr; }
     float Level() const { return m_level; }   // 0..1 (-60..0 dBFS)
     float Db() const { return m_db; }
     void SetGain(float g) { m_gain = g; }
@@ -574,9 +581,9 @@ private:
         const float rms = (float)std::sqrt(e / std::max(1, n));
         t->m_db = 20.0f * std::log10(std::max(1.0f, rms) / 32768.0f);
         t->m_level = std::clamp((t->m_db + 60.0f) / 60.0f, 0.0f, 1.0f);
-        if (t->m_out && SDL_GetQueuedAudioSize(t->m_out) < 16000) SDL_QueueAudio(t->m_out, stream, (Uint32)len);   // hear yourself
+        if (t->m_out && t->m_out->QueuedBytes() < 16000) t->m_out->Queue(stream, (std::uint32_t)len);   // hear yourself
     }
-    SDL_AudioDeviceID m_cap = 0, m_out = 0;
+    std::unique_ptr<okay::platform::AudioDevice> m_cap, m_out;
     volatile float m_level = 0.0f, m_db = -90.0f, m_gain = 1.0f;
 };
 

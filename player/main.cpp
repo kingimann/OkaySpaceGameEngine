@@ -12,7 +12,7 @@
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/Input/SdlKeys.hpp"      // F1-F12, nav keys, left / right modifiers
-#include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
+#include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
@@ -1634,12 +1634,13 @@ int main(int argc, char** argv) {
     std::vector<std::uint32_t> mesh3DGpu;
     int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
 
-    SDL_AudioSpec want{}, have{};
-    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2; want.samples = 1024;
+    okay::platform::AudioSpec want, have;
+    want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
+    want.allowChange = true;
     // Float output at whatever rate and channel count the device gives us.
-    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have,
-        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
-    if (audioDev) { AudioMixer::sampleRate = have.freq; SDL_PauseAudioDevice(audioDev, 0); }
+    std::unique_ptr<okay::platform::AudioDevice> audioDev;
+    if (okay::platform::Backend* pb = okay::platform::Default()) audioDev = pb->OpenAudio(want, false, nullptr, &have);
+    if (audioDev) { AudioMixer::sampleRate = have.freq; audioDev->Pause(false); }
     AudioMixer::masterVolume = cfg.volume;   // global mix scale from build settings
     AudioMixer::LoadSettings();   // the player's own volume settings win over it
     InputActions::Load();   // the player's own control bindings
@@ -1691,7 +1692,7 @@ int main(int argc, char** argv) {
     scene.Start();
 
     // Open every connected game controller (up to Input::kMaxGamepads, one per player).
-    okay::SdlGamepadSet pads;
+    okay::PadSet pads;
     pads.OpenAll();
 
     bool running = true;
@@ -2126,7 +2127,7 @@ int main(int argc, char** argv) {
             // dt drifts against the sound card, which starves or piles up audio.
             const int ch = have.channels >= 2 ? 2 : 1;
             const int target = have.freq / 14;
-            const int queued = (int)(SDL_GetQueuedAudioSize(audioDev) / (sizeof(float) * ch));
+            const int queued = (int)(audioDev->QueuedBytes() / (sizeof(float) * ch));
             const int n = std::min(target - queued, 8192);
             if (n > 0) {
                 if (scene.mainCamera) {   // listener for 3D/spatial audio sources
@@ -2136,7 +2137,7 @@ int main(int argc, char** argv) {
                 std::vector<float> st((size_t)n * 2);
                 AudioMixer::RenderStereo(scene, st.data(), n);
                 if (ch == 1) for (int i = 0; i < n; ++i) st[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
-                SDL_QueueAudio(audioDev, st.data(), (Uint32)((size_t)n * ch * sizeof(float)));
+                audioDev->Queue(st.data(), (uint32_t)((size_t)n * ch * sizeof(float)));
             }
         }
 
@@ -2775,7 +2776,7 @@ int main(int argc, char** argv) {
     for (auto& kv : textureCache)
         if (kv.second) SDL_DestroyTexture(kv.second);
     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
-    if (audioDev) SDL_CloseAudioDevice(audioDev);
+    audioDev.reset();
 #if defined(_WIN32)
     if (d3d12Renderer) { d3d12Renderer->Destroy(); delete d3d12Renderer; }
     if (d3dRenderer) { d3dRenderer->Destroy(); delete d3dRenderer; }

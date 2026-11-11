@@ -2267,3 +2267,8 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
 endif()
+
+# The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
+add_executable(test_platform_gamepad test_platform_gamepad.cpp)
+target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
+add_test(NAME platform_gamepad COMMAND test_platform_gamepad)

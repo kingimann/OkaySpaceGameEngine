@@ -9,7 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
-#include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
+#include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "FpHandsWindow.hpp"
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
 #include "TimelineWindow.hpp"          // the Timeline window (cutscene sequences)
@@ -3537,7 +3537,7 @@ ImVec2 g_uiMarqueeA{0, 0}, g_uiMarqueeB{0, 0};   // absolute screen corners of t
 int   g_spriteHandle = -1;   // 0..7 sprite resize handle being dragged in the 2D view
 
 // First connected game controller (opened in main); fed into Input during Play.
-SDL_GameController* g_pad = nullptr;
+std::unique_ptr<okay::platform::Gamepad> g_pad;
 // Top-left of the canvas the running game is previewed in (Game view if shown,
 // otherwise the Scene viewport). Mouse input is fed relative to this so UI
 // buttons hit-test correctly while playing.
@@ -46359,16 +46359,18 @@ int main(int argc, char** argv) {
 
     // Open the first connected game controller (optional) so the playable
     // templates can be driven with a gamepad inside the editor's Play mode.
-    for (int i = 0; i < SDL_NumJoysticks(); ++i)
-        if (SDL_IsGameController(i)) { g_pad = SDL_GameControllerOpen(i); if (g_pad) break; }
+    if (okay::platform::Backend* pb = okay::platform::Default())
+        for (int i = 0, n = pb->GamepadDeviceCount(); i < n; ++i)
+            if (pb->IsGamepad(i)) { g_pad = pb->OpenGamepad(i); if (g_pad) break; }
 
     // Open a stereo float audio device (queue mode); audio is optional. Take
     // whatever rate and channel count the device gives us.
-    SDL_AudioSpec want{}, have{};
-    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2; want.samples = 1024;
-    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have,
-        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
-    if (audioDev) { AudioMixer::sampleRate = have.freq; SDL_PauseAudioDevice(audioDev, 0); }
+    okay::platform::AudioSpec want, have;
+    want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
+    want.allowChange = true;
+    std::unique_ptr<okay::platform::AudioDevice> audioDev;
+    if (okay::platform::Backend* pb = okay::platform::Default()) audioDev = pb->OpenAudio(want, false, nullptr, &have);
+    if (audioDev) { AudioMixer::sampleRate = have.freq; audioDev->Pause(false); }
 
     // Create the window HIDDEN so the OS never composites a black, uninitialized
     // rectangle during the window + renderer setup. We paint the first splash
@@ -46836,11 +46838,10 @@ int main(int argc, char** argv) {
             if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
                 ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
-            if (e.type == SDL_CONTROLLERDEVICEADDED && !g_pad) g_pad = SDL_GameControllerOpen(e.cdevice.which);
-            if (e.type == SDL_CONTROLLERDEVICEREMOVED && g_pad &&
-                e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(g_pad))) {
-                SDL_GameControllerClose(g_pad); g_pad = nullptr;
-            }
+            if (e.type == SDL_CONTROLLERDEVICEADDED && !g_pad)
+                if (okay::platform::Backend* pb = okay::platform::Default()) g_pad = pb->OpenGamepad(e.cdevice.which);
+            if (e.type == SDL_CONTROLLERDEVICEREMOVED && g_pad && e.cdevice.which == g_pad->InstanceId())
+                g_pad.reset();
             if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
                 ResetViewTextures(e.type == SDL_RENDER_DEVICE_RESET);
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
@@ -47028,7 +47029,7 @@ int main(int argc, char** argv) {
             if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
             if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
-            FeedSdlGamepad(g_pad, down);
+            okay::FeedPad(g_pad.get(), down);
             Input::FeedKeys(down);
 
             // A modal inventory/crafting/chest releases capture so you can click it.
@@ -47332,7 +47333,7 @@ int main(int argc, char** argv) {
             if (ed.isPlaying()) {
                 const int ch = have.channels >= 2 ? 2 : 1;
                 const int target = have.freq / 14;
-                const int queued = (int)(SDL_GetQueuedAudioSize(audioDev) / (sizeof(float) * ch));
+                const int queued = (int)(audioDev->QueuedBytes() / (sizeof(float) * ch));
                 const int n = std::min(target - queued, 8192);
                 if (n > 0) {
                     // Listener = the scene's main camera (for 3D/spatial sources).
@@ -47343,10 +47344,10 @@ int main(int argc, char** argv) {
                     std::vector<float> st((size_t)n * 2);
                     AudioMixer::RenderStereo(ed.scene(), st.data(), n);
                     if (ch == 1) for (int i = 0; i < n; ++i) st[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
-                    SDL_QueueAudio(audioDev, st.data(), (Uint32)((size_t)n * ch * sizeof(float)));
+                    audioDev->Queue(st.data(), (uint32_t)((size_t)n * ch * sizeof(float)));
                 }
             } else {
-                SDL_ClearQueuedAudio(audioDev);
+                audioDev->ClearQueued();
             }
         }
 
@@ -48267,8 +48268,8 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
     if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
 #endif
-    if (g_pad) SDL_GameControllerClose(g_pad);
-    if (audioDev) SDL_CloseAudioDevice(audioDev);
+    g_pad.reset();
+    audioDev.reset();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

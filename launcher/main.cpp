@@ -4768,7 +4768,7 @@ static bool EnsureAudio() {
 
 // Microphone (Messenger-style: tap the mic, talk, then send or bin it).
 static constexpr int kVoiceRate = 16000, kVoiceMaxSecs = 120, kVoiceLevelHop = kVoiceRate / 20;
-static SDL_AudioDeviceID   g_recDev = 0;
+static std::unique_ptr<okay::platform::AudioDevice> g_recDev;
 static bool                g_recFake = false;     // dev demo: a recording without a device
 static std::vector<Sint16> g_recPcm;
 static std::vector<float>  g_recLevels;           // loudness per 50 ms (live meter)
@@ -4777,7 +4777,7 @@ static std::string         g_recToUid;            // which chat the recording is
 static long                g_recToGroup = 0;
 static long                g_recToChannel = 0;    // a server channel (0 = a DM / group)
 
-static bool VoiceRecording() { return g_recDev != 0 || g_recFake; }
+static bool VoiceRecording() { return g_recDev != nullptr || g_recFake; }
 static bool VoiceRecordingFor(const std::string& uid, long gid, long channel = 0) {
     return VoiceRecording() && g_recToUid == uid && g_recToGroup == gid && g_recToChannel == channel;
 }
@@ -4786,19 +4786,20 @@ static bool StartVoiceRecord(const std::string& toUid, long toGroup, long toChan
     if (VoiceRecording()) return false;
     if (g_attBusy) { Toast("An upload is already in progress", 2); return false; }
     if (!EnsureAudio()) { Toast("Audio isn't available on this system", 2); return false; }
-    SDL_AudioSpec want{}, have{};
-    want.freq = kVoiceRate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = 1024;
-    g_recDev = SDL_OpenAudioDevice(nullptr, 1, &want, &have, 0);   // SDL converts to our format
+    okay::platform::AudioSpec want;
+    want.freq = kVoiceRate; want.format = okay::platform::SampleFormat::S16; want.channels = 1; want.frames = 1024;
+    okay::platform::Backend* pb = okay::platform::Default();
+    g_recDev = pb ? pb->OpenAudio(want, true, nullptr, nullptr) : nullptr;   // converted to our format
     if (!g_recDev) { Toast("No microphone found", 2); return false; }
     g_recPcm.clear(); g_recLevels.clear();
     g_recToUid = toUid; g_recToGroup = toGroup; g_recToChannel = toChannel; g_recStart = okay::platform::TicksMs32();
-    SDL_PauseAudioDevice(g_recDev, 0);
+    g_recDev->Pause(false);
     return true;
 }
 static void PumpVoiceRecord() {   // once per frame: move captured audio into g_recPcm
     if (!g_recDev) return;
     Sint16 buf[2048];
-    while (Uint32 got = SDL_DequeueAudio(g_recDev, buf, sizeof(buf)))
+    while (Uint32 got = g_recDev->Dequeue(buf, sizeof(buf)))
         g_recPcm.insert(g_recPcm.end(), buf, buf + got / sizeof(Sint16));
     while ((g_recLevels.size() + 1) * kVoiceLevelHop <= g_recPcm.size()) {
         const Sint16* w = g_recPcm.data() + g_recLevels.size() * kVoiceLevelHop;
@@ -4821,7 +4822,7 @@ static bool WriteWav16(const std::string& path, const std::vector<Sint16>& pcm, 
 }
 // Stop recording; send=true writes the WAV and hands it to the upload worker.
 static void FinishVoiceRecord(bool send) {
-    if (g_recDev) { PumpVoiceRecord(); SDL_CloseAudioDevice(g_recDev); g_recDev = 0; }
+    if (g_recDev) { PumpVoiceRecord(); g_recDev.reset(); }
     const bool fake = g_recFake; g_recFake = false;
     std::vector<Sint16> pcm; pcm.swap(g_recPcm); g_recLevels.clear();
     if (!send || fake) return;
@@ -4843,10 +4844,43 @@ struct VoiceClip {
     SDL_AudioSpec spec{};
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
+    std::vector<Uint8> owned;        // the converted samples when the file was not native 16-bit / float
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
 };
 static std::map<std::string, VoiceClip> g_voiceClips;
-static SDL_AudioDeviceID g_playDev = 0;
+// The platform audio layer plays native-endian 16-bit or float samples. A clip in any other
+// PCM layout (8-bit, 32-bit integer, big-endian) is converted to 16-bit once, at load.
+static void VoiceClipToPlayable(VoiceClip& c) {
+    const SDL_AudioFormat f = c.spec.format;
+    if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
+    const int width = SDL_AUDIO_BITSIZE(f) / 8;
+    if (width < 1 || width > 4) { c.len = 0; return; }
+    const std::size_t n = c.len / (std::size_t)width;
+    std::vector<Uint8> out(n * 2);
+    for (std::size_t i = 0; i < n; ++i) {
+        const Uint8* p = c.pcm + i * (std::size_t)width;
+        float v = 0.0f;   // -1..1
+        if (SDL_AUDIO_ISFLOAT(f)) {
+            Uint32 u = 0;
+            for (int b = 0; b < 4; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? 3 - b : b] << (8 * b);
+            std::memcpy(&v, &u, 4);
+        } else if (width == 1) {
+            v = SDL_AUDIO_ISSIGNED(f) ? (float)(Sint8)p[0] / 128.0f : ((float)p[0] - 128.0f) / 128.0f;
+        } else {
+            Uint32 u = 0;
+            for (int b = 0; b < width; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? width - 1 - b : b] << (8 * b);
+            const long long top = 1ll << (8 * width - 1);
+            long long sv = SDL_AUDIO_ISSIGNED(f) ? (long long)(Sint32)(u << (32 - 8 * width)) >> (32 - 8 * width) : (long long)u - top;
+            v = (float)sv / (float)top;
+        }
+        const Sint16 s16 = (Sint16)std::clamp(v * 32767.0f, -32768.0f, 32767.0f);
+        std::memcpy(out.data() + i * 2, &s16, 2);
+    }
+    c.owned = std::move(out);
+    c.pcm = c.owned.data(); c.len = (Uint32)c.owned.size();
+    c.spec.format = AUDIO_S16SYS;
+}
+static std::unique_ptr<okay::platform::AudioDevice> g_playDev;
 static std::string       g_playUrl;          // clip loaded on g_playDev
 static bool              g_playPaused = false;
 static Uint32            g_playFrom = 0;     // byte offset the current queue started at
@@ -4920,6 +4954,7 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
         if (!failed && SDL_LoadWAV(cache.string().c_str(), &c.spec, &c.pcm, &c.len)) {
+            VoiceClipToPlayable(c);
             const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
             c.bytesPerSec = (float)c.spec.freq * bps;
             c.secs = c.len / c.bytesPerSec;
@@ -4951,7 +4986,7 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     return nullptr;
 }
 static void StopVoice() {
-    if (g_playDev) { SDL_CloseAudioDevice(g_playDev); g_playDev = 0; }
+    g_playDev.reset();
     g_playUrl.clear(); g_playPaused = false; g_playFrom = 0; g_playLen = 0;
 }
 // The samples to play at the chosen speed: the clip itself at 1x, otherwise a
@@ -4977,12 +5012,15 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
     if (!EnsureAudio()) { Toast("Audio isn't available on this system", 2); return; }
     if (g_playUrl != url || !g_playDev) {
         StopVoice();
-        SDL_AudioSpec have{};
-        g_playDev = SDL_OpenAudioDevice(nullptr, 0, &c.spec, &have, 0);
+        okay::platform::AudioSpec want;
+        want.freq = c.spec.freq; want.channels = std::max<int>(1, c.spec.channels); want.frames = std::max<int>(256, c.spec.samples);
+        want.format = c.spec.format == AUDIO_F32SYS ? okay::platform::SampleFormat::F32 : okay::platform::SampleFormat::S16;   // other formats were converted to s16 at load
+        okay::platform::Backend* pb = okay::platform::Default();
+        g_playDev = pb ? pb->OpenAudio(want, false, nullptr, nullptr) : nullptr;
         if (!g_playDev) { Toast("No audio output device", 2); return; }
         g_playUrl = url;
     }
-    SDL_ClearQueuedAudio(g_playDev);
+    g_playDev->ClearQueued();
     Uint32 len = 0;
     const Uint8* buf = VoiceBuffer(c, len);
     const Uint32 frame = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
@@ -4990,18 +5028,18 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
     off -= off % std::max<Uint32>(1, frame);
     if (off >= len) off = 0;
     g_playFrom = off; g_playLen = len;
-    SDL_QueueAudio(g_playDev, buf + off, len - off);
-    SDL_PauseAudioDevice(g_playDev, 0);
+    g_playDev->Queue(buf + off, len - off);
+    g_playDev->Pause(false);
     g_playPaused = false;
 }
 static float VoicePlayFrac(const std::string& url, const VoiceClip& c) {   // -1 = not this clip
     if (!g_playDev || g_playUrl != url || !c.len) return -1.0f;
     const Uint32 len = g_playLen ? g_playLen : c.len;
-    Uint32 left = SDL_GetQueuedAudioSize(g_playDev);
+    Uint32 left = g_playDev->QueuedBytes();
     return std::min(1.0f, (float)(len - std::min(left, len)) / len);
 }
 static void PumpVoicePlayback() {   // once per frame: finish clips, start "wanted" ones
-    if (g_playDev && !g_playPaused && SDL_GetQueuedAudioSize(g_playDev) == 0) StopVoice();
+    if (g_playDev && !g_playPaused && g_playDev->QueuedBytes() == 0) StopVoice();
     if (!g_voiceWant.empty()) {
         if (VoiceClip* c = VoiceClipFor(g_voiceWant)) { std::string u = g_voiceWant; g_voiceWant.clear(); PlayVoiceAt(u, *c, 0.0f); }
     }
@@ -5057,7 +5095,7 @@ static void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVe
     if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     if (tap) {
         if (!clip) g_voiceWant = (g_voiceWant == v.url) ? std::string() : v.url;
-        else if (frac >= 0.0f) { g_playPaused = !g_playPaused; SDL_PauseAudioDevice(g_playDev, g_playPaused ? 1 : 0); }
+        else if (frac >= 0.0f) { g_playPaused = !g_playPaused; g_playDev->Pause(g_playPaused); }
         else PlayVoiceAt(v.url, *clip, 0.0f);
     }
 
@@ -5109,7 +5147,7 @@ static void RenderChatVoice(const ChatVoiceInfo& v, float width, bool mine, ImVe
             if (clip && frac >= 0.0f) {
                 const bool wasPaused = g_playPaused;
                 PlayVoiceAt(v.url, *clip, frac);
-                if (wasPaused) { SDL_PauseAudioDevice(g_playDev, 1); g_playPaused = true; }
+                if (wasPaused) { g_playDev->Pause(true); g_playPaused = true; }
             }
         }
     }
@@ -5166,7 +5204,7 @@ static void DrawVoiceRecorderBar(float h, ImVec4 sendCol) {
 // played on its own output device so it never interrupts a voice note.
 static void PlayChatChime() {
     if (!g_chatSounds || !EnsureAudio()) return;
-    static SDL_AudioDeviceID dev = 0;
+    static std::unique_ptr<okay::platform::AudioDevice> dev;
     static std::vector<Sint16> pcm;
     static Uint32 lastAt = 0;
     if (okay::platform::TicksMs32() - lastAt < 1200 && lastAt) return;   // a burst of messages = one chime
@@ -5185,14 +5223,15 @@ static void PlayChatChime() {
         }
     }
     if (!dev) {
-        SDL_AudioSpec want{}, have{};
-        want.freq = rate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = 512;
-        dev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+        okay::platform::AudioSpec want;
+        want.freq = rate; want.format = okay::platform::SampleFormat::S16; want.channels = 1; want.frames = 512;
+        okay::platform::Backend* pb = okay::platform::Default();
+        dev = pb ? pb->OpenAudio(want, false, nullptr, nullptr) : nullptr;
         if (!dev) return;
-        SDL_PauseAudioDevice(dev, 0);
+        dev->Pause(false);
     }
-    SDL_ClearQueuedAudio(dev);
-    SDL_QueueAudio(dev, pcm.data(), (Uint32)(pcm.size() * sizeof(Sint16)));
+    dev->ClearQueued();
+    dev->Queue(pcm.data(), (uint32_t)(pcm.size() * sizeof(Sint16)));
 }
 
 // Drag & drop target: DrawChatWindow publishes its rectangle and the open
@@ -7752,7 +7791,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 add(9, VoiceMessageBody(7, u1).c_str(), 40, false);
                 add(10, VoiceMessageBody(4, u2).c_str(), 20, true);
                 if (std::getenv("OKAY_CHAT_DEMO_PLAY")) {   // mid-playback state (needs SDL_AUDIODRIVER=dummy headless)
-                    if (VoiceClip* c = VoiceClipFor(u1)) { PlayVoiceAt(u1, *c, 0.42f); SDL_PauseAudioDevice(g_playDev, 1); g_playPaused = true; }
+                    if (VoiceClip* c = VoiceClipFor(u1)) { PlayVoiceAt(u1, *c, 0.42f); g_playDev->Pause(true); g_playPaused = true; }
                 }
                 if (std::getenv("OKAY_CHAT_DEMO_REC")) {    // composer in recording mode
                     g_recFake = true; g_recToUid = "demo-uid"; g_recToGroup = 0; g_recStart = okay::platform::TicksMs32() - 4200;
@@ -21064,15 +21103,16 @@ int main(int argc, char** argv) {
                     static bool hearMyself = false;
                     EnsureAudio();
                     auto deviceCombo = [&](const char* id, bool capture, std::string& sel) {
-                        const int n = SDL_GetNumAudioDevices(capture ? 1 : 0);
+                        okay::platform::Backend* pb = okay::platform::Default();
+                        const int n = pb ? pb->AudioDeviceCount(capture) : 0;
                         const std::string cur = sel.empty() ? std::string("System default") : sel;
                         ImGui::SetNextItemWidth(300);
                         if (ImGui::BeginCombo(id, cur.c_str())) {
                             if (ImGui::Selectable("System default", sel.empty())) { sel.clear(); SavePrefs(); }
                             for (int i = 0; i < n; ++i) {
-                                const char* nm = SDL_GetAudioDeviceName(i, capture ? 1 : 0);
-                                if (!nm) continue;
-                                if (ImGui::Selectable(nm, sel == nm)) { sel = nm; SavePrefs(); }
+                                const std::string nm = pb->AudioDeviceName(i, capture);
+                                if (nm.empty()) continue;
+                                if (ImGui::Selectable(nm.c_str(), sel == nm)) { sel = nm; SavePrefs(); }
                             }
                             ImGui::EndCombo();
                         }

@@ -12,6 +12,7 @@ add_library(okay_engine
     src/Core/SaveFramework.cpp
     src/Core/SaveFrameworkScene.cpp
     src/Core/SaveFrameworkSync.cpp
+    src/Core/GameSaves.cpp
     src/Core/Scheduler.cpp
     src/Core/Tween.cpp
     src/Core/TimerDebug.cpp

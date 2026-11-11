@@ -21,7 +21,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 | Terrain | terrain properties | Get/Set Property on a terrain component. No separate terrain builtin. |
 | Splines | Spline.*, SplineFollower.* | Engine API Spline / SplineFollower / LineRenderer |
 | Networking | net_* builtins | Every Fn.net_* builtin in the list below |
-| Saves | SaveGame.* | Engine API SaveGame, Save Checkpoint, Load Checkpoint |
+| Saves | SaveGame.*, game_save / game_load / game_continue ... | Engine API SaveGame, Save Checkpoint, Load Checkpoint, Fn.game_* save-slot nodes (Saveable component marks what is stored) |
 | Scenes and prefabs | instantiate, load_scene | Fn.instantiate, Fn.load_scene, Spawn Projectile, Run Another Graph |
 | Time | Time.*, time | Engine API Time, Fn.time, Delta Time |
 | Tweens and timers | tween builtins, Every, Delay | Fn.tween_* builtins, Tween Position, Every, Delay, Count Down |
@@ -33,7 +33,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1351 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1361 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -401,6 +401,16 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `gameObject.CompareTag` | `Fn.gameObject.CompareTag` |
 | `gameObject.GetComponent` | `Fn.gameObject.GetComponent` |
 | `gameObject.SetActive` | `Fn.gameObject.SetActive` |
+| `game_autosave` | `Fn.game_autosave` |
+| `game_can_continue` | `Fn.game_can_continue` |
+| `game_continue` | `Fn.game_continue` |
+| `game_delete_slot` | `Fn.game_delete_slot` |
+| `game_load` | `Fn.game_load` |
+| `game_save` | `Fn.game_save` |
+| `game_slot_age` | `Fn.game_slot_age` |
+| `game_slot_exists` | `Fn.game_slot_exists` |
+| `game_slot_label` | `Fn.game_slot_label` |
+| `game_slot_text` | `Fn.game_slot_text` |
 | `game_time` | `Fn.game_time` |
 | `gamepad` | `Fn.gamepad` |
 | `gamepad_down` | `Fn.gamepad_down` |

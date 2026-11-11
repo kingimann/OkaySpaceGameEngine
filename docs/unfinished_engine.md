@@ -137,7 +137,6 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | Editor uses full-scene text snapshots for Undo; the engine `UndoStack` is unused there | no reference to `UndoStack` in `editor/` or `player/` (engine only, `Core/Undo.hpp`) | Undo memory grows with scene size, no per-field undo or undo across Play | High | Large |
-| Save framework has no editor UI, component, or scene record | `Core/SaveFramework.cpp`, `SaveFrameworkScene.cpp`; zero references in `editor/`, `player/`; script calls (`save_*`) only | A no-code user cannot make a save or load screen | High | Medium |
 | Engine accessors with no editor or player caller | `Debug/DrawCallRecorder`, `GpuTimer`, `MemoryTracker`, `FrameRecord`, `Optimize/StreamingGrid`, `Core/Cvar` and `Core/Jobs` stats: zero mentions in `editor/` and `player/` | Code and tests exist, no window or switch shows them (partly known as 23.x; this lists the rest) | Medium | Large |
 | Plugin API has no native plugins | feature map 24.1 (Planned) | Only script-level plugin windows | Medium | Large |
 | `editor/main.cpp` and `player/main.cpp` still hold panels, build, UI and server entry | feature map 15.10, 19.4 | Slow to change, merge conflicts | Low | Large |
@@ -157,7 +156,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 9. Medium: 57. Low: 26. Total rows: 92.
+High: 8. Medium: 57. Low: 26. Total rows: 91.
 
 ## Top 15 to tackle first
 
@@ -166,7 +165,7 @@ High: 9. Medium: 57. Low: 26. Total rows: 92.
 3. **Editor Play lacks the extended keys and extra pads** (sec 5). A few lines copying `AppendSdlExtendedKeys` and `pads.Feed` fix games that behave differently in Play and in a build.
 4. **(Resolved) Lua and C# backends removed** (sec 10). The optional third-party backends were dropped; old scenes naming them load and report "language not supported".
 5. **Mesh Collider 3D is a box** (sec 2). Users believe they get model collision; start with a convex hull, then triangle meshes for static objects.
-6. **Save framework has no no-code route** (sec 13). The engine work is done; a Save/Load slot component and a window make it usable without scripts.
+6. **(Resolved) Save framework no-code route** (was sec 13). A Saveable component stored in the scene file (transform, active, registry properties, script and visual-script variables), a Save Settings component (autosave interval and on scene start), Save / Load / Delete / Continue / slot exists / last saved time as script builtins, visual-script `Fn.game_*` nodes and Action List `game_*` actions, and a Save Slots UI screen. See `docs/save_framework.md`.
 7. **Direct3D 12 has no post-processing** (sec 1). Either bring it to parity or label it "preview" in Build Settings and keep it off by default.
 8. **Audio is mono and fully decoded** (sec 4). Streaming plus stereo for music is a clear quality and memory win.
 9. **Undo uses full snapshots** (sec 13). Moving the editor to the existing `UndoStack` reduces memory and unlocks undo across Play.

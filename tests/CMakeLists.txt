@@ -1821,6 +1821,12 @@ add_executable(test_save_scene test_save_scene.cpp)
 target_link_libraries(test_save_scene PRIVATE okay::engine)
 add_test(NAME save_scene COMMAND test_save_scene)
 
+# Save framework without code: Saveable in the scene file, GameSaves, autosave, script / visual-script /
+# Action List routes, the Save Slots screen.
+add_executable(test_save_nocode test_save_nocode.cpp)
+target_link_libraries(test_save_nocode PRIVATE okay::engine)
+add_test(NAME save_nocode COMMAND test_save_nocode)
+
 # Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)

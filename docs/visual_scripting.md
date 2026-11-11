@@ -147,7 +147,10 @@ see exactly where it points before you press Play.
   `deactivate`, `set_active`, `set_tag`), rendering/audio (`set_text`,
   `set_color`, `emit`, `play_anim`, `play_sound`, `set_cam`, `set_bg`,
   `set_light`, `set_ambient`), physics (`velocity`, `impulse`), data
-  (`set_prefs`, `add_prefs`, `save_prefs`), **scenes** (`load_scene`,
+  (`set_prefs`, `add_prefs`, `save_prefs`), **save slots** (`game_save`, `game_load`,
+  `game_continue`, `game_autosave`, `game_delete_slot`, `game_slot_exists`,
+  `game_can_continue`, `game_slot_age`, `game_slot_text`; see
+  `docs/save_framework.md`, "Saving without code"), **scenes** (`load_scene`,
   `load_scene_index`, `load_next_scene`), **raycasting** (`raycast` — store the
   hit in variables, see below), **multiplayer** (`net_host`,
   `net_join`, `net_send`, `net_set` synced vars, `net_spawn` replicated spawn,

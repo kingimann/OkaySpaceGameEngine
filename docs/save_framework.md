@@ -16,6 +16,78 @@ It adds:
 - **A version migration chain** and a refusal of saves from newer builds.
 - **Sync hooks** (`ISaveSync`) with in-memory and folder backends.
 - **`SaveMenuModel`**: rows a UI binds to, with no rendering in it.
+- **A no-code route**: the `Saveable` component in the editor and the scene file, a `Save Settings`
+  component, `GameSaves` (one call per action), script builtins, visual-script nodes, Action List
+  actions and a Save Slots screen. See "Saving without code" just below.
+
+## Saving without code
+
+You do not need C++ to use the framework.
+
+**1. Mark what is saved.** In the editor, Add Component > `Saveable (keep when saving)` on every
+object that should be kept (the player, a door, a coin, an enemy). The component is stored in the
+scene file, so a level loaded from a file has it. It lists what of the object is saved:
+
+| Setting | Saves |
+| --- | --- |
+| Save id | The stable key the object is found by. A fresh unique id is made when the component is added; press **New id** on a duplicated object. A warning shows when another object has the same id. |
+| Position, rotation, scale | The local transform. |
+| Active (on / off) | Whether the object is active. |
+| Rigidbody, Inventory, Stats | Velocities, the bag, health and attributes. |
+| Script and visual-script variables | The object's text-script globals and the variables of its visual scripts. |
+| Scene-wide variables | Action List numbers and text, and the visual scripts' scene and global variables, once per save. Tick it on one manager object. |
+| Also save these properties | Any registered component property, picked from a list ("Light.intensity", "Health.current"). They go through the property registry (`docs/properties.md`), so they are stored as text and put back with the same checks a Set Property node uses. |
+| Made while playing | The object was spawned from a prefab at run time. It is recreated on load from the prefab path (or `factory:Name`); a spawned object that did not exist at the save is removed. |
+
+Objects *without* a Saveable are not stored: they come back as the level file has them. An object
+the level contains that was **destroyed** before the save stays destroyed after a load (the save
+records it), including after the level is reloaded from its file.
+
+**2. Autosave setting.** Add Component > `Save Settings (autosave)` (class `SaveConfig`) to one object per scene:
+*Autosave every (s)* (0 = off), *Autosave when the scene starts* and *Autosave slots* (the ring
+`autosave_1` ... `autosave_N`; the oldest is replaced first). A scene-start autosave is skipped
+while a load is putting a save back, and so is the interval one.
+
+**3. Save, load, delete, continue.** Every route calls `GameSaves` (`okay/Core/GameSaves.hpp`):
+
+| What | Text script | Visual script node | Action List action |
+| --- | --- | --- | --- |
+| Save to a slot | `game_save("slot_1", "label")` | `Fn.game_save` | `game_save slot [label...]` |
+| Load a slot | `game_load("slot_1")` | `Fn.game_load` | `game_load slot` |
+| Continue (newest valid save) | `game_continue()` | `Fn.game_continue` | `game_continue` |
+| Delete a slot | `game_delete_slot("slot_1")` | `Fn.game_delete_slot` | `game_delete_slot slot` |
+| Slot exists | `game_slot_exists("slot_1")` | `Fn.game_slot_exists` | `game_slot_exists slot intoVar` |
+| Is there a save to continue | `game_can_continue()` | `Fn.game_can_continue` | `game_can_continue intoVar` |
+| When it was saved (text) | `game_slot_text("slot_1")` | `Fn.game_slot_text` | `game_slot_text slot intoTextVar` |
+| Seconds since it was saved | `game_slot_age("slot_1")` | `Fn.game_slot_age` | `game_slot_age slot intoVar` |
+| The label it was saved with | `game_slot_label("slot_1")` | `Fn.game_slot_label` | (use `game_slot_text`) |
+| Save into the autosave ring | `game_autosave()` | `Fn.game_autosave` | `game_autosave` |
+
+`game_load` happens at the start of the next frame, so it is safe from an Update or a button. If the
+slot was saved in a scene that is in the build list, that level is loaded first and the state is put
+on it (objects are matched by save id), so Continue from a main menu goes to the right level. Slot
+names are letters, digits, `-` and `_`. The saved time text is UTC, like `save_date`.
+
+**4. A ready screen.** UI > Prebuilt Screens > Menus > `Save Slots` adds three slots, each with its
+label and saved time (or "Empty") and **Save**, **Load**, **Delete** buttons, plus **Continue**, **Close**
+and a status line. It is built from the script builtins above, so it is editable like any other UI.
+
+**Errors.** A missing slot, a damaged one (it fails its checksum, or is cut short) and one saved by a
+newer version of the game are refused at the call, return false and write a `[save]` error to the
+Console naming the slot and the reason ("was saved by a newer version of the game ..."); the scene is
+left untouched. A damaged main file whose `.bak` is good loads from the backup with a warning. Continue
+skips damaged and newer-version slots, and says why when nothing is left.
+
+**Versions and migration.** The format is versioned (see "Versions and migrations" below). A game that
+changes what it saves raises `SaveStore::SetDataVersion` and registers a `RegisterMigration` step; the
+no-code route uses the store behind `GameSaves::Manager()` (`SaveManager::Default().Store()`), so call
+those on it at startup. Older saves are upgraded when they are read.
+
+**Limits.** Only a save remembers destroyed objects: leave a level without saving and come back, and
+the level file's objects are all there again. Variables of other kinds (lists, maps, object
+references) are not stored. A visual script's variables are matched to the object's first, second ...
+visual script by order. A Saveable on an object that is inactive when the level loads is noted when it
+first becomes active.
 
 ```cpp
 #include "okay/Core/SaveFramework.hpp"
@@ -60,6 +132,8 @@ objects exist: `SaveCaptureOptions::includeTag` (every object with that tag) and
 | `prefab` | `.okayprefab` path (or `factory:Name`) a dynamic object respawns from. |
 | `saveTransform`, `saveActive` | Store the local position/rotation/scale, and whether it is active. |
 | `saveComponents` | Also store Rigidbody, Inventory and Stats (below). |
+| `properties` | Property-registry paths to store too ("Light.intensity"). |
+| `saveVariables`, `saveSceneVariables` | The object's script / visual-script variables; the scene-wide Action List and visual-script variables. |
 | `onSave`, `onLoad` | Lambdas for quick custom fields. |
 
 For your own fields, subclass it:
@@ -152,8 +226,8 @@ SaveApplyReport r = SaveSystem::ApplyScene(scene, doc);    // restored, spawned,
   `deferred = true` (or `reloadScene`) picks a safe moment for you.
 - Objects queued with `Scene::Destroy` count as present until the frame ends,
   so save at the start of a frame, or in a deferred save.
-- The scene file format has no record for Saveable components yet, so a level
-  loaded from a file has none. Attach them from code in
+- The scene file stores the Saveable component (record `saveable`), so a level loaded
+  from a file has it. For objects without one, attach them from code in
   `SaveApplyOptions::prepare` (it runs after the level loads, before state goes
   back), or mark objects with a tag and save with `includeTag`.
 - `SaveSystem::VerifyCapture(scene)` is a debug check: it captures, writes the

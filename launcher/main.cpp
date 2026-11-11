@@ -16757,10 +16757,16 @@ int main(int argc, char** argv) {
     // would otherwise knock the launcher offline — only an http(s) URL counts.
     if (serverUrl.rfind("http", 0) != 0) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
     if (apiKey.empty())                  apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
+    // Where the emailed reset link should land (docs/password-reset.md). Empty = none set up.
+    std::string resetUrl = fromEnvOrFile("OKAY_PASSWORD_RESET_URL", "password_reset_url.txt");
+#ifdef OKAY_DEFAULT_PASSWORD_RESET_URL
+    if (resetUrl.rfind("http", 0) != 0) resetUrl = OKAY_DEFAULT_PASSWORD_RESET_URL;
+#endif
     // Held by pointer so the Settings tab can rebuild it live when the server
     // config changes.
     fs::path acctCfgDir = acct::DefaultConfigDir(fs::path(g_exeDir));
     auto accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, serverUrl, apiKey);
+    accountPtr->SetResetRedirect(resetUrl);
     g_presenceAccount = accountPtr.get();   // RecordPlayed broadcasts playing-presence through this
     // If we resumed a saved session against an online server, make sure it's
     // still valid (the token may have been revoked/expired); this signs the
@@ -20718,8 +20724,17 @@ int main(int argc, char** argv) {
                     if (ImGui::SmallButton("Forgot password?")) {
                         acct::Result r = account.RequestPasswordReset(acctUser);
                         acctMessageError = !r.ok;
-                        acctMessage = r.ok ? "Password reset email sent — check your inbox."
-                                           : r.error;
+                        if (!r.ok) acctMessage = r.error;
+                        else if (account.HasResetRedirect())
+                            acctMessage = "Password reset email sent. Open the link in it to choose a new password.";
+                        else {
+                            // Truth: with no landing page the link opens the server's default Site URL.
+                            acctMessage = "Reset email sent, but no reset page is set up for this build, so its link "
+                                          "opens the server's default web address instead of a password form. "
+                                          "The owner must host the page and set OKAY_PASSWORD_RESET_URL "
+                                          "(docs/password-reset.md).";
+                            acctMessageError = true;
+                        }
                     }
                 }
 

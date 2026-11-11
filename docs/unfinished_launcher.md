@@ -27,7 +27,7 @@ Size: Small < 1 day, Medium = a few days, Large = a week or more.
 
 | Item | Where | What is missing (plain English) | Impact | Size |
 |---|---|---|---|---|
-| "Forgot password" email leads nowhere | `launcher/main.cpp:20703-20711`; `engine/include/okay/Platform/Account/AccountService.hpp:472-484` (POST `/auth/v1/recover`, no redirect address) | The launcher sends the reset email, but nothing in the repo or docs provides the web page the emailed link opens to type a new password (Supabase Site URL / redirect page is not documented or built). Users who forget a password cannot finish the reset from the launcher. | High | Small (page plus doc) |
+| ~~"Forgot password" email leads nowhere~~ DONE (needs owner hosting) | `supabase/auth-pages/reset-password/index.html`; `docs/password-reset.md`; `AccountService.hpp` `RecoverUrl` | The landing page and launcher redirect now exist. Remaining owner steps: host the page, fill in the project URL and key in it, add its URL to the Supabase redirect allow-list, set `OKAY_PASSWORD_RESET_URL` (details in docs/password-reset.md). Until the URL is set the launcher says so instead of claiming success. Not tested against a live project. | Done | Small (owner step) |
 | No "Delete my account" or "Download my data" | Account page `launcher/main.cpp:20025-20720` has Change email (`:20443`) and Change password (`:20478`) only; no delete RPC in `docs/sql/` | Needed for privacy rules (GDPR style). Needs an RPC that removes the profile, messages, uploads and cloud saves, plus a confirm dialog. | High | Medium |
 | Login token is stored in plain text | `AccountService.hpp:919-922` (`SaveSession` writes username, access token and refresh token to a plain file, not atomic) | Anyone who can read the launcher folder can use the account. Use Windows DPAPI / macOS keychain / file permissions 0600, and write via a temp file. | Medium | Medium |
 | Achievements are never earned by the launcher itself | `launcher/main.cpp:21589-21852`; only unlock call is `engine/src/Components/ActionList.cpp:1514`; "first_publish" exists only in demo data (`:13640`, `:21608`) | The page lists unlocked ones only (no locked/goal list) and the launcher awards nothing for publishing, friends, playtime, etc. Cloud copy is one-way mirror to the profile (`Platform/Profiles.hpp:248`), so a new PC starts empty. `Platform/Achievements.hpp:4-5` still says cloud sync "can be layered on later". No tests for Achievements or Profiles (feature map 17.7). | Medium | Medium |
@@ -82,7 +82,7 @@ High: 8 | Medium: 16 | Low: 14 (38 rows).
 ## Top 10 to tackle first
 
 1. **Create `typing_state` and `message_reads` SQL** (Small). The code already calls them; two visible chat features silently do nothing on a clean database.
-2. **Password-reset landing page + doc** (Small). Locked-out users have no recovery path today.
+2. ~~Password-reset landing page + doc~~ done in the repo; owner must host it (docs/password-reset.md).
 3. **Deploy the voice server and set it in Admin > Chat** (Small, owner step). Calls are advertised but dead until then.
 4. **Real "Report" for messages, posts, items and profiles** (Medium). Public chat and Marketplace without user reporting is the biggest safety gap.
 5. **Server-side block list and enforced privacy settings** (Medium). Today a blocked user can still message and call.

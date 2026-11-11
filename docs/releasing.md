@@ -25,9 +25,16 @@ The bucket layout:
 
 | Path | What |
 | --- | --- |
+| `versions.json` | every released version with file sizes and SHA-256 (required by the updater; uploaded before `VERSION.txt`) |
 | `VERSION.txt` | newest version, uploaded last (cached 30 s) |
 | `NOTES.txt` | "what's new" lines for the launcher (default: recent commit subjects; set `NOTES_FILE` to choose) |
 | `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt` | that version's files |
+
+`versions.json` is required: it lists the size and SHA-256 of `OkayEngine.exe`, `OkaySpacePlayer.exe` and `OkaySpace.exe`, and the launcher
+refuses to update any file without one. The script checks that it can compute all of them before it uploads anything (also under
+`DRY_RUN=1`), uploads `versions.json` before `VERSION.txt`, reads it back from the bucket and compares it with the uploaded files, and
+stops (no `VERSION.txt`, so nobody is offered the version) if anything is off. Re-running the publish is safe. A release that exists only
+on GitHub has no `versions.json`, so launchers show "cannot update: no checksum list" instead of installing unchecked files.
 
 Only the newest 3 versions are kept (`KEEP=n` to change). `DRY_RUN=1` checks
 the build and key without uploading.

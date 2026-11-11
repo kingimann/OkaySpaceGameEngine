@@ -63,6 +63,12 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+# Own Ogg Vorbis decoder: SNR vs libvorbis references, Ogg framing, headers, truncation, bit-flip and noise fuzzing.
+add_executable(test_vorbis_decoder test_vorbis_decoder.cpp)
+target_link_libraries(test_vorbis_decoder PRIVATE okay::engine)
+target_compile_definitions(test_vorbis_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vorbis_decoder COMMAND test_vorbis_decoder)
+
 # Own MP3 decoder: SNR vs ffmpeg references, gapless/tags/resync, truncation, bit-flip and noise fuzzing.
 add_executable(test_mp3_decoder test_mp3_decoder.cpp)
 target_link_libraries(test_mp3_decoder PRIVATE okay::engine)
@@ -1527,11 +1533,22 @@ if(UNIX)
     add_test(NAME publish_supabase_checks COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_supabase_checks.sh)
 endif()
 
+# The hosted password-reset page (supabase/auth-pages/reset-password): its pure logic, under node (skipped when node is absent).
+find_program(OKAY_NODE node)
+if(OKAY_NODE)
+    add_test(NAME password_reset_page COMMAND ${OKAY_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_password_reset_page.js)
+endif()
+
 # The launcher's chat JSON (Messages / Servers): header-only, no engine link.
 add_executable(test_chat_json test_chat_json.cpp)
 target_compile_features(test_chat_json PRIVATE cxx_std_17)
 target_include_directories(test_chat_json PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME chat_json COMMAND test_chat_json)
+# Typing indicator / read receipts: missing-table detection (docs/sql/chat_receipts.sql).
+add_executable(test_chat_receipts test_chat_receipts.cpp)
+target_compile_features(test_chat_receipts PRIVATE cxx_std_17)
+target_include_directories(test_chat_receipts PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME chat_receipts COMMAND test_chat_receipts)
 # ...and the friends / profile JSON (Friends.hpp).
 add_executable(test_friends_json test_friends_json.cpp)
 target_compile_features(test_friends_json PRIVATE cxx_std_17)
@@ -1570,6 +1587,8 @@ add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
 if(UNIX)
     add_test(NAME anticheat_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_anticheat_sql.sh)
     set_tests_properties(anticheat_sql PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME chat_receipts_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_chat_receipts_sql.sh)
+    set_tests_properties(chat_receipts_sql PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_executable(test_tween test_tween.cpp)

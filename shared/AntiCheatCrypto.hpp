@@ -30,6 +30,9 @@
 #ifdef OKAY_HAVE_SODIUM
 #include <sodium.h>
 #endif
+#ifdef OKAY_OWN_CRYPTO
+#include <okay/Crypto/Crypto.hpp>   // engine builds with -DOKAY_OWN_CRYPTO=ON (unreviewed, opt-in)
+#endif
 
 namespace okayac {
 
@@ -416,7 +419,9 @@ inline bool Verify(const std::uint8_t* m, std::size_t n, const Signature& sig, c
 
 // The backend every caller uses.
 inline const char* Backend() {
-#ifdef OKAY_HAVE_SODIUM
+#ifdef OKAY_OWN_CRYPTO
+    return "okay::crypto";
+#elif defined(OKAY_HAVE_SODIUM)
     return "libsodium";
 #else
     return "portable";
@@ -431,6 +436,11 @@ inline bool SodiumReady() {
 #endif
 
 inline PublicKey PublicKeyFromSeed(const Seed& seed) {
+#ifdef OKAY_OWN_CRYPTO
+    PublicKey pk{};
+    okay::crypto::Ed25519PublicFromSeed(pk.data(), seed.data());
+    return pk;
+#endif
 #ifdef OKAY_HAVE_SODIUM
     if (SodiumReady()) {
         PublicKey pk{};
@@ -444,6 +454,14 @@ inline PublicKey PublicKeyFromSeed(const Seed& seed) {
 }
 
 inline Signature Sign(const std::uint8_t* m, std::size_t n, const Seed& seed) {
+#ifdef OKAY_OWN_CRYPTO
+    std::uint8_t pk[32], sk[64];
+    okay::crypto::Ed25519SeedKeypair(pk, sk, seed.data());
+    Signature sig{};
+    okay::crypto::Ed25519Sign(sig.data(), m, n, sk);
+    okay::crypto::MemZero(sk, sizeof(sk));
+    return sig;
+#endif
 #ifdef OKAY_HAVE_SODIUM
     if (SodiumReady()) {
         PublicKey pk{};
@@ -459,6 +477,9 @@ inline Signature Sign(const std::uint8_t* m, std::size_t n, const Seed& seed) {
 }
 
 inline bool Verify(const std::uint8_t* m, std::size_t n, const Signature& sig, const PublicKey& pk) {
+#ifdef OKAY_OWN_CRYPTO
+    return okay::crypto::Ed25519Verify(sig.data(), m, n, pk.data());
+#endif
 #ifdef OKAY_HAVE_SODIUM
     if (SodiumReady()) return crypto_sign_verify_detached(sig.data(), m, (unsigned long long)n, pk.data()) == 0;
 #endif

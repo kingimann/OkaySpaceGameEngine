@@ -1,13 +1,12 @@
 #include "okay/Graphics/Image.hpp"
 
-// The single translation unit that compiles the vendored stb implementations.
+// The single translation unit that compiles the vendored stb_image implementation.
 #define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 // Refuse absurd sizes before decoding: a 40-byte TGA header can claim
 // 52032 x 8192 and make stb allocate gigabytes.
 #define STBI_MAX_DIMENSIONS 16384
 #include "stb_image.h"
-#include "stb_image_write.h"
+#include "okay/Core/ImageWrite.hpp"
 
 #include "okay/Core/Log.hpp"
 #include <filesystem>
@@ -48,8 +47,7 @@ bool Image::Load(const std::string& path, std::string* error) {
 
 bool Image::SavePNG(const std::string& path) const {
     if (!Valid()) return false;
-    int stride = m_w * 4;
-    return stbi_write_png(path.c_str(), m_w, m_h, 4, m_pixels.data(), stride) != 0;
+    return ImageWrite::WritePNG(path, m_w, m_h, 4, m_pixels.data());
 }
 
 } // namespace okay

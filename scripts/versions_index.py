@@ -36,6 +36,9 @@ BUCKET_PATH = "v{version}/{file}"
 _VERSION_RE = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$")
 _FILE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+# The files the launcher's updater downloads. It REFUSES to install a file that has no checksum in the index
+# (launcher/UpdaterCore.hpp), so a publish that cannot list a size and SHA-256 for every one of these must fail.
+REQUIRED_FILES = ("OkayEngine.exe", "OkaySpacePlayer.exe", "OkaySpace.exe")
 
 
 def parse_version(text):
@@ -95,8 +98,21 @@ def _clean_entry(e):
             "inBucket": bool(e.get("inBucket", False)), "files": files}
 
 
-def merge(existing, version, channel, files, date, bucket_versions, latest, lts, repo):
-    """Return the new index (a dict). `existing` may be None or garbage."""
+def missing_checksums(files, required=REQUIRED_FILES):
+    """The required file names that lack a size or a 64-hex SHA-256 in `files` (a name -> {size, sha256} dict)."""
+    bad = []
+    for name in required:
+        info = files.get(name) if isinstance(files, dict) else None
+        ok = isinstance(info, dict) and isinstance(info.get("sha256"), str) and _SHA_RE.match(info["sha256"]) \
+            and isinstance(info.get("size"), int) and not isinstance(info.get("size"), bool) and info["size"] > 0
+        if not ok:
+            bad.append(name)
+    return bad
+
+
+def merge(existing, version, channel, files, date, bucket_versions, latest, lts, repo, required=REQUIRED_FILES):
+    """Return the new index (a dict). `existing` may be None or garbage.
+    Raises ValueError unless `files` has a size and SHA-256 for every name in `required`."""
     ver = canonical(version)
     if ver is None:
         raise ValueError("bad version: %r" % (version,))
@@ -107,6 +123,11 @@ def merge(existing, version, channel, files, date, bucket_versions, latest, lts,
             raise ValueError("bad file name: %r" % (name,))
         if not _SHA_RE.match(info.get("sha256", "")):
             raise ValueError("bad sha256 for %s" % name)
+
+    lacking = missing_checksums(files, required)
+    if lacking:
+        raise ValueError("no checksum for %s: the updater refuses files without one, so this release cannot be published"
+                         % ", ".join(lacking))
 
     old = existing if isinstance(existing, dict) and existing.get("schema") == SCHEMA else {}
     entries = {}
@@ -155,6 +176,27 @@ def _read_json(path):
         return None
 
 
+def _cmd_check(a):
+    """Fail (exit 1) unless the index in --index lists, for --version, the size and SHA-256 of every --file as it is on disk."""
+    data = _read_json(a.index)
+    ver = canonical(a.version)
+    entry = None
+    if isinstance(data, dict) and data.get("schema") == SCHEMA and isinstance(data.get("versions"), list):
+        entry = next((e for e in data["versions"] if isinstance(e, dict) and canonical(e.get("version")) == ver), None)
+    if entry is None:
+        sys.stderr.write("versions_index: %s does not list v%s\n" % (a.index, a.version))
+        return 1
+    listed = entry.get("files") if isinstance(entry.get("files"), dict) else {}
+    problems = ["%s is missing, or has no valid size/SHA-256" % n for n in missing_checksums(listed)]
+    for spec in a.file or []:
+        name, _, path = spec.partition("=")
+        if name in listed and os.path.isfile(path) and listed[name] != file_entry(path) and name not in [x.split()[0] for x in problems]:
+            problems.append("%s: the index does not match the file that was uploaded" % name)
+    for p in problems:
+        sys.stderr.write("versions_index: %s\n" % p)
+    return 1 if problems else 0
+
+
 def _cmd_merge(a):
     files = {}
     for spec in a.file or []:
@@ -197,7 +239,7 @@ def _self_test():
     check(parse_version("2.9.0") < parse_version("2.10.0"), "numeric compare, not text")
 
     sha = "a" * 64
-    f1 = {"OkayEngine.exe": {"size": 10, "sha256": sha}}
+    f1 = {n: {"size": 10, "sha256": sha} for n in REQUIRED_FILES}
     idx = merge(None, "2.855.0", "latest", f1, "2026-11-09", ["2.855.0"], "2.855.0", None, "o/n")
     check(idx["schema"] == 1 and idx["latest"] == "2.855.0" and "lts" not in idx, "first index")
     check(idx["archive"] == "https://github.com/o/n/releases/download/v{version}/{file}", "archive template")
@@ -219,7 +261,7 @@ def _self_test():
     check(idx4["lts"] == "2.850.1", "lts kept when not passed")
 
     # Re-publishing a version replaces its entry, no duplicates.
-    f2 = {"OkayEngine.exe": {"size": 11, "sha256": "b" * 64}}
+    f2 = {n: {"size": 11, "sha256": "b" * 64} for n in REQUIRED_FILES}
     idx5 = merge(idx4, "2.857.0", "latest", f2, "2026-11-12", None, "2.857.0", None, "o/n")
     same = [v for v in idx5["versions"] if v["version"] == "2.857.0"]
     check(len(same) == 1 and same[0]["files"]["OkayEngine.exe"]["size"] == 11, "republish replaces")
@@ -252,15 +294,32 @@ def _self_test():
     except ValueError:
         pass
 
+    # The updater needs a checksum for every file: a publish without one is refused.
+    for lack, what in ((dict(list(f1.items())[:2]), "a file missing"),
+                       ({**f1, "OkaySpace.exe": {"size": 10, "sha256": ""}}, "an empty sha"),
+                       ({**f1, "OkaySpace.exe": {"size": 0, "sha256": sha}}, "a zero size"),
+                       ({**f1, "OkaySpace.exe": {"sha256": sha}}, "no size"),
+                       ({}, "no files")):
+        try:
+            merge(None, "2.1.0", "latest", lack, "", None, None, None, "o/n")
+            check(False, "refuses " + what)
+        except ValueError as err:
+            check("checksum" in str(err) or "sha256" in str(err), "says why for " + what)
+
     # Round trip through JSON text and the CLI on real files.
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "OkayEngine.exe")
         with open(p, "wb") as fh:
             fh.write(b"hello")
+        paths = {}
+        for n in REQUIRED_FILES:
+            paths[n] = os.path.join(d, "src_" + n)
+            with open(paths[n], "wb") as fh:
+                fh.write(b"hello")
         out = os.path.join(d, "v.json")
         a = argparse.Namespace(existing=os.path.join(d, "none.json"), version="2.9.0", channel="latest",
-                               file=["OkayEngine.exe=" + p], date="2026-01-01", bucket_versions="2.9.0",
+                               file=[n + "=" + paths[n] for n in REQUIRED_FILES], date="2026-01-01", bucket_versions="2.9.0",
                                latest="2.9.0", lts=None, repo="o/n", out=out)
         check(_cmd_merge(a) == 0, "cli merge runs")
         data = _read_json(out)
@@ -272,6 +331,23 @@ def _self_test():
         check(_read_json(out) is None, "unreadable json ignored")
         a.existing = out
         check(_cmd_merge(a) == 0, "cli merge over a damaged index")
+        # check: the written index matches the files; a missing hash or a different file fails
+        ca = argparse.Namespace(index=out, version="2.9.0", file=[n + "=" + paths[n] for n in REQUIRED_FILES])
+        check(_cmd_check(ca) == 0, "check passes on a good index")
+        ca.version = "9.9.9"
+        check(_cmd_check(ca) == 1, "check fails for an unlisted version")
+        ca.version = "2.9.0"
+        with open(paths["OkaySpace.exe"], "wb") as fh:
+            fh.write(b"tampered")
+        check(_cmd_check(ca) == 1, "check fails when the uploaded file differs")
+        broken = _read_json(out)
+        del broken["versions"][0]["files"]["OkaySpacePlayer.exe"]
+        with open(out, "w", encoding="utf-8") as fh:
+            json.dump(broken, fh)
+        ca.file = []
+        check(_cmd_check(ca) == 1, "check fails when the index lacks a file")
+        ca.index = os.path.join(d, "nope.json")
+        check(_cmd_check(ca) == 1, "check fails without an index")
         a.file = ["Missing.exe=" + os.path.join(d, "nope")]
         check(_cmd_merge(a) == 2, "cli refuses a missing file")
 
@@ -285,6 +361,10 @@ def main(argv):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--self-test", action="store_true")
     sub = p.add_subparsers(dest="cmd")
+    c = sub.add_parser("check")
+    c.add_argument("--index", required=True)
+    c.add_argument("--version", required=True)
+    c.add_argument("--file", action="append")
     m = sub.add_parser("merge")
     m.add_argument("--existing", default="")
     m.add_argument("--version", required=True)
@@ -299,6 +379,8 @@ def main(argv):
     a = p.parse_args(argv)
     if a.self_test:
         return _self_test()
+    if a.cmd == "check":
+        return _cmd_check(a)
     if a.cmd == "merge":
         return _cmd_merge(a)
     p.print_help()

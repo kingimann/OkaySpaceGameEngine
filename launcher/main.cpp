@@ -1733,6 +1733,10 @@ bool g_dmFriendsOnly = false;     // messages from non-friends go to "Message re
 int  g_callsFrom = 1;             // 0 everyone, 1 friends, 2 nobody
 bool g_readReceipts = true;       // send read receipts / "in the chat" (off = you don't see theirs either)
 bool g_typingIndicator = true;    // tell people when I'm typing
+// What the server said about docs/sql/chat_receipts.sql (0 unknown, 1 works, 2 tables missing).
+// Written by the chat poller; the Settings rows swap the toggle for a note when 2.
+static volatile int g_typingSupport = 0, g_readSupport = 0;
+static const char* ReceiptsMissingNote() { return okay::Messages::ReceiptsSetupNote(); }
 bool g_sharePlaytime = true;      // sync my playtime to my public profile
 bool g_followersSeeActivity = true;   // people who follow me see my activity feed (profiles.followers_see_activity)
 std::set<std::string> g_friendUids;   // accepted friends (filled when a friends list loads)
@@ -15017,6 +15021,7 @@ static int ChatPollWorker(void*) {
                     }
                     nextTyping = now + 2500;
                 }
+                g_typingSupport = (int)dm.TypingSupport(); g_readSupport = (int)dm.ReadMarksSupport();
             }
         } catch (...) { /* transient — retry next tick */ }
         SDL_Delay(250);
@@ -20543,8 +20548,9 @@ int main(int argc, char** argv) {
                         if (ToggleSwitch("##shp", &g_sharePresence)) SavePrefs();
                     });
                     acDivider();
-                    acRow("Read receipts", "Blue ticks and \"in the chat\".", 40.0f, 22.0f, [&](float) {
-                        if (ToggleSwitch("##rr", &g_readReceipts)) SavePrefs();
+                    acRow("Read receipts", g_readSupport == 2 ? ReceiptsMissingNote() : "Blue ticks and \"in the chat\".",
+                          g_readSupport == 2 ? 0.0f : 40.0f, 22.0f, [&](float) {
+                        if (g_readSupport != 2 && ToggleSwitch("##rr", &g_readReceipts)) SavePrefs();
                     });
                     acDivider();
                     acRow("Show my playtime", "Hours per game on your public profile.", 40.0f, 22.0f, [&](float) {
@@ -21020,12 +21026,16 @@ int main(int argc, char** argv) {
                         if (ToggleSwitch("##sharepres", &g_sharePresence)) SavePrefs();
                     });
                     rowDivider();
-                    settingRow("Read receipts", "Blue ticks and \"in the chat\". Turn off and you won't see other people's either.", 40.0f, 22.0f, [&](float) {
-                        if (ToggleSwitch("##readrc", &g_readReceipts)) SavePrefs();
+                    settingRow("Read receipts", g_readSupport == 2 ? ReceiptsMissingNote()
+                                   : "Blue ticks and \"in the chat\". Turn off and you won't see other people's either.",
+                               g_readSupport == 2 ? 0.0f : 40.0f, 22.0f, [&](float) {
+                        if (g_readSupport != 2 && ToggleSwitch("##readrc", &g_readReceipts)) SavePrefs();
                     });
                     rowDivider();
-                    settingRow("Typing indicator", "Let people see when you're typing to them.", 40.0f, 22.0f, [&](float) {
-                        if (ToggleSwitch("##typing", &g_typingIndicator)) SavePrefs();
+                    settingRow("Typing indicator", g_typingSupport == 2 ? ReceiptsMissingNote()
+                                   : "Let people see when you're typing to them.",
+                               g_typingSupport == 2 ? 0.0f : 40.0f, 22.0f, [&](float) {
+                        if (g_typingSupport != 2 && ToggleSwitch("##typing", &g_typingIndicator)) SavePrefs();
                     });
                     rowDivider();
                     settingRow("Show my playtime", "Hours per game and in the editor on your public profile.", 40.0f, 22.0f, [&](float) {

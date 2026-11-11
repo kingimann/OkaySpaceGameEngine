@@ -12,7 +12,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **What:** The launcher program players double-click (`OkaySpace.exe`): window and sidebar, the pages, settings, notifications, the loading screen, and the self-updater that keeps the launcher, editor and player current.
 - **Parts:**
   - 17.1.1 Window, sidebar and pages - `launcher/main.cpp` - SDL2 plus Dear ImGui; tabs Create, Play, Community, Account, Settings, Achievements, Friends, Market, Servers, Forums, Downloads, plus Multiplayer, What's New, Tips and Admin; `main()` starts near L16377, the tab pages from L17892; number keys switch pages
-  - 17.1.2 Self-updater - `launcher/main.cpp` (L136-326) - compares its baked version with the published `VERSION.txt` and downloads the launcher, editor and player; `ShellSafeUrl` refuses URLs that could break out of the shell command; no signature check (see 17.11)
+  - 17.1.2 Self-updater - `launcher/main.cpp` (L136-326) - compares its baked version with the published `VERSION.txt` and downloads the launcher, editor and player; every file must have a SHA-256 in `versions.json` (`launcher/UpdaterCore.hpp`: no checksum, mismatch, failed download or failed swap = refused with a reason, nothing replaced); `ShellSafeUrl` refuses URLs that could break out of the shell command; `versions.json` itself is unsigned (see 17.11)
   - 17.1.3 Supabase mirror and periodic check - `launcher/main.cpp` (L810-1031) - uses whichever of the Supabase `releases` bucket and GitHub Releases has the newer version; `OKAY_UPDATE_SERVER` overrides; "newer version" badge
   - 17.1.4 What's New and Tips - `launcher/main.cpp` (L4050, tabs 12 and 13) - release history cards and a searchable tips list with a tip of the day
   - 17.1.5 Settings page - `launcher/main.cpp` (tab 4, L20333) - Appearance, Chat & Notifications, Loading screen, Behavior, Game libraries, Account, About, Privacy & Safety, Voice & Audio, Crash reports; saved in `launcher.cfg` next to the exe
@@ -20,13 +20,13 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.1.7 Shared look and startup frame - `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`, `shared/RobotoFont.h`, `shared/JetBrainsMonoFont.h` - the Slate theme shared with the editor, a branded splash drawn before ImGui starts, a procedural window icon, embedded fonts
   - 17.1.8 Windows resources and build - `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `launcher/okayspace.ico` - target `okayspace-launcher` builds `OkaySpace.exe`; it does not link the engine library (only engine headers plus `ServerQuery.cpp` and `UdpSocket.cpp`)
   - 17.1.9 Script UI bridge and test panel - `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp` - not launcher code: OkayUI widgets for script `ui_*` calls and the F1 "Test UI" panel, used by the editor and the player
-- **Code:** `launcher/main.cpp`, `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `launcher/okayspace.ico`, `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`, `shared/RobotoFont.h`, `shared/JetBrainsMonoFont.h`, `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp`
+- **Code:** `launcher/main.cpp`, `launcher/UpdaterCore.hpp`, `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `launcher/okayspace.ico`, `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`, `shared/RobotoFont.h`, `shared/JetBrainsMonoFont.h`, `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp`
 - **API:** `OkaySpace.exe`, `launcher.cfg`, env `OKAY_UPDATE_SERVER`, `OKAY_ACCOUNT_SERVER`, dev hooks `OKAY_UI_DEMO_TAB`, `OKAY_CHAT_DEMO`
 - **Editor:** none (the launcher starts `OkayEngine.exe` and `OkaySpacePlayer.exe` from `Tools/`)
 - **Docs:** `docs/packaging.md`, `docs/releasing.md`, `docs/launcher-multiplayer.md`
-- **Tests:** none for the shell itself; helpers have tests (`crash_reports`, `project_delete`, `official_game`, `chat_json`, `friends_json`)
+- **Tests:** none for the shell itself; the updater rules and helpers have tests (`launcher_versions` updater suite, `versions_index`, `crash_reports`, `project_delete`, `official_game`, `chat_json`, `friends_json`)
 - **Status:** Works - the shipping app, structure read from `main.cpp`; no automated UI test
-- **Open:** split `launcher/main.cpp` (1.5 MB, see 19.4 and ROADMAP "Later"); the self-updater verifies nothing but a version string and URL characters (17.11)
+- **Open:** split `launcher/main.cpp` (1.5 MB, see 19.4 and ROADMAP "Later"); the update index (`versions.json`) is not signed (17.11); the updater itself requires and verifies checksums
 - **Related:** 18.1, 18.5, 17.12, 17.13, 41.1
 - **Words:** launcher, OkaySpace.exe, updater, update, new version, sidebar, tray, splash, loading screen, Settings, launcher.cfg, What's New, Tips, notifications, toast, Slate theme
 - **Seen as:** launcher won't update or says "new version" forever; black frame at startup; wrong theme or text size; the sidebar is collapsed; two launchers open
@@ -215,7 +215,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.11.1 Relay session isolation - `Net/RelayServer` - done in #254 and hardened since (see 39.8)
   - 17.11.2 Script file paths - `Core/SaveData` - `Save::IsSafeRelative` refuses absolute paths and `..` for save, prefs, data, build and scene calls; test `script_paths`
   - 17.11.3 Reactions privacy - `docs/sql/social.sql` - `can_see_reaction_target` limits who can read or add a reaction (read in the SQL)
-  - 17.11.4 Updater signing - `launcher/main.cpp` (L136-326) - not implemented: the updater trusts HTTPS plus a version string
+  - 17.11.4 Updater signing - `launcher/main.cpp` (L136-326) - not implemented: the updater requires and checks SHA-256 from `versions.json` but that index is unsigned (trusts HTTPS plus the bucket)
 - **Code:** `Core/SaveData`, `docs/sql/social.sql`, `Net/RelayServer`
 - **API:** `Save::IsSafeRelative`, `ShellSafeUrl`
 - **Editor:** none

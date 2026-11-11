@@ -27,6 +27,7 @@ option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OF
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
+option(OKAY_BUILD_IMUI     "Build okay::imui, our own immediate-mode UI core (side by side with Dear ImGui, small, no dependencies)" ON)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
 if(MSVC)
@@ -109,6 +110,11 @@ set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
 
 # ---- The engine library ----------------------------------------------
 add_subdirectory(engine)
+
+# ---- okay::imui: our own UI core, side by side with Dear ImGui (nothing uses it yet) ----
+if(OKAY_BUILD_IMUI)
+    add_subdirectory(shared/imui)
+endif()
 
 # ---- OkayUI (SDL_Renderer immediate-mode UI toolkit) -----------------
 # Self-gates on SDL2 (skips quietly if absent). Added before the editor and tests

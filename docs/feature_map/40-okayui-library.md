@@ -105,3 +105,24 @@ This area stands alone (own CMake target `okay_ui`, own backends, own font atlas
 - **Words:** OkayUI versus Canvas, immediate mode versus scene UI, which UI system, UI toolkit, two UI systems, ui_ calls versus UI components
 - **Seen as:** "which UI should I use"; a look changes in one system and not the other; a script UI window and a scene HUD overlap; a feature exists in OkayUI but not in the scene UI (or the reverse)
 - **Ask me like:** "do I use OkayUI or a Canvas for a lobby screen"; "make the Matchmaking window a scene UI prebuilt screen"
+
+### 40.6 okay::imui, our own headless UI core (side by side with Dear ImGui)
+- **What:** A from-scratch immediate-mode UI core with no SDL, OpenGL or engine dependency: input arrives as plain structs, output is a draw list (vertex, index and command buffers), and a software backend draws it into an RGBA bitmap so everything is testable headlessly. It is a core, not a replacement: nothing in the editor, launcher or player uses it, Dear ImGui and OkayUI are untouched.
+- **Parts:**
+  - 40.6.1 Context, IDs and input - `shared/imui/Imui.hpp`, `shared/imui/Imui.cpp` - frame model (`NewFrame`, `Render`), FNV-1a ID stack, hover and active ids, key repeat, popup closing, misuse counted in `Context::errors`
+  - 40.6.2 Draw list and font atlas - `shared/imui/ImuiDraw.cpp` - rects (filled, outline, rounded), lines, triangles, circles, text, images, clip stack; atlas built from the engine's own `Font8x8` glyphs (no TTF rasteriser of ours on main yet)
+  - 40.6.3 Windows and layout - `shared/imui/Imui.cpp` - title bar, move, resize, collapse, close, scroll bar, z-order, auto-size, scroll regions, same-line, groups, columns, indent
+  - 40.6.4 Widgets - `shared/imui/Imui.cpp` - Text, Button, Checkbox, SliderFloat, SliderInt, DragFloat, InputText, Combo, Selectable, TreeNode, Separator
+  - 40.6.5 Software backend - `shared/imui/ImuiSoft.hpp`, `shared/imui/ImuiSoft.cpp` - top-left fill rule triangle rasteriser, scissor, alpha blend, textures; hostile draw data is skipped
+  - 40.6.6 Demo and audit - `shared/imui/demo/`, `docs/own_ui_toolkit.md` - `imui_demo [out.png]` renders a window of widgets; the doc ranks the ImGui calls our code makes and lists what is missing
+- **Code:** `shared/imui/Imui.hpp`, `shared/imui/Imui.cpp`, `shared/imui/ImuiDraw.cpp`, `shared/imui/ImuiSoft.hpp`, `shared/imui/ImuiSoft.cpp`, `shared/imui/CMakeLists.txt`, `shared/imui/demo/imui_demo.cpp`, `shared/imui/demo/DemoScene.hpp`, `shared/imui/tests/ImuiTestKit.hpp`
+- **API:** `okay::imui::CreateContext`, `NewFrame`, `Render`, `Begin`, `End`, `Button`, `SoftRender`, `okay::imui::Input`; CMake option `OKAY_BUILD_IMUI` (ON by default; small), library `okay::imui`
+- **Editor:** none (not wired in)
+- **Docs:** `docs/own_ui_toolkit.md`, `docs/own_code_roadmap.md`
+- **Tests:** `imui_core`, `imui_widgets`, `imui_golden` (four committed PNGs), `imui_fuzz` (seeded; run under ASan/UBSan)
+- **Status:** Basic - the core, eleven widgets, a software backend and tests exist; no GPU backend, no docking, no tables, no menus, no popups beyond Combo
+- **Open:** everything in section 3 of `docs/own_ui_toolkit.md` (popups, menus, tooltips, tables, tabs, docking, viewports, drag and drop, wrapped text, several fonts, TTF, clipboard, keyboard navigation, GPU backends); overlaps OkayUI (40.1), which already has many of those widgets, so the two need a merge decision
+- **Related:** 40.1, 40.5, 15.1, 17.1
+- **Words:** imui, okay::imui, own UI toolkit, replace Dear ImGui, immediate mode core, software UI renderer, headless UI test, golden image, draw list, font atlas, OKAY_BUILD_IMUI
+- **Seen as:** a UI golden test differs by a few pixels; typing in an imui text box drops a character; a window cannot be dragged in the imui demo; the imui build target is missing
+- **Ask me like:** "work on 40.6.4, add a menu bar to imui"; "run the imui fuzz test under the sanitizers"

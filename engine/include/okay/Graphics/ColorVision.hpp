@@ -9,6 +9,8 @@
 #include "okay/Render/Color.hpp"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -49,6 +51,9 @@ Color DaltonizeColor(const Color& c, ColorblindMode mode, float strength = 1.0f)
 /// The same over every pixel of an image, in place (alpha kept).
 void SimulateColorblind(Image& img, ColorblindMode mode, float severity = 1.0f);
 void DaltonizeImage(Image& img, ColorblindMode mode, float strength = 1.0f);
+/// The daltonize shift over `pixels` RGBA8 pixels in place (4 bytes each, alpha kept); what the
+/// player applies to the whole 3D frame. Does nothing for None and Achromatopsia.
+void DaltonizeRgba8(std::uint8_t* rgba, std::size_t pixels, ColorblindMode mode, float strength = 1.0f);
 /// Copies.
 Image SimulatedColorblind(const Image& img, ColorblindMode mode, float severity = 1.0f);
 Image DaltonizedImage(const Image& img, ColorblindMode mode, float strength = 1.0f);

@@ -1269,22 +1269,22 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Let players with colour vision differences read the game: filters, safe palettes and contrast, without changing the art by hand.
 - **Parts:**
   - 32.3.1 Colour vision maths (#574) - `Graphics/ColorVision` - simulate and correct for protanopia, deuteranopia, tritanopia, achromatopsia on colours and images; a colour-vision-safe palette; contrast checks
-  - 32.3.2 Accessibility settings (#574) - `Core/AccessibilitySettings` - `colorblind` mode and strength, high contrast, text scale, reduce motion and flashing, saved in Prefs, with change listeners
-  - 32.3.3 Full-screen filter - `-` - not built (a function on colours and images only; renderers do not apply it)
+  - 32.3.2 Accessibility settings (#574) - `Core/AccessibilitySettings` - `colorblind` mode and strength, high contrast, text scale, reduce motion and flashing, saved in Prefs, with change listeners; text size, colour filter, high contrast, reduce motion and reduce flashing are read by the player and set on the Settings screen (12.8.4); hold-to-toggle, aim assist, screen-reader hints and subtitle settings have no reader and no control
+  - 32.3.3 Colour filter - `Graphics/ColorVision`, `player/main.cpp` - the rendered 3D frame of every renderer and the flat colours and text of the screen UI are daltonized (protanopia, deuteranopia, tritanopia); UI images are not; the editor has no preview
 - **Code:** `Graphics/ColorVision`, `Core/AccessibilitySettings`
 - **API:** `SimulateColorblind`, `DaltonizeColor`, `Accessibility::FilterColor`, `TextColor`, `SetColorblind`
 - **Editor:** none
 - **Docs:** `docs/accessibility.md`
-- **Tests:** `accessibility`
-- **Status:** Partial - the colour vision maths and the accessibility settings are on main (#574, test `accessibility`); no renderer applies them ("a full-screen filter in the renderers is future work", per docs) and the editor has no preview.
-- **Exists today:** `Graphics/ColorVision` and `Core/AccessibilitySettings` as data and functions on colours and images; nothing in the renderers, the editor or the player reads the settings.
+- **Tests:** `accessibility`, `accessibility_wired`, `accessibility_render`
+- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion and reduce flashing change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`); the editor has no preview, UI images are not filtered, and the settings with no reader (subtitles, hold-to-toggle, aim assist, screen reader) are not offered.
+- **Exists today:** `Graphics/ColorVision`, `Core/AccessibilitySettings` and the player and UI renderer reading them; the editor and the okayui chrome do not.
 - **Work packages:**
-  1. M - Post-process filter in the renderers using the settings (all four renderers or software plus GL/D3D11 first). Depends on: #574 (on main).
+  1. Done - the filter runs on the pixel buffer every renderer hands to the player (CPU, about a few ms at 1080p).
   2. S - Game view "Simulate colour blindness" preview menu in the editor to check a scene. Depends on: package 1.
   3. S - UI theme and health bars use `Accessibility::FilterColor` or shapes plus colour. Depends on: 12.7.
-  4. S - Settings screen section with a preview strip. Depends on: 12.8.
+  4. S - Preview strip in the Settings screen section (the section itself is done). Depends on: 12.8.
   5. M - Palette checker: report colour pairs that are hard to tell apart for a given mode. Depends on: package 2.
-- **Open:** the GPU renderers do not read the settings; the speaker-colour palette in `CaptionManager` is the only consumer in the engine.
+- **Open:** UI images and the editor are not filtered; the colour filter runs on the CPU after the renderer, not in the GPU shaders; Achromatopsia has no correction and is not offered.
 - **Related:** 2.5, 12.7, 32.2
 - **Words:** colorblind, colour blind, protanopia, deuteranopia, tritanopia, daltonize, high contrast, safe palette, accessibility filter
 - **Seen as:** red and green indicators look the same; team colours indistinguishable

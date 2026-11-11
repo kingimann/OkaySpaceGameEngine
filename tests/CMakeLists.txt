@@ -1691,6 +1691,12 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_renderer_golden COMMAND test_ui_renderer_golden)
+
+    # Accessibility settings in rendered pixels (text size, colour filter, high contrast)
+    add_executable(test_accessibility_render test_accessibility_render.cpp)
+    target_link_libraries(test_accessibility_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_accessibility_render PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME accessibility_render COMMAND test_accessibility_render)
 else()
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()
@@ -2243,3 +2249,9 @@ add_executable(test_file_dialog test_file_dialog.cpp ${PROJECT_SOURCE_DIR}/share
 target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
+
+# Accessibility settings that change behaviour: reduced motion and flashing, colour filter on a software
+# frame, text size layout, and the Settings screen controls that set and save them
+add_executable(test_accessibility_wired test_accessibility_wired.cpp)
+target_link_libraries(test_accessibility_wired PRIVATE okay::engine)
+add_test(NAME accessibility_wired COMMAND test_accessibility_wired)

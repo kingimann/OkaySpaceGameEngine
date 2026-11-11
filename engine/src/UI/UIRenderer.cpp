@@ -4,6 +4,7 @@
 #include "okay/UI/TooltipPlace.hpp"
 #include <Okay.hpp>
 #include "okay/Core/Utf8.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -16,6 +17,75 @@ namespace okay {
 namespace ui2d {
 
 namespace {
+// The player's text size (Accessibility), for the widgets whose text can grow without a fixed slot.
+inline float UITextScale() { return Accessibility::Get().textScale; }
+
+// ---- Accessibility: colour vision filter and high-contrast text ----------------------------------
+// The most recent large solid fill, as drawn (before any colour filter): what high-contrast text is
+// measured against. Thin pieces (borders, text pixels) don't count.
+Color g_backdrop{0.06f, 0.06f, 0.08f, 1.0f};
+bool g_inText = false;
+
+// Wraps the frame's painter so every flat colour and vertex colour the UI pass sets is shifted for the
+// player's colour vision (Accessibility::FilterColor). Images are drawn as they are.
+class A11yPainter final : public Painter {
+public:
+    explicit A11yPainter(Painter& in) : m_in(in) {}
+    void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override {
+        m_c = Color::FromBytes(r, g, b, 255); m_a = a;
+        std::uint8_t fr, fg, fb; Filter(r, g, b, fr, fg, fb);
+        m_in.SetDrawColor(fr, fg, fb, a);
+    }
+    void FillRect(const Rect* r) override {
+        if (r && !g_inText && m_a >= 128 && std::min(r->w, r->h) >= 8) g_backdrop = m_c;
+        m_in.FillRect(r);
+    }
+    void DrawRect(const Rect* r) override { m_in.DrawRect(r); }
+    void DrawLine(int x0, int y0, int x1, int y1) override { m_in.DrawLine(x0, y0, x1, y1); }
+    void DrawPoint(int x, int y) override { m_in.DrawPoint(x, y); }
+    void SetClipRect(const Rect* r) override { m_in.SetClipRect(r); }
+    void GetClipRect(Rect* r) override { m_in.GetClipRect(r); }
+    bool IsClipEnabled() override { return m_in.IsClipEnabled(); }
+    void SetScale(float sx, float sy) override { m_in.SetScale(sx, sy); }
+    Tex LoadTexture(const std::string& path) override { return m_in.LoadTexture(path); }
+    Tex FontAtlas(TtfFont* font) override { return m_in.FontAtlas(font); }
+    void QueryTexture(Tex t, int* w, int* h) override { m_in.QueryTexture(t, w, h); }
+    void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) override {
+        std::uint8_t fr, fg, fb; Filter(r, g, b, fr, fg, fb);
+        m_in.SetTextureColorMod(t, fr, fg, fb);
+    }
+    void SetTextureAlphaMod(Tex t, std::uint8_t a) override { m_in.SetTextureAlphaMod(t, a); }
+    void Copy(Tex t, const Rect* s, const Rect* d) override { m_in.Copy(t, s, d); }
+    void CopyF(Tex t, const Rect* s, const FRect* d) override { m_in.CopyF(t, s, d); }
+    void CopyEx(Tex t, const Rect* s, const Rect* d, double a, const Point* c, int f) override { m_in.CopyEx(t, s, d, a, c, f); }
+    void CopyExF(Tex t, const Rect* s, const FRect* d, double a, const FPoint* c, int f) override { m_in.CopyExF(t, s, d, a, c, f); }
+    void Geometry(Tex t, const Vertex* v, int nv, const int* idx, int ni) override {
+        m_verts.assign(v, v + nv);
+        for (Vertex& x : m_verts) Filter(x.color.r, x.color.g, x.color.b, x.color.r, x.color.g, x.color.b);
+        m_in.Geometry(t, m_verts.data(), nv, idx, ni);
+    }
+    void MissingTexture(const std::string& path, const Rect& where) override { m_in.MissingTexture(path, where); }
+    Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) override { return m_in.UploadAtlas(page, pageIndex, existing); }
+
+private:
+    void Filter(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t& orr, std::uint8_t& og, std::uint8_t& ob) {
+        const std::uint32_t key = ((std::uint32_t)r << 16) | ((std::uint32_t)g << 8) | b;
+        if (!m_have || key != m_key) {   // the same colour is set many times in a row
+            const Color f = Accessibility::FilterColor(Color::FromBytes(r, g, b, 255));
+            m_key = key; m_have = true;
+            m_out[0] = (std::uint8_t)(f.r * 255.0f + 0.5f); m_out[1] = (std::uint8_t)(f.g * 255.0f + 0.5f); m_out[2] = (std::uint8_t)(f.b * 255.0f + 0.5f);
+        }
+        orr = m_out[0]; og = m_out[1]; ob = m_out[2];
+    }
+    Painter& m_in;
+    Color m_c{0, 0, 0, 1};
+    std::uint8_t m_a = 255;
+    std::uint32_t m_key = 0;
+    bool m_have = false;
+    std::uint8_t m_out[3] = {0, 0, 0};
+    std::vector<Vertex> m_verts;
+};
+
 // Collects one-pixel-tall spans and draws runs of identical rows (same x, width and
 // colour) as one rect: a rounded panel is a handful of rects instead of one per row.
 struct RowRuns {
@@ -275,16 +345,16 @@ float UITextW(const std::string& text, float px) {
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
 // in screen pixels, each font pixel `px` screen pixels wide. When `ttf` is loaded,
 // the TTF atlas is used instead (same sizing space).
-void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
-                float px, RGBA col, float letterSp, float lineSp,
-                bool italic, bool gradient, RGBA col2, TtfFont* ttf, bool bold) {
+static void DrawUITextImpl(Painter& r, const std::string& text, float ox, float oy,
+                           float px, RGBA col, float letterSp, float lineSp,
+                           bool italic, bool gradient, RGBA col2, TtfFont* ttf, bool bold) {
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
     ttf = FontForText(ttf, text);      // a font with the text's characters (other languages)
     if (px < 0.15f) px = 0.15f;   // a smooth font scales below one font pixel; the 8x8 font can't
     if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp, italic, bold ? (px * 8.0f >= 30.0f ? 1.5f : 1.0f) : 0.0f); return; }
     if (px < 1.0f) px = 1.0f;
     if (bold) {   // the 8x8 font has one weight: draw it again one font pixel to the right
-        DrawUIText(r, text, ox + px, oy, px, col, letterSp, lineSp, italic, gradient, col2, nullptr, false);
+        DrawUITextImpl(r, text, ox + px, oy, px, col, letterSp, lineSp, italic, gradient, col2, nullptr, false);
     }
     if (!gradient) r.SetDrawColor(col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
@@ -313,6 +383,22 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
     }
 }
 
+void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
+                float px, RGBA col, float letterSp, float lineSp,
+                bool italic, bool gradient, RGBA col2, TtfFont* ttf, bool bold) {
+    if (Accessibility::Get().highContrast) {   // text pushed to 7:1 against what is behind it
+        auto fix = [](RGBA c) {
+            const Color f = Accessibility::TextColor(Color::FromBytes(c.r, c.g, c.b, 255), g_backdrop);
+            return RGBA{(std::uint8_t)(f.r * 255.0f + 0.5f), (std::uint8_t)(f.g * 255.0f + 0.5f), (std::uint8_t)(f.b * 255.0f + 0.5f), c.a};
+        };
+        col = fix(col);
+        if (gradient) col2 = fix(col2);
+    }
+    const bool was = g_inText;
+    g_inText = true;
+    DrawUITextImpl(r, text, ox, oy, px, col, letterSp, lineSp, italic, gradient, col2, ttf, bold);
+    g_inText = was;
+}
 
 // Rich text: draw `disp` (already free of tags) in runs, each in the colour and weight its characters
 // carry in `styles` (one per visible character, in order). Each run is placed by measuring the text before
@@ -467,7 +553,17 @@ void PreparePassFrame(UIPassCache& c, const Scene& scene) {
 }
 } // namespace
 
+static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt);
+
 void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt) {
+    const AccessibilitySettings& a = Accessibility::Get();
+    g_backdrop = Color{0.06f, 0.06f, 0.08f, 1.0f};
+    if (a.colorblind == ColorblindMode::None && !a.highContrast) { RenderSceneUIImpl(scene, p, w, h, opt); return; }   // untouched
+    A11yPainter filtered(p);
+    RenderSceneUIImpl(scene, filtered, w, h, opt);
+}
+
+static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt) {
     // Scroll / mask membership: offset a widget's origin by the scroll views it
     // sits in and clip drawing to every enclosing viewport and mask, so
     // scrollable and masked content shows and hides correctly in the built game.
@@ -1387,7 +1483,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                 MMThickLine(p, box.x + bw * 0.43f, box.y + bh * 0.70f, box.x + bw * 0.77f, box.y + bh * 0.32f, lw, wc);
             }
         }
-        float px = 2.0f;
+        float px = 2.0f * UITextScale();
         float tx = o.x + tg->size.x + 8.0f;
         float ty = o.y + (tg->size.y - Font8x8::Height * px) * 0.5f;
         RGBA tc{(std::uint8_t)(tg->textColor.r * 255), (std::uint8_t)(tg->textColor.g * 255),
@@ -1500,7 +1596,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         // the icon. Skip the built-in label when a child Text object provides it
         // — that child draws itself in the text pass.
         if (!UIButtonTextChild(up.get())) {
-            float px = btn->fontScale * bk;
+            float px = btn->fontScale * bk * UITextScale();   // accessibility text size
             okay::TtfFont* fnt = okay::FontForText(btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath), btn->label);
             float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
                            : UITextW(btn->label, px);
@@ -1795,8 +1891,8 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                 p.SetDrawColor(hv.r, hv.g, hv.b, hv.a);
                 p.FillRect(&row);
             }
-            DrawUIText(p, cm->items[i], mo.x + 10.0f, iy + (cm->itemHeight - Font8x8::Height * cm->textSize) * 0.5f,
-                       cm->textSize, tx);
+            DrawUIText(p, cm->items[i], mo.x + 10.0f, iy + (cm->itemHeight - Font8x8::Height * cm->textSize * UITextScale()) * 0.5f,
+                       cm->textSize * UITextScale(), tx);
         }
         p.SetDrawColor(bd.r, bd.g, bd.b, bd.a);
         p.DrawRect(&box);
@@ -1817,7 +1913,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         const RGBA b = col(bgc);
         p.SetDrawColor(b.r, b.g, b.b, b.a);
         p.FillRect(&box);
-        const float px = kb->textSize, ty = o.y + (kb->size.y - Font8x8::Height * px) * 0.5f;
+        const float px = kb->textSize * UITextScale(), ty = o.y + (kb->size.y - Font8x8::Height * px) * 0.5f;
         DrawUIText(p, kb->action, o.x + 8.0f, ty, px, col(kb->textColor));
         const std::string keyText = kb->IsListening() ? std::string(kb->ListenPrompt()) : "[" + kb->KeyLabel() + "]";
         const RGBA kc = col(kb->IsListening() ? kb->listenColor : kb->keyColor);
@@ -1832,7 +1928,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         auto* tt = up->GetComponent<UITooltip>();
         if (!tt || !up->active || !tt->Ready()) continue;
         Vec2 m = uiMouse();
-        float px = 2.0f;
+        float px = 2.0f * UITextScale();
         const float ox = tt->offset.x, oy = tt->offset.y;
         auto plain = [&](const std::string& s) {
             std::string out;

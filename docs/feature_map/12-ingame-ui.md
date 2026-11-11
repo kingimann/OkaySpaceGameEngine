@@ -168,12 +168,12 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.8.1 Loading screen - `Components/LoadingScreen` - show-on-start or scene transition, progress, fade, rotating tips, bar and spinner styles, logo, slow zoom
   - 12.8.2 Loading layouts - `Components/LoadingScreenLayout` - one draw-command list (rect, gradient, image, text, arc) drawn identically by the player and the editor preview
   - 12.8.3 Pause menu - `Components/PauseMenu` - Escape toggle, freezes time, free cursor, builds editable UI objects in the scene, keyboard and gamepad
-  - 12.8.4 Settings screen - `Components/SettingsScreen` - Music, Effects, Fullscreen, VSync, Quality bound to mixer, window and render preset; Done returns to the pause menu
+  - 12.8.4 Settings screen - `Components/SettingsScreen` - Music, Effects, Fullscreen, VSync, Quality bound to mixer, window and render preset; Text size, Colour filter, High contrast, Reduce motion and Reduce flashing bound to `Accessibility` (applied live, saved to Prefs on Done); Done returns to the pause menu
 - **Code:** `Components/LoadingScreen`, `Components/LoadingScreenLayout`, `Components/PauseMenu`, `Components/SettingsScreen`, `editor/main.cpp` (Loading Screen and Pause Menu inspectors ~31719, ~29517)
 - **API:** `LoadingScreen::Begin("Scene")`, `PauseMenu`, `SettingsScreen::AnyOpen`, `GameInputBlocked`
 - **Editor:** Inspector headers Loading Screen (live animated preview, Look buttons) and Pause Menu; Create > UI > Prebuilt Screens > Menus and Loading Screens; Localized switch (Localization window)
 - **Docs:** `docs/game_ui.md` (Loading screens)
-- **Tests:** `loading_screen`, `pausemenu`, `pause_menu`, `ui_input_guard`, `ui_templates`
+- **Tests:** `loading_screen`, `pausemenu`, `pause_menu`, `ui_input_guard`, `ui_templates`, `accessibility_wired`
 - **Status:** Works - implemented and tested (headless loading logic, pause freeze and quit flag, pause card at three aspects)
 - **Open:** no known gaps; save-slot UI components (area 35) are not here
 - **Related:** 12.7, 7.4, 1.8, 35
@@ -259,7 +259,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** -
 - **Tests:** `ui_nav_touch`, `ui_overlays`, `ui_input_guard`, `uicapture_look`, `ui_system`, `focus_remap`
 - **Status:** Works - navigation, touch and focus rules are implemented and tested; a focus graph with tab order, links and traps (`UI/FocusGraph`, `BuildFocusGraph` in `UINavigation.hpp`) merged in #574 but `NavigateUI` does not use it
-- **Open:** FocusGraph and the accessibility settings (#574, 32.1, 32.3) are not used by `NavigateUI` or the widgets yet; remapping all UI actions and screen-reader hints belong to area 32; no gesture recognisers (double-click, long press, swipe)
+- **Open:** FocusGraph (#574, 32.1) is not used by `NavigateUI` or the widgets yet (the accessibility text size, colour filter and high contrast are applied by the UI renderer, 32.3); remapping all UI actions and screen-reader hints belong to area 32; no gesture recognisers (double-click, long press, swipe)
 - **Related:** 8.3, 8.4, 32.1, 12.4
 - **Words:** event system, hover, pressed, selected, gamepad navigation, focus, D-pad, keyboard menu navigation, touch, tap, pointer over UI, input capture, UICaptured
 - **Seen as:** gamepad cannot move through a menu; focus ring stays on a hidden widget; clicks on the HUD also fire in the world; the camera keeps turning while a menu is open; the wrong widget gets the click

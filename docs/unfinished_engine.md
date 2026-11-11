@@ -94,7 +94,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 |---|---|---|---|---|
 | UI frames have no rotation or scale | `Components/UIFrame.hpp` (only anchors, pivot, size) | Cannot spin or zoom a widget (spinning icons, pop-in) except through UIAnimation tricks | Medium | Medium |
 | Missing widgets: search bar, date and time picker, file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | `engine/include/okay/Components/UI*.hpp` file list has none of these | App-style UI must be assembled by hand | Medium | Large |
-| UI controller focus visuals and accessibility not wired | `UI/FocusGraph` is used by `UINavigation.hpp` but nothing reads `AccessibilitySettings` (see section 14) | Gamepad users get no consistent focus ring | Medium | Medium |
+| UI controller focus visuals not wired to accessibility | `UI/FocusGraph` is used by `UINavigation.hpp`; high contrast changes UI text only (see section 14) | Gamepad users get no consistent focus ring | Medium | Medium |
 | UI scripting needs the OkayUI bridge; without it `ui_*` calls draw nothing | `Scripting/ScriptUI` has only the OkayUI implementation in `shared/` (feature map 13.x) | A build without OkayUI silently ignores UI script calls | Low | Medium |
 | Steeply tilted world-space UI draws as axis-aligned rectangles | `docs/ui_world_space.md` | In-world screens at an angle look wrong | Low | Medium |
 | UI text is left-to-right only, no shaping | no bidi, shaping or Arabic code in `engine/src` or `include` | Arabic, Hebrew, Thai text draws wrong or mirrored by hand; the preview mirror only reverses characters | Medium | Large |
@@ -147,7 +147,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| Accessibility settings have no consumer at all | `engine/include/okay/Core/AccessibilitySettings.hpp:40-52`: text scale, high contrast, reduce motion, reduce flashing, colour-blind mode, hold-to-toggle, aim assist, screen-reader hints. Grep across `engine/src`, `Components`, `UI`, `player`, `editor`, `shared` finds no reader | A player can set them, but nothing scales text, damps camera shake, shifts colours (`Graphics/ColorVision.cpp` has the maths, no caller), or toggles holds. There is also no settings screen in the player that sets them | High | Large |
+| Accessibility: five settings are wired, five are not (partly done) | Wired and tested (`accessibility_wired`, `accessibility_render`): text size (screen-space text, button, toggle, keybind, tooltip, context-menu labels), colour filter (3D frame in the player plus UI flat colours and text), high contrast (UI text), reduce motion (camera shake, UI slide, pop and loop animations), reduce flashing (`flash` action, UI blink loop). All five rows sit on the Settings screen (`SettingsScreen`, saved to Prefs). NOT DONE and not in the UI: subtitles and sound captions (no widget draws `CaptionManager` lines), hold-to-toggle, aim assist, screen-reader hints, head bob and landing dip under reduce motion, Achromatopsia (no correction exists) | A player can use the five wired rows; the others still have no reader, so no control for them is offered. Wired limits: slider, dropdown, input and progress text keep their size; images drawn by UI widgets are not colour filtered; the editor and launcher (okayui) do not read the settings; Settings screens saved before this change lack the new rows until the Settings prefab is added again | Medium | Medium |
 | Localization tools (`LocTable`, `LocCheck`, `LocPreview`, `LocScan`) not reachable from the editor | zero references in `editor/` or `player/` | Missing-key reports, placeholder mismatches and pseudo-locale preview cannot be used by a normal user (this sharpens 1.16 and 31.1 with the exact consumer count) | Medium | Medium |
 | Duplicate components of one type save only the first (except a few listed types) | `SceneSerializer.cpp` (feature map 1.7) | Two colliders or two lights on one object lose one on save | Medium | Medium |
 | Right-to-left languages unsupported (see section 9) | see above | | Medium | Large |
@@ -157,11 +157,11 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 9. Medium: 57. Low: 26. Total rows: 92.
+High: 8. Medium: 58. Low: 26. Total rows: 92.
 
 ## Top 15 to tackle first
 
-1. **Accessibility settings have no readers** (sec 14). The class and tests exist, nothing uses them. Quickest wins: text scale in the UI painter and reduce-motion on camera shake. Shipping an accessibility feature that does nothing is a trust problem.
+1. **(Mostly resolved) Accessibility settings** (sec 14). Text size, colour filter, high contrast, reduce motion and reduce flashing now change the player and are on the Settings screen. Still open: subtitles and captions, hold-to-toggle, aim assist, screen-reader hints, editor and launcher chrome.
 2. **SSAO missing on Direct3D 11** (sec 1). Windows is the main target and D3D11 is its default; a lighting switch that does nothing there is the most visible renderer gap.
 3. **Editor Play lacks the extended keys and extra pads** (sec 5). A few lines copying `AppendSdlExtendedKeys` and `pads.Feed` fix games that behave differently in Play and in a build.
 4. **(Resolved) Lua and C# backends removed** (sec 10). The optional third-party backends were dropped; old scenes naming them load and report "language not supported".

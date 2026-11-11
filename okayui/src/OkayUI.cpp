@@ -311,19 +311,24 @@ inline float availW() {
 // Reserve a w*h slot for the next item; returns its top-left and advances the cursor
 // to the next line (SameLine() keeps it on the current line instead).
 void place(float w, float h, float& x, float& y) {
+    bool sameLine = false;
     if (g_lay.pendingSameLine) {
         float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
         x = g_lay.prevX + g_lay.prevW + sp;
         y = g_lay.prevY;
         g_lay.pendingSameLine = false;
         g_lay.sameLineSpacing = -1.0f;
+        sameLine = true;
     } else {
         x = leftEdge();
         y = g_lay.cy;
     }
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
     g_lay.cx = leftEdge();
-    g_lay.cy = y + h + g_lay.spacingY;
+    // The next line starts below the tallest item of this one, not just below the last (a short
+    // item after a tall one on the same line used to let the next line overlap the tall one).
+    const float bottom = y + h + g_lay.spacingY;
+    g_lay.cy = (sameLine && g_lay.cy > bottom) ? g_lay.cy : bottom;
     g_nextItemW = -1.0f;   // a one-shot SetNextItemWidth applies to just this item
 }
 
@@ -677,7 +682,16 @@ inline bool hit(float x, float y, float w, float h) {
     return true;
 }
 
-inline float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+// A float to a pixel coordinate: NaN becomes `nan`, anything huge is clamped (a plain (int) cast
+// of either is undefined behaviour).
+inline int clampPx(float v, int nan) {
+    if (v != v) return nan;
+    if (v > 1.0e7f) return 10000000;
+    if (v < -1.0e7f) return -10000000;
+    return (int)v;
+}
+
+inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }   // NaN -> 0
 
 } // namespace
 
@@ -1133,10 +1147,15 @@ void mergeOverlay() {
     if (g_oni > 0) { setTexture(g_defTex); pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
     const int base = g_nv;
     for (int i = 0; i < g_onv && g_nv < kMaxVerts; ++i) g_verts[g_nv++] = g_ovVerts[i];
+    const int fit = g_nv - base;   // overlay vertices that made it in
     int sp = 0;
-    for (int j = 0; j < g_oni && g_ni < kMaxIdx; ++j) {
-        while (sp < g_novSpans && g_ovSpans[sp].startIdx == j) setTexture(g_ovSpans[sp++].tex);
-        g_idx[g_ni++] = base + g_ovIdx[j];
+    // Whole triangles only: when the batch is full, a triangle that references a vertex that
+    // did not fit (or does not fit in the index buffer) is dropped, so the index buffer always
+    // stays valid and a multiple of three.
+    for (int j = 0; j + 3 <= g_oni && g_ni + 3 <= kMaxIdx; j += 3) {
+        while (sp < g_novSpans && g_ovSpans[sp].startIdx <= j) setTexture(g_ovSpans[sp++].tex);
+        if (g_ovIdx[j] >= fit || g_ovIdx[j + 1] >= fit || g_ovIdx[j + 2] >= fit) continue;
+        g_idx[g_ni++] = base + g_ovIdx[j]; g_idx[g_ni++] = base + g_ovIdx[j + 1]; g_idx[g_ni++] = base + g_ovIdx[j + 2];
     }
     g_onv = 0; g_oni = 0; g_novSpans = 0;
 }
@@ -1559,7 +1578,7 @@ void EndChild() {
         float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
         float thumbY = c.ry + t * (c.rh - thumbH);
         // Drag the thumb.
-        const int sbId = (int)((unsigned)c.lay.seed ^ 0x5cb0u ^ (unsigned)(sbx * 7.0f)) & 0x7fffffff;
+        const int sbId = (int)((unsigned)c.lay.seed ^ 0x5cb0u ^ (unsigned)clampPx(sbx * 7.0f, 0)) & 0x7fffffff;
         const bool overThumb = hit(sbx, thumbY, kScrollbarW, thumbH);
         if (overThumb) g_hot = sbId;
         if (g_active == sbId) {
@@ -1593,7 +1612,7 @@ void PushItemWidth(float w)    { if (g_itemWTop < 16) g_itemWStack[g_itemWTop++]
 void PopItemWidth()            { if (g_itemWTop > 0) --g_itemWTop; }
 
 void PushClipRect(float x, float y, float w, float h) {
-    SDL_Rect r; r.x = (int)x; r.y = (int)y; r.w = (int)(w < 0 ? 0 : w); r.h = (int)(h < 0 ? 0 : h);
+    SDL_Rect r; r.x = clampPx(x, 0); r.y = clampPx(y, 0); r.w = clampPx(w < 0 ? 0 : w, 0); r.h = clampPx(h < 0 ? 0 : h, 0);
     // Intersect with the enclosing clip so nested regions never draw outside a parent.
     if (g_clipTop > 0) {
         SDL_Rect& p = g_clipStack[g_clipTop - 1];

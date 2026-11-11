@@ -21,7 +21,7 @@
 #include "okay/Render/ModelImport.hpp"        // AutoMapLocomotion
 #include "imgui.h"
 #include "imgui_internal.h"             // BeginDragDropTargetCustom (dropping a clip on the canvas)
-#include "tinyfiledialogs.h"
+#include "FileDialog.hpp"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -30,6 +30,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <string>
@@ -1273,26 +1274,33 @@ void StatePreview(Ctx& c, const SM::State& st) {
 }
 // Load a clip file straight into a state's slot.
 void ImportIntoSlot(Ctx& c, SM::State& st, std::string& slot) {
+    // The picker may be the built-in browser (answers on a later frame), so nothing here may
+    // point into this frame's Ctx: take what is needed by value / as pointers to long-lived data.
+    EditorState* edp = &c.ed;
+    std::string* slotp = &slot;
+    const std::string stName = st.name;
     if (c.ma) {
-        std::vector<std::string> before = c.ma->ClipNames();
-        AddAnimationsFromFilesUI(c.ed, c.obj);
-        for (const auto& n : c.ma->ClipNames()) {
-            bool had = false;
-            for (const auto& b : before) if (b == n) { had = true; break; }
-            if (!had) { slot = n; c.ed.dirty = true; ConsoleLog("Imported '" + n + "' into " + st.name); break; }
-        }
+        ModelAnimator* ma = c.ma;
+        auto before = std::make_shared<std::vector<std::string>>(ma->ClipNames());
+        AddAnimationsFromFilesUI(c.ed, c.obj, [=] {
+            for (const auto& n : ma->ClipNames()) {
+                bool had = false;
+                for (const auto& b : *before) if (b == n) { had = true; break; }
+                if (!had) { *slotp = n; edp->dirty = true; ConsoleLog("Imported '" + n + "' into " + stName); break; }
+            }
+        });
     } else if (c.body) {
-        const char* filt[] = {"*.okayanim"};
-        if (const char* p = tinyfd_openFileDialog("Import clip into this state", "", 1, filt, "OkaySpace animation", 0)) {
-            c.ed.PushUndo();
-            std::vector<std::string> before = c.body->ClipNames();
+        auto* body = c.body;
+        okay::filedialog::OpenOne("Import clip into this state", "", okay::filedialog::Filters("OkaySpace animation", {"*.okayanim"}), [=](const std::string& p) {
+            edp->PushUndo();
+            std::vector<std::string> before = body->ClipNames();
             std::string err;
-            if (!c.body->LoadClipsFromFile(p, &err, /*replaceExisting=*/false)) {
+            if (!body->LoadClipsFromFile(p, &err, /*replaceExisting=*/false)) {
                 ConsoleLog(err.empty() ? "Import clip failed" : err, 2);
                 return;
             }
             std::string picked;
-            for (const auto& n : c.body->ClipNames()) {
+            for (const auto& n : body->ClipNames()) {
                 bool had = false;
                 for (const auto& b : before) if (b == n) { had = true; break; }
                 if (!had) { picked = n; break; }
@@ -1304,10 +1312,10 @@ void ImportIntoSlot(Ctx& c, SM::State& st, std::string& slot) {
                 if (!parsed.empty()) picked = parsed.front().name;
             }
             if (!picked.empty()) {
-                slot = picked; c.ed.dirty = true;
-                ConsoleLog("Imported '" + picked + "' into " + st.name);
+                *slotp = picked; edp->dirty = true;
+                ConsoleLog("Imported '" + picked + "' into " + stName);
             }
-        }
+        });
     }
 }
 

@@ -24,7 +24,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "imgui.h"
 #include "imgui_internal.h"
-#include "tinyfiledialogs.h"
+#include "FileDialog.hpp"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -1078,9 +1078,16 @@ bool ParamField(Ctx& c, BtNode& n, const BtParamDef& p) {
                         const char* one[] = {p.choices};
                         const bool own = p.choices && *p.choices;
                         const std::string dir = ProjectAssetsDir(c.ed);
-                        if (const char* f = tinyfd_openFileDialog(own ? "Pick a file" : "Pick a sound", dir.empty() ? nullptr : (dir + "/").c_str(),
-                                                                  own ? 1 : 3, own ? one : sounds, own ? p.choices : "sounds", 0))
-                            set(ProjectRelative(c.ed, f));
+                        // The built-in browser answers on a later frame: keep only pointers to long-lived data (the node, the catalogue entry, the editor).
+                        EditorState* edp = &c.ed; BtNode* np = &n; const BtParamDef* pp = &p;
+                        okay::filedialog::OpenOne(own ? "Pick a file" : "Pick a sound", dir.empty() ? std::string() : dir + "/",
+                                                  okay::filedialog::Filters(own ? p.choices : "sounds", own ? one : sounds, own ? 1 : 3),
+                                                  [edp, np, pp](const std::string& f) {
+                            EditPush();
+                            const std::string nv = ProjectRelative(*edp, f);
+                            if (pp->def && nv == pp->def) np->params.erase(pp->key); else np->params[pp->key] = nv;
+                            DocTouch();
+                        });
                     } else ImGui::OpenPopup(("##pickpop_" + std::string(p.key)).c_str());
                 }
                 if (ImGui::BeginPopup(("##pickpop_" + std::string(p.key)).c_str())) {
@@ -1434,25 +1441,24 @@ void DrawToolbar(Ctx& c, Ui& u) {
     Tip("Start a new tree: empty, or the Guard sample");
     ImGui::SameLine();
     if (ImGui::SmallButton("Open##bt")) {
-        const char* filt[] = {"*.okaybt"};
         const std::string dir = ProjectAssetsDir(ed);
-        if (const char* f = tinyfd_openFileDialog("Open behavior tree", dir.empty() ? nullptr : (dir + "/").c_str(), 1, filt, "behavior trees", 0)) {
+        Ui* up = &u;
+        okay::filedialog::OpenOne("Open behavior tree", dir.empty() ? std::string() : dir + "/", okay::filedialog::Filters("behavior trees", {"*.okaybt"}), [up](const std::string& f) {
             std::string err;
-            if (DocOpen(f, &err)) { ClearSel(u); u.frameReq = true; ConsoleLog(std::string("Opened ") + f); }
+            if (DocOpen(f, &err)) { ClearSel(*up); up->frameReq = true; ConsoleLog(std::string("Opened ") + f); }
             else ConsoleLog("Behavior Tree: " + err, 2);
-        }
+        });
     }
     ImGui::SameLine();
     auto saveAs = [&]() {
-        const char* filt[] = {"*.okaybt"};
         const std::string dir = ProjectAssetsDir(ed);
         const std::string def = d.path.empty() ? (dir.empty() ? d.tree.name + ".okaybt" : (std::filesystem::path(dir) / (d.tree.name.empty() ? "Tree" : d.tree.name)).string() + ".okaybt") : d.path;
-        if (const char* f = tinyfd_saveFileDialog("Save behavior tree", def.c_str(), 1, filt, "behavior trees")) {
+        okay::filedialog::SaveOne("Save behavior tree", def, okay::filedialog::Filters("behavior trees", {"*.okaybt"}), [](const std::string& f) {
             std::string path = f;
             if (std::filesystem::path(path).extension() != ".okaybt") path += ".okaybt";
             std::string err;
             if (DocSave(path, &err)) ConsoleLog("Saved " + path); else ConsoleLog("Behavior Tree: " + err, 2);
-        }
+        });
     };
     if (ImGui::SmallButton(d.dirty ? "Save*##bt" : "Save##bt")) {
         if (d.path.empty()) saveAs();
@@ -1646,11 +1652,11 @@ void DrawBehaviorTreeInspector(EditorState& ed, GameObject* go, Component* comp,
         Tip("The .okaybt file, relative to the project folder (Assets/Guard.okaybt).");
         ImGui::SameLine();
         if (ImGui::SmallButton("...##btrpick")) {
-            const char* filt[] = {"*.okaybt"};
             const std::string dir = ProjectAssetsDir(ed);
-            if (const char* f = tinyfd_openFileDialog("Pick a behavior tree", dir.empty() ? nullptr : (dir + "/").c_str(), 1, filt, "behavior trees", 0)) {
-                ed.PushUndo(); r->treePath = ProjectRelative(ed, f); ed.dirty = true;
-            }
+            EditorState* edp = &ed; auto* rp = r;
+            okay::filedialog::OpenOne("Pick a behavior tree", dir.empty() ? std::string() : dir + "/", okay::filedialog::Filters("behavior trees", {"*.okaybt"}), [edp, rp](const std::string& f) {
+                edp->PushUndo(); rp->treePath = ProjectRelative(*edp, f); edp->dirty = true;
+            });
         }
     }
     if (ImGui::SmallButton("Open in Behavior Tree window##btr")) {

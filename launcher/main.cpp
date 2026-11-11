@@ -39,7 +39,7 @@
 #include "imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — shared with the editor
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — `code` in chat
-#include "tinyfiledialogs.h" // native file picker (chat attachments)
+#include "FileDialog.hpp"       // native file picker (chat attachments), or the built-in browser
 
 // stb_image for optional per-game cover art. STATIC keeps its symbols file-local
 // (the launcher doesn't link the engine, so there's no clash, but this is tidy).
@@ -3719,18 +3719,21 @@ static std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
             ImGui::EndChild();
             ImGui::PopStyleColor();
         };
-        auto pickFile = [&](const char* folder, unsigned long long maxBytes) {
-            const char* pats[] = {"*.png", "*.gif", "*.jpg", "*.jpeg"};
-            const char* pick = tinyfd_openFileDialog(folder[0] == 'e' ? "Choose an image for your emoji" : "Choose a sticker image",
-                                                     "", 4, pats, "Images (PNG, GIF, JPG)", 0);
-            if (!pick || !*pick) return;
-            std::error_code ec; auto sz = fs::file_size(fs::path(pick), ec);
-            if (ec) { Toast("Couldn't read that file", 2); return; }
-            if ((unsigned long long)sz > maxBytes) { Toast(folder[0] == 'e' ? "Emoji images are limited to 512 KB" : "Stickers are limited to 2 MB", 2); return; }
-            pendingPath = pick; pendingFolder = folder;
-            std::string stem = fs::path(pick).stem().string(), nm;
-            for (char c : stem) if (std::isalnum((unsigned char)c) || c == '_' || c == '-') nm += (char)std::tolower((unsigned char)c);
-            std::snprintf(pendingName, sizeof(pendingName), "%s", nm.substr(0, 32).c_str());
+        auto pickFile = [&](const char* folderC, unsigned long long maxBytes) {
+            const std::string folder = folderC;
+            const bool isEmoji = folder[0] == 'e';
+            // The built-in browser answers on a later frame, so this keeps only values and statics (pendingPath / pendingName are statics).
+            okay::filedialog::OpenOne(isEmoji ? "Choose an image for your emoji" : "Choose a sticker image", "",
+                                      okay::filedialog::Filters("Images (PNG, GIF, JPG)", {"*.png", "*.gif", "*.jpg", "*.jpeg"}),
+                                      [folder, isEmoji, maxBytes](const std::string& pick) {
+                std::error_code ec; auto sz = fs::file_size(fs::path(pick), ec);
+                if (ec) { Toast("Couldn't read that file", 2); return; }
+                if ((unsigned long long)sz > maxBytes) { Toast(isEmoji ? "Emoji images are limited to 512 KB" : "Stickers are limited to 2 MB", 2); return; }
+                pendingPath = pick; pendingFolder = folder;
+                std::string stem = fs::path(pick).stem().string(), nm;
+                for (char c : stem) if (std::isalnum((unsigned char)c) || c == '_' || c == '-') nm += (char)std::tolower((unsigned char)c);
+                std::snprintf(pendingName, sizeof(pendingName), "%s", nm.substr(0, 32).c_str());
+            });
         };
         std::vector<okay::Messages::LibraryItem> libEmoji, libStickers; bool libLoaded = false; std::string libStatus;
         if (g_libMutex) {
@@ -14901,12 +14904,13 @@ static void OutboxKick() {
 // Pick a file with the native dialog and start uploading it to a chat.
 static void PickAndSendAttachment(const std::string& toUid, long toGroup, long toChannel) {
     if (g_attBusy) { Toast("An upload is already in progress", 2); return; }
-    const char* pick = tinyfd_openFileDialog("Send a photo or file", "", 0, nullptr, nullptr, 0);
-    if (!pick || !*pick) return;
-    std::error_code ec; auto sz = fs::file_size(fs::path(pick), ec);
-    if (ec) { Toast("Couldn't read that file", 2); return; }
-    if ((unsigned long long)sz > kMaxChatUpload) { Toast("Files are limited to 25 MB", 2); return; }
-    StartChatUpload(pick, toUid, toGroup, -1, toChannel);
+    okay::filedialog::OpenOne("Send a photo or file", "", {}, [toUid, toGroup, toChannel](const std::string& pick) {
+        if (g_attBusy) { Toast("An upload is already in progress", 2); return; }
+        std::error_code ec; auto sz = fs::file_size(fs::path(pick), ec);
+        if (ec) { Toast("Couldn't read that file", 2); return; }
+        if ((unsigned long long)sz > kMaxChatUpload) { Toast("Files are limited to 25 MB", 2); return; }
+        StartChatUpload(pick, toUid, toGroup, -1, toChannel);
+    });
 }
 
 static int ChatPollWorker(void*) {
@@ -16160,6 +16164,7 @@ static void DrawOfficialAdmin(okay::account::AccountService& account) {
     if (!g_oaMutex) g_oaMutex = SDL_CreateMutex();
     // The form (main thread only).
     static char folder[1024] = "";
+    static bool rescanPending = false;   // the folder picker answered (maybe on a later frame): rescan it
     static std::string scannedDir;   // the folder pf was read from (the text box may be mid-edit)
     static og::PublishFolder pf;
     static bool scanned = false;
@@ -16211,6 +16216,7 @@ static void DrawOfficialAdmin(okay::account::AccountService& account) {
         std::snprintf(nameBuf, sizeof(nameBuf), "%s", pf.name().c_str());   // a new folder: its own name and version
         verEdited = false;
     };
+    if (rescanPending) { rescanPending = false; rescan(); }
     if (static bool demoFolder = false; !demoFolder) {   // (env: dev screenshot hook) start with a folder picked
         demoFolder = true;
         if (const char* f = std::getenv("OKAY_UI_DEMO_OAFOLDER")) { std::snprintf(folder, sizeof(folder), "%s", f); rescan(); }
@@ -16277,10 +16283,11 @@ static void DrawOfficialAdmin(okay::account::AccountService& account) {
     if (ImGui::InputTextWithHint("##oa_folder", "Built game folder", folder, sizeof(folder), ImGuiInputTextFlags_EnterReturnsTrue)) rescan();
     ImGui::SameLine(0, 8);
     if (ImGui::Button("Browse\xE2\x80\xA6", ImVec2(100, 0))) {
-        if (const char* picked = tinyfd_selectFolderDialog("Choose the built game folder", folder[0] ? folder : nullptr)) {
-            std::snprintf(folder, sizeof(folder), "%s", picked);
-            rescan();
-        }
+        // `folder` and the scan state are statics of this function, so the callback can run on a later frame.
+        okay::filedialog::FolderOne("Choose the built game folder", folder, [](const std::string& picked) {
+            std::snprintf(folder, sizeof(folder), "%s", picked.c_str());
+            rescanPending = true;
+        });
     }
     ImGui::SameLine(0, 8);
     ImGui::BeginDisabled(!folder[0]);
@@ -18227,11 +18234,13 @@ int main(int argc, char** argv) {
             };
             // Open a project folder from anywhere: find its scene, remember it, open it.
             auto openFolder = [&]() {
-                const char* picked = tinyfd_selectFolderDialog("Open a project folder", npLoc);
-                if (!picked || !*picked) return;
+                // The built-in browser answers on a later frame: the callback keeps values and statics only.
+                const std::string editorExe = editor;
+                const auto sceneInCopy = sceneIn;
+                okay::filedialog::FolderOne("Open a project folder", npLoc, [editorExe, sceneInCopy](const std::string& picked) {
                 fs::path root(picked);
                 if (root.filename() == "Assets") root = root.parent_path();
-                std::string sc = sceneIn(root);
+                std::string sc = sceneInCopy(root);
                 std::error_code e;
                 if (sc.empty() || !fs::exists(fs::path(sc), e)) {   // a loose folder of scenes
                     for (auto& f : fs::directory_iterator(root, e))
@@ -18247,7 +18256,8 @@ int main(int argc, char** argv) {
                     SavePrefs();
                 }
                 s_projScanned = "\x01";
-                if (!editor.empty()) { LaunchEditor(editor, "", "", sc); Toast("Opening " + root.filename().string(), 1); }
+                if (!editorExe.empty()) { LaunchEditor(editorExe, "", "", sc); Toast("Opening " + root.filename().string(), 1); }
+            });
             };
             // ---- Home: two actions. Making a project happens in the popup, never from one click here. ----
             if (editor.empty()) {
@@ -18702,8 +18712,9 @@ int main(int argc, char** argv) {
                         if (ImGui::IsItemDeactivatedAfterEdit()) { g_projectsDir = npLoc; SavePrefs(); s_planAt = 0; }
                         if (!stack) ImGui::SameLine(0, 10);
                         if (ImGui::Button("Browse", ImVec2(stack ? -1 : 100, 0))) {
-                            if (const char* picked = tinyfd_selectFolderDialog("Where new projects go", npLoc))
-                                if (*picked) { std::snprintf(npLoc, sizeof(npLoc), "%s", picked); g_projectsDir = npLoc; SavePrefs(); s_planAt = 0; }
+                            okay::filedialog::FolderOne("Where new projects go", npLoc, [](const std::string& picked) {
+                                std::snprintf(npLoc, sizeof(npLoc), "%s", picked.c_str()); g_projectsDir = npLoc; SavePrefs(); s_planAt = 0;
+                            });
                         }
                         if (!s_plan.locationProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.locationProblem.c_str());
                         else if (!s_plan.pathProblem.empty() && s_plan.nameProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.pathProblem.c_str());
@@ -22608,8 +22619,7 @@ int main(int argc, char** argv) {
                     wSource = 0;
                     {
                         if (ImGui::Button(wFile.empty() ? "Choose file\xE2\x80\xA6" : "Change file\xE2\x80\xA6", ImVec2(140, 0))) {
-                            const char* pick = tinyfd_openFileDialog("Choose a file to list", "", 0, nullptr, nullptr, 0);
-                            if (pick && *pick) wFile = pick;
+                            okay::filedialog::OpenOne("Choose a file to list", "", {}, [](const std::string& pick) { wFile = pick; });
                         }
                         ImGui::SameLine(0, 10);
                         if (wFile.empty()) ImGui::TextDisabled(kMktKinds[std::clamp(wKind, 0, kMktKindN - 1)].key == std::string("game")
@@ -22879,8 +22889,7 @@ int main(int argc, char** argv) {
                 ImGui::InputTextMultiline("##eddesc", edDesc, sizeof(edDesc), ImVec2(-1, 80));
                 static std::string edFile;   // a replacement file to upload ("" = keep the current one)
                 if (ImGui::Button(edFile.empty() ? "Replace file\xE2\x80\xA6" : "Change file\xE2\x80\xA6", ImVec2(140, 0))) {
-                    const char* pick = tinyfd_openFileDialog("Choose the new file", "", 0, nullptr, nullptr, 0);
-                    if (pick && *pick) edFile = pick;
+                    okay::filedialog::OpenOne("Choose the new file", "", {}, [](const std::string& pick) { edFile = pick; });
                 }
                 ImGui::SameLine(0, 10);
                 const bool hostedHere = std::string(edUrl).find("/storage/v1/object/public/workshop/") != std::string::npos;
@@ -25141,6 +25150,7 @@ int main(int argc, char** argv) {
         if (!g_chatSeparate) DrawChatWindow(account);
 
         if (!g_chatHost.shown) DrawIncomingCall();   // (shown in the chat window when that's open)
+        okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
         DrawToastOverlay();
 
         ImGui::Render();

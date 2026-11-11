@@ -60,7 +60,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Editor:** each window's New, Open, Save As and Pick buttons; File > Open Project Folder, Save Scene As, Import
 - **Docs:** `docs/editor.md`
 - **Tests:** `tests/test_file_dialog.cpp` (helpers, argument lists, browser model, queue, fake helper programs)
-- **Status:** Works in the editor and launcher; not available to games. Windows backend compile-checked on Linux with MinGW only
+- **Status:** Works in the editor and launcher (built-in browser and zenity/kdialog argument handling tested on Linux); not available to games. NOT YET TESTED ON WINDOWS OR MACOS: the Windows IFileOpenDialog / IFileSaveDialog path is compile-checked only (MinGW cross-compile), and the macOS osascript path was never run. Test both on real machines
 - **Open:** no remembered last folder; no dialog from scripts or the player (a game cannot ask the user for a file)
 - **Related:** 15.4, 15.5, 10.1, 10.2, 9.4, 31
 - **Words:** file dialog, open file, save as, FileDialog, file browser, zenity, file picker, browse, choose file, native dialog

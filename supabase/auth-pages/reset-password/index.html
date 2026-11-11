@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'">
+<title>Reset your OkaySpace password</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #14161c; color: #e7e9ee; font: 16px/1.45 system-ui, sans-serif; }
+  main { width: min(420px, 92vw); background: #1d2029; border-radius: 12px; padding: 28px; box-sizing: border-box; }
+  h1 { margin: 0 0 6px; font-size: 22px; }
+  p { margin: 0 0 16px; color: #aab0bd; }
+  label { display: block; margin: 12px 0 4px; font-size: 14px; }
+  .row { display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; padding: 10px; border-radius: 8px; border: 1px solid #3a3f4d; background: #12141a; color: inherit; font: inherit; }
+  button { padding: 10px 14px; border-radius: 8px; border: 0; font: inherit; cursor: pointer; background: #3a3f4d; color: inherit; }
+  button.primary { width: 100%; margin-top: 18px; background: #5b8cff; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .msg { margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 14px; }
+  .err { background: #3b1d22; color: #ffb4b4; }
+  .ok  { background: #17301f; color: #a8e6b5; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Choose a new password</h1>
+  <p id="lead">Enter a new password for your OkaySpace account.</p>
+
+  <form id="form" autocomplete="off" novalidate>
+    <label for="pw">New password</label>
+    <div class="row">
+      <input id="pw" type="password" autocomplete="new-password" minlength="8" maxlength="72">
+      <button type="button" id="toggle" aria-pressed="false">Show</button>
+    </div>
+    <label for="pw2">Confirm new password</label>
+    <input id="pw2" type="password" autocomplete="new-password" maxlength="72">
+    <div id="error" class="msg err" role="alert" hidden></div>
+    <button class="primary" id="submit" type="submit">Set new password</button>
+  </form>
+
+  <div id="done" class="msg ok" role="status" hidden>
+    Your password was changed. Go back to the OkaySpace launcher and sign in with it.
+  </div>
+  <div id="fatal" class="msg err" role="alert" hidden></div>
+</main>
+
+<script>
+// ---- Owner setting: edit these two values after you host the page (docs/password-reset.md). ----
+// The project URL and the PUBLISHABLE (anon) key are public values; never put a service-role key here.
+var OKAY_RESET_CONFIG = { supabaseUrl: "", anonKey: "" };
+
+// ==== pure logic (tested without a browser by tests/scripts/test_password_reset_page.js) ====
+// LOGIC-BEGIN
+var MIN_LEN = 8, MAX_LEN = 72;   // 72 = bcrypt's limit, which Supabase uses
+
+// Parse "#access_token=...&type=recovery" (or "#error=...") into plain fields. Never throws.
+function parseFragment(hash) {
+  var out = { token: "", type: "", error: "", errorCode: "", errorDescription: "" };
+  var h = String(hash || "");
+  if (h.charAt(0) === "#") h = h.slice(1);
+  var parts = h.split("&");
+  for (var i = 0; i < parts.length; i++) {
+    if (!parts[i]) continue;
+    var eq = parts[i].indexOf("=");
+    var k = eq < 0 ? parts[i] : parts[i].slice(0, eq);
+    var v = eq < 0 ? "" : parts[i].slice(eq + 1);
+    try { k = decodeURIComponent(k.replace(/\+/g, " ")); v = decodeURIComponent(v.replace(/\+/g, " ")); }
+    catch (e) { continue; }
+    if (k === "access_token") out.token = v;
+    else if (k === "type") out.type = v;
+    else if (k === "error") out.error = v;
+    else if (k === "error_code") out.errorCode = v;
+    else if (k === "error_description") out.errorDescription = v;
+  }
+  return out;
+}
+
+// Returns "" when fine, else a message for the user.
+function validatePassword(pw, confirm) {
+  if (typeof pw !== "string" || pw.length < MIN_LEN) return "Use at least " + MIN_LEN + " characters.";
+  if (pw.length > MAX_LEN) return "Use at most " + MAX_LEN + " characters.";
+  if (pw !== confirm) return "The two passwords do not match.";
+  return "";
+}
+
+// Only an https Supabase URL (or http on localhost, for development) is accepted.
+function configProblem(cfg) {
+  if (!cfg || !cfg.supabaseUrl || !cfg.anonKey) return "This page is not set up yet: the site owner must fill in the project URL and key (see docs/password-reset.md).";
+  if (!/^https:\/\/[^\/\s]+$/i.test(cfg.supabaseUrl.replace(/\/+$/, "")) &&
+      !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(cfg.supabaseUrl.replace(/\/+$/, "")))
+    return "This page is set up with an invalid project URL.";
+  return "";
+}
+
+// What to send to PUT {url}/auth/v1/user.
+function buildUpdateRequest(cfg, token, password) {
+  return {
+    url: cfg.supabaseUrl.replace(/\/+$/, "") + "/auth/v1/user",
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "apikey": cfg.anonKey, "Authorization": "Bearer " + token },
+    body: JSON.stringify({ password: password })
+  };
+}
+
+// Turn a failed response into a message that does not echo secrets.
+function describeFailure(status, bodyText) {
+  var m = "";
+  try { var j = JSON.parse(bodyText); m = j.msg || j.message || j.error_description || ""; } catch (e) {}
+  if (status === 401 || status === 403) return "This reset link has expired or was already used. Request a new one from the launcher.";
+  if (status === 422 && m) return m;
+  if (status === 429) return "Too many attempts. Wait a minute and try again.";
+  if (status === 0) return "Couldn't reach the account server. Check your connection and try again.";
+  return m || ("Couldn't change the password (HTTP " + status + ").");
+}
+
+// Message for a link that carries no usable token. "" = the token is fine.
+function describeFragment(f) {
+  if (f.error || f.errorCode) {
+    if (f.errorCode === "otp_expired") return "This reset link has expired. Request a new one from the launcher.";
+    return f.errorDescription || "This reset link is not valid. Request a new one from the launcher.";
+  }
+  if (!f.token || (f.type && f.type !== "recovery")) return "This page only works from the link in the password-reset email. Request one from the launcher.";
+  return "";
+}
+// LOGIC-END
+
+// ==== page wiring ====
+(function () {
+  if (typeof document === "undefined") return;
+  var $ = function (id) { return document.getElementById(id); };
+  var token = "";
+  var frag = parseFragment(location.hash);
+  token = frag.token;
+  frag.token = "";   // keep it in one place only
+  // Remove the token from the address bar and history right away.
+  try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+
+  function fatal(msg) {
+    $("form").hidden = true; $("lead").hidden = true;
+    $("fatal").textContent = msg; $("fatal").hidden = false;
+  }
+  var problem = configProblem(OKAY_RESET_CONFIG) || describeFragment({ token: token, type: frag.type, error: frag.error, errorCode: frag.errorCode, errorDescription: frag.errorDescription });
+  if (problem) { token = ""; fatal(problem); return; }
+
+  $("toggle").addEventListener("click", function () {
+    var show = $("pw").type === "password";
+    $("pw").type = show ? "text" : "password";
+    $("pw2").type = show ? "text" : "password";
+    $("toggle").textContent = show ? "Hide" : "Show";
+    $("toggle").setAttribute("aria-pressed", show ? "true" : "false");
+  });
+
+  function showError(msg) { $("error").textContent = msg; $("error").hidden = !msg; }
+
+  $("form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var pw = $("pw").value, pw2 = $("pw2").value;
+    var bad = validatePassword(pw, pw2);
+    if (bad) { showError(bad); return; }
+    showError("");
+    $("submit").disabled = true; $("submit").textContent = "Saving...";
+    var req = buildUpdateRequest(OKAY_RESET_CONFIG, token, pw);
+    fetch(req.url, { method: req.method, headers: req.headers, body: req.body, credentials: "omit", referrerPolicy: "no-referrer" })
+      .then(function (r) { return r.text().then(function (t) { return { status: r.status, ok: r.ok, text: t }; }); })
+      .then(function (r) {
+        if (r.ok) {
+          token = ""; $("pw").value = ""; $("pw2").value = "";
+          $("form").hidden = true; $("lead").hidden = true; $("done").hidden = false;
+        } else {
+          if (r.status === 401 || r.status === 403) token = "";
+          showError(describeFailure(r.status, r.text));
+          $("submit").disabled = !token; $("submit").textContent = "Set new password";
+        }
+      })
+      .catch(function () {
+        showError(describeFailure(0, ""));
+        $("submit").disabled = false; $("submit").textContent = "Set new password";
+      });
+  });
+})();
+</script>
+</body>
+</html>

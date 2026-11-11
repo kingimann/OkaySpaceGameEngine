@@ -7,6 +7,7 @@
 #include "test_framework.hpp"
 #include "VersionsManager.hpp"
 #include "VersionsNet.hpp"
+#include "UpdaterCore.hpp"   // the self-updater rules: checksum required, stage then swap, reasons
 #include "OfficialGame.hpp"   // the bundled SHA-256 (the same one the launcher checks downloads with)
 
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 
@@ -1209,6 +1211,104 @@ int main() {
         setenv("PATH", saved.c_str(), 1);
     }
 #endif
+
+    // ---- the self-updater (launcher/UpdaterCore.hpp): a fake server, every failure mode, the install is never touched ----------
+    RUN_SUITE("updater requires checksums and fails loudly");
+    {
+        TempDir t;
+        const fs::path dest = t.path / "Tools" / "OkayEngine.exe";
+        const std::string oldBody(200, 'O'), newBody(300, 'N');
+        auto reset = [&] { std::error_code ec; fs::remove_all(t.path / "Tools", ec); Put(dest, oldBody); };
+        auto untouched = [&] {
+            std::error_code ec;
+            return Get(dest) == oldBody && !fs::exists(fs::path(dest.string() + ".new"), ec) && !fs::exists(fs::path(dest.string() + ".old"), ec);
+        };
+        std::map<std::string, std::string> server;     // url -> body; a url that is absent is a 404
+        okayupdater::FetchFn fetch = [&](const std::string& url, const fs::path& to, std::string& err) {
+            auto it = server.find(url);
+            if (it == server.end()) { err = "HTTP 404 not found"; return false; }
+            Put(to, it->second);
+            return true;
+        };
+        FileInfo good; good.size = newBody.size(); good.sha256 = Sha(newBody);
+        const std::string url = "https://example.invalid/v/OkayEngine.exe";
+
+        // 1. the happy path: staged, verified, swapped, old file kept aside only when asked.
+        reset(); server[url] = newBody;
+        okayupdater::Outcome st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        CHECK(st.ok && Get(dest) == oldBody);                                   // staging alone never replaces
+        okayupdater::Outcome cm = okayupdater::Commit("OkayEngine.exe", dest, 1, false);
+        CHECK(cm.ok && Get(dest) == newBody);
+
+        // 2. checksum mismatch (right size, wrong bytes: a corrupt or swapped file)
+        reset(); server[url] = std::string(newBody.size(), 'X');
+        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        CHECK(!st.ok && Has(st.reason, "OkayEngine.exe") && Has(st.reason, "checksum does not match") && Has(st.reason, "unchanged") && untouched());
+
+        // 3. truncated download (size mismatch)
+        reset(); server[url] = newBody.substr(0, 120);
+        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        CHECK(!st.ok && Has(st.reason, "120 bytes") && Has(st.reason, "300") && untouched());
+
+        // 4. 404 / unreachable: the reason from the server is in the message
+        reset(); server.erase(url);
+        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        CHECK(!st.ok && Has(st.reason, "Could not download OkayEngine.exe") && Has(st.reason, "404") && untouched());
+
+        // 5. missing checksum: refused BEFORE any download (the fake server must not even be asked)
+        reset(); server[url] = newBody;
+        int asked = 0;
+        okayupdater::FetchFn counting = [&](const std::string& u, const fs::path& to, std::string& e) { ++asked; return fetch(u, to, e); };
+        FileInfo noHash; noHash.size = newBody.size();
+        st = okayupdater::Stage("OkayEngine.exe", url, dest, &noHash, counting);
+        CHECK(!st.ok && Has(st.reason, "no valid SHA-256") && Has(st.reason, "publish-supabase.sh") && asked == 0 && untouched());
+        FileInfo badHash = noHash; badHash.sha256 = "abc123";                    // not 64 hex digits
+        st = okayupdater::Stage("OkayEngine.exe", url, dest, &badHash, counting);
+        CHECK(!st.ok && asked == 0 && untouched());
+        st = okayupdater::Stage("OkayEngine.exe", url, dest, nullptr, counting);   // the file is not in the index at all
+        CHECK(!st.ok && Has(st.reason, "does not list this file") && asked == 0 && untouched());
+
+        // 6. a hash with the right size but nothing else is still refused when the size is unlisted (0) and bytes differ
+        reset(); server[url] = std::string(300, 'Z');
+        FileInfo hashOnly; hashOnly.sha256 = Sha(newBody);
+        st = okayupdater::Stage("OkayEngine.exe", url, dest, &hashOnly, fetch);
+        CHECK(!st.ok && Has(st.reason, "checksum does not match") && untouched());
+
+        // 7. a corrupt / empty archive body served with a 200
+        reset(); server[url] = "";
+        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        CHECK(!st.ok && untouched());
+
+        // 8. the replace itself fails: the old file is put back, the reason is reported
+        reset(); server[url] = newBody;
+        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        CHECK(st.ok);
+        cm = okayupdater::Commit("OkayEngine.exe", dest, 100000, false);          // staged file is below the minimum size: refused
+        CHECK(!cm.ok && Has(cm.reason, "Could not replace OkayEngine.exe") && Has(cm.reason, "too small") && Get(dest) == oldBody);
+        CHECK(!fs::exists(fs::path(dest.string() + ".new")));
+#if !defined(_WIN32)
+        reset(); server[url] = newBody;
+        CHECK(okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch).ok);
+        setenv(okay::restart::kFailAfterBackupEnv, "1", 1);                       // fail after the old file was moved aside
+        cm = okayupdater::Commit("OkayEngine.exe", dest, 1, true);
+        unsetenv(okay::restart::kFailAfterBackupEnv);
+        CHECK(!cm.ok && Has(cm.reason, "previous") && Get(dest) == oldBody && !fs::exists(fs::path(dest.string() + ".old")));
+        okayupdater::Discard(dest);
+        CHECK(untouched());
+#endif
+
+        // 9. the index itself: not loaded, fallback (no checksums), version missing
+        Index none;                                                                // ok = false
+        none.error = "no versions.json";
+        CHECK(Has(okayupdater::IndexProblem(none, nullptr, "2.9.0"), "never installed without checksums"));
+        const Index good_idx = ParseIndex("{\"schema\":1,\"latest\":\"2.9.0\",\"versions\":[{\"version\":\"2.9.0\",\"files\":{\"OkayEngine.exe\":{\"size\":300,\"sha256\":\"" + Sha(newBody) + "\"}}}]}");
+        CHECK(good_idx.ok && okayupdater::IndexProblem(good_idx, good_idx.Find("2.9.0"), "2.9.0").empty());
+        CHECK(Has(okayupdater::IndexProblem(good_idx, good_idx.Find("9.9.9"), "9.9.9"), "does not list v9.9.9"));
+        const Index fb = FallbackIndex("2.9.0\n", "", "", false);                   // built from VERSION.txt: no checksums
+        const Entry* fe = fb.Find("2.9.0");
+        CHECK(!fb.ok || !fe || !okayupdater::RequireChecksum("OkayEngine.exe", fe->files.count("OkayEngine.exe") ? &fe->files.at("OkayEngine.exe") : nullptr).empty());
+    }
+
 
     TEST_MAIN_RESULT();
 }

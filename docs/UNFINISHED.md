@@ -34,6 +34,20 @@ The feature map currently has **124** rows that are Partial or Planned.
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 
+## Planned: text-script nodes in visual script
+
+Not started. These would let a visual-script graph run a short text script next to the normal nodes. All of it is our own code: no third-party Lua, Python or JavaScript runtime.
+
+Scope: a script node is for what nodes are bad at. That is algorithms and loops, tables and dictionaries, string and data handling, compact rules, and reusing snippets. Engine features (movement, physics, UI, audio, animation, networking) stay as nodes. A script calls the existing node and never reimplements it.
+
+Order, one step at a time, each shipped only when finished and tested in both directions (node to script and script to node):
+
+1. A "Run OkayScript" and expression node: typed pins, exec in and out, errors with line numbers.
+2. Lua-style syntax compiled to the same VM.
+3. A JavaScript-style subset, then a Python-style subset.
+
+These are "-style" subsets, not the real languages: code written for the real Lua, JavaScript or Python will often not run unchanged, and the standard libraries are not included. Differences (for example 1-based arrays in Lua) will be documented per language.
+
 ## Planned work from the to-do list
 
 - Admin: create test servers without a game

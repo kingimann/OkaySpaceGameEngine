@@ -4,6 +4,7 @@
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
 #include <SDL.h>
+#include <cstddef>  // offsetof
 #include <cstdio>   // snprintf for numeric widgets (C library, not STL)
 
 // All rendering goes through SDL_RenderGeometry (SDL >= 2.0.18), which is exactly
@@ -1009,11 +1010,44 @@ void finalizeFrame() {
 }
 } // namespace
 
+static_assert(sizeof(DrawVertex) == sizeof(SDL_Vertex), "DrawVertex must match SDL_Vertex");
+static_assert(offsetof(DrawVertex, x) == offsetof(SDL_Vertex, position), "DrawVertex layout");
+static_assert(offsetof(DrawVertex, r) == offsetof(SDL_Vertex, color), "DrawVertex layout");
+static_assert(offsetof(DrawVertex, u) == offsetof(SDL_Vertex, tex_coord), "DrawVertex layout");
+
+namespace {
+// The span list as backend-neutral commands: the same index ranges, clip rectangles
+// and textures EndFrame(SDL_Renderer*) walks, including the unclipped range before the
+// first span (window frames drawn before any clip was pushed).
+DrawCmd g_cmds[130];
+int buildCmds() {
+    int n = 0;
+    auto add = [&](int from, int to, bool on, const SDL_Rect& r, SDL_Texture* tex) {
+        if (to <= from || n >= 130) return;
+        DrawCmd& c = g_cmds[n++];
+        c.idxOffset = from; c.idxCount = to - from;
+        c.clipOn = on; c.clipX = r.x; c.clipY = r.y; c.clipW = r.w; c.clipH = r.h;
+        c.texture = (const void*)tex;
+    };
+    const SDL_Rect none = { 0, 0, 0, 0 };
+    if (g_nspans == 0) { add(0, g_ni, false, none, g_defTex); return n; }
+    add(0, g_spans[0].startIdx, false, none, g_defTex);
+    for (int s = 0; s < g_nspans; ++s)
+        add(g_spans[s].startIdx, (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni,
+            g_spans[s].on, g_spans[s].rect, g_spans[s].tex);
+    return n;
+}
+} // namespace
+
 DrawData GetDrawData() {
     DrawData d;
     d.vertices = g_verts; d.vertexCount = g_nv;
     d.indices = g_idx;    d.indexCount = g_ni;
-    d.vertexStride = (int)sizeof(SDL_Vertex);
+    d.vertexStride = (int)sizeof(DrawVertex);
+    d.cmds = g_cmds; d.cmdCount = buildCmds();
+    if (g_ttf && g_ttf->ok) {
+        d.atlasTexture = (const void*)kAtlasTex; d.atlasRgba = g_ttf->rgba; d.atlasW = g_ttf->w; d.atlasH = g_ttf->h;
+    }
     return d;
 }
 

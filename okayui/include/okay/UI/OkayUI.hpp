@@ -119,17 +119,46 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap);
 /// else is disturbed.
 void EndFrame(SDL_Renderer* renderer);
 
-// ---- Custom backends (e.g. Direct3D 11) ----------------------------------------
-// Raw batched geometry for a renderer other than SDL. Valid after the frame's widget
-// calls until the next BeginFrame. Vertex layout matches SDL_Vertex exactly:
+// ---- Custom backends (e.g. Direct3D 11, the software rasteriser) --------------
+// The frame's geometry as plain data, valid after the frame's widget calls (call
+// EndFrameData first so the overlay batch is merged in) until the next BeginFrame.
+// It is the same data EndFrame(SDL_Renderer*) draws, so every backend can match it.
+//
+// Vertices are `DrawVertex` (20 bytes, identical in layout to SDL_Vertex):
 //   offset 0: float position[2]   offset 8: uint8 color[4] (RGBA)   offset 12: float uv[2]
-// stride = 20 bytes. Indices are 32-bit, two triangles per quad.
+// Indices are 32-bit, three per triangle. The index buffer is split into commands
+// (`DrawCmd`): consecutive index ranges that share a clip rectangle and a texture,
+// in draw order. A backend that draws only `vertices` + `indices` (the Direct3D 11
+// backend does) ignores clipping and textures.
+struct DrawVertex {
+    float         x, y;
+    unsigned char r, g, b, a;
+    float         u, v;
+};
+struct DrawCmd {
+    int         idxOffset = 0;      // first index of the range
+    int         idxCount  = 0;      // number of indices (a multiple of 3)
+    bool        clipOn    = false;  // false: no scissor
+    int         clipX = 0, clipY = 0, clipW = 0, clipH = 0;   // scissor, pixels, top-left origin
+    /// nullptr: untextured (flat colour, ignore uv). DrawData::atlasTexture: the launcher
+    /// look's glyph atlas (white pixels, coverage in alpha, multiplied by the vertex colour).
+    /// Anything else is a backend-owned texture (an Image, a fallback font) that only the
+    /// SDL_Renderer backend can resolve.
+    const void* texture   = nullptr;
+};
 struct DrawData {
-    const void* vertices     = nullptr;
-    int         vertexCount  = 0;
-    const int*  indices      = nullptr;
-    int         indexCount   = 0;
-    int         vertexStride = 0;   // bytes per vertex
+    const void*     vertices     = nullptr;   // DrawVertex[vertexCount]
+    int             vertexCount  = 0;
+    const int*      indices      = nullptr;
+    int             indexCount   = 0;
+    int             vertexStride = 0;         // bytes per vertex (sizeof(DrawVertex))
+    const DrawCmd*  cmds         = nullptr;   // the index buffer split by clip rect and texture
+    int             cmdCount     = 0;
+    /// The launcher look's atlas (RGBA8, atlasW x atlasH, top row first), or null in the
+    /// classic look. A DrawCmd whose texture == atlasTexture samples it.
+    const void*          atlasTexture = nullptr;
+    const unsigned char* atlasRgba    = nullptr;
+    int                  atlasW = 0, atlasH = 0;
 };
 DrawData GetDrawData();
 

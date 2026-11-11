@@ -45,6 +45,15 @@ static void TestHideBasics() {
     CHECK(vis::UnhideAll(ed) == 0);
 }
 
+static void TestHideDeselectsCreatedObject() {
+    // CreateCube & co. make the object the primary selection without putting it in the multi list.
+    EditorState ed;
+    GameObject* c = ed.CreateCube();
+    CHECK(ed.selected() == c);
+    CHECK(vis::HideSelection(ed) == 1);
+    CHECK(ed.selected() == nullptr && !ed.IsSelected(c));
+}
+
 static void TestSceneViewScope() {
     EditorState ed;
     GameObject* a = Make(ed.scene(), "A");
@@ -310,6 +319,7 @@ static void TestUndo() {
 int main() {
     RUN_SUITE("editor_visibility");
     TestHideBasics();
+    TestHideDeselectsCreatedObject();
     TestSceneViewScope();
     TestIsolateLockHide();
     TestSaveLoad();

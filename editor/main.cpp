@@ -41355,6 +41355,17 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
+    if (!gameView) {   // the same "N hidden" note as the 3D view
+        const int hn = okay::editor::vis::HiddenCount(ed.scene());
+        if (hn > 0) {
+            char hb[96];
+            std::snprintf(hb, sizeof(hb), "%d hidden   (Alt+H shows all)", hn);
+            ImVec2 hts = ImGui::CalcTextSize(hb);
+            ImVec2 hp(canvasPos.x + 10.0f, canvasEnd.y - hts.y - 12.0f);
+            dl->AddRectFilled(ImVec2(hp.x - 8, hp.y - 4), ImVec2(hp.x + hts.x + 8, hp.y + hts.y + 4), IM_COL32(0, 0, 0, 160), 5.0f);
+            dl->AddText(hp, IM_COL32(90, 205, 215, 255), hb);
+        }
+    }
     dl->PopClipRect();
 
     if (gameView) return;   // the Game view is non-interactive
@@ -42287,6 +42298,19 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         dl->AddRectFilled(ImVec2(ip.x - 8, ip.y - 4), ImVec2(ip.x + its.x + 8, ip.y + its.y + 4),
                           IM_COL32(0, 0, 0, 160), 5.0f);
         dl->AddText(ip, ImGui::GetColorU32(AccentCol(1.0f)), ib);
+    }
+
+    // Hidden objects: say so on the canvas too, so an "empty" view is never a mystery (the toolbar chip clears it).
+    if (!gameView) {
+        const int hn = okay::editor::vis::HiddenCount(ed.scene());
+        if (hn > 0) {
+            char hb[96];
+            std::snprintf(hb, sizeof(hb), "%d hidden   (Alt+H shows all)", hn);
+            ImVec2 hts = ImGui::CalcTextSize(hb);
+            ImVec2 hp(view3dMin.x + 10.0f, view3dMax.y - hts.y - 12.0f);
+            dl->AddRectFilled(ImVec2(hp.x - 8, hp.y - 4), ImVec2(hp.x + hts.x + 8, hp.y + hts.y + 4), IM_COL32(0, 0, 0, 160), 5.0f);
+            dl->AddText(hp, IM_COL32(90, 205, 215, 255), hb);
+        }
     }
 
     // Highlight the selection with a clean yellow bounding box (12 edges).
@@ -44119,8 +44143,15 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         std::string hideChip;
         float hideChipW = 0.0f;
         if (hiddenN > 0) {
-            hideChip = std::to_string(hiddenN) + " hidden: Show all";
-            hideChipW = ImGui::CalcTextSize(hideChip.c_str()).x + vst.FramePadding.x * 2.0f + vst.ItemSpacing.x;
+            // The full "3 hidden: Show all" when the toolbar has room, else "3 hidden", else "3" (the tooltip says the rest).
+            const float room = ImGui::GetWindowContentRegionMax().x - (ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x)
+                               - vst.ItemSpacing.x - moreW - chipW;
+            const std::string n = std::to_string(hiddenN);
+            for (const std::string& cand : {n + " hidden: Show all", n + " hidden", n}) {
+                hideChip = cand;
+                hideChipW = ImGui::CalcTextSize(hideChip.c_str()).x + vst.FramePadding.x * 2.0f + vst.ItemSpacing.x;
+                if (hideChipW <= room) break;
+            }
         }
         float rightW = moreW + chipW + hideChipW;
         float curX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + vst.ItemSpacing.x;

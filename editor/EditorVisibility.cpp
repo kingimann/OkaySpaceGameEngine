@@ -75,8 +75,8 @@ int SetHidden(EditorState& ed, const std::vector<GameObject*>& objs, bool hidden
     for (GameObject* g : todo) {
         g->editorHidden = hidden;
         if (hidden) {   // what you hid should not stay selected: it has no gizmo and cannot be seen
-            for (GameObject* s : std::vector<GameObject*>(ed.MultiSelection()))
-                if (s && s->IsSelfOrDescendantOf(g)) ed.Deselect(s);
+            for (GameObject* s : Selected(ed))   // Selected() also holds a primary that Create* set without the multi list
+                if (s->IsSelfOrDescendantOf(g)) ed.Deselect(s);
         }
     }
     ed.dirty = true;

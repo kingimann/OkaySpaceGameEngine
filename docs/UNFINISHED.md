@@ -10,6 +10,8 @@ The feature map currently has **124** rows that are Partial or Planned.
 
 - [Engine-wide audit](unfinished_engine.md): 93 findings across 14 subsystems (10 High, 57 Medium, 26 Low), each with the file and line, what is missing, impact and size, and a top 15 to tackle first. The High items: accessibility settings that nothing reads, SSAO missing on Direct3D 11, no post-processing on Direct3D 12, the editor's Play differing from a built game on keys and gamepads, a mesh collider that is only a bounding box, Lua and C# never built in CI, navigation without off-mesh links or area costs, audio that is mono and fully decoded, editor undo that uses full-scene snapshots, and a save framework with no editor UI.
 
+- [Launcher audit](unfinished_launcher.md): 38 findings in six areas (8 High, 16 Medium, 14 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, server owners cannot kick, ban or promote, and updates are not signed.
+
 ## Hidden, removed or limited today
 
 | What | State | What is missing |

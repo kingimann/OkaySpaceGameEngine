@@ -34,13 +34,16 @@ void DrawBuiltin() {
     // picked) would stay open and invisible, blocking every click: close it.
     static ImGuiID s_verify = 0;
     static int s_verifyFrame = -1;
-    if (s_verify && ImGui::GetFrameCount() > s_verifyFrame) {
+    static void* s_verifyCtx = nullptr;
+    if (s_verify && s_verifyCtx == ImGui::GetCurrentContext() && ImGui::GetFrameCount() > s_verifyFrame) {
         ImGuiContext& g = *GImGui;
         if (g.OpenPopupStack.Size > 0 && g.OpenPopupStack[0].PopupId == s_verify && !g.OpenPopupStack[0].Window)
             ImGui::ClosePopupToLevel(0, true);
         s_verify = 0;
     }
     BrowserModel* m = BuiltinModel();
+    // Only the UI context that asked draws it (the launcher chat has its own window and context).
+    if (m && m->Req().uiContext && m->Req().uiContext != (void*)ImGui::GetCurrentContext()) return;
     if (!m) { s_shown = false; return; }
 
     const Request& rq = m->Req();
@@ -48,10 +51,10 @@ void DrawBuiltin() {
     std::string title = (rq.title.empty() ? std::string(verb) : rq.title) + "###okay_filedialog";
 
     if (!s_shown) {
-        // Opening a popup at the top level closes the one that is open there; remember a modal so it can come back.
+        // Opening a popup at the top level closes the one that is open there; remember it (a modal, or a popup like the chat's emoji picker) so it can come back.
         ImGuiContext& g = *GImGui;
         s_restore = 0;
-        if (g.OpenPopupStack.Size > 0 && g.OpenPopupStack[0].Window && (g.OpenPopupStack[0].Window->Flags & ImGuiWindowFlags_Modal))
+        if (g.OpenPopupStack.Size > 0 && g.OpenPopupStack[0].Window && !(g.OpenPopupStack[0].Window->Flags & ImGuiWindowFlags_ChildMenu))   // a modal or a popup window (not a menu)
             s_restore = g.OpenPopupStack[0].PopupId;
         ImGui::OpenPopup("###okay_filedialog");
         s_shown = true;
@@ -68,7 +71,7 @@ void DrawBuiltin() {
         // The popup closed behind our back (another popup took over): treat it as a cancel.
         s_shown = false;
         FinishBuiltin(false);
-        if (s_restore) { ImGui::OpenPopup(s_restore); s_verify = s_restore; s_verifyFrame = ImGui::GetFrameCount(); }
+        if (s_restore) { ImGui::OpenPopup(s_restore); s_verify = s_restore; s_verifyCtx = ImGui::GetCurrentContext(); s_verifyFrame = ImGui::GetFrameCount(); }
         return;
     }
 
@@ -180,7 +183,7 @@ void DrawBuiltin() {
     std::vector<std::string> res = m->Result();
     const bool ok = !res.empty();
     if (s_confirmReplace) {
-        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1), "\"%s\" already exists. Replace it?", res.empty() ? "" : res[0].c_str());
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.3f, 1), "\"%s\" already exists. Replace it?", res.empty() ? "" : FileNameOf(res[0]).c_str());
         ImGui::SameLine();
         if (ImGui::Button("Replace")) { s_confirmReplace = false; accept = true; }
         ImGui::SameLine();
@@ -203,7 +206,7 @@ void DrawBuiltin() {
         ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
         s_shown = false;
-        if (s_restore) { ImGui::OpenPopup(s_restore); s_verify = s_restore; s_verifyFrame = ImGui::GetFrameCount(); }   // the modal that asked for the file is back
+        if (s_restore) { ImGui::OpenPopup(s_restore); s_verify = s_restore; s_verifyCtx = ImGui::GetCurrentContext(); s_verifyFrame = ImGui::GetFrameCount(); }   // the modal that asked for the file is back
         FinishBuiltin(accept);   // may start the next queued dialog; it opens next frame
         return;
     }

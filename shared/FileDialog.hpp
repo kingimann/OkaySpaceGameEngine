@@ -37,6 +37,7 @@ struct Request {
     std::string startPath;               // a folder, or (for save) a full suggested path
     std::vector<Filter> filters;         // none = every file
     bool multi = false;                  // open only: allow several files
+    void* uiContext = nullptr;           // filled by Show() from the context getter: which UI context asked (the built-in browser appears there)
 };
 
 // One filter group from the old-style (description, pattern array) pair; none when n == 0.
@@ -126,6 +127,10 @@ void Show(const Request& r, Callback cb);   // the general form of the three abo
 void OpenOne(const std::string& title, const std::string& startPath, const std::vector<Filter>& filters, std::function<void(const std::string&)> cb);
 void SaveOne(const std::string& title, const std::string& startPath, const std::vector<Filter>& filters, std::function<void(const std::string&)> cb);
 void FolderOne(const std::string& title, const std::string& startPath, std::function<void(const std::string&)> cb);
+
+// For apps with several UI contexts (the launcher's chat has its own OS window): the getter returns the context drawing right
+// now. The built-in browser then shows in the context that asked, and DrawBuiltin() skips requests from other contexts.
+void SetContextGetter(void* (*getter)());
 
 // ---- Built-in browser -----------------------------------------------------------------------
 

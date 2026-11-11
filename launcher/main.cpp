@@ -15307,6 +15307,7 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     ImGui::NewFrame();
     DrawChatWindow(account);
     DrawIncomingCall();
+    okay::filedialog::DrawBuiltin();   // a file picked from the chat (attach, emoji) opens here, in the chat's own window
     DrawToastOverlay();
     ImGui::Render();
     SDL_SetRenderDrawColor(g_chatHost.ren, 21, 23, 29, 255);
@@ -16592,6 +16593,7 @@ int main(int argc, char** argv) {
     // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE SDL video init so
     // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched.
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+    okay::filedialog::SetContextGetter([]() -> void* { return ImGui::GetCurrentContext(); });   // the built-in file browser shows in the window (context) that asked
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
 
     // `--versions [<version>]` opens the Versions page (the editor's "Open launcher" button starts the launcher this way).

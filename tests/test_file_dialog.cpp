@@ -309,6 +309,18 @@ int main() {
         CHECK((m.Result() == V{R + "/Assets"}));
     }
 
+    {
+        BrowserModel m;   // a relative start folder is made absolute (callers pass project-relative paths)
+        const fs::path cwd = fs::current_path(ec);
+        fs::current_path(root, ec);
+        Request r; r.kind = Kind::SaveFile; r.startPath = "Assets/Level";
+        m.Begin(r);
+        CHECK(m.Dir() == R + "/Assets");
+        CHECK(m.Dir()[0] == '/' || m.Dir()[1] == ':');
+        CHECK(m.GoTo("zeta") && m.Dir() == R + "/zeta");
+        fs::current_path(cwd, ec);
+    }
+
     RUN_SUITE("callback plumbing (built-in)");
     {
 #ifdef _WIN32

@@ -48,22 +48,24 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Seen as:** cannot paste into a game text field; the sound keeps playing when the window loses focus; the mouse stays captured after alt-tab; the game pauses (or does not) when minimized
 - **Ask me like:** "let players paste into the chat box"; "pause the game when the window loses focus"
 
-### 37.3 Native file dialogs
-- **What:** Open and save dialogs in the editor (animation clips, dialogue, quests, sequences, behavior trees, fonts, CSV) go through the vendored tinyfiledialogs library; the shipped game has no file dialog.
+### 37.3 File dialogs
+- **What:** Open, save and choose-folder dialogs in the editor (animation clips, dialogue, quests, sequences, behavior trees, fonts, CSV, assets, scenes, build settings) and the launcher (chat attachments, project folders, marketplace files), written for OkaySpace in `shared/FileDialog.*` (no third-party library). The system's own dialog is used when there is one; otherwise a built-in ImGui browser opens, so picking a file never needs an outside tool. The shipped game has no file dialog.
 - **Parts:**
-  - 37.3.1 Editor dialogs - `editor/main.cpp`, `editor/TimelineWindow.*`, `editor/DialogueWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/LocalizationWindow.*`, `editor/AnimatorWindow.*` - `tinyfd_openFileDialog` and `tinyfd_saveFileDialog` calls with file filters
-  - 37.3.2 Vendored library - `engine/third_party/tinyfd/*` - tinyfiledialogs (third party, not mapped file by file)
-- **Code:** `editor/main.cpp`, `editor/TimelineWindow.*`, `editor/DialogueWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/LocalizationWindow.*`, `editor/AnimatorWindow.*`
-- **API:** `tinyfd_openFileDialog`, `tinyfd_saveFileDialog` (editor only; no engine wrapper)
-- **Editor:** each window's New, Open, Save As and Pick buttons
+  - 37.3.1 Dialog API - `shared/FileDialog.hpp`, `shared/FileDialog.cpp` - `okay::filedialog::Open`, `Save`, `Folder` (and the `*One` forms) with a callback, filters, multi-select, extension enforcing on save; path, glob and result-parsing helpers
+  - 37.3.2 System backends - `shared/FileDialog.cpp` - Windows: IFileOpenDialog / IFileSaveDialog (Unicode paths); Linux: zenity, then kdialog (argument vector, no shell); macOS: osascript; `OKAY_FILE_DIALOG=builtin` forces the built-in browser
+  - 37.3.3 Built-in browser - `shared/FileDialogUI.cpp`, `BrowserModel` in `shared/FileDialog.cpp` - modal ImGui window (places, folder list, name field, filter box, replace prompt); shows in the UI context that asked (the launcher's chat has its own window)
+  - 37.3.4 Callers - `editor/main.cpp`, `editor/TimelineWindow.*`, `editor/DialogueWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/LocalizationWindow.*`, `editor/AnimatorWindow.*`, `launcher/main.cpp`
+- **Code:** `shared/FileDialog.hpp`, `shared/FileDialog.cpp`, `shared/FileDialogUI.cpp`
+- **API:** `okay::filedialog::Open`, `OpenOne`, `Save`, `SaveOne`, `Folder`, `FolderOne`, `DrawBuiltin` (editor and launcher only; no engine wrapper)
+- **Editor:** each window's New, Open, Save As and Pick buttons; File > Open Project Folder, Save Scene As, Import
 - **Docs:** `docs/editor.md`
-- **Tests:** -
-- **Status:** Works in the editor (calls read in several windows); not available to games
-- **Open:** each window calls tinyfd directly (no shared wrapper, no remembered last folder); no dialog from scripts or the player (a game cannot ask the user for a file)
+- **Tests:** `tests/test_file_dialog.cpp` (helpers, argument lists, browser model, queue, fake helper programs)
+- **Status:** Works in the editor and launcher; not available to games. Windows backend compile-checked on Linux with MinGW only
+- **Open:** no remembered last folder; no dialog from scripts or the player (a game cannot ask the user for a file)
 - **Related:** 15.4, 15.5, 10.1, 10.2, 9.4, 31
-- **Words:** file dialog, open file, save as, tinyfd, tinyfiledialogs, file picker, browse, choose file, native dialog
+- **Words:** file dialog, open file, save as, FileDialog, file browser, zenity, file picker, browse, choose file, native dialog
 - **Seen as:** the Open button does nothing; the dialog opens in the wrong folder; the file filter hides my files
-- **Ask me like:** "add a shared file-dialog helper for the editor windows"; "let a script open a file picker"
+- **Ask me like:** "remember the last folder in file dialogs"; "let a script open a file picker"
 
 ### 37.4 System fonts
 - **What:** When the chosen UI font lacks the characters a text needs (accents, Cyrillic, Japanese, Korean, Chinese), the engine finds installed OS fonts by well-known paths and draws the text with one of them.

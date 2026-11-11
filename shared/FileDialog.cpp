@@ -621,6 +621,7 @@ void BrowserModel::Begin(const Request& r) {
     const StartSplit st = SplitStart(r.startPath, isDir);
     if (r.kind == Kind::SaveFile) typed = st.name;
     std::string d = st.dir;
+    if (!d.empty() && !IsAbsolutePath(d)) { std::error_code e2; d = NormalizePath(fs::absolute(fs::u8path(d), e2).u8string()); }   // callers pass project-relative folders
     // Walk up to the nearest folder that exists, then fall back to home, then the current folder.
     while (!d.empty() && !fs::is_directory(fs::u8path(d), ec)) {
         std::string up = ParentOf(d);
@@ -637,6 +638,7 @@ bool BrowserModel::GoTo(const std::string& dir) {
     std::string n = NormalizePath(dir);
     if (n.empty()) return false;
     std::error_code ec;
+    if (!IsAbsolutePath(n)) n = NormalizePath(fs::absolute(fs::u8path(n), ec).u8string());
     if (!fs::is_directory(fs::u8path(n), ec)) return false;
     std::string old = dir_;
     dir_ = n;
@@ -783,8 +785,13 @@ bool AnswerBuiltinForTests(const std::vector<std::string>& paths) {
 // ---------------------------------------------------------------------------------------------
 // The calls
 // ---------------------------------------------------------------------------------------------
-void Show(const Request& r, Callback cb) {
+static void* (*g_ctxGetter)() = nullptr;
+void SetContextGetter(void* (*getter)()) { g_ctxGetter = getter; }
+
+void Show(const Request& r0, Callback cb) {
     if (!cb) return;
+    Request r = r0;
+    if (g_ctxGetter) r.uiContext = g_ctxGetter();
     std::vector<std::string> paths;
     if (!BuiltinOpen() && RunNative(r, paths)) {
         if (!paths.empty()) cb(paths);

@@ -212,7 +212,6 @@ target_include_directories(okay_engine PUBLIC
 # the Image translation unit. Kept PRIVATE so it doesn't leak to consumers.
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/font8x8
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx
 )
 # ufbx (FBX importer, MIT/public domain) is a single C file: no warnings, optimised
@@ -226,10 +225,10 @@ else()
     set_source_files_properties(src/Audio/AudioDecode.cpp PROPERTIES COMPILE_OPTIONS "-w;-O2")
 endif()
 # Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
-# is required in addition to `-w`: the vendored font8x8 tables initialise `char`
+# is required in addition to `-w`: vendored tables (stb) may initialise `char`
 # arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR
 # that `-w` does not downgrade, even though GCC/MinGW accept it.
-set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Graphics/TtfFont.cpp
+set_source_files_properties(src/Graphics/Image.cpp src/Graphics/TtfFont.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES

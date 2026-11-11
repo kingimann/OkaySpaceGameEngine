@@ -2,15 +2,15 @@
 
 namespace okay {
 
-/// A built-in 8x8 monochrome bitmap font (vendored public-domain font8x8) for
+/// A built-in 8x8 monochrome bitmap font (the engine's own hand-drawn glyphs) for
 /// drawing text without any external font files. Each glyph is an 8x8 grid;
 /// Pixel(c, x, y) is true where the character is "on".
 struct Font8x8 {
     static constexpr int Width = 8;
     static constexpr int Height = 8;
 
-    /// The 8 row bytes for an ASCII character (row 0 = top). Bit (1 << x) is the
-    /// pixel at column x (0 = leftmost). Non-ASCII returns the blank glyph.
+    /// The 8 row bytes for a printable ASCII character (32..126) (row 0 = top). Bit (1 << x) is the
+    /// pixel at column x (0 = leftmost). Anything else returns the blank glyph.
     static const unsigned char* Glyph(char c);
 
     /// Is the pixel at (x, y) within this glyph's 8x8 cell set?

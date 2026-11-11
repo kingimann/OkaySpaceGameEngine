@@ -217,6 +217,9 @@ set_tests_properties(loaders_robust PROPERTIES TIMEOUT 120)   # a glTF node cycl
 add_executable(test_text test_text.cpp)
 target_link_libraries(test_text PRIVATE okay::engine)
 add_test(NAME text COMMAND test_text)
+add_executable(test_bitmap_font test_bitmap_font.cpp)
+target_link_libraries(test_bitmap_font PRIVATE okay::engine)
+add_test(NAME bitmap_font COMMAND test_bitmap_font)
 
 add_executable(test_ttf test_ttf.cpp)
 target_link_libraries(test_ttf PRIVATE okay::engine)

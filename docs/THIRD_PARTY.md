@@ -1,7 +1,7 @@
 # What is custom and what we build on
 
 OkaySpace is mostly our own code. This page lists what we wrote, and the outside libraries and
-services we build on, with their licences. The engine itself is MIT licensed (see `LICENSE`).
+services we build on, with their licences. The engine itself is proprietary (see `LICENSE`); third-party components keep their own licences.
 
 ## Policy and goal
 

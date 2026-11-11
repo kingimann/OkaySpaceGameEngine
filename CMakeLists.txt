@@ -72,6 +72,12 @@ endif()
 if(OKAY_DEFAULT_ACCOUNT_KEY)
     add_compile_definitions(OKAY_DEFAULT_ACCOUNT_KEY="${OKAY_DEFAULT_ACCOUNT_KEY}")
 endif()
+# Hosted password-reset page (supabase/auth-pages/reset-password, docs/password-reset.md).
+# Empty = not configured; the launcher then says so when it sends a reset email.
+set(OKAY_DEFAULT_PASSWORD_RESET_URL "" CACHE STRING "URL of the hosted password-reset page, sent to Supabase as redirect_to")
+if(OKAY_DEFAULT_PASSWORD_RESET_URL)
+    add_compile_definitions(OKAY_DEFAULT_PASSWORD_RESET_URL="${OKAY_DEFAULT_PASSWORD_RESET_URL}")
+endif()
 # Default voice server for launcher calls ("host" or "host:port" of a running
 # okayspace-relay; see docs/relay.md). Empty = players set one in Settings > Chat.
 set(OKAY_DEFAULT_VOICE_RELAY "" CACHE STRING "Default voice relay (host[:port]) compiled into the launcher")

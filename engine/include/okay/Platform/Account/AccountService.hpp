@@ -345,6 +345,18 @@ inline std::vector<long> JsonNumberValues(const std::string& json, const std::st
     return out;
 }
 
+/// RFC 3986 percent-encoding of everything but unreserved characters (for a query value).
+inline std::string PercentEncode(const std::string& in) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string o;
+    for (unsigned char c : in) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
+        else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
+    }
+    return o;
+}
+
 } // namespace detail
 
 // ===========================================================================
@@ -468,15 +480,29 @@ public:
         fs::remove(SessionPath(), ec);
     }
 
+    /// Where the emailed reset link should land (the hosted page from
+    /// supabase/auth-pages/reset-password, see docs/password-reset.md). Must be an
+    /// http(s) URL that is also on the Supabase Auth redirect allow-list. Empty =
+    /// not configured: Supabase then uses the project's Site URL instead.
+    void SetResetRedirect(std::string url) { resetRedirect_ = std::move(url); }
+    const std::string& ResetRedirect() const { return resetRedirect_; }
+    bool HasResetRedirect() const { return resetRedirect_.rfind("http", 0) == 0; }
+
+    /// The recover endpoint for `base` (+ optional redirect). Pure, so it is unit tested.
+    static std::string RecoverUrl(std::string base, const std::string& redirect) {
+        if (!base.empty() && base.back() == '/') base.pop_back();
+        std::string u = base + "/auth/v1/recover";
+        if (redirect.rfind("http", 0) == 0) u += "?redirect_to=" + detail::PercentEncode(redirect);
+        return u;
+    }
+
     /// Send a password-reset email (Supabase only). The user follows the emailed
     /// link to set a new password. Returns ok when the request was accepted.
     Result RequestPasswordReset(const std::string& email) {
         if (provider_ != Provider::Supabase)
             return Fail("Password reset needs the online (Supabase) account server.");
         if (!LooksLikeEmail(email)) return Fail("Enter a valid email address.");
-        std::string base = serverUrl_;
-        if (!base.empty() && base.back() == '/') base.pop_back();
-        ApiResponse r = HttpRequest("POST", base + "/auth/v1/recover",
+        ApiResponse r = HttpRequest("POST", RecoverUrl(serverUrl_, resetRedirect_),
                                     "{\"email\":\"" + detail::JsonEscape(email) + "\"}", {});
         if (!r.reached) return Fail("Couldn't reach the account server.");
         if (!r.ok) return Fail("Couldn't start password reset (HTTP " + std::to_string(r.status) + ").");
@@ -823,6 +849,7 @@ private:
 
     fs::path    configDir_;
     std::string serverUrl_;
+    std::string resetRedirect_;   // see SetResetRedirect
     std::string apiKey_;
     Provider    provider_;
     mutable Session session_;   // mutable: Api() picks up a token refreshed by another instance

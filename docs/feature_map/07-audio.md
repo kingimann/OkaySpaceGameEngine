@@ -32,17 +32,19 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **What:** Audio files (WAV, OGG, MP3) are decoded once into mono float clips at the mixer's rate and shared between sources; generators make simple test tones.
 - **Parts:**
   - 7.2.1 Clip data and WAV - `Audio/AudioClip` - mono samples plus rate; load and save WAV (8/16/24/32-bit PCM and float), downmix, resample, sine/square/noise/silence generators
-  - 7.2.2 OGG and MP3 decoding - `engine/src/Audio/AudioDecode.cpp` - stb_vorbis and dr_mp3 decoders and the shared decode cache (`LoadCached`)
+  - 7.2.2 OGG and MP3 decoding - `engine/src/Audio/AudioDecode.cpp` - the engine's own Ogg Vorbis and MP3 decoders and the shared decode cache (`LoadCached`)
   - 7.2.3 Path loading - `Audio/AudioLoad` - `LoadAudioFile`, `LoadSceneAudio`, the base folder used for project-relative audio paths
-- **Code:** `Audio/AudioClip`, `engine/src/Audio/AudioDecode.cpp`, `Audio/AudioLoad`
-- **API:** `AudioClip`, `AudioClip::Load`, `LoadWAV`, `LoadOGG`, `LoadMP3`, `LoadCached`, `Resampled`, `SaveWAV`, `LoadAudioFile`, `LoadSceneAudio`, `AudioBaseDir`
+  - 7.2.4 MP3 decoder - `Audio/Mp3Decoder` - MPEG-1/2/2.5 Layer III written in-house: frame sync, side info, bit reservoir, Huffman, requantisation, MS/intensity stereo, short/mixed blocks, IMDCT, polyphase synthesis; skips ID3v2 and the Xing/Info/VBRI frame, trims LAME encoder delay and padding, resynchronises past damage
+  - 7.2.5 Vorbis decoder - `Audio/VorbisDecoder` - Ogg Vorbis I written in-house: Ogg pages with CRC and packet reassembly, the three headers, Huffman codebooks (lookup types 0/1/2), floors 0 and 1, residue 0/1/2, channel coupling, window shapes with block-size switching, IMDCT, overlap-add, trim to the final granule position; skips damaged pages, decodes the first of chained streams by default
+- **Code:** `Audio/AudioClip`, `engine/src/Audio/AudioDecode.cpp`, `Audio/AudioLoad`, `Audio/Mp3Decoder` (`engine/src/Audio/Mp3Decoder.cpp`, tables in `Mp3Tables.hpp`), `Audio/VorbisDecoder` (`engine/src/Audio/VorbisDecoder.cpp`)
+- **API:** `AudioClip`, `AudioClip::Load`, `LoadWAV`, `LoadOGG`, `LoadMP3`, `LoadCached`, `Resampled`, `SaveWAV`, `LoadAudioFile`, `LoadSceneAudio`, `AudioBaseDir`, `DecodeMp3`, `Mp3Audio`, `Mp3Options`, `DecodeVorbis`, `VorbisAudio`, `VorbisOptions`
 - **Editor:** Project panel Audio category and Audio Clip asset icon; AudioSource inspector file picker
 - **Docs:** `docs/audio.md`
-- **Tests:** `audio_formats`, `wav`
-- **Status:** Works - AudioClip.hpp, the WAV loader and the AudioDecode.cpp head read; covered by `audio_formats` and `wav`
-- **Open:** clips are always mono (stereo files are downmixed) and fully decoded into memory, so long music is memory heavy and there is no streaming; per-clip import settings exist only as data (`Core/ImportSettings`, area 20.4) and the loader does not read them; no FLAC
+- **Tests:** `audio_formats`, `wav`, `mp3_decoder`, `vorbis_decoder`
+- **Status:** Works - AudioClip.hpp, the WAV loader and the AudioDecode.cpp head read; covered by `audio_formats` and `wav`; the MP3 decoder is checked against ffmpeg reference decodes (about 86 dB SNR on LAME files, 75-83 dB on synthetic intensity/mixed-block streams, limited by the 16-bit references) and the Vorbis decoder against libvorbis reference decodes (129-140 dB against the float output, 65-94 dB against the 16-bit fixtures); both are fuzzed under ASan/UBSan by `mp3_decoder` and `vorbis_decoder`
+- **Open:** clips are always mono (stereo files are downmixed) and fully decoded into memory, so long music is memory heavy and there is no streaming; per-clip import settings exist only as data (`Core/ImportSettings`, area 20.4) and the loader does not read them; no FLAC; the MP3 decoder is Layer III only (no Layer I/II, no free-format bitrates); the Vorbis decoder rejects more than 32 channels and codebooks that claim more than 2M entries, has no seeking or streaming, and floor type 0 (written by no current encoder) is only checked against libvorbis on generated streams
 - **Related:** 7.3, 20.4, 1.7
-- **Words:** wav, ogg, mp3, vorbis, audio clip, decode, resample, sample rate, LoadAudioFile, stb_vorbis, dr_mp3
+- **Words:** wav, ogg, mp3, vorbis, audio clip, decode, resample, sample rate, LoadAudioFile, Mp3Decoder, DecodeMp3, id3, xing, lame, gapless, VorbisDecoder, DecodeVorbis, ogg page, crc, floor, residue, mdct
 - **Seen as:** a sound file will not play or is listed in the Console as unreadable; a sound plays too fast or too slow; stereo sound comes out mono; a long song uses a lot of memory
 - **Ask me like:** "add a FLAC loader"; "my ogg file will not load"
 

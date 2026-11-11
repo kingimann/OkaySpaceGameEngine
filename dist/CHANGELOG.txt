@@ -23,6 +23,12 @@ v2.859.0
     inventory screen, with script calls for each. File > Examples > UI Gallery
     builds every widget. Typing in a text box no longer moves menu focus, and
     widgets under a panel can be blocked from clicks (#622).
+  - Text can use colour, bold and italic tags. Text is readable in all twelve
+    themes. The inventory screen shows the real inventory, and the nameplate's
+    health bar follows the object's Health. Dropdowns scroll, and there is a phone
+    layout of the gallery. The Glass theme is fixed and reachable, saved looks apply
+    from the UI Theme window, and Examples save into your project so Play starts
+    straight away (#631).
   Project panel (editor)
   - Create folders, scripts, scenes, prefabs, materials, data assets and visual
     scripts through a name prompt. Renaming and moving keep every scene, prefab and

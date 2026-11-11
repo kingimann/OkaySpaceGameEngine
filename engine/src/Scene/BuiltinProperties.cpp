@@ -382,7 +382,8 @@ void RegisterColliders3D() {
     }
     {
         PropertyBuilder<MeshCollider3D> b("MeshCollider3D", "meshcollider3d", "Physics 3D");
-        b.AddVec3("size", &MeshCollider3D::size).Range(0, kBig, 0.1);
+        b.AddVec3("size", &MeshCollider3D::size).Range(0, kBig, 0.1)
+         .Tooltip("Fallback box, used only when the object has no mesh with triangles");
         Collider3DCommon(b);
         b.Commit();
     }

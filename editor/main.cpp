@@ -26897,7 +26897,7 @@ void DrawModeling(EditorState& ed) {
                 go->AddComponent<MeshCollider3D>();   // collides against the live triangles
                 ed.dirty = true;
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exact per-triangle collision — use this for floors/walls/ramps you model or extrude.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exact per-triangle collision (BVH) — use this for floors, walls, ramps, bowls and rooms you model or extrude.\nStatic only: bodies collide with it, it cannot be a dynamic body (use Box for moving things).");
             ImGui::SameLine();
             if (AccentToggleButton("None##colmode", hasNone)) {
                 for (auto* c : go->GetComponents<Collider3D>()) go->RemoveComponent(c);
@@ -32157,7 +32157,36 @@ void DrawInspector(EditorState& ed) {
             }
         }
     }
-    if (auto* bc = dynamic_cast<BoxCollider3D*>(curComp)) {
+    if (auto* mcol = dynamic_cast<MeshCollider3D*>(curComp)) {
+        if (CompHeader("Mesh Collider 3D", mcol, &toRemove)) {
+            // Exact per-triangle collision against the MeshRenderer's mesh (BVH). Static only.
+            const std::string status = mcol->StatusMessage();
+            if (mcol->HasTriangles()) {
+                const TriMesh& tm = mcol->Tris();
+                ImGui::TextDisabled("Exact triangles: %d (BVH %d nodes%s)", tm.TriangleCount(), tm.NodeCount(),
+                                    tm.DroppedTriangles() > 0 ? (", " + std::to_string(tm.DroppedTriangles()) + " degenerate skipped").c_str() : "");
+            }
+            if (!status.empty()) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s", status.c_str());
+            ImGui::TextDisabled("Static geometry: bodies collide with it; it cannot be a dynamic body.");
+            if (ImGui::Checkbox("Trigger##mc3", &mcol->isTrigger)) ed.dirty = true;
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##mc3", &mcol->layer, 0.1f, 0, 31);
+            if (TriggerFilterFields(mcol, "mc3")) ed.dirty = true;
+            if (!mcol->HasTriangles()) {
+                // Only the no-mesh fallback box uses a size.
+                float sz[3] = {mcol->size.x, mcol->size.y, mcol->size.z};
+                if (DragVec3Axis("Fallback Size##mc3", sz, 0.05f)) { mcol->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
+                float off[3] = {mcol->offset.x, mcol->offset.y, mcol->offset.z};
+                if (DragVec3Axis("Fallback Offset##mc3", off, 0.05f)) { mcol->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+                if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##mc3")) { FitColliders(go); ed.dirty = true; }
+            }
+            if (ImGui::SmallButton("Rebuild##mc3")) { mcol->Invalidate(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rebuild the triangle BVH now (it also rebuilds automatically when the mesh changes).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove##mc3")) toRemove = mcol;
+        }
+    }
+    if (auto* bc = dynamic_cast<BoxCollider3D*>(curComp); bc && !dynamic_cast<MeshCollider3D*>(curComp)) {
         if (CompHeader("Box Collider 3D", bc, &toRemove)) {
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
             if (DragVec3Axis("Size##bc3", sz, 0.05f)) { bc->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
@@ -42342,7 +42371,18 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (!col->enabled) continue;
                 ImU32 cc = col->isTrigger ? IM_COL32(90, 170, 255, 230)
                          : (rb && rb->sleeping) ? IM_COL32(140, 150, 140, 200) : IM_COL32(90, 230, 120, 230);
-                if (auto* bx = dynamic_cast<BoxCollider3D*>(col)) {   // oriented box (mesh = its bounds)
+                if (auto* mcol = dynamic_cast<MeshCollider3D*>(col); mcol && mcol->HasTriangles()) {
+                    // The real collision geometry: triangle edges (sampled for big meshes) in world space.
+                    const TriMesh& tm = mcol->Tris();
+                    Mat4 w = mcol->WorldMatrix();
+                    int nt = tm.TriangleCount();
+                    int stride = std::max(1, nt / 1500);
+                    for (int ti = 0; ti < nt; ti += stride) {
+                        Vec3 a, b, c; tm.Triangle(ti, a, b, c);
+                        a = w.MultiplyPoint(a); b = w.MultiplyPoint(b); c = w.MultiplyPoint(c);
+                        line(a, b, cc, 1.0f); line(b, c, cc, 1.0f); line(c, a, cc, 1.0f);
+                    }
+                } else if (auto* bx = dynamic_cast<BoxCollider3D*>(col)) {   // oriented box (mesh without triangles = its bounds)
                     Vec3 c = bx->WorldCenter(), h = bx->HalfExtents(), ax, ay, az;
                     bx->WorldAxes(ax, ay, az);
                     Vec3 cr[8];

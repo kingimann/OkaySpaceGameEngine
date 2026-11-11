@@ -5,7 +5,7 @@ Point at anything and I know where it lives. Say **"work on 5.6.2"** (one number
 see ("feet slide on slopes", "the Hierarchy window"). Every number leads to the files, classes, tests,
 docs and editor windows involved, what already works, what is missing, and what is in flight.
 
-This map holds 58 areas, 374 sub-areas and 1682 numbered parts, and every source file in the repo is meant to appear in it
+This map holds 58 areas, 374 sub-areas and 1683 numbered parts, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
 **How it is organised**
@@ -233,7 +233,7 @@ Details for every sub-area and numbered part: [docs/feature_map/06-physics.md](f
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
 | [6.1](feature_map/06-physics.md#61-2d-bodies-and-colliders) | 2D bodies and colliders | Works | Side-view and top-down games: Rigidbody2D bodies and 2D colliders are stepped by Physics2D (gravity, contacts with friction and bounce, triggers... | no dedicated physics doc; no AddExplosionForce on Rigidbody2D (3D only); 2D joints are the Joint2D component (6.3), solved inside... |
-| [6.2](feature_map/06-physics.md#62-3d-bodies-and-colliders-collider-fit) | 3D bodies and colliders, collider fit | Works | Rigidbody3D bodies and 3D colliders (oriented boxes, spheres, capsules, cylinders, mesh-bounds) stepped by Physics3D, including heightmap terrain... | the header says bodies must be top-level (un-parented) Transforms; MeshCollider3D is only a bounds box, not a triangle mesh; no... |
+| [6.2](feature_map/06-physics.md#62-3d-bodies-and-colliders-collider-fit) | 3D bodies and colliders, collider fit | Works | Rigidbody3D bodies and 3D colliders (oriented boxes, spheres, capsules, cylinders, exact triangle meshes) stepped by Physics3D, including heightmap... | the header says bodies must be top-level (un-parented) Transforms; a MeshCollider3D is static only (no convex hull, so it cannot... |
 | [6.3](feature_map/06-physics.md#63-joints) | Joints | Works | Positional constraints between a body and a world point or another body: rigid rod, spring, weld and hinge, with optional breaking. | possible doc drift: both headers still say "no angular/hinge yet" and the Add Component rows say "(distance/spring/pin)" although... |
 | [6.4](feature_map/06-physics.md#64-fixed-step-with-render-interpolation-pose-history) | Fixed step with render interpolation, pose history | Works | Physics runs in fixed slices (1/50 s by default) whatever the frame rate, and bodies are drawn part way between their last two poses so motion stays... | a body moved by game code jumps with no blending (by design, per the header); no setting in the editor to change the step rate |
 | [6.5](feature_map/06-physics.md#65-queries-and-debug-draw) | Queries and debug draw | Works | Rays, line and shape casts and overlap tests against 2D and 3D colliders and terrain, plus an overlay that draws colliders, contacts and the rays... | no physics doc, so the query list is only in the headers and `docs/engine_api.md`; 3D shape casts skip triggers by default while... |

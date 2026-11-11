@@ -23,7 +23,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| "Mesh Collider 3D" is only the mesh's bounding box | `engine/include/okay/Physics/Collider3D.hpp:157-163` (`class MeshCollider3D : public BoxCollider3D`) | The name promises per-triangle or convex collision. Anything non-box-shaped (arches, bowls, rooms, terrain meshes) blocks as a solid box. Character cannot enter a hollow building model | High | Large |
+| Mesh Collider 3D is static-only and raises no collision callbacks | `engine/include/okay/Physics/Collider3D.hpp` (`MeshCollider3D`), `engine/src/Physics/Physics3D.cpp` (mesh pass in `Step`) | Exact per-triangle collision (BVH, rays, overlaps, casts, `ResolveSphere`, rigidbody contact, trigger overlap) now works against concave, hollow and holed meshes. Still open: a mesh collider cannot be a dynamic body (no convex-hull shape or concave-vs-concave contact in the solver; a dynamic Rigidbody3D on the same object is refused with a warning and an Inspector message); bodies landing on a solid mesh get no `OnCollisionEnter3D/Stay/Exit`; the navmesh bake treats it as its bounding box | Medium | Medium |
 | 3D hinge joint has no angle limits | `engine/include/okay/Components/Joint3D.hpp:22` (modes Distance, Spring, Pin, Hinge; no limit fields). 2D has them via `Math/JointLimit.hpp` | Doors and flaps swing a full circle; the 3D joint headers still say "no hinge" in comments | Medium | Small |
 | No 2D box or capsule casts, no 2D explosion force | `Physics/Physics2D.hpp` queries; `AddExplosionForce` only in `Rigidbody3D.hpp:111` | 2D games cannot sweep a box or capsule, or blast bodies away, without writing it in script | Medium | Small |
 | Bodies must be un-parented; no step-rate setting in the editor | `Rigidbody3D.hpp` header comment; feature map 6.4 | A rigidbody under a moving parent is wrong; no UI for the fixed step | Low | Medium |
@@ -165,7 +165,7 @@ High: 9. Medium: 57. Low: 26. Total rows: 92.
 2. **SSAO missing on Direct3D 11** (sec 1). Windows is the main target and D3D11 is its default; a lighting switch that does nothing there is the most visible renderer gap.
 3. **Editor Play lacks the extended keys and extra pads** (sec 5). A few lines copying `AppendSdlExtendedKeys` and `pads.Feed` fix games that behave differently in Play and in a build.
 4. **(Resolved) Lua and C# backends removed** (sec 10). The optional third-party backends were dropped; old scenes naming them load and report "language not supported".
-5. **Mesh Collider 3D is a box** (sec 2). Users believe they get model collision; start with a convex hull, then triangle meshes for static objects.
+5. **Mesh Collider 3D** (sec 2). Exact triangle collision for static geometry is done; the remaining gap is a convex-hull shape so a mesh can be a dynamic body, and collision callbacks for bodies landing on it.
 6. **Save framework has no no-code route** (sec 13). The engine work is done; a Save/Load slot component and a window make it usable without scripts.
 7. **Direct3D 12 has no post-processing** (sec 1). Either bring it to parity or label it "preview" in Build Settings and keep it off by default.
 8. **Audio is mono and fully decoded** (sec 4). Streaming plus stereo for music is a clear quality and memory win.

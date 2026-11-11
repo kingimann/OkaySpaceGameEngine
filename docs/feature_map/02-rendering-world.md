@@ -174,7 +174,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 ### 2.9 Fonts and images
 - **What:** The CPU side of text and pictures: the built-in 8x8 font, TrueType fonts baked into glyph atlases, the compiled-in UI font, the RGBA image buffer, and the world and screen text component.
 - **Parts:**
-  - 2.9.1 Bitmap font - `Graphics/Font` - `Font8x8` 8x8 monochrome ASCII glyphs, `Pixel`, `MeasureWidth`
+  - 2.9.1 Bitmap font - `Graphics/Font` - `Font8x8` built-in hand-drawn 8x8 monochrome ASCII glyphs (printable 32-126), `Pixel`, `MeasureWidth`
   - 2.9.2 TrueType fonts - `Graphics/TtfFont` - stb_truetype atlas, any glyph baked on first use, atlas grows, `Generation()` tells hosts to re-upload
   - 2.9.3 Built-in UI font - `Graphics/EmbeddedFont` - the launcher's Roboto font compiled in as base85
   - 2.9.4 Images - `Graphics/Image` - RGBA8 buffer, load PNG, JPG, BMP, TGA and more through stb_image, save PNG, get/set pixel, fill

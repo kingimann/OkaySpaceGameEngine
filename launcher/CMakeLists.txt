@@ -49,11 +49,10 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
     VersionsNet.cpp       # the cancellable curl download behind it
     VersionsUI.cpp        # the page itself
-    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c   # native file picker (chat attachments)
+    ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                         # file picker (chat attachments): system dialogs or the built-in browser
+    ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Net/ServerQuery.cpp                # server browser queries (+ LAN scan)
     ${CMAKE_SOURCE_DIR}/engine/src/Net/UdpSocket.cpp)
-set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c
-    PROPERTIES COMPILE_OPTIONS "-w")
 if(WIN32)
     enable_language(RC)
     list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc)
@@ -68,12 +67,11 @@ target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
     ${CMAKE_SOURCE_DIR}/engine/include
-    ${CMAKE_SOURCE_DIR}/engine/third_party/stb     # stb_image for game cover art
-    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd) # tinyfiledialogs
+    ${CMAKE_SOURCE_DIR}/engine/third_party/stb)    # stb_image for game cover art
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)
-    target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + tinyfd dialogs, voice UDP, native HTTPS
+    target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + file dialogs, voice UDP, native HTTPS
 endif()
 set_target_properties(okayspace-launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

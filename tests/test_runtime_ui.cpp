@@ -976,6 +976,9 @@ int main() {
         CHECK(s.Find("SwatchBlobA")->active && s.Find("SwatchBlobB")->active);
         auto* bd = s.Find("SwatchBackdrop")->GetComponent<UIPanel>();
         CHECK(bd->color.b > bd->color.r + 0.2f);
+        // glass slots and steppers are see-through too (not solid white blocks)
+        CHECK(s.Find("Slots")->GetComponent<UISlotGrid>()->color.a < 0.5f);
+        CHECK(s.Find("SwatchBlobA")->active);
     }
 
     // ---- The nameplate follows the Health Stat; its Hit / Heal buttons change the bar ----

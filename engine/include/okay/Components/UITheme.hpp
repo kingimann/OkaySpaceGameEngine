@@ -488,12 +488,12 @@ private:
             }
         }
         if (auto* stp = go->GetComponent<UIStepper>()) {
-            stp->background = Mix(panel, text, 0.10f); stp->background.a = 1.0f;
+            stp->background = Mix(panel, text, 0.10f); stp->background.a = panel.a < 0.5f ? 0.35f : 1.0f;   // a glass look stays see-through
             stp->button = accent;
             stp->textColor = text;
         }
         if (auto* sl = go->GetComponent<UISlider>()) {
-            sl->background = Mul(panel, 0.55f); sl->background.a = 1.0f;
+            sl->background = Mul(panel, 0.55f); sl->background.a = panel.a < 0.5f ? 0.35f : 1.0f;
             sl->fill = accent;
             sl->knob = buttonText;
             sl->textColor = text;
@@ -565,8 +565,9 @@ private:
             tip->borderColor = border;
         }
         if (auto* sg = go->GetComponent<UISlotGrid>()) {
-            sg->color = Mix(panel, text, 0.12f); sg->color.a = 1.0f;
-            sg->hoverColor = Mix(panel, text, 0.22f); sg->hoverColor.a = 1.0f;
+            const float sa = panel.a < 0.5f ? 0.35f : 1.0f;   // a glass look stays see-through
+            sg->color = Mix(panel, text, 0.12f); sg->color.a = sa;
+            sg->hoverColor = Mix(panel, text, 0.22f); sg->hoverColor.a = sa;
             sg->selectedColor = accent;
             sg->textColor = text;
         }

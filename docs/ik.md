@@ -259,7 +259,7 @@ On the character, in OkayScript:
 The same calls are on the typed Animator and IK components (`GetFloat`,
 `SetLayerWeight`, `SetRootMotion`, `SetCharacterModel`, `SetKindWeight`,
 `SetLimbTarget`, `ClearLimbTarget`). Visual-script Engine API nodes are
-generated from those bindings. C# and Lua keep their own APIs.
+generated from those bindings.
 
 Select a character with Foot IK to draw each foot's probe, the plant point,
 and a locked or free label. Look-At draws its clamp cone and a weight label.

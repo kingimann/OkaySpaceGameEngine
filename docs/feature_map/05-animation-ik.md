@@ -227,7 +227,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Docs:** `docs/animation.md` (From a script), `docs/ik.md` (Scripting, Animator and IK calls)
 - **Tests:** `anim_script_control`, `script_anim`, `anim_ik_tools`, `anim_clip_tools`
 - **Status:** Works - four test suites; per-kind script tools landed in #563
-- **Open:** C# and Lua keep their own animation APIs (per docs/ik.md); a played clip holds until stop_clip, movement-driven animation waits
+- **Open:** a played clip holds until stop_clip, movement-driven animation waits
 - **Related:** 5.1, 5.7, 13.4, 14.4
 - **Words:** play_clip, stop_clip, anim_set_float, anim_trigger, ik_enable, set_character_model, capture_pose, Play Clip node
 - **Seen as:** a script clip is overwritten by locomotion; a state machine and locomotion fight; events at time 0 never fire; script plays on the wrong model part

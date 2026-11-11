@@ -69,6 +69,12 @@ target_link_libraries(test_vorbis_decoder PRIVATE okay::engine)
 target_compile_definitions(test_vorbis_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vorbis_decoder COMMAND test_vorbis_decoder)
 
+# Own MP3 decoder: SNR vs ffmpeg references, gapless/tags/resync, truncation, bit-flip and noise fuzzing.
+add_executable(test_mp3_decoder test_mp3_decoder.cpp)
+target_link_libraries(test_mp3_decoder PRIVATE okay::engine)
+target_compile_definitions(test_mp3_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME mp3_decoder COMMAND test_mp3_decoder)
+
 add_executable(test_audio_music test_audio_music.cpp)
 target_link_libraries(test_audio_music PRIVATE okay::engine)
 add_test(NAME audio_music COMMAND test_audio_music)
@@ -217,6 +223,9 @@ set_tests_properties(loaders_robust PROPERTIES TIMEOUT 120)   # a glTF node cycl
 add_executable(test_text test_text.cpp)
 target_link_libraries(test_text PRIVATE okay::engine)
 add_test(NAME text COMMAND test_text)
+add_executable(test_bitmap_font test_bitmap_font.cpp)
+target_link_libraries(test_bitmap_font PRIVATE okay::engine)
+add_test(NAME bitmap_font COMMAND test_bitmap_font)
 
 add_executable(test_ttf test_ttf.cpp)
 target_link_libraries(test_ttf PRIVATE okay::engine)
@@ -487,19 +496,10 @@ target_link_libraries(test_steam PRIVATE okay::engine)
 add_test(NAME steam COMMAND test_steam)
 
 
-# Built only when the optional Lua backend is enabled.
-if(OKAY_WITH_LUA)
-    add_executable(test_lua test_lua.cpp)
-    target_link_libraries(test_lua PRIVATE okay::engine)
-    add_test(NAME lua COMMAND test_lua)
-endif()
-
-# Built only when the optional C# (Mono) backend is enabled.
-if(OKAY_WITH_CSHARP)
-    add_executable(test_csharp test_csharp.cpp)
-    target_link_libraries(test_csharp PRIVATE okay::engine)
-    add_test(NAME csharp COMMAND test_csharp)
-endif()
+# Old scenes naming the removed Lua / Mono C# backends still load and say "no longer supported".
+add_executable(test_script_removed_langs test_script_removed_langs.cpp)
+target_link_libraries(test_script_removed_langs PRIVATE okay::engine)
+add_test(NAME script_removed_langs COMMAND test_script_removed_langs)
 
 add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)

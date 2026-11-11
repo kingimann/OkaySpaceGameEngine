@@ -141,6 +141,7 @@ add_library(okay_engine
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
     src/Audio/VorbisDecoder.cpp
+    src/Audio/Mp3Decoder.cpp
     src/AI/Pathfinding.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
@@ -212,25 +213,20 @@ target_include_directories(okay_engine PUBLIC
 # the Image translation unit. Kept PRIVATE so it doesn't leak to consumers.
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/font8x8
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/dr_libs
 )
 # ufbx (FBX importer, MIT/public domain) is a single C file: no warnings, optimised
 # even in debug builds (parsing big FBX files unoptimised is painfully slow).
 if(MSVC)
     set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
-    set_source_files_properties(src/Audio/AudioDecode.cpp PROPERTIES COMPILE_OPTIONS "/w;/O2")
 else()
     set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
-    # The vendored MP3 decoder (dr_mp3) builds inside this file.
-    set_source_files_properties(src/Audio/AudioDecode.cpp PROPERTIES COMPILE_OPTIONS "-w;-O2")
 endif()
 # Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
-# is required in addition to `-w`: the vendored font8x8 tables initialise `char`
+# is required in addition to `-w`: vendored tables (stb) may initialise `char`
 # arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR
 # that `-w` does not downgrade, even though GCC/MinGW accept it.
-set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Graphics/TtfFont.cpp
+set_source_files_properties(src/Graphics/Image.cpp src/Graphics/TtfFont.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
@@ -328,30 +324,6 @@ if(OKAY_USE_SODIUM)
     endif()
 endif()
 
-# ---- Optional scripting backends -------------------------------------
-# Lua: real Lua embedding. Enable with -DOKAY_WITH_LUA=ON (needs liblua dev).
-# Disabled by default — the engine ships OkayScript as its scripting language.
-if(OKAY_WITH_LUA)
-    find_package(Lua QUIET)
-    if(NOT LUA_FOUND)
-        find_package(PkgConfig QUIET)
-        if(PkgConfig_FOUND)
-            pkg_check_modules(LUA QUIET lua5.4 lua-5.4 lua)
-            set(LUA_LIBRARIES ${LUA_LIBRARIES})
-            set(LUA_INCLUDE_DIR ${LUA_INCLUDE_DIRS})
-        endif()
-    endif()
-    if(LUA_LIBRARIES)
-        target_sources(okay_engine PRIVATE src/Scripting/LuaScriptVM.cpp)
-        target_include_directories(okay_engine SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
-        target_link_libraries(okay_engine PRIVATE ${LUA_LIBRARIES})
-        target_compile_definitions(okay_engine PUBLIC OKAY_WITH_LUA)
-        message(STATUS "OkaySpace: Lua scripting ENABLED")
-    else()
-        message(WARNING "OKAY_WITH_LUA set but Lua not found; skipping Lua backend")
-    endif()
-endif()
-
 # Steam: real Steamworks backend. Enable with -DOKAY_WITH_STEAM=ON and point at
 # the SDK with -DSTEAMWORKS_SDK_PATH=/path/to/sdk (Valve's SDK is proprietary
 # and cannot be bundled). Without this, the in-memory simulation backend is used.
@@ -378,24 +350,6 @@ endif()
 if(DEFINED OKAY_STEAM_APP_ID)
     target_compile_definitions(okay_engine PUBLIC OKAY_STEAM_APP_ID=${OKAY_STEAM_APP_ID})
     message(STATUS "OkaySpace: default Steam App ID = ${OKAY_STEAM_APP_ID}")
-endif()
-
-# C#: real Mono embedding. Enable with -DOKAY_WITH_CSHARP=ON (needs Mono dev).
-if(OKAY_WITH_CSHARP)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(MONO QUIET mono-2)
-    endif()
-    if(MONO_FOUND)
-        target_sources(okay_engine PRIVATE src/Scripting/CSharpScriptVM.cpp)
-        target_include_directories(okay_engine SYSTEM PRIVATE ${MONO_INCLUDE_DIRS})
-        target_link_libraries(okay_engine PRIVATE ${MONO_LIBRARIES})
-        target_link_directories(okay_engine PRIVATE ${MONO_LIBRARY_DIRS})
-        target_compile_definitions(okay_engine PUBLIC OKAY_WITH_CSHARP)
-        message(STATUS "OkaySpace: C# (Mono) scripting ENABLED")
-    else()
-        message(WARNING "OKAY_WITH_CSHARP set but Mono not found; skipping C# backend")
-    endif()
 endif()
 
 # ---- Optional model import via Assimp (FBX / DAE / STL / PLY / 3DS / ...) ----

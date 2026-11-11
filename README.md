@@ -166,8 +166,6 @@ launcher is the one thing to double-click and the rest sits in `Tools/`
 
 ```bash
 cmake -S . -B build \
-  -DOKAY_WITH_LUA=ON \        # Lua scripting     (needs liblua dev)
-  -DOKAY_WITH_CSHARP=ON \     # C# scripting      (needs Mono + mcs)
   -DOKAY_WITH_STEAM=ON -DSTEAMWORKS_SDK_PATH=/path/to/sdk   # Steamworks
 ```
 

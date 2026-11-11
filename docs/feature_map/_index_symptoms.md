@@ -139,7 +139,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a loop cut previews but does not apply | [3.2](03-modeling-import.md#32-edge-and-loop-tools) Edge and loop tools |
 | a loop never ends or runs once | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
 | a loop over thousands of items is slow on one thread | [1.18](01-core-scene.md#118-core-runtime-utilities) Core runtime utilities |
-| a Lua or C# script does nothing | [13.3](13-scripting.md#133-c-and-lua-vms) C# and Lua VMs |
+| a Lua or C# script does nothing | [13.3](13-scripting.md#133-removed-lua-and-c-mono-backends) Removed Lua and C# (Mono) backends |
 | a marquee picks nodes it only touches | [36.4](36-math-geometry.md#364-bounds-rectangles-and-shapes) Bounds, rectangles and shapes |
 | a material change does not show | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | a material does not apply to the selection | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |
@@ -349,6 +349,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an object survives (or does not survive) a scene change | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
 | an old client can't join a server with replay protection | [39.2](39-security-anticheat.md#392-transport-security-encryption-replay-protection-sealed-join-host-keys) Transport security: encryption, replay protection, sealed join, host keys |
 | an old object with Actions behaves differently in the graph | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
+| an old scene loads but its script is silent | [13.3](13-scripting.md#133-removed-lua-and-c-mono-backends) Removed Lua and C# (Mono) backends |
 | an option has no effect | [41.1](41-build-tools-infra.md#411-cmake-project-layout-and-options) CMake project layout and options |
 | an overlay is reported as an unknown module | [39.5](39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) Runtime checks and the clock heartbeat |
 | an RPC is ignored (rate limited) | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
@@ -934,6 +935,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the collider ignores the modified mesh | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
 | the Console is flooded by one repeated line | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
 | the Console lists Visual Script errors when Play starts | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
+| the Console says the script language is no longer supported | [13.3](13-scripting.md#133-removed-lua-and-c-mono-backends) Removed Lua and C# (Mono) backends |
 | the Console shows the same line many times | [1.10](01-core-scene.md#110-logging-and-profiling) Logging and profiling |
 | the context menu lacks an entry | [15.1](15-editor.md#151-hierarchy) Hierarchy |
 | the controller does not shake on a hit or explosion | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |
@@ -957,7 +959,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the editor opens to an empty scene with no direction | [51.3](43-proposals.md#513-welcome-screen-and-tips) Welcome screen and tips |
 | the editor opens twice or the second launch does nothing | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
 | the editor says "GPU renderer failing | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
-| the editor shows no errors for those languages | [13.3](13-scripting.md#133-c-and-lua-vms) C# and Lua VMs |
 | the editor stutters on a big scene | [38.2](38-render-backends.md#382-opengl-backend) OpenGL backend |
 | the editor view freezes while the GPU recovers | [38.10](38-render-backends.md#3810-frame-and-present-path) Frame and present path |
 | the exe asks for admin | [41.2](41-build-tools-infra.md#412-cmake-modules-windows-resources-and-toolchain) CMake modules, Windows resources and toolchain |
@@ -1004,7 +1005,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the item does not snap to the zone | [11.11](11-gameplay-systems.md#1111-world-drag-and-drop) World drag and drop |
 | the item list does not refresh | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |
 | the journal does not open | [10.4](10-story-cinematics.md#104-story-ui-dialogue-box-quest-tracker-and-journal) Story UI: dialogue box, quest tracker and journal |
-| the language dropdown is missing | [13.3](13-scripting.md#133-c-and-lua-vms) C# and Lua VMs |
 | the launcher doesn't see a new version | [18.5](18-build-export-release.md#185-update-feed) Update feed |
 | the launcher is slow to fill in (curl per request) | [17.2](17-launcher-platform.md#172-accounts-and-sign-in) Accounts and sign-in |
 | the launcher shows an old version | [41.9](41-build-tools-infra.md#419-versioning-and-release-prep) Versioning and release prep |

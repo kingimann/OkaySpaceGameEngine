@@ -2270,7 +2270,7 @@ endif()
 # 1) libsodium, in process (only when it is installed; independent of OKAY_USE_SODIUM / OKAY_OWN_CRYPTO).
 find_package(PkgConfig QUIET)
 set(_okay_xc_sodium FALSE)
-if(PkgConfig_FOUND)
+if(PkgConfig_FOUND AND NOT CMAKE_CROSSCOMPILING)   # (a cross build would find the HOST's libsodium)
     pkg_check_modules(OKAY_XC_SODIUM QUIET libsodium)
     if(OKAY_XC_SODIUM_FOUND)
         set(_okay_xc_sodium TRUE)

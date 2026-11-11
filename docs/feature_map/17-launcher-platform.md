@@ -83,12 +83,13 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.4.6 Polls, game invites, join requests - `launcher/main.cpp` (L5925, L4444, L6098) - invite cards with Join game, "Ask to join", `/invite`
   - 17.4.7 Voice calls UI - `launcher/main.cpp` (L7062) - call cards, incoming call, voice panel; the audio engine is 16.7
   - 17.4.8 Chat window - `launcher/main.cpp` (L14982, polls L9726 and L14532) - docked or pop-out window with an outbox so a sent message appears instantly
-- **Code:** `Platform/Messages`, `docs/sql/group_chats.sql`, `docs/sql/chat_extras.sql`, `docs/sql/chat_media.sql`
-- **API:** `okay::Messages`, chat slash commands `/invite`, `/party`, launcher Chat window
+  - 17.4.9 Blocks and enforced privacy - `docs/sql/blocks.sql`, `Platform/Privacy`, `Platform/BlockList`, `launcher/main.cpp` (`SetBlocked`, `PumpBlocks`, `PumpPrivacy`; Settings > Privacy & Safety) - server-side block list and privacy settings (messages, calls, friend requests, online status, profile details); blocked people cannot DM, call, friend-request or read presence and private profile fields; works offline (queued) and says when a server rule refused or the SQL has not been run
+- **Code:** `Platform/Messages`, `Platform/Privacy`, `Platform/BlockList`, `docs/sql/group_chats.sql`, `docs/sql/chat_extras.sql`, `docs/sql/chat_media.sql`, `docs/sql/blocks.sql`
+- **API:** `okay::Messages`, `okay::BlockList`, `okay::privacy`, chat slash commands `/invite`, `/party`, launcher Chat window
 - **Editor:** none
 - **Docs:** `docs/supabase-backend.md`, `docs/launcher-multiplayer.md`
-- **Tests:** `chat_json`
-- **Status:** Works - shipping; only the JSON splitter (braces in message bodies) is unit tested
+- **Tests:** `chat_json`, `blocks_privacy` (rule parsing, missing-table detection, settings, pending block changes), `blocks_sql` (local Postgres, 99 checks)
+- **Status:** Works - shipping; the JSON splitter (braces in message bodies) and the block/privacy logic are tested. Server-side blocks need `docs/sql/blocks.sql` run by the owner (until then blocking is PC-only and Settings says so)
 - **Open:** most of the 24.8k lines of `main.cpp` are chat code and untested (split, see 19.4); `chat_extras.sql` and `group_chats.sql` are optional and degrade silently
 - **Related:** 16.7, 17.3, 17.6, 17.9
 - **Words:** chat, DM, direct message, group chat, reactions, emoji, GIF, Tenor, sticker, poll, pin, edit history, scheduled message, voice note, call, /invite, typing indicator, read receipt

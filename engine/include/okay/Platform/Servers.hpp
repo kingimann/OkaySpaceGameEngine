@@ -6,6 +6,7 @@
 // others' servers; everything else is plain PostgREST gated by RLS. No-ops when
 // signed out / offline.
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Privacy.hpp"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -104,8 +105,8 @@ public:
             inList += m.uid;
         }
         if (inList.empty()) return out;
-        auto p = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen"
-                           "&id=in.(" + inList + ")", "GET");
+        auto p = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen"
+                           "&id=in.(" + inList + ")");
         if (p.ok) {
             for (const auto& o : SplitObjects(p.body)) {
                 std::string id = Field(o, "id");

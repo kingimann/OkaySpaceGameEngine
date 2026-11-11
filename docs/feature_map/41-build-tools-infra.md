@@ -113,14 +113,15 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.6.3 Social add-ons - `docs/sql/profile_showcase.sql`, `docs/sql/profile_extras.sql`, `docs/sql/follows.sql`, `docs/sql/group_chats.sql`, `docs/sql/chat_extras.sql`, `docs/sql/chat_media.sql`, `docs/sql/forum_sections.sql`, `docs/sql/parties.sql`
   - 41.6.4 Staff and anti-cheat - `docs/sql/admin.sql`, `docs/sql/anticheat.sql`, `docs/sql/app_config.sql`, `docs/sql/official_game_admin.sql` (all need `admin.sql` first)
   - 41.6.5 Multiplayer tables - `docs/sql/game_servers.sql`, `docs/sql/matches.sql`, `docs/sql/matchmaking.sql` (matches needs social; matchmaking uses game_servers, matches, parties and app_config when present)
-  - 41.6.6 Local SQL test - `tests/scripts/test_anticheat_sql.sh` - only `anticheat.sql` has one (39.6)
-- **Code:** `supabase/functions/session-ticket/index.ts`, `supabase/functions/session-ticket/ticket.ts`, `supabase/functions/session-ticket/make_key.ts`, `supabase/functions/session-ticket/ticket_test.ts`, `docs/sql/*` (all 16 files, named one by one in the Parts above)
+  - 41.6.6 Local SQL test - `tests/scripts/test_anticheat_sql.sh`, `tests/scripts/test_blocks_sql.sh` - `anticheat.sql` (39.6) and `blocks.sql` have one
+  - 41.6.7 Blocks and privacy - `docs/sql/blocks.sql` - `blocks` and `privacy_settings` tables, rules on messages, calls and friend requests, the `profiles_visible` view (needs `social.sql` first; re-run after a later file adds a `profiles` column)
+- **Code:** `supabase/functions/session-ticket/index.ts`, `supabase/functions/session-ticket/ticket.ts`, `supabase/functions/session-ticket/make_key.ts`, `supabase/functions/session-ticket/ticket_test.ts`, `docs/sql/*` (all 17 files, named one by one in the Parts above)
 - **API:** `supabase functions deploy session-ticket`, `supabase secrets set`, the SQL editor; Storage buckets `releases`, `chat`, `workshop`
 - **Editor:** none
 - **Docs:** `docs/supabase-backend.md`, `docs/accounts.md`, `docs/anticheat.md`
-- **Tests:** `anticheat_sql` (local Postgres, skipped in CI), `anticheat_backend`
+- **Tests:** `anticheat_sql` and `blocks_sql` (local Postgres, skipped in CI), `anticheat_backend`
 - **Status:** Works - the files are in use by the shipping launcher; only one has a local test
-- **Open:** no migration tracking (re-run by hand); 15 of 16 SQL files have no test; the Edge function is not deployed and its self-test is not in CI; run order from the headers: `social`, `profile_showcase`, `profile_extras`, `forum_sections`, `follows`, `group_chats`, `chat_extras`, `chat_media`, `admin`, then `anticheat`, `app_config`, `official_game_admin`, and `game_servers`, `matches`, `parties`, `matchmaking`
+- **Open:** no migration tracking (re-run by hand); 15 of 17 SQL files have no test; the Edge function is not deployed and its self-test is not in CI; run order from the headers: `social`, `profile_showcase`, `profile_extras`, `forum_sections`, `follows`, `group_chats`, `chat_extras`, `chat_media`, `admin`, then `anticheat`, `app_config`, `official_game_admin`, and `game_servers`, `matches`, `parties`, `matchmaking`
 - **Related:** 17.2, 17.9, 39.3, 39.6, 16.4, 16.9
 - **Words:** Supabase, SQL, schema, RLS, SECURITY DEFINER, Edge function, Deno, storage bucket, migration, SQL editor, pg_cron
 - **Seen as:** a launcher feature is hidden until a SQL file is run; "permission denied for table"; a Supabase function isn't found

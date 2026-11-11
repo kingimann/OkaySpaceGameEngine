@@ -5,6 +5,7 @@
 // just "messages where that friend is sender or recipient" — and whichever side
 // isn't the friend is me, so we never need our own uuid.
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Privacy.hpp"
 #include <string>
 #include <vector>
 #include <map>
@@ -42,8 +43,13 @@ public:
         std::string j = "{\"recipient\":" + JStr(friendUid) + ",\"body\":" + JStr(body);
         if (replyTo > 0) j += ",\"reply_to\":" + std::to_string(replyTo);
         j += "}";
-        return acct_.Api("/rest/v1/messages", "POST", j).ok;
+        auto r = acct_.Api("/rest/v1/messages", "POST", j);
+        // Why it failed, in words (a server privacy rule, or no connection); empty
+        // when the cause is unknown or it worked. See docs/sql/blocks.sql.
+        lastSendError_ = r.ok ? std::string() : privacy::FailureText(r, "");
+        return r.ok;
     }
+    const std::string& LastSendError() const { return lastSendError_; }
 
     // Delete one of my own sent messages (RLS blocks deleting others').
     bool Delete(long messageId) {
@@ -291,7 +297,7 @@ public:
             st.viewingAt = ParseIso(Field(o[0], "updated_at"));
         }
         if (withLastSeen) {
-            auto p = acct_.Api("/rest/v1/profiles?select=last_seen&id=eq." + peerUid, "GET");
+            auto p = privacy::ProfilesGet(acct_, "select=last_seen&id=eq." + peerUid);
             if (p.ok) { auto po = SplitObjects(p.body); if (!po.empty()) st.lastSeen = ParseIso(Field(po[0], "last_seen")); }
         }
         return st;
@@ -400,7 +406,7 @@ public:
             out.push_back(m);
         }
         if (ids.empty()) return out;
-        auto p = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen&id=in.(" + ids + ")", "GET");
+        auto p = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen&id=in.(" + ids + ")");
         if (p.ok)
             for (const auto& o : SplitObjects(p.body)) {
                 const std::string id = Field(o, "id");
@@ -738,6 +744,7 @@ public:
 
 private:
     okay::account::AccountService& acct_;
+    std::string lastSendError_;
     std::string myId_;
 
     // My own profile/user uuid (looked up by username, cached).

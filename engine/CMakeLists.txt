@@ -404,6 +404,12 @@ if(OKAY_USE_ASSIMP)
     message(STATUS "OkaySpace: Assimp model import ENABLED (DAE/STL/PLY/3DS/Blend/X/3MF/AMF/X3D/MD2/MD3/MD5/MDL/SMD/MS3D/LWO/DXF/OFF/AC/B3D/BVH/PMX/...)")
 endif()
 
+# The platform seam (windows / events / GL context / timers / clipboard / audio device /
+# gamepad): see cmake/OkayPlatform.cmake. Everything that used SDL for those goes through it.
+include(${CMAKE_SOURCE_DIR}/cmake/OkayPlatform.cmake)
+okay_add_platform_library()
+target_link_libraries(okay_engine PUBLIC okay_platform)
+
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
 

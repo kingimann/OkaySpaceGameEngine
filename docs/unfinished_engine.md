@@ -64,7 +64,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| No off-mesh links, area costs or obstacle carving | no matches in `engine/src/AI`, `AI/NavMesh*.hpp`, `Components/NavMeshAgent.hpp` | NPCs cannot jump gaps, climb ladders, or avoid mud or water. Moving obstacles do not cut the mesh | High | Large |
+| Moving obstacles do not cut the mesh (no obstacle carving) | `Components/NavMeshObstacle.hpp` | Agents dodge a moving obstacle locally but the path search does not route around it, so a closed door or a parked cart can wedge a path. (Resolved: off-mesh links and area types with costs and per-agent masks, see `docs/navigation.md`.) | Medium | Medium |
 | NavMesh polygons are axis-aligned rectangles, one agent radius per bake, one surface per scene | feature map 9.1 | Angled walls become staircases; two NPC sizes need two scenes | Medium | Large |
 | 2D grid pathfinder: no weights, smoothing or moving obstacles | `AI/Pathfinding.hpp` | 2D games get jagged unweighted paths | Low | Medium |
 | Behavior tree cannot run another tree; no breakpoints | `AI/BehaviorTree.hpp:100-110` (no sub-tree node type) | Large trees cannot be modular | Medium | Medium |
@@ -157,7 +157,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 9. Medium: 57. Low: 26. Total rows: 92.
+High: 8. Medium: 58. Low: 26. Total rows: 92.
 
 ## Top 15 to tackle first
 
@@ -170,7 +170,7 @@ High: 9. Medium: 57. Low: 26. Total rows: 92.
 7. **Direct3D 12 has no post-processing** (sec 1). Either bring it to parity or label it "preview" in Build Settings and keep it off by default.
 8. **Audio is mono and fully decoded** (sec 4). Streaming plus stereo for music is a clear quality and memory win.
 9. **Undo uses full snapshots** (sec 13). Moving the editor to the existing `UndoStack` reduces memory and unlocks undo across Play.
-10. **Navigation: off-mesh links and area costs** (sec 6). Biggest AI limit; NPCs cannot use gaps, ladders or avoid hazards.
+10. **(Resolved) Navigation: off-mesh links and area costs** (sec 6). Nav Mesh Modifier areas with per-area costs and agent masks, and Nav Mesh Links (jump, drop, ladder) the agents plan through and cross. Obstacle carving is still open.
 11. **Cast shadows from spot and point lights on D3D12 and software** (sec 1) or a visible warning in the Light Inspector (small).
 12. **Visual script export turns Wait or Delay into comments** (sec 10). Emit working `after(t, fn)` code and add one export-vs-runtime test.
 13. **Joint3D hinge limits** (sec 2). Small change with big effect on doors and levers; reuse `Math/JointLimit.hpp`.

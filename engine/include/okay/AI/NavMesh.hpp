@@ -6,6 +6,39 @@
 
 namespace okay {
 
+/// Navigation area types. A baked polygon carries one (0..31); a query filter says which
+/// areas an agent may enter (a mask) and what crossing each one costs (a multiplier on
+/// distance), so a road is preferred over a swamp and a blocked area is never entered.
+constexpr int kNavAreaCount = 32;
+namespace NavArea {
+enum : int { Walkable = 0, NotWalkable = 1, Water = 2, Road = 3 };   // 4..31 are free for the project
+}
+/// Every area except NotWalkable: what an agent may enter by default.
+constexpr std::uint32_t kNavAllAreas = 0xFFFFFFFFu;
+constexpr std::uint32_t kNavDefaultAreaMask = 0xFFFFFFFDu;
+const char* NavAreaDefaultName(int area);    ///< "Walkable", "Not Walkable", "Water", "Road", else "Area N"
+float NavAreaDefaultCost(int area);          ///< 1, 1, 3, 0.5, and 1 for custom areas
+
+/// One directed off-mesh edge a query may use (a jump, a drop, a ladder): leave the mesh
+/// at `from`, arrive at `to`. The caller resolves the polygons under both ends.
+struct NavOffMeshEdge {
+    Vec3 from, to;           ///< points on the mesh (snapped by the caller)
+    int  fromPoly = -1, toPoly = -1;
+    float cost = 1.0f;       ///< multiplier on the distance travelled
+    int   area = 0;          ///< must be in the agent's area mask
+    int   id = -1;           ///< the caller's handle, reported back in the path
+};
+
+/// What one agent may walk on: an area mask, a cost per area and optional off-mesh edges.
+struct NavQueryFilter {
+    std::uint32_t areaMask = kNavDefaultAreaMask;
+    float areaCost[kNavAreaCount];
+    const std::vector<NavOffMeshEdge>* edges = nullptr;
+    NavQueryFilter() { for (int i = 0; i < kNavAreaCount; ++i) areaCost[i] = NavAreaDefaultCost(i); }
+    bool  Allows(int area) const { return area >= 0 && area < kNavAreaCount && ((areaMask >> area) & 1u) != 0; }
+    float Cost(int area) const { return area >= 0 && area < kNavAreaCount ? areaCost[area] : 1.0f; }
+};
+
 /// How a NavMeshSurface turns the scene's static colliders into walkable polygons.
 struct NavMeshBuildSettings {
     float agentRadius = 0.4f;   ///< walkable area is shrunk by this much from every wall / ledge
@@ -32,6 +65,7 @@ public:
         float minX = 0, maxX = 0, minZ = 0, maxZ = 0;
         float minY = 0, maxY = 0;
         Vec3  center;
+        int   area = 0;              ///< NavArea (0..31): what crossing it costs and who may enter
     };
     struct Link {
         int  from = 0, to = 0;   ///< polygon indices
@@ -70,9 +104,16 @@ public:
     /// pulls the string tight across the portals; without it the path visits every
     /// polygon centre on the way (debugging, comparisons). False when either point
     /// is off the mesh or the destination is on another island.
-    bool FindPath(const Vec3& from, const Vec3& to, std::vector<Vec3>& out, bool smooth = true) const;
+    /// With a `filter` the search honours its area mask and costs (A* cost = distance *
+    /// area cost) and may take its off-mesh edges; `legEdges` then receives, per corner,
+    /// the edge id of the jump that arrives at that corner (-1 = walked). The destination
+    /// polygon must be in the mask; the start polygon need not be (an agent standing in a
+    /// forbidden area can still walk out).
+    bool FindPath(const Vec3& from, const Vec3& to, std::vector<Vec3>& out, bool smooth = true,
+                  const NavQueryFilter* filter = nullptr, std::vector<int>* legEdges = nullptr) const;
     /// A* over the polygon graph: the polygon indices from `start` to `end`.
-    bool FindPolyPath(int start, const Vec3& from, int end, const Vec3& to, std::vector<int>& out) const;
+    bool FindPolyPath(int start, const Vec3& from, int end, const Vec3& to, std::vector<int>& out,
+                      const NavQueryFilter* filter = nullptr) const;
     /// Walk the mesh in a straight line from `from` toward `to`. True when a mesh
     /// edge is in the way (`hit` = where), false when the line stays on the mesh.
     bool Raycast(const Vec3& from, const Vec3& to, Vec3& hit, int* lastPoly = nullptr) const;
@@ -99,6 +140,8 @@ private:
     void BuildGrid();
     void PolysNear(float minX, float minZ, float maxX, float maxZ, std::vector<int>& out) const;
     void PortalLeftRight(const Link& l, const Vec3& dir, Vec3& left, Vec3& right) const;
+    // Corners across polygons path[i0..i1] from `s` to `e` (both included), appended to `out`.
+    void StringPull(std::size_t i0, std::size_t i1, const Vec3& s, const Vec3& e, bool smooth, std::vector<Vec3>& out) const;
 
     // Per-query scratch, reused between calls (no allocation once warm).
     struct Scratch {

@@ -55,6 +55,59 @@ convex polygon with per-corner heights; neighbouring rectangles are joined by
 portals (the shared part of their common edge), which is what A* and the
 funnel use.
 
+## Areas and costs
+
+Every baked polygon carries one of 32 **areas**. Built in: 0 Walkable, 1 Not Walkable, 2 Water, 3 Road;
+4..31 are yours to name (Navigation window > Areas, or `NavMeshSurface.areaName`). Put a **Nav Mesh
+Modifier** on an object to choose the area its colliders bake as (Add Component > Gameplay > Nav Mesh
+Modifier). It also covers child objects that have no modifier of their own (**Apply To Children**).
+Where two colliders overlap with level tops (a road slab laid flush in a swamp), the higher area
+number wins; otherwise the surface on top decides. A **Not Walkable** collider cuts a hole in the
+mesh (a pit, a lava pool). Only cells of one area merge into a polygon, so the area is exact to a
+cell. Bake again after changing an area; the polygons in the `.okaynav` file keep it (`p v0 v1 v2 v3 area`;
+files from before areas load as all Walkable).
+
+What an area **costs** lives on the surface (`areaCost[32]`, the Areas table), not in the bake, so it
+can be tuned without rebaking. The path search charges `distance * cost` for the stretch inside each
+polygon: defaults are Water 3 and Road 0.5, every other area 1. Below 1 is preferred, above 1 avoided.
+The funnel pass only straightens the route inside the chosen polygons, so it never cuts across a
+costly area the search went round. The search measures each polygon from portal midpoint to portal
+midpoint, so on a few very large polygons it is approximate: a detour around a small swamp only wins
+when the swamp's cost outweighs the extra walking, so give strongly avoided areas a clearly higher cost.
+
+Which areas an agent may enter is its **Area Mask** (`NavMeshAgent.areaMask`, default every area
+but Not Walkable). A forbidden area is never entered; a goal inside one, or one only reachable through
+one, has no path (the agent gives up, as for any unreachable goal). The start polygon may be
+forbidden, so an agent standing in a forbidden area can walk out. Other callers
+(`Navigation::FindPath`, the NPC and click-to-move controllers) use the default mask.
+
+```cpp
+std::vector<Vec3> corners; std::vector<NavMeshLink*> legs;
+const uint32_t noWater = kNavDefaultAreaMask & ~(1u << NavArea::Water);
+bool ok = Navigation::FindPathForAgent(scene, from, to, corners, legs, noWater);
+```
+
+## Off-mesh links
+
+A **Nav Mesh Link** joins two points the ground does not: a jump over a gap, a drop off a ledge, a
+ladder. Points are in the object's local space and must lie on the baked mesh (within 1.5 m; the
+Inspector says when an end is off it). Fields: **Type** (Jump arcs `arcHeight` above the straight line,
+Drop falls slow then fast, Ladder climbs a straight line), **Bidirectional** (off: start to end only),
+**Cost** (multiplier on the crossing distance, on top of the link area's cost), **Area** (checked
+against the agent's mask, so an agent can opt out of a kind of link), **Speed** (0 = the agent's own).
+A disabled component or inactive object is not used. The Scene view draws each link as two rings, the
+crossing arc and an arrow head per direction (grey when unusable), and the mesh in area colours.
+
+Planning treats each usable link as one more edge (two for a bidirectional link), so a link is taken
+only when it makes the route cheaper. The path from `Navigation::FindPathForAgent` has a parallel `legs`
+vector: a non-null entry means the leg ending at that corner is that link's crossing. A
+`NavMeshAgent` walks to the link's start, crosses to the end over `distance / speed` seconds (it is
+placed exactly on the end point), and walks on; it does not stop mid-crossing and repaths only after
+landing. `agent.onLinkStart` / `onLinkEnd` (`std::function<void(NavMeshAgent&, NavMeshLink&)>`) fire at the
+two ends in that order, for an animation hook; Action Lists get `nav_link_start` and `nav_link_end`.
+`IsTraversingLink()`, `CurrentLink()` and `LinkProgress()` report the crossing. An agent driven by an
+NPC or click-to-move controller does not use links.
+
 ## Queries (`okay/AI/NavMesh.hpp`, `okay/AI/Navigation.hpp`)
 
 `Navigation` is the facade every caller goes through; it uses the baked mesh
@@ -162,5 +215,10 @@ Unknown records are skipped, so a newer build's file still loads.
   get a staircase edge one cell wide. Lower the cell size where it shows.
 - One agent radius per bake. A game with both rats and ogres bakes for the
   ogre or keeps a second surface in another scene.
-- Off-mesh links (jumps, ladders) and obstacle carving are not implemented;
-  the grid fallback does not know about them either.
+- Obstacle carving is not implemented (moving obstacles are avoided locally,
+  not planned around). The grid fallback (no baked mesh) knows nothing of areas
+  or links.
+- Area costs and masks apply to the baked mesh only; an agent driven by an NPC or
+  click-to-move controller uses the default mask and no links. A link whose ends are
+  more than 1.5 m from the mesh is skipped. Link crossings are not blocked by geometry
+  (the arc passes through walls); place links where the way is clear.

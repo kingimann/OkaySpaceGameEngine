@@ -173,6 +173,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a party member doesn't follow the leader | [17.3](17-launcher-platform.md#173-friends-following-parties) Friends, following, parties |
 | a pasted C# script is accepted but has no effect | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a pasted join link does nothing | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
+| a path ignores the road | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
 | a path zig-zags | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | a pause menu and a cutscene un-pause each other | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | a pickup cannot be picked up | [11.2](11-gameplay-systems.md#112-items-and-loot) Items and loot |
@@ -315,6 +316,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an agent gives up on a path | [9.2](09-ai-navigation.md#92-nav-agents-and-obstacles) Nav agents and obstacles |
 | an agent jitters when it arrives | [9.2](09-ai-navigation.md#92-nav-agents-and-obstacles) Nav agents and obstacles |
 | an agent slides instead of walking | [9.2](09-ai-navigation.md#92-nav-agents-and-obstacles) Nav agents and obstacles |
+| an agent walks into lava | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
 | an angle jumps at 360 | [36.3](36-math-geometry.md#363-scalars-interpolation-and-easing) Scalars, interpolation and easing |
 | an animation overshoots or snaps | [36.3](36-math-geometry.md#363-scalars-interpolation-and-easing) Scalars, interpolation and easing |
 | an animation runs during pause when it should not (or the reverse) | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
@@ -326,6 +328,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an edited mesh reverts after reopening the scene | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | an edited mesh updates a moment late | [38.9](38-render-backends.md#389-gpu-resources) GPU resources |
 | an effect object lingers | [11.10](11-gameplay-systems.md#1110-no-code-behaviours-move-spin-lifetime) No-code behaviours: move, spin, lifetime |
+| an enemy cannot climb a ladder | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
 | an enemy never notices the player or notices from behind | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
 | an enemy sees through walls | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
 | an exe is missing SDL2.dll | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
@@ -712,6 +715,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | nothing spawns | [11.6](11-gameplay-systems.md#116-spawners-turn-manager-minimap) Spawners, turn manager, minimap |
 | NPCs stand in the street all night | [53.1](43-proposals.md#531-time-of-day-events-and-gameplay) Time-of-day events and gameplay |
 | NPCs vanish when I walk away | [45.3](43-proposals.md#453-streaming-aware-systems) Streaming-aware systems |
+| NPCs wade through mud instead of walking round | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
+| NPCs will not jump a gap | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
 | objects are named "Cube (3) | [42.5](42-examples-samples.md#425-editor-plugin-examples) Editor plugin examples |
 | objects entering water make no ripples | [52.3](43-proposals.md#523-fluids) Fluids |
 | objects fall through a thin floor | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |

@@ -236,6 +236,7 @@ void DrawUIThemeWindowBody(EditorState& ed) {
     if (ImGui::Button("Apply to all UI", ImVec2(150, 0))) {
         ed.PushUndo();
         UITheme* th = UIGallery::EnsureTheme(scene, sel);
+        if (sel == 0) { UIThemeFromText(*th, UIThemeToText(pv)); th->global = true; }   // a look loaded from a file: use its values, not a preset
         th->Apply();
         ed.dirty = true;
         status = "Styled " + std::to_string(widgets) + " widget(s) as " + UITheme::PresetName(sel);
@@ -248,6 +249,7 @@ void DrawUIThemeWindowBody(EditorState& ed) {
     if (ImGui::Button("Apply to selected", ImVec2(150, 0))) {
         ed.PushUndo();
         UITheme t; t.ApplyPreset(sel);
+        if (sel == 0) UIThemeFromText(t, UIThemeToText(pv));   // a look loaded from a file
         t.ApplyTo(ed.selected());
         ed.dirty = true;
         status = std::string("Styled ") + ed.selected()->name + " and what is inside it";

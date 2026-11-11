@@ -58,6 +58,7 @@ inline void StyleGalleryExtras(Scene& scene, UITheme* th) {
         if (!inset && !title) continue;
         Color c = mix(th->panel, title ? th->accent : th->text, title ? 0.30f : 0.09f);
         c.a = th->panel.a < 0.5f ? 0.35f : 1.0f;                      // a glass look stays see-through
+        if (th->panel.a < 0.5f && inset) c = Color(0.04f, 0.07f, 0.17f, 0.55f);   // a dark glass tint so light text reads over any blob
         ip->color = c; ip->useGradient = false; ip->shadow = false; ip->topHighlight = false;
         ip->borderColor = th->border;
     }

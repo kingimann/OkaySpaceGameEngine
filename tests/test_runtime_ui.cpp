@@ -929,6 +929,21 @@ int main() {
         CHECK_NEAR(btn->color.r, a.button.r, 1e-3f);                    // the Horror button colour is on the widget
     }
 
+    // ---- "Apply to all UI" with a look loaded from a file (preset 0) restyles the scene with that file's values ----
+    {
+        Scene s("FileLook");
+        UIGallery::BuildGallery(s, (int)UITheme::Preset::ModernFlat);
+        UITheme neon; neon.ApplyPreset((int)UITheme::Preset::Neon);
+        const std::string text = UIThemeToText(neon);
+        auto* btn = s.Find("Play")->GetComponent<UIButton>();
+        const Color before = btn->color;
+        UITheme* th = UIGallery::EnsureTheme(s, 0);          // what the editor's Apply button does for a loaded file
+        CHECK(UIThemeFromText(*th, text)); th->global = true;
+        th->Apply();
+        CHECK(std::fabs(btn->color.r - before.r) + std::fabs(btn->color.g - before.g) + std::fabs(btn->color.b - before.b) > 0.1f);
+        CHECK(std::fabs(th->accent.r - neon.accent.r) < 0.01f && std::fabs(th->accent.g - neon.accent.g) < 0.01f);
+    }
+
     // ---- A long dropdown list scrolls: wheel, scrollbar position, and the selection stays in view ----
     {
         Scene s("DD");
@@ -978,6 +993,7 @@ int main() {
         CHECK(bd->color.b > bd->color.r + 0.2f);
         // glass slots and steppers are see-through too (not solid white blocks)
         CHECK(s.Find("Slots")->GetComponent<UISlotGrid>()->color.a < 0.5f);
+        CHECK(s.Find("Box") && s.Find("SwatchInsetNameplate")->GetComponent<UIPanel>()->color.r < 0.1f);   // glass insets are a dark tint (light text reads)
         CHECK(UIDrawsAbove(s.Find("ThemePick"), s.Find("Window")));
         CHECK(s.Find("ThemePick")->GetComponent<UIDropdown>()->listColor.a > 0.9f);   // the open list is solid over the other widgets
         CHECK(s.Find("SwatchBlobA")->active);

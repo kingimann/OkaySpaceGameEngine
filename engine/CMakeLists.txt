@@ -140,6 +140,7 @@ add_library(okay_engine
     src/Audio/AudioMixer.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
+    src/Audio/VorbisDecoder.cpp
     src/Audio/Mp3Decoder.cpp
     src/AI/Pathfinding.cpp
     src/AI/NavMesh.cpp
@@ -219,11 +220,8 @@ target_include_directories(okay_engine PRIVATE
 # even in debug builds (parsing big FBX files unoptimised is painfully slow).
 if(MSVC)
     set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "/w;/O2")
-    set_source_files_properties(src/Audio/AudioDecode.cpp PROPERTIES COMPILE_OPTIONS "/w;/O2")
 else()
     set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
-    # The vendored OGG decoder (stb_vorbis) builds inside this file.
-    set_source_files_properties(src/Audio/AudioDecode.cpp PROPERTIES COMPILE_OPTIONS "-w;-O2")
 endif()
 # Silence warnings from the third-party single-header libraries. `-Wno-narrowing`
 # is required in addition to `-w`: vendored tables (stb) may initialise `char`

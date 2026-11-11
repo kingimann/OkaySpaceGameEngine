@@ -10,6 +10,7 @@
 #include "EditorState.hpp"
 #include "EditorVisibility.hpp"   // editor-only Hide + selection sets
 #include "SurfaceSnap.hpp"         // snap steps, modifier rules, snap-to-surface
+#include "SelectionTools.hpp"      // align / distribute / mirror, multi-select gizmo pivot
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "FpHandsWindow.hpp"
@@ -2481,6 +2482,7 @@ void LoadSettings() {
         else if (k == "gamedeviceland") g_gameDeviceLandscape = (v != 0);
         else if (k == "gamesafearea") g_gameSafeArea = (v != 0);
         else if (okay::editor::snap::ApplySetting(k, v, okay::editor::snap::Cfg())) {}   // snap steps + surface options
+        else if (okay::editor::seltools::ApplySetting(k, v, okay::editor::seltools::Cfg())) {}   // align / distribute / mirror options, gizmo pivot
         else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
@@ -2542,6 +2544,7 @@ void SaveSettings() {
       << "docautosave " << (int)(g_docAutosaveSec + 0.5f) << "\n"
       << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n";
     okay::editor::snap::AppendSettings(f, okay::editor::snap::Cfg());
+    okay::editor::seltools::AppendSettings(f, okay::editor::seltools::Cfg());
     okayproj::WriteTextAtomic("okay_settings.txt", f.str());   // whole or not at all: a crash never leaves a cut-off file
 }
 
@@ -6004,6 +6007,93 @@ static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
     }
 }
 
+// Align / Distribute / Mirror for a selection of 3D objects (editor/SelectionTools). One function so the Edit menu, the
+// Hierarchy right-click menu and the Scene toolbar's Align popup offer exactly the same things. Items that cannot run
+// are greyed out and their tooltip says why; every action is one undo step.
+static void DrawAlignMirrorMenu(EditorState& ed) {
+    namespace st = okay::editor::seltools;
+    st::Settings& cfg = st::Cfg();
+    bool changed = false;
+    const st::Availability canA = st::CanAlign(ed), canD = st::CanDistribute(ed), canM = st::CanMirror(ed);
+    const std::size_t nSel = st::Targets(ed.MultiSelection().empty() && ed.selected() ? std::vector<GameObject*>{ed.selected()} : ed.MultiSelection()).size();
+    // A setting row: stays open when clicked, lit when it is the current choice.
+    auto opt = [&](const char* label, bool on, const char* tip) {
+        const bool hit = ImGui::Selectable(label, on, ImGuiSelectableFlags_DontClosePopups);
+        if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        return hit;
+    };
+    auto act = [&](const char* label, const st::Availability& av, const char* tip) {
+        const bool hit = ImGui::MenuItem(label, nullptr, false, av.ok);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s%s", tip, av.ok ? "" : ("\n\nGreyed out: " + av.reason).c_str());
+        return hit;
+    };
+    auto say = [&](const st::Result& r) { ConsoleLog(r.message, r.ok ? 0 : 1); };
+    static const char* kAx[3] = {"X", "Y", "Z"};
+    ImGui::TextDisabled("%zu object%s to work on", nSel, nSel == 1 ? "" : "s");
+
+    // ---- Align
+    if (ImGui::BeginMenu("Align", canA.ok)) {
+        ImGui::TextDisabled("Line the objects up with");
+        if (opt("The selection's bounds", cfg.alignTo == st::AlignTo::Selection, "Each object's edge goes to the min / centre / max of the box around the whole selection.")) { cfg.alignTo = st::AlignTo::Selection; changed = true; }
+        if (opt("The active object (last picked)", cfg.alignTo == st::AlignTo::Active, "The last object you picked stays where it is; the others line up with it.")) { cfg.alignTo = st::AlignTo::Active; changed = true; }
+        ImGui::Separator();
+        static const char* kEdge[3] = {"min", "centre", "max"};
+        static const char* kEdgeTip[3] = {"the lowest edge (smallest coordinate)", "the middle", "the highest edge (largest coordinate)"};
+        for (int a = 0; a < 3; ++a)
+            for (int e = 0; e < 3; ++e) {
+                char lb[40]; std::snprintf(lb, sizeof(lb), "Align %s %s##al%d%d", kAx[a], kEdge[e], a, e);
+                char tp[160]; std::snprintf(tp, sizeof(tp), "Move the objects along %s so %s of each one's world-space box lines up.\nRenderer and collider bounds are used; an object with neither counts as a point.", kAx[a], kEdgeTip[e]);
+                if (ImGui::MenuItem(lb)) say(st::Align(ed, (st::Axis)a, (st::Edge)e, cfg.alignTo));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tp);
+            }
+        ImGui::EndMenu();
+    }
+    if (!canA.ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Line selected objects up along an axis.\n\nGreyed out: %s", canA.reason.c_str());
+
+    // ---- Distribute
+    if (ImGui::BeginMenu("Distribute", canD.ok)) {
+        if (opt("Equal gaps between objects", cfg.spread == st::Spread::Gaps, "The same empty space between each pair of neighbouring boxes. The two outer objects stay.")) { cfg.spread = st::Spread::Gaps; changed = true; }
+        if (opt("Equal spacing between centres", cfg.spread == st::Spread::Centres, "The same distance between neighbouring centres. The two outer objects stay.")) { cfg.spread = st::Spread::Centres; changed = true; }
+        ImGui::Separator();
+        for (int a = 0; a < 3; ++a) {
+            char lb[40]; std::snprintf(lb, sizeof(lb), "Distribute along %s##di%d", kAx[a], a);
+            if (ImGui::MenuItem(lb)) say(st::Distribute(ed, (st::Axis)a, cfg.spread));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Order the objects by position along %s and space them out evenly.", kAx[a]);
+        }
+        ImGui::EndMenu();
+    }
+    if (!canD.ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Space objects out evenly along an axis.\n\nGreyed out: %s", canD.reason.c_str());
+
+    // ---- Mirror
+    if (ImGui::BeginMenu("Mirror", canM.ok)) {
+        ImGui::TextDisabled("Mirror about");
+        if (opt("The selection's centre", cfg.mirrorAbout == st::MirrorAbout::SelectionCentre, "The mirror plane passes through the centre of the box around the selection.")) { cfg.mirrorAbout = st::MirrorAbout::SelectionCentre; changed = true; }
+        if (opt("The active object's pivot", cfg.mirrorAbout == st::MirrorAbout::ActivePivot, "The mirror plane passes through the last picked object's position.")) { cfg.mirrorAbout = st::MirrorAbout::ActivePivot; changed = true; }
+        if (opt("The world origin", cfg.mirrorAbout == st::MirrorAbout::WorldOrigin, "The mirror plane passes through 0, 0, 0.")) { cfg.mirrorAbout = st::MirrorAbout::WorldOrigin; changed = true; }
+        ImGui::TextDisabled("Result");
+        if (opt("A mirrored copy", cfg.mirrorDuplicate, "Leaves the originals alone and selects the mirrored copies.")) { cfg.mirrorDuplicate = true; changed = true; }
+        if (opt("Mirror in place", !cfg.mirrorDuplicate, "Replaces the selection with its mirror image.")) { cfg.mirrorDuplicate = false; changed = true; }
+        ImGui::Separator();
+        static const char* kPlane[3] = {"YZ", "XZ", "XY"};
+        for (int a = 0; a < 3; ++a) {
+            char lb[48]; std::snprintf(lb, sizeof(lb), "Mirror across %s (%s plane)##mi%d", kAx[a], kPlane[a], a);
+            if (ImGui::MenuItem(lb)) say(st::Mirror(ed, (st::Axis)a, cfg.mirrorAbout, cfg.mirrorDuplicate));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Reflect the objects (and their children) across the plane where %s stays fixed.\nNever uses a negative scale: the mesh itself is flipped and its faces reversed, so lighting and collisions stay right.", kAx[a]);
+        }
+        ImGui::EndMenu();
+    }
+    if (!canM.ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Make a mirror image of the selection.\n\nGreyed out: %s", canM.reason.c_str());
+
+    // ---- Gizmo pivot (the Local / Global switch is the button beside the tools)
+    ImGui::Separator();
+    ImGui::TextDisabled("Gizmo pivot for several objects");
+    if (opt("Active object's pivot", cfg.gizmoPivot == st::GizmoPivot::Active, "The gizmo sits on the last picked object. Rotating turns the group about that object.")) { cfg.gizmoPivot = st::GizmoPivot::Active; changed = true; }
+    if (opt("Centre of the selection", cfg.gizmoPivot == st::GizmoPivot::Center, "The gizmo sits at the average position of the selected objects. Rotating turns the group about that point.")) { cfg.gizmoPivot = st::GizmoPivot::Center; changed = true; }
+    if (changed) SaveSettings();
+}
+
 void DrawMenuAndToolbar(EditorState& ed) {
     SceneBuildSync(ed);
     // play tint: while the game runs, darken the editor chrome a
@@ -6139,6 +6229,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
     if (ImGui::BeginMenu("Edit")) {
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !g_meshUndo.empty() || ed.CanUndo())) { if (!MeshUndo(false)) ed.Undo(); ed.dirty = true; ConsoleLog("Undo"); }
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !g_meshRedo.empty() || ed.CanRedo())) { if (!MeshUndo(true)) ed.Redo(); ed.dirty = true; ConsoleLog("Redo"); }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Align / Distribute / Mirror")) { DrawAlignMirrorMenu(ed); ImGui::EndMenu(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Line objects up, space them out evenly, or mirror them. Select several objects first (Ctrl+click).\nAlso in the Hierarchy right-click menu and the Scene view's Align button.");
         ImGui::Separator();
         if (ImGui::MenuItem("Project Settings...")) g_showProjectSettings = true;
         ImGui::EndMenu();
@@ -19446,6 +19539,7 @@ void DrawHierarchy(EditorState& ed) {
                 }
                 if (ImGui::MenuItem("Duplicate", "Ctrl+D")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
                 if (ImGui::MenuItem("Group Selected", "Ctrl+Shift+G")) { ed.GroupSelected(); ConsoleLog("Grouped selection"); }
+                if (ImGui::BeginMenu("Align / Distribute / Mirror")) { DrawAlignMirrorMenu(ed); ImGui::EndMenu(); }
                 if (ImGui::MenuItem("Focus", "F")) FocusSelected(ed);
                 if (ImGui::MenuItem(g_isolate == node ? "Exit Isolation" : "Isolate", "Shift+I"))
                     g_isolate = (g_isolate == node) ? nullptr : node;
@@ -43665,7 +43759,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         // view and flickers the scene), so the Scale tool falls back to Move.
         bool noScale = sel->GetComponent<Camera>() != nullptr;
         Tool tool = (noScale && g_tool == Tool::Scale) ? Tool::Move : g_tool;
-        Vec3 o = t->Position();
+        // Several objects selected: every Move / Rotate / Scale drag applies to all of them (the primary drives it), and the
+        // gizmo can sit at the centre of the selection instead of on the primary (editor/SelectionTools).
+        namespace stl = okay::editor::seltools;
+        const std::vector<GameObject*> gizFollow = ed.MultiSelection().size() > 1 ? stl::Followers(ed.MultiSelection(), sel) : std::vector<GameObject*>{};
+        const bool multiGiz = !gizFollow.empty();
+        Vec3 o = (multiGiz && stl::Cfg().gizmoPivot == stl::GizmoPivot::Center)
+                     ? stl::PivotPoint(stl::Targets(ed.MultiSelection()), sel, stl::GizmoPivot::Center) : t->Position();
         float L = ed.camDist * 0.18f;                 // arm length, screen-stable
         // World axes by default; Local mode (and Scale, which is inherently local)
         // uses the object's own right/up/forward so the handles follow rotation.
@@ -43844,6 +43944,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 // tangent to its ring: find the ring point nearest the cursor, take
                 // its screen-space tangent, and project the mouse motion onto it.
                 Vec3 rax = rotAxisOf(i);
+                // Turn the primary and every follower about this axis through the gizmo pivot.
+                auto rotateSel = [&](const Vec3& ax3, float deg) {
+                    std::vector<GameObject*> all{sel};
+                    all.insert(all.end(), gizFollow.begin(), gizFollow.end());
+                    stl::RotateAbout(all, o, ax3, deg);
+                };
                 float a; ringPick(i, a);
                 ImVec2 p0, p1;
                 if (ringPt(i, a - 0.06f, p0) && ringPt(i, a + 0.06f, p1)) {
@@ -43857,9 +43963,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             g_rotAccum += deg;
                             float snapped = okay::editor::snap::RoundStep(g_rotAccum, g_rotSnapDeg);
                             float step = snapped - g_rotApplied;
-                            if (step != 0.0f) { t->Rotate(rax * step); g_rotApplied = snapped; g_rotTotal = snapped; }
+                            if (step != 0.0f) { rotateSel(rax, step); g_rotApplied = snapped; g_rotTotal = snapped; }
                         } else {
-                            t->Rotate(rax * deg);
+                            rotateSel(rax, deg);
                             g_rotTotal += deg;
                         }
                         ed.dirty = true;
@@ -43885,6 +43991,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         // Accumulate the true position; snap only the output so the
                         // handle tracks the cursor and snaps cleanly at grid lines.
                         g_dragRawPos += localStep;
+                        const Vec3 worldBefore = t->Position();
                         okay::editor::snap::SurfaceHit sh;
                         if (snapNow.surface) {
                             // Surface snap: the object goes to the surface under the cursor (the arm's axis is not used).
@@ -43906,6 +44013,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         } else {
                             t->localPosition = g_dragRawPos;
                         }
+                        if (multiGiz) stl::MoveFollowers(gizFollow, t->Position() - worldBefore);   // the rest of the selection moves by the same step
                     } else { // Scale
                         g_dragRawScale.x += (i == 0) ? amt : 0.0f;
                         g_dragRawScale.y += (i == 1) ? amt : 0.0f;
@@ -43918,7 +44026,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             sc.z = okay::editor::snap::RoundStep(sc.z, ss);
                         }
                         sc.x = Mathf::Max(0.01f, sc.x); sc.y = Mathf::Max(0.01f, sc.y); sc.z = Mathf::Max(0.01f, sc.z);
+                        const Vec3 oldScale = t->localScale;
                         t->localScale = sc;
+                        if (multiGiz) {   // the same ratio for every other object, about the gizmo pivot
+                            auto ratioOf = [](float n, float old) { return old > 1e-6f ? n / old : 1.0f; };
+                            stl::ScaleFollowers(gizFollow, o, axis, {ratioOf(sc.x, oldScale.x), ratioOf(sc.y, oldScale.y), ratioOf(sc.z, oldScale.z)});
+                        }
                     }
                     ed.dirty = true;
                 }
@@ -44225,6 +44338,24 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                    g_gizmoLocal ? "Handles: Local (object axes). Click or X for Global"
                                 : "Handles: Global (world axes). Click or X for Local"))
         g_gizmoLocal = !g_gizmoLocal;
+    // Several objects selected: where the gizmo sits (the last picked object's pivot, or the centre of the selection),
+    // and the Align / Distribute / Mirror popup.
+    {
+        namespace stl = okay::editor::seltools;
+        ImGui::SameLine();
+        const bool ctr = stl::Cfg().gizmoPivot == stl::GizmoPivot::Center;
+        if (AccentToggleButton(ctr ? "Center##tpivot" : "Pivot##tpivot", ctr, ImVec2(0, ImGui::GetFrameHeight()))) {
+            stl::Cfg().gizmoPivot = ctr ? stl::GizmoPivot::Active : stl::GizmoPivot::Center;
+            SaveSettings();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(ctr
+            ? "Gizmo pivot: the centre of the selected objects (several objects selected).\nMove, Rotate and Scale apply to all of them. Click for the active object's pivot."
+            : "Gizmo pivot: the last picked object (several objects selected).\nMove, Rotate and Scale apply to all of them. Click to put the gizmo at the centre of the selection.");
+        ImGui::SameLine();
+        if (AccentToggleButton("Align##talign", false, ImVec2(0, ImGui::GetFrameHeight()))) ImGui::OpenPopup("##alignpop");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Align, distribute and mirror the selected objects.\nSelect 2 or more to align, 3 or more to distribute (Ctrl+click in the Scene view or Hierarchy).");
+        if (ImGui::BeginPopup("##alignpop")) { DrawAlignMirrorMenu(ed); ImGui::EndPopup(); }
+    }
     // Snap: the magnet toggles it; the little arrow holds the increments.
     ImGui::SameLine();
     namespace sn = okay::editor::snap;

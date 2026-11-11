@@ -53,10 +53,10 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 ### 15.3 Scene and Game views, gizmos, spline tools
 - **What:** The two views of the world: the Scene view (2D and 3D editing, selection, gizmos, overlays) and the Game view (what the player sees, with resolution and phone presets), plus the spline editing overlay.
 - **Parts:**
-  - 15.3.1 Scene view shell and toolbar - `editor/main.cpp` (`DrawViewport` ~41508-42171) - 2D/3D switch, UI-only toggle, tool icons, global/local, snap, frame selected, isolate (also stops clicks on isolated-out objects), the "N hidden: Show all" chip (15.1.6), "..." menu, Overlays menu
+  - 15.3.1 Scene view shell and toolbar - `editor/main.cpp` (`DrawViewport` ~41508-42171) - 2D/3D switch, UI-only toggle, tool icons, global/local, gizmo pivot (Pivot / Center), Align / Distribute / Mirror popup, snap, frame selected, isolate (also stops clicks on isolated-out objects), the "N hidden: Show all" chip (15.1.6), "..." menu, Overlays menu
   - 15.3.2 2D scene drawing - `editor/main.cpp` (`DrawScene2D` ~38643-39018) - sprites, tilemaps, colliders, selection in 2D
   - 15.3.3 3D scene drawing - `editor/main.cpp` (`DrawScene3D` ~39019-41397) - mesh rendering through the editor camera, selection, picking
-  - 15.3.4 Transform gizmo - `editor/main.cpp` (~41023-41265) - Move, Rotate, Scale axis handles with step snapping (Ctrl snaps, Alt cancels, Ctrl+Shift snaps a move to the surface under the cursor; see 44.1.5 and 44.1.6), vertex snapping with V (~41266)
+  - 15.3.4 Transform gizmo - `editor/main.cpp` (~41023-41265) - Move, Rotate, Scale axis handles that apply to every selected object (toolbar Pivot / Center switch, see 44.1.7) with step snapping (Ctrl snaps, Alt cancels, Ctrl+Shift snaps a move to the surface under the cursor; see 44.1.5 and 44.1.6), vertex snapping with V (~41266)
   - 15.3.5 Collider and terrain tools in the view - `editor/main.cpp` (~40947 collider face handles, ~40105 terrain sculpt brush, ~40157 mesh edit mode)
   - 15.3.6 View axis gizmo and camera bookmarks - `editor/main.cpp` - top-right axis tips snap the view; View > Appearance > Camera Bookmarks
   - 15.3.7 Scene overlays - `editor/main.cpp`, `editor/NavigationWindow.*` - colliders, physics debug, skeletons, navmesh polygons and agent paths

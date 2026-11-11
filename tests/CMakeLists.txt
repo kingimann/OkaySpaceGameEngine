@@ -752,6 +752,11 @@ add_executable(test_surface_snap test_surface_snap.cpp ${PROJECT_SOURCE_DIR}/edi
 target_include_directories(test_surface_snap PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_surface_snap PRIVATE okay::engine)
 add_test(NAME surface_snap COMMAND test_surface_snap)
+# Editor Align / Distribute / Mirror and the multi-select gizmo helpers (editor/SelectionTools, ImGui-free): align min / centre / max / active, equal gaps and equal spacing, mirror positions / rotations / scales / winding (world-space triangles), a mirrored mirror is the original, children and prefab instances, one undo step, gizmo drags on every selected object.
+add_executable(test_selection_tools test_selection_tools.cpp ${PROJECT_SOURCE_DIR}/editor/SelectionTools.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_selection_tools PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_selection_tools PRIVATE okay::engine)
+add_test(NAME selection_tools COMMAND test_selection_tools)
 
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
 add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)

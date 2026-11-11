@@ -186,6 +186,42 @@ Recent additions (v2.12–2.14):
   cursor is elsewhere. Edit ▸ **Drop to Surface** drops the selection straight down.
   Undo: the drag, create, duplicate or drop is a single step (the editor's snapshot
   undo, `EditorState::PushUndo`).
+- **Align, Distribute and Mirror** — for several 3D objects at once (Ctrl+click in the
+  Scene view or Hierarchy). Reachable three ways, all with the same items: Edit ▸
+  **Align / Distribute / Mirror**, the Hierarchy right-click menu, and the **Align**
+  button in the Scene toolbar. Items that cannot run are greyed out and their tooltip
+  says why (Align needs 2 or more objects, Distribute 3 or more, Mirror 1 or more; a
+  child selected together with its parent is not counted, it moves with the parent).
+  Every action is one undo step, and an action that would change nothing takes none.
+  - **Align** X, Y or Z to the **min, centre or max** of the box around the whole
+    selection, or to the **active object** (the last one picked, which stays where it
+    is). The boxes are world-space: an object's renderers and everything below it, else
+    its 3D colliders, else its position as a point.
+  - **Distribute** three or more objects along an axis, ordered by position:
+    **equal gaps** between their boxes, or **equal spacing** between their centres. The
+    two outer objects stay put.
+  - **Mirror** the selection across the **YZ, XZ or XY plane** through the selection's
+    centre, the active object's pivot or the world origin, as a **mirrored copy**
+    (the copies become the selection) or **in place**. Children come along. Mirror
+    never writes a negative scale, because the renderers and lighting assume a right-handed
+    transform: it flips the mesh itself on one local axis and reverses the face winding
+    (so normals, lighting and back-face culling stay right), turns the rotation into the
+    matching proper rotation, keeps every scale positive and unchanged, and mirrors
+    spline points, collider offsets and sprite flips. A mesh that is already symmetric
+    (a cube, a plane) is left alone. Mirroring twice across the same plane gives back
+    the original. Not mirrored: other local-space component data (waypoints, joint
+    anchors), skinned or deformed meshes and terrain (their position and rotation
+    are mirrored, the shape is not; the console line says how many). An object under a
+    parent that is both turned and scaled unevenly can only be mirrored approximately
+    (it would need a shear), and the console line says so.
+  - **Gizmo pivot and Local/Global.** The Move, Rotate and Scale gizmos now apply to
+    **every selected object**, not just the last one picked: Move shifts all of them by
+    the same step (also with Snap and Surf), Rotate turns the group about the gizmo
+    pivot, Scale applies the same ratio to each object's own scale and to its distance
+    from the pivot. The toolbar button beside Local/Global switches the **gizmo pivot**
+    between **Pivot** (the last picked object) and **Center** (the average position of
+    the selected objects); Local/Global (X) was already there. One drag is one undo step.
+    The Rotate rings turn about the world axis they show, also in Global mode.
 - **Project Settings** (Edit ▸ Project Settings) and a larger **Build** dialog
   (Quit-on-Escape, Master Volume, Show-FPS).
 - **Crash-safe autosave** (File ▸ Autosave) writes unsaved graphs, scripts and

@@ -9,6 +9,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | 1 item / 2 items" reads wrong | [1.8](01-core-scene.md#18-localization) Localization |
 | 2D enemies cut through walls or cannot find a route on a tilemap | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | 3D looks different in the editor and the player | [2.1](02-rendering-world.md#21-renderers) Renderers |
+| a .dae/.3ds file will not import without Assimp | [3.6](03-modeling-import.md#36-model-import) Model import |
 | a 2D level is made of flat coloured squares | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
 | a ball does not bounce | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a ban banner on the launcher with an Appeal button | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |

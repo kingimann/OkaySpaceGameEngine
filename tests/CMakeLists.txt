@@ -2243,3 +2243,16 @@ add_executable(test_file_dialog test_file_dialog.cpp ${PROJECT_SOURCE_DIR}/share
 target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
+
+# Our own model readers (OBJ+MTL, STL, PLY) + the import seam: fixtures in tests/data/models,
+# malformed input, a fuzz sweep, the backend switch, and (with OKAY_USE_ASSIMP) both backends compared.
+add_executable(test_model_readers test_model_readers.cpp)
+target_link_libraries(test_model_readers PRIVATE okay::engine)
+target_compile_definitions(test_model_readers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME model_readers COMMAND test_model_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(model_readers PROPERTIES TIMEOUT 300)
+add_executable(test_model_readers_fuzz test_model_readers_fuzz.cpp)
+target_link_libraries(test_model_readers_fuzz PRIVATE okay::engine)
+target_compile_definitions(test_model_readers_fuzz PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME model_readers_fuzz COMMAND test_model_readers_fuzz WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(model_readers_fuzz PROPERTIES TIMEOUT 300)

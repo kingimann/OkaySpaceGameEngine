@@ -15974,17 +15974,7 @@ void DrawScriptEditor(EditorState& ed) {
             // NEVER pop suggestions inside a comment or string literal. The popup
             // steals Tab/Enter, so popping on comments broke plain typing.
             bool inCommentOrString = false;
-            if (sc->Language() == "lua") {                     // Lua: scan the caret's line ("--", quotes)
-                int ls2 = p; while (ls2 > 0 && t[ls2 - 1] != '\n') --ls2;
-                bool inStr = false; char q = 0;
-                for (int k = ls2; k < p && !inCommentOrString; ++k) {
-                    char c = t[k];
-                    if (inStr) { if (c == q && (k == 0 || t[k - 1] != '\\')) inStr = false; continue; }
-                    if (c == '"' || c == '\'') { inStr = true; q = c; continue; }
-                    if (c == '-' && k + 1 < p && t[k + 1] == '-') inCommentOrString = true;
-                }
-                if (inStr) inCommentOrString = true;
-            } else if (p > 0) {                                // OkayScript: the language's own rules
+            if (p > 0) {                                       // OkayScript: the language's own rules
                 const std::vector<char> code = scripttext::CodeMask(std::string(t, (std::size_t)p));
                 inCommentOrString = !code[(std::size_t)p - 1] && t[p - 1] != '\n';
             }
@@ -16442,8 +16432,7 @@ void DrawScriptEditor(EditorState& ed) {
         }
 
         // --- Status bar (VS Code-style) --------------------------------------
-        const char* langLbl = sc->Language() == "okayscript" ? "C# (OkayScript)"
-                            : sc->Language() == "lua" ? "Lua" : sc->Language().c_str();
+        const char* langLbl = sc->Language() == "okayscript" ? "C# (OkayScript)" : sc->Language().c_str();
         char selInfo[32] = "";
         if (caret.selLen > 0) std::snprintf(selInfo, sizeof(selInfo), " (%d sel)", caret.selLen);
         ImGui::TextDisabled("%s    Ln %d, Col %d%s    %d lines    Spaces    %d%%", langLbl,

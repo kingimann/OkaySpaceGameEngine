@@ -338,9 +338,9 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ### 47.2 Mod scripting sandbox
 - **What:** Run scripts from mods safely: limit file access, network and engine calls.
 - **Parts:**
-  - 47.2.1 Script languages - `Scripting/OkayScriptVM`, `Scripting/CSharpScriptVM`, `Scripting/LuaScriptVM` - scripts have builtins for files and networking
+  - 47.2.1 Script languages - `Scripting/OkayScriptVM` - scripts have builtins for files and networking
   - 47.2.2 No permission model - `-` - the script hosts have no capability list
-- **Code:** `Scripting/OkayScriptVM`, `Scripting/CSharpScriptVM`, `Scripting/LuaScriptVM`
+- **Code:** `Scripting/OkayScriptVM`
 - **API:** script built-ins (`docs/scripting_reference.md`)
 - **Editor:** none
 - **Docs:** `docs/scripting_reference.md`
@@ -944,7 +944,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ## 55. Script debugging and profiling
 
 ### 55.1 Breakpoints and stepping for text scripts
-- **What:** Pause an OkayScript, C#-style or Lua script on a line, step, and see variables, like the visual script debugger already does for graphs.
+- **What:** Pause an OkayScript or C#-style script on a line, step, and see variables, like the visual script debugger already does for graphs.
 - **Parts:**
   - 55.1.1 Visual-script debugger - `Components/ActionList`, `VisualScript/VsDebug`, `editor/GameFiber.hpp` - breakpoints on nodes freeze the game mid-frame; continue and step; red badges
   - 55.1.2 Script editor markers - `editor/main.cpp` - F11 toggles a bookmark shown as a marker (the editor widget's breakpoint markers are repurposed for bookmarks)
@@ -957,7 +957,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Status:** Partial - graphs can be debugged; text scripts cannot.
 - **Exists today:** Parts 55.1.1 and 55.1.2. The game fiber is reusable for text scripts.
 - **Suggested priority:** High - most gameplay is written in text scripts and today the only tool is `print`.
-- **Open:** first step: a line hook in the OkayScript VM and the typed-script interpreter (`engine/src/Script/Interpreter.cpp`) that calls a debug callback; reuse the game fiber to freeze the frame; the C# and Lua hosts would need their own.
+- **Open:** first step: a line hook in the OkayScript VM and the typed-script interpreter (`engine/src/Script/Interpreter.cpp`) that calls a debug callback; reuse the game fiber to freeze the frame.
 - **Related:** 13.5, 14.5, 23.4
 - **Words:** script debugger, breakpoint, step over, step into, call stack, pause on error, GameFiber, debug script
 - **Seen as:** my script does something odd and I can only add prints

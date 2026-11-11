@@ -324,7 +324,7 @@
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 
-// Text scripting (OkayScript built-in; Lua / C# optional)
+// Text scripting (OkayScript, our own VM)
 #include "okay/Scripting/ScriptVM.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Scripting/NextScriptVM.hpp"

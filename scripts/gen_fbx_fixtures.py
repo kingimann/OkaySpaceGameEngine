@@ -207,7 +207,7 @@ class Scene:
     def texture(self, name, filename, content=None):
         i = self.nid()
         self.objects.append(N('Texture', [L(i), self.nm('Texture', name), S('')], [
-            N('Type', [S('TextureVideoClip')]), N('FileName', [S(filename)]), N('RelativeFilename', [S(os.path.basename(filename))])]))
+            N('Type', [S('TextureVideoClip')]), N('FileName', [S(filename)]), N('RelativeFilename', [S(filename.replace('\\', '/').split('/')[-1])])]))
         if content is not None:
             v = self.nid()
             self.objects.append(N('Video', [L(v), self.nm('Video', name), S('Clip')], [
@@ -378,11 +378,11 @@ def rig_scene(ascii_names):
                     for k in range(4):
                         idx.append(r * 4 + k); w.append(wt)
         cl = sc.nid()
-        ident = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        meshtobone = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -float(bi), 0, 1]   # Transform = mesh node relative to the bone (what Blender writes)
         link = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, float(bi), 0, 1]   # bone bind world: translation (0, bi, 0), column-major
         sc.objects.append(N('Deformer', [L(cl), sc.nm('SubDeformer', 'Cluster%d' % bi), S('Cluster')], [
             N('Version', [I(100)]), N('Indexes', [AI(idx)]), N('Weights', [AD(w)]),
-            N('Transform', [AD(ident)]), N('TransformLink', [AD(link)])]))
+            N('Transform', [AD(meshtobone)]), N('TransformLink', [AD(link)])]))
         sc.connect(cl, skin)
         sc.connect(bone, cl)
     # blend shape moving the top ring outwards

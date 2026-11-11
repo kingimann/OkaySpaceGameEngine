@@ -114,23 +114,21 @@ Mat FromFbx16(const std::vector<double>& a) {
 // axis / unit conversion: p' = s * C * p, C a signed axis permutation
 // ---------------------------------------------------------------------------
 struct Conv {
+    // Like ufbx's "modify geometry" conversion: only the ROOT nodes get the axis rotation (so every
+    // node below keeps the local axes the file was authored in), and the unit scale multiplies
+    // every translation, vertex and bind matrix.
     double C[3][3] = {{1,0,0},{0,1,0},{0,0,1}};
     double s = 1.0;
-    bool flipWinding = false;
-    void Dir(const double in[3], double out[3]) const { for (int i = 0; i < 3; ++i) out[i] = C[i][0] * in[0] + C[i][1] * in[1] + C[i][2] * in[2]; }
-    void Pt(const double in[3], double out[3]) const { Dir(in, out); for (int i = 0; i < 3; ++i) out[i] *= s; }
-    /// M X M^-1 for an affine X (translation gets the unit scale).
-    Mat Matrix(const Mat& x) const {
+    void Pt(const double in[3], double out[3]) const { for (int i = 0; i < 3; ++i) out[i] = in[i] * s; }
+    /// Unit scale on an affine matrix: the translation is scaled, the linear part kept.
+    Mat Scaled(const Mat& x) const { Mat r = x; r.m[3] *= s; r.m[7] *= s; r.m[11] *= s; return r; }
+    Mat Axes() const {
         Mat r;
-        double tmp[3][3], lin[3][3];
-        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) { tmp[i][j] = 0; for (int k = 0; k < 3; ++k) tmp[i][j] += C[i][k] * x.m[k * 4 + j]; }
-        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) { lin[i][j] = 0; for (int k = 0; k < 3; ++k) lin[i][j] += tmp[i][k] * C[j][k]; }   // * C^T
-        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) r.m[i * 4 + j] = lin[i][j];
-        const double t[3] = {x.m[3], x.m[7], x.m[11]};
-        double o[3]; Pt(t, o);
-        r.m[3] = o[0]; r.m[7] = o[1]; r.m[11] = o[2];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) r.m[i * 4 + j] = C[i][j];
         return r;
     }
+    /// What a node's local matrix becomes: scaled, and rotated into Y-up if it hangs off the scene root.
+    Mat Local(const Mat& raw, bool isRoot) const { return isRoot ? Mul(Axes(), Scaled(raw)) : Scaled(raw); }
 };
 
 // ---------------------------------------------------------------------------
@@ -162,11 +160,16 @@ void LoadProps(const Elem& e, Props& out) {
     }
 }
 
-std::string CleanName(const std::string& raw, const std::string& cls) {
+std::string CleanName(const std::string& raw, const std::string& /*cls*/) {
+    // Binary files: "Name\0\1Class". ASCII files: "Class::Name".
     const std::size_t z = raw.find('\0');
     if (z != std::string::npos) return raw.substr(0, z);
-    const std::string pre = cls + "::";
-    if (raw.compare(0, pre.size(), pre) == 0) return raw.substr(pre.size());
+    const std::size_t c = raw.find("::");
+    if (c != std::string::npos && c > 0 && c <= 24) {
+        bool word = true;
+        for (std::size_t i = 0; i < c; ++i) { const char ch = raw[i]; if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))) word = false; }
+        if (word) return raw.substr(c + 2);
+    }
     return raw;
 }
 
@@ -403,8 +406,6 @@ struct Builder {
         if (okAxes) {
             // Rows of C: where the source "right", "up", "front" axes end up (X, Y, Z of the target).
             for (int j = 0; j < 3; ++j) { conv.C[0][j] = j == ca ? sc.settings.coordSign : 0; conv.C[1][j] = j == ua ? sc.settings.upSign : 0; conv.C[2][j] = j == fa ? sc.settings.frontSign : 0; }
-            const double det = conv.C[0][0] * (conv.C[1][1] * conv.C[2][2] - conv.C[1][2] * conv.C[2][1]) - conv.C[0][1] * (conv.C[1][0] * conv.C[2][2] - conv.C[1][2] * conv.C[2][0]) + conv.C[0][2] * (conv.C[1][0] * conv.C[2][1] - conv.C[1][1] * conv.C[2][0]);
-            conv.flipWinding = det < 0;
         }
         double s = sc.settings.unitScaleFactor * 0.01;
         if (!(s > 0) || !std::isfinite(s)) s = 0.01;
@@ -471,15 +472,13 @@ struct Builder {
     std::vector<XProps> xp;
 
     static Mat LocalMatrix(const XProps& x) {
-        const double zero[3] = {0, 0, 0};
         const Mat T = Translate(x.t[0], x.t[1], x.t[2]), Roff = Translate(x.roff[0], x.roff[1], x.roff[2]);
         const Mat Rp = Translate(x.rp[0], x.rp[1], x.rp[2]), RpI = Translate(-x.rp[0], -x.rp[1], -x.rp[2]);
         const Mat Rpre = Euler(x.pre, 0), R = Euler(x.r, x.order), RpostI = InvertOrIdentity(Euler(x.post, 0));
         const Mat Soff = Translate(x.soff[0], x.soff[1], x.soff[2]);
         const Mat Sp = Translate(x.sp[0], x.sp[1], x.sp[2]), SpI = Translate(-x.sp[0], -x.sp[1], -x.sp[2]);
         const Mat S = ScaleM(x.s[0], x.s[1], x.s[2]);
-        (void)zero;
-        Mat m = T;
+                Mat m = T;
         m = Mul(m, Roff); m = Mul(m, Rp); m = Mul(m, Rpre); m = Mul(m, R); m = Mul(m, RpostI); m = Mul(m, RpI);
         m = Mul(m, Soff); m = Mul(m, Sp); m = Mul(m, S); m = Mul(m, SpI);
         return m;
@@ -553,7 +552,7 @@ struct Builder {
 
     void SetLocal(std::size_t i, const Mat& rawLocal) {
         SceneNode& n = sc.nodes[i];
-        n.local = conv.Matrix(rawLocal);
+        n.local = conv.Local(rawLocal, n.parent < 0);
         Decompose(n.local, n.translation, n.rotation, n.scale);
     }
 
@@ -567,7 +566,7 @@ struct Builder {
         const std::size_t ncp = verts->size() / 3;
         m.controlPoints = (std::uint32_t)std::min<std::size_t>(ncp, 0xFFFFFFFFu);
         std::vector<double> P(ncp * 3);
-        for (std::size_t i = 0; i < ncp; ++i) { const double in[3] = {(*verts)[i * 3], (*verts)[i * 3 + 1], (*verts)[i * 3 + 2]}; double o[3]; conv.Pt(in, o); for (int k = 0; k < 3; ++k) P[i * 3 + (std::size_t)k] = o[k]; }
+        for (std::size_t i = 0; i < ncp; ++i) for (int k = 0; k < 3; ++k) P[i * 3 + (std::size_t)k] = (*verts)[i * 3 + (std::size_t)k] * conv.s;
 
         // polygons
         struct Face { std::size_t start, count; };
@@ -595,23 +594,7 @@ struct Builder {
         const Layer lc = LoadLayer(g, "LayerElementColor", "Colors", "ColorIndex", 4);
         Layer lm = LoadLayer(g, "LayerElementMaterial", "Materials", "Materials", 1);
         if (lm.Ok()) lm.indexed = false;          // material ids are the values themselves
-        m.hasUV = lu.Ok(); m.hasColors = lc.Ok(); m.hasNormals = true;   // missing normals are generated
-
-        // generated smooth normals (area weighted over every polygon at a control point)
-        std::vector<double> gen;
-        if (!ln.Ok()) {
-            gen.assign(ncp * 3, 0.0);
-            for (const Face& f : faces) {
-                double nx = 0, ny = 0, nz = 0;
-                for (std::size_t k = 0; k < f.count; ++k) {
-                    const std::int32_t a = cpOf[f.start + k], b = cpOf[f.start + (k + 1) % f.count];
-                    if (a < 0 || b < 0) continue;
-                    const double* pa = &(*verts)[(std::size_t)a * 3]; const double* pb = &(*verts)[(std::size_t)b * 3];
-                    nx += (pa[1] - pb[1]) * (pa[2] + pb[2]); ny += (pa[2] - pb[2]) * (pa[0] + pb[0]); nz += (pa[0] - pb[0]) * (pa[1] + pb[1]);
-                }
-                for (std::size_t k = 0; k < f.count; ++k) { const std::int32_t a = cpOf[f.start + k]; if (a < 0) continue; gen[(std::size_t)a * 3] += nx; gen[(std::size_t)a * 3 + 1] += ny; gen[(std::size_t)a * 3 + 2] += nz; }
-            }
-        }
+        m.hasUV = lu.Ok(); m.hasColors = lc.Ok(); m.hasNormals = true;   // missing normals are generated (flat, per polygon)
 
         std::map<int, Part> parts;
         std::vector<std::array<double, 3>> pts;
@@ -630,8 +613,13 @@ struct Builder {
             int slot = 0;
             double mv;
             if (lm.Ok() && Fetch(lm, f.start, fi, (std::size_t)cpOf[f.start], edgeOfCorner, &mv) && mv >= 0 && mv < 1e6) slot = (int)mv;
+            double fn[3] = {0, 0, 0};   // polygon (Newell) normal, used when the file has none
+            if (!ln.Ok()) for (std::size_t k = 0; k < pts.size(); ++k) {
+                const auto& pa = pts[k]; const auto& pb = pts[(k + 1) % pts.size()];
+                fn[0] += (pa[1] - pb[1]) * (pa[2] + pb[2]); fn[1] += (pa[2] - pb[2]) * (pa[0] + pb[0]); fn[2] += (pa[0] - pb[0]) * (pa[1] + pb[1]);
+            }
             tris.clear();
-            Triangulate(pts, tris, conv.flipWinding);
+            Triangulate(pts, tris, false);
             if (cornersBuilt + tris.size() > opt.limits.maxCorners) return Fail("mesh too large");
             cornersBuilt += tris.size();
             Part& part = parts[slot]; part.slot = slot;
@@ -641,10 +629,9 @@ struct Builder {
                 Corner c;
                 for (int a = 0; a < 3; ++a) c.p[a] = (float)P[cp * 3 + (std::size_t)a];
                 c.cp = (std::uint32_t)cp;
-                double nn[3] = {0, 0, 0}, in[3] = {0, 0, 0};
-                if (ln.Ok()) { if (!Fetch(ln, pv, fi, cp, edgeOfCorner, in)) { in[0] = in[1] = in[2] = 0; } }
-                else { in[0] = gen[cp * 3]; in[1] = gen[cp * 3 + 1]; in[2] = gen[cp * 3 + 2]; }
-                conv.Dir(in, nn);
+                double nn[3] = {0, 0, 0};
+                if (ln.Ok()) { if (!Fetch(ln, pv, fi, cp, edgeOfCorner, nn)) { nn[0] = nn[1] = nn[2] = 0; } }
+                else { nn[0] = fn[0]; nn[1] = fn[1]; nn[2] = fn[2]; }
                 const double l = std::sqrt(nn[0] * nn[0] + nn[1] * nn[1] + nn[2] * nn[2]);
                 if (l > 1e-12) for (int a = 0; a < 3; ++a) c.n[a] = (float)(nn[a] / l);
                 double uv[2];
@@ -688,10 +675,11 @@ struct Builder {
                         auto nm = nodeOfModel.find(bc->child);
                         if (nm != nodeOfModel.end() && !bc->propLink) { cluster.boneNode = nm->second; break; }
                     }
-                    Mat transform, link;
+                    // `Transform` is the mesh node's matrix relative to the bone at bind time (what exporters
+                    // such as Blender write; TransformLink, the bone's world bind matrix, is not needed).
+                    Mat transform;
                     if (const std::vector<double>* a = ArrayOf(*cl->e, "Transform")) transform = FromFbx16(*a);
-                    if (const std::vector<double>* a = ArrayOf(*cl->e, "TransformLink")) link = FromFbx16(*a);
-                    cluster.geometryToBone = conv.Matrix(Mul(InvertOrIdentity(link), Mul(transform, g2n)));
+                    cluster.geometryToBone = conv.Scaled(Mul(transform, g2n));
                     const std::vector<double>* ix = ArrayOf(*cl->e, "Indexes");
                     const std::vector<double>* wt = ArrayOf(*cl->e, "Weights");
                     if (ix && wt) for (std::size_t k = 0; k < std::min(ix->size(), wt->size()); ++k) {
@@ -723,7 +711,7 @@ struct Builder {
                                 bc.indices.push_back((std::uint32_t)v);
                                 const double in[3] = {(*dv)[k * 3], (*dv)[k * 3 + 1], (*dv)[k * 3 + 2]}; double o[3]; conv.Pt(in, o);
                                 for (int a = 0; a < 3; ++a) bc.dp.push_back((float)o[a]);
-                                if (hasN) { const double nin[3] = {(*dnm)[k * 3], (*dnm)[k * 3 + 1], (*dnm)[k * 3 + 2]}; double no[3]; conv.Dir(nin, no); for (int a = 0; a < 3; ++a) bc.dn.push_back((float)no[a]); }
+                                if (hasN) for (int a = 0; a < 3; ++a) bc.dn.push_back((float)(*dnm)[k * 3 + (std::size_t)a]);
                             }
                         }
                     }
@@ -878,7 +866,7 @@ struct Builder {
                 for (double t : times) {
                     XProps x = base;
                     evalVec(kv.second, 0, base.t, t, x.t); evalVec(kv.second, 1, base.r, t, x.r); evalVec(kv.second, 2, base.s, t, x.s);
-                    const Mat local = conv.Matrix(LocalMatrix(x));
+                    const Mat local = conv.Local(LocalMatrix(x), sc.nodes[(std::size_t)kv.first].parent < 0);
                     double tr[3], q[4], s[3]; Decompose(local, tr, q, s);
                     Key3 kt; kt.time = t; for (int k = 0; k < 3; ++k) kt.v[k] = tr[k];
                     Key4 kq; kq.time = t; for (int k = 0; k < 4; ++k) kq.v[k] = q[k];
@@ -912,7 +900,7 @@ struct Builder {
             n.world = n.parent >= 0 ? Mul(sc.nodes[(std::size_t)n.parent].world, n.local) : n.local;
             const XProps& x = xp[i];
             const Mat g = Mul(Translate(x.gt[0], x.gt[1], x.gt[2]), Mul(Euler(x.gr, 0), ScaleM(x.gs[0], x.gs[1], x.gs[2])));
-            n.geometryToNode = conv.Matrix(g);
+            n.geometryToNode = conv.Scaled(g);
             n.geometryToWorld = Mul(n.world, n.geometryToNode);
         }
         if (!Meshes()) return false;

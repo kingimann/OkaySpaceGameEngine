@@ -25,7 +25,7 @@ static Bytes ReadAll(const std::string& p) {
 static void U32(Bytes& b, std::size_t at, std::uint32_t v) { std::memcpy(&b[at], &v, 4); }
 static void Put32(Bytes& b, std::uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back((std::uint8_t)(v >> (8 * i))); }
 
-static fbx::BuildOptions Tight() {   // small limits: a hostile file may not make the fuzz loop slow
+static fbx::BuildOptions Tight() {   // tiny limits: a hostile file may not make the fuzz loop slow
     fbx::BuildOptions o;
     o.limits.maxArrayBytes = 16u << 20; o.limits.maxCorners = 1u << 20; o.limits.maxElements = 1u << 20;
     o.limits.maxNodes = 1u << 16; o.limits.maxBakedSamples = 2000;
@@ -64,7 +64,7 @@ static void Truncation() {
         CHECK(Load(full, fbx::BuildOptions()));
         const bool ascii = full.size() > 4 && std::memcmp(full.data(), "; FBX", 5) == 0;
         std::size_t failedPrefixes = 0, tried = 0;
-        for (std::size_t n = 0; n < full.size(); n += (full.size() > 4000 ? 7 : 1)) {   // every length for small files
+        for (std::size_t n = 0; n < full.size(); n += (full.size() > 4000 ? 7 : 1)) {   // every length for tiny files
             Bytes cut(full.begin(), full.begin() + (std::ptrdiff_t)n);
             ++tried;
             if (!Load(cut)) ++failedPrefixes;
@@ -147,15 +147,15 @@ static void Bombs() {
     const auto t0 = std::chrono::steady_clock::now();
     CHECK(!fbx::Inflate(z.data(), z.size(), out, 1u << 20));   // stops at the limit
     CHECK(out.size() <= (1u << 20));
-    const Bytes small = Bomb(100);
-    CHECK(fbx::Inflate(small.data(), small.size(), out, 1u << 20) && out.size() == 1 + 100 * 258);
+    const Bytes tiny = Bomb(100);
+    CHECK(fbx::Inflate(tiny.data(), tiny.size(), out, 1u << 20) && out.size() == 1 + 100 * 258);
     // as an FBX array claiming 8 bytes but carrying a bigger stream
     {
-        Bytes b = Header(); Rec(b, 0, 1, 13 + (std::uint32_t)small.size(), "X"); b.push_back('d'); Put32(b, 1); Put32(b, 1); Put32(b, (std::uint32_t)small.size());
-        b.insert(b.end(), small.begin(), small.end()); U32(b, 27, (std::uint32_t)b.size());
+        Bytes b = Header(); Rec(b, 0, 1, 13 + (std::uint32_t)tiny.size(), "X"); b.push_back('d'); Put32(b, 1); Put32(b, 1); Put32(b, (std::uint32_t)tiny.size());
+        b.insert(b.end(), tiny.begin(), tiny.end()); U32(b, 27, (std::uint32_t)b.size());
         CHECK(!Load(b));
     }
-    // the whole-file array budget is shared: many small arrays add up
+    // the whole-file array budget is shared: many tiny arrays add up
     {
         fbx::BuildOptions o = Tight(); o.limits.maxArrayBytes = 4096;
         Bytes b = Header();

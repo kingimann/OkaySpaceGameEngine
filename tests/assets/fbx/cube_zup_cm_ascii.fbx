@@ -92,7 +92,7 @@ Objects:  {
 	Texture: 1004, "Texture::Diffuse", "" {
 		Type: "TextureVideoClip"
 		FileName: "C:\art\red.png"
-		RelativeFilename: "C:\art\red.png"
+		RelativeFilename: "red.png"
 	}
 }
 

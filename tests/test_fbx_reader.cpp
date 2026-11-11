@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <unordered_map>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -93,10 +95,16 @@ static void DirectTests() {
         for (const fbx::Corner& c : m.parts[0].corners) for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], c.p[k]); hi[k] = std::max(hi[k], c.p[k]); }
         for (int k = 0; k < 3; ++k) { CHECK(Near(lo[k], -0.01, 1e-6)); CHECK(Near(hi[k], 0.01, 1e-6)); }
         CHECK(Near(MeshArea(m), 6 * 0.02 * 0.02, 1e-7));
-        // the +Z (front, normal (0,0,1)) face of the file became the -Y... check one normal: file (0,0,1) -> (0,1,0)
-        bool sawUp = false;
-        for (const fbx::Corner& c : m.parts[0].corners) if (Near(c.n[1], 1.0, 1e-4) && Near(c.n[0], 0, 1e-4)) sawUp = true;
-        CHECK(sawUp);
+        // Like ufbx: geometry and normals keep the file's axes, the root node carries the Y-up rotation.
+        // Local point (0,0,1 cm) of the Z-up node: T + R_y(30) S (0,0,1) = (10.5, 20, 30.866) cm -> (x, z, -y) * 0.01.
+        const double in[3] = {0, 0, 0.01};
+        const fbx::Mat& g2w = n.geometryToWorld;
+        CHECK(Near(g2w.m[0] * in[0] + g2w.m[1] * in[1] + g2w.m[2] * in[2] + g2w.m[3], 0.105, 1e-6));
+        CHECK(Near(g2w.m[4] * in[0] + g2w.m[5] * in[1] + g2w.m[6] * in[2] + g2w.m[7], 0.30866025, 1e-6));
+        CHECK(Near(g2w.m[8] * in[0] + g2w.m[9] * in[1] + g2w.m[10] * in[2] + g2w.m[11], -0.2, 1e-6));
+        bool rawNormal = false;
+        for (const fbx::Corner& c : m.parts[0].corners) if (Near(c.n[2], 1.0, 1e-4)) rawNormal = true;
+        CHECK(rawNormal);
         // ascii and binary agree corner by corner
         const auto& ca = a.meshes[0].parts[0].corners; const auto& cb = m.parts[0].corners;
         CHECK(ca.size() == cb.size());
@@ -104,7 +112,9 @@ static void DirectTests() {
         // material, texture reference and embedded bytes
         CHECK(b.materials.size() == 1 && b.materials[0].name == "Red" && b.materials[0].hasDiffuse && Near(b.materials[0].diffuse[0], 0.9));
         CHECK(b.materials[0].hasEmissive && b.materials[0].hasRoughness);
-        CHECK(b.materials[0].diffuseTexture == 0 && b.textures.size() == 1 && b.textures[0].fileName == "C:\\art\\red.png" && b.textures[0].relativeFileName == "red.png");
+        CHECK(b.materials[0].diffuseTexture == 0);
+        CHECK(b.textures.size() == 1);
+        if (b.textures.size() == 1) { CHECK(b.textures[0].fileName == "C:\\art\\red.png"); CHECK(b.textures[0].relativeFileName == "red.png"); }
         CHECK(b.textures[0].content.size() > 20 && b.textures[0].content[1] == 'P');
         CHECK(a.textures.size() == 1 && a.textures[0].content.empty());
         CHECK(m.materials.size() == 1 && m.materials[0] == 0);
@@ -127,7 +137,7 @@ static void DirectTests() {
         // L hexagon (area 3) + pentagon + triangle (0.5)
         auto shoelace = [](std::vector<std::pair<double, double>> p) { double s = 0; for (std::size_t i = 0; i < p.size(); ++i) { auto& a = p[i]; auto& b = p[(i + 1) % p.size()]; s += a.first * b.second - b.first * a.second; } return std::fabs(s) * 0.5; };
         const double pent = shoelace({{3, 0}, {4, 0}, {4.5, 1}, {3.5, 1.8}, {2.8, 1}});
-        CHECK(Near(MeshArea(m), 3.0 + pent + 0.5, 1e-5));
+        CHECK(Near(MeshArea(m), (3.0 + pent + 0.5) * 1e-4, 1e-9));   // file is in cm
         CHECK(m.triangleCount() == 4 + 3 + 1);
         CHECK(m.parts.size() == 2 && m.parts[0].slot == 0 && m.parts[1].slot == 1);
         if (m.parts.size() == 2) CHECK(m.parts[0].corners.size() / 3 == 4 && m.parts[1].corners.size() / 3 == 4);
@@ -148,7 +158,7 @@ static void DirectTests() {
     CHECK(pl.nodes.size() == 2 && pl.roots.size() == 1);
     if (pl.nodes.size() == 2) {
         CHECK(pl.nodes[0].name == "Parent" && pl.nodes[1].name == "Pyr" && pl.nodes[1].parent == 0);
-        CHECK(Near(pl.nodes[1].world.m[3], 1.0, 1e-9) && Near(pl.nodes[1].world.m[7], 2.0, 1e-9));
+        CHECK(Near(pl.nodes[1].world.m[3], 0.01, 1e-9) && Near(pl.nodes[1].world.m[7], 0.02, 1e-9));
         CHECK(Near(pl.nodes[1].scale[0], 2.0, 1e-6));
         CHECK(pl.nodes[1].mesh == 0 && pl.meshes[0].triangleCount() == 3);   // the 2-corner polygon was skipped
         bool unit = true;
@@ -171,7 +181,7 @@ static void DirectTests() {
         for (std::size_t i = 0; i < m.clusters.size(); ++i) {
             CHECK(m.clusters[i].boneNode >= 0);
             if (m.clusters[i].boneNode >= 0) CHECK(r.nodes[(std::size_t)m.clusters[i].boneNode].name == "Bone" + std::to_string(i));
-            CHECK(Near(m.clusters[i].geometryToBone.m[7], -(double)i, 1e-9));   // inverse bind of a bone at y = i
+            CHECK(Near(m.clusters[i].geometryToBone.m[7], -(double)i * 0.01, 1e-9));   // mesh node relative to a bone at y = i (cm -> m)
         }
         CHECK(m.skinWeights[0].size() == 1 && m.skinWeights[4].size() == 2 && Near(m.skinWeights[4][0].weight, 0.5));
         CHECK(m.channels.size() == 1 && Near(m.channels[0].weight, 0.25) && m.channels[0].indices.size() == 4 && m.channels[0].dp.size() == 12 && m.channels[0].dn.size() == 12);
@@ -191,7 +201,7 @@ static void DirectTests() {
                 const fbx::Key4& k0 = na.rotation[0];   // t = 0: pre-rotation only
                 CHECK(Near(std::fabs(k0.v[2]), std::sin(5.0 * 3.14159265358979 / 180.0), 1e-6));
             } else if (nm == "Bone2") {   // linear 1.0 -> 1.5 over 2 s
-                CHECK(Near(na.translation[30].v[1], 1.25, 1e-6) && Near(na.translation[60].v[1], 1.5, 1e-6));
+                CHECK(Near(na.translation[30].v[1], 0.0125, 1e-8) && Near(na.translation[60].v[1], 0.015, 1e-8));
             } else if (nm == "Bone0") {   // constant steps: 1,1,2
                 CHECK(Near(na.scale[20].v[0], 1.0, 1e-9) && Near(na.scale[60].v[0], 2.0, 1e-9));
             }
@@ -226,7 +236,7 @@ static void DirectTests() {
         p[0] += 0.5; p[1] += 0.25; p[1] += 0.1;
         p[0] += 1; p[1] += 2; p[2] += 3;
         const fbx::Mat& g2w = pv.nodes[0].geometryToWorld;
-        const double in[3] = {0.3, -0.7, 0.9};
+        const double in[3] = {0.003, -0.007, 0.009};   // geometry space is in meters (file: cm)
         const double ox = g2w.m[0] * in[0] + g2w.m[1] * in[1] + g2w.m[2] * in[2] + g2w.m[3];
         const double oy = g2w.m[4] * in[0] + g2w.m[5] * in[1] + g2w.m[6] * in[2] + g2w.m[7];
         const double oz = g2w.m[8] * in[0] + g2w.m[9] * in[1] + g2w.m[10] * in[2] + g2w.m[11];
@@ -236,13 +246,13 @@ static void DirectTests() {
 }
 
 // ---- ufbx vs ours -----------------------------------------------------------------------
-struct Stats {
+struct ImportStats {
     int objects = 0, meshes = 0, skinned = 0, joints = 0, verts = 0, tris = 0, clips = 0, tracks = 0, blend = 0;
     double lo[3] = {1e30, 1e30, 1e30}, hi[3] = {-1e30, -1e30, -1e30}, area = 0;
     std::vector<std::string> names;
 };
-static Stats Collect(Scene& s, GameObject* root) {
-    Stats st;
+static ImportStats Collect(Scene& s, GameObject* root) {
+    ImportStats st;
     for (const auto& up : s.Objects()) {
         GameObject* g = up.get();
         if (!g->IsSelfOrDescendantOf(root)) continue;
@@ -325,7 +335,7 @@ static void CompareWithUfbx() {
         fbx::SetOwnReaderEnabled(false);
         CHECK(oku && ru && oko && ro);
         if (!ru || !ro) continue;
-        Stats a = Collect(su, ru), b = Collect(so, ro);
+        ImportStats a = Collect(su, ru), b = Collect(so, ro);
         auto same = [&](const char* label, double x, double y, double eps) {
             if (std::fabs(x - y) > eps) std::cerr << "  (" << what << ") " << label << ": ufbx " << x << " vs ours " << y << "\n";
             CHECK(std::fabs(x - y) <= eps);
@@ -359,12 +369,32 @@ static void CompareWithUfbx() {
             for (std::size_t i = 0; i < std::min(sa->inverseBind.size(), sb->inverseBind.size()); ++i)
                 for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) CHECK_NEAR(sa->inverseBind[i].at(c, r), sb->inverseBind[i].at(c, r), 1e-4);
             CHECK(sa->bind.vertices.size() == sb->bind.vertices.size());
-            if (sa->bind.vertices.size() == sb->bind.vertices.size()) {
-                double worst = 0;
+            if (sa->bind.vertices.size() == sb->bind.vertices.size() && sa->bind.uvs.size() == sa->bind.vertices.size() && sb->bind.uvs.size() == sb->bind.vertices.size()) {
+                // Vertex order may differ (each side dedupes in its own order): match vertices by
+                // position + normal + uv, then compare their influences as joint -> weight maps.
+                auto key = [](const Mesh& m, std::size_t i) {
+                    char buf[160];
+                    std::snprintf(buf, sizeof(buf), "%.5f,%.5f,%.5f|%.4f,%.4f,%.4f|%.4f,%.4f", m.vertices[i].x, m.vertices[i].y, m.vertices[i].z,
+                                  m.normals.size() > i ? m.normals[i].x : 0.f, m.normals.size() > i ? m.normals[i].y : 0.f, m.normals.size() > i ? m.normals[i].z : 0.f, m.uvs[i].x, m.uvs[i].y);
+                    return std::string(buf);
+                };
+                std::unordered_map<std::string, std::size_t> inB;
+                for (std::size_t i = 0; i < sb->bind.vertices.size(); ++i) inB[key(sb->bind, i)] = i;
+                double worst = 0; std::size_t unmatched = 0;
                 for (std::size_t i = 0; i < sa->bind.vertices.size(); ++i) {
-                    worst = std::max(worst, (double)(sa->bind.vertices[i] - sb->bind.vertices[i]).Magnitude());
-                    for (int k = 0; k < 4; ++k) { worst = std::max(worst, (double)std::fabs(sa->jointWt[i][(std::size_t)k] - sb->jointWt[i][(std::size_t)k])); if (sa->jointWt[i][(std::size_t)k] > 0) worst = std::max(worst, (double)(sa->jointIdx[i][(std::size_t)k] != sb->jointIdx[i][(std::size_t)k])); }
+                    auto it = inB.find(key(sa->bind, i));
+                    if (it == inB.end()) { ++unmatched; continue; }
+                    const std::size_t j = it->second;
+                    for (int k = 0; k < 4; ++k) {
+                        const float wa = sa->jointWt[i][(std::size_t)k];
+                        if (wa <= 0) continue;
+                        float wb = 0;
+                        for (int q = 0; q < 4; ++q) if (sb->jointIdx[j][(std::size_t)q] == sa->jointIdx[i][(std::size_t)k] && sb->jointWt[j][(std::size_t)q] > 0) wb += sb->jointWt[j][(std::size_t)q];
+                        worst = std::max(worst, (double)std::fabs(wa - wb));
+                    }
                 }
+                if (unmatched || worst >= 1e-4) std::cerr << "  (" << what << ") skinned part " << up->name << ": " << unmatched << " unmatched vertices, worst weight difference " << worst << "\n";
+                CHECK(unmatched == 0);
                 CHECK(worst < 1e-4);
             }
         }

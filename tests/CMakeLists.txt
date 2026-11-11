@@ -747,6 +747,12 @@ target_include_directories(test_editor_visibility PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(test_editor_visibility PRIVATE okay::engine)
 add_test(NAME editor_visibility COMMAND test_editor_visibility)
 
+# Editor snapping (editor/SurfaceSnap, ImGui-free): rotation / scale / move step maths, modifier rules, settings persistence, surface-snap raycast (hit, miss, ignore self / children / hidden, normal alignment, offset), undo.
+add_executable(test_surface_snap test_surface_snap.cpp ${PROJECT_SOURCE_DIR}/editor/SurfaceSnap.cpp ${PROJECT_SOURCE_DIR}/editor/EditorVisibility.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_surface_snap PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_surface_snap PRIVATE okay::engine)
+add_test(NAME surface_snap COMMAND test_surface_snap)
+
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
 add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
 target_link_libraries(test_project_save PRIVATE okay::engine)

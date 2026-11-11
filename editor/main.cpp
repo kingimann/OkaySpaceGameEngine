@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "EditorVisibility.hpp"   // editor-only Hide + selection sets
+#include "SurfaceSnap.hpp"         // snap steps, modifier rules, snap-to-surface
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "FpHandsWindow.hpp"
@@ -2274,8 +2275,11 @@ static bool TriggerFilterFields(Col* c, const char* id) {
 // A vector3 drag field with per-axis colour cues (X=red, Y=green, Z=blue) — a
 // 3px coloured bar down each component, like other editors. `activated` is
 // set when a drag begins on any field (so the caller can push one undo step).
+// `snapStep` > 0 snaps a value DRAGGED in a field to that step while snapping applies (the Snap button, or Ctrl held after
+// the drag has started; Alt cancels it). A value typed into the field is never snapped. The drag keeps its true value, so
+// slow mouse motion is not rounded away.
 static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
-                         const char* fmt = "%.3f", bool* activated = nullptr) {
+                         const char* fmt = "%.3f", bool* activated = nullptr, float snapStep = 0.0f) {
     static const ImU32 axCol[3] = { IM_COL32(206, 84, 84, 255), IM_COL32(120, 194, 110, 255),
                                     IM_COL32(88, 150, 235, 255) };
     bool changed = false;
@@ -2302,7 +2306,19 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
             f = kShorter[k];
             break;
         }
-        if (ImGui::DragFloat("##c", &v[i], speed, 0.0f, 0.0f, f)) changed = true;
+        static okay::editor::snap::DragSnap s_dragSnap;
+        const float beforeEdit = v[i];
+        const ImGuiID fieldId = ImGui::GetID("##c");
+        const bool fieldChanged = ImGui::DragFloat("##c", &v[i], speed, 0.0f, 0.0f, f);
+        if (snapStep > 0.0f) {
+            if (ImGui::IsItemActivated()) s_dragSnap.Begin(beforeEdit);
+            const ImGuiIO& sio = ImGui::GetIO();
+            const bool typing = ImGui::TempInputIsActive(fieldId);
+            if (fieldChanged && !typing && okay::editor::snap::Resolve(okay::editor::snap::Cfg(), {sio.KeyCtrl, sio.KeyShift, sio.KeyAlt}).steps)
+                v[i] = s_dragSnap.Feed(v[i], snapStep);
+            else if (fieldChanged || ImGui::IsItemActivated()) s_dragSnap.Begin(v[i]);   // typed, or not snapping: follow the value
+        }
+        if (fieldChanged) changed = true;
         if (activated && ImGui::IsItemActivated()) *activated = true;
         ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
         ImGui::GetWindowDrawList()->AddRectFilled(mn, ImVec2(mn.x + 3.0f, mx.y), axCol[i], 2.0f);
@@ -2464,6 +2480,7 @@ void LoadSettings() {
         else if (k == "gamedevice2") g_gameDevice = (v < 0 ? 0 : v);
         else if (k == "gamedeviceland") g_gameDeviceLandscape = (v != 0);
         else if (k == "gamesafearea") g_gameSafeArea = (v != 0);
+        else if (okay::editor::snap::ApplySetting(k, v, okay::editor::snap::Cfg())) {}   // snap steps + surface options
         else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
@@ -2524,6 +2541,7 @@ void SaveSettings() {
       << "sidetabs " << g_sideTabs << "\n"
       << "docautosave " << (int)(g_docAutosaveSec + 0.5f) << "\n"
       << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n";
+    okay::editor::snap::AppendSettings(f, okay::editor::snap::Cfg());
     okayproj::WriteTextAtomic("okay_settings.txt", f.str());   // whole or not at all: a crash never leaves a cut-off file
 }
 
@@ -3097,8 +3115,10 @@ static void TagRenameMenu(EditorState& ed, const std::string& tag) {
     if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
     ImGui::Separator();
 }
-bool  g_snap = false;
-float g_snapSize = 1.0f;
+// Snap settings: ONE object (editor/SurfaceSnap) holds the toggle, the move / rotate / scale steps and the surface
+// options. These names stay as references to it, so every older use (gizmos, splines, mesh modal) reads the same values.
+bool&  g_snap = okay::editor::snap::Cfg().enabled;
+float& g_snapSize = okay::editor::snap::Cfg().moveStep;
 int   g_uiGrid = 8;         // UI snap grid in pixels (Snap on)
 float g_uiSnapDist = 8.0f;  // alignment-snap distance for UI (canvas px)
 // UI authoring zoom: scale + pan the UI canvas in the Scene view so small widgets
@@ -3135,7 +3155,28 @@ float g_rotAccum = 0.0f;    // raw degrees this rotate-drag (for 15-deg snap det
 float g_rotApplied = 0.0f;  // snapped degrees already applied this drag
 float g_rotTotal = 0.0f;    // signed degrees turned this drag (HUD readout)
 float g_rotStartAng = 0.0f; // ring angle (rad) where this rotate-drag began
-float g_rotSnapDeg = 15.0f; // rotation snap increment when Snap is on
+float& g_rotSnapDeg = okay::editor::snap::Cfg().rotStep; // rotation snap increment when Snap is on
+okay::editor::snap::SurfaceHit g_surfaceHit;   // the surface the current Move drag is snapped to (drawn as a marker; cleared on release)
+// "Place on surface": put new, duplicated or dropped objects on the surface under the cursor (the ray the Scene view
+// stored in EditorState::placeRay). Several objects keep their layout: the first one is placed and the rest move
+// with it; only a single object is turned to the surface normal. Returns false (nothing moved) when the option is
+// off, there is no fresh Scene-view ray, or the ray hits nothing. The caller owns the undo step.
+static bool PlaceOnSurfaceUnderCursor(okay::editor::EditorState& ed, const std::vector<okay::GameObject*>& objs) {
+    namespace sn = okay::editor::snap;
+    if (!sn::Cfg().placeOnSurface || objs.empty() || !objs.front() || !ed.view3D) return false;
+    if (!ed.placeRay.valid || ImGui::GetFrameCount() - ed.placeRayFrame > 2) return false;
+    sn::SurfaceQuery q;
+    for (okay::GameObject* o : objs) q.ignore.push_back(o);
+    q.isolate = g_isolate;
+    const sn::SurfaceHit h = sn::RaycastSurface(ed.scene(), ed.placeRay.origin, ed.placeRay.dir, q);
+    if (!h.hit) return false;
+    okay::GameObject* first = objs.front();
+    const sn::SurfacePose p = sn::ComputeSurfacePose(first, h, sn::Cfg());
+    const okay::Vec3 delta = p.position - first->transform->Position();
+    if (objs.size() == 1) { sn::ApplySurfacePose(first, p); return true; }
+    for (okay::GameObject* o : objs) if (o && o->transform) o->transform->SetPosition(o->transform->Position() + delta);
+    return true;
+}
 // Pre-snap drag accumulators. Snapping rounds the OUTPUT every frame; without
 // keeping the true (unsnapped) value, sub-grid mouse motion gets repeatedly
 // rounded away and dragging feels sticky/glitchy (you have to overshoot to move,
@@ -6649,6 +6690,37 @@ void DrawMenuAndToolbar(EditorState& ed) {
             Vec3& p = ed.selected()->transform->localPosition;
             p = {std::round(p.x / g) * g, std::round(p.y / g) * g, std::round(p.z / g) * g};
             ed.dirty = true; ConsoleLog("Snapped to grid");
+        }
+        if (ImGui::MenuItem("Snap Rotation and Scale to Steps", nullptr, false, ed.selected() != nullptr)) {
+            // The same steps the gizmos and the Inspector fields use (Snap settings: Rotate and Scale).
+            ed.PushUndo();
+            namespace sn = okay::editor::snap;
+            for (GameObject* g : ed.MultiSelection().empty() ? std::vector<GameObject*>{ed.selected()} : ed.MultiSelection()) {
+                if (!g || !g->transform) continue;
+                Vec3 e = g->transform->localRotation.ToEuler();
+                g->transform->localRotation = Quat::Euler({sn::SnapDegrees(e.x, sn::Cfg().rotStep), sn::SnapDegrees(e.y, sn::Cfg().rotStep), sn::SnapDegrees(e.z, sn::Cfg().rotStep)});
+                if (!g->GetComponent<Camera>()) {
+                    Vec3& sc = g->transform->localScale;
+                    sc = {sn::SnapScale(sc.x, sn::Cfg().scaleStep), sn::SnapScale(sc.y, sn::Cfg().scaleStep), sn::SnapScale(sc.z, sn::Cfg().scaleStep)};
+                }
+            }
+            ed.dirty = true; ConsoleLog("Snapped rotation and scale to the steps");
+        }
+        if (ImGui::MenuItem("Drop to Surface", nullptr, false, ed.selected() != nullptr)) {
+            // Straight down from each selected object onto the first surface below it (Snap settings: Align / Rest / Offset).
+            namespace sn = okay::editor::snap;
+            ed.PushUndo();
+            int moved = 0;
+            for (GameObject* g : ed.MultiSelection().empty() ? std::vector<GameObject*>{ed.selected()} : ed.MultiSelection()) {
+                if (!g || !g->transform) continue;
+                sn::SurfaceQuery q; q.ignore.push_back(g); q.isolate = g_isolate;
+                const Vec3 from = g->transform->Position() + Vec3{0.0f, 0.001f, 0.0f};
+                const sn::SurfaceHit h = sn::RaycastSurface(ed.scene(), from, {0, -1, 0}, q);
+                if (!h.hit) continue;
+                sn::ApplySurfacePose(g, sn::ComputeSurfacePose(g, h, sn::Cfg())); ++moved;
+            }
+            ed.dirty = true;
+            ConsoleLog(moved ? "Dropped " + std::to_string(moved) + " object(s) onto the surface below" : "Nothing below to drop onto", moved ? 0 : 1);
         }
         if (ImGui::MenuItem("Copy", "Ctrl+C", false, ed.selected() != nullptr)) {
             g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
@@ -28666,7 +28738,7 @@ void DrawInspector(EditorState& ed) {
         if (multi) ImGui::TextDisabled("(editing %d selected objects)", (int)ed.MultiSelection().size());
         bool act = false;
         float pos[3] = {t->localPosition.x, t->localPosition.y, t->localPosition.z};
-        if (DragVec3Axis("Position", pos, 0.05f, "%.3f", &act)) {
+        if (DragVec3Axis("Position", pos, 0.05f, "%.3f", &act, okay::editor::snap::Cfg().moveStep)) {
             t->localPosition = {pos[0], pos[1], pos[2]}; ed.dirty = true;
             others([&](GameObject* g) { g->transform->localPosition = t->localPosition; });
         }
@@ -28689,7 +28761,7 @@ void DrawInspector(EditorState& ed) {
             if (std::fabs(dot) < 0.999999f) e = cur.ToEuler();   // q and -q are the same rotation
         }
         float rot[3] = {e.x, e.y, e.z};
-        if (DragVec3Axis("Rotation", rot, 1.0f, "%.2f", &act)) {
+        if (DragVec3Axis("Rotation", rot, 1.0f, "%.2f", &act, okay::editor::snap::Cfg().rotStep)) {
             e = {rot[0], rot[1], rot[2]};
             t->localRotation = Quat::Euler(e); ed.dirty = true;
             others([&](GameObject* g) { g->transform->localRotation = t->localRotation; g_euler[g] = e; });
@@ -28709,7 +28781,7 @@ void DrawInspector(EditorState& ed) {
         float scl[3] = {t->localScale.x, t->localScale.y, t->localScale.z};
         float sclOld[3] = {scl[0], scl[1], scl[2]};
         if (isCam) ImGui::BeginDisabled();
-        if (DragVec3Axis("Scale", scl, 0.05f, "%.3f", &act)) {
+        if (DragVec3Axis("Scale", scl, 0.05f, "%.3f", &act, okay::editor::snap::Cfg().scaleStep)) {
             if (s_uniformScale) {
                 // Scale the untouched axes by the same ratio as the edited one.
                 for (int ax = 0; ax < 3; ++ax) {
@@ -41541,6 +41613,23 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                      center.y - (c.y / c.w) * canvasSize.y * 0.5f);
         return true;
     };
+    // The world ray (origin, unit direction) through a screen point of this view.
+    auto cursorRay = [&](ImVec2 m) -> std::pair<Vec3, Vec3> {
+        const float ndcx = 2.0f * (m.x - canvasPos.x) / canvasSize.x - 1.0f;
+        const float ndcy = 1.0f - 2.0f * (m.y - canvasPos.y) / canvasSize.y;
+        const Mat4 inv = vp.Inverse();
+        const Vec4 pn = inv * Vec4{ndcx, ndcy, -1.0f, 1.0f}, pf = inv * Vec4{ndcx, ndcy, 1.0f, 1.0f};
+        const Vec3 a{pn.x / pn.w, pn.y / pn.w, pn.z / pn.w}, b{pf.x / pf.w, pf.y / pf.w, pf.z / pf.w};
+        return {a, (b - a).Normalized()};
+    };
+    // "Place on surface" for new, duplicated and dropped objects uses this: the ray under the cursor while it is over the
+    // Scene view, else the ray through the view centre. (Not the Game view, and not 2D.)
+    if (!gameView && ed.view3D) {
+        const bool over = hovered && io.MousePos.x >= canvasPos.x && io.MousePos.x <= canvasEnd.x && io.MousePos.y >= canvasPos.y && io.MousePos.y <= canvasEnd.y;
+        const auto r = cursorRay(over ? io.MousePos : ImVec2((canvasPos.x + canvasEnd.x) * 0.5f, (canvasPos.y + canvasEnd.y) * 0.5f));
+        ed.placeRay = {true, r.first, r.second};
+        ed.placeRayFrame = ImGui::GetFrameCount();
+    }
     // Project an already-in-front clip-space point (w > 0) to the screen.
     auto projClip = [&](const Vec4& c) -> ImVec2 {
         return ImVec2(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
@@ -42310,6 +42399,30 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ImVec2 hp(view3dMin.x + 10.0f, view3dMax.y - hts.y - 12.0f);
             dl->AddRectFilled(ImVec2(hp.x - 8, hp.y - 4), ImVec2(hp.x + hts.x + 8, hp.y + hts.y + 4), IM_COL32(0, 0, 0, 160), 5.0f);
             dl->AddText(hp, IM_COL32(90, 205, 215, 255), hb);
+        }
+    }
+
+    // Snap indicator: shows whenever snapping applies to the current tool (the Snap button, or Ctrl / Ctrl+Shift held), so
+    // it is never a mystery why a drag moves in steps. Alt turns it off for the drag.
+    if (!gameView && ed.view3D) {
+        namespace sn = okay::editor::snap;
+        const auto as = sn::Resolve(sn::Cfg(), {io.KeyCtrl, io.KeyShift, io.KeyAlt});
+        const bool surf = as.surface && g_tool == Tool::Move;
+        if (as.steps || surf) {
+            char sb[128];
+            const char* tool = g_tool == Tool::Move ? "Move" : g_tool == Tool::Rotate ? "Rotate" : "Scale";
+            char step[48];
+            if (g_tool == Tool::Move)        std::snprintf(step, sizeof(step), "%g", sn::Cfg().moveStep);
+            else if (g_tool == Tool::Rotate) std::snprintf(step, sizeof(step), "%g\xc2\xb0", sn::Cfg().rotStep);
+            else                             std::snprintf(step, sizeof(step), "%g", sn::Cfg().scaleStep);
+            if (surf && as.steps) std::snprintf(sb, sizeof(sb), "Snap: %s %s + surface   (Alt = off)", tool, step);
+            else if (surf)        std::snprintf(sb, sizeof(sb), "Snap: %s to surface   (Alt = off)", tool);
+            else                  std::snprintf(sb, sizeof(sb), "Snap: %s %s   (Alt = off)", tool, step);
+            ImVec2 sts = ImGui::CalcTextSize(sb);
+            const float lift = okay::editor::vis::HiddenCount(ed.scene()) > 0 ? 30.0f : 0.0f;
+            ImVec2 sp(view3dMin.x + 10.0f, view3dMax.y - sts.y - 12.0f - lift);
+            dl->AddRectFilled(ImVec2(sp.x - 8, sp.y - 4), ImVec2(sp.x + sts.x + 8, sp.y + sts.y + 4), IM_COL32(0, 0, 0, 160), 5.0f);
+            dl->AddText(sp, ImGui::GetColorU32(AccentCol(1.0f)), sb);
         }
     }
 
@@ -43180,7 +43293,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 const Vec3 pivot = g_meModal.PivotWorld();
                 const mdl::Ray rayNow = mouseRay(io.MousePos);
                 const Vec3 viewDir = mouseRay(ImVec2(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f)).direction;
-                const bool snap = g_snap || io.KeyCtrl;
+                const bool snap = okay::editor::snap::Resolve(okay::editor::snap::Cfg(), {io.KeyCtrl, io.KeyShift, io.KeyAlt}).steps;
                 ImVec2 ps; const bool psOk = toScreen(vp * Vec4{pivot, 1}, ps);
                 const mdl::AxisLock lock = g_meModal.lock;
                 const bool typed = g_meModal.typed.Active();
@@ -43229,7 +43342,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             float d0 = std::hypot(g_meModalMouse0.x - ps.x, g_meModalMouse0.y - ps.y);
                             float d1 = std::hypot(io.MousePos.x - ps.x, io.MousePos.y - ps.y);
                             f = d0 > 4.0f ? d1 / d0 : 1.0f;
-                            if (snap) f = mdl::SnapTo(f, 0.1f);
+                            if (snap) f = okay::editor::snap::SnapScale(f, okay::editor::snap::Cfg().scaleStep);
                         }
                         W = mdl::ScaleMatrix(pivot, lock, f);
                         std::snprintf(buf, sizeof(buf), "Scale %.3f", f);
@@ -43705,11 +43818,27 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                              g_dragRawPos = t->localPosition; g_dragRawScale = t->localScale;
                              g_ikTarget = t->Position(); g_ikEndLocal = t->localPosition; }
         }
-        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_gizmoGrab = false; g_gizmoAxis = -1; }
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_gizmoGrab = false; g_gizmoAxis = -1; g_surfaceHit = {}; }
+        // Surface snap marker: a ring on the surface point, a line along its normal, and what it landed on.
+        if (g_gizmoGrab && g_surfaceHit.hit) {
+            ImVec2 hp, hn;
+            if (toScreen(vp * Vec4{g_surfaceHit.point, 1}, hp)) {
+                const ImU32 mc = IM_COL32(120, 230, 255, 255);
+                dl->AddCircle(hp, 9.0f, mc, 20, 2.0f);
+                dl->AddCircleFilled(hp, 2.5f, mc);
+                if (toScreen(vp * Vec4{g_surfaceHit.point + g_surfaceHit.normal * (L * 0.5f), 1}, hn)) dl->AddLine(hp, hn, mc, 2.0f);
+                char sb[96];
+                std::snprintf(sb, sizeof(sb), "%s (%s)", g_surfaceHit.object ? g_surfaceHit.object->name.c_str() : "surface",
+                              okay::editor::snap::HitSourceName(g_surfaceHit.source));
+                dl->AddText(ImVec2(hp.x + 14, hp.y + 6), IM_COL32(255, 255, 255, 230), sb);
+            }
+        }
 
         // Drag the grabbed handle.
         if (g_gizmoGrab && g_gizmoAxis >= 0 && oOk && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             int i = g_gizmoAxis;
+            // Ctrl = snap to the steps, Alt = no snap, Ctrl+Shift = surface snap (rules: editor/SurfaceSnap.hpp).
+            const auto snapNow = okay::editor::snap::Resolve(okay::editor::snap::Cfg(), {io.KeyCtrl, io.KeyShift, io.KeyAlt});
             if (tool == Tool::Rotate) {
                 // Spin about the grabbed axis (X/Y/Z or the view axis) by dragging
                 // tangent to its ring: find the ring point nearest the cursor, take
@@ -43723,10 +43852,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     if (tl > 1e-3f) {
                         tg.x /= tl; tg.y /= tl;
                         float deg = (io.MouseDelta.x * tg.x + io.MouseDelta.y * tg.y) * 0.5f;
-                        if ((g_snap || io.KeyCtrl) && g_rotSnapDeg > 0.0f) {
+                        if (snapNow.steps && g_rotSnapDeg > 0.0f) {
                             // Detents: apply only whole snapped steps as we cross them.
                             g_rotAccum += deg;
-                            float snapped = Mathf::Round(g_rotAccum / g_rotSnapDeg) * g_rotSnapDeg;
+                            float snapped = okay::editor::snap::RoundStep(g_rotAccum, g_rotSnapDeg);
                             float step = snapped - g_rotApplied;
                             if (step != 0.0f) { t->Rotate(rax * step); g_rotApplied = snapped; g_rotTotal = snapped; }
                         } else {
@@ -43756,10 +43885,24 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         // Accumulate the true position; snap only the output so the
                         // handle tracks the cursor and snaps cleanly at grid lines.
                         g_dragRawPos += localStep;
-                        if ((g_snap || io.KeyCtrl) && g_snapSize > 0.0f) {
-                            t->localPosition.x = Mathf::Round(g_dragRawPos.x / g_snapSize) * g_snapSize;
-                            t->localPosition.y = Mathf::Round(g_dragRawPos.y / g_snapSize) * g_snapSize;
-                            t->localPosition.z = Mathf::Round(g_dragRawPos.z / g_snapSize) * g_snapSize;
+                        okay::editor::snap::SurfaceHit sh;
+                        if (snapNow.surface) {
+                            // Surface snap: the object goes to the surface under the cursor (the arm's axis is not used).
+                            okay::editor::snap::SurfaceQuery sq;
+                            sq.ignore.push_back(sel);
+                            for (GameObject* m : ed.MultiSelection()) sq.ignore.push_back(m);
+                            sq.isolate = g_isolate;
+                            const auto ray = cursorRay(io.MousePos);
+                            sh = okay::editor::snap::RaycastSurface(ed.scene(), ray.first, ray.second, sq);
+                        }
+                        g_surfaceHit = sh;
+                        if (sh.hit) {
+                            okay::editor::snap::ApplySurfacePose(sel, okay::editor::snap::ComputeSurfacePose(sel, sh, okay::editor::snap::Cfg()));
+                            g_dragRawPos = t->localPosition;   // so letting go of the keys continues from here, with no jump
+                        } else if (snapNow.steps && g_snapSize > 0.0f) {
+                            t->localPosition.x = okay::editor::snap::RoundStep(g_dragRawPos.x, g_snapSize);
+                            t->localPosition.y = okay::editor::snap::RoundStep(g_dragRawPos.y, g_snapSize);
+                            t->localPosition.z = okay::editor::snap::RoundStep(g_dragRawPos.z, g_snapSize);
                         } else {
                             t->localPosition = g_dragRawPos;
                         }
@@ -43768,10 +43911,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         g_dragRawScale.y += (i == 1) ? amt : 0.0f;
                         g_dragRawScale.z += (i == 2) ? amt : 0.0f;
                         Vec3 sc = g_dragRawScale;
-                        if ((g_snap || io.KeyCtrl) && g_snapSize > 0.0f) {      // snap scale to the increment
-                            sc.x = Mathf::Round(sc.x / g_snapSize) * g_snapSize;
-                            sc.y = Mathf::Round(sc.y / g_snapSize) * g_snapSize;
-                            sc.z = Mathf::Round(sc.z / g_snapSize) * g_snapSize;
+                        if (snapNow.steps && okay::editor::snap::Cfg().scaleStep > 0.0f) {      // snap scale to its own increment
+                            const float ss = okay::editor::snap::Cfg().scaleStep;
+                            sc.x = okay::editor::snap::RoundStep(sc.x, ss);
+                            sc.y = okay::editor::snap::RoundStep(sc.y, ss);
+                            sc.z = okay::editor::snap::RoundStep(sc.z, ss);
                         }
                         sc.x = Mathf::Max(0.01f, sc.x); sc.y = Mathf::Max(0.01f, sc.y); sc.z = Mathf::Max(0.01f, sc.z);
                         t->localScale = sc;
@@ -44083,19 +44227,63 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         g_gizmoLocal = !g_gizmoLocal;
     // Snap: the magnet toggles it; the little arrow holds the increments.
     ImGui::SameLine();
-    if (IconButton("##tsnap", TbIcon::Snap, "Snap to increments (or hold Ctrl while dragging)", g_snap)) g_snap = !g_snap;
+    namespace sn = okay::editor::snap;
+    if (IconButton("##tsnap", TbIcon::Snap,
+                   "Snap to steps (Move / Rotate / Scale gizmos and the Inspector fields).\n"
+                   "Ctrl while dragging snaps for that drag; Alt while dragging turns snapping off for it.\n"
+                   "Ctrl+Shift while dragging a Move handle snaps to the surface under the cursor.\n"
+                   "The arrow beside it sets the steps.", g_snap)) { g_snap = !g_snap; SaveSettings(); }
     ImGui::SameLine(0, 1);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, vst.FramePadding.y));
     if (ImGui::ArrowButton("##snapsettings", ImGuiDir_Down)) ImGui::OpenPopup("##snapsettingspop");
     ImGui::PopStyleVar();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap settings");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap settings: move / rotate / scale steps and surface snap");
+    // Surface snap: its own toggle, because it changes what a Move drag does (the object follows the cursor over surfaces).
+    ImGui::SameLine();
+    if (AccentToggleButton("Surf##tsurface", sn::Cfg().surface, ImVec2(0, ImGui::GetFrameHeight()))) { sn::Cfg().surface = !sn::Cfg().surface; SaveSettings(); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(sn::Cfg().surface
+        ? "Surface snap is on: dragging a Move handle puts the object on the surface under the cursor.\nAlt while dragging turns it off for that drag. Options are in the snap settings (arrow)."
+        : "Surface snap: dragging a Move handle puts the object on the surface under the cursor.\nOr hold Ctrl+Shift while dragging. Options are in the snap settings (arrow).");
     if (ImGui::BeginPopup("##snapsettingspop")) {
-        ImGui::TextDisabled("SNAP INCREMENTS");
+        bool changed = false;   // saved to okay_settings.txt when a change ends
+        // One row of steps: preset buttons, then a custom value box. The current preset is lit.
+        auto stepRow = [&](const char* label, float& v, const float* presets, int n, float lo, float hi, const char* fmt, const char* tip) {
+            ImGui::TextUnformatted(label);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+            const int cur = sn::PresetIndex(presets, n, v);
+            for (int i = 0; i < n; ++i) {
+                char b[24]; std::snprintf(b, sizeof(b), "%g##%s%d", presets[i], label, i);
+                ImGui::SameLine();
+                if (AccentToggleButton(b, cur == i, ImVec2(0, 0))) { v = presets[i]; changed = true; }
+            }
+            ImGui::SameLine(); ImGui::SetNextItemWidth(64);
+            char id[32]; std::snprintf(id, sizeof(id), "##custom%s", label);
+            if (ImGui::DragFloat(id, &v, v * 0.02f > 0.01f ? v * 0.02f : 0.01f, lo, hi, fmt)) { v = std::min(hi, std::max(lo, v)); }
+            if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom step. Drag, or Ctrl+click and type a value.");
+        };
+        ImGui::TextDisabled("SNAP STEPS");
         ImGui::Separator();
-        ImGui::SetNextItemWidth(130);
-        ImGui::DragFloat("Move / Scale", &g_snapSize, 0.05f, 0.05f, 100.0f, "%.2f");
-        ImGui::SetNextItemWidth(130);
-        ImGui::DragFloat("Rotate (deg)", &g_rotSnapDeg, 1.0f, 1.0f, 180.0f, "%.0f");
+        stepRow("Move   ", sn::Cfg().moveStep, sn::kMovePresets, 6, sn::kMinStep, sn::kMaxMoveStep, "%g", "Move step in world units (grid size).");
+        stepRow("Rotate ", sn::Cfg().rotStep, sn::kRotationPresets, 5, sn::kMinRotStep, sn::kMaxRotStep, "%g deg", "Rotation step in degrees (detents on the rotate rings).");
+        stepRow("Scale  ", sn::Cfg().scaleStep, sn::kScalePresets, 6, sn::kMinStep, sn::kMaxScaleStep, "%g", "Scale step (the scale handles, the Scale field, mesh-edit scale).");
+        ImGui::TextDisabled("Ctrl = snap this drag   Alt = no snap this drag");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextDisabled("SURFACE");
+        ImGui::Separator();
+        if (ImGui::Checkbox("Surface snap while moving", &sn::Cfg().surface)) changed = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move handles drag the object over the surface under the cursor\n(colliders, terrain and meshes; hidden objects and the object itself are ignored).\nCtrl+Shift does the same for one drag.");
+        if (ImGui::Checkbox("Align rotation to the surface", &sn::Cfg().alignNormal)) changed = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns the object's up axis to the surface normal (keeps its heading).\nUsed by surface snap, Place on surface and Drop to Surface.");
+        if (ImGui::Checkbox("Rest on the surface", &sn::Cfg().restOnSurface)) changed = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lifts the object so its lowest point touches the surface, instead of its pivot.");
+        ImGui::SetNextItemWidth(90);
+        if (ImGui::DragFloat("Offset along normal", &sn::Cfg().surfaceOffset, 0.01f, -100.0f, 100.0f, "%.3f")) {}
+        if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance kept from the surface, along its normal (negative sinks it in).");
+        if (ImGui::Checkbox("Place new objects on the surface", &sn::Cfg().placeOnSurface)) changed = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("New primitives and players, duplicates (Ctrl+D) and assets dropped into the Scene view\nland on the surface under the cursor (or the view centre) instead of the default spot.");
+        if (changed) SaveSettings();
         ImGui::Dummy(ImVec2(0, 4));
         ImGui::TextDisabled("UI (2D screen)");
         ImGui::Separator();
@@ -44525,7 +44713,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                                (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.gltf/.glb; other formats need Assimp)"), 2);
             }
             if (placed) {
-                placed->transform->SetPosition(drop);
+                if (!PlaceOnSurfaceUnderCursor(ed, {placed})) placed->transform->SetPosition(drop);   // "Place on surface" lands it under the cursor
                 ed.Select(placed); ed.dirty = true;
                 ConsoleLog("Placed " + placed->name);
                 if (placed->GetComponent<MeshRenderer>() || placed->transform->ChildCount() > 0) LogModelReport(ed, placed);
@@ -46913,6 +47101,8 @@ int main(int argc, char** argv) {
     }
     LoadRecent();
     LoadSettings();
+    ed.spawnPlaceHook = [&ed](GameObject* go) { return PlaceOnSurfaceUnderCursor(ed, {go}); };
+    ed.duplicatePlaceHook = [&ed](const std::vector<GameObject*>& clones) { PlaceOnSurfaceUnderCursor(ed, clones); };
     LoadUserLayouts();     // named panel layouts (okay_layouts.txt)
     // Brand-new install on a high-DPI display (common on Windows 11 laptops at
     // 125%/150%): size the UI to the display so it isn't tiny. Only on first run —

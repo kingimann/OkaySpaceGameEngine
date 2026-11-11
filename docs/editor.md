@@ -147,12 +147,45 @@ Recent additions (v2.12–2.14):
 - **Edit Collider** — on a Box Collider 3D, click **Edit Collider** to show six
   draggable face handles in the Scene view; pull each side to hand-fit the box to
   your model. Adjusts the collider's size + offset; undoable.
-- **Scene gizmos** — **snapping** for Move/Rotate/Scale (grid + 15° detents) and
+- **Scene gizmos** — **snapping** for Move/Rotate/Scale with their own steps (see
+  **Snapping** below) and
   a **Local/Global** toggle (X); a live **Camera Preview** inset for a selected
   perspective camera; colored **light gizmos** (range sphere / spot cone).
   **billboard icons** with name labels mark every camera and light in
   the Scene (a camera glyph; a sun/bulb/spot glyph by light type), so lights and
   cameras are easy to see and pick even with no mesh.
+- **Snapping** — one system for the gizmos, the Inspector fields and mesh-edit
+  transforms. The magnet button in the Scene toolbar turns **Snap** on; the arrow
+  beside it opens the snap settings, where **Move** (0.1, 0.25, 0.5, 1, 2, 5 or
+  custom), **Rotate** (1°, 5°, 15°, 45°, 90° or custom) and **Scale** (0.01, 0.05,
+  0.1, 0.25, 0.5, 1 or custom) each have their own step. The lit button is the
+  current step. The steps, the toggles and the surface options are saved in
+  `okay_settings.txt` and come back next launch. Whenever snapping applies to the
+  active tool a chip in the corner of the Scene view says so ("Snap: Rotate 15° …").
+  **Keys while dragging:** **Ctrl** snaps this drag (also when Snap is off), **Alt**
+  turns snapping off for this drag (also when Snap is on), **Ctrl+Shift** snaps a
+  Move drag to the surface. In the Inspector, a Position, Rotation or Scale value
+  you *drag* snaps to its step while Snap is on (or when you press Ctrl after the
+  drag has started; Ctrl on the first click starts typing instead, as it always did);
+  a value you *type* is never changed. Edit ▸ **Snap Rotation and Scale to Steps**
+  rounds the selection's current values to the steps. All of it is one undo step per
+  drag or command.
+- **Surface snap** — with **Surf** on (toolbar, next to the snap arrow), or
+  Ctrl+Shift held, dragging a Move handle puts the object on the surface under the
+  cursor, and a ring, a normal line and the surface's name follow the cursor. The
+  object itself, its children and the other selected objects are never the surface;
+  neither are objects hidden in the Scene view, inactive objects or trigger
+  colliders. Primitive colliders and terrain are hit exactly; a mesh with no solid
+  collider (or a Mesh Collider, which is only a box) is hit on its triangles, and
+  its render bounds when it has none or has over 200 000. The snap settings add
+  **Align rotation to the surface** (turns the up axis to the normal and keeps the
+  heading), **Rest on the surface** (the lowest point touches it, not the pivot) and
+  an **Offset along normal**. **Place new objects on the surface** applies the same
+  options to new primitives and players, to Duplicate (Ctrl+D) and to assets dropped
+  into the Scene view: they land under the cursor, or at the view centre when the
+  cursor is elsewhere. Edit ▸ **Drop to Surface** drops the selection straight down.
+  Undo: the drag, create, duplicate or drop is a single step (the editor's snapshot
+  undo, `EditorState::PushUndo`).
 - **Project Settings** (Edit ▸ Project Settings) and a larger **Build** dialog
   (Quit-on-Escape, Master Volume, Show-FPS).
 - **Crash-safe autosave** (File ▸ Autosave) writes unsaved graphs, scripts and

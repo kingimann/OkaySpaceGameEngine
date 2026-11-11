@@ -250,6 +250,7 @@ void EditorState::AdoptCamera(Camera* cam) {
 
 GameObject* EditorState::SettleSpawn(GameObject* go) {
     if (!go || !go->transform) return go;
+    if (spawnPlaceHook && spawnPlaceHook(go)) return go;   // "Place on surface" put it under the cursor
     const Vec3 hint = (camTarget.x != 0.0f || camTarget.z != 0.0f) ? camTarget : Vec3::Zero;
     go->transform->SetPosition(ClearFeetPosition(m_scene, go, hint));
     return go;
@@ -319,6 +320,7 @@ GameObject* EditorState::DuplicateSelected() {
         if (clone) { clone->transform->SetPosition(clone->transform->Position() + Vec3{0.5f, 0.5f, 0.0f}); clones.push_back(clone); }
     }
     if (clones.empty()) return nullptr;
+    if (duplicatePlaceHook) duplicatePlaceHook(clones);   // "Place on surface" moves the copies onto the surface under the cursor
     m_multi = clones;
     m_selected = clones.back();
     dirty = true;

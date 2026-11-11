@@ -312,6 +312,17 @@ public:
     float camDist   = 14.0f;   // distance from target
     Vec3  camTarget = Vec3::Zero;
 
+    // ---- "Place on surface" (editor/SurfaceSnap) -------------------------
+    /// The ray the 3D Scene view last saw: under the cursor while it is over the view, else through the view centre.
+    /// `placeRayFrame` is the ImGui frame it was set on (a stale ray is not used).
+    struct PlaceRay { bool valid = false; Vec3 origin{0, 0, 0}; Vec3 dir{0, 0, -1}; };
+    PlaceRay placeRay;
+    int placeRayFrame = -1000;
+    /// Set by the editor shell. Called for a newly created object (before the ground-settle) / for the copies a
+    /// Duplicate just made. The spawn hook returns true when it placed the object, so the default spot is skipped.
+    std::function<bool(GameObject*)> spawnPlaceHook;
+    std::function<void(const std::vector<GameObject*>&)> duplicatePlaceHook;
+
     bool dirty = false; // unsaved changes
 
 private:

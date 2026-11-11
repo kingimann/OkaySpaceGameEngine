@@ -49,7 +49,7 @@ target_include_directories(okay_imgui SYSTEM PUBLIC
 target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
-add_executable(okay-editor main.cpp EditorState.cpp EditorVisibility.cpp FpHandsWindow.cpp
+add_executable(okay-editor main.cpp EditorState.cpp EditorVisibility.cpp SurfaceSnap.cpp FpHandsWindow.cpp
     AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
     TimelineWindow.cpp                                                 # the Timeline window (cutscene sequences)
     NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)

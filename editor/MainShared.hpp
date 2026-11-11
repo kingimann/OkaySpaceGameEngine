@@ -55,8 +55,8 @@ void AddAnimationsFromFilesUI(okay::editor::EditorState& ed, okay::GameObject* m
 
 // Scene-view snapping (Snap toggle, or Ctrl held) and gizmo axes; the spline point
 // gizmo follows them like the move gizmo does.
-extern bool  g_snap;
-extern float g_snapSize;
+extern bool&  g_snap;        // references into okay::editor::snap::Cfg() (editor/SurfaceSnap.hpp)
+extern float& g_snapSize;
 extern bool  g_gizmoLocal;
 // An image file (or "proc:" texture) as a cached SDL texture, null when it can't load.
 SDL_Texture* GetThumb(const std::string& path);

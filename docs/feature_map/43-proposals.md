@@ -93,20 +93,22 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Build rough level layouts fast from simple shapes on a grid with consistent units, then replace them with real art.
 - **Parts:**
   - 44.1.1 Primitives - `Render/Mesh`, `editor/main.cpp` - GameObject menu cubes, planes, spheres, cylinders and more with `Mesh::FromName`
-  - 44.1.2 Grid snap - `editor/main.cpp` - Snap toggle and size for moves (Ctrl while dragging), Edit > Snap Position to Grid, script `grid_snap`
+  - 44.1.2 Grid snap - `editor/main.cpp`, `editor/SurfaceSnap.*` - the toolbar Snap toggle and a move step (Ctrl while dragging, Alt to switch it off for a drag), Edit > Snap Position to Grid, script `grid_snap`
+  - 44.1.5 Rotation and scale snap - `editor/SurfaceSnap.*`, `editor/main.cpp` (`DrawViewport`, `DragVec3Axis`) - one settings object holds the move, rotate (1, 5, 15, 45, 90 or custom degrees) and scale steps, shown in the Snap popup and an on-canvas chip, saved in `okay_settings.txt`; the rotate rings, scale handles, mesh-edit scale and the Inspector Position, Rotation and Scale fields use the same steps; Edit > Snap Rotation and Scale to Steps
+  - 44.1.6 Surface snap - `editor/SurfaceSnap.*`, `editor/main.cpp` (`PlaceOnSurfaceUnderCursor`), `EditorState::spawnPlaceHook` - Move-handle drags (the Surf toggle, or Ctrl+Shift for one drag) put the object on the surface under the cursor, with optional align-to-normal, rest-on-surface and an offset along the normal; the same options place new primitives and players, duplicates and dropped assets (Place new objects on the surface); Edit > Drop to Surface. Hits colliders and terrain exactly, mesh triangles for meshes without a solid collider (a MeshCollider is only a box), and render bounds for very large meshes; skips the dragged object and its children, hidden and inactive objects and triggers
   - 44.1.3 Edit Mesh - `editor/main.cpp`, `Modeling/PolyOps` - select, move, extrude, inset, subdivide and other mesh operations on a selected mesh (area 3)
   - 44.1.4 Player-facing builders - `Components/BlockBuilder`, `Components/StructureBuilder`, `Components/BuilderMode` - block and structure placement for in-game building (a runtime feature, not an editor tool)
-- **Code:** `Render/Mesh`, `editor/main.cpp`, `Modeling/PolyOps`, `Components/BlockBuilder`, `Components/StructureBuilder`, `Components/BuilderMode`
-- **API:** `Mesh::FromName`, `g_snap` (editor), `BlockBuilder`
-- **Editor:** GameObject menu, toolbar Snap, 3D Modeling window
+- **Code:** `Render/Mesh`, `editor/main.cpp`, `editor/SurfaceSnap.*`, `Modeling/PolyOps`, `Components/BlockBuilder`, `Components/StructureBuilder`, `Components/BuilderMode`
+- **API:** `Mesh::FromName`, `okay::editor::snap::Cfg()`, `RaycastSurface`, `ComputeSurfacePose`, `BlockBuilder`
+- **Editor:** GameObject menu, toolbar Snap and Surf, Snap settings popup (arrow beside the magnet), Edit menu (Snap Position to Grid, Snap Rotation and Scale to Steps, Drop to Surface), 3D Modeling window
 - **Docs:** `docs/modeling.md`, `docs/build_mode.md`
-- **Tests:** `mesh3d`, `poly_ops`, `builder_mode`, `block_builder`
-- **Status:** Basic - shapes and move snapping exist; no blockout kit and no rotation or surface snapping.
-- **Exists today:** All of Parts. There is no dedicated greybox kit with a fixed unit size, no "snap to ground" and no rotation or scale snapping (not found in `editor/main.cpp`).
+- **Tests:** `mesh3d`, `poly_ops`, `builder_mode`, `block_builder`, `surface_snap`
+- **Status:** Basic - shapes, move, rotation and scale snapping and surface snapping work; no blockout kit.
+- **Exists today:** All of Parts. Rotation snap (15 degree detents) and scale snap existed already in the gizmos; this area now also has user-set rotate and scale steps, saved snap settings and surface snap. There is no dedicated greybox kit with a fixed unit size and no snapping to neighbouring pieces (edge or vertex of another object's piece; V vertex snap moves mesh vertices only). Surface snap is not applied to the 2D view, to UI widgets or to several selected objects dragged by the gizmo (only the primary one moves).
 - **Suggested priority:** Medium - speeds up every 3D level, mostly editor UI work on existing pieces.
 - **Open:** first step: a Blockout palette (floor, wall, ramp, stairs, door frame at 1 m units) that snaps to grid and to neighbouring pieces, with rotation snap in 15 degree steps.
 - **Related:** 3.1, 3.5, 15.3, 15.6, 44.2
-- **Words:** blockout, greybox, whitebox, level design, grid snap, snap to ground, rotation snap, vertex snap, primitives
+- **Words:** blockout, greybox, whitebox, level design, grid snap, snap to ground, snap to surface, drop to surface, align to normal, rotation snap, scale snap, snap steps, vertex snap, primitives
 - **Seen as:** walls do not line up; placing things at exact distances is fiddly; objects float above the ground
 - **Ask me like:** "add a blockout palette with snapping walls and floors"
 

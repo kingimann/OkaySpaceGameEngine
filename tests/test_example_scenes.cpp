@@ -50,6 +50,10 @@ int main() {
     CHECK(third.find("UI Gallery (phone).okayscene") != std::string::npos);
     CHECK(fs::exists(where) && fs::exists(second) && fs::exists(third));
     CHECK(ed.scene().Find("SwatchScroll") != nullptr);               // the phone layout
+    // The editor lays the UI out every frame (scroll content sizes). That must not make the freshly saved example "changed",
+    // or Play would ask to save it.
+    okay::UpdateUILayouts(ed.scene());
+    CHECK(!ed.HasUnsavedChanges());
 
     // An unwritable place is reported, and the built scene stays open.
     {

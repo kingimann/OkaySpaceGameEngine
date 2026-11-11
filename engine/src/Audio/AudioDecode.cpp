@@ -1,8 +1,10 @@
 // OGG Vorbis and MP3 decoding for AudioClip, plus Load() by file extension and
-// the shared decode cache. The decoders are vendored single-file libraries
-// (stb_vorbis and dr_mp3, both public domain), compiled only in this file
-// (warnings off for it in engine/CMakeLists.txt).
+// the shared decode cache. OGG goes through the vendored stb_vorbis (public
+// domain, compiled only in this file with warnings off, see
+// engine/CMakeLists.txt); MP3 goes through the engine's own decoder
+// (Mp3Decoder.cpp).
 #include "okay/Audio/AudioClip.hpp"
+#include "okay/Audio/Mp3Decoder.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <algorithm>
@@ -17,9 +19,6 @@
 #define STB_VORBIS_NO_PUSHDATA_API
 #define STB_VORBIS_NO_STDIO
 #include "stb_vorbis.c"
-#define DR_MP3_IMPLEMENTATION
-#define DR_MP3_NO_STDIO
-#include "dr_mp3.h"
 // stb_vorbis leaks single-letter macros (C, L, R) into the rest of the file.
 #undef C
 #undef L
@@ -82,17 +81,13 @@ bool AudioClip::LoadMP3(const std::string& path, std::string* error) {
     samples.clear();
     std::vector<unsigned char> buf;
     if (!ReadFile(path, buf, error)) return false;
-    drmp3_config cfg{};
-    drmp3_uint64 frames = 0;
-    float* pcm = drmp3_open_memory_and_read_pcm_frames_f32(buf.data(), buf.size(), &cfg, &frames, nullptr);
-    if (!pcm || frames == 0 || cfg.channels == 0) {
-        if (pcm) drmp3_free(pcm, nullptr);
+    Mp3Audio audio;
+    if (!DecodeMp3(buf.data(), buf.size(), audio, nullptr) || audio.FrameCount() == 0) {
         if (error) *error = "not a readable MP3 file";
         return false;
     }
-    Downmix(pcm, (std::size_t)frames, (int)cfg.channels, samples);
-    drmp3_free(pcm, nullptr);
-    sampleRate = (int)cfg.sampleRate;
+    Downmix(audio.samples.data(), audio.FrameCount(), audio.channels, samples);
+    sampleRate = audio.sampleRate;
     return true;
 }
 

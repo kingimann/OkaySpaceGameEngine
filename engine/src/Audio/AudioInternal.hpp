@@ -49,11 +49,8 @@ public:
     virtual std::size_t MemoryBytes() const = 0;
 };
 
-/// OGG Vorbis (stb_vorbis, in AudioDecode.cpp). From `path` when it is not
-/// empty (read from disk as it plays), otherwise from `mem`.
-std::unique_ptr<PcmDecoder> MakeOggDecoder(const std::string& path,
-                                           std::shared_ptr<const std::vector<unsigned char>> mem,
-                                           std::string* error);
+/// OGG Vorbis through VorbisStream (in AudioDecode.cpp).
+std::unique_ptr<PcmDecoder> MakeOggDecoder(std::shared_ptr<AudioByteSource> src, std::string* error);
 
 } // namespace audio_detail
 } // namespace okay

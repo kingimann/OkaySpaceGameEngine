@@ -41,7 +41,7 @@ one-shot of the source's own clip (`PlayOneShot()`) needs the clip in memory.
 
 How it works, for the curious: each streaming source owns an `AudioStream`
 (WAV is read directly; MP3 goes through `Mp3Stream`, our own decoder one frame at a
-time; OGG through the Vorbis decoder's incremental API). Decoded audio waits in a
+time; OGG through `VorbisStream`, our own Vorbis decoder reading Ogg pages on demand). Decoded audio waits in a
 ring of 32,768 frames. The mixer's buffer fill starts by topping the ring up (the
 decode step), so decoding always runs ahead of what is played and on the same
 thread that mixes, with no locks. If the file cannot be read fast enough the ring

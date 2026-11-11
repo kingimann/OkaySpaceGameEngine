@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <new>
 #include <string>
@@ -103,6 +105,13 @@ std::vector<Fixture> Fixtures(const std::string& tmpWavPrefix) {
     }
     v.push_back({"mp3 tone_mono", kData + "tone_mono.mp3"});
     v.push_back({"ogg tone_stereo", kData + "tone_stereo.ogg"});
+    {   // every Ogg fixture of the decoder's own test set (mono to 8 channels, odd block sizes, floor 0, truncated packets)
+        std::vector<std::string> names;
+        for (const auto& e : std::filesystem::directory_iterator(kData + "ogg"))
+            if (e.path().extension() == ".ogg") names.push_back(e.path().filename().string());
+        std::sort(names.begin(), names.end());
+        for (const std::string& n : names) v.push_back({"ogg " + n, kData + "ogg/" + n});
+    }
     struct W { const char* name; int fmt, ch, rate, bits; };
     const W ws[] = {{"wav16 stereo", 1, 2, 22050, 16}, {"wav16 mono", 1, 1, 11025, 16}, {"wav8 stereo", 1, 2, 8000, 8},
                     {"wav24 stereo", 1, 2, 44100, 24}, {"wav32f stereo", 3, 2, 32000, 32}, {"wav16 6ch", 1, 6, 16000, 16}};
@@ -135,6 +144,62 @@ void ResetMixer(int rate) {
     for (int i = 0; i < (int)AudioGroup::Count; ++i) { AudioMixer::groupVolume[i] = 1.0f; AudioMixer::groupMuted[i] = false; }
     AudioMixer::duckMusicUnderVoice = false;
     AudioMixer::SetListener(Vec3::Zero);
+}
+
+// ---- Ogg repackaging: a long, many-page file made from a fixture's own packets -------------------
+std::uint32_t OggCrc(const std::vector<unsigned char>& p) {
+    static std::uint32_t t[256];
+    static bool init = false;
+    if (!init) {
+        for (std::uint32_t i = 0; i < 256; ++i) { std::uint32_t r = i << 24; for (int k = 0; k < 8; ++k) r = (r & 0x80000000u) ? (r << 1) ^ 0x04C11DB7u : (r << 1); t[i] = r; }
+        init = true;
+    }
+    std::uint32_t crc = 0;
+    for (unsigned char b : p) crc = (crc << 8) ^ t[((crc >> 24) ^ b) & 0xFF];
+    return crc;
+}
+
+// The packets of a well-formed single-stream Ogg file.
+std::vector<std::vector<unsigned char>> OggPackets(const std::vector<unsigned char>& f) {
+    std::vector<std::vector<unsigned char>> out;
+    std::vector<unsigned char> cur;
+    std::size_t pos = 0;
+    while (pos + 27 <= f.size() && std::memcmp(&f[pos], "OggS", 4) == 0) {
+        const unsigned nseg = f[pos + 26];
+        std::size_t body = pos + 27 + nseg;
+        for (unsigned i = 0; i < nseg; ++i) {
+            const unsigned l = f[pos + 27 + i];
+            cur.insert(cur.end(), f.begin() + (std::ptrdiff_t)body, f.begin() + (std::ptrdiff_t)(body + l));
+            body += l;
+            if (l < 255) { out.push_back(cur); cur.clear(); }
+        }
+        pos = body;
+    }
+    return out;
+}
+
+// One packet per page, `repeats` copies of the audio packets; the last page ends the stream.
+std::vector<unsigned char> OggRepack(const std::vector<std::vector<unsigned char>>& pk, int repeats) {
+    std::vector<std::vector<unsigned char>> all(pk.begin(), pk.begin() + 3);
+    for (int r = 0; r < repeats; ++r) all.insert(all.end(), pk.begin() + 3, pk.end());
+    std::vector<unsigned char> out;
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        std::vector<unsigned char> pg = {'O', 'g', 'g', 'S', 0, (unsigned char)(i == 0 ? 2 : (i + 1 == all.size() ? 4 : 0))};
+        const std::uint64_t granule = i + 1 == all.size() ? 0x7FFFFFFFFFull : 0;
+        for (int b = 0; b < 8; ++b) pg.push_back((unsigned char)(granule >> (8 * b)));
+        Put32(pg, 0x1234); Put32(pg, (std::uint32_t)i); Put32(pg, 0);
+        std::vector<unsigned char> lacing;
+        std::size_t len = all[i].size();
+        while (len >= 255) { lacing.push_back(255); len -= 255; }
+        lacing.push_back((unsigned char)len);
+        pg.push_back((unsigned char)lacing.size());
+        pg.insert(pg.end(), lacing.begin(), lacing.end());
+        pg.insert(pg.end(), all[i].begin(), all[i].end());
+        const std::uint32_t crc = OggCrc(pg);
+        for (int b = 0; b < 4; ++b) pg[22 + b] = (unsigned char)(crc >> (8 * b));
+        out.insert(out.end(), pg.begin(), pg.end());
+    }
+    return out;
 }
 
 bool Same(const float* a, const float* b, std::size_t n) { return std::memcmp(a, b, n * sizeof(float)) == 0; }
@@ -257,7 +322,7 @@ int main() {
     }
     // Looped MP3, OGG and stereo WAV: the second pass is the first pass, and nothing is skipped or silent at the join.
     for (const Fixture& fx : fixtures) {
-        if (fx.name != "mp3 stereo_44k_cbr128" && fx.name != "mp3 mono_16k_mpeg2" && fx.name != "ogg tone_stereo" &&
+        if (fx.name != "mp3 stereo_44k_cbr128" && fx.name != "mp3 mono_16k_mpeg2" && fx.name != "ogg tone_stereo" && fx.name != "ogg enc_stereo_22k_q3" && fx.name != "ogg syn_stereo_blocks_64_8192" &&
             fx.name != "wav16 stereo" && fx.name != "mp3 noxing_44k")
             continue;
         AudioClip whole; whole.Load(fx.path);
@@ -279,6 +344,48 @@ int main() {
         CHECK(same);
         // The join itself: the frames either side of it are the end and the start of the file.
         CHECK(!st->Ended());
+    }
+
+    // ---- a long Ogg with many pages: the seek index, exact seeks and a seamless loop -----------------
+    for (const char* name : {"ogg/enc_stereo_22k_q3.ogg", "ogg/syn_stereo_blocks_64_8192.ogg", "ogg/enc_mono_16k_q4.ogg"}) {
+        const auto pk = OggPackets(Slurp(kData + name));
+        CHECK(pk.size() > 4);
+        if (pk.size() <= 4) continue;
+        const int repeats = std::max(1, 600 / (int)(pk.size() - 3));
+        const std::string lp = tmp + "long.ogg";
+        Spit(lp, OggRepack(pk, repeats));
+        AudioClip whole;
+        CHECK(whole.Load(lp));
+        auto st = AudioStream::OpenFile(lp);
+        CHECK(st != nullptr);
+        if (!st) continue;
+        const std::size_t n = whole.FrameCount(), ch = (std::size_t)whole.channels;
+        std::cout << "  " << name << " x" << repeats << ": " << n << " frames\n";
+        CHECK(st->TotalFrames() == (std::int64_t)n);
+        const auto all = StreamAll(*st, 1234);
+        CHECK(all.size() == whole.samples.size() && Same(all.data(), whole.samples.data(), all.size()));
+        bool allOk = true;
+        std::uint32_t x = 7;
+        for (int i = 0; i < 60; ++i) {
+            x = x * 1664525u + 1013904223u;
+            const std::size_t t = i == 0 ? 0 : i == 1 ? n - 1 : (x >> 8) % n;
+            st->Seek((std::int64_t)t);
+            const std::size_t want = std::min<std::size_t>(700, n - t);
+            std::vector<float> buf(want * ch);
+            const std::size_t got = st->Read(buf.data(), want);
+            if (got != want || !Same(buf.data(), whole.samples.data() + t * ch, want * ch)) { allOk = false; std::cerr << "  seek " << t << " wrong in " << name << "\n"; }
+        }
+        CHECK(allOk);
+        st->Seek(0);
+        st->loop = true;
+        std::vector<float> two(2 * n * ch);
+        std::size_t got = 0;
+        while (got < 2 * n) { const std::size_t k = st->Read(two.data() + got * ch, std::min<std::size_t>(999, 2 * n - got)); if (!k) break; got += k; }
+        CHECK(got == 2 * n);
+        bool same = true;
+        for (std::size_t i = 0; i < 2 * n * ch; ++i) if (two[i] != whole.samples[i % (n * ch)]) { same = false; break; }
+        CHECK(same);
+        std::remove(lp.c_str());
     }
 
     // ---- memory bound: a ten minute file ------------------------------------------------------------
@@ -366,8 +473,11 @@ int main() {
         CHECK(peak2 < 2u * 1024 * 1024);
         std::remove(mp.c_str());
 
-        auto og = AudioStream::OpenFile(kData + "tone_stereo.ogg");
-        CHECK(og && og->MemoryBytes() < 2u * 1024 * 1024);
+        for (const char* n : {"tone_stereo.ogg", "ogg/enc_stereo_48k_q10.ogg", "ogg/enc_8ch_16k_q3.ogg", "ogg/syn_stereo_blocks_64_8192.ogg"}) {
+            auto og = AudioStream::OpenFile(kData + n);
+            CHECK(og && og->MemoryBytes() < 2u * 1024 * 1024);
+            if (og) std::cout << "  " << n << " stream memory " << og->MemoryBytes() / 1024 << " KB\n";
+        }
     }
 
     // ---- underrun: a starved ring plays silence, never skips ahead, never crashes -------------------

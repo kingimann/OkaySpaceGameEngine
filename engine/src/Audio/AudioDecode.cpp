@@ -1,29 +1,21 @@
 // OGG Vorbis and MP3 decoding for AudioClip, plus Load() by file extension and
-// the shared decode cache, and the OGG decoder the streaming code uses. OGG goes through the vendored stb_vorbis (public
-// domain, compiled only in this file with warnings off, see
-// engine/CMakeLists.txt); MP3 goes through the engine's own decoder
-// (Mp3Decoder.cpp).
+// the shared decode cache, and the OGG decoder the streaming code uses. OGG goes
+// through the engine's own decoder (VorbisDecoder.cpp, whole file or
+// incrementally through VorbisStream); MP3 through Mp3Decoder.cpp.
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
+#include "okay/Audio/VorbisDecoder.hpp"
 #include "okay/Core/Log.hpp"
 #include "AudioInternal.hpp"
 
 #include <algorithm>
 #include <cctype>
-#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <vector>
-
-#define STB_VORBIS_NO_PUSHDATA_API
-#include "stb_vorbis.c"
-// stb_vorbis leaks single-letter macros (C, L, R) into the rest of the file.
-#undef C
-#undef L
-#undef R
 
 namespace okay {
 
@@ -51,25 +43,19 @@ bool AudioClip::LoadOGG(const std::string& path, std::string* error, bool downmi
     channels = 1;
     std::vector<unsigned char> buf;
     if (!ReadFile(path, buf, error)) return false;
-    int fileCh = 0, rate = 0;
-    short* pcm = nullptr;
-    const int frames = stb_vorbis_decode_memory(buf.data(), (int)buf.size(), &fileCh, &rate, &pcm);
-    if (frames <= 0 || !pcm || fileCh <= 0) {
-        if (pcm) std::free(pcm);
+    VorbisAudio audio;
+    if (!DecodeVorbis(buf.data(), buf.size(), audio, nullptr) || audio.FrameCount() == 0) {
         if (error) *error = "not a readable OGG Vorbis file";
         return false;
     }
-    std::vector<float> f(static_cast<std::size_t>(frames) * fileCh);
-    for (std::size_t i = 0; i < f.size(); ++i) f[i] = pcm[i] / 32768.0f;
-    std::free(pcm);
-    const int outCh = audio_detail::KeptChannels(fileCh, downmix);
-    if (outCh == fileCh) samples = std::move(f);
+    const int outCh = audio_detail::KeptChannels(audio.channels, downmix);
+    if (outCh == audio.channels) samples = std::move(audio.samples);
     else {
-        samples.resize(static_cast<std::size_t>(frames));
-        audio_detail::DownmixToMono(f.data(), (std::size_t)frames, fileCh, samples.data());
+        samples.resize(audio.FrameCount());
+        audio_detail::DownmixToMono(audio.samples.data(), audio.FrameCount(), audio.channels, samples.data());
     }
     channels = outCh;
-    sampleRate = rate;
+    sampleRate = audio.sampleRate;
     return true;
 }
 
@@ -133,7 +119,7 @@ std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, 
 }
 
 // ---------------------------------------------------------------------------
-// Streaming OGG decoder (stb_vorbis reads from disk or memory as it goes)
+// Streaming OGG decoder (our own VorbisStream: pages are read from the source as they are needed)
 // ---------------------------------------------------------------------------
 
 namespace audio_detail {
@@ -141,79 +127,44 @@ namespace {
 
 class OggPcmDecoder : public PcmDecoder {
 public:
-    ~OggPcmDecoder() override { if (v_) stb_vorbis_close(v_); }
-
-    bool Open(const std::string& path, std::shared_ptr<const std::vector<unsigned char>> mem, std::string* error) {
-        int err = 0;
-        if (!path.empty()) {
-            std::FILE* f = std::fopen(path.c_str(), "rb");
-            if (!f) { if (error) *error = "cannot open " + path; return false; }
-            v_ = stb_vorbis_open_file(f, 1, &err, nullptr);   // closes f with the decoder, also when opening fails
-        } else if (mem && !mem->empty() && mem->size() < 0x7fffffffu) {
-            mem_ = std::move(mem);
-            v_ = stb_vorbis_open_memory(mem_->data(), static_cast<int>(mem_->size()), &err, nullptr);
-        }
-        if (!v_) { if (error) *error = "not a readable OGG Vorbis file"; return false; }
-        const stb_vorbis_info info = stb_vorbis_get_info(v_);
-        fileCh_ = info.channels;
-        if (fileCh_ < 1 || fileCh_ > 16 || info.sample_rate == 0) {
-            if (error) *error = "not a readable OGG Vorbis file";
-            return false;
-        }
-        sampleRate = static_cast<int>(info.sample_rate);
+    bool Open(std::shared_ptr<AudioByteSource> src, std::string* error) {
+        if (!vorbis_.Open(std::move(src), error)) return false;
+        fileCh_ = vorbis_.Channels();
+        sampleRate = vorbis_.SampleRate();
         channels = fileCh_ > 2 ? 1 : fileCh_;
-        const unsigned len = stb_vorbis_stream_length_in_samples(v_);
-        totalFrames = len > 0 ? static_cast<std::int64_t>(len) : -1;
-        setupBytes_ = info.setup_memory_required + info.setup_temp_memory_required + info.temp_memory_required;
-        tmp_.resize(static_cast<std::size_t>(kChunk) * static_cast<std::size_t>(fileCh_));
+        totalFrames = vorbis_.TotalFrames();
         return true;
     }
 
     std::size_t Read(float* dst, std::size_t maxFrames) override {
+        if (fileCh_ <= 2) return vorbis_.Read(dst, maxFrames);
         std::size_t done = 0;
+        tmp_.resize(static_cast<std::size_t>(kChunk) * static_cast<std::size_t>(fileCh_));
         while (done < maxFrames) {
             const std::size_t want = std::min<std::size_t>(maxFrames - done, kChunk);
-            const int n = stb_vorbis_get_samples_short_interleaved(v_, fileCh_, tmp_.data(), static_cast<int>(want) * fileCh_);
-            if (n <= 0) break;
-            float* out = dst + done * static_cast<std::size_t>(channels);
-            if (fileCh_ <= 2) {
-                for (std::size_t i = 0; i < static_cast<std::size_t>(n) * static_cast<std::size_t>(fileCh_); ++i) out[i] = tmp_[i] / 32768.0f;
-            } else {
-                // Same arithmetic as the whole-file path: scale each sample, then average.
-                std::vector<float> f(static_cast<std::size_t>(n) * static_cast<std::size_t>(fileCh_));
-                for (std::size_t i = 0; i < f.size(); ++i) f[i] = tmp_[i] / 32768.0f;
-                DownmixToMono(f.data(), static_cast<std::size_t>(n), fileCh_, out);
-            }
-            done += static_cast<std::size_t>(n);
+            const std::size_t n = vorbis_.Read(tmp_.data(), want);
+            if (n == 0) break;
+            DownmixToMono(tmp_.data(), n, fileCh_, dst + done);
+            done += n;
         }
         return done;
     }
 
-    bool Seek(std::int64_t frame) override {
-        if (frame < 0) frame = 0;
-        if (frame == 0) return stb_vorbis_seek_start(v_) != 0;
-        return stb_vorbis_seek(v_, static_cast<unsigned>(frame)) != 0;
-    }
-
-    std::size_t MemoryBytes() const override {
-        return sizeof(*this) + tmp_.capacity() * sizeof(short) + setupBytes_ + 4096 /* stdio buffer */;
-    }
+    bool Seek(std::int64_t frame) override { return vorbis_.Seek(frame); }
+    std::size_t MemoryBytes() const override { return sizeof(*this) + vorbis_.MemoryBytes() + tmp_.capacity() * sizeof(float); }
 
 private:
-    static constexpr int kChunk = 1024;
-    stb_vorbis* v_ = nullptr;
-    std::shared_ptr<const std::vector<unsigned char>> mem_;
+    static constexpr std::size_t kChunk = 1024;
+    VorbisStream vorbis_;
     int fileCh_ = 0;
-    std::size_t setupBytes_ = 0;
-    std::vector<short> tmp_;
+    std::vector<float> tmp_;
 };
 
 } // namespace
 
-std::unique_ptr<PcmDecoder> MakeOggDecoder(const std::string& path, std::shared_ptr<const std::vector<unsigned char>> mem,
-                                           std::string* error) {
+std::unique_ptr<PcmDecoder> MakeOggDecoder(std::shared_ptr<AudioByteSource> src, std::string* error) {
     std::unique_ptr<OggPcmDecoder> d(new OggPcmDecoder);
-    if (!d->Open(path, std::move(mem), error)) return nullptr;
+    if (!d->Open(std::move(src), error)) return nullptr;
     return d;
 }
 

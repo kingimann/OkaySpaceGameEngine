@@ -5,7 +5,7 @@ Point at anything and I know where it lives. Say **"work on 5.6.2"** (one number
 see ("feet slide on slopes", "the Hierarchy window"). Every number leads to the files, classes, tests,
 docs and editor windows involved, what already works, what is missing, and what is in flight.
 
-This map holds 58 areas, 374 sub-areas and 1683 numbered parts, and every source file in the repo is meant to appear in it
+This map holds 58 areas, 374 sub-areas and 1684 numbered parts, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
 **How it is organised**
@@ -253,7 +253,7 @@ Details for every sub-area and numbered part: [docs/feature_map/07-audio.md](fea
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
 | [7.1](feature_map/07-audio.md#71-mixer-and-audio-mixer) | Mixer and Audio Mixer | Works | The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice and distance panning... | only four fixed groups (no user-made buses, effect chain or snapshots); low-pass is the only effect; no reverb, occlusion or... |
-| [7.2](feature_map/07-audio.md#72-formats-and-clips) | Formats and clips | Works | Audio files (WAV, OGG, MP3) are decoded once into float clips that keep their channels (mono or stereo; downmix only on request) at the mixer's rate... | the OGG stream uses the vendored stb_vorbis incremental API (our own Vorbis decoder is not on main yet); streams are not... |
+| [7.2](feature_map/07-audio.md#72-formats-and-clips) | Formats and clips | Works | Audio files (WAV, OGG, MP3) are decoded once into float clips that keep their channels (mono or stereo; downmix only on request) at the mixer's rate... | the Vorbis decoder rejects more than 32 channels and codebooks that claim more than 2M entries, and floor type 0 (written by no... |
 | [7.3](feature_map/07-audio.md#73-audio-sources-and-music-player) | Audio sources and music player | Works | The AudioSource component plays a clip or, with Stream, a file read as it plays, with volume, pitch, pan or balance, loop, seek, 3D falloff... | one listener (the main camera); Seek is C++ only (no script or visual-script call); the editor Add Component menu labels and... |
 | [7.4](feature_map/07-audio.md#74-saved-volume-settings) | Saved volume settings | Works | The player's master, group volumes and mutes are saved to Prefs (`audio.*` keys) and loaded on the next start; the Pause Menu and Settings screen... | the volume sliders belong to the pause and settings screens (area 12.8); no subtitle or caption link yet (`CaptionManager` from... |
 
@@ -461,7 +461,7 @@ Details for every sub-area and numbered part: [docs/feature_map/17-launcher-plat
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [17.1](feature_map/17-launcher-platform.md#171-launcher-shell-and-updater) | Launcher shell and updater | Works | The launcher program players double-click (`OkaySpace.exe`): window and sidebar, the pages, settings, notifications, the loading screen, and the... | split `launcher/main.cpp` (1.5 MB, see 19.4 and ROADMAP "Later"); the self-updater verifies nothing but a version string and URL... |
+| [17.1](feature_map/17-launcher-platform.md#171-launcher-shell-and-updater) | Launcher shell and updater | Works | The launcher program players double-click (`OkaySpace.exe`): window and sidebar, the pages, settings, notifications, the loading screen, and the... | split `launcher/main.cpp` (1.5 MB, see 19.4 and ROADMAP "Later"); the update index (`versions.json`) is not signed (17.11); the... |
 | [17.2](feature_map/17-launcher-platform.md#172-accounts-and-sign-in) | Accounts and sign-in | Works | One account service shared by the launcher, editor, player and game scripts: sign up and in, session tokens that refresh, cloud saves and... | the default Supabase project URL and publishable key are hardcoded in `CMakeLists.txt` (old map: remove them; the release... |
 | [17.3](feature_map/17-launcher-platform.md#173-friends-following-parties) | Friends, following, parties | Works | Friend lists with online status and what they play, one-way follows, and parties of friends who follow their leader into a match. | no test for follows or the SQL; `parties.sql` and `follows.sql` must be run once or the features hide |
 | [17.4](feature_map/17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) | Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji | Works | The Discord- and Messenger-style chat: direct messages, group chats, reactions, replies, pins, edit history, scheduled messages, custom status... | most of the 24.8k lines of `main.cpp` are chat code and untested (split, see 19.4); `chat_extras.sql` and `group_chats.sql` are... |

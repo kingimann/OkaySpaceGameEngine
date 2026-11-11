@@ -1,5 +1,5 @@
 // Streaming audio: the byte sources, the WAV and MP3 PcmDecoders and the ring
-// buffer AudioStream. (The OGG decoder lives in AudioDecode.cpp beside stb_vorbis.)
+// buffer AudioStream. (The OGG decoder wrapper lives in AudioDecode.cpp; the decoder is VorbisStream.)
 #include "okay/Audio/AudioStream.hpp"
 #include "okay/Audio/AudioByteSource.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
@@ -144,8 +144,7 @@ private:
     Mp3Stream mp3_;
 };
 
-std::unique_ptr<PcmDecoder> MakeDecoder(std::shared_ptr<AudioByteSource> src, const std::string& path,
-                                        std::shared_ptr<const std::vector<unsigned char>> mem, std::string* error) {
+std::unique_ptr<PcmDecoder> MakeDecoder(std::shared_ptr<AudioByteSource> src, std::string* error) {
     unsigned char head[12] = {0};
     const std::size_t got = src->Read(0, head, 12);
     std::string err;
@@ -154,7 +153,10 @@ std::unique_ptr<PcmDecoder> MakeDecoder(std::shared_ptr<AudioByteSource> src, co
         std::unique_ptr<WavPcmDecoder> w(new WavPcmDecoder);
         if (w->Open(src, &err)) d = std::move(w);
     } else if (got >= 4 && std::memcmp(head, "OggS", 4) == 0) {
-        d = MakeOggDecoder(path, std::move(mem), &err);
+        {
+        std::unique_ptr<PcmDecoder> o = MakeOggDecoder(src, &err);
+        d = std::move(o);
+    }
     } else {
         std::unique_ptr<Mp3PcmDecoder> m(new Mp3PcmDecoder);
         if (m->Open(src, &err)) d = std::move(m);
@@ -188,7 +190,7 @@ std::shared_ptr<AudioStream> AudioStream::OpenFile(const std::string& path, std:
     auto src = AudioByteSource::FromFile(path, error);
     if (!src) return nullptr;
     std::string err;
-    auto dec = audio_detail::MakeDecoder(src, path, nullptr, &err);
+    auto dec = audio_detail::MakeDecoder(src, &err);
     std::shared_ptr<AudioStream> s(new AudioStream);
     if (!dec || !s->Init(std::move(dec))) {
         if (error) *error = err.empty() ? "not a readable audio file" : err;
@@ -202,7 +204,7 @@ std::shared_ptr<AudioStream> AudioStream::OpenMemory(std::shared_ptr<const std::
     if (!bytes || bytes->empty()) { if (error) *error = "no audio data"; return nullptr; }
     auto src = AudioByteSource::FromMemory(bytes);
     std::string err;
-    auto dec = audio_detail::MakeDecoder(src, std::string(), bytes, &err);
+    auto dec = audio_detail::MakeDecoder(src, &err);
     std::shared_ptr<AudioStream> s(new AudioStream);
     if (!dec || !s->Init(std::move(dec))) {
         if (error) *error = err.empty() ? "not a readable audio file" : err;

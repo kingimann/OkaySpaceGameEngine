@@ -11,9 +11,14 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include <Okay.hpp>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <cstdlib>
 #include <sstream>
 #include <string>
+#include <filesystem>
+#include <fstream>
 
 using namespace okay;
 using namespace okay::editor::vsed;
@@ -241,18 +246,18 @@ void ExpectDemo(Scene& scene, const char* where) {
     auto* rt = read->GetComponent<TextRenderer>();
     CHECK(vs && rt);
     if (!vs) return;
-    auto near = [&](const char* name, float want) {
+    auto nearVal = [&](const char* name, float want) {
         const float got = Var(vs, name);
         if (std::fabs(got - want) > 0.01f)
             std::printf("  %s: %s is %g, wanted %g\n", where, name, got, want);
         CHECK(std::fabs(got - want) < 0.01f);
     };
-    near("loop", 3); near("each", 30); near("c", 3); near("reps", 4);
-    near("patha", 1); near("pathb", 10); near("gatev", 5); near("don", 2);
-    near("oncev", 1); near("ch", 4); near("en", 2); near("sw", 7); near("ctr", 3);
-    near("cd", 1); near("delayed", 1); near("waited", 1); near("brk", 3);
-    near("cont", 8); near("fun", 8); near("branched", 1); near("seqa", 1); near("seqb", 10);
-    near("ticks", 4);
+    nearVal("loop", 3); nearVal("each", 30); nearVal("c", 3); nearVal("reps", 4);
+    nearVal("patha", 1); nearVal("pathb", 10); nearVal("gatev", 5); nearVal("don", 2);
+    nearVal("oncev", 1); nearVal("ch", 4); nearVal("en", 2); nearVal("sw", 7); nearVal("ctr", 3);
+    nearVal("cd", 1); nearVal("delayed", 1); nearVal("waited", 1); nearVal("brk", 3);
+    nearVal("cont", 8); nearVal("fun", 8); nearVal("branched", 1); nearVal("seqa", 1); nearVal("seqb", 10);
+    nearVal("ticks", 4);
     CHECK_NEAR(runner->transform->Position().x, 4.0f, 0.01f);
     CHECK(rt->text.find("Ticks 4") != std::string::npos);
     CHECK(vs->Graph() && vs->Graph()->ErrorCount() == 0);
@@ -410,10 +415,25 @@ int main() {
 
     // The playground scene: every flow node, then the thing you see in Play.
     const std::string graph = FlowDemoGraph();
+    std::string playgrounds;   // the logic-runtime scenes' graphs
+    {
+        std::error_code pec;
+        for (const auto& ent : std::filesystem::directory_iterator(std::string(OKAY_SOURCE_DIR) + "/examples/visual_script/playground", pec)) {
+            if (ent.path().extension() != ".okayvs") continue;
+            std::ifstream in(ent.path());
+            playgrounds.append(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            playgrounds += "\n";
+        }
+    }
     for (const VsDef& d : Registry()) {
         if (d.cat != CAT_FLOW) continue;
+        // Flow nodes that came in with the logic runtime are shown by their own
+        // Node Playground scene (VsPlaygroundForNode), not by this one.
         const bool listed = graph.find(" " + std::string(d.type) + "\n") != std::string::npos ||
-                            graph.find(" " + std::string(d.type) + " ") != std::string::npos;
+                            graph.find(" " + std::string(d.type) + " ") != std::string::npos ||
+                            VsPlaygroundForNode(d.type) != nullptr ||
+                            playgrounds.find(" " + std::string(d.type) + "\n") != std::string::npos ||
+                            playgrounds.find(" " + std::string(d.type) + " ") != std::string::npos;
         CHECK(listed);
         if (!listed) std::printf("  demo graph is missing %s\n", d.type);
     }

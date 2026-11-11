@@ -2,6 +2,7 @@
 // Where a node sits in the Add Node menu. Every node has one topic from
 // kPaletteCategories. A blank subcategory means it sits directly in that topic.
 // docs/visual_scripting_naming.md lists the topics for new nodes (including PR 601).
+#include <cctype>
 #include <cstring>
 #include <string>
 
@@ -93,9 +94,153 @@ inline int VsSubOrder(const char* sub) {
     return 1000;
 }
 
+// A text-script builtin (Fn.print). Always a real topic; the long tail is Advanced.
+inline bool VsTokenIs(const std::string& low, const char* tok) {
+    const std::string t = tok;
+    for (std::size_t p = 0; (p = low.find(t, p)) != std::string::npos; p += 1) {
+        const bool left = p == 0 || low[p - 1] == '_' || low[p - 1] == '.';
+        const std::size_t end = p + t.size();
+        const bool right = end == low.size() || low[end] == '_' || low[end] == '.';
+        if (left && right) return true;
+    }
+    return false;
+}
+
+inline VsPlace VsPlaceForBuiltin(const char* name) {
+    std::string low = name ? name : "";
+    for (char& c : low) c = (char)std::tolower((unsigned char)c);
+    auto has = [&](const char* t) { return VsTokenIs(low, t); };
+    if (has("print") || has("log") || has("warn") || has("assert") || has("debug") || has("trace"))
+        return VsAt("Debug");
+    if (has("sound") || has("music") || has("audio") || has("sfx")) return VsAt("Audio");
+    if (has("anim") || has("clip") || has("ik")) return VsAt("Animation");
+    if (has("camera") || has("fov") || has("shake")) return VsAt("Camera");
+    if (has("ui") || has("button") || has("slider") || has("toast") || has("tooltip") || has("font"))
+        return VsAt("UI");
+    if (has("key") || has("mouse") || has("gamepad") || has("joystick") || has("axis") || has("input"))
+        return VsAt("Input");
+    if (has("raycast") || has("overlap") || has("rigid") || has("force") || has("impulse") ||
+        has("velocity") || has("physics") || has("gravity"))
+        return VsAt("Physics");
+    if (has("net") || has("steam") || has("rpc") || has("lobby")) return VsAt("Online");
+    if (has("wait") || has("delay") || has("timescale") || has("pause") || has("timer") || has("cooldown"))
+        return VsAt("Time");
+    if (has("tween")) return VsAt("Movement", "Tweens");
+    if (has("move") || has("teleport") || has("translate") || has("rotate") || has("position") ||
+        has("lookat") || has("look"))
+        return VsAt("Movement");
+    if (has("spawn") || has("destroy") || has("instantiate") || has("prefab") || has("find") ||
+        has("tag") || has("object"))
+        return VsAt("Objects");
+    if (has("scene") || has("quest") || has("dialogue") || has("weather") || has("fog") || has("nav"))
+        return VsAt("Scene");
+    if (has("save") || has("prefs") || has("checkpoint")) return VsAt("Variables", "Saved");
+    if (has("var") || has("global")) return VsAt("Variables");
+    if (has("list") || has("array") || has("map") || has("dict")) return VsAt("Lists & Maps", "Lists");
+    if (has("str") || has("string") || has("format") || has("concat") || has("text")) return VsAt("Text");
+    if (has("random") || has("abs") || has("sin") || has("cos") || has("tan") || has("lerp") ||
+        has("clamp") || has("sqrt") || has("pow") || has("min") || has("max") || has("vec") || has("math"))
+        return VsAt("Math");
+    return VsAt("Advanced");
+}
+
+// Gameplay nodes, escape hatches, and flow nodes added on the logic-runtime branch.
+inline VsPlace VsPlaceForNewNode(const char* type) {
+    if (VsIs(type, "TweenPosition") || VsIs(type, "TweenRotation") || VsIs(type, "TweenScale") ||
+        VsIs(type, "TweenColor"))
+        return VsAt("Movement", "Tweens");
+    if (VsIs(type, "RotateTowards") || VsIs(type, "OrbitAround") || VsIs(type, "FollowPath") ||
+        VsIs(type, "Bob") || VsIs(type, "Spin") || VsIs(type, "Knockback") || VsIs(type, "SmoothFollow") ||
+        VsIs(type, "Patrol") || VsIs(type, "Chase") || VsIs(type, "Flee") || VsIs(type, "Wander"))
+        return VsAt("Movement");
+    if (VsIs(type, "CrossfadeClip") || VsIs(type, "StopAnimation") || VsIs(type, "WaitAnimEnd"))
+        return VsAt("Animation");
+    if (VsIs(type, "PickUp") || VsIs(type, "Drop") || VsIs(type, "Collect")) return VsAt("Objects", "Items");
+    if (VsIs(type, "DoorOpen") || VsIs(type, "DoorClose") || VsIs(type, "Lever") ||
+        VsIs(type, "Damage") || VsIs(type, "Heal") || VsIs(type, "IsDead") || VsIs(type, "Respawn") ||
+        VsIs(type, "SpawnProjectile") || VsIs(type, "Shoot") || VsIs(type, "Ammo") ||
+        VsIs(type, "SpawnEvery") || VsIs(type, "DestroyAfter") || VsIs(type, "PoolGet") ||
+        VsIs(type, "PoolRelease") || VsIs(type, "FindByTag") || VsIs(type, "SendMessage") ||
+        VsIs(type, "Broadcast"))
+        return VsAt("Objects");
+    if (VsIs(type, "OnTagEnter") || VsIs(type, "OnTagStay") || VsIs(type, "OnTagExit") ||
+        VsIs(type, "Proximity"))
+        return VsAt("Physics", "Collisions");
+    if (VsIs(type, "CanSee")) return VsAt("Physics", "Queries");
+    if (VsIs(type, "OnInteract") || VsIs(type, "OnDeath") || VsIs(type, "OnHealthChanged"))
+        return VsAt("Events");
+    if (VsIs(type, "OnAction") || VsIs(type, "OnActionUp") || VsIs(type, "OnActionHeld"))
+        return VsAt("Input", "Controls");
+    if (VsIs(type, "GetMoveAxis")) return VsAt("Input", "Axes");
+    if (VsIs(type, "ScoreAdd") || VsIs(type, "ScoreSet") || VsIs(type, "ScoreGet")) return VsAt("Variables");
+    if (VsIs(type, "CheckpointSave") || VsIs(type, "CheckpointLoad")) return VsAt("Variables", "Saved");
+    if (VsIs(type, "Countdown")) return VsAt("Flow", "Timing");
+    if (VsIs(type, "SwitchString") || VsIs(type, "SwitchCases") || VsIs(type, "LatchGate"))
+        return VsAt("Flow");
+    if (VsIs(type, "ForEachMap")) return VsAt("Flow", "Loops");
+    if (VsIs(type, "RunGraph")) return VsAt("Flow", "Functions");
+    if (VsIs(type, "Win") || VsIs(type, "Lose") || VsIs(type, "RestartScene")) return VsAt("Scene");
+    if (VsIs(type, "SetProgress")) return VsAt("UI", "Bars");
+    if (VsIs(type, "ShowFloatingText") || VsIs(type, "FadeScreen")) return VsAt("UI");
+    if (VsIs(type, "SetCameraTarget") || VsIs(type, "Zoom") || VsIs(type, "SwitchCamera"))
+        return VsAt("Camera");
+    if (VsIs(type, "PlaySoundAt") || VsIs(type, "StopSound")) return VsAt("Audio");
+    if (VsIs(type, "RandomPick") || VsIs(type, "RandomPoint")) return VsAt("Math", "Random");
+    if (VsIs(type, "ShuffleList") || VsIs(type, "ListMin") || VsIs(type, "ListMax"))
+        return VsAt("Lists & Maps", "Lists");
+    if (VsPre(type, "Map") || VsIs(type, "NewMap")) return VsAt("Lists & Maps", "Maps");
+    if (VsIs(type, "IsValid")) return VsAt("Math", "Compare");
+    if (VsIs(type, "NotAnd") || VsIs(type, "NotOr") || VsIs(type, "AllTrue") || VsIs(type, "AnyTrue") ||
+        VsIs(type, "IsEven") || VsIs(type, "IsOdd") || VsIs(type, "PickByIndex") || VsIs(type, "FirstValid") ||
+        VsIs(type, "IsInState"))
+        return VsAt("Math", "Compare");
+    if (VsIs(type, "DoWhile") || VsIs(type, "ForStep") || VsIs(type, "StepThrough") || VsIs(type, "CountUntil"))
+        return VsAt("Flow", "Loops");
+    if (VsIs(type, "WaitUntil") || VsIs(type, "WaitWhile") || VsIs(type, "WaitSteady") || VsIs(type, "WaitLimit"))
+        return VsAt("Flow", "Timing");
+    if (VsIs(type, "BranchInOrder") || VsIs(type, "BecameTrue") || VsIs(type, "BecameFalse") ||
+        VsIs(type, "WeightedBranch") || VsIs(type, "SetState") || VsIs(type, "GetState") ||
+        VsIs(type, "WhenStateBecomes") || VsIs(type, "WhenStateLeaves"))
+        return VsAt("Flow");
+    if (VsIs(type, "HeldLong") || VsIs(type, "HappenedNear") || VsIs(type, "EveryWhile") ||
+        VsIs(type, "BlendTime") || VsIs(type, "Stopwatch") || VsIs(type, "WaitBetween"))
+        return VsAt("Flow", "Timing");
+    if (VsIs(type, "EaseToward")) return VsAt("Math", "Curves");
+    if (VsIs(type, "IsSlightly") || VsIs(type, "IsMostly") || VsIs(type, "IsVery") || VsIs(type, "PickBest"))
+        return VsAt("Math", "Compare");
+    if (VsIs(type, "ShuffleBag") || VsIs(type, "ChanceEachSecond")) return VsAt("Math", "Random");
+    if (VsIs(type, "TryFirst") || VsIs(type, "AllSucceed") || VsIs(type, "FlipOutcome") ||
+        VsIs(type, "AlwaysSucceed") || VsIs(type, "RepeatUntilFail") || VsIs(type, "SucceedNow") ||
+        VsIs(type, "FailNow") || VsIs(type, "CheckOutcome"))
+        return VsAt("Advanced", "Behavior");
+    if (VsIs(type, "InCone") || VsIs(type, "LineOfSight") || VsIs(type, "CountNearby") ||
+        VsIs(type, "NearestObject") || VsIs(type, "FarthestObject"))
+        return VsAt("Physics", "Queries");
+    if (VsIs(type, "InsideArea") || VsIs(type, "SortByDistance")) return VsAt("Scene");
+    if (VsIs(type, "WhenChanged") || VsIs(type, "DoUnless")) return VsAt("Flow");
+    if (VsIs(type, "RememberValue") || VsIs(type, "RecallValue")) return VsAt("Variables", "Saved");
+    if (VsIs(type, "HealthEmpty") || VsIs(type, "HealthFull") || VsIs(type, "AddBuff"))
+        return VsAt("Objects", "Survival");
+    if (VsIs(type, "AdvanceObjective")) return VsAt("Scene", "Story");
+    if (VsIs(type, "AssertThis") || VsIs(type, "LogOnce") || VsIs(type, "DrawDebugLine"))
+        return VsAt("Debug");
+    if (VsIs(type, "GetProperty") || VsIs(type, "SetProperty") || VsIs(type, "CallMethod") ||
+        VsIs(type, "GetComponent") || VsIs(type, "AddComponent") || VsIs(type, "RunSnippet") ||
+        VsIs(type, "CallScript"))
+        return VsAt("Advanced");
+    return {};
+}
+
 // Hand-written nodes (no '.' in the type). Unknown types come back with a null category.
 inline VsPlace VsPlaceForNode(const char* type) {
     if (!type || !type[0]) return {};
+    if (VsPre(type, "Lb")) {
+#include "generated/library_place.inc"
+    }
+    if (VsPre(type, "Gl") && type[2] >= 'A' && type[2] <= 'Z') {   // the gameplay library (GlGetHealth ...)
+#include "generated/gplib_place.inc"
+    }
+    if (VsPre(type, "Fn.")) return VsPlaceForBuiltin(type + 3);
     // Events that belong with the thing they listen to.
     if (VsPre(type, "OnKey")) return VsAt("Input", "Keys");
     if (VsPre(type, "OnMouse") || VsIs(type, "OnClick")) return VsAt("Input", "Mouse");
@@ -222,6 +367,7 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsIs(type, "GetX") || VsIs(type, "GetY") || VsIs(type, "GetZ") || VsIs(type, "GetPosition") ||
         VsIs(type, "SetPosition") || VsIs(type, "SetPositionVec") || VsIs(type, "Translate") ||
         VsIs(type, "MoveBy") || VsIs(type, "MoveTowards") || VsIs(type, "Teleport")) return VsAt("Movement");
+    if (VsPlace extra = VsPlaceForNewNode(type); extra.category) return extra;
     return {};
 }
 

@@ -111,6 +111,22 @@ inline const VsSharedLevel kSharedLevels[] = {
 
 inline int VsSharedLevelCount() { return (int)(sizeof kSharedLevels / sizeof kSharedLevels[0]); }
 
+// Levels for the logic-round nodes. Kept beside kSharedLevels so that shared
+// list stays the 84 types both branches already agree on.
+inline const VsSharedLevel kLogicLevels[] = {
+#include "generated/library_levels.inc"
+#include "generated/gplib_levels.inc"
+};
+
+inline int VsLogicLevelCount() { return (int)(sizeof kLogicLevels / sizeof kLogicLevels[0]); }
+
+inline const VsLevel* VsLogicLevel(const char* type) {
+    if (!type) return nullptr;
+    for (const VsSharedLevel& s : kLogicLevels)
+        if (std::strcmp(s.type, type) == 0) return &s.level;
+    return nullptr;
+}
+
 // The everyday nodes. A first script is built from these.
 inline const char* kBasicTypes[] = {
     "OnStart", "OnUpdate", "OnKey", "OnKeyUp", "OnClick", "OnCollision", "OnTrigger",
@@ -166,8 +182,25 @@ inline VsLevel VsLevelForNode(const char* type) {
         VsLevelIs(type, "SaveCreation") || VsLevelIs(type, "LoadCreation") ||
         VsLevelIs(type, "PlaySequence") || VsLevelIs(type, "StopSequence") || VsLevelIs(type, "OnSequenceEvent") ||
         VsLevelIs(type, "Vault") || VsLevelIs(type, "Mantle") || VsLevelIs(type, "LedgeGrab") ||
-        VsLevelIs(type, "ClimbUp") || VsLevelIs(type, "LetGo") || VsLevelIs(type, "Shimmy"))
+        VsLevelIs(type, "ClimbUp") || VsLevelIs(type, "LetGo") || VsLevelIs(type, "Shimmy") ||
+        VsLevelIs(type, "GetProperty") || VsLevelIs(type, "SetProperty") ||
+        VsLevelIs(type, "CallMethod") || VsLevelIs(type, "GetComponent") ||
+        VsLevelIs(type, "AddComponent") || VsLevelIs(type, "RunSnippet"))
         return VsLevel::Advanced;
+    if (VsLevelIs(type, "NotAnd") || VsLevelIs(type, "NotOr") || VsLevelIs(type, "AllTrue") ||
+        VsLevelIs(type, "AnyTrue") || VsLevelIs(type, "IsEven") || VsLevelIs(type, "IsOdd") ||
+        VsLevelIs(type, "PickByIndex") || VsLevelIs(type, "FirstValid") || VsLevelIs(type, "IsInState") ||
+        VsLevelIs(type, "GetState") || VsLevelIs(type, "SetState"))
+        return VsLevel::Basic;
+    if (VsLevelIs(type, "IsSlightly") || VsLevelIs(type, "IsMostly") || VsLevelIs(type, "IsVery") ||
+        VsLevelIs(type, "PickBest") || VsLevelIs(type, "InsideArea") || VsLevelIs(type, "CountNearby") ||
+        VsLevelIs(type, "EaseToward"))
+        return VsLevel::Basic;
+    if (VsLevelIs(type, "TryFirst") || VsLevelIs(type, "AllSucceed") || VsLevelIs(type, "FlipOutcome") ||
+        VsLevelIs(type, "AlwaysSucceed") || VsLevelIs(type, "RepeatUntilFail") || VsLevelIs(type, "WaitBetween") ||
+        VsLevelIs(type, "SucceedNow") || VsLevelIs(type, "FailNow") || VsLevelIs(type, "CheckOutcome"))
+        return VsLevel::Advanced;
+    if (const VsLevel* logic = VsLogicLevel(type)) return *logic;
     return VsLevel::Intermediate;
 }
 
@@ -241,6 +274,14 @@ inline const char* VsNodeExample(const char* type) {
         {"Destroy", "Remove the coin after it is picked up."},
         {"SetActive", "Hide the door until the key is found."},
         {"GetPosition", "Read where the player is, then aim at that point."},
+        {"LbApproach", "Ease a health bar from where it is toward the new value."},
+        {"LbIsPositive", "True once the score climbs above zero."},
+        {"LbHasText", "True when the player typed a name."},
+        {"LbIsBlinking", "A warning light that is on for half a second, then off."},
+        {"LbIsQuestDone", "True when every step of the quest is finished."},
+        {"LbCouldSpend", "True when the player can afford the sword."},
+        {"LbRunAndCheck", "Open the door, and only then play the sound, if the door opened."},
+        {"LbTimeLeft", "How many seconds are left on a ten second fuse."},
         {"SetPosition", "Put the player back at the start."},
         {"Translate", "Nudge the platform 1 unit to the right."},
         {"Key", "True while W is held, so the player keeps walking."},

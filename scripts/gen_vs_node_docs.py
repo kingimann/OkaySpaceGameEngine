@@ -35,11 +35,26 @@ def mask_quoted_braces(s):
 def unmask(s):
     return s.replace('\x01', '}').replace('\x02', '{')
 
+def read_inc(path):
+    """File text with each #include "generated/x.inc" line replaced by that file."""
+    text = pathlib.Path(path).read_text()
+    def sub(m):
+        inc = ROOT / "editor" / m.group(1)
+        if not inc.exists():
+            inc = ROOT / "engine/include" / m.group(1)
+        return inc.read_text() if inc.exists() else m.group(0)
+    return re.sub(r'#include "((?:generated|okay/VisualScript)/[\w.]+\.inc)"', sub, text)
+
 def load_nodes():
-    text = (ROOT / "editor/VisualScriptEditor.hpp").read_text()
+    text = read_inc(ROOT / "editor/VisualScriptEditor.hpp")
     a = text.find("VsWithTargetPins({")
     b = text.find("}));", a)
     body = mask_quoted_braces(text[a:b])
+    # Hand nodes added next to the text-script builtins (Get Property, Call Method ...).
+    c = text.find("inline std::vector<VsDef> VsWithBuiltinDefs")
+    if c >= 0:
+        d = text.find("return defs;", c)
+        body += "\n" + mask_quoted_braces(text[c:d].replace("defs.push_back(", "").replace("});", "},"))
     pat = re.compile(
         r'\{\s*"([^"]+)"\s*,\s*"((?:\\.|[^"\\])*)"\s*,\s*(CAT_\w+)\s*,\s*(true|false)\s*,'
         r'\s*\{([^}]*)\}\s*,\s*\{([^}]*)\}\s*,\s*\{([^}]*)\}\s*,\s*(\d+)\s*,\s*(nullptr|"[^"]*")',
@@ -63,7 +78,7 @@ def load_friendly():
     The registry text keeps the old tokens; the editor renames them at start-up
     (ApplyFriendlyNames), so the docs have to use the renamed pins.
     """
-    text = (ROOT / "editor/VisualScriptNames.hpp").read_text()
+    text = read_inc(ROOT / "editor/VisualScriptNames.hpp")
     arrays = {n: pins_of(b) for n, b in
               re.findall(r'inline const char\* const (\w+)\[\]\s*=\s*\{([^}]*)\};', text)}
     out = {}
@@ -97,24 +112,29 @@ def apply_friendly(nodes, friendly):
                     n["renames"][n[key][i]] = new
 
 def load_help():
-    text = (ROOT / "editor/VisualScriptNodeHelp.hpp").read_text()
+    text = read_inc(ROOT / "editor/VisualScriptNodeHelp.hpp")
     return dict(re.findall(r'\{\s*"([^"]+)"\s*,\s*"((?:\\.|[^"\\])*)"\s*\}', text))
 
 def load_rows():
-    text = (ROOT / "engine/src/VisualScript/VsTypes.cpp").read_text()
-    return {t: (e == "true", i, o) for t, e, i, o in
+    text = read_inc(ROOT / "engine/src/VisualScript/VsTypes.cpp")
+    rows = {t: (e == "true", i, o) for t, e, i, o in
             re.findall(r'\{"([^"]+)",\s*(true|false),\s*"([^"]*)",\s*"([^"]*)"\}', text)}
+    # Escape-hatch nodes have their signature in code, not in the table.
+    for t, e, i, o in re.findall(
+            r'type == "(\w+)"\)\s*\{\s*static const NodeSignature s\{(true|false),\s*"([^"]*)",\s*"([^"]*)"\}', text):
+        rows.setdefault(t, (e == "true", i, o))
+    return rows
 
 def load_targets():
-    text = (ROOT / "engine/src/VisualScript/NodeGraph.cpp").read_text()
+    text = read_inc(ROOT / "engine/src/VisualScript/NodeGraph.cpp")
     a = text.find("static const std::unordered_map<std::string, int> kPins")
     b = text.find("};", a)
     return {t: int(n) for t, n in re.findall(r'\{"([^"]+)",\s*(\d+)\}', text[a:b])}
 
-TYPE_NAME = {"N": "Number", "B": "Bool", "T": "Text", "V": "Vector3", "O": "Object", "L": "List", "A": "Any"}
+TYPE_NAME = {"M": "Map", "N": "Number", "B": "Bool", "T": "Text", "V": "Vector3", "O": "Object", "L": "List", "A": "Any"}
 TYPE_DEFAULT = {
     "Number": "0", "Bool": "false", "Text": "empty text", "Vector3": "(0, 0, 0)",
-    "Object": "no object", "List": "an empty list", "Any": "nothing", "Flow": "",
+    "Object": "no object", "Map": "an empty map", "List": "an empty list", "Any": "nothing", "Flow": "",
 }
 
 # Runtime fallbacks that are not the plain zero/false/empty value. Keyed by type + pin name.

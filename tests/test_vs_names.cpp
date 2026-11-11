@@ -111,6 +111,50 @@ int main() {
         }
     }
 
+    // Generated bindings and text-script builtins use the same rules. The raw
+    // identifier stays searchable (it is not the title).
+    int apiNamed = 0, fnNamed = 0;
+    for (const VsDef& d : Registry()) {
+        const bool fn = d.type && std::strncmp(d.type, "Fn.", 3) == 0;
+        const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
+        const VsName* named = FindVsName(d.type);
+        if (!fn && !api && !named) continue;
+        VsNameKind kind = VsNameKind::Calculation;
+        if (named) kind = named->kind;
+        else if (d.title && std::strncmp(d.title, "On ", 3) == 0) kind = VsNameKind::Event;
+        else if (d.title && (std::strncmp(d.title, "Is ", 3) == 0 || std::strncmp(d.title, "Has ", 4) == 0)) kind = VsNameKind::Question;
+        else if (d.title && std::strncmp(d.title, "Get ", 4) == 0) kind = VsNameKind::Reading;
+        else if (d.execIn) kind = VsNameKind::Action;
+        const std::string why = LintVsTitle(d.title, kind);
+        CHECK(why.empty());
+        if (!why.empty()) std::printf("  %s title \"%s\": %s\n", d.type, d.title ? d.title : "", why.c_str());
+        auto checkPins = [&](const std::vector<const char*>& pins) {
+            for (const char* p : pins) {
+                const std::string pinWhy = LintVsPin(p);
+                CHECK(pinWhy.empty());
+                if (!pinWhy.empty()) std::printf("  %s pin \"%s\": %s\n", d.type, p ? p : "", pinWhy.c_str());
+            }
+        };
+        checkPins(d.dataIn);
+        checkPins(d.dataOut);
+        checkPins(d.execOut);
+        const std::string keys = VsNodeSearchText(d.type);
+        if (api) {
+            CHECK(keys.find(api->title) != std::string::npos);
+            CHECK(keys.find(api->member) != std::string::npos);
+            ++apiNamed;
+        }
+        if (fn) {
+            CHECK(keys.find(d.type + 3) != std::string::npos);
+            ++fnNamed;
+        }
+        if (named && named->oldTitle && named->oldTitle[0])
+            CHECK(keys.find(named->oldTitle) != std::string::npos);
+    }
+    CHECK(apiNamed > 50);
+    CHECK(fnNamed > 100);
+    std::printf("  friendly generated names: %d bindings, %d text-script builtins\n", apiNamed, fnNamed);
+
     okay::Log::sink = sink;
     TEST_MAIN_RESULT();
 }

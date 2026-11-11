@@ -1,0 +1,40 @@
+# Gameplay library: progression. Every node below is declared here; the first chain runs in Play.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 GlLevelFromExperience
+pos 2 300 240
+default 2 0 450
+default 2 1 100
+node 3 SetVar level
+pos 3 300 40
+exec 1 0 3
+data 3 0 2 0
+node 100 GlLevelFromExperience
+pos 100 40 520
+default 100 0 400
+default 100 1 100
+node 101 GlExperienceForLevel
+pos 101 300 520
+default 101 0 3
+default 101 1 100
+node 102 GlExperienceToNextLevel
+pos 102 560 520
+default 102 0 250
+default 102 1 100
+node 103 GlGrowByLevel
+pos 103 820 520
+default 103 0 10
+default 103 1 0.1
+default 103 2 3
+node 104 GlPriceWithDiscount
+pos 104 1080 520
+default 104 0 80
+default 104 1 0.25
+node 105 GlCooldownPortion
+pos 105 1340 520
+default 105 0 3
+default 105 1 12
+node 106 GlRollChance
+pos 106 40 710
+default 106 0 1

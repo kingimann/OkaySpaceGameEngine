@@ -1,0 +1,22 @@
+# Switch Number: 5 matches the third of the cases 0, 2, 5, 9, so the flow leaves by Case 3.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 Const 5
+pos 2 40 220
+node 3 SwitchCases 0,2,5,9
+pos 3 320 40
+exec 1 0 3
+data 3 0 2 0
+node 4 Const "Switch Number: 5 chose case 3"
+pos 4 640 220
+node 5 SetText Readout
+pos 5 640 40
+exec 3 2 5
+data 5 0 4 0
+node 6 Const 3
+pos 6 640 360
+node 7 SetVar chosen
+pos 7 920 40
+exec 5 0 7
+data 7 0 6 0

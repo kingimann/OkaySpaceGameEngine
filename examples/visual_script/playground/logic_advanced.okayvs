@@ -1,0 +1,33 @@
+node 1 OnUpdate
+entry OnUpdate 1
+node 2 LbWeighPick
+default 2 0 1
+default 2 1 2
+default 2 2 3
+default 2 3 0
+default 2 4 1
+default 2 5 1
+default 2 6 8
+default 2 7 1
+node 3 LbResponseCurve
+default 3 1 0
+default 3 2 3
+default 3 3 1
+data 3 0 2 0
+node 4 LbLerpClamp
+default 4 0 -1.5
+default 4 1 1.8
+data 4 2 3 0
+node 5 GetX
+node 6 DeltaTime
+node 7 LbSpringStep
+default 7 1 0
+default 7 3 18
+data 7 0 5 0
+data 7 2 4 0
+data 7 4 6 0
+node 8 SetPosition
+default 8 1 0.5
+default 8 2 0
+data 8 0 7 0
+exec 1 0 8

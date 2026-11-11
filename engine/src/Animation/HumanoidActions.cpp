@@ -1989,6 +1989,7 @@ bool RequestLedgeGrab(GameObject* go) {
 
 bool RequestClimbUp(GameObject* go) {
     if (!go || IsDead(go)) return false;
+    TraverseValidate(go);
     AbortTraverse(go);
     SetHanging(go, false);
     const bool played = PlayNamed(go, "ClimbUp", "ClimbUp");
@@ -2010,6 +2011,7 @@ bool RequestClimbUp(GameObject* go) {
 
 void RequestLetGo(GameObject* go) {
     if (!go) return;
+    TraverseValidate(go);
     AbortTraverse(go);
     SetHanging(go, false);
     PlayNamed(go, "LetGo", "LetGo");

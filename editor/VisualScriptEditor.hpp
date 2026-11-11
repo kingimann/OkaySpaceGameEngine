@@ -20,6 +20,8 @@
 #include "okay/Scene/Layers.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
 #include "VisualScriptChoices.hpp"
@@ -28,6 +30,11 @@
 #include "VisualScriptLevels.hpp"
 #include "VisualScriptTemplates.hpp"
 #include "VsCanvasTools.hpp"
+#include "VsPlayground.hpp"
+#include "VisualScriptNames.hpp"
+#include "VisualScriptLevels.hpp"
+#include "VisualScriptCategories.hpp"
+#include "VisualScriptFriendly.hpp"
 #include "DocRecovery.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -48,7 +55,7 @@
 namespace okay::editor::vsed {
 
 // ---- Node registry: describes each node type the editor can place ----------
-enum VsCat { CAT_EVENT, CAT_FLOW, CAT_VAR, CAT_MATH, CAT_LOGIC, CAT_INPUT, CAT_XFORM, CAT_ACTION, CAT_DATA, CAT_NET, CAT_API, CAT_COUNT };
+enum VsCat { CAT_EVENT, CAT_FLOW, CAT_VAR, CAT_MATH, CAT_LOGIC, CAT_INPUT, CAT_XFORM, CAT_ACTION, CAT_DATA, CAT_NET, CAT_API, CAT_SCRIPT, CAT_COUNT };
 
 inline ImU32 CatColor(int cat) {
     // Calm, distinct header colours: readable at a glance, not neon.
@@ -63,6 +70,7 @@ inline ImU32 CatColor(int cat) {
         case CAT_ACTION: return IM_COL32(176, 114, 78, 255);
         case CAT_NET:    return IM_COL32(84, 114, 170, 255);
         case CAT_API:    return IM_COL32(122, 142, 88, 255);
+        case CAT_SCRIPT: return IM_COL32(150, 118, 72, 255);
         default:         return IM_COL32(108, 114, 128, 255);
     }
 }
@@ -78,8 +86,6 @@ struct VsDef {
     int         param;                // 0 none, 1 text field, 2 compare-op combo
     const char* paramHint;
     // How hard this node is. Registry() fills it from VisualScriptLevels.hpp.
-    // A new row can leave it out; the default is replaced there. PR 601's nodes
-    // are named in kSharedLevels so they get a level too.
     VsLevel     level = VsLevel::Intermediate;
 };
 
@@ -107,15 +113,34 @@ inline std::vector<VsDef> VsWithTargetPins(std::vector<VsDef> defs) {
 // okay/VisualScript/VsApi.hpp): one per property / method, pins included.
 inline std::vector<VsDef> VsWithApiDefs(std::vector<VsDef> defs) {
     for (const okay::vs::VsApiEntry& e : okay::vs::VsApiEntries()) {
-        VsDef d{e.type.c_str(), e.title.c_str(), CAT_API, e.exec, {}, {}, {}, 0, nullptr};
+        VsDef d{e.type.c_str(), VsFriendlyApiTitle(e), CAT_API, e.exec, {}, {}, {}, 0, nullptr};
         if (e.exec) d.execOut.push_back("");
-        for (const auto& p : e.ins) d.dataIn.push_back(p.name.c_str());
-        for (const auto& p : e.outs) d.dataOut.push_back(p.name.c_str());
+        VsFillFriendlyPins(e, d.dataIn, d.dataOut);
         defs.push_back(std::move(d));
     }
     return defs;
 }
 inline bool IsApiNode(const std::string& t) { return okay::vs::VsApiFind(t) != nullptr; }
+
+// One node per text-script builtin, plus the escape hatches. Pointers stay valid:
+// BuiltinNodes() keeps its strings for the process lifetime.
+inline std::vector<VsDef> VsWithBuiltinDefs(std::vector<VsDef> defs) {
+    for (const okay::vs::BuiltinNodeInfo& n : okay::vs::BuiltinNodes()) {
+        VsDef d{n.type.c_str(), VsFriendlyBuiltinTitle(n.builtin), CAT_SCRIPT, true, {""},
+                {"First", "Second", "Third", "Fourth"}, {"Result"}, 0, nullptr};
+        defs.push_back(std::move(d));
+    }
+    defs.push_back({"GetProperty", "Get Property", CAT_DATA, true, {""}, {"Path","Target"}, {"Value"}, 1, "Component.property"});
+    defs.push_back({"SetProperty", "Set Property", CAT_ACTION, true, {""}, {"Value","Path","Target"}, {}, 1, "Component.property"});
+    defs.push_back({"CallMethod", "Call Method", CAT_ACTION, true, {""}, {"A","B","C","D","Method"}, {"Result"}, 1, "Type.Method"});
+    defs.push_back({"GetComponent", "Get Component", CAT_DATA, true, {""}, {"Target","Type"}, {"Object","Has"}, 1, "component type"});
+    defs.push_back({"AddComponent", "Add Component", CAT_ACTION, true, {""}, {"Target","Type"}, {}, 1, "component type"});
+    defs.push_back({"FindByTag", "Find By Tag", CAT_DATA, false, {}, {"Tag"}, {"Object"}, 1, "tag"});
+    defs.push_back({"SendMessage", "Send Message", CAT_ACTION, true, {""}, {"Message","Target"}, {}, 1, "message name"});
+    defs.push_back({"Broadcast", "Broadcast", CAT_ACTION, true, {""}, {"Message"}, {}, 1, "message name"});
+    defs.push_back({"RunSnippet", "Run Snippet", CAT_ACTION, true, {""}, {"Code"}, {"Result"}, 1, "a line of text script"});
+    return defs;
+}
 
 // Titles and renamed pins come from VisualScriptNames.hpp. The strings in the
 // list below stay the file token's fallback for nodes that are not renamed yet.
@@ -151,14 +176,14 @@ inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime),
 // then the generated engine-API nodes.
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = ApplyLevels(ApplyFriendlyNames(VsWithApiDefs(VsWithTargetPins({
+    static const std::vector<VsDef> defs = ApplyLevels(ApplyFriendlyNames(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         // Flow
         {"Branch",   "Branch",    CAT_FLOW, true, {"True","False"}, {"Cond"}, {}, 0, nullptr},
         {"Sequence", "Sequence",  CAT_FLOW, true, {"0","1"}, {}, {}, 0, nullptr},
-        {"Once",     "Once",      CAT_FLOW, true, {""}, {}, {}, 0, nullptr},
+        {"Once",     "Once",      CAT_FLOW, true, {""}, {"Reset"}, {}, 0, nullptr},
         {"Timer",    "Every (s)", CAT_FLOW, true, {""}, {}, {}, 1, "seconds"},
         // Variables
         {"GetVar",   "Get Var",   CAT_VAR, false, {}, {}, {"Value"}, 1, "name"},
@@ -336,6 +361,144 @@ inline const std::vector<VsDef>& Registry() {
         {"ParticlePlay",   "Play Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ParticleStop",   "Stop Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ParticleBurst",  "Burst Particles",     CAT_ACTION, true, {""}, {"Count"}, {}, 0, nullptr},
+        // High-level gameplay. Ready-made actions; the low-level nodes above stay as they are.
+        {"RotateTowards", "Rotate Towards", CAT_XFORM, true, {""}, {"Speed","Target"}, {}, 0, nullptr},
+        {"OrbitAround", "Orbit Around", CAT_XFORM, true, {""}, {"Centre","Radius","Speed"}, {}, 0, nullptr},
+        {"FollowPath", "Follow Path", CAT_XFORM, true, {"Moving","Done"}, {"Speed","Points"}, {}, 1, "x,y,z; x,y,z"},
+        {"Bob", "Bob", CAT_XFORM, true, {""}, {"Height","Speed"}, {}, 0, nullptr},
+        {"Spin", "Spin", CAT_XFORM, true, {""}, {"Speed"}, {}, 0, nullptr},
+        {"Knockback", "Knockback", CAT_XFORM, true, {""}, {"From","Force"}, {}, 0, nullptr},
+        {"SmoothFollow", "Smooth Follow", CAT_XFORM, true, {""}, {"Target","Smoothing"}, {}, 0, nullptr},
+        {"TweenPosition", "Tween Position", CAT_XFORM, true, {""}, {"To","Seconds"}, {}, 1, "linear, in, out, inout"},
+        {"TweenRotation", "Tween Rotation", CAT_XFORM, true, {""}, {"Yaw","Seconds"}, {}, 1, "linear, in, out, inout"},
+        {"TweenScale", "Tween Scale", CAT_XFORM, true, {""}, {"To","Seconds"}, {}, 1, "linear, in, out, inout"},
+        {"TweenColor", "Tween Color", CAT_XFORM, true, {""}, {"R","G","B","A","Seconds"}, {}, 1, "linear, in, out, inout"},
+        {"CrossfadeClip", "Crossfade Animation", CAT_ACTION, true, {""}, {"Blend"}, {}, 1, "clip name"},
+        {"StopAnimation", "Stop Animation", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"WaitAnimEnd", "Wait For Animation End", CAT_FLOW, true, {""}, {}, {}, 0, nullptr},
+        {"OnInteract", "On Interact", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"PickUp", "Pick Up", CAT_ACTION, true, {""}, {"Item"}, {}, 0, nullptr},
+        {"Drop", "Drop", CAT_ACTION, true, {""}, {"Item"}, {}, 0, nullptr},
+        {"DoorOpen", "Door Open", CAT_ACTION, true, {""}, {"Degrees","Seconds"}, {}, 0, nullptr},
+        {"DoorClose", "Door Close", CAT_ACTION, true, {""}, {"Seconds"}, {}, 0, nullptr},
+        {"Lever", "Lever", CAT_ACTION, true, {"On","Off"}, {}, {}, 0, nullptr},
+        {"Collect", "Collect", CAT_ACTION, true, {""}, {"Amount"}, {}, 0, nullptr},
+        {"OnTagEnter", "On Tag Enter", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
+        {"OnTagStay", "On Tag Stay", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
+        {"OnTagExit", "On Tag Exit", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
+        {"Proximity", "Proximity", CAT_LOGIC, false, {}, {"Target","Distance"}, {"Near"}, 0, nullptr},
+        {"Damage", "Damage", CAT_ACTION, true, {""}, {"Amount","Target"}, {}, 0, nullptr},
+        {"Heal", "Heal", CAT_ACTION, true, {""}, {"Amount","Target"}, {}, 0, nullptr},
+        {"IsDead", "Is Dead", CAT_LOGIC, false, {}, {"Target"}, {"Dead"}, 0, nullptr},
+        {"OnDeath", "On Death", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnHealthChanged", "On Health Changed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"Respawn", "Respawn", CAT_ACTION, true, {""}, {"Target"}, {}, 0, nullptr},
+        {"SpawnProjectile", "Spawn Projectile", CAT_ACTION, true, {""}, {"Speed"}, {"Object"}, 1, "prefab"},
+        {"Shoot", "Shoot", CAT_ACTION, true, {""}, {"Max Dist","Damage"}, {"Hit","Object"}, 0, nullptr},
+        {"Ammo", "Ammo", CAT_ACTION, true, {"Fired","Empty"}, {}, {"Left"}, 1, "shots"},
+        {"Patrol", "Patrol Waypoints", CAT_ACTION, true, {""}, {"Speed","Points"}, {}, 1, "x,y,z; x,y,z"},
+        {"Chase", "Chase Target", CAT_ACTION, true, {""}, {"Target","Speed"}, {}, 0, nullptr},
+        {"Flee", "Flee", CAT_ACTION, true, {""}, {"Threat","Speed"}, {}, 0, nullptr},
+        {"Wander", "Wander", CAT_ACTION, true, {""}, {"Radius","Speed"}, {}, 0, nullptr},
+        {"CanSee", "Can See Target", CAT_LOGIC, false, {}, {"Target","Distance","Cone"}, {"Seen"}, 0, nullptr},
+        {"SpawnEvery", "Spawn Every", CAT_ACTION, true, {""}, {"Seconds"}, {"Object"}, 1, "prefab"},
+        {"DestroyAfter", "Destroy After", CAT_ACTION, true, {""}, {"Seconds","Target"}, {}, 0, nullptr},
+        {"PoolGet", "Pool Get", CAT_ACTION, true, {""}, {}, {"Object"}, 1, "prefab"},
+        {"PoolRelease", "Pool Release", CAT_ACTION, true, {""}, {"Item"}, {}, 1, "pool name"},
+        {"ScoreAdd", "Score Add", CAT_VAR, true, {""}, {"Amount"}, {}, 0, nullptr},
+        {"ScoreSet", "Score Set", CAT_VAR, true, {""}, {"Value"}, {}, 0, nullptr},
+        {"ScoreGet", "Score Get", CAT_VAR, false, {}, {}, {"Score"}, 0, nullptr},
+        {"Countdown", "Countdown", CAT_FLOW, true, {""}, {"Seconds"}, {}, 1, "seconds"},
+        {"Win", "Win", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"Lose", "Lose", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"RestartScene", "Restart Scene", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"CheckpointSave", "Checkpoint Save", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"CheckpointLoad", "Checkpoint Load", CAT_ACTION, true, {"Loaded","Missing"}, {}, {}, 0, nullptr},
+        {"SetProgress", "Set Progress Bar", CAT_ACTION, true, {""}, {"Value","Target"}, {}, 0, nullptr},
+        {"ShowFloatingText", "Show Floating Text", CAT_ACTION, true, {""}, {"Text","Target"}, {}, 0, nullptr},
+        {"FadeScreen", "Fade Screen", CAT_ACTION, true, {""}, {"Amount","Panel"}, {}, 0, nullptr},
+        {"SetCameraTarget", "Set Camera Target", CAT_ACTION, true, {""}, {"Target","Smoothing"}, {}, 0, nullptr},
+        {"Zoom", "Zoom", CAT_ACTION, true, {""}, {"Delta"}, {}, 0, nullptr},
+        {"SwitchCamera", "Switch Camera", CAT_ACTION, true, {""}, {}, {}, 1, "camera name"},
+        {"PlaySoundAt", "Play Sound At", CAT_ACTION, true, {""}, {"Source"}, {}, 0, nullptr},
+        {"StopSound", "Stop Sound", CAT_ACTION, true, {""}, {"Source"}, {}, 0, nullptr},
+        {"OnAction", "On Action Pressed", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
+        {"OnActionUp", "On Action Released", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
+        {"OnActionHeld", "On Action Held", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
+        {"GetMoveAxis", "Get Move Axis", CAT_INPUT, false, {}, {}, {"Move"}, 0, nullptr},
+        {"RandomPick", "Random Pick", CAT_MATH, false, {}, {"List"}, {"Item"}, 0, nullptr},
+        {"RandomPoint", "Random Point In Area", CAT_MATH, false, {}, {"Center","Size"}, {"Point"}, 0, nullptr},
+        {"ShuffleList", "Shuffle", CAT_MATH, false, {}, {"List"}, {"List"}, 0, nullptr},
+        {"ListMin", "Min Of List", CAT_MATH, false, {}, {"List"}, {"Min"}, 0, nullptr},
+        {"ListMax", "Max Of List", CAT_MATH, false, {}, {"List"}, {"Max"}, 0, nullptr},
+        {"OnCollisionTag", "On Collision With Tag", CAT_EVENT, false, {""}, {}, {}, 1, "tag"},
+        // Logic and flow round. File tokens stay short; titles come from the name table.
+        {"NotAnd", "Not and", CAT_LOGIC, false, {}, {"First","Second"}, {"Result"}, 0, nullptr},
+        {"NotOr", "Not or", CAT_LOGIC, false, {}, {"First","Second"}, {"Result"}, 0, nullptr},
+        {"AllTrue", "All True", CAT_LOGIC, false, {}, {"List"}, {"Result"}, 0, nullptr},
+        {"AnyTrue", "Any True", CAT_LOGIC, false, {}, {"List"}, {"Result"}, 0, nullptr},
+        {"IsEven", "Is Even", CAT_LOGIC, false, {}, {"Value"}, {"Result"}, 0, nullptr},
+        {"IsOdd", "Is Odd", CAT_LOGIC, false, {}, {"Value"}, {"Result"}, 0, nullptr},
+        {"PickByIndex", "Pick by Index", CAT_LOGIC, false, {}, {"Index","List"}, {"Item"}, 0, nullptr},
+        {"FirstValid", "First Valid", CAT_LOGIC, false, {}, {"First","Second","Third","Fourth"}, {"Value"}, 0, nullptr},
+        {"BranchInOrder", "Branch in Order", CAT_FLOW, true, {"First","Second","Third","Otherwise"}, {"First","Second","Third"}, {}, 0, nullptr},
+        {"DoWhile", "Repeat While", CAT_FLOW, true, {"Body","Done"}, {"Condition"}, {}, 0, nullptr},
+        {"ForStep", "Count With Step", CAT_FLOW, true, {"Body","Done"}, {"First","Last","Step"}, {"Index"}, 0, nullptr},
+        {"WaitUntil", "Wait Until", CAT_FLOW, true, {""}, {"Condition"}, {}, 0, nullptr},
+        {"WaitWhile", "Wait While", CAT_FLOW, true, {""}, {"Condition"}, {}, 0, nullptr},
+        {"BecameTrue", "Became True", CAT_FLOW, true, {""}, {"Condition"}, {}, 0, nullptr},
+        {"BecameFalse", "Became False", CAT_FLOW, true, {""}, {"Condition"}, {}, 0, nullptr},
+        {"CountUntil", "Count Until", CAT_FLOW, true, {"Each","Reached"}, {"Target","Reset"}, {"Count"}, 0, nullptr},
+        {"WeightedBranch", "Weighted Branch", CAT_FLOW, true, {"First","Second"}, {"First Weight","Second Weight"}, {}, 0, nullptr},
+        {"WaitSteady", "Wait Until Steady", CAT_FLOW, true, {""}, {"Condition","Seconds"}, {}, 0, nullptr},
+        {"StepThrough", "Step Through", CAT_FLOW, true, {"First","Second","Third"}, {}, {}, 0, nullptr},
+        {"WaitLimit", "Wait With Limit", CAT_FLOW, true, {"Ready","Timed Out"}, {"Condition","Seconds"}, {}, 0, nullptr},
+        {"SetState", "Set State", CAT_FLOW, true, {""}, {"Name"}, {}, 0, nullptr},
+        {"GetState", "Get State", CAT_DATA, false, {}, {}, {"State"}, 0, nullptr},
+        {"IsInState", "Is in State", CAT_LOGIC, false, {}, {"Name"}, {"Result"}, 0, nullptr},
+        {"WhenStateBecomes", "When State Becomes", CAT_FLOW, true, {""}, {"Name"}, {}, 0, nullptr},
+        {"WhenStateLeaves", "When State Leaves", CAT_FLOW, true, {""}, {"Name"}, {}, 0, nullptr},
+        {"HeldLong", "Has Held Long Enough", CAT_LOGIC, false, {}, {"Condition","Seconds"}, {"Result"}, 0, nullptr},
+        {"HappenedNear", "Has Happened Within", CAT_LOGIC, false, {}, {"First","Second","Seconds"}, {"Result"}, 0, nullptr},
+        {"EveryWhile", "Every Few Seconds", CAT_FLOW, true, {""}, {"Condition","Seconds"}, {}, 0, nullptr},
+        {"EaseToward", "Ease Toward", CAT_MATH, false, {}, {"Current","Target","Speed"}, {"Result"}, 0, nullptr},
+        {"BlendTime", "Blend Over Time", CAT_FLOW, true, {""}, {"From","To","Seconds"}, {"Value"}, 0, nullptr},
+        {"Stopwatch", "Run Stopwatch", CAT_FLOW, true, {""}, {"Reset"}, {"Seconds"}, 0, nullptr},
+        {"IsSlightly", "Is Slightly True", CAT_LOGIC, false, {}, {"Value"}, {"Result"}, 0, nullptr},
+        {"IsMostly", "Is Mostly True", CAT_LOGIC, false, {}, {"Value"}, {"Result"}, 0, nullptr},
+        {"IsVery", "Is Very True", CAT_LOGIC, false, {}, {"Value"}, {"Result"}, 0, nullptr},
+        {"PickBest", "Pick Best Score", CAT_LOGIC, false, {}, {"First","Second","Third","Fourth"}, {"Index"}, 0, nullptr},
+        {"ShuffleBag", "Draw Without Repeating", CAT_MATH, false, {}, {"List"}, {"Item"}, 0, nullptr},
+        {"ChanceEachSecond", "Chance This Second", CAT_MATH, false, {}, {"Rate"}, {"Result"}, 0, nullptr},
+        {"TryFirst", "Try First", CAT_FLOW, true, {"First","Second","Third"}, {}, {}, 0, nullptr},
+        {"AllSucceed", "All Must Succeed", CAT_FLOW, true, {"First","Second","Third"}, {}, {}, 0, nullptr},
+        {"FlipOutcome", "Flip Result", CAT_FLOW, true, {"Child"}, {}, {}, 0, nullptr},
+        {"AlwaysSucceed", "Always Succeed", CAT_FLOW, true, {"Child"}, {}, {}, 0, nullptr},
+        {"RepeatUntilFail", "Repeat Until Fail", CAT_FLOW, true, {"Child"}, {}, {}, 0, nullptr},
+        {"WaitBetween", "Wait Between Tries", CAT_FLOW, true, {"Child"}, {"Seconds"}, {}, 0, nullptr},
+        {"SucceedNow", "Succeed Now", CAT_FLOW, true, {}, {}, {}, 0, nullptr},
+        {"FailNow", "Fail Now", CAT_FLOW, true, {}, {}, {}, 0, nullptr},
+        {"CheckOutcome", "Check Condition", CAT_FLOW, true, {"Success","Fail"}, {"Condition"}, {}, 0, nullptr},
+        {"InCone", "Is in Cone", CAT_LOGIC, false, {}, {"Target","Degrees"}, {"Result"}, 0, nullptr},
+        {"LineOfSight", "Has Line of Sight", CAT_LOGIC, false, {}, {"Target"}, {"Result"}, 0, nullptr},
+        {"InsideArea", "Is Inside Area", CAT_LOGIC, false, {}, {"Center","Size"}, {"Result"}, 0, nullptr},
+        {"CountNearby", "Count Nearby", CAT_LOGIC, false, {}, {"Radius","Tag"}, {"Count"}, 0, nullptr},
+        {"NearestObject", "Get Nearest Object", CAT_DATA, false, {}, {"Radius","Tag"}, {"Object"}, 0, nullptr},
+        {"FarthestObject", "Get Farthest Object", CAT_DATA, false, {}, {"Radius","Tag"}, {"Object"}, 0, nullptr},
+        {"SortByDistance", "Sort by Distance", CAT_LOGIC, false, {}, {"List"}, {"Sorted"}, 0, nullptr},
+        {"WhenChanged", "When Value Changes", CAT_FLOW, true, {""}, {"Value"}, {}, 0, nullptr},
+        {"DoUnless", "Run Unless", CAT_FLOW, true, {"Then","Skipped"}, {"Condition","Unless"}, {}, 0, nullptr},
+        {"RememberValue", "Remember Value", CAT_ACTION, true, {""}, {"Name","Value"}, {}, 0, nullptr},
+        {"RecallValue", "Get Remembered Value", CAT_DATA, false, {}, {"Name"}, {"Value"}, 0, nullptr},
+        {"HealthEmpty", "When Health Runs Out", CAT_FLOW, true, {""}, {}, {}, 0, nullptr},
+        {"HealthFull", "When Health is Full", CAT_FLOW, true, {""}, {}, {}, 0, nullptr},
+        {"AddBuff", "Add Timed Buff", CAT_ACTION, true, {""}, {"Base","Add","Multiply","Seconds"}, {"Current"}, 0, nullptr},
+        {"AdvanceObjective", "Advance Objective", CAT_ACTION, true, {"Each","Completed"}, {"Steps","Reset"}, {"Progress"}, 0, nullptr},
+        {"AssertThis", "Assert This", CAT_ACTION, true, {""}, {"Condition","Message"}, {}, 0, nullptr},
+        {"LogOnce", "Log Once", CAT_ACTION, true, {""}, {"Value","Reset"}, {}, 0, nullptr},
+        {"DrawDebugLine", "Draw Debug Line", CAT_ACTION, true, {""}, {"From","To"}, {}, 0, nullptr},
+#include "generated/library_reg.inc"
+#include "generated/gplib_reg.inc"
         // --- Tweens, springs and eases (the engine's Tween / Spring / Easing code) ---
         {"EaseCurve",      "Ease With Curve",     CAT_MATH, false, {}, {"Time"}, {"Value"}, 1, "ease (OutBack, cubic-bezier(..), steps(4))"},
         {"SpringStep",     "Spring Step",         CAT_MATH, true, {""}, {"Target","Stiffness","Damping"}, {"Value","Velocity"}, 1, "start value (blank: first target)"},
@@ -349,8 +512,11 @@ inline const std::vector<VsDef>& Registry() {
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
         {"FlipFlop",  "Flip-Flop",     CAT_FLOW, true, {"A","B"}, {}, {}, 0, nullptr},
         {"Gate",      "Gate",          CAT_FLOW, true, {""}, {"Open"}, {}, 0, nullptr},
-        {"DoN",       "Do N Times",    CAT_FLOW, true, {""}, {}, {"Count"}, 1, "N"},
+        {"DoN",       "Do N Times",    CAT_FLOW, true, {""}, {"Reset"}, {"Count"}, 1, "N"},
         {"SwitchInt", "Switch (int)",  CAT_FLOW, true, {"0","1","2","Default"}, {"Value"}, {}, 0, nullptr},
+        {"SwitchString", "Switch (name)", CAT_FLOW, true, {"Case 1","Case 2","Case 3","Case 4","Default"}, {"Value"}, {}, 1, "cases, comma separated"},
+        {"SwitchCases", "Switch (cases)", CAT_FLOW, true, {"Case 1","Case 2","Case 3","Case 4","Default"}, {"Value"}, {}, 1, "numbers, comma separated"},
+        {"LatchGate", "Latch Gate", CAT_FLOW, true, {"Exit"}, {"Open","Close","Toggle"}, {"Is Open"}, 1, "open to start open"},
         {"Toggle",    "Toggle Var",    CAT_VAR,  true, {""}, {}, {}, 1, "name"},
         // --- Math ---
         {"RandomInt", "Random Int",    CAT_MATH, false, {}, {"Min","Max"}, {"Out"}, 0, nullptr},
@@ -583,10 +749,18 @@ inline const std::vector<VsDef>& Registry() {
         // Loops (Break / Continue act on the loop whose Body runs them).
         {"While",           "While",            CAT_FLOW,  true, {"Body","Done"}, {"Cond"}, {}, 0, nullptr},
         {"ForEach",         "For Each",         CAT_FLOW,  true, {"Body","Done"}, {"List"}, {"Item","Index"}, 0, nullptr},
+        {"ForEachMap",      "For Each Map",     CAT_FLOW,  true, {"Body","Done"}, {"Map"}, {"Key","Value"}, 0, nullptr},
         {"Break",           "Break",            CAT_FLOW,  true, {}, {}, {}, 0, nullptr},
         {"Continue",        "Continue",         CAT_FLOW,  true, {}, {}, {}, 0, nullptr},
         // Lists
         {"NewList",         "New List",         CAT_DATA,  false, {}, {}, {"List"}, 0, nullptr},
+        {"NewMap",          "New Map",          CAT_DATA,  false, {}, {}, {"Map"}, 0, nullptr},
+        {"MapSet",          "Map Set",          CAT_DATA,  true, {""}, {"Map","Key","Value"}, {}, 0, nullptr},
+        {"MapRemove",       "Map Remove",       CAT_DATA,  true, {""}, {"Map","Key"}, {}, 0, nullptr},
+        {"MapGet",          "Map Get",          CAT_DATA,  false, {}, {"Map","Key"}, {"Value","Found"}, 0, nullptr},
+        {"MapHas",          "Map Has",          CAT_DATA,  false, {}, {"Map","Key"}, {"Yes"}, 0, nullptr},
+        {"MapKeys",         "Map Keys",         CAT_DATA,  false, {}, {"Map"}, {"Keys"}, 0, nullptr},
+        {"MapValues",       "Map Values",       CAT_DATA,  false, {}, {"Map"}, {"Values"}, 0, nullptr},
         {"ListAdd",         "List Add",         CAT_DATA,  true, {""}, {"List","Item"}, {}, 0, nullptr},
         {"ListRemoveAt",    "List Remove At",   CAT_DATA,  true, {""}, {"List","Index"}, {}, 0, nullptr},
         {"ListGet",         "List Get",         CAT_DATA,  false, {}, {"List","Index"}, {"Item"}, 0, nullptr},
@@ -604,7 +778,10 @@ inline const std::vector<VsDef>& Registry() {
         {"OnVarChanged",       "On Var Changed",        CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
         {"OnSceneVarChanged",  "On Scene Var Changed",  CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
         {"OnGlobalVarChanged", "On Global Var Changed", CAT_EVENT, false, {""}, {}, {"Value","Old"}, 1, "variable"},
-    }))));
+        {"IsValid",         "Is Valid",         CAT_LOGIC, false, {}, {"Value"}, {"Yes"}, 0, nullptr},
+        {"CallScript",      "Call Script",      CAT_ACTION, true, {""}, {"Argument"}, {"Result"}, 1, "function"},
+        {"RunGraph",        "Run Graph",        CAT_FLOW,  true, {""}, {}, {}, 1, "file.okayvs or file|Event"},
+    })))));
     return defs;
 }
 
@@ -769,9 +946,17 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnEvent") return "OnEvent:" + tok(arg, "Event");
     if (type == "OnNetRpc") return "OnNetRpc:" + tok(arg, "rpc");
     if (type == "OnVarChanged" || type == "OnSceneVarChanged" || type == "OnGlobalVarChanged") return type + ":" + tok(arg, "x");
-    if (type == "OnLanguageChanged") return type;
+    if (type == "OnLanguageChanged" || type == "OnInteract" || type == "OnDeath" || type == "OnHealthChanged") return type;
+    if (type == "OnTagEnter" || type == "OnTagStay" || type == "OnTagExit" || type == "OnCollisionTag")
+        return type + ":" + tok(arg, "Player");
+    if (type == "OnAction") return "OnAction:" + tok(arg, "interact");
+    if (type == "OnActionUp") return "OnActionUp:" + tok(arg, "interact");
+    if (type == "OnActionHeld") return "OnActionHeld:" + tok(arg, "interact");
     return {};
 }
+
+inline bool IsSwitchNode(const std::string& t);
+inline std::vector<std::string> VsEditorSwitchCases(const std::string& arg);
 
 struct VsEditGraph {
     std::vector<VsEditNode> nodes;
@@ -798,6 +983,11 @@ struct VsEditGraph {
             {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"}, {"FindObject", "Player"},
             {"NearestWithTag", "Enemy"}, {"Teleport", "self"},
             {"ShowUI", "self"}, {"HideUI", "self"}, {"Delay", "1"}, {"Action", "log Hello"},
+            {"FollowPath", "0,0,0; 2,0,0"}, {"Patrol", "0,0,0; 3,0,0; 3,0,3"},
+            {"OnTagEnter", "Player"}, {"OnTagStay", "Player"}, {"OnTagExit", "Player"}, {"OnCollisionTag", "Player"},
+            {"OnAction", "interact"}, {"OnActionUp", "interact"}, {"OnActionHeld", "interact"},
+            {"Countdown", "5"}, {"Ammo", "6"}, {"CrossfadeClip", "Idle"}, {"TweenPosition", "inout"},
+            {"TweenRotation", "inout"}, {"TweenScale", "inout"}, {"TweenColor", "inout"},
             {"Condition", "always"}, {"Actions", "log Hello"},
             {"SetBuildPalette", "Block=Assets/block.okayprefab"}, {"SaveCreation", "creation"}, {"LoadCreation", "creation"},
             {"AddItem", "item"}, {"RemoveItem", "item"}, {"HasItem", "item"}, {"ItemCount", "item"}, {"EquipItem", "item"},
@@ -936,6 +1126,16 @@ struct VsEditGraph {
                         [&](const VsExecLink& l) { return !has(l.from) || !has(l.to); }), execLinks.end());
         dataLinks.erase(std::remove_if(dataLinks.begin(), dataLinks.end(),
                         [&](const VsDataLink& l) { return !has(l.consumer) || !has(l.producer); }), dataLinks.end());
+        // Switch Default used to be pin 4. With fewer cases it is the pin after the last case.
+        for (const auto& n : nodes) {
+            if (!IsSwitchNode(n.type)) continue;
+            const int ncases = (int)VsEditorSwitchCases(n.arg).size();
+            if (ncases >= 4) continue;
+            bool dest = false;
+            for (const auto& l : execLinks) if (l.from == n.id && l.pin == ncases) dest = true;
+            if (dest) continue;
+            for (auto& l : execLinks) if (l.from == n.id && l.pin == 4) l.pin = ncases;
+        }
         nextId = maxId + 1;
     }
 };
@@ -990,9 +1190,32 @@ inline bool VsSigFor(const VsEditGraph& g, const VsEditNode& n, okay::vs::Functi
 }
 /// The node's pins: the registry entry, or for function nodes one built from
 /// the signature (parameters / return values become data pins).
+inline bool IsSwitchNode(const std::string& t) { return t == "SwitchString" || t == "SwitchCases"; }
+/// Cases in a Switch node's text field (comma separated). Empty pieces are dropped.
+inline std::vector<std::string> VsEditorSwitchCases(const std::string& arg) {
+    std::vector<std::string> out;
+    std::string cur;
+    auto flush = [&] {
+        std::size_t b = 0, e = cur.size();
+        while (b < e && std::isspace(static_cast<unsigned char>(cur[b]))) ++b;
+        while (e > b && std::isspace(static_cast<unsigned char>(cur[e - 1]))) --e;
+        if (e > b) out.push_back(cur.substr(b, e - b));
+        cur.clear();
+    };
+    for (char c : arg) { if (c == ',') flush(); else cur.push_back(c); }
+    if (!cur.empty()) flush();
+    if (out.size() > 63) out.resize(63);
+    return out;
+}
+/// Default is the pin after the last case. Moving the list moves that wire with it.
+inline void VsMoveSwitchDefault(VsEditGraph& g, int node, int oldDef, int newDef) {
+    if (oldDef == newDef) return;
+    for (auto& l : g.execLinks)
+        if (l.from == node && l.pin == oldDef) l.pin = newDef;
+}
 inline const VsDef* VsDefFor(const VsEditGraph& g, const VsEditNode& n) {
     const VsDef* base = FindDef(n.type);
-    if (!base || !IsFunctionNode(n.type)) return base;
+    if (!base || (!IsFunctionNode(n.type) && !IsSwitchNode(n.type))) return base;
     struct Dyn { std::string key; std::vector<std::string> labels; VsDef def; };
     static std::map<int, std::unique_ptr<Dyn>> cache;   // node id -> its pins
     okay::vs::FunctionSig sig;
@@ -1003,11 +1226,21 @@ inline const VsDef* VsDefFor(const VsEditGraph& g, const VsEditNode& n) {
         key += "|";
         for (const auto& p : sig.returns) key += p.name + ",";
     }
+    if (IsSwitchNode(n.type)) key = n.type + "|sw|" + n.arg;
     auto& slot = cache[n.id];
     if (slot && slot->key == key) return &slot->def;
     slot = std::make_unique<Dyn>();
     slot->key = key;
     slot->def = *base;
+    if (IsSwitchNode(n.type)) {
+        const auto cases = VsEditorSwitchCases(n.arg);
+        slot->labels.reserve(cases.size() + 1);
+        for (const auto& c : cases) slot->labels.push_back(c);
+        slot->labels.push_back("Default");
+        slot->def.execOut.clear();
+        for (const auto& s : slot->labels) slot->def.execOut.push_back(s.c_str());
+        return &slot->def;
+    }
     if (ok) {
         const auto& ins  = n.type == "FunctionStart" ? std::vector<okay::vs::FunctionSig::Pin>{} : n.type == "Return" ? sig.returns : sig.params;
         const auto& outs = n.type == "FunctionStart" ? sig.params : n.type == "Return" ? std::vector<okay::vs::FunctionSig::Pin>{} : sig.returns;
@@ -1676,7 +1909,9 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             const int tp = okay::vs::TargetPinFor(n.type);
             bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" || n.type == "SpringStep" ||
                              IsFunctionNode(n.type) || n.type == "SetLocal" || n.type == "GetLocal" || IsApiNode(n.type) ||
-                             n.type == "ForEach" || n.type.rfind("List", 0) == 0 || n.type == "NewList" || n.type == "AllWithTag" ||
+                             n.type == "ForEach" || n.type == "ForEachMap" || n.type.rfind("List", 0) == 0 || n.type == "NewList" ||
+                             n.type == "NewMap" || n.type.rfind("Map", 0) == 0 || n.type == "RunGraph" || n.type == "CallScript" ||
+                             n.type == "AllWithTag" ||
                              n.type.find("SceneVar") != std::string::npos || n.type.find("GlobalVar") != std::string::npos ||
                              n.type == "OnVarChanged" ||
                              (tp >= 0 && pinUsed(n.id, tp)) || (n.type == "Destroy" && pinUsed(n.id, 0));
@@ -1982,6 +2217,7 @@ inline ImU32 VsPinColor(okay::vs::PinType t) {
         case PinType::Vec3:   return IM_COL32(235, 200, 80, 255);
         case PinType::Object: return IM_COL32(95, 165, 255, 255);
         case PinType::List:   return IM_COL32(90, 215, 220, 255);
+        case PinType::Map:    return IM_COL32(180, 140, 230, 255);
         default:              return IM_COL32(185, 185, 195, 255);
     }
 }
@@ -2428,6 +2664,9 @@ inline int VsSaveAllTabs(const std::string& projectDir) {
     if (n) VsSaveTabList();
     return n;
 }
+
+// File > Examples and "Try it" on a node. The editor (main.cpp) fills this in.
+inline void (*OpenPlayground)(EditorState& ed, const char* demoId) = nullptr;
 
 // Pin geometry helpers (screen positions computed during draw).
 struct PinKey { int node; int kind; int side; int index; };  // kind:0 exec,1 data; side:0 in,1 out
@@ -3139,6 +3378,33 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::Button("Save")) doSave();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save this graph (Ctrl+S)");
     ImGui::SameLine();
+    if (ImGui::Button("Recipes")) ImGui::OpenPopup("##vsrecipes");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop in a ready-made graph: coins, a chasing enemy, a door, a health pickup, a countdown.");
+    if (ImGui::BeginPopup("##vsrecipes")) {
+        struct Rec { const char* name; const char* text; };
+        static const Rec recs[] = {
+            {"Collect coins and score",
+             "node 1 OnStart\npos 1 40 40\nentry OnStart 1\nnode 2 ScoreAdd\npos 2 280 40\ndefault 2 0 1\nexec 1 0 2\n"
+             "node 3 OnTagEnter coin\npos 3 40 220\nentry OnTagEnter:coin 3\nnode 4 Collect\npos 4 300 220\ndefault 4 0 1\nexec 3 0 4\n"},
+            {"Enemy chases and damages",
+             "node 1 OnUpdate\npos 1 40 40\nentry OnUpdate 1\nnode 2 FindWithTag Player\npos 2 40 200\nnode 3 Chase\npos 3 300 40\n"
+             "exec 1 0 3\ndata 3 0 2 0\nnode 4 OnTagEnter Player\npos 4 40 380\nentry OnTagEnter:Player 4\n"
+             "node 5 Damage\npos 5 320 380\ndefault 5 0 10\nexec 4 0 5\n"},
+            {"Door with a key",
+             "node 1 OnStart\npos 1 40 40\nentry OnStart 1\nnode 2 Const true\npos 2 40 200\nnode 3 SetVar has_key\npos 3 280 40\nexec 1 0 3\ndata 3 0 2 0\n"
+             "node 4 OnInteract\npos 4 40 400\nentry OnInteract 4\nnode 5 GetVar has_key\npos 5 40 560\nnode 6 Branch\npos 6 280 400\n"
+             "exec 4 0 6\ndata 6 0 5 0\nnode 7 DoorOpen\npos 7 540 400\ndefault 7 0 90\ndefault 7 1 0.35\nexec 6 0 7\n"},
+            {"Health pickup",
+             "node 1 OnTagEnter Player\npos 1 40 40\nentry OnTagEnter:Player 1\nnode 2 Heal\npos 2 300 40\ndefault 2 0 25\nexec 1 0 2\n"
+             "node 3 Destroy\npos 3 540 40\nexec 2 0 3\n"},
+            {"Countdown then win",
+             "node 1 OnStart\npos 1 40 40\nentry OnStart 1\nnode 2 Countdown 0.4\npos 2 300 40\nexec 1 0 2\nnode 3 Win\npos 3 560 40\nexec 2 0 3\n"},
+        };
+        for (const Rec& r : recs)
+            if (ImGui::MenuItem(r.name)) { st.templateText = r.text; st.pasteTemplate = true; }
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
     {
         const std::string nm = g.path.empty() ? std::string("Untitled graph")
                                               : std::filesystem::path(g.path).filename().string();
@@ -3704,6 +3970,7 @@ inline void Draw(EditorState& ed, bool* open) {
             if (is.severity == 0) { inlineMsg = is.message; inlineErr = true; break; }
             if (inlineMsg.empty()) inlineMsg = is.message;
         }
+        const bool isSwitch = IsSwitchNode(n.type);
         bool targetWired = false;
         for (int ti = 0; ti < (int)d->dataIn.size(); ++ti)
             if (d->dataIn[ti] && std::strcmp(d->dataIn[ti], "Target") == 0) {
@@ -3715,7 +3982,7 @@ inline void Draw(EditorState& ed, bool* open) {
         const bool showAdd = reqGap.missing && inlineMsg.empty();
         if (showAdd) inlineMsg = "Needs " + reqGap.addId;
         const float msgH = inlineMsg.empty() ? 0.0f : (showAdd ? ROW_H * 2.4f : ROW_H * 1.35f);
-        float bodyH = rows * ROW_H + (d->param ? ROW_H + 10.0f * z : 0) + PAD;
+        float bodyH = rows * ROW_H + (d->param ? ROW_H + 10.0f * z : 0) + (isSwitch ? ROW_H : 0.0f) + PAD;
         float h = HEADER_H + bodyH + msgH;
         // Wider when it has data inputs: their value boxes sit between the input
         // labels and the output labels.
@@ -4065,6 +4332,40 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (n.arg == "right") b = 1; else if (n.arg == "middle") b = 2;
                 if (b < 0 || b > 2) b = 0;
                 if (ImGui::Combo("##mbtn", &b, btns, 3)) { n.arg = std::to_string(b); g.dirty = true; }
+            } else if (isSwitch) {
+                char sbuf[512]; std::snprintf(sbuf, sizeof(sbuf), "%s", n.arg.c_str());
+                if (ImGui::InputTextWithHint("##sw", d->paramHint ? d->paramHint : "", sbuf, sizeof(sbuf))) {
+                    const int oldN = (int)VsEditorSwitchCases(n.arg).size();
+                    const int newN = (int)VsEditorSwitchCases(sbuf).size();
+                    VsMoveSwitchDefault(g, n.id, oldN, newN);
+                    n.arg = sbuf; g.dirty = true;
+                }
+                // InputText returns the cursor to the window flow. Put + case
+                // back under the field, inside this node.
+                const ImVec2 swField = ImGui::GetItemRectMax();
+                ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD, swField.y + 6.0f * z));
+                if (ImGui::SmallButton("+ case")) {
+                    auto cases = VsEditorSwitchCases(n.arg);
+                    if ((int)cases.size() < 63) {
+                        const int oldN = (int)cases.size();
+                        if (n.type == "SwitchCases") {
+                            int next = oldN;
+                            if (!cases.empty()) {
+                                char* end = nullptr;
+                                const long v = std::strtol(cases.back().c_str(), &end, 10);
+                                if (end && *end == '\0') next = (int)v + 1;
+                            }
+                            cases.push_back(std::to_string(next));
+                        } else {
+                            cases.push_back("case" + std::to_string(oldN + 1));
+                        }
+                        std::string joined;
+                        for (const auto& c : cases) { if (!joined.empty()) joined += ", "; joined += c; }
+                        VsMoveSwitchDefault(g, n.id, oldN, oldN + 1);
+                        n.arg = joined; g.dirty = true;
+                    }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another case. Default stays the last pin.");
             } else if (VsChoiceKind ck = VsArgChoice(n.type); ck != VsChoiceKind::None) {
                 if (VsDrawChoice(ed, g, n.arg, ck, NODE_W - PAD * 2)) g.dirty = true;
             } else if (okay::vs::VsRefKind ak = VsArgKind(n.type); ak != okay::vs::VsRefKind::None) {

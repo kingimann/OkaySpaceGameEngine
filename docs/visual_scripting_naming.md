@@ -214,3 +214,52 @@ the file token in backticks. Update that group when you rename it.
 
 `docs/visual_scripting_nodes.md` (generated on the node-docs branch) must use
 these same titles the next time it is generated. Do not invent a second wording.
+
+## The gameplay library
+
+`tools/gen_gameplay_library.py` writes the gameplay library: nodes that act on an
+object and its components (health, items, a Rigidbody, a Camera, text, sound,
+quests, saved positions, groups of objects, time and input). Each node is one
+entry in the generator with its plain-English title, a level, a one-line help
+sentence, its topic, its behaviour, and the scene test that proves it. The same
+run writes `engine/include/okay/VisualScript/NodesGameplayLib.hpp`,
+`editor/generated/gplib_*.inc`, `tests/test_vs_gameplay_library.cpp`, and one
+playground graph per topic (`examples/visual_script/playground/gl_*.okayvs`, with
+a matching scene). Node ids start with `Gl`. Do not edit the generated files.
+
+| Topic | Subcategory | What is there |
+|---|---|---|
+| Movement | (none), Turn, Size | Move forward or sideways, move to a position, hop, circle, turn toward an object, snap to a grid, keep inside a box |
+| Physics | (none), Queries | Speed, jump, push, mass, gravity, drag, bounce; facing, behind, nearby counts, alert level |
+| Objects | Survival | Health, armor, resistance, lives, respawn, damage and heal over time, critical hits and falloff |
+| Objects | Items | Count, fit, move and take items, carry limit and weight |
+| Objects | Groups | Hide, show and destroy everything with a tag |
+| Camera | | Zoom, field of view, shake, tilt, follow and look at an object |
+| UI | | Show a number, a clock, health or time in text; color, size, opacity, typing out |
+| Audio | | Volume, pitch, looping, muting, fading |
+| Animation | Procedural | Pulse, sway, fade a sprite |
+| Scene | Story | Start, complete, fail and count quests, and their objectives |
+| Scene | Dialogue | Start a conversation, show a line, offer choices, read the answer, end it (nine nodes, run against a conversation file kept beside the scene) |
+| Variables | Saved | Save and load a position or health under a name |
+| Math | Progression | Level from experience, stat growth, prices, cooldown share, roll a chance |
+| Time | | Slow motion, game speed, session time |
+| Input | Axes, Keys, Mouse | Horizontal and vertical input, sprint, crouch, jump, fire, aim |
+
+There are 241 gameplay library nodes. The count is in `tools/gameplay_library_count.txt`. A new node needs a test in
+the generator, or the run fails the check that every node is covered.
+
+## Every node must do something
+
+`tests/test_vs_registry_effect.cpp` builds every registered node and runs it
+against the same graph without it. A node passes when something you can see
+differs (a transform, a component value, a variable, a log line, a saved key, a
+render setting) or when it reports a clear error. It runs in the plain test scene,
+then in a scene with the components it drives (an animator, a nav agent, a
+behaviour tree, Full Body IK, particles, a line, a music player), then in a
+targeted scenario (a hurt body, a seat, a wall to vault, a quest, a playing
+sound). Online nodes run with no session and must report or return a value; the
+ones that would open a connection are built only. Event nodes are fired by what
+raises them. A node that does none of this fails the test, so it has to be fixed
+or hidden from the Add Node menu (its factory stays so old graphs still load).
+Ten online nodes are hidden that way for now, in `kHiddenUntilTested` in `editor/VisualScriptPalette.hpp` with a reason each: `Fn.net_join_link`, `Fn.net_pin_host` and the eight PlayFab `Fn.pf_*` nodes. The registry test asserts that list, so it cannot grow quietly.
+`tests/vs_registry_known_gaps.inc` is the list of exceptions and is empty.

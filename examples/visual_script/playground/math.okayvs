@@ -1,0 +1,65 @@
+# Math. Min and max of 3, 8, 1, plus add, clamp and lerp.
+node 1 OnStart
+pos 1 40 80
+entry OnStart 1
+node 2 NewList
+pos 2 40 280
+node 3 SetVar nums
+pos 3 300 80
+node 4 GetVar nums
+pos 4 40 460
+node 5 ListAdd
+pos 5 540 20
+default 5 1 3
+node 6 ListAdd
+pos 6 760 20
+default 6 1 8
+node 7 ListAdd
+pos 7 980 20
+default 7 1 1
+node 8 ListMin
+pos 8 540 240
+node 9 ListMax
+pos 9 540 400
+node 10 SetPosition
+pos 10 820 300
+node 11 Add
+pos 11 540 580
+default 11 0 2
+default 11 1 5
+node 12 Clamp
+pos 12 540 740
+default 12 0 11
+default 12 1 0
+default 12 2 4
+node 13 Lerp
+pos 13 540 920
+default 13 0 0
+default 13 1 10
+default 13 2 0.5
+node 14 SetVar total
+pos 14 820 580
+node 15 SetVar clamped
+pos 15 820 740
+node 16 SetVar blended
+pos 16 820 920
+exec 1 0 3
+data 3 0 2 0
+exec 3 0 5
+data 5 0 4 0
+exec 5 0 6
+data 6 0 4 0
+exec 6 0 7
+data 7 0 4 0
+exec 7 0 10
+data 10 0 8 0
+data 10 1 9 0
+data 8 0 4 0
+data 9 0 4 0
+exec 10 0 14
+data 14 0 11 0
+exec 14 0 15
+data 15 0 12 0
+exec 15 0 16
+data 16 0 13 0
+comment 20 1080 1200 80 3 "The marker moves to x = min and y = max. total is 7, clamped is 4, blended is 5."

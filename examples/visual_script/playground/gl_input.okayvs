@@ -1,0 +1,36 @@
+# Gameplay library: input. Every node below is declared here; the first chain runs in Play.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 GlGetHorizontalInput
+pos 2 300 240
+node 3 SetVar h
+pos 3 300 40
+exec 1 0 3
+data 3 0 2 0
+node 4 GlIsSprinting
+pos 4 560 240
+node 5 SetVar sprint
+pos 5 560 40
+exec 3 0 5
+data 5 0 4 0
+node 100 GlGetHorizontalInput
+pos 100 40 520
+node 101 GlGetVerticalInput
+pos 101 300 520
+node 102 GlIsSprinting
+pos 102 560 520
+node 103 GlIsCrouching
+pos 103 820 520
+node 104 GlIsAnyKeyHeld
+pos 104 1080 520
+node 105 GlIsJumpHeld
+pos 105 1340 520
+node 106 GlIsFireHeld
+pos 106 40 710
+node 107 GlIsAimHeld
+pos 107 300 710
+node 108 GlIsInteractHeld
+pos 108 560 710
+node 109 GlGetMoveStrength
+pos 109 820 710

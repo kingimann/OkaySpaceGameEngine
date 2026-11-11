@@ -1,0 +1,186 @@
+# Gameplay library: movement. Every node below is declared here; the first chain runs in Play.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 GlMoveForward
+pos 2 300 40
+default 2 0 2
+exec 1 0 2
+node 3 GlTurnBy
+pos 3 560 40
+default 3 0 60
+exec 2 0 3
+node 4 GlKeepInsideBox
+pos 4 820 40
+default 4 0 -6
+default 4 1 6
+default 4 2 -6
+default 4 3 6
+exec 3 0 4
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 102
+exec 102 0 103
+exec 103 0 104
+exec 104 0 105
+exec 105 0 106
+exec 106 0 107
+exec 107 0 108
+exec 108 0 109
+exec 109 0 110
+exec 110 0 111
+exec 111 0 112
+exec 112 0 113
+exec 113 0 116
+exec 116 0 117
+exec 117 0 118
+exec 118 0 119
+exec 119 0 120
+exec 120 0 121
+exec 121 0 122
+exec 122 0 123
+exec 123 0 124
+exec 124 0 125
+exec 125 0 126
+exec 126 0 127
+exec 127 0 128
+exec 128 0 129
+exec 129 0 130
+exec 130 0 131
+exec 131 0 133
+exec 133 0 134
+node 100 GlGetSpeed
+pos 100 40 520
+node 101 GlIsMoving
+pos 101 300 520
+default 101 0 0.1
+node 102 GlSetVelocity
+pos 102 560 520
+default 102 0 2
+default 102 1 0
+default 102 2 1
+node 103 GlPushWithImpulse
+pos 103 820 520
+default 103 0 2
+default 103 1 0
+default 103 2 0
+node 104 GlStopMoving
+pos 104 1080 520
+node 105 GlMoveForward
+pos 105 1340 520
+default 105 0 4
+node 106 GlMoveSideways
+pos 106 40 710
+default 106 0 2
+node 107 GlTurnBy
+pos 107 300 710
+default 107 0 90
+node 108 GlFaceDirection
+pos 108 560 710
+default 108 0 1
+default 108 1 0
+node 109 GlKeepInsideBox
+pos 109 820 710
+default 109 0 -1
+default 109 1 1
+default 109 2 -2
+default 109 3 2
+node 110 GlWrapAroundBox
+pos 110 1080 710
+default 110 0 -1
+default 110 1 1
+default 110 2 -1
+default 110 3 1
+node 111 GlSnapToGrid
+pos 111 1340 710
+default 111 0 1
+node 112 GlMoveToPosition
+pos 112 40 900
+default 112 0 10
+default 112 1 0
+default 112 2 0
+default 112 3 2
+node 113 GlLookAtPosition
+pos 113 300 900
+default 113 0 10
+default 113 1 0
+default 113 2 0
+node 114 GlGetDistanceToPosition
+pos 114 560 900
+default 114 0 3
+default 114 1 4
+default 114 2 0
+node 115 GlIsNearPosition
+pos 115 820 900
+default 115 0 1
+default 115 1 0
+default 115 2 0
+default 115 3 2
+node 116 GlHop
+pos 116 1080 900
+default 116 0 1
+default 116 1 1.5707963
+node 117 GlMoveBackAndForth
+pos 117 1340 900
+default 117 0 3
+default 117 1 1.5707963
+node 118 GlShakePosition
+pos 118 40 1090
+default 118 0 0.5
+node 119 GlKeepAboveHeight
+pos 119 300 1090
+default 119 0 0
+node 120 GlLimitHeight
+pos 120 560 1090
+default 120 0 0
+default 120 1 4
+node 121 GlResetRotation
+pos 121 820 1090
+node 122 GlSetSizeEvenly
+pos 122 1080 1090
+default 122 0 2.5
+node 123 GlFlipSide
+pos 123 1340 1090
+node 124 GlCopyPositionFrom
+pos 124 40 1280
+default 124 0 Goal
+node 125 GlStayAtDistanceFrom
+pos 125 300 1280
+default 125 0 Goal
+default 125 1 3
+default 125 2 4
+node 126 GlTurnTowardObject
+pos 126 560 1280
+default 126 0 Goal
+default 126 1 90
+node 127 GlRiseAtSpeed
+pos 127 820 1280
+default 127 0 2
+node 128 GlMoveInCircle
+pos 128 1080 1280
+default 128 0 2
+default 128 1 1.5707963
+node 129 GlChangeSizeOverTime
+pos 129 1340 1280
+default 129 0 1
+node 130 GlMultiplySize
+pos 130 40 1470
+default 130 0 3
+node 131 GlFaceAwayFrom
+pos 131 300 1470
+default 131 0 Goal
+node 132 GlGetFacingAngle
+pos 132 560 1470
+node 133 GlSetFacingAngle
+pos 133 820 1470
+default 133 0 75
+node 134 GlSetHeight
+pos 134 1080 1470
+default 134 0 3.5
+node 135 GlIsAboveHeight
+pos 135 1340 1470
+default 135 0 1
+node 136 GlIsBelowHeight
+pos 136 40 1660
+default 136 0 1

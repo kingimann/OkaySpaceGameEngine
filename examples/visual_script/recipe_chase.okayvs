@@ -1,0 +1,7 @@
+# Chase the object named Player. Wire it from On Update.
+node 1 OnUpdate
+entry OnUpdate 1
+node 2 FindWithTag Player
+node 3 Chase
+exec 1 0 3
+data 3 0 2 0

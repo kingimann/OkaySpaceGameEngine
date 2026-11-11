@@ -49,17 +49,78 @@ struct ReturnNode : VsNode {
 struct CallFunctionNode : VsNode {
     std::string fn;
     std::vector<VsValue> last;
+    bool waiting = false;
+    int depthBefore = 0;
+    int resumeAt = -1;
+    int resumeFileId = -1;
+    std::vector<VsHeldFrame> held;
     explicit CallFunctionNode(std::string f) : fn(std::move(f)) {}
     int ExecOutCount() const override { return 1; }
+    void OnSuspendRejected() override { waiting = false; held.clear(); resumeAt = -1; }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!waiting) return false;
+        r.b0 = true;
+        r.i0 = depthBefore;
+        r.i2 = resumeFileId;
+        r.frames = held;
+        r.values = last;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph& g) override {
+        waiting = r.b0;
+        depthBefore = r.i0;
+        resumeFileId = r.i2;
+        resumeAt = r.i2 >= 0 ? g.NodeByFileId(r.i2) : -1;
+        held = r.frames;
+        last = r.values;
+    }
     VsValue Eval(int pin, NodeGraph&, VsContext&) override {
         return pin >= 0 && pin < (int)last.size() ? last[(std::size_t)pin] : VsValue{};
     }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         auto* fs = dynamic_cast<FunctionStartNode*>(g.Node(g.FunctionNode(fn)));
+        if (g.Resuming() && waiting) {
+            g.RestoreFrames(held);
+            const auto st = g.Run(resumeAt, ctx, true, true);
+            if (st == NodeGraph::RunStatus::Suspended) {
+                resumeAt = g.TakeSuspendNode();
+                if (VsNode* n = g.Node(resumeAt)) resumeFileId = n->fileId;
+                g.StashFrames(depthBefore, held);
+                return NodeGraph::kSuspend;
+            }
+            g.FinishCall(depthBefore, last);
+            if (fs) last.resize(fs->sig.returns.size());
+            waiting = false;
+            resumeAt = -1;
+            return g.Aborted() ? -1 : 0;
+        }
+        if (waiting) return -1;   // this call is already parked; Resume owns it
         std::vector<VsValue> args;
-        if (fs) for (std::size_t i = 0; i < fs->sig.params.size(); ++i) args.push_back(In((int)i, g, ctx));
+        if (fs) for (std::size_t i = 0; i < fs->sig.params.size(); ++i) {
+            args.push_back(In((int)i, g, ctx));
+            const PinType want = fs->sig.params[i].type;
+            const bool ok = want == PinType::Any || want == PinType::Text
+                || (want == PinType::Number && (args.back().IsNumber() || args.back().IsBool() || args.back().IsString()))
+                || (want == PinType::Bool && !args.back().IsArray() && !args.back().IsMap() && !args.back().IsVec3())
+                || (want == PinType::Vec3 && (args.back().IsVec3() || args.back().IsNumber()))
+                || (want == PinType::Object && (args.back().IsObject() || args.back().IsString()))
+                || (want == PinType::List && args.back().IsArray())
+                || (want == PinType::Map && args.back().IsMap());
+            if (!ok) g.Error(this, ctx, "argument '" + fs->sig.params[i].name + "' of function '" + fn +
+                                        "' needs a " + PinTypeName(want) + "; the value was passed anyway");
+        }
+        depthBefore = g.CallDepth();
         std::vector<VsValue> rets;
-        if (!g.CallFunction(fn, std::move(args), rets, this, ctx)) return g.Aborted() ? -1 : 0;
+        int suspended = -1;
+        const auto result = g.CallFunction(fn, std::move(args), rets, this, ctx, &suspended);
+        if (result == NodeGraph::CallResult::Suspended) {
+            waiting = true;
+            resumeAt = suspended;
+            if (VsNode* n = g.Node(resumeAt)) resumeFileId = n->fileId;
+            g.StashFrames(depthBefore, held);
+            return NodeGraph::kSuspend;
+        }
+        if (result == NodeGraph::CallResult::Failed) return g.Aborted() ? -1 : 0;
         if (fs) rets.resize(fs->sig.returns.size());   // no Return reached: the values read empty
         last = std::move(rets);
         return 0;

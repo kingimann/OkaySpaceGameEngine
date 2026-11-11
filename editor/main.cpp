@@ -5830,6 +5830,42 @@ static void StopAnimPreview();
 static void StopModelScenePreview(EditorState& ed);
 static void StopLivePreview(EditorState& ed);
 
+// Open one Node Playground demo: the scene, its graph, and the object whose
+// pins should light up in Play. File > Examples and each node's Try it button
+// both come here.
+static void OpenVsPlayground(EditorState& ed, const char* demoId) {
+    const okay::editor::vsed::VsPlaygroundDemo* demo = okay::editor::vsed::VsPlaygroundById(demoId);
+    if (!demo) { ConsoleLog("No playground demo named that.", 2); return; }
+    const std::string dir = okay::editor::vsed::VsPlaygroundDir();
+    if (dir.empty()) {
+        ConsoleLog("Node Playground scenes were not found (examples/visual_script/playground).", 2);
+        return;
+    }
+    const std::string scene = dir + "/" + demo->scene;
+    std::string err;
+    if (!ed.Load(scene, &err)) { ConsoleLog("Couldn't open " + scene + ": " + err, 2); return; }
+    ConsoleLog(std::string("Node Playground: ") + demo->title + ". Press Play. " + demo->blurb);
+    okay::GameObject* host = nullptr;
+    std::string graphPath;
+    for (const auto& up : ed.scene().Objects()) {
+        if (!up) continue;
+        for (auto* vc : up->GetComponents<okay::VisualScriptComponent>()) {
+            const std::string file = std::filesystem::path(vc->Path()).filename().string();
+            if (file == demo->graph) {
+                if (!host || up->name == demo->focus) { host = up.get(); graphPath = vc->Path(); }
+            }
+        }
+    }
+    if (graphPath.empty()) graphPath = dir + "/" + demo->graph;
+    okay::editor::vsed::OpenFile(graphPath);
+    auto& st = okay::editor::vsed::State();
+    st.frameAll = true;
+    st.liveValues = true;
+    st.showDetails = true;
+    if (host) ed.Select(host);
+    g_showVisualScript = true;
+}
+
 // The toolbar's playback-speed group, shown while the game runs: [slower] [current speed v] [faster]. The speed is the
 // Play loop's debug time scale (okay::GameLoop::SetDebugTimeScale): only the editor's frame time is scaled, the game's
 // own Time.timeScale is untouched, and Stop puts it back to 1x. Clicking the speed opens the preset list and
@@ -5974,6 +6010,34 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Clear")) { g_recent.clear(); SaveRecent(); }
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Examples")) {
+            if (ImGui::BeginMenu("Visual Script Node Playground")) {
+                ImGui::TextDisabled("Press Play and follow the text on screen.");
+                int nDemos = 0;
+                const okay::editor::vsed::VsPlaygroundDemo* demos = okay::editor::vsed::VsPlaygroundDemos(&nDemos);
+                for (int i = 0; i < nDemos; ++i) {
+                    if (ImGui::MenuItem(demos[i].title)) OpenVsPlayground(ed, demos[i].id);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", demos[i].blurb);
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Ready-made scenes for the high-level visual script nodes.");
+            const auto basics = okay::editor::NodePlaygroundScenes();
+            if (ImGui::BeginMenu("Node Playground (flow and variables)", !basics.empty())) {
+                for (const std::string& p : basics) {
+                    const std::string name = std::filesystem::path(p).stem().string();
+                    if (ImGui::MenuItem(name.c_str())) {
+                        std::string err;
+                        if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                        else ConsoleLog("Open failed: " + err, 2);
+                    }
+                }
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -46198,6 +46262,8 @@ static int RunBuildGameCli(int argc, char** argv) {
     return ok ? 0 : 1;
 }
 
+int RunVsGraphShot(int argc, char** argv);
+
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     okay::restart::RememberArguments(argc, argv);
@@ -46209,6 +46275,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
         if (std::string(argv[i]) == "--build-game") return RunBuildGameCli(argc, argv);
+        if (std::string(argv[i]) == "--vs-shot") return RunVsGraphShot(argc, argv);
     }
     // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end.
     if (const char* c = std::getenv("OKAY_TEST_CRASH"); c && *c) {
@@ -46535,6 +46602,7 @@ int main(int argc, char** argv) {
     // Saving rewrote an edited mesh asset and re-triangulated it: vertex numbers are
     // kept (so vertex and edge selections stay), triangle numbers aren't.
     EditorState::onMeshTrianglesReordered = [](GameObject* go) { if (go == g_meshEditObj) g_meshSelFaces.clear(); };
+    okay::editor::vsed::OpenPlayground = [](EditorState& ed, const char* id) { OpenVsPlayground(ed, id); };
     okay::editor::vsed::StepCatalog = VsStepCatalog;
     okay::editor::vsed::StepEditor = VsStepEditor;
     okay::editor::vsed::StepSummary = [](const ActionList::Item& it) { return ActionOpSummary(it); };
@@ -47957,6 +48025,14 @@ int main(int argc, char** argv) {
         ApplyPendingInspectorAdds(ed);
         { OKAY_PROFILE("UI.Services"); if (g_showServices)  DrawServices(ed); }
         { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); }
+        if (const char* vsOpen = std::getenv("OKAY_VS_OPEN")) {
+            static bool opened = false;
+            if (!opened && *vsOpen) {
+                opened = true;
+                okay::editor::vsed::OpenFile(vsOpen);
+                g_showVisualScript = true;
+            }
+        }
         { OKAY_PROFILE("UI.Problems"); if (g_showProblems || std::getenv("OKAY_UI_DIAG")) DrawProblems(ed); }
         if (std::getenv("OKAY_UI_DIAG") && g_showVisualScript && g_sceneDockId)
             ImGui::SetNextWindowDockID(g_sceneDockId, ImGuiCond_Always);

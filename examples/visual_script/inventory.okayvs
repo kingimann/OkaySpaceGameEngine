@@ -1,0 +1,70 @@
+# Inventory map. Keys are sorted: arrow, key, potion. Break on "key" skips potion. total is 11.
+node 1 OnStart
+pos 1 40 30
+entry OnStart 1
+node 2 NewMap
+pos 2 40 180
+node 3 SetVar bag
+pos 3 280 30
+exec 1 0 3
+data 3 0 2 0
+
+node 4 GetVar bag
+pos 4 40 360
+node 5 MapSet
+pos 5 280 360
+default 5 1 "potion"
+default 5 2 2
+exec 3 0 5
+data 5 0 4 0
+
+node 6 GetVar bag
+pos 6 40 540
+node 7 MapSet
+pos 7 280 540
+default 7 1 "key"
+default 7 2 1
+exec 5 0 7
+data 7 0 6 0
+
+node 8 GetVar bag
+pos 8 40 720
+node 9 MapSet
+pos 9 280 720
+default 9 1 "arrow"
+default 9 2 10
+exec 7 0 9
+data 9 0 8 0
+
+node 10 GetVar bag
+pos 10 540 360
+node 11 ForEachMap
+pos 11 780 360
+exec 9 0 11
+data 11 0 10 0
+
+node 12 AddVar total
+pos 12 1080 300
+exec 11 0 12
+data 12 0 11 1
+node 13 Const "key"
+pos 13 1080 500
+node 14 Equals
+pos 14 1320 420
+data 14 0 11 0
+data 14 1 13 0
+node 15 Branch
+pos 15 1560 300
+exec 12 0 15
+data 15 0 14 0
+node 16 Break
+pos 16 1800 240
+exec 15 0 16
+node 17 Const 1
+pos 17 1080 660
+node 18 SetVar done
+pos 18 1320 620
+exec 11 1 18
+data 18 0 17 0
+
+comment 20 10 2000 900 4 "Inventory: arrow + key, Break skips potion"

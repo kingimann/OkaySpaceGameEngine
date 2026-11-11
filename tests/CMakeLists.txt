@@ -1299,6 +1299,62 @@ add_executable(test_vs_wave4 test_vs_wave4.cpp)
 target_link_libraries(test_vs_wave4 PRIVATE okay::engine)
 add_test(NAME vs_wave4 COMMAND test_vs_wave4)
 
+add_executable(test_vs_runtime test_vs_runtime.cpp)
+target_link_libraries(test_vs_runtime PRIVATE okay::engine)
+target_compile_definitions(test_vs_runtime PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_runtime COMMAND test_vs_runtime)
+
+add_executable(test_vs_gameplay test_vs_gameplay.cpp)
+target_link_libraries(test_vs_gameplay PRIVATE okay::engine)
+add_test(NAME vs_gameplay COMMAND test_vs_gameplay)
+
+add_executable(test_vs_node_behavior test_vs_node_behavior.cpp)
+target_link_libraries(test_vs_node_behavior PRIVATE okay::engine)
+target_compile_definitions(test_vs_node_behavior PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_node_behavior COMMAND test_vs_node_behavior)
+
+add_executable(test_vs_playground test_vs_playground.cpp)
+target_link_libraries(test_vs_playground PRIVATE okay::engine)
+target_compile_definitions(test_vs_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+add_executable(test_vs_logic_round test_vs_logic_round.cpp)
+target_link_libraries(test_vs_logic_round PRIVATE okay::engine)
+add_test(NAME vs_logic_round COMMAND test_vs_logic_round)
+
+add_executable(test_vs_smart_logic test_vs_smart_logic.cpp)
+target_link_libraries(test_vs_smart_logic PRIVATE okay::engine)
+add_test(NAME vs_smart_logic COMMAND test_vs_smart_logic)
+
+add_executable(test_vs_flow_playground test_vs_flow_playground.cpp)
+target_link_libraries(test_vs_flow_playground PRIVATE okay::engine)
+target_compile_definitions(test_vs_flow_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_flow_playground COMMAND test_vs_flow_playground)
+
+add_executable(test_vs_registry_effect test_vs_registry_effect.cpp)
+target_include_directories(test_vs_registry_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_registry_effect PRIVATE okay::engine)
+add_test(NAME vs_registry_effect COMMAND test_vs_registry_effect)
+
+add_executable(test_vs_node_effect test_vs_node_effect.cpp)
+target_include_directories(test_vs_node_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_node_effect PRIVATE okay::engine)
+add_test(NAME vs_node_effect COMMAND test_vs_node_effect)
+
+add_executable(test_vs_gameplay_library test_vs_gameplay_library.cpp)
+target_link_libraries(test_vs_gameplay_library PRIVATE okay::engine)
+target_compile_definitions(test_vs_gameplay_library PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_gameplay_library COMMAND test_vs_gameplay_library)
+
+add_executable(test_vs_logic_library test_vs_logic_library.cpp)
+target_link_libraries(test_vs_logic_library PRIVATE okay::engine)
+add_test(NAME vs_logic_library COMMAND test_vs_logic_library)
+add_test(NAME vs_playground COMMAND test_vs_playground)
+
+add_executable(test_vs_script_coverage test_vs_script_coverage.cpp)
+target_link_libraries(test_vs_script_coverage PRIVATE okay::engine)
+target_compile_definitions(test_vs_script_coverage PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_script_coverage COMMAND test_vs_script_coverage)
+
 add_executable(test_ui_animation test_ui_animation.cpp)
 target_link_libraries(test_ui_animation PRIVATE okay::engine)
 add_test(NAME ui_animation COMMAND test_ui_animation)

@@ -1,0 +1,54 @@
+# For Each Map: add up the values of a map. arrow 10 + key 1 + potion 2 = 13.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 NewMap
+pos 2 40 220
+node 3 SetVar bag
+pos 3 320 40
+exec 1 0 3
+data 3 0 2 0
+node 4 GetVar bag
+pos 4 320 220
+node 5 MapSet
+pos 5 600 40
+default 5 1 "potion"
+default 5 2 2
+exec 3 0 5
+data 5 0 4 0
+node 6 GetVar bag
+pos 6 600 220
+node 7 MapSet
+pos 7 880 40
+default 7 1 "key"
+default 7 2 1
+exec 5 0 7
+data 7 0 6 0
+node 8 GetVar bag
+pos 8 880 220
+node 9 MapSet
+pos 9 1160 40
+default 9 1 "arrow"
+default 9 2 10
+exec 7 0 9
+data 9 0 8 0
+node 10 GetVar bag
+pos 10 1160 220
+node 11 ForEachMap
+pos 11 1440 40
+exec 9 0 11
+data 11 0 10 0
+node 12 AddVar total
+pos 12 1720 40
+exec 11 0 12
+data 12 0 11 1
+node 13 GetVar total
+pos 13 1720 240
+node 14 Concat
+pos 14 1980 240
+default 14 0 "Map total: "
+data 14 1 13 0
+node 15 SetText Readout
+pos 15 1980 40
+exec 11 1 15
+data 15 0 14 0

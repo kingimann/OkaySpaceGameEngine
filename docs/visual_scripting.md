@@ -704,13 +704,18 @@ not translated, and each node's tooltip gives the line of script.
 | **For Loop** | Runs Body for every number from First to Last (Index), then Done. |
 | **Repeat N** | Runs Body N times. |
 | **While** | Runs Body again and again while Cond is true. Cond is checked before each run. Then Done. |
-| **For Each** | Runs Body once per item of a List, with Item and Index (counted from 0), then Done. It walks the list as it was when the loop started, so the body may add to or remove from it safely. |
+| **For Each** | Runs Body once per item of a List, with Item and Index (counted from 0), then Done. It walks the list as it was when the loop started, so the body may add to or remove from it safely. A Delay in the body pauses the loop; the next item runs on a later frame. |
+| **For Each Map** | Same, for a map. Key and Value are set for each entry, keys in sorted order. |
 | **Break** | Leaves the loop whose Body runs it. The loop goes on to Done. |
 | **Continue** | Skips the rest of this run of the Body. The loop goes on to the next item. |
 
 - Break and Continue act on the innermost loop. In nested loops they only affect the inner one.
 - Before Play, the checker says when a Break / Continue isn't inside a loop's Body. While playing it's reported in the Console. That includes one that's after the loop's Done, or inside a function that has no loop of its own: Break doesn't reach out of a function into the loop that called it.
 - A loop that never ends (a While whose Cond stays true) is stopped by the event's step budget and reported. The game keeps running.
+- **Delay** and **Wait** inside a loop body pause that loop. The chain is picked up on a later frame and the loop continues with the next item (or the rest of the same one). A Sequence does not wait: its other outputs still run the same frame.
+- **Every (s)** keeps the leftover time. A 1 second timer that sees a 1.4 second frame fires and is 0.4 seconds into the next interval, instead of starting the interval over.
+- **Once** and **Do N Times** take a Reset input. Wire true into it to arm them again.
+- Editing a graph during Play keeps variables, and keeps node state that is tied to the same node id: Once, timers, a Delay that is still counting, a loop paused on a Delay. Deleting the node drops that state.
 
 ### Lists
 
@@ -723,6 +728,36 @@ Lists are shared: every node that reads `bag` sees the same list. The other list
 - **List Remove At**
 
 **All With Tag** gives every active object with a tag as a list, and so do the 3D Overlap queries. Walk one with For Each.
+
+### Maps
+
+**New Map** makes an empty map from names to values. Keep it in a variable, then **Map Set** (Map, Key, Value). The same rules as lists: the map is shared, so every reader sees the write.
+
+- **Map Get** returns the value and Found (false when the key is missing; that is not an error)
+- **Map Has**, **Map Remove**
+- **Map Keys** / **Map Values** are lists, keys in sorted order, so a run is repeatable
+- **For Each Map** walks those entries. Break stops early
+
+### Ready-made gameplay
+
+A beginner set sits on top of the low-level nodes. It does not replace Move Towards, Look At, Teleport, Nav Move To, Clamp, Lerp, Play Sound, Play Music, Load Scene, or the other nodes that already did that job. Each new node uses a sensible default when a pin is left empty, and a missing object or component is a node error.
+
+Movement: Turn Towards, Orbit Around Center, Follow Path, Move Upward and Downward, Spin, Knock Back, Follow Smoothly. Tweens (the caller waits): Tween Position, Rotation, Scale and Color. Animation: Crossfade Animation, Stop Animation, Wait for Animation End. Interaction: On Interact (E within 2 units), Pick up, Drop, Open Door, Close Door, Flip Lever, Collect, On Tag Enter / Stay / Exit, Is Nearby. Combat: Apply Damage, Heal, Is Dead, On Death, On Health Changed, Respawn (a Health component), Spawn Projectile, Shoot, Use Ammo. AI: Patrol Waypoints, Chase Target, Flee From Threat, Wander Around, Is Target Visible. Spawning: Spawn Every Few Seconds, Destroy After Seconds, Take From Pool, Release to Pool. Flow: Add Score, Set Score, Get Score, Count Down, Show Win, Show Loss, Restart Scene, Save Checkpoint, Load Checkpoint (the existing save). UI: Set Progress, Show Floating Text, Fade Screen. Camera: Set Camera Target, Zoom Camera, Switch Camera. Audio: Play Sound Here, Stop Sound (the Audio Source; music stays on Play Music / Stop Music). Input: On Action Pressed / Released / Held (interact, jump, fire, or a key name) and Get Move Direction. Utility: Pick Random Item, Pick Random Point, Shuffle List, Find Smallest, Find Largest, On Collision With Tag.
+
+The Visual Script toolbar's Recipes menu drops in a whole graph: collect coins and score, an enemy that chases and damages, a door with a key, a health pickup, and a countdown that ends in a win.
+
+### Switches, gates and calling out
+
+- **Switch on Name** (`SwitchString`) and **Switch on Number** (`SwitchCases`): one pin per case in the text field (comma separated, or **+ case**), then Default. An older file that wired Default to pin 4 still hits Default. Switch Number is still the fixed Zero / One / Two / Default node.
+- A **Delay** or **Wait** inside a function pauses the **Call Function**. The caller continues when the wait finishes, with the same arguments and locals. A called graph's own Delay is kept if the parent graph is reloaded during Play.
+- **Latch Gate** starts closed (type `open` to start open). Open, Close and Toggle are pulses. The flow passes only while the latch is open.
+- **Is Valid** is false for a destroyed object, a name that finds nothing, or a number that isn't finite.
+- **Call Script** calls a function on this object's text script (`function bump(n) { return n + 1; }`) and reads the return value. The other direction already exists: a script's `send_event` runs On Custom Event.
+- **Run Another Graph** runs another `.okayvs` file's event on this object (`door_logic.okayvs` or `door_logic.okayvs|Open`). Variables are shared. A relative path only, no `..`.
+
+### Values
+
+A number written as text (`"3"`, `" -1.5 "`) counts as that number in math and in Branch. The words `true` / `false` / `yes` / `no` (any case) and the text `"0"` count as true or false. Any other text is true when it isn't empty. A destroyed object is false. NaN is false. Dividing or taking a remainder by zero reports an error and yields 0.
 Reading or removing past the end of a list is reported, not ignored.
 
 ### Scene and global variables
@@ -953,6 +988,13 @@ Script-binding nodes are the generated list in [engine_api.md](engine_api.md): o
 - **Call Function** (`CallFunction`)
 - **While** (`While`) — in Condition
 - **For Each** (`ForEach`) — in List; out Item, Index
+- **For Each Map** (`ForEachMap`) — in Map; out Key, Value
+- **Switch on Name** (`SwitchString`) — in Value; setting: cases
+- **Switch on Number** (`SwitchCases`) — in Value; setting: numbers
+- **Latch Gate** (`LatchGate`) — in Open, Close, Toggle; out Is Open
+- **Is Valid** (`IsValid`) — in Value; out Yes
+- **Call Script** (`CallScript`) — in Argument; out Result; setting: function
+- **Run Another Graph** (`RunGraph`) — setting: file or file|Event
 - **Break Loop** (`Break`) — was Break
 - **Continue Loop** (`Continue`) — was Continue
 
@@ -1222,6 +1264,13 @@ Script-binding nodes are the generated list in [engine_api.md](engine_api.md): o
 - **Contact Normal** (`ContactNormal`) — out Normal
 - **Impact Speed** (`ImpactSpeed`) — out Speed
 - **New List** (`NewList`) — out List
+- **New Map** (`NewMap`) — out Map
+- **Map Set** (`MapSet`) — in Map, Key, Value
+- **Map Get** (`MapGet`) — in Map, Key; out Value, Found
+- **Map Has** (`MapHas`) — in Map, Key; out Yes
+- **Map Remove** (`MapRemove`) — in Map, Key
+- **Map Keys** (`MapKeys`) — in Map; out Keys
+- **Map Values** (`MapValues`) — in Map; out Values
 - **List Add** (`ListAdd`) — in List, Item
 - **List Remove At** (`ListRemoveAt`) — in List, Index
 - **List Get** (`ListGet`) — in List, Index; out Item

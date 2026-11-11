@@ -70,6 +70,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ProjectBrowser.cpp ProjectPanelUI.cpp                              # the Project panel: folder model + safe file operations, name prompt / delete confirm / import settings
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
+    VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
     ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)  # native file dialogs
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})
 target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared

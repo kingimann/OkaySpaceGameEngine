@@ -1,0 +1,32 @@
+# Door: a key lets the trigger's object open, after a short delay. Without the key it stays locked.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 Const true
+pos 2 40 220
+node 3 SetVar has_key
+pos 3 340 40
+exec 1 0 3
+data 3 0 2 0
+node 4 GetVar has_key
+pos 4 340 220
+node 5 Branch
+pos 5 660 40
+exec 3 0 5
+data 5 0 4 0
+node 6 Delay 0.4
+pos 6 980 20
+exec 5 0 6
+node 7 Const "open"
+pos 7 980 220
+node 8 SetVar door
+pos 8 1300 20
+exec 6 0 8
+data 8 0 7 0
+node 9 Const "locked"
+pos 9 980 420
+node 10 SetVar door
+pos 10 1300 280
+exec 5 1 10
+data 10 0 9 0
+comment 20 0 1600 620 2 "Door: key, then a delay, then open. No key locks it."

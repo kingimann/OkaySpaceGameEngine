@@ -1,0 +1,45 @@
+okayscene 1
+name "VS Playground: UI"
+gravity 0 0
+gravity3 0 0 0
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 9 -16 0 0 0 1 1 1 1
+    camera 1 5 52 0.11 0.13 0.17 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Instructions"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    text "Press Play. The bar fills to about three quarters, floating text says Hello, and the screen fades a little. Nothing to press." 1 0.96 0.82 1 2.15 1 18 16 0 1 0 0 0 0.72 1 1 0 0 0 0 0 1 0 1080 150 0 1 0.05 0.06 0.09 0.9 0 1.15 0 1
+end
+gameobject 2 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.15 2 0 0 0 1 16 0.3 16
+    mesh "Cube" 0.18 0.2 0.24 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 3 "Hud"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    text "..." 1 0.95 0.85 1 3.2 1 24 220 0
+    uiprogress 24 180 420 26 0.15 0.1 0.12 0.16 1 0.3 0.78 0.42 1 0
+    visualscript ""
+    visualscriptpath "ui.okayvs"
+end
+gameobject 4 "Fade"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    uipanel 0 0 1280 800 0 0 0 0 0
+end
+gameobject 5 "Marker"
+  active 1
+  parent -1
+  transform 0 0.5 1 0 0 0 1 0.5 0.5 0.5
+    mesh "Sphere" 0.9 0.75 0.3 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+end

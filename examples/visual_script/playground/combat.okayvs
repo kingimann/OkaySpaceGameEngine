@@ -1,0 +1,78 @@
+# Combat. Fighter heals, Enemy is defeated and respawns, Gun shoots.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 GetName
+pos 2 40 240
+node 3 SwitchString "Fighter, Enemy, Gun"
+pos 3 340 40
+node 4 Once
+pos 4 700 20
+node 5 Damage
+pos 5 940 20
+default 5 0 30
+node 6 Heal
+pos 6 1180 20
+default 6 0 15
+node 7 IsDead
+pos 7 700 200
+node 8 SetVar dead
+pos 8 980 200
+node 9 Once
+pos 9 700 360
+node 10 Damage
+pos 10 940 360
+default 10 0 400
+node 11 OnStart
+pos 11 40 560
+entry OnStart 11
+node 12 SwitchString "Fighter, Enemy, Gun"
+pos 12 340 560
+node 13 SpawnProjectile cube.okayprefab
+pos 13 700 540
+default 13 0 9
+node 14 Ammo 6
+pos 14 1000 540
+node 15 Shoot
+pos 15 1260 540
+default 15 0 30
+default 15 1 15
+node 16 OnDeath
+pos 16 40 820
+entry OnDeath 16
+node 17 SetVar died
+pos 17 340 820
+default 17 0 1
+node 18 Respawn
+pos 18 620 820
+node 19 OnHealthChanged
+pos 19 40 1000
+entry OnHealthChanged 19
+node 20 SetVar hurt
+pos 20 360 1000
+default 20 0 1
+node 21 OnCollisionTag ball
+pos 21 40 1180
+entry OnCollisionTag:ball 21
+node 22 SetVar bumped
+pos 22 400 1180
+default 22 0 1
+exec 1 0 3
+data 3 0 2 0
+exec 3 0 4
+exec 4 0 5
+exec 5 0 6
+exec 6 0 8
+data 8 0 7 0
+exec 3 1 9
+exec 9 0 10
+exec 11 0 12
+data 12 0 2 0
+exec 12 2 13
+exec 13 0 14
+exec 14 0 15
+exec 16 0 17
+exec 17 0 18
+exec 19 0 20
+exec 21 0 22
+comment 20 1360 1500 80 0 "The gun looks along +Z. Ammo counts down. On Death respawns the enemy."

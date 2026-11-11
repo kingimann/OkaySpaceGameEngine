@@ -1,14 +1,30 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include <cctype>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 #include <variant>
 #include <vector>
 
 namespace okay::vs {
+
+/// `s` as a finite number when the whole string (aside from surrounding spaces)
+/// is one. "3" and "-1.5" count; "3abc", "nan" and "" do not.
+inline bool VsParseFinite(const std::string& s, float& out) {
+    std::size_t b = 0, e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    if (b >= e) return false;
+    char* end = nullptr;
+    const float v = std::strtof(s.c_str() + b, &end);
+    if (end != s.c_str() + e || !std::isfinite(v)) return false;
+    out = v;
+    return true;
+}
 
 /// A reference to a GameObject flowing on a wire (Self, Other, a spawned object,
 /// a raycast hit...). Holds the object's instance id, never a pointer, so it is
@@ -72,12 +88,29 @@ public:
         if (auto* b = std::get_if<bool>(&m_data)) return *b ? 1.0f : 0.0f;
         if (auto* v = std::get_if<Vec3>(&m_data)) return v->Magnitude();
         if (auto* a = std::get_if<ArrayRef>(&m_data)) return *a ? (float)(*a)->size() : 0.0f;
+        if (auto* m = std::get_if<MapRef>(&m_data)) return *m ? (float)(*m)->size() : 0.0f;
+        if (auto* s = std::get_if<std::string>(&m_data)) {
+            float n = 0.0f;
+            if (VsParseFinite(*s, n)) return n;
+        }
         return 0.0f;
     }
     bool AsBool() const {
         if (auto* b = std::get_if<bool>(&m_data)) return *b;
-        if (auto* f = std::get_if<float>(&m_data)) return *f != 0.0f;
-        if (auto* s = std::get_if<std::string>(&m_data)) return !s->empty();
+        if (auto* f = std::get_if<float>(&m_data)) return !std::isnan(*f) && *f != 0.0f;
+        if (auto* s = std::get_if<std::string>(&m_data)) {
+            std::string t;
+            t.reserve(s->size());
+            for (char c : *s) {
+                if (std::isspace(static_cast<unsigned char>(c))) continue;
+                t.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            }
+            if (t.empty() || t == "false" || t == "no") return false;
+            if (t == "true" || t == "yes") return true;
+            float n = 0.0f;
+            if (VsParseFinite(*s, n)) return n != 0.0f;
+            return true;   // any other text is on
+        }
         if (auto* a = std::get_if<ArrayRef>(&m_data)) return *a && !(*a)->empty();
         if (auto* m = std::get_if<MapRef>(&m_data)) return *m && !(*m)->empty();
         if (auto* o = std::get_if<VsObject>(&m_data)) return o->id != 0 && VsObjectAlive(o->id);

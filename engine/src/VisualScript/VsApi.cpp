@@ -6,6 +6,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Log.hpp"
 #include "../Script/ScriptInternal.hpp"
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <unordered_map>
@@ -261,6 +262,75 @@ const VsApiEntry* VsApiFind(const std::string& type) {
     const Built& b = Data();
     auto it = b.index.find(type);
     return it != b.index.end() ? &b.entries[it->second] : nullptr;
+}
+
+bool VsApiInvoke(const std::string& typeName, const std::string& method,
+                 const std::vector<VsValue>& args, VsContext& ctx, VsValue& out, std::string& error) {
+    const Built& b = Data();
+    const Binding* best = nullptr;
+    const VsApiEntry* entry = nullptr;
+    int bestExtra = 1000;
+    for (std::size_t i = 0; i < b.entries.size(); ++i) {
+        const Binding& bd = b.bindings[i];
+        if (bd.kind != Binding::Call || !bd.method) continue;
+        if (b.entries[i].apiType != typeName || b.entries[i].member != method) continue;
+        const int n = (int)bd.method->params.size();
+        const int extra = n >= (int)args.size() ? n - (int)args.size() : 100 + (int)args.size() - n;
+        if (extra < bestExtra) { bestExtra = extra; best = &bd; entry = &b.entries[i]; }
+    }
+    if (!best || !entry) {
+        error = "no method " + typeName + "." + method;
+        return false;
+    }
+    const EngineApi& api = EngineApi::Get();
+    const ApiType& t = api.types[(std::size_t)best->typeIndex];
+    script::CallContext c;
+    c.self = ctx.gameObject;
+    c.deltaTime = ctx.deltaTime;
+    Value self;
+    if (!best->isStatic) {
+        if (t.isValueType) {
+            self = args.empty() ? Value{Vec3::Zero} : Value{args.back().AsVec3()};
+        } else {
+            if (!ctx.gameObject) { error = "there's no object for " + typeName + "." + method; return false; }
+            if (t.find && !t.find(ctx.gameObject)) {
+                error = "'" + ctx.gameObject->name + "' has no " + t.name;
+                return false;
+            }
+            self = Value{script::ObjRef{ctx.gameObject->InstanceId(), best->typeIndex}};
+        }
+    }
+    try {
+        std::vector<Value> in;
+        const std::size_t n = best->method->params.size();
+        in.reserve(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            VsValue v = i < args.size() ? args[i] : VsValue();
+            in.push_back(ToScript(v, best->method->params[i], ctx));
+        }
+        out = ToVs(best->method->fn(self, in, c), best->method->ret);
+        return true;
+    } catch (const script::RuntimeError& e) {
+        error = e.what();
+    } catch (const std::bad_variant_access&) {
+        error = "a value was the wrong kind for " + typeName + "." + method;
+    } catch (const std::exception& e) {
+        error = e.what();
+    }
+    return false;
+}
+
+std::vector<std::string> VsApiMethodLabels() {
+    std::vector<std::string> out;
+    for (const VsApiEntry& e : VsApiEntries())
+        if (e.exec || e.type.find('/') != std::string::npos) {
+            if (e.member.empty()) continue;
+            const std::string label = e.apiType + "." + e.member;
+            if (out.empty() || out.back() != label) out.push_back(label);
+        }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
 }
 
 std::unique_ptr<VsNode> MakeApiNode(const std::string& type) {

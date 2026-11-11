@@ -14,6 +14,7 @@
 // the graph's own object), like every other node acting on an object; members of
 // Vector3 take the vector last; static members (Input, Time, Mathf...) take neither.
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsValue.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,6 +22,7 @@
 namespace okay::vs {
 
 class VsNode;
+struct VsContext;
 
 struct VsApiPin {
     std::string name;
@@ -46,6 +48,12 @@ const std::vector<VsApiEntry>& VsApiEntries();
 const VsApiEntry* VsApiFind(const std::string& type);
 /// A runtime node for `type`, or nullptr when it isn't a generated node.
 std::unique_ptr<VsNode> MakeApiNode(const std::string& type);
+/// Call `Type.Method` with `args` (the graph's object is the receiver). False, with
+/// `error` set, when that method does not exist or the call fails.
+bool VsApiInvoke(const std::string& typeName, const std::string& method,
+                 const std::vector<VsValue>& args, VsContext& ctx, VsValue& out, std::string& error);
+/// "Type.Method" labels for the editor picker, one per method.
+std::vector<std::string> VsApiMethodLabels();
 /// The binding's own check of a typed-in value for input `pin` (key names,
 /// axis names): an error message, or "" when it's fine or not checked.
 std::string VsApiCheckLiteral(const std::string& type, int pin, const std::string& literal);

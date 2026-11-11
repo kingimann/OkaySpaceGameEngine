@@ -1,0 +1,57 @@
+# Gameplay library: audio. Every node below is declared here; the first chain runs in Play.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 GlSetVolume
+pos 2 300 40
+default 2 0 0.5
+exec 1 0 2
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 100
+exec 100 0 102
+exec 102 0 104
+exec 104 0 105
+exec 105 0 106
+exec 106 0 107
+exec 107 0 108
+exec 108 0 109
+exec 109 0 110
+node 100 GlSetVolume
+pos 100 40 520
+default 100 0 0.4
+node 101 GlGetVolume
+pos 101 300 520
+node 102 GlSetPitch
+pos 102 560 520
+default 102 0 1.5
+node 103 GlIsSoundPlaying
+pos 103 820 520
+node 104 GlPauseSound
+pos 104 1080 520
+node 105 GlSetSoundLooping
+pos 105 1340 520
+default 105 0 true
+node 106 GlFadeVolumeTo
+pos 106 40 710
+default 106 0 0
+default 106 1 1
+node 107 GlRandomizePitch
+pos 107 300 710
+default 107 0 1.3
+default 107 1 1.3
+node 108 GlMuteSound
+pos 108 560 710
+default 108 0 true
+node 109 GlPlaySoundNow
+pos 109 820 710
+node 110 GlSetSound3D
+pos 110 1080 710
+default 110 0 true
+node 111 GlGetPitch
+pos 111 1340 710
+node 112 GlIsSoundLooping
+pos 112 40 900
+node 113 GlIsSoundPositional
+pos 113 300 900

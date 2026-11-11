@@ -1,0 +1,21 @@
+# A key is granted on start. Interact is the live event; this file also opens the door from On Start so a headless run can see the swing.
+node 1 OnStart
+entry OnStart 1
+node 2 Const true
+node 3 SetVar has_key
+exec 1 0 3
+data 3 0 2 0
+node 4 DoorOpen
+default 4 0 90
+default 4 1 0.2
+exec 3 0 4
+node 5 OnInteract
+entry OnInteract 5
+node 6 GetVar has_key
+node 7 Branch
+exec 5 0 7
+data 7 0 6 0
+node 8 DoorOpen
+default 8 0 90
+default 8 1 0.2
+exec 7 0 8

@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include "VisualScriptEditor.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include <cstring>
 #include <string>
 
 using namespace okay::editor::vsed;
@@ -47,12 +48,12 @@ int main() {
     for (const VsDef& d : Registry()) {
         const int lv = (int)d.level;
         CHECK(lv >= 0 && lv <= 2);
-        CHECK(d.level == (std::strchr(d.type, '.') ? VsLevelForApi(okay::vs::VsApiFind(d.type)->apiType.c_str(),
-                                                                    okay::vs::VsApiFind(d.type)->member.c_str())
-                                                    : VsLevelForNode(d.type)));
-        if (std::strchr(d.type, '.')) {
-            const okay::vs::VsApiEntry* e = okay::vs::VsApiFind(d.type);
-            const bool help = (e && !e->doc.empty()) || (VsNodeHelp(d.type) && VsNodeHelp(d.type)[0]);
+        // Fn.print has a dot but is a text-script builtin, not an engine binding.
+        const okay::vs::VsApiEntry* apiEntry = std::strchr(d.type, '.') ? okay::vs::VsApiFind(d.type) : nullptr;
+        CHECK(d.level == (apiEntry ? VsLevelForApi(apiEntry->apiType.c_str(), apiEntry->member.c_str())
+                                   : VsLevelForNode(d.type)));
+        if (apiEntry) {
+            const bool help = !apiEntry->doc.empty() || (VsNodeHelp(d.type) && VsNodeHelp(d.type)[0]);
             CHECK(help);
             if (!help) std::printf("  no help: %s\n", d.type);
             ++api;
@@ -80,6 +81,32 @@ int main() {
     CHECK(VsLevelForStep("set_var", "Variables") == VsLevel::Basic);
     CHECK(VsLevelForStep("net_host", "Multiplayer") == VsLevel::Advanced);
     CHECK(VsLevelForStep("tween_move", "Juice") == VsLevel::Intermediate);
+
+    // The logic library is leveled on purpose: beginners, the everyday toolbox, and specialist tools.
+    CHECK(VsLevelForNode("LbApproach") == VsLevel::Basic);
+    CHECK(VsLevelForNode("LbSmoothStep") == VsLevel::Intermediate);
+    CHECK(VsLevelForNode("LbSpringStep") == VsLevel::Advanced);
+    CHECK(VsLevelForNode("LbRunAndCheck") == VsLevel::Basic);
+    CHECK(VsLevelForNode("LbTrySeveral") == VsLevel::Intermediate);
+    CHECK(VsLevelForNode("LbRepeatUntilSuccess") == VsLevel::Advanced);
+    CHECK(VsLevelForNode("LbWeighPick") == VsLevel::Advanced);
+    CHECK(VsLevelForNode("WaitUntil") == VsLevel::Basic);
+    CHECK(VsLevelForNode("LineOfSight") == VsLevel::Advanced);
+    int lbBasic = 0, lbMid = 0, lbAdv = 0;
+    for (const VsDef& d : Registry()) {
+        if (!d.type || std::strncmp(d.type, "Lb", 2) != 0) continue;
+        if (d.level == VsLevel::Basic) ++lbBasic;
+        else if (d.level == VsLevel::Intermediate) ++lbMid;
+        else ++lbAdv;
+        const char* help = VsNodeHelp(d.type);
+        CHECK(help && help[0] && std::strchr(help, '\n') == nullptr);
+        CHECK(help && std::strlen(help) < 180);
+        CHECK(d.level == VsLevelForNode(d.type));
+    }
+    CHECK(lbBasic >= 20);
+    CHECK(lbMid >= 20);
+    CHECK(lbAdv >= 20);
+    std::printf("  logic library levels: %d basic, %d intermediate, %d advanced\n", lbBasic, lbMid, lbAdv);
 
     TEST_MAIN_RESULT();
 }

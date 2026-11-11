@@ -29,6 +29,20 @@ inline const char* const kPinCondition[] = {"Condition"};
 inline const char* const kPinTimes[] = {"Times"};
 inline const char* const kExecFirstSecond[] = {"First", "Second"};
 inline const char* const kExecCases[] = {"Zero", "One", "Two", "Default"};
+inline const char* const kExecNamedCases[] = {"Case One", "Case Two", "Case Three", "Case Four", "Default"};
+inline const char* const kExecLever[] = {"Opened", "Closed"};
+inline const char* const kPinCenterRadiusSpeed[] = {"Center", "Radius", "Speed"};
+inline const char* const kPinTweenColor[] = {"Red", "Green", "Blue", "Opacity", "Seconds"};
+inline const char* const kPinShoot[] = {"Distance", "Damage"};
+inline const char* const kPinSmallest[] = {"Smallest"};
+inline const char* const kPinLargest[] = {"Largest"};
+inline const char* const kPinCall[] = {"First", "Second", "Third", "Fourth", "Method"};
+inline const char* const kPinComponent[] = {"Object", "Found"};
+inline const char* const kPinZoom[] = {"Amount"};
+inline const char* const kPinNearby[] = {"Nearby"};
+inline const char* const kPinVisible[] = {"Visible"};
+inline const char* const kPinDirection[] = {"Direction"};
+inline const char* const kPinRemaining[] = {"Remaining"};
 
 // Events. oldTitle is what the palette used to say.
 inline const VsName kVsNames[] = {
@@ -104,6 +118,158 @@ inline const VsName kVsNames[] = {
     {"ForEach",       VsNameKind::Action, "For Each",               "For Each",          "", nullptr, 0, nullptr, 0},
     {"Break",         VsNameKind::Action, "Break Loop",             "Break",             "", nullptr, 0, nullptr, 0},
     {"Continue",      VsNameKind::Action, "Continue Loop",          "Continue",          "", nullptr, 0, nullptr, 0},
+    // Nodes added on the logic-runtime branch. File tokens stay; these are the titles.
+    {"OnInteract",       VsNameKind::Event, "On Interact",            "On Interact",            "interact", nullptr, 0, nullptr, 0},
+    {"OnTagEnter",       VsNameKind::Event, "On Tag Enter",           "On Tag Enter",           "tag enter", nullptr, 0, nullptr, 0},
+    {"OnTagStay",        VsNameKind::Event, "On Tag Stay",            "On Tag Stay",            "tag stay", nullptr, 0, nullptr, 0},
+    {"OnTagExit",        VsNameKind::Event, "On Tag Exit",            "On Tag Exit",            "tag exit", nullptr, 0, nullptr, 0},
+    {"OnDeath",          VsNameKind::Event, "On Death",               "On Death",               "death", nullptr, 0, nullptr, 0},
+    {"OnHealthChanged",  VsNameKind::Event, "On Health Changed",      "On Health Changed",      "health", nullptr, 0, nullptr, 0},
+    {"OnAction",         VsNameKind::Event, "On Action Pressed",      "On Action Pressed",      "action interact jump fire", nullptr, 0, nullptr, 0},
+    {"OnActionUp",       VsNameKind::Event, "On Action Released",     "On Action Released",     "action", nullptr, 0, nullptr, 0},
+    {"OnActionHeld",     VsNameKind::Event, "On Action Held",         "On Action Held",         "action", nullptr, 0, nullptr, 0},
+    {"OnCollisionTag",   VsNameKind::Event, "On Collision With Tag",  "On Collision With Tag",  "tag collision", nullptr, 0, nullptr, 0},
+    {"WaitAnimEnd",      VsNameKind::Action, "Wait for Animation End", "Wait For Animation End", "anim animation", nullptr, 0, nullptr, 0},
+    {"Countdown",        VsNameKind::Action, "Count Down",            "Countdown",              "seconds", nullptr, 0, nullptr, 0},
+    {"SwitchString",     VsNameKind::Action, "Switch on Name",        "Switch (name)",          "switch string case", nullptr, 0, nullptr, 0},
+    {"SwitchCases",      VsNameKind::Action, "Switch on Number",      "Switch (cases)",         "switch case", nullptr, 0, nullptr, 0},
+    {"LatchGate",        VsNameKind::Action, "Latch Gate",            "Latch Gate",             "", nullptr, 0, nullptr, 0},
+    {"ForEachMap",       VsNameKind::Action, "For Each in Map",       "For Each Map",           "map", nullptr, 0, nullptr, 0},
+    {"RunGraph",         VsNameKind::Action, "Run Another Graph",     "Run Graph",              "graph", nullptr, 0, nullptr, 0},
+    {"RotateTowards",    VsNameKind::Action, "Turn Towards",          "Rotate Towards",         "rotate", nullptr, 0, nullptr, 0},
+    {"OrbitAround",      VsNameKind::Action, "Orbit Around Center",   "Orbit Around",           "orbit centre center", kPinCenterRadiusSpeed, 3, nullptr, 0},
+    {"FollowPath",       VsNameKind::Action, "Follow Path",           "Follow Path",            "", nullptr, 0, nullptr, 0},
+    {"Bob",              VsNameKind::Action, "Move Upward and Downward", "Bob",                "bob up down", nullptr, 0, nullptr, 0},
+    {"Spin",             VsNameKind::Action, "Spin",                  "Spin",                   "", nullptr, 0, nullptr, 0},
+    {"Knockback",        VsNameKind::Action, "Knock Back",            "Knockback",              "", nullptr, 0, nullptr, 0},
+    {"SmoothFollow",     VsNameKind::Action, "Follow Smoothly",       "Smooth Follow",          "", nullptr, 0, nullptr, 0},
+    {"TweenPosition",    VsNameKind::Action, "Tween Position",        "Tween Position",         "", nullptr, 0, nullptr, 0},
+    {"TweenRotation",    VsNameKind::Action, "Tween Rotation",        "Tween Rotation",         "", nullptr, 0, nullptr, 0},
+    {"TweenScale",       VsNameKind::Action, "Tween Scale",           "Tween Scale",            "", nullptr, 0, nullptr, 0},
+    {"TweenColor",       VsNameKind::Action, "Tween Color",           "Tween Color",            "rgba", kPinTweenColor, 5, nullptr, 0},
+    {"CrossfadeClip",    VsNameKind::Action, "Crossfade Animation",   "Crossfade Animation",    "anim clip", nullptr, 0, nullptr, 0},
+    {"StopAnimation",    VsNameKind::Action, "Stop Animation",        "Stop Animation",         "anim", nullptr, 0, nullptr, 0},
+    {"PickUp",           VsNameKind::Action, "Pick up",               "Pick Up",                "", nullptr, 0, nullptr, 0},
+    {"Drop",             VsNameKind::Action, "Drop",                  "Drop",                   "", nullptr, 0, nullptr, 0},
+    {"DoorOpen",         VsNameKind::Action, "Open Door",             "Door Open",              "", nullptr, 0, nullptr, 0},
+    {"DoorClose",        VsNameKind::Action, "Close Door",            "Door Close",             "", nullptr, 0, nullptr, 0},
+    {"Lever",            VsNameKind::Action, "Flip Lever",            "Lever",                  "", nullptr, 0, nullptr, 0},
+    {"Collect",          VsNameKind::Action, "Collect",               "Collect",                "", nullptr, 0, nullptr, 0},
+    {"Damage",           VsNameKind::Action, "Apply Damage",          "Damage",                 "", nullptr, 0, nullptr, 0},
+    {"Heal",             VsNameKind::Action, "Heal",                  "Heal",                   "", nullptr, 0, nullptr, 0},
+    {"Respawn",          VsNameKind::Action, "Respawn",               "Respawn",                "", nullptr, 0, nullptr, 0},
+    {"SpawnProjectile",  VsNameKind::Action, "Spawn Projectile",      "Spawn Projectile",       "prefab", nullptr, 0, nullptr, 0},
+    {"Shoot",            VsNameKind::Action, "Shoot",                 "Shoot",                  "max dist", kPinShoot, 2, nullptr, 0},
+    {"Ammo",             VsNameKind::Action, "Use Ammo",              "Ammo",                   "", nullptr, 0, kPinRemaining, 1},
+    {"Patrol",           VsNameKind::Action, "Patrol Waypoints",      "Patrol Waypoints",       "", nullptr, 0, nullptr, 0},
+    {"Chase",            VsNameKind::Action, "Chase Target",          "Chase Target",           "", nullptr, 0, nullptr, 0},
+    {"Flee",             VsNameKind::Action, "Flee From Threat",      "Flee",                   "", nullptr, 0, nullptr, 0},
+    {"Wander",           VsNameKind::Action, "Wander Around",         "Wander",                 "", nullptr, 0, nullptr, 0},
+    {"SpawnEvery",       VsNameKind::Action, "Spawn Every Few Seconds", "Spawn Every",          "prefab", nullptr, 0, nullptr, 0},
+    {"DestroyAfter",     VsNameKind::Action, "Destroy After Seconds", "Destroy After",          "", nullptr, 0, nullptr, 0},
+    {"PoolGet",          VsNameKind::Action, "Take From Pool",        "Pool Get",               "pool", nullptr, 0, nullptr, 0},
+    {"PoolRelease",      VsNameKind::Action, "Release to Pool",       "Pool Release",           "pool", nullptr, 0, nullptr, 0},
+    {"ScoreAdd",         VsNameKind::Action, "Add Score",             "Score Add",              "", nullptr, 0, nullptr, 0},
+    {"ScoreSet",         VsNameKind::Action, "Set Score",             "Score Set",              "", nullptr, 0, nullptr, 0},
+    {"Win",              VsNameKind::Action, "Show Win",              "Win",                    "", nullptr, 0, nullptr, 0},
+    {"Lose",             VsNameKind::Action, "Show Loss",             "Lose",                   "", nullptr, 0, nullptr, 0},
+    {"RestartScene",     VsNameKind::Action, "Restart Scene",         "Restart Scene",          "", nullptr, 0, nullptr, 0},
+    {"CheckpointSave",   VsNameKind::Action, "Save Checkpoint",       "Checkpoint Save",        "", nullptr, 0, nullptr, 0},
+    {"CheckpointLoad",   VsNameKind::Action, "Load Checkpoint",       "Checkpoint Load",        "", nullptr, 0, nullptr, 0},
+    {"SetProgress",      VsNameKind::Action, "Set Progress",          "Set Progress Bar",       "", nullptr, 0, nullptr, 0},
+    {"ShowFloatingText", VsNameKind::Action, "Show Floating Text",     "Show Floating Text",      "", nullptr, 0, nullptr, 0},
+    {"FadeScreen",       VsNameKind::Action, "Fade Screen",           "Fade Screen",            "", nullptr, 0, nullptr, 0},
+    {"SetCameraTarget",  VsNameKind::Action, "Set Camera Target",     "Set Camera Target",      "", nullptr, 0, nullptr, 0},
+    {"Zoom",             VsNameKind::Action, "Zoom Camera",           "Zoom",                   "", kPinZoom, 1, nullptr, 0},
+    {"SwitchCamera",     VsNameKind::Action, "Switch Camera",         "Switch Camera",          "", nullptr, 0, nullptr, 0},
+    {"PlaySoundAt",      VsNameKind::Action, "Play Sound Here",       "Play Sound At",          "", nullptr, 0, nullptr, 0},
+    {"StopSound",        VsNameKind::Action, "Stop Sound",            "Stop Sound",             "", nullptr, 0, nullptr, 0},
+    {"CallScript",       VsNameKind::Action, "Call Script",           "Call Script",            "", nullptr, 0, nullptr, 0},
+    {"SetProperty",      VsNameKind::Action, "Set Property",          "Set Property",           "", nullptr, 0, nullptr, 0},
+    {"CallMethod",       VsNameKind::Action, "Call Method",           "Call Method",            "", kPinCall, 5, nullptr, 0},
+    {"AddComponent",     VsNameKind::Action, "Add Component",         "Add Component",          "", nullptr, 0, nullptr, 0},
+    {"SendMessage",      VsNameKind::Action, "Send Message",          "Send Message",           "", nullptr, 0, nullptr, 0},
+    {"Broadcast",        VsNameKind::Action, "Broadcast Message",     "Broadcast",              "", nullptr, 0, nullptr, 0},
+    {"RunSnippet",       VsNameKind::Action, "Run Text Snippet",      "Run Snippet",            "", nullptr, 0, nullptr, 0},
+    {"Proximity",        VsNameKind::Question, "Is Nearby",           "Proximity",              "", nullptr, 0, kPinNearby, 1},
+    {"IsDead",           VsNameKind::Question, "Is Dead",             "Is Dead",                "", nullptr, 0, nullptr, 0},
+    {"CanSee",           VsNameKind::Question, "Is Target Visible",   "Can See Target",         "", nullptr, 0, kPinVisible, 1},
+    {"ScoreGet",         VsNameKind::Reading, "Get Score",            "Score Get",              "", nullptr, 0, nullptr, 0},
+    {"GetMoveAxis",      VsNameKind::Reading, "Get Move Direction",   "Get Move Axis",          "axis", nullptr, 0, kPinDirection, 1},
+    {"GetProperty",      VsNameKind::Reading, "Get Property",         "Get Property",           "", nullptr, 0, nullptr, 0},
+    {"GetComponent",     VsNameKind::Reading, "Get Component",        "Get Component",          "", nullptr, 0, kPinComponent, 2},
+    {"FindByTag",        VsNameKind::Reading, "Get Object by Tag",    "Find By Tag",            "find tag", nullptr, 0, nullptr, 0},
+    {"RandomPick",       VsNameKind::Calculation, "Pick Random Item", "Random Pick",            "", nullptr, 0, nullptr, 0},
+    {"RandomPoint",      VsNameKind::Calculation, "Pick Random Point", "Random Point In Area", "centre center", nullptr, 0, nullptr, 0},
+    {"ShuffleList",      VsNameKind::Calculation, "Shuffle List",     "Shuffle",                "", nullptr, 0, nullptr, 0},
+    {"ListMin",          VsNameKind::Calculation, "Find Smallest",    "Min Of List",            "min", nullptr, 0, kPinSmallest, 1},
+    {"ListMax",          VsNameKind::Calculation, "Find Largest",     "Max Of List",            "max", nullptr, 0, kPinLargest, 1},
+    {"NotAnd",           VsNameKind::Calculation, "Not and",           "Not and",                "nand", nullptr, 0, nullptr, 0},
+    {"NotOr",            VsNameKind::Calculation, "Not or",            "Not or",                 "nor", nullptr, 0, nullptr, 0},
+    {"AllTrue",          VsNameKind::Calculation, "All True",          "All True",               "", nullptr, 0, nullptr, 0},
+    {"AnyTrue",          VsNameKind::Calculation, "Any True",          "Any True",               "", nullptr, 0, nullptr, 0},
+    {"IsEven",           VsNameKind::Question,    "Is Even",           "Is Even",                "", nullptr, 0, nullptr, 0},
+    {"IsOdd",            VsNameKind::Question,    "Is Odd",            "Is Odd",                 "", nullptr, 0, nullptr, 0},
+    {"PickByIndex",      VsNameKind::Calculation, "Pick by Index",     "Pick by Index",          "", nullptr, 0, nullptr, 0},
+    {"FirstValid",       VsNameKind::Calculation, "First Valid",       "First Valid",            "coalesce", nullptr, 0, nullptr, 0},
+    {"BranchInOrder",    VsNameKind::Action,      "Branch in Order",   "Branch in Order",        "else if", nullptr, 0, nullptr, 0},
+    {"DoWhile",          VsNameKind::Action,      "Repeat While",      "Repeat While",           "do while", nullptr, 0, nullptr, 0},
+    {"ForStep",          VsNameKind::Action,      "Count With Step",   "Count With Step",        "for step reverse", nullptr, 0, nullptr, 0},
+    {"WaitUntil",        VsNameKind::Action,      "Wait Until",        "Wait Until",             "", nullptr, 0, nullptr, 0},
+    {"WaitWhile",        VsNameKind::Action,      "Wait While",        "Wait While",             "", nullptr, 0, nullptr, 0},
+    {"BecameTrue",       VsNameKind::Action,      "Became True",       "Became True",            "rising edge", nullptr, 0, nullptr, 0},
+    {"BecameFalse",      VsNameKind::Action,      "Became False",      "Became False",           "falling edge", nullptr, 0, nullptr, 0},
+    {"CountUntil",       VsNameKind::Action,      "Count Until",       "Count Until",            "counter target", nullptr, 0, nullptr, 0},
+    {"WeightedBranch",   VsNameKind::Action,      "Weighted Branch",   "Weighted Branch",        "random branch", nullptr, 0, nullptr, 0},
+    {"WaitSteady",       VsNameKind::Action,      "Wait Until Steady", "Wait Until Steady",      "debounce", nullptr, 0, nullptr, 0},
+    {"StepThrough",      VsNameKind::Action,      "Step Through",      "Step Through",           "multi gate", nullptr, 0, nullptr, 0},
+    {"WaitLimit",        VsNameKind::Action,      "Wait With Limit",   "Wait With Limit",        "timeout", nullptr, 0, nullptr, 0},
+    {"SetState",         VsNameKind::Action,      "Set State",         "Set State",              "", nullptr, 0, nullptr, 0},
+    {"GetState",         VsNameKind::Reading,     "Get State",         "Get State",              "", nullptr, 0, nullptr, 0},
+    {"IsInState",        VsNameKind::Question,    "Is in State",       "Is in State",            "enum", nullptr, 0, nullptr, 0},
+    {"WhenStateBecomes", VsNameKind::Action,      "When State Becomes","When State Becomes",     "on state enter", nullptr, 0, nullptr, 0},
+    {"WhenStateLeaves",  VsNameKind::Action,      "When State Leaves", "When State Leaves",      "on state exit", nullptr, 0, nullptr, 0},
+    {"HeldLong",         VsNameKind::Question,    "Has Held Long Enough", "Has Held Long Enough", "held for", nullptr, 0, nullptr, 0},
+    {"HappenedNear",     VsNameKind::Question,    "Has Happened Within", "Has Happened Within", "within time", nullptr, 0, nullptr, 0},
+    {"EveryWhile",       VsNameKind::Action,      "Every Few Seconds", "Every Few Seconds", "every n while", nullptr, 0, nullptr, 0},
+    {"EaseToward",       VsNameKind::Calculation, "Ease Toward", "Ease Toward", "", nullptr, 0, nullptr, 0},
+    {"BlendTime",        VsNameKind::Action,      "Blend Over Time", "Blend Over Time", "lerp tween", nullptr, 0, nullptr, 0},
+    {"Stopwatch",        VsNameKind::Action,      "Run Stopwatch", "Run Stopwatch", "", nullptr, 0, nullptr, 0},
+    {"IsSlightly",       VsNameKind::Question,    "Is Slightly True", "Is Slightly True", "fuzzy", nullptr, 0, nullptr, 0},
+    {"IsMostly",         VsNameKind::Question,    "Is Mostly True", "Is Mostly True", "fuzzy", nullptr, 0, nullptr, 0},
+    {"IsVery",           VsNameKind::Question,    "Is Very True", "Is Very True", "fuzzy", nullptr, 0, nullptr, 0},
+    {"PickBest",         VsNameKind::Calculation, "Pick Best Score", "Pick Best Score", "utility", nullptr, 0, nullptr, 0},
+    {"ShuffleBag",       VsNameKind::Calculation, "Draw Without Repeating", "Draw Without Repeating", "shuffle bag", nullptr, 0, nullptr, 0},
+    {"ChanceEachSecond", VsNameKind::Calculation, "Chance This Second", "Chance This Second", "probability", nullptr, 0, nullptr, 0},
+    {"TryFirst",         VsNameKind::Action,      "Try First", "Try First", "selector behaviour", nullptr, 0, nullptr, 0},
+    {"AllSucceed",       VsNameKind::Action,      "All Must Succeed", "All Must Succeed", "sequence behaviour", nullptr, 0, nullptr, 0},
+    {"FlipOutcome",      VsNameKind::Action,      "Flip Result", "Flip Result", "inverter", nullptr, 0, nullptr, 0},
+    {"AlwaysSucceed",    VsNameKind::Action,      "Always Succeed", "Always Succeed", "succeeder", nullptr, 0, nullptr, 0},
+    {"RepeatUntilFail",  VsNameKind::Action,      "Repeat Until Fail", "Repeat Until Fail", "", nullptr, 0, nullptr, 0},
+    {"WaitBetween",      VsNameKind::Action,      "Wait Between Tries", "Wait Between Tries", "cooldown decorator", nullptr, 0, nullptr, 0},
+    {"SucceedNow",       VsNameKind::Action,      "Succeed Now", "Succeed Now", "", nullptr, 0, nullptr, 0},
+    {"FailNow",          VsNameKind::Action,      "Fail Now", "Fail Now", "", nullptr, 0, nullptr, 0},
+    {"CheckOutcome",     VsNameKind::Action,      "Check Condition", "Check Condition", "", nullptr, 0, nullptr, 0},
+    {"InCone",           VsNameKind::Question,    "Is in Cone", "Is in Cone", "perception", nullptr, 0, nullptr, 0},
+    {"LineOfSight",      VsNameKind::Question,    "Has Line of Sight", "Has Line of Sight", "", nullptr, 0, nullptr, 0},
+    {"InsideArea",       VsNameKind::Question,    "Is Inside Area", "Is Inside Area", "", nullptr, 0, nullptr, 0},
+    {"CountNearby",      VsNameKind::Calculation, "Count Nearby", "Count Nearby", "", nullptr, 0, nullptr, 0},
+    {"NearestObject",    VsNameKind::Reading,     "Get Nearest Object", "Get Nearest Object", "", nullptr, 0, nullptr, 0},
+    {"FarthestObject",   VsNameKind::Reading,     "Get Farthest Object", "Get Farthest Object", "", nullptr, 0, nullptr, 0},
+    {"SortByDistance",   VsNameKind::Calculation, "Sort by Distance", "Sort by Distance", "", nullptr, 0, nullptr, 0},
+    {"WhenChanged",      VsNameKind::Action,      "When Value Changes", "When Value Changes", "watch", nullptr, 0, nullptr, 0},
+    {"DoUnless",         VsNameKind::Action,      "Run Unless", "Run Unless", "rule", nullptr, 0, nullptr, 0},
+    {"RememberValue",    VsNameKind::Action,      "Remember Value", "Remember Value", "save flag", nullptr, 0, nullptr, 0},
+    {"RecallValue",      VsNameKind::Reading,     "Get Remembered Value", "Get Remembered Value", "", nullptr, 0, nullptr, 0},
+    {"HealthEmpty",      VsNameKind::Action,      "When Health Runs Out", "When Health Runs Out", "", nullptr, 0, nullptr, 0},
+    {"HealthFull",       VsNameKind::Action,      "When Health is Full", "When Health is Full", "", nullptr, 0, nullptr, 0},
+    {"AddBuff",          VsNameKind::Action,      "Add Timed Buff", "Add Timed Buff", "stat modifier", nullptr, 0, nullptr, 0},
+    {"AdvanceObjective", VsNameKind::Action,      "Advance Objective", "Advance Objective", "quest", nullptr, 0, nullptr, 0},
+    {"AssertThis",       VsNameKind::Action,      "Assert This", "Assert This", "", nullptr, 0, nullptr, 0},
+    {"LogOnce",          VsNameKind::Action,      "Log Once", "Log Once", "", nullptr, 0, nullptr, 0},
+    {"DrawDebugLine",    VsNameKind::Action,      "Draw Debug Line", "Draw Debug Line", "", nullptr, 0, nullptr, 0},
+#include "generated/library_names.inc"
+#include "generated/gplib_names.inc"
 };
 
 struct VsExecLabels { const char* type; const char* const* pins; int count; };
@@ -111,6 +277,9 @@ inline const VsExecLabels kVsExecLabels[] = {
     {"Sequence",  kExecFirstSecond, 2},
     {"FlipFlop",  kExecFirstSecond, 2},
     {"SwitchInt", kExecCases, 4},
+    {"SwitchString", kExecNamedCases, 5},
+    {"SwitchCases", kExecNamedCases, 5},
+    {"Lever", kExecLever, 2},
 };
 
 inline const VsName* FindVsName(const char* type) {
@@ -172,14 +341,14 @@ inline std::string LintVsTitle(const char* titleIn, VsNameKind kind) {
         const std::string& w = words[i];
         const std::string low = VsLower(w);
         if (VsBannedWord(low)) return "\"" + w + "\" is jargon or an abbreviation; say it in ordinary words";
-        const bool small = VsSmallWord(low);
-        bool capSmall = small && !w.empty() && std::isupper((unsigned char)w[0]);
+        const bool smallWord = VsSmallWord(low);
+        bool capSmall = smallWord && !w.empty() && std::isupper((unsigned char)w[0]);
         for (std::size_t k = 1; capSmall && k < w.size(); ++k)
             if (!std::islower((unsigned char)w[k])) capSmall = false;
         if (i == 0) {
             if (!(VsMajorWord(w) || capSmall))
                 return "\"" + w + "\" should be a full word starting with a capital";
-        } else if (small) {
+        } else if (smallWord) {
             if (w != low) return "small word \"" + w + "\" stays lowercase";
         } else if (!VsMajorWord(w)) {
             return "\"" + w + "\" should be a full word (no symbols, digits, or abbreviations)";

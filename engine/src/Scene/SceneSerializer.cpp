@@ -5410,7 +5410,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     vsc->LoadFromText(src);
                 } else if (field == "visualscriptpath") {
                     // Prefer the file (it may have been edited since the scene was saved).
+                    // A path written next to the scene ("movement.okayvs") is opened from
+                    // the scene's folder when it is not already an absolute file.
                     std::string p = ReadQuoted(in);
+                    {
+                        const std::filesystem::path pp(p);
+                        if (!pp.is_absolute() && !g_loadingSceneDir.empty()) {
+                            const std::filesystem::path alt = std::filesystem::path(g_loadingSceneDir) / pp;
+                            std::error_code ec;
+                            if (std::filesystem::exists(alt, ec)) p = alt.string();
+                        }
+                    }
                     auto graphs = go->GetComponents<VisualScriptComponent>();
                     if (auto* vsc = graphs.empty() ? nullptr : graphs.back()) {
                         vsc->SetPath(p);

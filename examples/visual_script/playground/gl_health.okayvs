@@ -1,0 +1,151 @@
+# Gameplay library: health. Every node below is declared here; the first chain runs in Play.
+node 1 OnUpdate
+pos 1 40 40
+entry OnUpdate 1
+node 2 GlDamageOverTime
+pos 2 300 40
+default 2 0 12
+exec 1 0 2
+node 3 GlGetHealth
+pos 3 300 240
+node 4 SetVar health
+pos 4 560 40
+exec 2 0 4
+data 4 0 3 0
+node 5 OnStart
+pos 5 40 340
+entry OnStart 5
+node 6 GlSetHealth
+pos 6 300 340
+default 6 0 100
+exec 5 0 6
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 103
+exec 103 0 104
+exec 104 0 107
+exec 107 0 108
+exec 108 0 109
+exec 109 0 111
+exec 111 0 112
+exec 112 0 113
+exec 113 0 115
+exec 115 0 117
+exec 117 0 118
+exec 118 0 119
+exec 119 0 120
+exec 120 0 123
+exec 123 0 124
+exec 124 0 125
+exec 125 0 126
+exec 126 0 127
+exec 127 0 128
+exec 128 0 129
+node 100 GlGetHealth
+pos 100 40 520
+node 101 GlGetHealthPortion
+pos 101 300 520
+node 102 GlGetMaxHealth
+pos 102 560 520
+node 103 GlSetHealth
+pos 103 820 520
+default 103 0 30
+node 104 GlSetMaximumHealth
+pos 104 1080 520
+default 104 0 50
+node 105 GlIsHealthLow
+pos 105 1340 520
+default 105 0 0.25
+node 106 GlIsHealthFull
+pos 106 40 710
+node 107 GlHealToFull
+pos 107 300 710
+node 108 GlKill
+pos 108 560 710
+node 109 GlSetInvincible
+pos 109 820 710
+default 109 0 true
+node 110 GlIsInvincible
+pos 110 1080 710
+node 111 GlDamageOverTime
+pos 111 1340 710
+default 111 0 10
+node 112 GlHealOverTime
+pos 112 40 900
+default 112 0 10
+node 113 GlSetArmor
+pos 113 300 900
+default 113 0 5
+node 114 GlGetArmor
+pos 114 560 900
+node 115 GlSetRegeneration
+pos 115 820 900
+default 115 0 4
+default 115 1 1
+node 116 GlDamageAfterArmor
+pos 116 1080 900
+default 116 0 20
+default 116 1 5
+default 116 2 0.5
+node 117 GlHealPortion
+pos 117 1340 900
+default 117 0 0.5
+node 118 GlDamagePortion
+pos 118 40 1090
+default 118 0 0.3
+node 119 GlSetHealthPortion
+pos 119 300 1090
+default 119 0 0.4
+node 120 GlReviveWithHealth
+pos 120 560 1090
+default 120 0 0.5
+default 120 1 Goal
+node 121 GlCriticalDamage
+pos 121 820 1090
+default 121 0 10
+default 121 1 true
+default 121 2 2.5
+node 122 GlDamageFalloff
+pos 122 1080 1090
+default 122 0 100
+default 122 1 15
+default 122 2 10
+default 122 3 20
+node 123 GlSetInvincibleTime
+pos 123 1340 1090
+default 123 0 0.75
+node 124 GlSetLives
+pos 124 40 1280
+default 124 0 3
+node 125 GlSetRespawnTime
+pos 125 300 1280
+default 125 0 true
+default 125 1 4
+node 126 GlSetResistance
+pos 126 560 1280
+default 126 0 0.5
+node 127 GlSetSmallestHit
+pos 127 820 1280
+default 127 0 2
+node 128 GlSetOverhealLimit
+pos 128 1080 1280
+default 128 0 25
+default 128 1 3
+node 129 GlSetRemoveOnDeath
+pos 129 1340 1280
+default 129 0 true
+node 130 GlGetMissingHealth
+pos 130 40 1470
+node 131 GlIsHealthAbove
+pos 131 300 1470
+node 132 GlGetResistance
+pos 132 560 1470
+node 133 GlGetLives
+pos 133 820 1470
+node 134 GlIsRespawnOn
+pos 134 1080 1470
+node 135 GlGetOverhealLimit
+pos 135 1340 1470
+node 136 GlGetHitProtectionTime
+pos 136 40 1660

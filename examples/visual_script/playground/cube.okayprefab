@@ -1,0 +1,8 @@
+okayscene 3
+gameobject 0 "Pickup"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 0.45 0.45 0.45
+  mesh "Sphere" 0.95 0.78 0.25 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end

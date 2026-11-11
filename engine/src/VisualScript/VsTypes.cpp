@@ -1,6 +1,7 @@
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -25,7 +26,7 @@ const Row kRows[] = {
         {"OnUpdate", false, "", ""},
         {"Branch", true, "B", ""},
         {"Sequence", true, "", ""},
-        {"Once", true, "", ""},
+        {"Once", true, "B", ""},
         {"Timer", true, "", ""},
         {"GetVar", false, "", "A"},
         {"SetVar", true, "A", ""},
@@ -179,7 +180,7 @@ const Row kRows[] = {
         {"Repeat", true, "", ""},
         {"FlipFlop", true, "", ""},
         {"Gate", true, "B", ""},
-        {"DoN", true, "", "N"},
+        {"DoN", true, "B", "N"},
         {"SwitchInt", true, "N", ""},
         {"Toggle", true, "", ""},
         {"RandomInt", false, "NN", "N"},
@@ -333,6 +334,20 @@ const Row kRows[] = {
         // Loops, lists, scene / global variables, Variable Changed events.
         {"While", true, "B", ""},
         {"ForEach", true, "L", "AN"},
+        {"ForEachMap", true, "M", "TA"},
+        {"NewMap", false, "", "M"},
+        {"MapSet", true, "MTA", ""},
+        {"MapRemove", true, "MT", ""},
+        {"MapGet", false, "MT", "AB"},
+        {"MapHas", false, "MT", "B"},
+        {"MapKeys", false, "M", "L"},
+        {"MapValues", false, "M", "L"},
+        {"SwitchString", true, "A", ""},
+        {"SwitchCases", true, "N", ""},
+        {"LatchGate", true, "BBB", "B"},
+        {"IsValid", false, "A", "B"},
+        {"CallScript", true, "A", "A"},
+        {"RunGraph", true, "", ""},
         {"Break", true, "", ""},
         {"Continue", true, "", ""},
         {"NewList", false, "", "L"},
@@ -411,6 +426,143 @@ const Row kRows[] = {
         {"ParticlePlay", true, "", ""},
         {"ParticleStop", true, "", ""},
         {"ParticleBurst", true, "N", ""},
+        // High-level gameplay. These sit on top of the nodes above; they do not replace them.
+        {"RotateTowards", true, "NO", ""},
+        {"OrbitAround", true, "ONN", ""},
+        {"FollowPath", true, "NL", ""},
+        {"Bob", true, "NN", ""},
+        {"Spin", true, "N", ""},
+        {"Knockback", true, "ON", ""},
+        {"SmoothFollow", true, "ON", ""},
+        {"TweenPosition", true, "VN", ""},
+        {"TweenRotation", true, "NN", ""},
+        {"TweenScale", true, "VN", ""},
+        {"TweenColor", true, "NNNNN", ""},
+        {"CrossfadeClip", true, "N", ""},
+        {"StopAnimation", true, "", ""},
+        {"WaitAnimEnd", true, "", ""},
+        {"OnInteract", false, "", ""},
+        {"PickUp", true, "O", ""},
+        {"Drop", true, "O", ""},
+        {"DoorOpen", true, "NN", ""},
+        {"DoorClose", true, "N", ""},
+        {"Lever", true, "", ""},
+        {"Collect", true, "N", ""},
+        {"OnTagEnter", false, "", ""},
+        {"OnTagStay", false, "", ""},
+        {"OnTagExit", false, "", ""},
+        {"Proximity", false, "ON", "B"},
+        {"Damage", true, "NO", ""},
+        {"Heal", true, "NO", ""},
+        {"IsDead", false, "O", "B"},
+        {"OnDeath", false, "", ""},
+        {"OnHealthChanged", false, "", ""},
+        {"Respawn", true, "O", ""},
+        {"SpawnProjectile", true, "N", "O"},
+        {"Shoot", true, "NN", "BO"},
+        {"Ammo", true, "", "N"},
+        {"Patrol", true, "NL", ""},
+        {"Chase", true, "ON", ""},
+        {"Flee", true, "ON", ""},
+        {"Wander", true, "NN", ""},
+        {"CanSee", false, "ONN", "B"},
+        {"SpawnEvery", true, "N", "O"},
+        {"DestroyAfter", true, "NO", ""},
+        {"PoolGet", true, "", "O"},
+        {"PoolRelease", true, "O", ""},
+        {"ScoreAdd", true, "N", ""},
+        {"ScoreSet", true, "N", ""},
+        {"ScoreGet", false, "", "N"},
+        {"Countdown", true, "N", ""},
+        {"Win", true, "", ""},
+        {"Lose", true, "", ""},
+        {"RestartScene", true, "", ""},
+        {"CheckpointSave", true, "", ""},
+        {"CheckpointLoad", true, "", ""},
+        {"SetProgress", true, "NO", ""},
+        {"ShowFloatingText", true, "TO", ""},
+        {"FadeScreen", true, "NO", ""},
+        {"SetCameraTarget", true, "ON", ""},
+        {"Zoom", true, "N", ""},
+        {"SwitchCamera", true, "", ""},
+        {"PlaySoundAt", true, "O", ""},
+        {"StopSound", true, "O", ""},
+        {"OnAction", false, "", ""},
+        {"OnActionUp", false, "", ""},
+        {"OnActionHeld", false, "", ""},
+        {"GetMoveAxis", false, "", "V"},
+        {"RandomPick", false, "L", "A"},
+        {"RandomPoint", false, "VV", "V"},
+        {"ShuffleList", false, "L", "L"},
+        {"ListMin", false, "L", "N"},
+        {"ListMax", false, "L", "N"},
+        {"OnCollisionTag", false, "", ""},
+        {"NotAnd", false, "BB", "B"},
+        {"NotOr", false, "BB", "B"},
+        {"AllTrue", false, "L", "B"},
+        {"AnyTrue", false, "L", "B"},
+        {"IsEven", false, "N", "B"},
+        {"IsOdd", false, "N", "B"},
+        {"PickByIndex", false, "NL", "A"},
+        {"FirstValid", false, "AAAA", "A"},
+        {"BranchInOrder", true, "BBB", ""},
+        {"DoWhile", true, "B", ""},
+        {"ForStep", true, "NNN", "N"},
+        {"WaitUntil", true, "B", ""},
+        {"WaitWhile", true, "B", ""},
+        {"BecameTrue", true, "B", ""},
+        {"BecameFalse", true, "B", ""},
+        {"CountUntil", true, "NB", "N"},
+        {"WeightedBranch", true, "NN", ""},
+        {"WaitSteady", true, "BN", ""},
+        {"StepThrough", true, "", ""},
+        {"WaitLimit", true, "BN", ""},
+        {"SetState", true, "T", ""},
+        {"GetState", false, "", "T"},
+        {"IsInState", false, "T", "B"},
+        {"WhenStateBecomes", true, "T", ""},
+        {"WhenStateLeaves", true, "T", ""},
+        {"HeldLong", false, "BN", "B"},
+        {"HappenedNear", false, "BBN", "B"},
+        {"EveryWhile", true, "BN", ""},
+        {"EaseToward", false, "NNN", "N"},
+        {"BlendTime", true, "NNN", "N"},
+        {"Stopwatch", true, "B", "N"},
+        {"IsSlightly", false, "N", "B"},
+        {"IsMostly", false, "N", "B"},
+        {"IsVery", false, "N", "B"},
+        {"PickBest", false, "NNNN", "N"},
+        {"ShuffleBag", false, "L", "A"},
+        {"ChanceEachSecond", false, "N", "B"},
+        {"TryFirst", true, "", ""},
+        {"AllSucceed", true, "", ""},
+        {"FlipOutcome", true, "", ""},
+        {"AlwaysSucceed", true, "", ""},
+        {"RepeatUntilFail", true, "", ""},
+        {"WaitBetween", true, "N", ""},
+        {"SucceedNow", true, "", ""},
+        {"FailNow", true, "", ""},
+        {"CheckOutcome", true, "B", ""},
+        {"InCone", false, "ON", "B"},
+        {"LineOfSight", false, "O", "B"},
+        {"InsideArea", false, "VV", "B"},
+        {"CountNearby", false, "NT", "N"},
+        {"NearestObject", false, "NT", "O"},
+        {"FarthestObject", false, "NT", "O"},
+        {"SortByDistance", false, "L", "L"},
+        {"WhenChanged", true, "A", ""},
+        {"DoUnless", true, "BB", ""},
+        {"RememberValue", true, "TA", ""},
+        {"RecallValue", false, "T", "A"},
+        {"HealthEmpty", true, "", ""},
+        {"HealthFull", true, "", ""},
+        {"AddBuff", true, "NNNN", "N"},
+        {"AdvanceObjective", true, "NB", "N"},
+        {"AssertThis", true, "BT", ""},
+        {"LogOnce", true, "AB", ""},
+        {"DrawDebugLine", true, "VV", ""},
+#include "okay/VisualScript/library_rows.inc"
+#include "okay/VisualScript/gplib_rows.inc"
         // Tweens, springs and eases.
         {"EaseCurve", false, "N", "N"},
         {"SpringStep", true, "NNN", "NN"},
@@ -440,6 +592,10 @@ std::vector<std::string> AllNodeTypes() {
     std::vector<std::string> v;
     for (const Row& r : kRows) v.push_back(r.type);
     for (const VsApiEntry& e : VsApiEntries()) v.push_back(e.type);
+    for (const BuiltinNodeInfo& b : BuiltinNodes()) v.push_back(b.type);
+    for (const char* t : {"GetProperty","SetProperty","CallMethod","GetComponent","AddComponent",
+                          "FindByTag","SendMessage","Broadcast","RunSnippet"})
+        v.push_back(t);
     return v;
 }
 
@@ -453,6 +609,16 @@ const NodeSignature* SignatureFor(const std::string& type) {
         if (it != Table().end()) return &it->second;
     }
     if (const VsApiEntry* e = VsApiFind(type)) return &e->sig;
+    if (IsBuiltinNode(type)) return &BuiltinSignature();
+    if (type == "GetProperty") { static const NodeSignature s{true, "TO", "A"}; return &s; }
+    if (type == "SetProperty") { static const NodeSignature s{true, "ATO", ""}; return &s; }
+    if (type == "CallMethod")  { static const NodeSignature s{true, "AAAAT", "A"}; return &s; }
+    if (type == "GetComponent"){ static const NodeSignature s{true, "OT", "OB"}; return &s; }
+    if (type == "AddComponent"){ static const NodeSignature s{true, "OT", ""}; return &s; }
+    if (type == "FindByTag")   { static const NodeSignature s{false, "T", "O"}; return &s; }
+    if (type == "SendMessage") { static const NodeSignature s{true, "TO", ""}; return &s; }
+    if (type == "Broadcast")   { static const NodeSignature s{true, "T", ""}; return &s; }
+    if (type == "RunSnippet")  { static const NodeSignature s{true, "T", "A"}; return &s; }
     return nullptr;
 }
 
@@ -497,6 +663,7 @@ const char* PinTypeName(PinType t) {
         case PinType::Vec3:   return "Vector3";
         case PinType::Object: return "Object";
         case PinType::List:   return "List";
+        case PinType::Map:    return "Map";
     }
     return "?";
 }
@@ -508,6 +675,8 @@ std::string ConversionHint(PinType from, PinType to) {
     if (from == PinType::Text && to == PinType::Bool) return "compare it with Equals, or check Text Length";
     if (from == PinType::Object && (to == PinType::Vec3)) return "use Object Position (or Get Position with this object as Target)";
     if (from == PinType::Object && to == PinType::Number) return "use Distance To, or Get X / Y / Z with this object as Target";
+    if (from == PinType::Map && to == PinType::List) return "use Map Keys or Map Values";
+    if (from == PinType::List && to == PinType::Map) return "build a map with New Map and Map Set";
     if (from == PinType::List && to == PinType::Number) return "use the Count output";
     if (from == PinType::List && to == PinType::Object) return "use the Nearest output";
     if (to == PinType::Object) return "wire an object (Self, Other Object, Find Object, Spawn...) or type a name";
@@ -535,6 +704,7 @@ bool TypeFromName(std::string t, PinType& out) {
     if (t == "vector3" || t == "vec3" || t == "v") { out = PinType::Vec3; return true; }
     if (t == "object" || t == "gameobject" || t == "o") { out = PinType::Object; return true; }
     if (t == "list" || t == "l") { out = PinType::List; return true; }
+    if (t == "map" || t == "dictionary" || t == "m") { out = PinType::Map; return true; }
     return false;
 }
 bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std::string* err, const char* what) {
@@ -548,7 +718,7 @@ bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std:
         const std::string type = colon == std::string::npos ? "" : Trim(item.substr(colon + 1));
         if (!ValidName(p.name)) { if (err) *err = std::string(what) + " name '" + p.name + "' isn't a valid name"; return false; }
         if (!TypeFromName(type, p.type)) {
-            if (err) *err = "unknown type '" + type + "' (use Number, Bool, Text, Vector3, Object, List or Any)";
+            if (err) *err = "unknown type '" + type + "' (use Number, Bool, Text, Vector3, Object, List, Map or Any)";
             return false;
         }
         for (const auto& q : out) if (q.name == p.name) { if (err) *err = std::string(what) + " '" + p.name + "' is listed twice"; return false; }
@@ -760,9 +930,6 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             else if (!owner.empty() && FunctionNameOf(kv.second.arg) != owner)
                 issues.push_back({0, kv.first, "this Return is in function '" + owner + "' but returns from '" + FunctionNameOf(kv.second.arg) + "'"});
         }
-        if ((t == "Delay" || t == "Wait") && !owner.empty())
-            issues.push_back({0, kv.first, "Delay / Wait can't pause inside a function (it runs to the end at once) - "
-                                           "start the delay after the Call Function instead"});
         if (t == "SetLocal" && owner.empty() && fromEvents.count(kv.first))
             issues.push_back({0, kv.first, "Set Local only works inside a function - use Set Var for graph variables"});
     }
@@ -771,7 +938,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             auto it = nodes.find(id);
             if (it == nodes.end()) return false;
             const std::string& t = it->second.type;
-            return t == "ForLoop" || t == "Repeat" || t == "While" || t == "ForEach";
+            return t == "ForLoop" || t == "Repeat" || t == "While" || t == "ForEach" || t == "ForEachMap";
         };
         std::vector<int> bodies;
         std::set<int> hasBody;
@@ -781,9 +948,9 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         for (const auto& kv : nodes) {
             const std::string& t = kv.second.type;
             if ((t == "Break" || t == "Continue") && reached.count(kv.first) && !inLoop.count(kv.first))
-                issues.push_back({0, kv.first, t + " isn't inside the Body of a loop (For Loop, Repeat, While, For Each), "
+                issues.push_back({0, kv.first, t + " isn't inside the Body of a loop (For Loop, Repeat, While, For Each, For Each Map), "
                                                    "so it does nothing"});
-            if ((t == "While" || t == "ForEach") && reached.count(kv.first) && !hasBody.count(kv.first))
+            if ((t == "While" || t == "ForEach" || t == "ForEachMap") && reached.count(kv.first) && !hasBody.count(kv.first))
                 issues.push_back({1, kv.first, "nothing is wired to Body, so the loop does nothing" +
                                                std::string(t == "While" ? " (or never ends, while Cond is true)" : "")});
         }

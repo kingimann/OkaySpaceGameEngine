@@ -3,6 +3,7 @@
 // with a one-line message on malformed input. See okay/Render/ModelData.hpp.
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>

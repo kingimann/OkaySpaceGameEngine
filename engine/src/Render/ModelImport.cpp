@@ -417,6 +417,7 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
 
 bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
     out = ImportedModel{};
+    (void)flatten;   // only the Assimp backend has a use for it
     const std::string ext = ExtensionOf(path);
     ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
     if (use == ImportBackend::Assimp) {

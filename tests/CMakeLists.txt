@@ -63,6 +63,17 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+# Stereo clips and placement (balance for 2D, mono-then-pan for 3D).
+add_executable(test_audio_stereo test_audio_stereo.cpp)
+target_link_libraries(test_audio_stereo PRIVATE okay::engine)
+add_test(NAME audio_stereo COMMAND test_audio_stereo)
+
+# Streaming audio: streamed vs whole-file decode, seek, loop, memory bound, underruns, hostile files.
+add_executable(test_audio_stream test_audio_stream.cpp)
+target_link_libraries(test_audio_stream PRIVATE okay::engine)
+target_compile_definitions(test_audio_stream PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME audio_stream COMMAND test_audio_stream)
+
 # Own MP3 decoder: SNR vs ffmpeg references, gapless/tags/resync, truncation, bit-flip and noise fuzzing.
 add_executable(test_mp3_decoder test_mp3_decoder.cpp)
 target_link_libraries(test_mp3_decoder PRIVATE okay::engine)

@@ -140,6 +140,7 @@ add_library(okay_engine
     src/Audio/AudioMixer.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
+    src/Audio/AudioStream.cpp
     src/Audio/Mp3Decoder.cpp
     src/AI/Pathfinding.cpp
     src/AI/NavMesh.cpp

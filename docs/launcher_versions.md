@@ -79,8 +79,10 @@ free disk space to keep v2.855.0 ... The update goes on without keeping it."). A
 then fails, the copy is deleted again (it would only duplicate what still runs).
 
 After a successful update the automatic copies beyond **Keep previous versions: N** are removed, newest kept first. **Never** pruned:
-versions you installed yourself, the newest installed patch of the LTS line, the default editor. The downloads of the update itself are
-also checked against `versions.json` when it lists the version (a mismatch fails the update and leaves the live files alone).
+versions you installed yourself, the newest installed patch of the LTS line, the default editor. The downloads of the update itself
+(the in-place updater, `launcher/UpdaterCore.hpp`) REQUIRE `versions.json` to list a size and SHA-256 for each file: with no index, no entry for
+the version or no checksum the update is refused, and so is a failed download, a size or checksum mismatch or a failed swap. Each case shows its
+reason in the update dialog, is logged in `okay_update.log`, and leaves the installed files as they were (every file is staged and checked before any is replaced).
 
 ## Project cards and Open with (Create page)
 

@@ -668,6 +668,13 @@ void PrefabComponentMenu(okay::Component* comp) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this component into the prefab. Other instances that did not change it take it too.");
 }
 
+// Next button of the header row: on the same line when it fits, else on a new one (a narrow Inspector must not clip the buttons).
+static void HdrSameLine(const char* label) {
+    const float need = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + need < right) ImGui::SameLine();
+}
+
 // Header of the Inspector for an object that is (or is part of) a prefab instance.
 void DrawPrefabHeader(okay::editor::EditorState& ed, okay::GameObject* go) {
     PrefabInstanceInfo info;
@@ -680,8 +687,9 @@ void DrawPrefabHeader(okay::editor::EditorState& ed, okay::GameObject* go) {
     else ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "Prefab: %s (missing)", info.name.c_str());
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", info.source.c_str());
     if (info.kind != PrefabKind::Plain || info.isNestedInstance) {
-        ImGui::SameLine();
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("%s", PrefabKindLabel(info).c_str());
+        ImGui::PopTextWrapPos();
     }
     if (!info.isRoot) {
         ImGui::TextDisabled("This object is part of the prefab instance %s.", root->name.c_str());
@@ -691,12 +699,12 @@ void DrawPrefabHeader(okay::editor::EditorState& ed, okay::GameObject* go) {
     }
     if (ImGui::SmallButton("Open")) { if (s_hooks.open) s_hooks.open(root); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit this prefab: shows the instance on its own in the Scene view (Esc leaves).\nApply All writes your changes into the prefab file.");
-    ImGui::SameLine();
+    HdrSameLine("Select Asset");
     if (ImGui::SmallButton("Select Asset")) { if (s_hooks.selectAsset) s_hooks.selectAsset(info.source); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find %s in the Project panel.", info.name.c_str());
     if (info.kind == PrefabKind::Variant) {
         const std::string base = ResolveVariantBase(info);
-        ImGui::SameLine();
+        HdrSameLine("Select Base");
         ImGui::BeginDisabled(base.empty());
         if (ImGui::SmallButton("Select Base")) { if (s_hooks.selectAsset) s_hooks.selectAsset(base); }
         ImGui::EndDisabled();
@@ -704,28 +712,28 @@ void DrawPrefabHeader(okay::editor::EditorState& ed, okay::GameObject* go) {
             ImGui::SetTooltip(base.empty() ? "The base prefab %s was not found." : "Find the base prefab %s in the Project panel.", info.baseName.c_str());
     }
     if (info.isRoot) {
-        ImGui::SameLine();
+        HdrSameLine("Revert All");
         ImGui::BeginDisabled(nChanges == 0);
         if (ImGui::SmallButton("Revert All")) Queue(PrefabReq::RevertAll, root);
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(nChanges ? "Put everything back to what the prefab says." : "Nothing differs from the prefab.");
-        ImGui::SameLine();
+        HdrSameLine("Apply All");
         ImGui::BeginDisabled(nChanges == 0 || !info.exists);
         if (ImGui::SmallButton("Apply All")) Queue(PrefabReq::ApplyAll, root);
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip(nChanges ? "Write every change into the prefab file. Other instances that did not change the same thing take it too." : "Nothing differs from the prefab.");
-        ImGui::SameLine();
+        HdrSameLine("Create Variant");
         ImGui::BeginDisabled(!info.exists);
         if (ImGui::SmallButton("Create Variant")) {
             s_openVariant = true; s_variantSeed = true;
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Save what this instance changed as a new prefab that is based on %s, and make this object an instance of it.", info.name.c_str());
-        ImGui::SameLine();
+        HdrSameLine("Update All");
         if (ImGui::SmallButton("Update All")) Queue(PrefabReq::UpdateAll, root);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rebuild every instance of this prefab in the scene from the file (each keeps what it changed).\nUse it after the file was edited outside the editor.");
-        ImGui::SameLine();
+        HdrSameLine("Unpack");
         if (ImGui::SmallButton("Unpack")) ImGui::OpenPopup("##unpackmenu");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the link to the prefab; this becomes plain objects.");
         if (ImGui::BeginPopup("##unpackmenu")) {

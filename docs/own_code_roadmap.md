@@ -13,9 +13,11 @@ A step ships only when it is finished and tested. Nothing here is started yet un
 | ufbx | same | Binary FBX reader, then ASCII FBX | Not started |
 | SDL2 | `okay::Platform` (window, events, GL context, gamepad, audio device, clipboard, timers) | Win32 first (window, input, WGL/D3D), then X11, then macOS; gamepad and audio device per OS (XInput, evdev/ALSA, CoreAudio) | Not started |
 | Dear ImGui | `okay::ui` editor toolkit built on `okayui` | Own immediate-mode core (layout, widgets, text, docking), then port panels one at a time | Not started |
-| libsodium | `okay::crypto` wrapper | Last. Never ships without an outside expert review and test vectors; until then libsodium stays | Not started |
+| libsodium | `okay::crypto` wrapper | Start now, side by side: ChaCha20-Poly1305, BLAKE2b, X25519, Ed25519, checked against the published RFC and libsodium test vectors, constant-time by construction, fuzzed. It is not the default, and nothing switches over, until an outside expert has reviewed it | Not started |
+| Steamworks, Photon | `okay::net` service interfaces (exist) | These are services, not libraries: we replace them with our own relay, matchmaking, accounts and achievements backends, which already exist in part | Ongoing |
 
 Rules:
 - Each backend gets tests against reference data, plus fuzzing for anything that parses files.
 - Each step is one PR with an honest NOT DONE list.
 - Order inside the list: Assimp and ufbx, then SDL2, then ImGui, then libsodium.
+- "Hard" does not mean "never". It means our version starts out side by side and non-default, and becomes the default only after it has earned it: matching tests, fuzzing, and for crypto an outside review. The library stays until then.

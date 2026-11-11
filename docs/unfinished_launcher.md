@@ -11,7 +11,7 @@ Size: Small < 1 day, Medium = a few days, Large = a week or more.
 
 | Item | Where | What is missing (plain English) | Impact | Size |
 |---|---|---|---|---|
-| Typing indicator and read receipts have no database tables | `engine/include/okay/Platform/Messages.hpp:243-303` (typing_state, message_reads); toggles `launcher/main.cpp:4412`, `:9362` | The launcher reads and writes the `typing_state` and `message_reads` tables, but no SQL file anywhere in the repo creates them (checked docs/sql, supabase/, tests/sql). On a fresh Supabase project "typing..." and "Seen" never work, with no warning; the feature map (17.4.1) says typing and read marks "Works". | High | Small |
+| ~~Typing indicator and read receipts have no database tables~~ DONE in code, owner step left | `docs/sql/chat_receipts.sql` (new); `engine/include/okay/Platform/Messages.hpp` (`IsMissingTable`, `TypingSupport`, `ReadMarksSupport`); Settings rows in `launcher/main.cpp` | The SQL now exists (tables `typing_state`, `message_reads`, RLS: write only your own rows, read only rows you are a party to, a read mark can only point at a message of that conversation). **Owner step:** run `docs/sql/chat_receipts.sql` once in the Supabase SQL editor (after `social.sql`). Until then, when the server reports the tables missing, Settings shows "Not set up on the server yet" in place of the Typing indicator / Read receipts toggles. Tested: `chat_receipts` (unit) and `chat_receipts_sql` (local Postgres, RLS). Not testable here: the real round trip against the live project. | Done | Small |
 | Voice calls need a voice server that nobody has deployed by default | `docs/voice-server.md:9-12`; `launcher/main.cpp:1726`, `:12291`, `:12354` | Until an admin runs the relay on a public machine and types its address in Settings > Chat, every call says "No voice server is set up yet". The deploy kit exists (`deploy/voice-server/`) but there is no built-in default, no health check and no in-app hint for non-admins. | High | Small (owner step) |
 | Blocking and privacy settings are only on this PC | `launcher/main.cpp:1732-1733`, `:4299`, `:4348-4349`, `:7394`, `:8166`, `:8784`; no blocks table in `docs/sql/` | "Block", "Friends only" DMs and "Calls from" are filters in the launcher. A blocked person can still send you messages and ring you (you just do not see them), a different PC or a reinstall forgets the block list, and Message requests only hides messages. Needs a server-side blocks table plus an RLS check. | High | Medium |
 | No way to report a message, forum post, marketplace item or profile | only `launcher/main.cpp:8782` and `:13001-13015` ("Report cheating") | The one report button is for cheating and goes to the anti-cheat inbox. Abuse, spam and illegal content cannot be reported by users anywhere; moderators have to find it themselves in Admin. | High | Medium |
@@ -60,9 +60,11 @@ Size: Small < 1 day, Medium = a few days, Large = a week or more.
 
 ## 5. Backend setup (supabase/ and SQL)
 
+How to apply the chat receipts SQL (owner): Supabase dashboard > SQL Editor > New query > paste the whole of `docs/sql/chat_receipts.sql` > Run. It needs `social.sql` already applied, is safe to re-run, and takes effect immediately (the launcher picks it up on the next chat poll, no restart needed). Check: Table Editor shows `typing_state` and `message_reads` with RLS enabled. To test it locally first: `OKAY_SQL_TEST_PGHOST=/var/run/postgresql bash tests/scripts/test_chat_receipts_sql.sh` against a throwaway local Postgres.
+
 | Item | Where | What is missing (plain English) | Impact | Size |
 |---|---|---|---|---|
-| 16 SQL files must be run by hand with no run-order list or version check | `docs/sql/*.sql` (16 files); `docs/supabase-backend.md`; per-feature docs say "run once" (`docs/launcher-multiplayer.md:72,161,209,235`) | There is no single "set up a new project" script, no order (admin before anticheat is only in `docs/anticheat.md:680`), and the launcher cannot tell the owner which files are missing; features quietly hide. | Medium | Medium |
+| 17 SQL files must be run by hand with no run-order list or version check | `docs/sql/*.sql` (17 files); `docs/supabase-backend.md`; per-feature docs say "run once" (`docs/launcher-multiplayer.md:72,161,209,235`) | There is no single "set up a new project" script, no order (admin before anticheat is only in `docs/anticheat.md:680`), and the launcher cannot tell the owner which files are missing; features quietly hide. | Medium | Medium |
 | `cloud_saves` and `leaderboards` SQL exists only inside a Markdown page | `docs/supabase-backend.md:28-60` (not in `docs/sql/`) | Easy to miss and not covered by the SQL test harness; `tests/scripts/test_anticheat_sql.sh` tests anti-cheat SQL only. The other 15 files have no automated check. | Low | Small |
 | `supabase/` holds one Edge Function only | `supabase/functions/session-ticket/` | There is no `config.toml`, migrations folder or deploy script for the schema; everything else is copy-paste SQL. | Low | Medium |
 
@@ -77,7 +79,7 @@ Size: Small < 1 day, Medium = a few days, Large = a week or more.
 
 ## Counts
 
-High: 8 | Medium: 16 | Low: 14 (38 rows).
+High: 7 (+1 done in code, waiting on the owner to run the SQL) | Medium: 16 | Low: 14 (38 rows).
 
 ## Top 10 to tackle first
 

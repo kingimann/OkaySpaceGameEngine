@@ -35,7 +35,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 ### 17.2 Accounts and sign-in
 - **What:** One account service shared by the launcher, editor, player and game scripts: sign up and in, session tokens that refresh, cloud saves and leaderboards. It works offline with a local on-disk account, with a custom server, or with Supabase.
 - **Parts:**
-  - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted, stretched SHA-256 file), Remote (your server, see 42.4) and Supabase (email sign-up, password reset, change email or username, token refresh); `Api()` adds the key and bearer token
+  - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted, stretched SHA-256 file), Remote (your server, see 42.4) and Supabase (email sign-up, password reset (emails a link to the hosted page `supabase/auth-pages/reset-password`, see `docs/password-reset.md`), change email or username, token refresh); `Api()` adds the key and bearer token
   - 17.2.2 Account facade - `Platform/Account/Account` - process-wide `okay::Account` used by editor, player and the `account_*` script builtins; `OKAY_ACCOUNT_SERVER`
   - 17.2.3 Cloud saves and leaderboards - `Platform/Account/AccountService` - `CloudSave`, `CloudLoad`, `CloudList`, `LeaderboardSubmit`, `LeaderboardTop` on two Supabase tables
   - 17.2.4 Native HTTPS - `Platform/NativeHttp` - pooled WinHTTP connections on Windows (no curl process per request); elsewhere, or if WinHTTP can't reach, the code falls back to curl with secrets passed in files

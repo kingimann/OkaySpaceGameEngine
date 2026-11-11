@@ -1528,6 +1528,12 @@ if(UNIX)
     add_test(NAME publish_supabase_checks COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_supabase_checks.sh)
 endif()
 
+# The hosted password-reset page (supabase/auth-pages/reset-password): its pure logic, under node (skipped when node is absent).
+find_program(OKAY_NODE node)
+if(OKAY_NODE)
+    add_test(NAME password_reset_page COMMAND ${OKAY_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_password_reset_page.js)
+endif()
+
 # The launcher's chat JSON (Messages / Servers): header-only, no engine link.
 add_executable(test_chat_json test_chat_json.cpp)
 target_compile_features(test_chat_json PRIVATE cxx_std_17)

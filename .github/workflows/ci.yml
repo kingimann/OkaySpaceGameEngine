@@ -19,7 +19,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
 
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -74,7 +76,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
 
       # The runner kernel's high mmap randomness can break ASan's shadow memory
       # setup (random "DEADLYSIGNAL" crashes before main); 28 bits is safe.
@@ -152,6 +156,7 @@ jobs:
         run: |
           mkdir -p ~/apt-cache/partial
           ls ~/apt-cache/*.deb 2>/dev/null | wc -l > ~/apt-debs-before
+          bash scripts/ci-apt-mirror.sh
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
           for i in 1 2 3; do
             if timeout 240 sudo apt-get $APT update && \

@@ -63,6 +63,18 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+# Own Ogg Vorbis decoder: SNR vs libvorbis references, Ogg framing, headers, truncation, bit-flip and noise fuzzing.
+add_executable(test_vorbis_decoder test_vorbis_decoder.cpp)
+target_link_libraries(test_vorbis_decoder PRIVATE okay::engine)
+target_compile_definitions(test_vorbis_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vorbis_decoder COMMAND test_vorbis_decoder)
+
+# Own MP3 decoder: SNR vs ffmpeg references, gapless/tags/resync, truncation, bit-flip and noise fuzzing.
+add_executable(test_mp3_decoder test_mp3_decoder.cpp)
+target_link_libraries(test_mp3_decoder PRIVATE okay::engine)
+target_compile_definitions(test_mp3_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME mp3_decoder COMMAND test_mp3_decoder)
+
 add_executable(test_audio_music test_audio_music.cpp)
 target_link_libraries(test_audio_music PRIVATE okay::engine)
 add_test(NAME audio_music COMMAND test_audio_music)
@@ -1514,6 +1526,12 @@ add_test(NAME official_publish COMMAND test_official_publish)
 if(UNIX)
     add_test(NAME publish_official_cleanup COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_official_cleanup.sh)
     add_test(NAME publish_supabase_checks COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_supabase_checks.sh)
+endif()
+
+# The hosted password-reset page (supabase/auth-pages/reset-password): its pure logic, under node (skipped when node is absent).
+find_program(OKAY_NODE node)
+if(OKAY_NODE)
+    add_test(NAME password_reset_page COMMAND ${OKAY_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_password_reset_page.js)
 endif()
 
 # The launcher's chat JSON (Messages / Servers): header-only, no engine link.

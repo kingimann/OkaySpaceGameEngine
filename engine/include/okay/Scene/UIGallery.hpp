@@ -236,6 +236,16 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
     if (!portrait) gx::Label(scene, content, "ThemeLabel", "Theme", {880, 24}, 80, slate::Dim(), 14.0f);
     {   // theme picker
         GameObject* pick = Child(scene, content, "ThemePick");
+        {   // its own Canvas layer above the window's, so the open list draws over every card and the window
+            Canvas* page = OwningCanvas(content);
+            auto* pc = pick->AddComponent<Canvas>();
+            if (page) {
+                pc->scaleMode = page->scaleMode; pc->referenceResolution = page->referenceResolution;
+                pc->screenMatch = page->screenMatch; pc->matchWidthOrHeight = page->matchWidthOrHeight;
+                pc->scaleFactor = page->scaleFactor;
+            }
+            pc->sortOrder = (page ? page->sortOrder : 0) + 2;
+        }
         auto* dd = pick->AddComponent<UIDropdown>();
         dd->anchor = UIAnchor::TopLeft; dd->position = portrait ? Vec2{24, 76} : Vec2{944, 14}; dd->size = portrait ? Vec2{392, 38} : Vec2{304, 38};
         dd->options.clear();

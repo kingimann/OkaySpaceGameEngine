@@ -527,7 +527,7 @@ private:
         if (auto* dd = go->GetComponent<UIDropdown>()) {
             dd->color = Mul(panel, 0.72f); dd->color.a = 1.0f;
             dd->hoverColor = buttonHover;
-            dd->listColor = panel;
+            dd->listColor = panel.a < 0.5f ? dd->color : panel;   // the open list sits over other widgets, so a glass look makes it solid
             dd->textColor = text;
             dd->borderColor = border;
             dd->shape = UIShape::Rounded;

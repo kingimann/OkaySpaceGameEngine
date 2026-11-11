@@ -978,6 +978,8 @@ int main() {
         CHECK(bd->color.b > bd->color.r + 0.2f);
         // glass slots and steppers are see-through too (not solid white blocks)
         CHECK(s.Find("Slots")->GetComponent<UISlotGrid>()->color.a < 0.5f);
+        CHECK(UIDrawsAbove(s.Find("ThemePick"), s.Find("Window")));
+        CHECK(s.Find("ThemePick")->GetComponent<UIDropdown>()->listColor.a > 0.9f);   // the open list is solid over the other widgets
         CHECK(s.Find("SwatchBlobA")->active);
     }
 

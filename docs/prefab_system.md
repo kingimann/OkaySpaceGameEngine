@@ -2,7 +2,7 @@
 
 This page covers `PrefabTools` (`okay/Scene/PrefabTools.hpp`), which builds on the
 prefab instances and overrides described in [prefabs.md](prefabs.md). Everything here is
-data and API; nothing in the editor calls it yet.
+data and API. The editor calls it through `editor/PrefabEdit.*` (see "In the editor" at the end of this page).
 
 ```cpp
 #include <Okay.hpp>
@@ -267,3 +267,58 @@ has (warnings, the file still loads). Messages name the file and the object, for
   the instance and brings back lost ones; the wave 1 `ReapplyPrefab` path, which plain files
   still take, drops added objects (see prefabs.md). Revert and apply keep both added and lost
   objects as they are.
+
+## In the editor
+
+The Inspector, the Hierarchy and the Project panel use `PrefabTools` through `editor/PrefabEdit.*`
+(no drawing, tested by `prefab_editor`) and `editor/InspectorPanel.*` (the drawing). The editor has no
+prefab code of its own: reading and writing prefab files, overrides, nesting and variants are all
+`PrefabTools`; `PrefabEdit` adds undo, the update of other instances and the names the Inspector shows.
+
+**What you see**
+- Hierarchy: an instance root has a blue mark on its icon, an instance of a variant a violet one, a prefab nested
+  inside a bigger one a square with an inner square, and an orange dot when the instance differs from its prefab
+  (hover the mark for the kind and the number of changes). The row menu has a **Prefab** submenu: Open, Select
+  Asset, Revert All, Apply All, Create Variant..., Update All Instances, Unpack, Unpack Completely.
+- Inspector header **Prefab: <name>** (with "Prefab Variant of <base>" or "nested in <outer>" beside it) and the
+  buttons **Open**, **Select Asset**, **Revert All**, **Apply All**, **Create Variant**, **Update All**, **Unpack**.
+  An object inside an instance shows the same header with **Select Instance Root**.
+- A property that differs from the prefab has a blue bar at the left of its row. Right-click it:
+  **Revert Property** or **Apply Property to Prefab** (a vector or colour acts on all its parts that differ).
+- A component that differs has a blue header bar and **Revert Component to Prefab** / **Apply Component to
+  Prefab** in its `...` menu. A component added to the instance reads **Revert Added Component** (it is removed).
+- **Changed from the prefab** lists, for the selected object, each component with Revert / Apply, each field with
+  its old and new value and its own Revert / Apply, components added or lost, and (on the root) child objects added
+  or lost with Revert / Apply.
+- Project panel: right-click a `.okayprefab` > **Create Variant** makes `<name> Variant.okayprefab` next to it.
+
+**What the actions do**
+- *Revert* uses `RevertOverride` / `RevertAll`; the instance is rebuilt with its name, place and ids kept. An added
+  child is deleted; a lost child is brought back from the prefab.
+- *Apply* uses `ApplyToSource` / `ApplyAllToSource` and writes the prefab file (for a variant instance the variant
+  file, for an instance inside another prefab the inner file; the base is never touched). For a plain prefab,
+  *Apply* of an added or lost child object rewrites the prefab with `SavePrefab`; for variants and nested
+  instances the button says why it is off (keep the structure with **Create Variant**).
+- Apply then updates **the other instances in the scene**: each one's own overrides are captured against the old
+  file first, then it is rebuilt from the new file with `Reapply`. An instance that changed the same field keeps its
+  value; the others take the new one. Instances of prefabs that use the applied file (variants, outer prefabs) are
+  updated the same way.
+- **Create Variant** (Inspector) saves what the instance changed with `SaveVariant` and links the instance to the
+  new variant. **Create Variant** (Project panel) writes a variant file with no differences yet.
+- **Update All** re-applies every instance of the prefab from the file, keeping what each changed (use it after
+  the file was edited outside the editor). **Unpack** / **Unpack Completely** use `Unpack`.
+- **Open** shows the instance on its own in the Scene view (Isolate; Esc leaves) and selects it; **Apply All**
+  writes the edits back. A separate prefab-editing scene with a breadcrumb is not built (feature map 21.1).
+
+**Undo.** Every action is one step. `EditorState::PushUndo` takes the scene as before; the prefab files an action
+wrote travel with that step (`EditorState::AttachUndoFiles`: the text before and after, or "did not exist"), so
+Undo puts the old file text back together with the old scene and Redo writes it again. The editor's undo today is
+the scene-snapshot one (`EditorState`; this branch is built on it, not on the `UndoStack` work in `claude/editor-undo-stack`, whose `PushUndo(name, std::unique_ptr<ICommand> alsoUndo)` overload is where `AttachUndoFiles` goes when the two meet: the file edits become that extra command); when it moves to `UndoStack` (`okay/Core/Undo.hpp`) the file text becomes
+one command of the group that carries the scene change, with the same before and after strings, and `PrefabEdit`
+keeps calling the same two functions.
+
+**Limits in the editor**
+- Apply updates the other instances, but not a second instance of the applied file that sits inside the same
+  outer prefab instance.
+- Objects added or lost can be applied only to plain prefab files (see above).
+- The Hierarchy mark and the "N changes" figure are refreshed about every 1.5 seconds.

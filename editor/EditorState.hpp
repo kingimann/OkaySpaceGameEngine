@@ -215,6 +215,23 @@ public:
     std::uint64_t UndoSerial() const { return m_undoSerial; }
     bool Undo();
     bool Redo();
+    /// One asset file an undoable edit wrote (a prefab Apply rewrites the .okayprefab, not just the scene). Undo puts `before` back
+    /// (or deletes the file when `hadBefore` is false), Redo writes `after` again. See AttachUndoFiles.
+    struct FileEdit {
+        std::string path;
+        bool hadBefore = true;
+        std::string before;
+        bool hasAfter = true;
+        std::string after;
+    };
+    /// Tie file edits to the undo step the last PushUndo made, so Undo / Redo move the files together with the scene. No-op
+    /// (false) when there is no step or undo is suppressed. When the UndoStack takes over the editor's undo (okay/Core/Undo.hpp)
+    /// this becomes one command that carries the same before / after file texts.
+    bool AttachUndoFiles(std::vector<FileEdit> edits);
+    /// Drop the step the last PushUndo made (the edit it was taken for failed and changed nothing).
+    void DiscardLastUndo();
+    /// Read a whole file ("" and false when it cannot be read). Helper for building FileEdit.
+    static bool ReadTextFile(const std::string& path, std::string& out);
     /// Load a scene snapshot, keeping the same objects selected afterwards.
     void RestoreKeepingSelection(const std::string& snapshot);
     bool CanUndo() const { return !m_undo.empty(); }
@@ -329,6 +346,9 @@ private:
     GameLoop m_loop;   // the Play loop (set up in the constructor)
 
     std::vector<std::string> m_undo, m_redo;
+    std::vector<std::vector<FileEdit>> m_undoFiles, m_redoFiles;   // parallel to m_undo / m_redo (empty = scene only)
+    void ClearHistory() { m_undo.clear(); m_redo.clear(); m_undoFiles.clear(); m_redoFiles.clear(); }
+    static void ApplyFiles(const std::vector<FileEdit>& edits, bool undoing);
     std::uint64_t m_savedPrint = 0;       // fingerprint of the scene text at the last save / load / new
     std::uint64_t m_playPrint = 0;        // fingerprint of the edit scene Play() put aside
     bool m_dirtyAtPlay = false;           // `dirty` when Play started (Play-time edits are thrown away)

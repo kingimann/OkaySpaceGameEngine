@@ -42,7 +42,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** `docs/editor.md` (Add Component, Component headers)
 - **Tests:** `editor` (selftest), `char_editor_parts` (editor-built part rig of a Character)
 - **Status:** Works - one header per component type exists; the 9.8k-line function is the biggest part of `main.cpp`
-- **Open:** polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); nothing found yet for editing component values during Play and keeping them (planned area 34); prefab override editing UI is planned (area 21)
+- **Open:** polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); nothing found yet for editing component values during Play and keeping them (planned area 34); prefab overrides are shown and edited in the Inspector header, per property and in the Hierarchy (area 21)
 - **Related:** 15.10, 12.10, 13.4, 14.1, 21, 34
 - **Words:** Inspector, Add Component, component header, enable checkbox, Remove Component, tag, static, Character Model panel, Rig Model, script fields, component search
 - **Seen as:** a component has no card or a field is missing; Add Component search cannot find a component; values reset after editing; the Inspector is slow with many components

@@ -3,6 +3,7 @@
 #include "EditorWidgets.hpp"
 #include "ConsolePanel.hpp"
 #include "InspectorModel.hpp"
+#include "PrefabEdit.hpp"
 #include "imgui_internal.h"
 #include <algorithm>
 #include <cstring>
@@ -18,6 +19,7 @@ namespace oked {
 namespace {
 
 okay::editor::EditorState* s_ed = nullptr;
+const okay::Component* s_markComp = nullptr;   // the component whose fields are being drawn (SetTipComponent)
 
 std::string LowerS(std::string s) {
     for (char& c : s) c = (char)std::tolower((unsigned char)c);
@@ -414,6 +416,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
         }
         default: break;
     }
+    PrefabFieldMark(label.c_str());   // a prefab instance's overridden property: blue bar and Revert / Apply menu
     if (ro) ImGui::EndDisabled();
     ImGui::PopID();
     if (wrote) ed.dirty = true;
@@ -449,6 +452,7 @@ void DrawFallbackInspector(okay::editor::EditorState& ed, okay::GameObject* go, 
     int have = 0;
     for (GameObject* g : targets) if (PropertyRegistry::GetProperty(*g, ComponentPath(info->name, idx) + "." + shown[0]->name).IsValid()) ++have;
     if (have > 1) ImGui::TextDisabled("Editing %d selected objects", have);
+    SetTipComponent(comp);   // which component the per-property prefab marks belong to
     std::string group;
     for (const PropertyDesc* d : shown) {
         if (d->group != group) {
@@ -466,11 +470,13 @@ namespace { std::string s_tipType; }
 
 void SetTipComponent(const okay::Component* comp) {
     s_tipType.clear();
+    s_markComp = comp;
     if (!comp) return;
     if (auto info = PropertyRegistry::FindFor(*comp)) s_tipType = info->name;
 }
 
 void FieldTip(const char* label) {
+    PrefabFieldMark(label);   // a prefab instance's overridden field: blue bar and the Revert / Apply menu
     if (s_tipType.empty() || !ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) return;
     const std::string tip = FieldTooltip(s_tipType, label);
     if (!tip.empty()) ImGui::SetTooltip("%s", tip.c_str());
@@ -512,6 +518,7 @@ void ComponentValueMenu(okay::Component* comp) {
     if (ImGui::IsItemHovered() && !canPaste) ImGui::SetTooltip(s_clip.Valid() ? "The copied values belong to a different component." : "Copy the values of another component of this kind first.");
     if (ImGui::MenuItem("Reset")) { s_reqComp = comp; s_reqKind = 3; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put every value back to what a new component has.");
+    PrefabComponentMenu(comp);   // Revert / Apply Component for a prefab instance's changed component
 }
 
 void ApplyComponentValueRequests(okay::editor::EditorState& ed, okay::GameObject* go) {
@@ -541,14 +548,43 @@ void ApplyComponentValueRequests(okay::editor::EditorState& ed, okay::GameObject
                (written == 0 ? " (nothing changed)" : ""));
 }
 
-// ---- Prefab changes ----------------------------------------------------------------------------------------------------------
+// ---- Prefab instances: header, per-property marks, changes list --------------------------------------------------------------
+//
+// The logic (reading differences, Revert / Apply, undo, updating the other instances) is oked::PrefabEdit / PrefabTools; this is
+// only the drawing. Buttons never rebuild the instance in the middle of a frame (the object the Inspector draws would vanish
+// under it): they queue a request that RunPrefabRequests carries out once the drawing is done.
 
 namespace {
 std::vector<PrefabChange> s_changes;
+std::vector<PrefabObjectChange> s_objChanges;
 GameObject* s_changesRoot = nullptr;
 std::unordered_set<const Component*> s_changedComps;
+std::unordered_map<const Component*, std::size_t> s_changeOf;   // component -> index in s_changes
 int s_changesFrame = -1000;
+PrefabUiHooks s_hooks;
+
+struct PrefabReq {
+    enum Kind { None, Revert, Apply, RevertAll, ApplyAll, RevertObject, ApplyObject, Variant, Unpack, UnpackAll, UpdateAll } kind = None;
+    GameObject* root = nullptr;
+    std::vector<PrefabTarget> targets;
+    PrefabObjectChange object;
+    std::string path;   // Variant: where to write
+} s_req;
+
+bool s_openVariant = false;
+bool s_variantSeed = false;   // fill the name box with the default on the next Create Variant button / dialog open
+char s_variantName[160] = "";
+
+ImVec4 PrefabBlue() { return ImVec4(0.45f, 0.70f, 1.0f, 1.0f); }
+
+void Queue(PrefabReq::Kind k, GameObject* root, std::vector<PrefabTarget> t = {}) {
+    s_req = PrefabReq(); s_req.kind = k; s_req.root = root; s_req.targets = std::move(t);
 }
+}   // namespace
+
+void SetPrefabUiHooks(PrefabUiHooks hooks) { s_hooks = std::move(hooks); }
+
+void InvalidatePrefabChanges() { s_changesFrame = -1000; ClearPrefabInfoCache(); }
 
 void RefreshPrefabChanges(GameObject* go) {
     GameObject* root = go ? PrefabTools::NearestPrefabRoot(*go) : nullptr;
@@ -559,85 +595,295 @@ void RefreshPrefabChanges(GameObject* go) {
     s_changesRoot = root;
     s_changesFrame = frame;
     s_changes.clear();
+    s_objChanges.clear();
     s_changedComps.clear();
+    s_changeOf.clear();
     if (!root) return;
     s_changes = PrefabChangesOf(*root);
-    for (const PrefabChange& ch : s_changes) {
+    s_objChanges = PrefabObjectChangesOf(*root);
+    for (std::size_t i = 0; i < s_changes.size(); ++i) {
+        const PrefabChange& ch = s_changes[i];
         if (!ch.object || ch.removed) continue;
         int n = 0;
         for (const auto& up : ch.object->Components())
-            if (up && RecordNameOf(*up) == ch.record) { if (n++ == ch.occurrence) { s_changedComps.insert(up.get()); break; } }
+            if (up && RecordNameOf(*up) == ch.record) {
+                if (n++ == ch.occurrence) { s_changedComps.insert(up.get()); s_changeOf[up.get()] = i; break; }
+            }
     }
 }
 
 bool PrefabChangedFor(const okay::Component* comp) { return comp && s_changedComps.count(comp) != 0; }
 
-bool DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go) {
-    GameObject* root = s_changesRoot;
-    if (!root || !go) return false;
-    const bool isRoot = (go == root);
-    std::vector<const PrefabChange*> mine;
-    for (const PrefabChange& c : s_changes) if (c.object == go) mine.push_back(&c);
-    const int others = (int)s_changes.size() - (int)mine.size();
-    if (mine.empty() && (!isRoot || others == 0)) {
-        if (!isRoot) { ImGui::TextDisabled("Part of prefab %s", std::filesystem::path(root->prefabSource).filename().string().c_str()); ImGui::Spacing(); }
-        return false;
+namespace {
+// The diff fields of the labelled property of the current component that differ from the prefab. Empty when none.
+std::vector<std::string> OverriddenFieldsFor(const char* label, const PrefabChange** change) {
+    if (!s_markComp) return {};
+    auto it = s_changeOf.find(s_markComp);
+    if (it == s_changeOf.end() || it->second >= s_changes.size()) return {};
+    const PrefabChange& ch = s_changes[it->second];
+    if (change) *change = &ch;
+    return ChangedFieldsForLabel(ch, *s_markComp, label);
+}
+}   // namespace
+
+void PrefabFieldMark(const char* label) {
+    if (!s_markComp || s_changeOf.empty() || !s_changesRoot) return;
+    const PrefabChange* ch = nullptr;
+    const std::vector<std::string> fields = OverriddenFieldsFor(label, &ch);
+    if (fields.empty() || !ch) return;
+    // A blue bar at the left edge of the row, so overridden fields stand out in a long card.
+    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    const float x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x - 5.0f;
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x, mn.y), ImVec2(x + 3.0f, mx.y), IM_COL32(90, 165, 255, 255), 1.5f);
+    const ImGuiID id = ImGui::GetItemID();
+    char pid[40];
+    std::snprintf(pid, sizeof(pid), "##prefabprop%08x", (unsigned)id);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) ImGui::OpenPopup(pid);
+    if (ImGui::BeginPopup(pid)) {
+        const std::string pname = std::filesystem::path(s_changesRoot->prefabSource).filename().string();
+        ImGui::TextColored(PrefabBlue(), "Overridden from %s", pname.c_str());
+        for (const std::string& f : fields)
+            for (const PrefabFieldDiff& d : ch->fields)
+                if (d.name == f) ImGui::TextDisabled("%s: %s -> %s", f.c_str(), d.prefabValue.c_str(), d.instanceValue.c_str());
+        ImGui::Separator();
+        std::vector<PrefabTarget> targets;
+        for (const std::string& f : fields) targets.push_back(TargetOf(*ch, f));
+        if (ch->wholeRecordOnly || ch->added || ch->removed) targets = {TargetOf(*ch)};
+        if (ImGui::MenuItem("Revert Property")) Queue(PrefabReq::Revert, s_changesRoot, targets);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put this property back to the prefab's value.");
+        if (ImGui::MenuItem("Apply Property to Prefab")) Queue(PrefabReq::Apply, s_changesRoot, targets);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this value into %s. Other instances that did not change it take it too.", pname.c_str());
+        ImGui::EndPopup();
     }
-    bool rebuilt = false;
-    const std::string pname = std::filesystem::path(root->prefabSource).filename().string();
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.17f, 0.25f, 1.0f));
-    ImGui::BeginChild("##prefabchanges", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
-    ImGui::TextColored(ImVec4(0.45f, 0.70f, 1.0f, 1.0f), "Changed from the prefab");
+}
+
+void PrefabComponentMenu(okay::Component* comp) {
+    auto it = comp ? s_changeOf.find(comp) : s_changeOf.end();
+    if (it == s_changeOf.end() || it->second >= s_changes.size() || !s_changesRoot) return;
+    const PrefabChange& ch = s_changes[it->second];
+    ImGui::Separator();
+    if (ImGui::MenuItem(ch.added ? "Revert Added Component" : "Revert Component to Prefab")) Queue(PrefabReq::Revert, s_changesRoot, {TargetOf(ch)});
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(ch.added ? "Remove this component: the prefab does not have it." : "Put every value of this component back to the prefab's.");
+    if (ImGui::MenuItem(ch.added ? "Apply Added Component to Prefab" : "Apply Component to Prefab")) Queue(PrefabReq::Apply, s_changesRoot, {TargetOf(ch)});
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this component into the prefab. Other instances that did not change it take it too.");
+}
+
+// Header of the Inspector for an object that is (or is part of) a prefab instance.
+void DrawPrefabHeader(okay::editor::EditorState& ed, okay::GameObject* go) {
+    PrefabInstanceInfo info;
+    if (!go || !DescribePrefabInstance(*go, info)) return;
+    GameObject* root = info.root;
+    const int nChanges = s_changesRoot == root ? (int)(s_changes.size() + s_objChanges.size()) : 0;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.17f, 0.27f, 1.0f));
+    ImGui::BeginChild("##prefabbanner", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+    if (info.exists) ImGui::TextColored(PrefabBlue(), "Prefab: %s", info.name.c_str());
+    else ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "Prefab: %s (missing)", info.name.c_str());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", info.source.c_str());
+    if (info.kind != PrefabKind::Plain || info.isNestedInstance) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", PrefabKindLabel(info).c_str());
+    }
+    if (!info.isRoot) {
+        ImGui::TextDisabled("This object is part of the prefab instance %s.", root->name.c_str());
+        if (ImGui::SmallButton("Select Instance Root")) ed.Select(root);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Prefab Revert All / Apply All / Create Variant work on the instance root.");
+        ImGui::SameLine();
+    }
+    if (ImGui::SmallButton("Open")) { if (s_hooks.open) s_hooks.open(root); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit this prefab: shows the instance on its own in the Scene view (Esc leaves).\nApply All writes your changes into the prefab file.");
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", pname.c_str());
-    int i = 0;
-    for (const PrefabChange* c : mine) {
-        ImGui::PushID(i++);
-        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-        ImGui::TextWrapped("%s", c->description.c_str());
-        ImGui::PopTextWrapPos();
-        std::string err;
-        if (ImGui::SmallButton("Revert")) {
-            ed.PushUndo();
-            const RootSlot slot = CaptureRootSlot(ed.scene(), *root);
-            if (GameObject* fresh = PrefabTools::RevertOverride(ed.scene(), *root, c->prefabObject, c->record, "", c->occurrence, &err)) {
-                RestoreRootSlot(ed.scene(), fresh, slot);
-                ed.Select(fresh); ed.dirty = true; rebuilt = true;
-            } else ConsoleLog("Revert failed: " + err, 2);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put this back to what the prefab says.");
+    if (ImGui::SmallButton("Select Asset")) { if (s_hooks.selectAsset) s_hooks.selectAsset(info.source); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find %s in the Project panel.", info.name.c_str());
+    if (info.kind == PrefabKind::Variant) {
+        const std::string base = ResolveVariantBase(info);
         ImGui::SameLine();
-        if (!rebuilt && ImGui::SmallButton("Apply")) {
-            if (PrefabTools::ApplyToSource(*root, c->prefabObject, c->record, "", c->occurrence, &err)) {
-                ConsoleLog("Applied to " + pname + ": " + c->record);
-                s_changesFrame = -1000;
-            } else ConsoleLog("Apply failed: " + err, 2);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this change into the prefab. Every instance gets it.");
-        ImGui::PopID();
-        if (rebuilt) break;
+        ImGui::BeginDisabled(base.empty());
+        if (ImGui::SmallButton("Select Base")) { if (s_hooks.selectAsset) s_hooks.selectAsset(base); }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip(base.empty() ? "The base prefab %s was not found." : "Find the base prefab %s in the Project panel.", info.baseName.c_str());
     }
-    if (!rebuilt && isRoot) {
-        if (others > 0) ImGui::TextDisabled("%d more change%s in objects below", others, others == 1 ? "" : "s");
-        if (ImGui::SmallButton("Revert All")) {
-            std::string err;
-            ed.PushUndo();
-            const RootSlot slot = CaptureRootSlot(ed.scene(), *root);
-            if (GameObject* fresh = PrefabTools::RevertAll(ed.scene(), *root, &err)) { RestoreRootSlot(ed.scene(), fresh, slot); ed.Select(fresh); ed.dirty = true; rebuilt = true; }
-            else ConsoleLog("Revert failed: " + err, 2);
-        }
+    if (info.isRoot) {
         ImGui::SameLine();
-        if (!rebuilt && ImGui::SmallButton("Apply All")) {
-            std::string err;
-            if (PrefabTools::ApplyAllToSource(*root, &err)) { ConsoleLog("Applied all changes to " + pname); s_changesFrame = -1000; }
-            else ConsoleLog("Apply failed: " + err, 2);
+        ImGui::BeginDisabled(nChanges == 0);
+        if (ImGui::SmallButton("Revert All")) Queue(PrefabReq::RevertAll, root);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(nChanges ? "Put everything back to what the prefab says." : "Nothing differs from the prefab.");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(nChanges == 0 || !info.exists);
+        if (ImGui::SmallButton("Apply All")) Queue(PrefabReq::ApplyAll, root);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip(nChanges ? "Write every change into the prefab file. Other instances that did not change the same thing take it too." : "Nothing differs from the prefab.");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!info.exists);
+        if (ImGui::SmallButton("Create Variant")) {
+            s_openVariant = true; s_variantSeed = true;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Save what this instance changed as a new prefab that is based on %s, and make this object an instance of it.", info.name.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Update All")) Queue(PrefabReq::UpdateAll, root);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rebuild every instance of this prefab in the scene from the file (each keeps what it changed).\nUse it after the file was edited outside the editor.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Unpack")) ImGui::OpenPopup("##unpackmenu");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the link to the prefab; this becomes plain objects.");
+        if (ImGui::BeginPopup("##unpackmenu")) {
+            if (ImGui::MenuItem("Unpack")) Queue(PrefabReq::Unpack, root);
+            if (ImGui::MenuItem("Unpack Completely", nullptr, false, info.nestedCount > 0)) Queue(PrefabReq::UnpackAll, root);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Also cut the links of the prefabs inside this one.");
+            ImGui::EndPopup();
         }
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();
     ImGui::Spacing();
-    if (rebuilt) { s_changesRoot = nullptr; s_changes.clear(); s_changedComps.clear(); }
-    return rebuilt;
+
+    if (s_openVariant) {
+        if (s_variantSeed || !s_variantName[0]) {
+            const std::string d = std::filesystem::path(DefaultVariantPath(info.source)).stem().string();
+            std::snprintf(s_variantName, sizeof(s_variantName), "%s", d.c_str());
+            s_variantSeed = false;
+        }
+        ImGui::OpenPopup("Create Variant");
+        s_openVariant = false;
+    }
+    if (ImGui::BeginPopupModal("Create Variant", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("A variant is a prefab based on %s. It stores only what is different from it, so changes to the base reach it.", info.name.c_str());
+        ImGui::SetNextItemWidth(260.0f);
+        const bool enter = ImGui::InputText("Name", s_variantName, sizeof(s_variantName), ImGuiInputTextFlags_EnterReturnsTrue);
+        const std::string file = std::string(s_variantName) + ".okayprefab";
+        const std::string full = (std::filesystem::path(info.source).parent_path() / file).string();
+        std::error_code ec;
+        const bool taken = std::filesystem::exists(full, ec);
+        const bool ok = s_variantName[0] && !taken;
+        if (taken) ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "%s already exists.", file.c_str());
+        else ImGui::TextDisabled("Saved next to the base: %s", file.c_str());
+        ImGui::BeginDisabled(!ok);
+        if (ImGui::Button("Create", ImVec2(110, 0)) || (enter && ok)) {
+            Queue(PrefabReq::Variant, root);
+            s_req.path = full;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+void QueuePrefabAction(PrefabAction a, GameObject* root) {
+    switch (a) {
+        case PrefabAction::RevertAll:        Queue(PrefabReq::RevertAll, root); break;
+        case PrefabAction::ApplyAll:         Queue(PrefabReq::ApplyAll, root); break;
+        case PrefabAction::Unpack:           Queue(PrefabReq::Unpack, root); break;
+        case PrefabAction::UnpackCompletely: Queue(PrefabReq::UnpackAll, root); break;
+        case PrefabAction::UpdateAll:        Queue(PrefabReq::UpdateAll, root); break;
+    }
+}
+
+void OpenCreateVariantDialog() { s_openVariant = true; s_variantSeed = true; }
+
+bool RunPrefabRequests(okay::editor::EditorState& ed) {
+    PrefabReq r = std::move(s_req);
+    s_req = PrefabReq();
+    if (r.kind == PrefabReq::None || !r.root) return false;
+    // The object may be gone (the scene changed since the click).
+    bool alive = false;
+    for (const auto& up : ed.scene().Objects()) if (up.get() == r.root && !up->IsDestroyed()) { alive = true; break; }
+    if (!alive) return false;
+    PrefabOpResult res;
+    switch (r.kind) {
+        case PrefabReq::Revert:       res = PrefabRevert(ed, *r.root, r.targets); break;
+        case PrefabReq::Apply:        res = PrefabApply(ed, *r.root, r.targets); break;
+        case PrefabReq::RevertAll:    res = PrefabRevertAll(ed, *r.root); break;
+        case PrefabReq::ApplyAll:     res = PrefabApplyAll(ed, *r.root); break;
+        case PrefabReq::RevertObject: res = PrefabRevertObject(ed, *r.root, r.object); break;
+        case PrefabReq::ApplyObject:  res = PrefabApplyObject(ed, *r.root, r.object); break;
+        case PrefabReq::Variant:      res = PrefabCreateVariant(ed, *r.root, r.path); break;
+        case PrefabReq::Unpack:       res = PrefabUnpack(ed, *r.root, false); break;
+        case PrefabReq::UnpackAll:    res = PrefabUnpack(ed, *r.root, true); break;
+        case PrefabReq::UpdateAll:    res = PrefabUpdateInstances(ed, r.root->prefabSource); break;
+        default: break;
+    }
+    ConsoleLog(res.message, res.ok ? 0 : 2);
+    InvalidatePrefabChanges();
+    s_changesRoot = nullptr; s_changes.clear(); s_objChanges.clear(); s_changedComps.clear(); s_changeOf.clear();
+    // Reverts and Update All rebuild the instance: the object the Inspector is showing is gone, so the caller stops drawing this frame.
+    return res.ok && (r.kind == PrefabReq::Revert || r.kind == PrefabReq::RevertAll || r.kind == PrefabReq::RevertObject || r.kind == PrefabReq::UpdateAll);
+}
+
+// The "Changed from the prefab" box for the selected object, and (on the instance root) the objects it gained or lost.
+void DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go) {
+    GameObject* root = s_changesRoot;
+    if (!root || !go) return;
+    const bool isRoot = (go == root);
+    std::vector<const PrefabChange*> mine;
+    for (const PrefabChange& c : s_changes) if (c.object == go) mine.push_back(&c);
+    const std::size_t objCount = isRoot ? s_objChanges.size() : 0;
+    if (mine.empty() && objCount == 0) {
+        if (isRoot && !s_changes.empty()) ImGui::TextDisabled("%d change%s in objects below. Select them to see them.", (int)s_changes.size(), s_changes.size() == 1 ? "" : "s");
+        return;
+    }
+    const std::string pname = std::filesystem::path(root->prefabSource).filename().string();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.17f, 0.25f, 1.0f));
+    ImGui::BeginChild("##prefabchanges", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+    ImGui::TextColored(PrefabBlue(), "Changed from the prefab");
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", pname.c_str());
+    int id = 0;
+    for (const PrefabChange* c : mine) {
+        ImGui::PushID(id++);
+        const char* what = c->added ? "Added component" : c->removed ? "Removed component" : "Component";
+        ImGui::TextColored(ImVec4(0.82f, 0.88f, 1.0f, 1.0f), "%s: %s", what, PrettyName(c->record).c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Revert")) Queue(PrefabReq::Revert, root, {TargetOf(*c)});
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(c->added ? "Remove the component: the prefab does not have it." : c->removed ? "Bring the component back from the prefab." : "Put every value of this component back to the prefab's.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Apply")) Queue(PrefabReq::Apply, root, {TargetOf(*c)});
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this component into the prefab. Other instances that did not change it take it too.");
+        if (!c->wholeRecordOnly && !c->added && !c->removed) {
+            int fi = 0;
+            for (const PrefabFieldDiff& f : c->fields) {
+                ImGui::PushID(fi++);
+                ImGui::Bullet();
+                ImGui::TextWrapped("%s: %s -> %s", f.name.c_str(), f.inPrefab ? f.prefabValue.c_str() : "(none)", f.inInstance ? f.instanceValue.c_str() : "(none)");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Revert")) Queue(PrefabReq::Revert, root, {TargetOf(*c, f.name)});
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put just this value back to the prefab's.");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Apply")) Queue(PrefabReq::Apply, root, {TargetOf(*c, f.name)});
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write just this value into the prefab.");
+                ImGui::PopID();
+            }
+        }
+        ImGui::PopID();
+    }
+    if (objCount) {
+        PrefabInstanceInfo info;
+        DescribePrefabInstance(*root, info);
+        const std::string blocked = ApplyObjectBlockedReason(info);
+        for (const PrefabObjectChange& o : s_objChanges) {
+            ImGui::PushID(id++);
+            ImGui::TextColored(ImVec4(0.82f, 0.88f, 1.0f, 1.0f), "%s", o.description.c_str());
+            if (!o.path.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", o.path.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Revert")) { Queue(PrefabReq::RevertObject, root); s_req.object = o; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(o.added ? "Delete this object: the prefab does not have it." : "Bring this object back from the prefab.");
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!blocked.empty());
+            if (ImGui::SmallButton("Apply")) { Queue(PrefabReq::ApplyObject, root); s_req.object = o; }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", blocked.empty() ? (o.added ? "Add this object to the prefab." : "Remove this object from the prefab.") : blocked.c_str());
+            ImGui::PopID();
+        }
+    }
+    const int others = (int)s_changes.size() - (int)mine.size();
+    if (isRoot && others > 0) ImGui::TextDisabled("%d more change%s in objects below", others, others == 1 ? "" : "s");
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
 }
 
 // ---- Play mode ---------------------------------------------------------------------------------------------------------------------

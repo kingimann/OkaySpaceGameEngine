@@ -15,6 +15,7 @@
 #include "okay/Core/TimerDebug.hpp"
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include "../shared/ProjectCreate.hpp"
 
 namespace {
@@ -146,16 +147,56 @@ void EditorState::PushUndo() {
     if (m_suppressUndo) return;
     ++m_undoSerial;
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
-    if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
-    m_redo.clear();
+    m_undoFiles.emplace_back();
+    if (m_undo.size() > kMaxUndo) { m_undo.erase(m_undo.begin()); m_undoFiles.erase(m_undoFiles.begin()); }
+    m_redo.clear(); m_redoFiles.clear();
 }
 
 void EditorState::PushUndoText(std::string before) {
     if (m_suppressUndo) return;
     ++m_undoSerial;
     m_undo.push_back(std::move(before));
-    if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
-    m_redo.clear();
+    m_undoFiles.emplace_back();
+    if (m_undo.size() > kMaxUndo) { m_undo.erase(m_undo.begin()); m_undoFiles.erase(m_undoFiles.begin()); }
+    m_redo.clear(); m_redoFiles.clear();
+}
+
+bool EditorState::ReadTextFile(const std::string& path, std::string& out) {
+    out.clear();
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::ostringstream ss; ss << f.rdbuf();
+    out = ss.str();
+    return true;
+}
+
+bool EditorState::AttachUndoFiles(std::vector<FileEdit> edits) {
+    if (m_suppressUndo || m_undo.empty() || m_undoFiles.size() != m_undo.size()) return false;
+    m_undoFiles.back() = std::move(edits);
+    return true;
+}
+
+void EditorState::DiscardLastUndo() {
+    if (m_undo.empty()) return;
+    m_undo.pop_back();
+    if (!m_undoFiles.empty()) m_undoFiles.pop_back();
+}
+
+void EditorState::ApplyFiles(const std::vector<FileEdit>& edits, bool undoing) {
+    namespace fs = std::filesystem;
+    for (const FileEdit& e : edits) {
+        std::error_code ec;
+        const bool keep = undoing ? e.hadBefore : e.hasAfter;
+        if (!keep) { fs::remove(e.path, ec); continue; }
+        const std::string tmp = e.path + ".tmp";
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            f << (undoing ? e.before : e.after);
+        }
+        fs::rename(tmp, e.path, ec);
+        if (ec) { fs::remove(e.path, ec); ec.clear(); fs::rename(tmp, e.path, ec); }
+    }
+    if (!edits.empty()) SceneSerializer::ClearPrefabCache();   // instantiating a prefab must read the restored file
 }
 
 bool EditorState::Undo() {
@@ -163,6 +204,10 @@ bool EditorState::Undo() {
     ++m_undoSerial;
     m_redo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_undo.back(); m_undo.pop_back();
+    std::vector<FileEdit> files = m_undoFiles.empty() ? std::vector<FileEdit>{} : std::move(m_undoFiles.back());
+    if (!m_undoFiles.empty()) m_undoFiles.pop_back();
+    ApplyFiles(files, true);
+    m_redoFiles.push_back(std::move(files));
     StopNetwork();
     RestoreKeepingSelection(s);
     return true;
@@ -173,6 +218,10 @@ bool EditorState::Redo() {
     ++m_undoSerial;
     m_undo.push_back(SceneSerializer::Serialize(m_scene));
     std::string s = m_redo.back(); m_redo.pop_back();
+    std::vector<FileEdit> files = m_redoFiles.empty() ? std::vector<FileEdit>{} : std::move(m_redoFiles.back());
+    if (!m_redoFiles.empty()) m_redoFiles.pop_back();
+    ApplyFiles(files, false);
+    m_undoFiles.push_back(std::move(files));
     StopNetwork();
     RestoreKeepingSelection(s);
     return true;
@@ -836,8 +885,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     m_path = path;
     // A different scene is a different document: its undo history is its own. (Keeping the old one
     // would let Undo put the previous scene's objects into this file.)
-    m_undo.clear();
-    m_redo.clear();
+    ClearHistory();
     // Re-home the project to the scene's own project folder (the parent of its
     // Assets/ dir), so opening another project's scene switches the Project panel
     // and asset paths over instead of keeping the previous project's files around.
@@ -880,7 +928,8 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
     const bool prevDirty = dirty;
     const std::uint64_t prevPrint = m_savedPrint;
     std::vector<std::string> prevUndo = std::move(m_undo), prevRedo = std::move(m_redo);
-    m_undo.clear(); m_redo.clear();
+    auto prevUndoFiles = std::move(m_undoFiles); auto prevRedoFiles = std::move(m_redoFiles);
+    ClearHistory();
     const std::string scenePath = (fs::path(root) / "Assets" / (sceneName + ".okayscene")).string();
     (this->*tpl)();
     m_scene.SetName(sceneName);
@@ -895,14 +944,14 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
         setProjectDir(prevDir);
         m_undo = std::move(prevUndo);
         m_redo = std::move(prevRedo);
+        m_undoFiles = std::move(prevUndoFiles); m_redoFiles = std::move(prevRedoFiles);
         dirty = prevDirty;
         m_savedPrint = prevPrint;
         okayproj::Undo(made);   // Save is atomic: a failed one wrote nothing, so only the folders and files made above go
         r.error = err;
         return r;
     }
-    m_undo.clear();
-    m_redo.clear();
+    ClearHistory();
     r.ok = true;
     r.root = root;
     r.scene = scenePath;

@@ -23,7 +23,7 @@ hosting) are not libraries and stay outside the goal unless we choose to self-ho
 | Rendering | `engine/src/Render`, `engine/include/okay/Render` | Our own software renderer plus OpenGL, Direct3D 11 and Direct3D 12 backends, camera stack, lighting, post-processing |
 | Physics | `engine/` | 2D and 3D physics, joints, ragdolls, queries, fixed-step simulation |
 | Animation and IK | `engine/src/Animation` | Animators, state machines, humanoid rig mapping, root motion, foot, hand and full-body IK |
-| Audio | `engine/src/Audio` | Mixer, groups, music player, one-shots, and our own MP3 and Ogg Vorbis decoders |
+| Audio | `engine/src/Audio` | Mixer, groups, music player, one-shots, and our own MP3 decoder (Ogg Vorbis decoding is still stb_vorbis, below) |
 | In-game UI | `engine/` UI, `okayui/` | Canvas, widgets, themes, layout, scrolling, rich text, UI Gallery |
 | Scripting | `engine/src/Scripting`, `engine/src/VisualScript` | OkayScript language and VM, the visual-script graph engine and every node |
 | Networking | `engine/src/Net`, `relay/` | UDP transport, server authority, rooms, matchmaking, anti-cheat, dedicated server, relay |
@@ -42,7 +42,7 @@ hosting) are not libraries and stay outside the goal unless we choose to self-ho
 | [Dear ImGui](https://github.com/ocornut/imgui) | Editor and launcher UI | MIT | Downloaded at configure time, pinned to one commit |
 | [Assimp](https://github.com/assimp/assimp) v5.4.3 | Importing many 3D model formats | BSD 3-clause | Downloaded at configure time (optional, `OKAY_USE_ASSIMP`) |
 | [ufbx](https://github.com/ufbx/ufbx) | FBX import | MIT or public domain | Vendored in `engine/third_party/ufbx` |
-| [stb_image, stb_truetype](https://github.com/nothings/stb) | PNG/JPG loading, TrueType fonts | Public domain or MIT | Vendored in `engine/third_party/stb` |
+| [stb_image, stb_truetype, stb_vorbis](https://github.com/nothings/stb) | PNG/JPG loading, TrueType fonts, Ogg Vorbis decoding | Public domain or MIT | Vendored in `engine/third_party/stb` |
 | [DejaVu Sans](https://dejavu-fonts.github.io) | Default UI font | Free font licence (see `assets/fonts/DejaVuSans-LICENSE.txt`) | In `assets/fonts` |
 | [libsodium](https://libsodium.org) | Authenticated packet encryption | ISC | System package (optional, `OKAY_USE_SODIUM`) |
 

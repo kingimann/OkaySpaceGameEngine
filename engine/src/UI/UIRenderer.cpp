@@ -212,14 +212,20 @@ void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
 
 // Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
-                 float ox, float oy, float px, RGBA col, float letterSp, float lineSp) {
+                 float ox, float oy, float px, RGBA col, float letterSp, float lineSp,
+                 bool italic, float boldOffset) {
     f->Prepare(text);   // bake new characters before the atlas is uploaded
     Tex tex = r.FontAtlas(f);
     if (!tex) return;
     r.SetTextureColorMod(tex, col.r, col.g, col.b);
     r.SetTextureAlphaMod(tex, col.a);
+    int atlasW = 0, atlasH = 0;
+    if (italic) r.QueryTexture(tex, &atlasW, &atlasH);
+    const bool shear = italic && atlasW > 0 && atlasH > 0;
     const float s = px * (float)okay::Font8x8::Height / f->BakeHeight();
     const float baseline = f->Ascent((float)okay::Font8x8::Height) * px;
+    const float kSlant = 0.22f;                       // how far the top of a glyph leans, per unit of height
+    const int taps = boldOffset > 0.0f ? 3 : 1;
     float penX = ox, penY = oy;
     for (std::size_t i = 0; i < text.size();) {
         const std::uint32_t ch = okay::utf8::Next(text, i);
@@ -229,8 +235,24 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
             Rect src{g->x0, g->y0, gw, gh};
-            FRect dst{penX + g->xoff * s, penY + baseline + g->yoff * s, gw * s, gh * s};
-            r.CopyF(tex, &src, &dst);
+            for (int t = 0; t < taps; ++t) {
+                const float dx = taps > 1 ? boldOffset * 0.5f * (float)t : 0.0f;
+                FRect dst{penX + dx + g->xoff * s, penY + baseline + g->yoff * s, gw * s, gh * s};
+                if (!shear) { r.CopyF(tex, &src, &dst); continue; }
+                // Shear about the baseline: points higher above it lean further right.
+                const float base = penY + baseline;
+                const float topLean = (base - dst.y) * kSlant, botLean = (base - (dst.y + dst.h)) * kSlant;
+                const float u0 = (float)g->x0 / (float)atlasW, u1 = (float)g->x1 / (float)atlasW;
+                const float v0 = (float)g->y0 / (float)atlasH, v1 = (float)g->y1 / (float)atlasH;
+                const RGBA white{255, 255, 255, 255};
+                Vertex v[4] = {
+                    {FPoint{dst.x + topLean, dst.y}, white, FPoint{u0, v0}},
+                    {FPoint{dst.x + dst.w + topLean, dst.y}, white, FPoint{u1, v0}},
+                    {FPoint{dst.x + dst.w + botLean, dst.y + dst.h}, white, FPoint{u1, v1}},
+                    {FPoint{dst.x + botLean, dst.y + dst.h}, white, FPoint{u0, v1}}};
+                const int idx[6] = {0, 1, 2, 0, 2, 3};
+                r.Geometry(tex, v, 4, idx, 6);
+            }
         }
         penX += g->xadvance * s + letterSp * px;
     }
@@ -255,12 +277,15 @@ float UITextW(const std::string& text, float px) {
 // the TTF atlas is used instead (same sizing space).
 void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
                 float px, RGBA col, float letterSp, float lineSp,
-                bool italic, bool gradient, RGBA col2, TtfFont* ttf) {
+                bool italic, bool gradient, RGBA col2, TtfFont* ttf, bool bold) {
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
     ttf = FontForText(ttf, text);      // a font with the text's characters (other languages)
     if (px < 0.15f) px = 0.15f;   // a smooth font scales below one font pixel; the 8x8 font can't
-    if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
+    if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp, italic, bold ? (px * 8.0f >= 30.0f ? 1.5f : 1.0f) : 0.0f); return; }
     if (px < 1.0f) px = 1.0f;
+    if (bold) {   // the 8x8 font has one weight: draw it again one font pixel to the right
+        DrawUIText(r, text, ox + px, oy, px, col, letterSp, lineSp, italic, gradient, col2, nullptr, false);
+    }
     if (!gradient) r.SetDrawColor(col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
     float cx = ox;
@@ -288,6 +313,50 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
     }
 }
 
+
+// Rich text: draw `disp` (already free of tags) in runs, each in the colour and weight its characters
+// carry in `styles` (one per visible character, in order). Each run is placed by measuring the text before
+// it on its line, so any font lines up; the lines advance like DrawUIText's.
+void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,
+                  float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,
+                  bool bold, float boldOff, TtfFont* ttf) {
+    TtfFont* f = FontForText(ttf ? ttf : g_uiDefaultFont, disp);
+    const float adv = (f && f->Valid()) ? f->LineHeight((float)Font8x8::Height) * px + lineSp * px
+                                        : (Font8x8::Height + 1 + lineSp) * px;
+    std::size_t glyph = 0, lineStart = 0;
+    float y = oy;
+    while (lineStart <= disp.size()) {
+        std::size_t lineEnd = disp.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = disp.size();
+        const std::string line = disp.substr(lineStart, lineEnd - lineStart);
+        std::size_t runStart = 0;
+        okay::RichStyle runStyle;
+        bool haveRun = false;
+        auto flush = [&](std::size_t end) {
+            if (!haveRun || end <= runStart) return;
+            const std::string run = line.substr(runStart, end - runStart);
+            const std::string before = line.substr(0, runStart);
+            const float x = ox + UITextW(before, px) + letterSp * px * (float)okay::utf8::Length(before);
+            RGBA col = base;
+            if (runStyle.hasColor) col = RGBA{runStyle.r, runStyle.g, runStyle.b, (std::uint8_t)(runStyle.a * base.a / 255)};
+            const bool it = italic || runStyle.italic;
+            DrawUIText(r, run, x, y, px, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
+        };
+        for (std::size_t i = 0; i < line.size();) {
+            const std::size_t at = i;
+            const std::uint32_t cp = okay::utf8::Next(line, i);
+            if (cp == ' ' || cp == '\t') continue;       // a space joins the run it sits in
+            const okay::RichStyle st = glyph < styles.size() ? styles[glyph] : okay::RichStyle();
+            ++glyph;
+            if (!haveRun) { runStart = at; runStyle = st; haveRun = true; }
+            else if (!(st == runStyle)) { flush(at); runStart = at; runStyle = st; }
+        }
+        flush(line.size());
+        y += adv;
+        if (lineEnd >= disp.size()) break;
+        lineStart = lineEnd + 1;
+    }
+}
 
 namespace {
 // What the UI pass keeps between frames for one scene, so a steady frame neither
@@ -1467,8 +1536,11 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             if (tk <= 0.0f) continue;   // canvas behind the camera
             ps *= tk;
         }
+        // Text inside a Scroll View / List View / Mask scrolls with it and is clipped to it, like every other widget.
+        { Vec2 clipOnly{0.0f, 0.0f}; if (!tWorld) enterScroll(up.get(), clipOnly); }
         if (tr->background) {                       // label background box
             Vec2 b = UIResolveOrigin(up.get(), (float)w, (float)h);   // parent-relative box
+            if (!tWorld) b = b - UIScrollTotal(up.get());
             Rect br{(int)b.x, (int)b.y, (int)(tr->size.x * tk), (int)(tr->size.y * tk)};
             p.SetDrawColor((std::uint8_t)(tr->backgroundColor.r * 255),
                                    (std::uint8_t)(tr->backgroundColor.g * 255), (std::uint8_t)(tr->backgroundColor.b * 255),
@@ -1477,6 +1549,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
         Vec2 o = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
                         : UITextDrawOrigin(up.get(), tr, (float)w, (float)h);   // parent-relative + align
+        if (!tWorld) o = o - UIScrollTotal(up.get());
         thread_local std::string dispScratch;
         const std::string& disp = tr->DisplayText(dispScratch);
         bool it = tr->italic;
@@ -1495,8 +1568,12 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             DrawUIText(p, disp, o.x, o.y - fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
             DrawUIText(p, disp, o.x, o.y + fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
         }
-        DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
-        if (tr->bold) DrawUIText(p, disp, o.x + fo, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
+        if (tr->richText && tr->screenSpace && RichTextHasTags(tr->text)) {
+            const okay::RichText rt = okay::ParseRichText(tr->text);
+            DrawRichRuns(p, disp, rt.styles, o.x, o.y, ps, col, ls, lp, it, tr->bold, fo, fnt);
+        } else {
+            DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt, tr->bold);
+        }
     }
         else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
         auto* wu = up->GetComponent<WorldUI>();
@@ -1578,12 +1655,10 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                     DrawUIText(p, q.empty() ? std::string("Search...") : q, o.x + 8.0f,
                              orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, sc);
                 }
-                const int cap = dd->maxVisible > 0 ? dd->maxVisible : 1000000;
-                int shown = 0;
-                for (int i = 0; i < (int)dd->options.size() && shown < cap; ++i) {
+                const int firstRow = row;
+                for (int i = 0; i < (int)dd->options.size(); ++i) {
                     if (dd->ShownSlot(i) < 0) continue;
                     Rect orow = rowBox(row++);
-                    ++shown;
                     const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
                     p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
                                            (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
@@ -1596,6 +1671,17 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                         tx += UITextW(glyph, px) + 6.0f;
                     }
                     DrawUIText(p, dd->options[i], tx, ty, px, tc);
+                }
+                if (dd->Scrolls()) {   // a scrollbar on the right edge: the thumb shows where the visible rows sit
+                    const int matches = dd->MatchCount(), vis = dd->maxVisible;
+                    const int trackY = (int)(top + firstRow * dd->size.y), trackH = (int)(vis * dd->size.y);
+                    const int barW = 6, barX = (int)(o.x + dd->size.x) - barW - 3;
+                    Rect track{barX, trackY + 2, barW, trackH - 4};
+                    p.SetDrawColor(255, 255, 255, 38); p.FillRect(&track);
+                    const int thumbH = std::max(14, (int)((float)track.h * (float)vis / (float)matches));
+                    const int span = track.h - thumbH, steps = matches - vis;
+                    Rect thumb{barX, track.y + (steps > 0 ? span * dd->ScrollOffset() / steps : 0), barW, thumbH};
+                    p.SetDrawColor(tc.r, tc.g, tc.b, 190); p.FillRect(&thumb);
                 }
             }
         }

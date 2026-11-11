@@ -65,6 +65,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
     InspectorPanel.cpp InspectorModel.cpp                              # Inspector / Hierarchy: reference fields, generic component card, filter, drag-drop logic
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
+    ExampleScenes.cpp                                                  # File > Examples scenes saved into the project
     UIRuntimeTools.cpp                                                 # UI themes, runtime UI widgets, File > Examples > UI Gallery
     LocalizationWindow.cpp                                             # the Localization window (string table)
     ProjectBrowser.cpp ProjectPanelUI.cpp                              # the Project panel: folder model + safe file operations, name prompt / delete confirm / import settings

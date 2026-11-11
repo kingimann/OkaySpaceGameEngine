@@ -26,6 +26,6 @@ void DrawExamplesMenu(okay::editor::EditorState& ed,
                       const std::function<void(const std::function<void()>&)>& afterSavePrompt);
 
 /// Replace the open scene with the UI Gallery example.
-void OpenUIGalleryExample(okay::editor::EditorState& ed);
+void OpenUIGalleryExample(okay::editor::EditorState& ed, bool portrait = false);
 
 } // namespace oked

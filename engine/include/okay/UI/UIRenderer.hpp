@@ -61,8 +61,12 @@ void MMThickLine(Painter& r, float x0, float y0, float x1, float y1, float width
 void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col);
 
 /// Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
+/// `italic` shears every glyph quad about the baseline (a true slant, not a different font).
+/// `boldOffset` > 0 draws each glyph three times across that many screen pixels, which thickens the
+/// strokes smoothly (a faux bold: the font file has no bold weight).
 void DrawTtfText(Painter& r, TtfFont* f, const std::string& text,
-                 float ox, float oy, float px, RGBA col, float letterSp, float lineSp);
+                 float ox, float oy, float px, RGBA col, float letterSp, float lineSp,
+                 bool italic = false, float boldOffset = 0.0f);
 /// The scene-wide default UI font DrawUIText/UITextW fall back to when no font is given.
 /// RenderSceneUI sets it to the scene's UI font for its pass and clears it after, so
 /// world text and overlays keep the 8x8 bitmap font unless a host sets it around them.
@@ -78,7 +82,7 @@ float UITextW(const std::string& text, float px);
 void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
                 float px, RGBA col, float letterSp = 0.0f, float lineSp = 0.0f,
                 bool italic = false, bool gradient = false, RGBA col2 = RGBA{0, 0, 0, 0},
-                TtfFont* ttf = nullptr);
+                TtfFont* ttf = nullptr, bool bold = false);
 
 } // namespace ui2d
 } // namespace okay

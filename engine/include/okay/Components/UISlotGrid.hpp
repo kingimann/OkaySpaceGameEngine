@@ -30,6 +30,9 @@ public:
     Color selectedColor = Color::FromBytes(66, 150, 250);
     Color hoverColor = Color::FromBytes(72, 80, 98);
     std::vector<std::string> labels;
+    Color textColor = Color::White;     ///< slot label colour (themes set it to the look's text colour)
+    float fontScale = 1.5f;             ///< slot label size
+    bool  numberEmptySlots = true;      ///< a slot with no label shows its number; off = blank (an inventory's empty slots)
 
     int Count() const { return (columns < 1 ? 1 : columns) * (rows < 1 ? 1 : rows); }
     float Width() const {
@@ -128,13 +131,14 @@ private:
             b->size = cell;
             b->shape = UIShape::Rounded;
             b->cornerRadius = 8.0f;
-            b->fontScale = 1.5f;
+            b->fontScale = fontScale;
             b->focusable = false;
-            b->label = Label(i).empty() ? std::to_string(i + 1) : Label(i);
+            b->label = Label(i).empty() ? (numberEmptySlots ? std::to_string(i + 1) : std::string()) : Label(i);
             b->color = (i == value) ? selectedColor : color;
             b->hoverColor = hoverColor;
             b->pressedColor = selectedColor;
-            b->textColor = Color::White;
+            b->textColor = textColor;
+            b->hoverTextColor = textColor;
         }
     }
 

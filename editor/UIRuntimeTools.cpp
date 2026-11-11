@@ -1,5 +1,6 @@
 #include "UIRuntimeTools.hpp"
 #include "ConsolePanel.hpp"
+#include "ExampleScenes.hpp"
 #include "imgui.h"
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
@@ -235,6 +236,7 @@ void DrawUIThemeWindowBody(EditorState& ed) {
     if (ImGui::Button("Apply to all UI", ImVec2(150, 0))) {
         ed.PushUndo();
         UITheme* th = UIGallery::EnsureTheme(scene, sel);
+        if (sel == 0) { UIThemeFromText(*th, UIThemeToText(pv)); th->global = true; }   // a look loaded from a file: use its values, not a preset
         th->Apply();
         ed.dirty = true;
         status = "Styled " + std::to_string(widgets) + " widget(s) as " + UITheme::PresetName(sel);
@@ -247,6 +249,7 @@ void DrawUIThemeWindowBody(EditorState& ed) {
     if (ImGui::Button("Apply to selected", ImVec2(150, 0))) {
         ed.PushUndo();
         UITheme t; t.ApplyPreset(sel);
+        if (sel == 0) UIThemeFromText(t, UIThemeToText(pv));   // a look loaded from a file
         t.ApplyTo(ed.selected());
         ed.dirty = true;
         status = std::string("Styled ") + ed.selected()->name + " and what is inside it";
@@ -328,6 +331,15 @@ bool DrawRuntimeUIComponentInspector(Component* comp, EditorState& ed, Component
         }
         return true;
     }
+    if (auto* ib = dynamic_cast<UIInventoryBind*>(comp)) {
+        if (hooks.header("UI Inventory Bind", ib, toRemove, true)) {
+            DrawProps(*ib, ed);
+            if (!ib->gameObject->GetComponent<UISlotGrid>()) Hint("Put this on the object with the UI Slot Grid: its slots then show the items of an Inventory.");
+            else if (!ib->FindInventory()) Hint("No Inventory found. Add an Inventory to the Player (or name another object above).");
+            else Hint("The slots show the items of the Inventory, the stack size after the name. Click a slot, then ask SelectedItem().");
+        }
+        return true;
+    }
     return false;
 }
 
@@ -366,25 +378,26 @@ void DrawUIAddMenuExtras(EditorState& ed, GameObject* parent, bool& created) {
         g->AddComponent<UIDamageNumbers>();
         return g;
     });
-    add("Nameplate", "A name, level and health bar. In the world it follows a character.", [&] { return UIGallery::AddNameplate(sc, false); });
-    add("Nameplate (in the world)", "The same plate as a 3D object that faces the camera: put it over a character.", [&] { return UIGallery::AddNameplate(sc, true); });
+    add("Nameplate", "A name, level and a health bar that follows the Health Stat (the player's health). The name and level are plain text you edit.", [&] { return UIGallery::AddNameplate(sc, false); });
+    add("Nameplate (in the world)", "The same plate as a 3D object that faces the camera: make it a child of a character. Its bar follows the Health Stat.", [&] { return UIGallery::AddNameplate(sc, true); });
     add("Inventory", "A bag screen with a grid of slots.", [&] { return UIGallery::AddInventoryScreen(sc); });
     add("Dialogue", "Speaker, typing text and choice buttons. Scripts call ui_dialogue_show().", [&] { return UIGallery::AddDialogueScreen(sc); });
 }
 
-void OpenUIGalleryExample(EditorState& ed) {
-    ed.NewScene2D();
-    ed.PushUndo();
-    GameObject* root = UIGallery::BuildGallery(ed.scene(), (int)UITheme::Preset::ModernFlat);
-    ed.Select(root);
-    ed.dirty = false;   // an example is not "unsaved work"
-    ConsoleLog("Opened the UI Gallery. Press Play to try the widgets; pick a theme at the top right.");
+void OpenUIGalleryExample(EditorState& ed, bool portrait) {
+    std::string where, err;
+    if (!BuildUIGalleryExample(ed, portrait, &where, &err)) ConsoleLog("Could not save the example into the project: " + err, 1);
+    ConsoleLog(std::string(portrait ? "Opened the UI Gallery for phones. Press Play, pick a phone in the Game view, and scroll."
+                                    : "Opened the UI Gallery. Press Play to try the widgets; pick a theme at the top right.") +
+               (where.empty() ? std::string() : " Saved as " + where + "."));
 }
 
 void DrawExamplesMenu(EditorState& ed, const std::function<void(const std::function<void()>&)>& afterSavePrompt) {
     if (ImGui::BeginMenu("Examples")) {
-        if (ImGui::MenuItem("UI Gallery")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed); });
+        if (ImGui::MenuItem("UI Gallery")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed, false); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every in-game UI widget in one scene, in twelve looks. Press Play to try them.");
+        if (ImGui::MenuItem("UI Gallery (phone)")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed, true); });
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same widgets in one scrolling column on a portrait canvas. Pick a phone in the Game view.");
         ImGui::EndMenu();
     }
 }

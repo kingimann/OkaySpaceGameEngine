@@ -1,8 +1,54 @@
-# Our own UI toolkit (`okay::imui`) and the Dear ImGui audit
+# Our own UI toolkit: OkayUI replaces Dear ImGui
 
-Part of the plan in `docs/own_code_roadmap.md` (Dear ImGui row). This page has three parts: what the editor, launcher and shared code actually call (the audit), what `okay::imui` is and how to use it, and what is still missing before it could replace Dear ImGui.
+Part of the plan in `docs/own_code_roadmap.md` (Dear ImGui row).
 
-**Status: stage 1, side by side, not used by anything.** The editor and launcher still use Dear ImGui and no ImGui call was changed. `okay::imui` is a new library with its own tests. It is not the default and nothing switches to it.
+**Decision (owner, approved): OkayUI (`okayui/`) is THE toolkit.** It slowly replaces Dear ImGui. The headless pieces that were first written as a separate library (`okay::imui`, branch `claude/own-imui-core`: a software rasteriser, a golden-image and synthetic-input test harness, behaviour tests, a fuzz test) are folded into OkayUI instead of living beside it as a second toolkit. There is exactly one own toolkit. The editor and launcher still use Dear ImGui and no ImGui call is changed by this work.
+
+This page has: the decision and the OkayUI audit (this section), the audit of which ImGui calls our code makes (section 1), how the headless harness works (section 2), and what OkayUI still lacks (section 3). Sections 2 and 3 are rewritten as the fold-in lands; see the status line of each.
+
+## 0. OkayUI audit (what was found before folding anything in)
+
+Read from `okayui/` (headers, sources, backends), `tests/test_okayui.cpp` and every call site that builds an `OkayUI::Input`.
+
+### Shape
+
+| Piece | Size | What |
+|---|---|---|
+| `okayui/include/okay/UI/OkayUI.hpp` | 438 lines | The whole public API: free functions in `namespace OkayUI`, `Input`, `Theme`, `DrawData`, `Font` |
+| `okayui/src/OkayUI.cpp` | 2656 lines | Widgets, layout, windows, the geometry batch |
+| `okayui/src/OkayUI_FontAtlas.*` | 206 lines | The launcher look's Roboto atlas, baked with `stb_truetype` (compiled into the engine) |
+| `okayui/src/OkayUI_D3D11.cpp`, `d3d11_demo/` | 291 lines | Direct3D 11 backend and a standalone demo (Windows only) |
+| `tests/test_okayui.cpp` | 911 lines | One test file, not a small one: drives an SDL software renderer on an in-memory surface and reads pixels back. Covers press and release, hover, the ImGui-capture gate, checkbox, slider, radio, tabs, text field, windows (collapse, close), scrolling children with clipping, combo, drag, colour picker, tables, menus, popups, plots, drag and drop, the launcher look. |
+
+Style: one global singleton (single UI context, state in file-scope fixed arrays), no heap and no STL in the toolkit's own code (the header says so; the `.cpp` still includes `<algorithm>`), integer widget ids hashed (FNV-1a) from labels plus an id stack, explicit-coordinate widgets plus an ImGui-style auto-layout layer on top (`Begin`/`End`, `SameLine`, `BeginChild`, `Columns`, `BeginTable`, menus, popups, trees, drag and drop). About 70 widgets. Widget interaction is hot/active (press arms on the inside, fires on release inside).
+
+### How it renders
+
+- Every widget appends to one fixed geometry batch: `SDL_Vertex` arrays (20,000 vertices, 30,000 32-bit indices) plus a second "overlay" batch (combo lists, tooltips, drag chip, toasts) that is appended after the main one. Quads, triangle fans for circles, rounded rectangles built from bars and corner fans. Nothing is anti-aliased.
+- The batch is split into **spans**: an index offset plus a clip rectangle on/off plus a texture. `BeginChild`, the launcher-look window frame and `PushClipRect` create spans; images and fallback-font text switch the texture.
+- **SDL_Renderer backend** (`EndFrame(SDL_Renderer*)`): one `SDL_RenderGeometry` call per span under that span's clip rectangle. This is the path the player and editor use, on top of Dear ImGui's own SDL_Renderer.
+- **Direct3D 11 backend** (`EndFrameData` + `GetDrawData` + `D3D11Backend`): takes only the vertex and index arrays. **It ignores spans**, so scroll-region clipping, the TrueType atlas texture (the launcher look's text and its flat shapes all sample that texture) and images are not available on that path.
+- Text: classic look draws one quad per lit pixel of the engine's 8x8 bitmap font (scale 2 gives 16 px glyphs); launcher look draws one textured quad per glyph from the Roboto atlas (up to six baked sizes, one RGBA texture shared with a solid white patch so shapes and text share one draw call); characters the atlas lacks go through an engine `TtfFont` with its own texture.
+- So the draw data is already a vertex, index and command (span) list, but it is only reachable through `SDL_Vertex`, `SDL_Rect` and `SDL_Texture*`, and the public `DrawData` leaves the spans out.
+
+### Input
+
+`OkayUI::Input` is already a plain struct: mouse position, left and right button state, wheel, typed UTF-8 text, a `backspace` edge, and `blocked` (another layer owns the mouse). Edges are found by comparing with the previous frame. It has **no** keys other than backspace, no modifiers, no middle button, no time step. The editor (`editor/main.cpp`), the player (`player/main.cpp`) and `shared/` build it with member assignment, so adding fields with defaults at the end is source compatible.
+
+### Findings that matter for the fold-in
+
+1. A headless run is possible without a window: OkayUI needs only the SDL headers and `SDL_sinf` style maths, plus the engine's 8x8 font and, for the launcher look, the atlas code. It does not need a video device. It is not "no SDL" like `okay::imui` was, but linking SDL for a test is already the case for `test_okayui`.
+2. There is no backend-neutral command list in the public API (see D3D11 above): added in step 2 without changing what the SDL backend draws.
+3. Single global context: tests must reset state between cases. There was no reset call; one is added.
+4. `TextField` (and so `InputText`) appends raw bytes and Backspace removes one **byte**, so a multi-byte character is corrupted by one Backspace; control characters and invalid UTF-8 are accepted; there is no caret, selection, Left/Right/Home/End/Delete/Enter or mouse placement.
+5. An open `Combo` list is drawn on top but does not block input: a click on a list row also reaches a widget under it, and a click outside the list that closes it also reaches whatever it lands on.
+6. Windows have a title-bar drag, collapse caret and close button, but no resize grip, no z-order, and overlapping windows both receive the same click.
+7. No way to ask for a widget's rectangle, hover or whether a text field wants the keyboard (ImGui `GetItemRectMin/Max` 144 call sites, `IsItemHovered` 1502, `io.WantTextInput` 19).
+8. Time dependent drawing (`SDL_GetTicks`) exists only in toasts and the spinner; the text caret blink counts frames, so it is deterministic.
+
+## 0.1 Relation to `okay::imui` (what was folded)
+
+`okay::imui` had a stricter, headless design for the same job. What moves into OkayUI: the triangle rasteriser (top-left fill rule, per-command scissor, source-over blending, hostile input skipped, with both bug fixes from the fuzz test), the PNG reader and golden-image comparison, the synthetic input driver, the behaviour tests (ported to OkayUI widgets), and the fuzz test. What is not kept: the `imui` widgets, layout, context and `Imui.hpp`, because OkayUI already has them and has far more of them. Behaviour that `okay::imui` had and OkayUI lacked is listed in section 3.
 
 ## 1. Audit: which ImGui APIs we call
 
@@ -167,13 +213,11 @@ imui::SoftRender(dd, ctx->font, bitmap);     // or any other backend
 - `imui_golden`: four committed PNGs (`shared/imui/tests/golden/`), written with `okay::ImageWrite` and read back with a small inflate in the test kit: primitives, a button held, a button hovered, and the demo window after a scripted interaction. Per-channel tolerance 2 and at most 0.05 percent of pixels may differ, to survive compilers that round floats differently. `IMUI_UPDATE_GOLDEN=1` regenerates them; a mismatch writes `<name>.actual.png` into the working directory. Also checks that two runs render the same pixels and that the PNG reader round-trips.
 - `imui_fuzz`: seeded random frames (random input including NaN and infinities, random windows and well-nested widget trees with hostile sizes, formats and labels), unbalanced call sequences, a text-editing reference model compared after every key, layout properties (stacked items never overlap, same-line items advance), random draw lists and corrupted buffers into the rasteriser, UTF-8 and hash on random bytes. `IMUI_FUZZ_ITERS` and `IMUI_FUZZ_SEED` scale and vary it. Run under AddressSanitizer and UBSan during development; this found two real bugs in the first version of the rasteriser (a non-finite clip rectangle and a non-finite texture coordinate converted to an int), both fixed with tests.
 
-## 3. Relation to OkayUI, and what is missing before it could replace Dear ImGui
+## 3. What is missing before OkayUI could replace Dear ImGui
 
-**OkayUI already exists** (`okayui/`, area 40 of the feature map). It is also our own immediate-mode toolkit, about 3.5k lines, and it already has far more widgets than `okay::imui`: tables with resizable columns, menus, popups and context popups, tooltips, collapsing headers, list boxes, colour pickers, plots, drag and drop, wrapped text, several fonts through its own atlas. It draws through SDL_Renderer or Direct3D 11, ships in the player and the editor, and has one small test. This audit was written against ImGui's call sites and this core was written first without building on OkayUI, so the two overlap. What `okay::imui` adds is a clean headless design (no SDL, input as plain structs, a software backend, golden and behaviour tests, fuzzing) and much stricter tests of the widgets it has. What it lacks is nearly everything OkayUI already has. The owner should decide whether the two merge (the cheapest route is probably to give OkayUI this kind of headless test harness and port the missing ImGui calls into it, using `okay::imui` as the reference for the test style), or whether `okay::imui` grows and OkayUI is retired. This stage does not touch OkayUI.
+**Merge decision taken: OkayUI is the toolkit** (section 0). `okay::imui` is not grown further and is not retired as a second toolkit; its headless harness and tests move into OkayUI (step 3 and later of the fold-in) and its widgets are deleted because OkayUI already has them. The ranked list in section 1 was counted against `okay::imui`; the per-function OkayUI coverage replaces it when the fold-in finishes.
 
-The list below is what `okay::imui` itself would still need. Plainly: most of it. It is a core, not a replacement. In rough order of how much of our code is blocked:
-
-Plainly: most of it. `okay::imui` is a core, not a replacement. In rough order of how much of our code is blocked:
+The list below was written for `okay::imui` and is kept until it is re-counted against OkayUI. In rough order of how much of our code is blocked:
 
 1. **Popups, menus and tooltips.** `OpenPopup`, `BeginPopup`, `BeginPopupModal`, context-menu popups, `BeginMenu`, `MenuItem`, menu bars, `SetTooltip`. About 3,000 call sites in the ranked list alone. Only the combo's popup exists.
 2. **Text drawing details.** Wrapped text (`TextWrapped`, `PushTextWrapPos`), bullet text, `SeparatorText`, formatted labels with colours, `SetWindowFontScale`, several fonts and sizes, non-ASCII glyphs, a TTF rasteriser of our own (today only bitmap glyphs), kerning, shaping and right-to-left text.

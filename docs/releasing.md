@@ -32,7 +32,7 @@ The bucket layout:
 Only the newest 3 versions are kept (`KEEP=n` to change). `DRY_RUN=1` checks
 the build and key without uploading.
 
-Limits: on the current plan each file must be at most 50 MB. The editor is
+Limits: each file must be at most 100 MB (the project and bucket limit, set in Supabase Settings > Storage; the script checks `MAX_MB`, default 100). The editor is
 about 23 MB because its debug info is split into `build-win-symbols/OkayEngine.debug`
 (keep that file to decode crash addresses; it isn't uploaded to Supabase).
 Storage and download traffic count against the Supabase plan's quotas.
@@ -67,7 +67,7 @@ Then, signed in as an admin:
    the live one unless you tick "Allow same or older" (the script's `FORCE=1`).
    Type the "What's new" lines (they become `NOTES.txt`).
 4. **Check** lists anything that would stop the publish: not exactly one
-   Windows game exe, a file over 50 MB, names Windows can't store or that clash,
+   Windows game exe, a file over the size limit (100 MB), names Windows can't store or that clash,
    an empty or oversized game, a version that isn't newer.
 5. **Publish...** uploads with your own sign-in: every file to `official/v<ver>/`,
    then `manifest.json`, then `NOTES.txt`, and `VERSION.txt` last. A progress bar
@@ -114,7 +114,7 @@ The bucket layout, beside the engine's files:
 
 The game's name is `title=` from `Data/game.okayconfig` (or `NAME=...`); its exe
 is `<title>.exe`, or the only `.exe` at the top of the folder (or `EXE=...`). The
-script refuses a non-Windows exe, a file over 50 MB, names Windows can't store
+script refuses a non-Windows exe, a file over the size limit (100 MB), names Windows can't store
 (or that only differ in case), a top-level `manifest.json`, and an empty or
 over-10 GB game. Hidden files (`.git`, `.DS_Store`) are left out. As with the engine, `KEEP` (default 3) versions are kept (the script, unlike
 the launcher, cleans up on its own) and `DRY_RUN=1`

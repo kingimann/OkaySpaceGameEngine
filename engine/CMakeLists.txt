@@ -149,6 +149,7 @@ add_library(okay_engine
     src/AI/Navigation.cpp
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
+    src/Core/ImageWrite.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
@@ -207,7 +208,7 @@ target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# Vendored single-header libraries (stb_image / stb_image_write), used only by
+# Vendored single-header libraries (stb_image), used only by
 # the Image translation unit. Kept PRIVATE so it doesn't leak to consumers.
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb

@@ -2244,6 +2244,10 @@ target_include_directories(test_dev_log PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(test_dev_log PRIVATE okay::engine)
 add_test(NAME dev_log COMMAND test_dev_log)
 
+add_executable(test_image_write test_image_write.cpp)
+target_link_libraries(test_image_write PRIVATE okay::engine)
+add_test(NAME image_write COMMAND test_image_write)
+
 # shared/FileDialog: our own open / save / folder dialogs (replaced the vendored tinyfiledialogs): path and glob helpers,
 # argument lists for zenity / kdialog / osascript (no injection), result parsing, extension enforcing, the built-in browser's
 # model and queue, and a run through fake helper programs on PATH. No window.

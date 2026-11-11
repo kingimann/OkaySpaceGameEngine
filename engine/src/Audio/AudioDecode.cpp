@@ -3,6 +3,7 @@
 // (stb_vorbis and dr_mp3, both public domain), compiled only in this file
 // (warnings off for it in engine/CMakeLists.txt).
 #include "okay/Audio/AudioClip.hpp"
+#include "okay/Core/Log.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -121,7 +122,12 @@ std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, 
         if (it != cache.end()) return it->second;
     }
     AudioClip c;
-    if (!c.Load(path, error)) return nullptr;
+    std::string loadErr;
+    if (!c.Load(path, &loadErr)) {
+        Log::Warning("[asset] cannot load audio '", path, "': ", loadErr);
+        if (error) *error = loadErr;
+        return nullptr;
+    }
     auto shared = std::make_shared<const AudioClip>(rate > 0 && c.sampleRate != rate ? c.Resampled(rate) : std::move(c));
     std::lock_guard<std::mutex> lock(mu);
     cache[key] = shared;

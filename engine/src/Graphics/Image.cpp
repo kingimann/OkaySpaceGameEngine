@@ -9,6 +9,7 @@
 #include "stb_image.h"
 #include "stb_image_write.h"
 
+#include "okay/Core/Log.hpp"
 #include <filesystem>
 
 namespace okay {
@@ -35,6 +36,7 @@ bool Image::Load(const std::string& path, std::string* error) {
     unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
     if (!data) {
         if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "load failed";
+        Log::Warning("[asset] cannot load image '", path, "': ", stbi_failure_reason() ? stbi_failure_reason() : "load failed");
         m_w = m_h = 0; m_pixels.clear();
         return false;
     }

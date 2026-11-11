@@ -44,6 +44,7 @@
 #include "OkayScriptUIBridge.hpp"
 #include "OkayTestPanel.hpp"
 #endif
+#include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -1468,9 +1469,17 @@ int main(int argc, char** argv) {
     Scene scene("Game");
     scene.UseFixedStepPhysics(true);   // same physics at any frame rate, drawn smoothly
     std::string err;
+    // Development build: write <game>.log (see shared/DevLog.hpp). Release builds write nothing.
+    const bool devPanels = cfg.development || (std::getenv("OKAY_DEV") && std::getenv("OKAY_DEV")[0] && std::getenv("OKAY_DEV")[0] != '0');
+    okay::devlog::Start(devPanels, okay::devlog::LogPathFor(argv[0], baseDir), saveDir + "game.log",
+                        cfg.title, "", scenePath);
+    okay::devlog::HitchWatch hitchWatch;
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
         SDL_Log("Could not load %s: %s", scenePath.c_str(), err.c_str());
+        okay::Log::Error("[scene] could not load '", scenePath, "': ", err);
         // Keep running with an empty scene rather than failing outright.
+    } else {
+        okay::Log::Info("[scene] loaded '", scenePath, "'");
     }
     if (dedicatedServer) {   // headless: run the scene as the server until stopped
         std::printf("[server] scene %s\n", scenePath.c_str());
@@ -1687,7 +1696,6 @@ int main(int argc, char** argv) {
     bool running = true;
 #ifdef OKAY_HAVE_OKAYUI
     bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay (development builds only)
-    const bool devPanels = cfg.development || (std::getenv("OKAY_DEV") && std::getenv("OKAY_DEV")[0] && std::getenv("OKAY_DEV")[0] != '0');
     if (std::getenv("OKAY_TESTUI")) g_testUI = true;   // dev screenshot hook
     // Safe-area insets (fractions of the screen: "left,top,right,bottom") for UI Safe
     // Area containers, from the platform / a launcher, or to test a phone layout.
@@ -1984,6 +1992,7 @@ int main(int argc, char** argv) {
         Uint64 now = SDL_GetPerformanceCounter();
         const float measuredDt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
+        if (okay::devlog::Active()) hitchWatch.Frame(measuredDt);
         // The game steps by an evened-out frame time (vsync: whole refresh
         // periods; the loop does it). The refresh rate is re-read now and then
         // (the window can move to another display).
@@ -2759,6 +2768,7 @@ int main(int argc, char** argv) {
     }
 
     AudioMixer::SaveSettings();
+    okay::devlog::Stop();
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 
     for (auto& kv : textureCache)

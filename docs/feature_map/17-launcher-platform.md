@@ -75,7 +75,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 ### 17.4 Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji
 - **What:** The Discord- and Messenger-style chat: direct messages, group chats, reactions, replies, pins, edit history, scheduled messages, custom status, polls, files, GIFs, emoji, stickers, voice notes and voice calls.
 - **Parts:**
-  - 17.4.1 Direct messages - `Platform/Messages` - send, history, typing, read marks, reactions, reply, search across chats, forward; rows limited to the two parties by row-level security
+  - 17.4.1 Direct messages - `Platform/Messages` - send, history, typing, read marks, reactions, reply, search across chats, forward; rows limited to the two parties by row-level security; typing and read marks need `docs/sql/chat_receipts.sql` (`typing_state`, `message_reads`) and Settings shows "Not set up on the server yet" instead of the two toggles when the server says the tables are missing
   - 17.4.2 Group chats - `docs/sql/group_chats.sql` - membership-gated conversations kept apart from the 1:1 `messages` table
   - 17.4.3 Pins, edit history, scheduled messages, status - `docs/sql/chat_extras.sql` - `message_pins`, `message_edits`; `launcher/main.cpp` (L5112-5640); pins stay on this device until the SQL is run
   - 17.4.4 Media - `docs/sql/chat_media.sql` - emoji from a Twemoji sheet (L3144), GIFs (Tenor key), custom emoji and stickers, file cards, voice notes (L4573); the public `chat` bucket
@@ -87,11 +87,11 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **API:** `okay::Messages`, chat slash commands `/invite`, `/party`, launcher Chat window
 - **Editor:** none
 - **Docs:** `docs/supabase-backend.md`, `docs/launcher-multiplayer.md`
-- **Tests:** `chat_json`
-- **Status:** Works - shipping; only the JSON splitter (braces in message bodies) is unit tested
-- **Open:** most of the 24.8k lines of `main.cpp` are chat code and untested (split, see 19.4); `chat_extras.sql` and `group_chats.sql` are optional and degrade silently
+- **Tests:** `chat_json`, `chat_receipts` (missing-table detection), `chat_receipts_sql` (local Postgres, skipped unless `OKAY_SQL_TEST_PGHOST`)
+- **Status:** Works - shipping; typing and read marks work once the owner has run `chat_receipts.sql` (not applied to any live project by us); the JSON splitter and the missing-table check are unit tested
+- **Open:** most of the 24.8k lines of `main.cpp` are chat code and untested (split, see 19.4); `chat_extras.sql` and `group_chats.sql` are optional and degrade silently; the live typing / read-mark round trip against a real Supabase project is untested
 - **Related:** 16.7, 17.3, 17.6, 17.9
-- **Words:** chat, DM, direct message, group chat, reactions, emoji, GIF, Tenor, sticker, poll, pin, edit history, scheduled message, voice note, call, /invite, typing indicator, read receipt
+- **Words:** chat, DM, direct message, group chat, reactions, emoji, GIF, Tenor, sticker, poll, pin, edit history, scheduled message, voice note, call, /invite, typing indicator, read receipt, "Seen", chat_receipts.sql
 - **Seen as:** messages missing or duplicated; a message with braces vanishes; GIF search empty; no emoji colour; call button does nothing
 - **Ask me like:** "add message threads", "GIF search needs a key, where is it set?"
 

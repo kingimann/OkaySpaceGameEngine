@@ -99,11 +99,10 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Steeply tilted world-space UI draws as axis-aligned rectangles | `docs/ui_world_space.md` | In-world screens at an angle look wrong | Low | Medium |
 | UI text is left-to-right only, no shaping | no bidi, shaping or Arabic code in `engine/src` or `include` | Arabic, Hebrew, Thai text draws wrong or mirrored by hand; the preview mirror only reverses characters | Medium | Large |
 
-## 10. Scripting (OkayScript, Lua, C#, typed language) and visual script
+## 10. Scripting (OkayScript, typed language) and visual script
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| Lua and C# backends are never built in CI or release | `engine/include/okay/Scripting/LuaScriptVM.hpp:5-7`, `CSharpScriptVM.hpp:5-9` (need `-DOKAY_WITH_LUA=ON` or `OKAY_WITH_CSHARP=ON`); no mention in `.github/workflows/*.yml` or `scripts/` | The editor shows "Lua" as a language (`editor/main.cpp:16435`) but a shipped build has no Lua runtime, and the code can rot | High | Medium |
 | Typed script language: `static`, `const` only in the Behaviour class; `new` only for Vector3; `int.Parse` style calls not parsed | `engine/src/Script/Checker.cpp:248, 249, 262, 1688`; `Parser.cpp:901` | Users porting normal C# patterns hit errors saying "for now" | Medium | Large |
 | Visual script to code export turns Wait, Delay, Timer into comments | `editor/VisualScriptEditor.hpp:1862-1864`; unknown nodes become `// unsupported node` at `:1873`; Actions export writes `// TODO` at `editor/main.cpp:20409, 20531` | Generated code silently behaves differently from the graph (no delay happens). No test compares export with runtime | Medium | Medium |
 | Typed language engine API duplicated from the old VM | `engine/src/Script/EngineApi.cpp` vs `Scripting/OkayScriptVM.cpp` | The two builtin tables can drift | Low | Large |
@@ -120,7 +119,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | `NativeHttp` is Windows only | `Platform/NativeHttp.hpp:19, 32` | Other systems shell out to a `curl` process, so a game on a machine without curl cannot call accounts or matchmaking | Medium | Medium |
 | Web build has no networking, matchmaking or server browser | `Net/Matchmaker.cpp`, `ServerBrowser.cpp`, `MatchResults.cpp` guard on `__EMSCRIPTEN__` | Browser games are single-player | Medium | Large |
 | Net sim and replication layers lack named tests | no test names `NetDelta`, `QPose`, ADPCM or jitter buffer (feature map 16.2, 16.7) | Regressions in snapshot compression go unseen | Low | Small |
-| No CI job builds Photon, Lua, C# or Steam adapters | `.github/workflows`; `scripts/build-windows-dist.sh:66` only sets Steam from an env var | Optional adapters can stop compiling unnoticed | Medium | Small |
+| No CI job builds Photon or Steam adapters | `.github/workflows`; `scripts/build-windows-dist.sh:66` only sets Steam from an env var | Optional adapters can stop compiling unnoticed | Medium | Small |
 
 ## 12. Platform, Steam, build and export
 
@@ -158,14 +157,14 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 10. Medium: 57. Low: 26. Total rows: 93.
+High: 9. Medium: 57. Low: 26. Total rows: 92.
 
 ## Top 15 to tackle first
 
 1. **Accessibility settings have no readers** (sec 14). The class and tests exist, nothing uses them. Quickest wins: text scale in the UI painter and reduce-motion on camera shake. Shipping an accessibility feature that does nothing is a trust problem.
 2. **SSAO missing on Direct3D 11** (sec 1). Windows is the main target and D3D11 is its default; a lighting switch that does nothing there is the most visible renderer gap.
 3. **Editor Play lacks the extended keys and extra pads** (sec 5). A few lines copying `AppendSdlExtendedKeys` and `pads.Feed` fix games that behave differently in Play and in a build.
-4. **Lua and C# never compiled in CI** (sec 10). Add one CI job per option, or hide the language until it is built in release.
+4. **(Resolved) Lua and C# backends removed** (sec 10). The optional third-party backends were dropped; old scenes naming them load and report "language not supported".
 5. **Mesh Collider 3D is a box** (sec 2). Users believe they get model collision; start with a convex hull, then triangle meshes for static objects.
 6. **Save framework has no no-code route** (sec 13). The engine work is done; a Save/Load slot component and a window make it usable without scripts.
 7. **Direct3D 12 has no post-processing** (sec 1). Either bring it to parity or label it "preview" in Build Settings and keep it off by default.

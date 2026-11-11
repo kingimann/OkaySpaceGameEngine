@@ -309,8 +309,9 @@ struct Checker {
             if (!source.empty()) {
                 std::unique_ptr<IScriptVM> vm = CreateScriptVM(sc->Language());
                 if (!vm) {
-                    Add(Severity::Error, "script.backend", path, "ScriptComponent",
-                        "Script language '" + sc->Language() + "' is not available in this build");
+                    std::string why = RemovedScriptLanguageMessage(sc->Language());
+                    if (why.empty()) why = "Script language '" + sc->Language() + "' is not available in this build";
+                    Add(Severity::Error, "script.backend", path, "ScriptComponent", why);
                 } else {
                     std::string err;
                     if (!vm->Validate(source, &err))

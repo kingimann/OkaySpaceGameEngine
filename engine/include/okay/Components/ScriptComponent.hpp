@@ -8,8 +8,8 @@
 
 namespace okay {
 
-/// Runs a text script (OkayScript by default, or Lua / C# when those backends
-/// are enabled) on a GameObject. The script's start() runs once and update(dt)
+/// Runs a text script (OkayScript by default; the old Lua / C# Mono backends were
+/// removed, and a script naming them fails to load with a clear message) on a GameObject. The script's start() runs once and update(dt)
 /// runs every frame — a component written in a scripting language.
 class ScriptComponent : public Behaviour {
 public:

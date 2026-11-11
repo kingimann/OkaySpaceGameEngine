@@ -326,30 +326,6 @@ if(OKAY_USE_SODIUM)
     endif()
 endif()
 
-# ---- Optional scripting backends -------------------------------------
-# Lua: real Lua embedding. Enable with -DOKAY_WITH_LUA=ON (needs liblua dev).
-# Disabled by default — the engine ships OkayScript as its scripting language.
-if(OKAY_WITH_LUA)
-    find_package(Lua QUIET)
-    if(NOT LUA_FOUND)
-        find_package(PkgConfig QUIET)
-        if(PkgConfig_FOUND)
-            pkg_check_modules(LUA QUIET lua5.4 lua-5.4 lua)
-            set(LUA_LIBRARIES ${LUA_LIBRARIES})
-            set(LUA_INCLUDE_DIR ${LUA_INCLUDE_DIRS})
-        endif()
-    endif()
-    if(LUA_LIBRARIES)
-        target_sources(okay_engine PRIVATE src/Scripting/LuaScriptVM.cpp)
-        target_include_directories(okay_engine SYSTEM PRIVATE ${LUA_INCLUDE_DIR})
-        target_link_libraries(okay_engine PRIVATE ${LUA_LIBRARIES})
-        target_compile_definitions(okay_engine PUBLIC OKAY_WITH_LUA)
-        message(STATUS "OkaySpace: Lua scripting ENABLED")
-    else()
-        message(WARNING "OKAY_WITH_LUA set but Lua not found; skipping Lua backend")
-    endif()
-endif()
-
 # Steam: real Steamworks backend. Enable with -DOKAY_WITH_STEAM=ON and point at
 # the SDK with -DSTEAMWORKS_SDK_PATH=/path/to/sdk (Valve's SDK is proprietary
 # and cannot be bundled). Without this, the in-memory simulation backend is used.
@@ -376,24 +352,6 @@ endif()
 if(DEFINED OKAY_STEAM_APP_ID)
     target_compile_definitions(okay_engine PUBLIC OKAY_STEAM_APP_ID=${OKAY_STEAM_APP_ID})
     message(STATUS "OkaySpace: default Steam App ID = ${OKAY_STEAM_APP_ID}")
-endif()
-
-# C#: real Mono embedding. Enable with -DOKAY_WITH_CSHARP=ON (needs Mono dev).
-if(OKAY_WITH_CSHARP)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(MONO QUIET mono-2)
-    endif()
-    if(MONO_FOUND)
-        target_sources(okay_engine PRIVATE src/Scripting/CSharpScriptVM.cpp)
-        target_include_directories(okay_engine SYSTEM PRIVATE ${MONO_INCLUDE_DIRS})
-        target_link_libraries(okay_engine PRIVATE ${MONO_LIBRARIES})
-        target_link_directories(okay_engine PRIVATE ${MONO_LIBRARY_DIRS})
-        target_compile_definitions(okay_engine PUBLIC OKAY_WITH_CSHARP)
-        message(STATUS "OkaySpace: C# (Mono) scripting ENABLED")
-    else()
-        message(WARNING "OKAY_WITH_CSHARP set but Mono not found; skipping C# backend")
-    endif()
 endif()
 
 # ---- Optional model import via Assimp (FBX / DAE / STL / PLY / 3DS / ...) ----

@@ -3,11 +3,17 @@
 OkaySpace is mostly our own code. This page lists what we wrote, and the outside libraries and
 services we build on, with their licences. The engine itself is MIT licensed (see `LICENSE`).
 
-## Policy
+## Policy and goal
 
-We build things ourselves. An outside library is allowed only when writing our own is impossible
-or would be unsafe, and each one below says how replaceable it is. Prefer replacing a library with our
-own code over adding a new one. Cryptography is never written by us: use a vetted library.
+The goal is for everything to be our own code, slowly, one piece at a time. Until a piece is replaced, an
+outside library is allowed only when writing our own is impossible or would be unsafe, and each one below
+says how replaceable it is. Prefer replacing a library with our own code over adding a new one.
+
+Order of replacement: the small, easy libraries first, then larger ones. The largest and riskiest are
+left for last and need their own plan: the platform layer (SDL2), the editor interface toolkit (Dear
+ImGui), and encryption (libsodium). For encryption, writing our own is a security risk, so that one needs
+an expert review plan before any work starts. Services run by other companies (Steamworks, Photon, our
+hosting) are not libraries and stay outside the goal unless we choose to self-host.
 
 ## Written by us (custom)
 

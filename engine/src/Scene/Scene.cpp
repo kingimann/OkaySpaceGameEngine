@@ -209,6 +209,7 @@ void Scene::Clear() {
     m_physicsAcc = 0.0f;
     uiFont.clear();                            // the loaded scene sets its own, if any
     unknownRecords.clear();                    // ... and brings the unknown records of its own file
+    selectionSets.clear();                     // editor selection sets belong to the scene being cleared
     mainCamera = nullptr;
     ResetLayerCollisions();   // the layer matrix belongs to the scene being cleared
     // The pointer-dispatch state points at objects about to be freed: forget it,

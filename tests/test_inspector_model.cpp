@@ -61,6 +61,10 @@ static void TestFilter() {
     CHECK(hits("comp:camera") == std::set<std::string>{"Eye"});
     CHECK(hits("is:off") == std::set<std::string>{"Lamp"});
     CHECK(hits("is:locked") == std::set<std::string>{"Crate"});
+    crate->editorHidden = true;
+    CHECK(hits("is:hidden") == std::set<std::string>{"Crate"});   // the editor-only Scene view hide
+    crate->editorHidden = false;
+    CHECK(hits("is:hidden").empty());
     CHECK(hits("is:static") == std::set<std::string>{"Crate"});
     CHECK(hits("-is:off").size() == 3);                     // a leading minus turns it round
     CHECK(hits("-t:enemy").size() == 3);

@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "EditorVisibility.hpp"   // editor-only Hide + selection sets
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "FpHandsWindow.hpp"
@@ -11783,6 +11784,7 @@ void DrawShortcutsWindow() {
         {"X",             "Local / world gizmo space"},
         {"F",             "Frame (focus) the selection"},
         {"Shift+I",       "Isolate selection (Esc exits)"},
+        {"H / Alt+H",     "Hide selection in the Scene view / show all hidden"},
         {"Ctrl+Alt+1..3", "Save camera bookmark"},
         {"Ctrl+1..3",     "Recall camera bookmark"},
         {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
@@ -16719,6 +16721,16 @@ void HandleShortcuts(EditorState& ed) {
         ConsoleLog(g_isolate ? "Isolating '" + g_isolate->name + "' (Shift+I to exit)"
                              : "Isolation off");
     }
+    // H hides the selection in the Scene view, Alt+H shows everything again (editor only).
+    if (!animKeys && !ctrl && ImGui::IsKeyPressed(ImGuiKey_H, false)) {
+        if (ImGui::GetIO().KeyAlt) {
+            const int n = okay::editor::vis::UnhideAll(ed);
+            ConsoleLog(n ? "Showed " + std::to_string(n) + " hidden object(s)" : "Nothing is hidden");
+        } else if (!ImGui::GetIO().KeyShift) {
+            const int n = okay::editor::vis::HideSelection(ed);
+            ConsoleLog(n ? "Hid " + std::to_string(n) + " object(s) in the Scene view (Alt+H shows all)" : "Select something to hide");
+        }
+    }
     // Esc exits Isolate mode (when no popup wants the key).
     if (g_isolate && ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
         !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
@@ -18715,14 +18727,26 @@ static void HierLock(GameObject* go, bool rowHovered, ImVec2 rowMin, ImVec2 rowM
     dl->AddRectFilled(ImVec2(cx - 3.5f, cy - 0.5f), ImVec2(cx + 3.5f, cy + 5.0f), col, 1.0f);  // body
 }
 
-// Lock/unlock an object and its whole subtree (mirrors SetActiveRecursive).
-static void SetLockedRecursive(GameObject* go, bool on) {
-    if (!go) return;
-    go->editorLocked = on;
-    if (go->transform)
-        for (Transform* c : go->transform->Children())
-            if (c) SetLockedRecursive(c->gameObject, on);
+// Scene-view hide toggle, left of the padlock: an eye that is struck through and teal when the object is
+// hidden (own flag) and dim when only a parent hides it. Editor-only: unlike the right-most eye it never
+// changes `active`. A faint hint shows on row hover so the hotspot is findable.
+static void HierHide(GameObject* go, bool rowHovered, ImVec2 rowMin, ImVec2 rowMax) {
+    const bool own = go->editorHidden, byParent = !own && okay::editor::vis::IsHidden(go);
+    if (!own && !byParent && !rowHovered) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float cx = rowMax.x - kHierEyeW * 2.5f, cy = (rowMin.y + rowMax.y) * 0.5f;
+    const ImU32 col = own ? IM_COL32(90, 205, 215, 240) : byParent ? IM_COL32(90, 205, 215, 120) : IM_COL32(140, 144, 152, 110);
+    // An almond (two arcs) with a pupil: not the round "active" eye, so the two read apart.
+    ImVec2 pts[12];
+    for (int i = 0; i < 6; ++i) { float t = (float)i / 5.0f; pts[i] = ImVec2(cx - 6.0f + 12.0f * t, cy - 3.6f * std::sin(t * 3.14159f)); }
+    for (int i = 0; i < 6; ++i) { float t = (float)i / 5.0f; pts[6 + i] = ImVec2(cx + 6.0f - 12.0f * t, cy + 3.6f * std::sin(t * 3.14159f)); }
+    dl->AddPolyline(pts, 12, col, ImDrawFlags_Closed, 1.3f);
+    dl->AddCircleFilled(ImVec2(cx, cy), 1.7f, col);
+    if (own) dl->AddLine(ImVec2(cx - 6.0f, cy + 5.5f), ImVec2(cx + 6.0f, cy - 5.5f), col, 1.6f);
 }
+
+// Lock/unlock an object and its whole subtree (mirrors SetActiveRecursive).
+static void SetLockedRecursive(GameObject* go, bool on) { okay::editor::vis::SetLockedRecursive(go, on); }
 
 // Set a GameObject and its whole subtree active/inactive, so toggling a parent in
 // the Hierarchy takes its children with it.
@@ -18792,6 +18816,84 @@ static std::string EllipsizeToWidth(const std::string& text, float maxW) {
     return s.empty() ? std::string(ell) : s + ell;
 }
 
+// ---- Selection sets (Hierarchy) ------------------------------------------------------------------------------
+// Named groups of objects kept with the scene (by GUID). Click a set to select its members (Ctrl adds), double-click
+// or right-click for the rest. Every action is one undo step; the logic is in editor/EditorVisibility.cpp.
+static int  g_selSetRename = -1;        // set being renamed inline
+static bool g_selSetRenameOpen = false; // focus the box on the first frame
+static bool g_selSetsOpen = false;      // forced open after Create
+static char g_selSetBuf[96] = "";
+
+static void SelSetNote(const char* what, int dropped) {
+    if (dropped > 0) ConsoleLog(std::string(what) + ": " + std::to_string(dropped) + " object(s) in the set no longer exist and were removed from it");
+}
+
+static void DrawSelectionSets(EditorState& ed) {
+    namespace vis = okay::editor::vis;
+    Scene& sc = ed.scene();
+    char hdr[64];
+    std::snprintf(hdr, sizeof(hdr), "Selection Sets (%d)###selsets", (int)sc.selectionSets.size());
+    if (g_selSetsOpen) { ImGui::SetNextItemOpen(true); g_selSetsOpen = false; }
+    if (!ImGui::CollapsingHeader(hdr)) return;
+    ImGui::BeginDisabled(ed.selected() == nullptr);
+    if (ImGui::SmallButton("New from selection##selset")) {
+        const int ni = vis::CreateSet(ed, "");
+        if (ni >= 0) {
+            g_selSetRename = ni; g_selSetRenameOpen = true;
+            std::strncpy(g_selSetBuf, sc.selectionSets[(std::size_t)ni].name.c_str(), sizeof(g_selSetBuf) - 1);
+        }
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Save the selected objects as a named set (kept in the scene file).\nClick a set to select its members.");
+    if (sc.selectionSets.empty()) ImGui::TextDisabled("No sets yet. Select objects, then New from selection.");
+    for (int i = 0; i < (int)sc.selectionSets.size(); ++i) {
+        ImGui::PushID(i);
+        const vis::SetResolve r = vis::ResolveSet(sc, i);
+        if (g_selSetRename == i) {
+            if (g_selSetRenameOpen) { ImGui::SetKeyboardFocusHere(); g_selSetRenameOpen = false; }
+            ImGui::SetNextItemWidth(-1.0f);
+            const bool done = ImGui::InputText("##selsetname", g_selSetBuf, sizeof(g_selSetBuf), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+            if (done) { if (!vis::RenameSet(ed, i, g_selSetBuf)) ConsoleLog("Set name is empty or already used"); g_selSetRename = -1; }
+            else if (ImGui::IsItemDeactivated()) g_selSetRename = -1;   // Esc or click away keeps the old name
+            ImGui::PopID();
+            continue;
+        }
+        std::string label = sc.selectionSets[(std::size_t)i].name + "  (" + std::to_string(r.live.size()) + ")";
+        if (r.dead > 0) label += "  " + std::to_string(r.dead) + " missing";
+        if (ImGui::Selectable(label.c_str())) {
+            int dropped = 0;
+            vis::SelectSet(ed, i, ImGui::GetIO().KeyCtrl, &dropped);
+            SelSetNote("Select set", dropped);
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            g_selSetRename = i; g_selSetRenameOpen = true;
+            std::strncpy(g_selSetBuf, sc.selectionSets[(std::size_t)i].name.c_str(), sizeof(g_selSetBuf) - 1);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click: select the members (Ctrl adds). Double-click: rename. Right-click: more.");
+        if (ImGui::BeginPopupContextItem("##selsetctx")) {
+            int dropped = 0;
+            if (ImGui::MenuItem("Select set")) { vis::SelectSet(ed, i, false, &dropped); SelSetNote("Select set", dropped); }
+            if (ImGui::MenuItem("Add selection to set", nullptr, false, ed.selected() != nullptr)) vis::AddSelectionToSet(ed, i);
+            if (ImGui::MenuItem("Remove selection from set", nullptr, false, ed.selected() != nullptr)) vis::RemoveSelectionFromSet(ed, i);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Hide set in Scene View")) { vis::SetSetHidden(ed, i, true, &dropped); SelSetNote("Hide set", dropped); }
+            if (ImGui::MenuItem("Show set in Scene View")) { vis::SetSetHidden(ed, i, false, &dropped); SelSetNote("Show set", dropped); }
+            if (ImGui::MenuItem("Lock set")) { vis::SetSetLocked(ed, i, true, &dropped); SelSetNote("Lock set", dropped); }
+            if (ImGui::MenuItem("Unlock set")) { vis::SetSetLocked(ed, i, false, &dropped); SelSetNote("Unlock set", dropped); }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Rename")) {
+                g_selSetRename = i; g_selSetRenameOpen = true;
+                std::strncpy(g_selSetBuf, sc.selectionSets[(std::size_t)i].name.c_str(), sizeof(g_selSetBuf) - 1);
+            }
+            if (ImGui::MenuItem("Delete set")) { vis::DeleteSet(ed, i); ImGui::EndPopup(); ImGui::PopID(); break; }
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
+    }
+    ImGui::Separator();
+}
+
 void DrawHierarchy(EditorState& ed) {
     // Skip the per-frame root-list build + sort + per-row component scans when the
     // Hierarchy panel is collapsed or a hidden background tab.
@@ -18802,7 +18904,7 @@ void DrawHierarchy(EditorState& ed) {
     SearchField("##hfilter", g_hierFilter, sizeof(g_hierFilter), "Search",
                 -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
     if (ImGui::IsItemHovered() && !g_hierFilter[0])
-        ImGui::SetTooltip("Search by name, tag or type: camera, light, mesh, script, ui...\nt:enemy  finds a tag      c:rigidbody  finds a component\nl:water  finds a layer    is:off / locked / static / prefab\n-word leaves matches out. Parent/Child lists every object that path names.");
+        ImGui::SetTooltip("Search by name, tag or type: camera, light, mesh, script, ui...\nt:enemy  finds a tag      c:rigidbody  finds a component\nl:water  finds a layer    is:off / locked / hidden / static / prefab\n-word leaves matches out. Parent/Child lists every object that path names.");
     ImGui::SameLine();
     if (IconButton("##hmore", TbIcon::More, "Hierarchy options", g_hierSort)) ImGui::OpenPopup("##hieropts");
     if (ImGui::BeginPopup("##hieropts")) {
@@ -18810,6 +18912,14 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Collapse all")) g_hierExpand = 2;
         ImGui::Separator();
         ImGui::MenuItem("Sort A-Z", nullptr, &g_hierSort);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Hide selection", "H", false, ed.selected() != nullptr)) okay::editor::vis::HideSelection(ed);
+        if (ImGui::MenuItem("Show all hidden", "Alt+H", false, okay::editor::vis::HiddenCount(ed.scene()) > 0)) okay::editor::vis::UnhideAll(ed);
+        if (ImGui::MenuItem("Selection set from selection", nullptr, false, ed.selected() != nullptr)) {
+            const int ni = okay::editor::vis::CreateSet(ed, "");
+            if (ni >= 0) { g_selSetRename = ni; g_selSetRenameOpen = true; g_selSetsOpen = true;
+                           std::strncpy(g_selSetBuf, ed.scene().selectionSets[(std::size_t)ni].name.c_str(), sizeof(g_selSetBuf) - 1); }
+        }
         ImGui::EndPopup();
     }
     // Scene header: name (with unsaved marker) and object count, as a quiet strip.
@@ -18858,6 +18968,7 @@ void DrawHierarchy(EditorState& ed) {
     ImGui::Separator();
     // The search bar and scene header stay put; only the rows scroll.
     ImGui::BeginChild("##hiertree", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+    DrawSelectionSets(ed);
 
     // When searching, show a flat list of every matching object. The search also
     // matches TYPE words ("camera", "light", "mesh", "sprite", "script", ...), so
@@ -18999,7 +19110,7 @@ void DrawHierarchy(EditorState& ed) {
             if (node == g_hierDropOpen && childCount > 0) { ImGui::SetNextItemOpen(true); g_hierDropOpenSeen = true; }
             // Dim inactive objects; grey the whole row (and its subtree label).
             // Isolation dims everything outside the isolated subtree the same way.
-            bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
+            bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate)) || okay::editor::vis::IsHidden(node);
             const bool prefabRoot = !dim && !node->prefabSource.empty();   // prefab instances read blue
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
             else if (prefabRoot) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.76f, 1.0f, 1.0f));
@@ -19023,7 +19134,7 @@ void DrawHierarchy(EditorState& ed) {
                 - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f)
                 - ImGui::CalcTextSize("     ").x
                 - ImGui::CalcTextSize(tail.c_str()).x
-                - kHierEyeW * 2.0f - 8.0f
+                - kHierEyeW * 3.0f - 8.0f
                 - (diag ? 22.0f : 0.0f);
             const std::string shown = EllipsizeToWidth(node->name, nameRoom);
             bool open = ImGui::TreeNodeEx(node, flags, "     %s%s", shown.c_str(), tail.c_str());
@@ -19046,14 +19157,16 @@ void DrawHierarchy(EditorState& ed) {
             {   // badges only where the name leaves room
                 const float labelEnd = rowMin.x + ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f +
                                        ImGui::CalcTextSize(("     " + shown + tail).c_str()).x + 8.0f;
-                HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y), labelEnd);
+                HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 3.0f, rowMax.y), labelEnd);
             }
             DrawObjectDiagMarker(node, rowMin, rowMax);
             HierEye(node, rowMin, rowMax);
             HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
+            HierHide(node, ImGui::IsItemHovered(), rowMin, rowMax);
             float mx = ImGui::GetIO().MousePos.x;
             bool inEye  = mx >= rowMax.x - kHierEyeW && mx <= rowMax.x;
             bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
+            bool inHide = mx >= rowMax.x - kHierEyeW * 3.0f && mx < rowMax.x - kHierEyeW * 2.0f;
             if (ImGui::IsItemHovered() && inEye)
                 ImGui::SetTooltip(node->active ? "Hide (deactivate) this object and its children"
                                                : "Show (activate) this object and its children");
@@ -19061,8 +19174,15 @@ void DrawHierarchy(EditorState& ed) {
                 ImGui::SetTooltip(node->editorLocked
                     ? "Unlock: allow selecting this object in the Scene view again"
                     : "Lock: this object (and children) can't be click-selected in the Scene view");
+            if (ImGui::IsItemHovered() && inHide)
+                ImGui::SetTooltip(node->editorHidden
+                    ? "Show in the Scene view again (H hides the selection, Alt+H shows all)"
+                    : okay::editor::vis::IsHidden(node) ? "Hidden because a parent is hidden"
+                    : "Hide in the Scene view (editor only: Play and the game are unaffected)");
             if (ImGui::IsItemClicked()) {
-                if (inEye) {   // the eye hotspot toggles active instead of selecting
+                if (inHide) {   // the hide hotspot toggles the editor-only flag
+                    okay::editor::vis::SetHidden(ed, HierTargets(ed, node), !node->editorHidden);
+                } else if (inEye) {   // the eye hotspot toggles active instead of selecting
                     ed.PushUndo();
                     SetActiveRecursive(node, !node->active);
                     ed.dirty = true;
@@ -19204,7 +19324,7 @@ void DrawHierarchy(EditorState& ed) {
                 ImGui::EndDragDropTarget();
             }
             // Double-click a row to rename it inline (not on the eye/lock toggles).
-            if (ImGui::IsItemHovered() && !inEye && !inLock && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            if (ImGui::IsItemHovered() && !inEye && !inLock && !inHide && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 g_hierRename = node; g_hierRenameOpen = true;
                 std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
                 g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
@@ -19229,6 +19349,8 @@ void DrawHierarchy(EditorState& ed) {
                     for (GameObject* g : HierTargets(ed, node)) SetLockedRecursive(g, on);
                     ed.dirty = true;
                 }
+                if (ImGui::MenuItem(node->editorHidden ? "Show in Scene View" : "Hide in Scene View", "H"))
+                    okay::editor::vis::SetHidden(ed, HierTargets(ed, node), !node->editorHidden);
                 ImGui::Separator();
                 if (ImGui::MenuItem("Cut", "Ctrl+X")) {
                     g_clipboard = SceneSerializer::SerializeObject(*node);
@@ -19595,6 +19717,9 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::MenuItem("Expand All"))   g_hierExpand = 1;
         if (ImGui::MenuItem("Collapse All")) g_hierExpand = 2;
         ImGui::MenuItem("Sort A-Z", nullptr, &g_hierSort);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Hide selection", "H", false, ed.selected() != nullptr)) okay::editor::vis::HideSelection(ed);
+        if (ImGui::MenuItem("Show all hidden", "Alt+H", false, okay::editor::vis::HiddenCount(ed.scene()) > 0)) okay::editor::vis::UnhideAll(ed);
         ImGui::EndPopup();
     }
 
@@ -40892,7 +41017,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 if (area < bestArea) { bestArea = area; hit = g; }
             }
             if (!hit) hit = UIRaycast(ed.scene(), mouseCanvas, canvasSize.x, canvasSize.y);
-            if (hit && hit->editorLocked) hit = nullptr;   // locked: Hierarchy-only selection
+            if (hit && !okay::editor::vis::ScenePickable(hit, g_isolate)) hit = nullptr;   // locked, hidden or isolated out: Hierarchy-only selection
             if (hit) {
                 // Clicking a button's label text selects the BUTTON so you always grab and
                 // move the button (and its text) as one. DOUBLE-click drills into the text
@@ -41259,7 +41384,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (const auto& up : objs) {
                 GameObject* go = up.get();
                 auto* sr = go->GetComponent<SpriteRenderer>();
-                if (!sr || !go->active || go->editorLocked) continue;   // locked: Hierarchy-only selection
+                if (!sr || !go->active || !okay::editor::vis::ScenePickable(go, g_isolate)) continue;   // locked, hidden or isolated out: Hierarchy-only selection
                 Vec3 wp = go->transform->Position();
                 Vec3 ls = go->transform->LossyScale();
                 float hx = sr->size.x * ls.x * 0.5f, hy = sr->size.y * ls.y * 0.5f;
@@ -41673,8 +41798,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
         for (const auto& up : objs) {
             if (!up->active) continue;
-            // Isolate mode: gizmos follow the render — only the isolated subtree.
+            // Isolate mode: gizmos follow the render — only the isolated subtree. Hidden objects have none.
             if (g_isolate && !up->IsSelfOrDescendantOf(g_isolate)) continue;
+            if (okay::editor::vis::IsHidden(up.get())) continue;
             Transform* t = up->transform;
             Vec3 p = t->Position();
 
@@ -43726,7 +43852,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (hit && bestDepth < 0.0f) break;
             GameObject* go = up.get();
             auto* mr = go->GetComponent<MeshRenderer>();
-            if (!mr || !go->active || go->editorLocked) continue;   // locked: Hierarchy-only selection
+            if (!mr || !go->active || !okay::editor::vis::ScenePickable(go, g_isolate)) continue;   // locked, hidden or isolated out: Hierarchy-only selection
             Mat4 model = go->transform->LocalToWorldMatrix();
             Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
             float minx = 1e30f, miny = 1e30f, maxx = -1e30f, maxy = -1e30f;
@@ -43753,7 +43879,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             float best = 16.0f * 16.0f;
             for (const auto& up : objs) {
                 GameObject* go = up.get();
-                if (!go->active || go->editorLocked || go->GetComponent<MeshRenderer>()) continue;
+                if (!go->active || !okay::editor::vis::ScenePickable(go, g_isolate) || go->GetComponent<MeshRenderer>()) continue;
                 ImVec2 sp;
                 if (!toScreen(vp * Vec4{go->transform->Position(), 1}, sp)) continue;
                 float dx = io.MousePos.x - sp.x, dy = io.MousePos.y - sp.y, d2 = dx * dx + dy * dy;
@@ -43988,10 +44114,26 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             chip = "UI Editing";
             chipW = ImGui::CalcTextSize(chip.c_str()).x + vst.ItemSpacing.x;
         }
-        float rightW = moreW + chipW;
+        // "3 hidden: Show all": the editor-only hide count, one click to clear (also Alt+H).
+        const int hiddenN = uiPanel ? 0 : okay::editor::vis::HiddenCount(ed.scene());
+        std::string hideChip;
+        float hideChipW = 0.0f;
+        if (hiddenN > 0) {
+            hideChip = std::to_string(hiddenN) + " hidden: Show all";
+            hideChipW = ImGui::CalcTextSize(hideChip.c_str()).x + vst.FramePadding.x * 2.0f + vst.ItemSpacing.x;
+        }
+        float rightW = moreW + chipW + hideChipW;
         float curX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + vst.ItemSpacing.x;
         float wantX = ImGui::GetWindowContentRegionMax().x - rightW;
         ImGui::SameLine(wantX > curX ? wantX : 0.0f);
+        if (hiddenN > 0) {
+            if (AccentToggleButton(hideChip.c_str(), true)) {
+                okay::editor::vis::UnhideAll(ed);
+                ConsoleLog("Showed all hidden objects");
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%d object(s) are hidden in the Scene view (editor only).\nClick to show them all (Alt+H). H hides the selection.\nHidden objects stay in Play and the built game.", hiddenN);
+            ImGui::SameLine();
+        }
         if (g_isolate && !uiPanel) {
             if (AccentToggleButton(chip.c_str(), true)) g_isolate = nullptr;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit isolation (Shift+I)");
@@ -44012,7 +44154,10 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw the HUD / menus over the 2D or 3D scene (click + drag to edit them).\nTurn off to click objects that sit behind the UI.");
             if (ImGui::MenuItem("Isolate selection", "Shift+I", g_isolate != nullptr, g_isolate || ed.selected()))
                 g_isolate = g_isolate ? nullptr : ed.selected();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show ONLY the selected object and its children in the Scene view.\nView-only: the Game view and Play mode are unaffected.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show ONLY the selected object and its children in the Scene view.\nView-only: the Game view and Play mode are unaffected.\nA hidden object stays hidden inside the isolated subtree (Hide wins).");
+            if (ImGui::MenuItem("Hide selection", "H", false, ed.selected() != nullptr)) okay::editor::vis::HideSelection(ed);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide the selected objects (and their children) in the Scene view only.\nPlay and the built game still show them.");
+            if (ImGui::MenuItem("Show all hidden", "Alt+H", false, okay::editor::vis::HiddenCount(ed.scene()) > 0)) okay::editor::vis::UnhideAll(ed);
         }
         bool camSel = ed.view3D && ed.selected() && ed.selected()->GetComponent<Camera>();
         // Align With View: snap the selected Camera to the editor eye.
@@ -44295,6 +44440,15 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
+    // Editor-only Hide (and what Isolate keeps out): switch those objects off for the rest of this Scene
+    // view so everything below (drawing, picking, gizmos, UI editing) skips them, then put them back as they were.
+    // This is the Scene view only; the Game view is drawn elsewhere and never hides anything.
+    if (g_isolate) {   // a deleted isolate target would dangle
+        bool alive = false;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g_isolate) { alive = true; break; }
+        if (!alive) g_isolate = nullptr;
+    }
+    okay::editor::vis::SceneViewHideScope sceneViewHide(ed.scene(), g_isolate);
 
     ImGui::SetNextItemAllowOverlap();   // the selection's drag chip sits on top of the picture
     ImGui::InvisibleButton("canvas", canvasSize,

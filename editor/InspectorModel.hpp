@@ -21,7 +21,7 @@ namespace oked {
 //   t:enemy        tag contains "enemy"            (tag: works too)
 //   c:rigidbody    has a component whose name contains it
 //   l:water        layer name contains it
-//   is:off | locked | static | prefab | ui          the object's state
+//   is:off | locked | hidden | static | prefab | ui          the object's state
 // A leading "-" turns a word around ("-t:enemy" = everything not tagged enemy).
 // Text with a "/" in it is a path ("Parent/Child") and is kept whole.
 struct HierFilter {

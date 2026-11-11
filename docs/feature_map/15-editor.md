@@ -14,15 +14,17 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.1.3 Empty-space context menu - `editor/main.cpp` - create empty, sprite, cube, camera, light, 3D objects and UI widgets, Select All, Deselect, Expand/Collapse All, Sort A-Z
   - 15.1.4 Rig and character entries - `editor/main.cpp` - Use Built-in Animations, Map Humanoid Bones, Rig Model (Humanoid), Add IK Target on model roots
   - 15.1.5 Scene merge drops - `editor/main.cpp` - drop a `.okayscene` on the Hierarchy to merge it into the open scene
-- **Code:** `editor/main.cpp` (`DrawHierarchy`), `editor/EditorState.*`
-- **API:** menu View > Panels > Hierarchy; shortcuts for rename, duplicate, delete, focus
+  - 15.1.6 Scene-view hide - `editor/EditorVisibility.*`, `editor/main.cpp` (`HierHide`, `DrawViewport`), `GameObject::editorHidden`, `Scene/SceneSerializer` (`hidden 1`) - teal eye per row, H hides the selection, Alt+H shows all, "N hidden: Show all" chip; hides an object and its children in the Scene view, picking and gizmos only (Play and builds ignore it); Hide wins over Isolate, Lock is separate; one undo step each
+  - 15.1.7 Selection sets - `editor/EditorVisibility.*`, `editor/main.cpp` (`DrawSelectionSets`), `Scene::selectionSets`, `Scene/SceneSerializer` (`selset`) - named sets of objects by GUID in a Hierarchy header: create from selection, rename, delete, select, add or remove the selection, hide, show, lock or unlock the set; dead GUIDs dropped with a count; one undo step each
+- **Code:** `editor/main.cpp` (`DrawHierarchy`), `editor/EditorState.*`, `editor/EditorVisibility.*`
+- **API:** menu View > Panels > Hierarchy; shortcuts for rename, duplicate, delete, focus, H (hide selection), Alt+H (show all hidden)
 - **Editor:** Hierarchy panel
-- **Docs:** `docs/editor.md` (Editor quality-of-life, Hierarchy right-click)
-- **Tests:** `editor` (selftest)
-- **Status:** Works - used by every session; the GUI is not unit-tested
-- **Open:** polish (carried from the earlier map); #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active state, FindByPath, Validate) and the Hierarchy panel does not call `Validate` or `FindByPath` yet; a pinned-object feature named in the old A-Z index is not found by name in the Hierarchy code
+- **Docs:** `docs/editor.md` (Editor quality-of-life, Hierarchy right-click, Hide, Selection Sets)
+- **Tests:** `editor` (selftest), `editor_visibility` (hide, isolate + lock + hide, sets, dead GUIDs, undo, save and load), `inspector_model` (`is:hidden`)
+- **Status:** Works - used by every session; the GUI is not unit-tested, the hide and set logic is
+- **Open:** polish (carried from the earlier map); "N hidden" counts objects with their own hide flag (a hidden parent counts once, not its children); a hidden object picked in the Hierarchy still shows its selection gizmo; sets have no colour or ordering; #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active state, FindByPath, Validate) and the Hierarchy panel does not call `Validate` or `FindByPath` yet; a pinned-object feature named in the old A-Z index is not found by name in the Hierarchy code
 - **Related:** 15.2, 1.3, 1.6, 21
-- **Words:** Hierarchy, hierarchy panel, pin (Hierarchy), scene tree, parenting, drag to parent, group, prefab save, order, sort, search, filter
+- **Words:** Hierarchy, hierarchy panel, hide, hidden, show all, eye, selection set, named set, pin (Hierarchy), scene tree, parenting, drag to parent, group, prefab save, order, sort, search, filter
 - **Seen as:** an object is missing from the tree; dragging does not re-parent; the context menu lacks an entry; the search shows nothing; selection jumps
 - **Ask me like:** "work on 15.1.1, hide and lock toggles in the Hierarchy"; "Paste as Child puts the object at the wrong place"
 
@@ -51,7 +53,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 ### 15.3 Scene and Game views, gizmos, spline tools
 - **What:** The two views of the world: the Scene view (2D and 3D editing, selection, gizmos, overlays) and the Game view (what the player sees, with resolution and phone presets), plus the spline editing overlay.
 - **Parts:**
-  - 15.3.1 Scene view shell and toolbar - `editor/main.cpp` (`DrawViewport` ~41508-42171) - 2D/3D switch, UI-only toggle, tool icons, global/local, snap, frame selected, isolate, "..." menu, Overlays menu
+  - 15.3.1 Scene view shell and toolbar - `editor/main.cpp` (`DrawViewport` ~41508-42171) - 2D/3D switch, UI-only toggle, tool icons, global/local, snap, frame selected, isolate (also stops clicks on isolated-out objects), the "N hidden: Show all" chip (15.1.6), "..." menu, Overlays menu
   - 15.3.2 2D scene drawing - `editor/main.cpp` (`DrawScene2D` ~38643-39018) - sprites, tilemaps, colliders, selection in 2D
   - 15.3.3 3D scene drawing - `editor/main.cpp` (`DrawScene3D` ~39019-41397) - mesh rendering through the editor camera, selection, picking
   - 15.3.4 Transform gizmo - `editor/main.cpp` (~41023-41265) - Move, Rotate, Scale axis handles, vertex snapping with V (~41266)

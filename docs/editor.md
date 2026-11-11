@@ -179,7 +179,28 @@ Recent additions (v2.12–2.14):
   **Isolate** (Shift+I, the Scene toolbar button, or right-click ▸ Isolate)
   shows ONLY the selected object and its children in the Scene view — view-only,
   nothing in the scene changes, and a banner reminds you it's on. Rows outside
-  the isolated subtree dim in the Hierarchy.
+  the isolated subtree dim in the Hierarchy. In the Scene view a click can no
+  longer pick an object that isolation is hiding.
+  **Hide** is the editor-only cousin of the Hierarchy's active eye: the teal eye
+  to the left of the padlock (or **H** on the selection, or right-click ▸ Hide in
+  Scene View) takes an object and its children out of the Scene view, out of
+  picking and out of the gizmos. It never changes *Active*, so **Play**, the Game
+  view and a built game still show the object. The flag is saved in the scene file
+  as editor metadata (`hidden 1`; an older file simply has none, and a prefab file
+  never carries it). A "3 hidden: Show all" chip appears in the Scene toolbar;
+  **Alt+H** or the chip shows everything again, and `is:hidden` finds hidden rows
+  in the Hierarchy search. How it combines with the other two: **Hide wins over
+  Isolate** (a hidden child of an isolated object stays hidden, and isolating a
+  hidden object shows nothing), **Lock** only stops Scene-view clicks and is kept
+  separately (hiding does not unlock), and clicking a row in the Hierarchy selects
+  it whatever its Hide, Isolate or Lock state.
+  **Selection Sets** (the collapsible header at the top of the Hierarchy) are
+  named groups of objects saved with the scene by GUID. *New from selection*,
+  click a set to select its members (Ctrl adds), double-click to rename; the
+  right-click menu adds or removes the current selection, hides, shows, locks or
+  unlocks the whole set, and deletes it. When objects of a set were deleted, the
+  set shows "N missing" and drops them the next time you use it (a Console line
+  gives the count). Every Hide, set and lock action is one undo step.
 - **Project** — the same selection model: **Ctrl+click** to toggle,
   **Shift+click** for a range, **Ctrl+A** for everything shown. **Ctrl+C/X/V**
   copy, cut and paste whole multi-selections between folders, and **Delete**

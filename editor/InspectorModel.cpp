@@ -138,6 +138,7 @@ bool HierFilter::Matches(const GameObject& go, const std::unordered_set<const Ga
                 if (s == "off" || s == "inactive" || s == "disabled") hit = !go.active;
                 else if (s == "on" || s == "active")                  hit = go.active;
                 else if (s == "locked")                               hit = go.editorLocked;
+                else if (s == "hidden")                               hit = go.editorHidden;   // hidden in the Scene view (own flag)
                 else if (s == "static")                               hit = go.isStatic;
                 else if (s == "prefab")                               hit = PrefabTools::IsPrefabInstance(go);
                 else if (s == "ui")                                   hit = Contains(HierKindWords(go), "ui");

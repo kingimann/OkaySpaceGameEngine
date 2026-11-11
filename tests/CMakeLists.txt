@@ -741,6 +741,12 @@ target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/ed
 target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
 
+# Editor-only Hide and selection sets (editor/EditorVisibility, ImGui-free): hide with children, picking, Play, save/load, isolate + lock + hide, sets, dead GUIDs, undo.
+add_executable(test_editor_visibility test_editor_visibility.cpp ${PROJECT_SOURCE_DIR}/editor/EditorVisibility.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_editor_visibility PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_visibility PRIVATE okay::engine)
+add_test(NAME editor_visibility COMMAND test_editor_visibility)
+
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
 add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
 target_link_libraries(test_project_save PRIVATE okay::engine)

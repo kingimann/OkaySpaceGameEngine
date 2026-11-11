@@ -5,7 +5,7 @@ Point at anything and I know where it lives. Say **"work on 5.6.2"** (one number
 see ("feet slide on slopes", "the Hierarchy window"). Every number leads to the files, classes, tests,
 docs and editor windows involved, what already works, what is missing, and what is in flight.
 
-This map holds 58 areas, 374 sub-areas and 1683 numbered parts, and every source file in the repo is meant to appear in it
+This map holds 58 areas, 374 sub-areas and 1685 numbered parts, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
 **How it is organised**
@@ -405,7 +405,7 @@ Details for every sub-area and numbered part: [docs/feature_map/15-editor.md](fe
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [15.1](feature_map/15-editor.md#151-hierarchy) | Hierarchy | Works | The tree of every object in the scene with search, drag and drop re-parenting, rename, and a large right-click menu. | polish (carried from the earlier map); #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active... |
+| [15.1](feature_map/15-editor.md#151-hierarchy) | Hierarchy | Works | The tree of every object in the scene with search, drag and drop re-parenting, rename, and a large right-click menu. | polish (carried from the earlier map); "N hidden" counts objects with their own hide flag (a hidden parent counts once, not its... |
 | [15.2](feature_map/15-editor.md#152-inspector-add-component-menu-character-model-panel) | Inspector, Add Component menu, Character Model panel | Works | The panel that edits the selected object: name, tag, static flag, and one collapsible card per component, an Add Component menu with search, and the... | polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); nothing found... |
 | [15.3](feature_map/15-editor.md#153-scene-and-game-views-gizmos-spline-tools) | Scene and Game views, gizmos, spline tools | Works | The two views of the world: the Scene view (2D and 3D editing, selection, gizmos, overlays) and the Game view (what the player sees, with resolution... | world-space canvases show only in the Game view (12.6); Scene view 3D render does a GPU-to-CPU readback each frame (the code... |
 | [15.4](feature_map/15-editor.md#154-project-panel-and-asset-manager) | Project panel and asset manager | Works | The file browser of the project's Assets folder (folders, thumbnails, smart filters, search, color labels, drag and drop into the scene) and a window... | polish (carried from the earlier map); planned area 20: an asset browser window on top of the new asset manager (PR #568, on... |

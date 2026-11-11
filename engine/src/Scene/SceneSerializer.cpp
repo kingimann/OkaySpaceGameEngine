@@ -3683,6 +3683,13 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
     for (const std::string& r : scene.unknownRecords) out << r << "\n";   // what a newer build wrote at the top, as it was
+    for (const auto& set : scene.selectionSets) {   // editor selection sets: one line each, members by GUID
+        std::string nm = set.name;
+        for (char& c : nm) if (c == '\n' || c == '\r') c = ' ';   // the record is one line
+        out << "selset " << Quote(nm);
+        for (const std::string& g : set.guids) out << " " << Quote(g);
+        out << "\n";
+    }
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
     if (scene.HasCustomLayerCollisions()) {   // optional: older scenes have none (everything collides)
         out << "layermatrix";
@@ -3816,6 +3823,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
         if (go->editorLocked) out << "  locked 1\n";
+        if (go->editorHidden) out << "  hidden 1\n";   // editor-only; a prefab file or a copy (SerializeObject) never carries it
         if (go->layer != 0) out << "  layer " << go->layer << "\n";
         if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
         if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";
@@ -4059,6 +4067,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             std::string nm = ReadQuoted(in); if (clear) scene.SetName(nm);
         } else if (token == "uifont") {
             std::string uf = ReadQuoted(in); if (clear) scene.uiFont = uf;
+        } else if (token == "selset") {   // editor selection set: name then member GUIDs, one line
+            std::string nm = ReadQuoted(in);
+            std::string rest; std::getline(in, rest);
+            if (clear) {
+                Scene::SelectionSet set; set.name = nm;
+                std::istringstream ls(rest);
+                while (ls >> std::ws && ls.peek() == '"') set.guids.push_back(ReadQuoted(ls));
+                if (scene.selectionSets.size() < 4096) scene.selectionSets.push_back(std::move(set));
+            }
         } else if (token == "layermatrix") {
             std::uint32_t rows[32]; bool ok = true;
             for (int i = 0; i < 32; ++i) { unsigned long long v = 0; if (!(in >> v) || v > 0xFFFFFFFFull) { ok = false; break; } rows[i] = (std::uint32_t)v; }
@@ -4177,6 +4194,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
                 else if (field == "locked") { int l = 0; in >> l; go->editorLocked = (l != 0); }
+                else if (field == "hidden") { int h = 0; in >> h; go->editorHidden = (h != 0); }
                 else if (field == "layer") {
                     int l = 0; in >> l;
                     if (l < 0 || l > 31) {   // renderers and the collision matrix read it modulo 32: say so, and store what they use

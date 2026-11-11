@@ -127,6 +127,11 @@ public:
     /// clicks while arranging things on top. No runtime effect; persisted.
     bool editorLocked = false;
 
+    /// Editor-only: a hidden object (and its children) is not drawn or picked in the Scene
+    /// view. The Game view, Play mode and exported games ignore it: it never changes `active`.
+    /// Persisted in the scene file as editor metadata (`hidden 1`); an older file has none.
+    bool editorHidden = false;
+
     /// The name of the scene this object was MERGED in from (empty = it belongs to
     /// the main/host scene). Set when combining scenes so the editor's Hierarchy can
     /// show where each merged scene starts and ends. Persisted with the scene.

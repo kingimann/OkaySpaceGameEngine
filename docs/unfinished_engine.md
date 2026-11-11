@@ -141,6 +141,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Engine accessors with no editor or player caller | `Debug/DrawCallRecorder`, `GpuTimer`, `MemoryTracker`, `FrameRecord`, `Optimize/StreamingGrid`, `Core/Cvar` and `Core/Jobs` stats: zero mentions in `editor/` and `player/` | Code and tests exist, no window or switch shows them (partly known as 23.x; this lists the rest) | Medium | Large |
 | Plugin API has no native plugins | feature map 24.1 (Planned) | Only script-level plugin windows | Medium | Large |
 | `editor/main.cpp` and `player/main.cpp` still hold panels, build, UI and server entry | feature map 15.10, 19.4 | Slow to change, merge conflicts | Low | Large |
+| Hide and selection sets: gaps left | `editor/EditorVisibility.*`, `editor/main.cpp` (`HierHide`, `DrawSelectionSets`) | The Scene-view hide is a switch-off during the draw, so a hidden object picked in the Hierarchy still shows its selection gizmo; the Hierarchy's flat search rows have no hide eye; sets cannot be reordered or coloured and are not offered in the Scene view; the GUI itself is checked by hand, not by a test | Low | Small |
 | Dead code: `DrawFlowGraph` (about 1,060 lines), `g_bevelWidth` | `editor/main.cpp:24374, 3032` (already in `unfinished-audit.md`) | None for users | Low | Small |
 
 ## 14. Accessibility, localization, serialization and shared

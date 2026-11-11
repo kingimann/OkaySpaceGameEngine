@@ -505,6 +505,15 @@ public:
     /// Instantiate), cleared with the scene. See GameObject::unknownRecords for the per-object ones.
     std::vector<std::string> unknownRecords;
 
+    /// A named group of objects the editor keeps with the scene (by GUID, so it survives
+    /// save/load, undo and renames). Editor metadata only: it never affects Play or a build.
+    struct SelectionSet {
+        std::string name;
+        std::vector<std::string> guids;
+    };
+    /// Saved as `selset` records; read by a full load, cleared with the scene.
+    std::vector<SelectionSet> selectionSets;
+
     // ---- Lifecycle (driven by the Application) ------------------------
     /// Run Awake/Start on all components created so far.
     void Start();

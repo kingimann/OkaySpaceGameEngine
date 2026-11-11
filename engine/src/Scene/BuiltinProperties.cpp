@@ -61,6 +61,7 @@ void RegisterGameObject() {
      .AddInt("layer", &GameObject::layer).Range(0, 31).Tooltip("Render and physics layer").Default(PropertyValue::MakeInt(0))
      .AddBool("isStatic", &GameObject::isStatic).Tooltip("Marked as not moving at runtime").Default(PropertyValue::MakeBool(false))
      .AddBool("editorLocked", &GameObject::editorLocked).Tooltip("Cannot be picked in the Scene view").Hidden().Default(PropertyValue::MakeBool(false))
+     .AddBool("editorHidden", &GameObject::editorHidden).Tooltip("Not drawn or picked in the Scene view (editor only)").Hidden().Default(PropertyValue::MakeBool(false))
      .AddInt("uiDrawOrder", &GameObject::uiDrawOrder).Range(-100000, 100000).Tooltip("UI layering override (0 = the widget's default)").Default(PropertyValue::MakeInt(0));
     b.Commit();
 }

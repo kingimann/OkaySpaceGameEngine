@@ -4,6 +4,8 @@ Pages are grouped by what you are trying to do. New here? Start with
 [making_a_game.md](making_a_game.md).
 
 ## Get started
+- [THIRD_PARTY.md](THIRD_PARTY.md): what is custom code and which outside libraries we build on, with licences.
+- [UNFINISHED.md](UNFINISHED.md): what is not finished yet, hidden or limited today, and the to-do list.
 - [making_a_game.md](making_a_game.md): make your first game, from an empty editor to a shipped one.
 - [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
 - [prefab_system.md](prefab_system.md): nested prefabs, variants, unpack, per-record and per-field apply and revert, and the prefab validator.

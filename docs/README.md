@@ -13,6 +13,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [properties.md](properties.md): the property registry: read, write, watch, snapshot and diff any component field by name (the base for per-property undo, live editing and prefab overrides).
 - [scene_diff_merge.md](scene_diff_merge.md): canonical scene text, structured diffs, three-way merge and format migration for version control.
 - [editor.md](editor.md): the editor, its panels and Build Game.
+- [platform_layer.md](platform_layer.md): the okay::platform seam over SDL2, our own Linux / Windows backends, the SDL audit and what is tested.
 - [project_upgrade.md](project_upgrade.md): the engine version a project was saved with, the upgrade question when an editor of another version opens it, safe upgrade with a full backup, restore, and the launcher's Versions folder.
 - [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.

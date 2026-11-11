@@ -256,6 +256,8 @@ int main() {
     }
     CHECK(ran >= 1);
     CHECK(Default() != nullptr);
+    if (Default()) std::cout << "[default backend] " << Default()->Name() << " (OKAY_PLATFORM_BACKEND)\n";
+    CHECK(Default() == Get(DefaultKind()));
 #if defined(__linux__)
     if (IsCompiledIn(BackendKind::Own)) TestEvdevMapping();
 #endif

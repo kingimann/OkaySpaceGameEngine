@@ -40,16 +40,18 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.2.3 Cloud saves and leaderboards - `Platform/Account/AccountService` - `CloudSave`, `CloudLoad`, `CloudList`, `LeaderboardSubmit`, `LeaderboardTop` on two Supabase tables
   - 17.2.4 Native HTTPS - `Platform/NativeHttp` - pooled WinHTTP connections on Windows (no curl process per request); elsewhere, or if WinHTTP can't reach, the code falls back to curl with secrets passed in files
   - 17.2.5 Account page - `launcher/main.cpp` (tab 3, L19634) - sign in or create, profile, sign-in and security, privacy, more
+  - 17.2.7 Download my data - `Platform/Account/AccountData` and launcher Account > Sign-in & security > Your data - reads only rows the signed-in user may read (RLS) and saves one JSON in `exports/` next to the launcher, with honest progress, "not set up" sections and a failed-sections list
+  - 17.2.8 Delete my account - `supabase/functions/delete-account` and the same card - type the username and the password, then the Edge Function (user id from the JWT only) deletes or anonymises the user's rows in every table in `docs/sql/`, removes uploaded files and the auth user; the launcher shows server step errors, "function not deployed", and signs out on success; see `docs/account_data.md`
   - 17.2.6 Baked default server - `CMakeLists.txt` - `OKAY_DEFAULT_ACCOUNT_URL` and `OKAY_DEFAULT_ACCOUNT_KEY` compiled into every binary
 - **Code:** `Platform/Account/Account`, `Platform/Account/AccountService`, `Platform/NativeHttp`
 - **API:** `okay::Account::Get`, `Login`, `Logout`, `Token`, `IsLoggedIn`, `AccountService::Register`, `Login`, `Api`, `CloudSave`, `LeaderboardTop`, scripts `account_login`, `account_register`, `account_logout`, `account_is_logged_in`, `account_token`, `account_get`, `account_post`
 - **Editor:** none (the sign-in page is the launcher's Account tab; the player and game scripts use the same service)
-- **Docs:** `docs/accounts.md`, `docs/supabase-backend.md`
-- **Tests:** `account`, `account_script`
-- **Status:** Works - local backend, session persistence and the script facade are tested; the remote and Supabase paths need a live server and are not exercised in CI
+- **Docs:** `docs/accounts.md`, `docs/supabase-backend.md`, `docs/account_data.md`
+- **Tests:** `account`, `account_script`, `account_data`, `delete_account_function`
+- **Status:** Works - local backend, session persistence and the script facade are tested; the remote and Supabase paths need a live server and are not exercised in CI. Export and delete: client logic and the function logic are unit-tested with fakes; the function is not deployed or run against a live project (owner steps in `docs/account_data.md`)
 - **Open:** the default Supabase project URL and publishable key are hardcoded in `CMakeLists.txt` (old map: remove them; the release workflow deliberately no longer overrides them); possible risk: `AccountService` shells out to curl on non-Windows
 - **Related:** 17.9, 17.11, 42.4, 41.6
-- **Words:** account, sign in, login, register, username, password, session, token, Supabase, cloud save, leaderboard, AccountService, NativeHttp, WinHTTP, curl, JWT
+- **Words:** account, sign in, login, register, username, password, session, token, Supabase, cloud save, leaderboard, AccountService, NativeHttp, WinHTTP, curl, JWT, delete account, export my data, download my data, GDPR, privacy
 - **Seen as:** "can't sign in"; signed out after a restart; sign-in works in the launcher but not in a game; the launcher is slow to fill in (curl per request)
 - **Ask me like:** "let players log in from my game's menu", "point the build at my own account server"
 

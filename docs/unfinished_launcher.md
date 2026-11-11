@@ -28,7 +28,6 @@ Size: Small < 1 day, Medium = a few days, Large = a week or more.
 | Item | Where | What is missing (plain English) | Impact | Size |
 |---|---|---|---|---|
 | "Forgot password" email leads nowhere | `launcher/main.cpp:20703-20711`; `engine/include/okay/Platform/Account/AccountService.hpp:472-484` (POST `/auth/v1/recover`, no redirect address) | The launcher sends the reset email, but nothing in the repo or docs provides the web page the emailed link opens to type a new password (Supabase Site URL / redirect page is not documented or built). Users who forget a password cannot finish the reset from the launcher. | High | Small (page plus doc) |
-| No "Delete my account" or "Download my data" | Account page `launcher/main.cpp:20025-20720` has Change email (`:20443`) and Change password (`:20478`) only; no delete RPC in `docs/sql/` | Needed for privacy rules (GDPR style). Needs an RPC that removes the profile, messages, uploads and cloud saves, plus a confirm dialog. | High | Medium |
 | Login token is stored in plain text | `AccountService.hpp:919-922` (`SaveSession` writes username, access token and refresh token to a plain file, not atomic) | Anyone who can read the launcher folder can use the account. Use Windows DPAPI / macOS keychain / file permissions 0600, and write via a temp file. | Medium | Medium |
 | Achievements are never earned by the launcher itself | `launcher/main.cpp:21589-21852`; only unlock call is `engine/src/Components/ActionList.cpp:1514`; "first_publish" exists only in demo data (`:13640`, `:21608`) | The page lists unlocked ones only (no locked/goal list) and the launcher awards nothing for publishing, friends, playtime, etc. Cloud copy is one-way mirror to the profile (`Platform/Profiles.hpp:248`), so a new PC starts empty. `Platform/Achievements.hpp:4-5` still says cloud sync "can be layered on later". No tests for Achievements or Profiles (feature map 17.7). | Medium | Medium |
 | Saved setting that does nothing: "min_to_tray" | `launcher/main.cpp:1681`, `:4319`, `:4433`; tray code `:9785-9826` is `[[maybe_unused]]` and never called | A preference is written and read but no setting shows it and nothing hides the window to the tray. The feature map row 17.1.6 still claims "minimize to the Windows tray". | Low | Small (delete it, or finish it) |
@@ -77,7 +76,7 @@ Size: Small < 1 day, Medium = a few days, Large = a week or more.
 
 ## Counts
 
-High: 8 | Medium: 16 | Low: 14 (38 rows).
+High: 7 | Medium: 16 | Low: 14 (37 rows). "Delete my account / Download my data" is done (see `docs/account_data.md`); owner must deploy the function.
 
 ## Top 10 to tackle first
 
@@ -87,7 +86,7 @@ High: 8 | Medium: 16 | Low: 14 (38 rows).
 4. **Real "Report" for messages, posts, items and profiles** (Medium). Public chat and Marketplace without user reporting is the biggest safety gap.
 5. **Server-side block list and enforced privacy settings** (Medium). Today a blocked user can still message and call.
 6. **Kick/ban/remove-member buttons for community servers and group chats** (Small to Medium). The database already allows it; only UI is missing.
-7. **Delete my account / export my data** (Medium). Legal and trust requirement for any online account system.
+7. ~~Delete my account / export my data~~ DONE in the launcher (Account > Sign-in & security > Your data) and `supabase/functions/delete-account`. Owner step left: deploy the function (`docs/account_data.md`). Follow-up (Medium): schema change so other people's message history can be kept as "[deleted]" instead of removed (see that doc).
 8. **Fail loudly when the launcher self-update does not apply, and require the checksum index** (Small, then Large for signing). Update integrity is the one path that can compromise every user.
 9. **Set `OKAY_AC_TRUSTED_KEYS` and make the release step enforce `versions.json`** (Small, owner step). Cheap, and it turns two "warn only" release checks into real protection.
 10. **Decide Windows-only vs cross-platform, then fix docs or packaging** (Large). Versions page, updater and curl-per-call networking all assume Windows; saying so (or fixing it) avoids support surprises. Ship a shared Tenor key (Small) in the same pass to make GIFs work for everyone.

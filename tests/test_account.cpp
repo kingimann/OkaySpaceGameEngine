@@ -138,6 +138,19 @@ int main() {
         CHECK(svc.Login("alice", "newpass1").ok);   // new password works
         // Password reset is a Supabase-only feature.
         CHECK(!svc.RequestPasswordReset("a@b.com").ok);
+        // Reset email: the recover URL carries the (percent-encoded) landing page.
+        CHECK(acct::AccountService::RecoverUrl("https://x.supabase.co/", "") ==
+              "https://x.supabase.co/auth/v1/recover");
+        CHECK(acct::AccountService::RecoverUrl("https://x.supabase.co", "https://a.io/reset/?v=1") ==
+              "https://x.supabase.co/auth/v1/recover?redirect_to=https%3A%2F%2Fa.io%2Freset%2F%3Fv%3D1");
+        CHECK(acct::AccountService::RecoverUrl("https://x.supabase.co", "javascript:alert(1)") ==
+              "https://x.supabase.co/auth/v1/recover");   // non-http(s) redirects are dropped
+        {
+            acct::AccountService r2(dir);
+            CHECK(!r2.HasResetRedirect());
+            r2.SetResetRedirect("https://a.io/reset/");
+            CHECK(r2.HasResetRedirect());
+        }
         // 3-arg register (username is ignored on the local backend).
         CHECK(svc.Register("bob", "passbob", "Bobby").ok);
 

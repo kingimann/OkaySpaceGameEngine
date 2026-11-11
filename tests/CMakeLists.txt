@@ -2237,3 +2237,7 @@ add_executable(test_dev_log test_dev_log.cpp)
 target_include_directories(test_dev_log PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(test_dev_log PRIVATE okay::engine)
 add_test(NAME dev_log COMMAND test_dev_log)
+
+add_executable(test_image_write test_image_write.cpp)
+target_link_libraries(test_image_write PRIVATE okay::engine)
+add_test(NAME image_write COMMAND test_image_write)

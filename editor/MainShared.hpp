@@ -3,6 +3,7 @@
 // This list shrinks as main.cpp is split further; each entry moves to the
 // header of the module that ends up owning it.
 #include "imgui.h"
+#include <functional>
 #include <string>
 
 namespace okay { class GameObject; namespace editor { class EditorState; } }
@@ -49,7 +50,8 @@ void OpenScriptFileInEditorAt(const std::string& path, int line);
 
 // "Add animations from file...": pick clip files (FBX, glTF, DAE, BVH) and add
 // every clip to the Model Animator on `modelRoot`.
-void AddAnimationsFromFilesUI(okay::editor::EditorState& ed, okay::GameObject* modelRoot);
+// onDone runs after clips were added (the picker may answer on a later frame, so work that depends on the result goes there).
+void AddAnimationsFromFilesUI(okay::editor::EditorState& ed, okay::GameObject* modelRoot, std::function<void()> onDone = {});
 
 // Scene-view snapping (Snap toggle, or Ctrl held) and gizmo axes; the spline point
 // gizmo follows them like the move gizmo does.

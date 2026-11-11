@@ -16,7 +16,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "imgui.h"
-#include "tinyfiledialogs.h"
+#include "FileDialog.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -460,19 +460,27 @@ void DoNew() {
     s.view = AnimTimeView{};
 }
 
+bool WriteSequence(EditorState& ed, std::string path);
+// Saves to the sequence's file, or asks where first (the answer may arrive on a later frame with the built-in browser).
 bool DoSave(EditorState& ed, bool saveAs) {
     namespace fs = std::filesystem;
     State& s = S();
-    std::string path = s.path;
-    if (saveAs || path.empty()) {
-        const char* filt[] = {"*.okayseq"};
+    if (saveAs || s.path.empty()) {
         const fs::path dir = fs::path(ed.projectDir().empty() ? "." : ed.projectDir()) / "Assets";
         const std::string def = (dir / (s.seq.name + ".okayseq")).string();
-        const char* p = tinyfd_saveFileDialog("Save sequence", def.c_str(), 1, filt, "OkaySpace sequence");
-        if (!p) return false;
-        path = p;
-        if (fs::path(path).extension() != ".okayseq") path += ".okayseq";
+        EditorState* edp = &ed;
+        okay::filedialog::SaveOne("Save sequence", def, okay::filedialog::Filters("OkaySpace sequence", {"*.okayseq"}), [edp](const std::string& p) {
+            std::string path = p;
+            if (fs::path(path).extension() != ".okayseq") path += ".okayseq";
+            WriteSequence(*edp, path);
+        });
+        return false;   // nothing written yet
     }
+    return WriteSequence(ed, s.path);
+}
+bool WriteSequence(EditorState& ed, std::string path) {
+    namespace fs = std::filesystem;
+    State& s = S();
     std::string err;
     if (!s.seq.SaveToFile(path, &err)) { ConsoleLog("Timeline: " + err, 2); return false; }
     s.path = path; s.dirty = false;
@@ -896,11 +904,14 @@ void AudioCueInspector(EditorState& ed, State& s) {
     TextField("File##audio", c.file, "empty = the Audio Source's own clip");
     ImGui::SameLine();
     if (ImGui::SmallButton("...##audio")) {
-        const char* filt[] = {"*.wav", "*.ogg", "*.mp3"};
         const std::string dir = ed.projectDir().empty() ? std::string() : ed.projectDir() + "/";
-        if (const char* p = tinyfd_openFileDialog("Pick a sound", dir.c_str(), 3, filt, "Audio", 0)) {
-            BeginEdit(); c.file = ProjectRelative(ed, p); Touch();
-        }
+        EditorState* edp = &ed;
+        const std::size_t trk = (std::size_t)s.sel.track, idx = (std::size_t)s.sel.index;
+        okay::filedialog::OpenOne("Pick a sound", dir, okay::filedialog::Filters("Audio", {"*.wav", "*.ogg", "*.mp3"}), [edp, trk, idx](const std::string& p) {
+            State& st = S();   // look the cue up again: this may run on a later frame
+            if (trk >= st.seq.audio.size() || idx >= st.seq.audio[trk].cues.size()) return;
+            BeginEdit(); st.seq.audio[trk].cues[idx].file = ProjectRelative(*edp, p); Touch();
+        });
     }
     Drag("Volume##audio", c.volume, 0.01f, 0.0f, 2.0f);
     if (ImGui::Button("Delete cue")) DeleteSel(s);
@@ -1004,9 +1015,8 @@ void DrawToolbar(EditorState& ed) {
     if (ImGui::Button("New")) DoNew();
     ImGui::SameLine();
     if (ImGui::Button("Open...")) {
-        const char* filt[] = {"*.okayseq"};
         const std::string dir = ed.projectDir().empty() ? std::string() : ed.projectDir() + "/Assets/";
-        if (const char* p = tinyfd_openFileDialog("Open sequence", dir.c_str(), 1, filt, "OkaySpace sequence", 0)) DoOpen(p);
+        okay::filedialog::OpenOne("Open sequence", dir, okay::filedialog::Filters("OkaySpace sequence", {"*.okayseq"}), [](const std::string& p) { DoOpen(p); });
     }
     ImGui::SameLine();
     if (ImGui::Button("Save")) DoSave(ed, false);

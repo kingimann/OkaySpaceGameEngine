@@ -1,0 +1,93 @@
+# Launcher: what is unfinished (plain-English to-do list)
+
+Read from origin/main 13a892ec (clean read-only tree). Nothing was built or run. Line numbers are in that tree
+(`launcher/main.cpp` is 25,206 lines). Existing notes in UNFINISHED.md and unfinished-audit.md were read first; the demo
+env flags (OKAY_CHAT_DEMO*, OKAY_UI_DEMO_*, OKAY_MP_DEMO*, OKAY_VOICE_DEMO*) are only dev screenshot hooks and are not listed as problems
+(about 45 of them are compiled into the shipping launcher; they are inert unless someone sets the variable).
+Server-dependent pages show honest "not set up on the server yet" notices, so nothing below is fake data on screen.
+Size: Small < 1 day, Medium = a few days, Large = a week or more.
+
+## 1. Chat, calls and voice
+
+| Item | Where | What is missing (plain English) | Impact | Size |
+|---|---|---|---|---|
+| Typing indicator and read receipts have no database tables | `engine/include/okay/Platform/Messages.hpp:243-303` (typing_state, message_reads); toggles `launcher/main.cpp:4412`, `:9362` | The launcher reads and writes the `typing_state` and `message_reads` tables, but no SQL file anywhere in the repo creates them (checked docs/sql, supabase/, tests/sql). On a fresh Supabase project "typing..." and "Seen" never work, with no warning; the feature map (17.4.1) says typing and read marks "Works". | High | Small |
+| Voice calls need a voice server that nobody has deployed by default | `docs/voice-server.md:9-12`; `launcher/main.cpp:1726`, `:12291`, `:12354` | Until an admin runs the relay on a public machine and types its address in Settings > Chat, every call says "No voice server is set up yet". The deploy kit exists (`deploy/voice-server/`) but there is no built-in default, no health check and no in-app hint for non-admins. | High | Small (owner step) |
+| Blocking and privacy settings are only on this PC | `launcher/main.cpp:1732-1733`, `:4299`, `:4348-4349`, `:7394`, `:8166`, `:8784`; no blocks table in `docs/sql/` | "Block", "Friends only" DMs and "Calls from" are filters in the launcher. A blocked person can still send you messages and ring you (you just do not see them), a different PC or a reinstall forgets the block list, and Message requests only hides messages. Needs a server-side blocks table plus an RLS check. | High | Medium |
+| No way to report a message, forum post, marketplace item or profile | only `launcher/main.cpp:8782` and `:13001-13015` ("Report cheating") | The one report button is for cheating and goes to the anti-cheat inbox. Abuse, spam and illegal content cannot be reported by users anywhere; moderators have to find it themselves in Admin. | High | Medium |
+| Chat is polling, not push | polling loops `launcher/main.cpp:9945` (4 s tick), `:7372`, `:14919`, `:15048` | No realtime socket and no desktop (OS) notifications: with the launcher minimized you get a chime and a taskbar flash only; calls ring up to about 3 s late. Fine for now, but it multiplies request load per user. | Medium | Large |
+| GIF search is off until each user pastes their own Tenor key | `launcher/main.cpp:3622`, `:3911-3926`, `:3941` | Out of the box the GIF tab shows "GIF search is off". The owner could ship one shared key (app_config) or a small proxy so it works for everybody. | Medium | Small |
+| Group chat members cannot be removed | `launcher/main.cpp:6585-6625` (Members popup is read-only); SQL allows it at `docs/sql/group_chats.sql:88` | The popup lists members only. No remove, no make-admin, no ownership transfer, so one troublemaker in a group can only be escaped by leaving. | Medium | Small |
+| Voice calls have no tests | `launcher/VoiceChat.hpp` (582 lines); no tests/test_voice*; feature map 16.7 | ADPCM encode/decode, jitter handling, room key and the v3 relay hello are untested. | Medium | Medium |
+| Scheduled messages, notifications and device-only pins live in local files | `launcher/main.cpp:5606` (sent only while the launcher is open), `:1856-1860` (notifications.cfg), `:4401` (local pins when chat_extras.sql is missing) | None of these follow the account to another PC; a scheduled message does not send if the launcher is closed at that time. The screen says so for scheduled messages, not for the others. | Low | Medium |
+| Voice-note waveform is a made-up shape until the clip downloads, and only 16-bit clips get a real one | `launcher/main.cpp:4893-4936`, `:5076` | Cosmetic: other formats keep the placeholder waveform. | Low | Small |
+| Chat sample data and 20+ demo flags ship in the release launcher | `launcher/main.cpp:5283`, `:7729-7866` (sample thread), `:17355-17358` (demo notifications), `:12464-12495` (sample admin data) | Inert without env vars, but it is test scaffolding in the shipped binary (adds size, and anyone can set the variable). Could be compiled out of release builds. | Low | Small |
+
+## 2. Accounts, profiles, achievements
+
+| Item | Where | What is missing (plain English) | Impact | Size |
+|---|---|---|---|---|
+| "Forgot password" email leads nowhere | `launcher/main.cpp:20703-20711`; `engine/include/okay/Platform/Account/AccountService.hpp:472-484` (POST `/auth/v1/recover`, no redirect address) | The launcher sends the reset email, but nothing in the repo or docs provides the web page the emailed link opens to type a new password (Supabase Site URL / redirect page is not documented or built). Users who forget a password cannot finish the reset from the launcher. | High | Small (page plus doc) |
+| No "Delete my account" or "Download my data" | Account page `launcher/main.cpp:20025-20720` has Change email (`:20443`) and Change password (`:20478`) only; no delete RPC in `docs/sql/` | Needed for privacy rules (GDPR style). Needs an RPC that removes the profile, messages, uploads and cloud saves, plus a confirm dialog. | High | Medium |
+| Login token is stored in plain text | `AccountService.hpp:919-922` (`SaveSession` writes username, access token and refresh token to a plain file, not atomic) | Anyone who can read the launcher folder can use the account. Use Windows DPAPI / macOS keychain / file permissions 0600, and write via a temp file. | Medium | Medium |
+| Achievements are never earned by the launcher itself | `launcher/main.cpp:21589-21852`; only unlock call is `engine/src/Components/ActionList.cpp:1514`; "first_publish" exists only in demo data (`:13640`, `:21608`) | The page lists unlocked ones only (no locked/goal list) and the launcher awards nothing for publishing, friends, playtime, etc. Cloud copy is one-way mirror to the profile (`Platform/Profiles.hpp:248`), so a new PC starts empty. `Platform/Achievements.hpp:4-5` still says cloud sync "can be layered on later". No tests for Achievements or Profiles (feature map 17.7). | Medium | Medium |
+| Saved setting that does nothing: "min_to_tray" | `launcher/main.cpp:1681`, `:4319`, `:4433`; tray code `:9785-9826` is `[[maybe_unused]]` and never called | A preference is written and read but no setting shows it and nothing hides the window to the tray. The feature map row 17.1.6 still claims "minimize to the Windows tray". | Low | Small (delete it, or finish it) |
+| Social-link and profile editors rely on SQL that may not be run | `docs/sql/profile_extras.sql`, `profile_showcase.sql`; fallback `Profiles.hpp:142-144` | Degrades quietly (showcases hidden); no on-screen hint telling the owner which SQL is missing. | Low | Small |
+
+## 3. Servers (community), Forums, Marketplace, Admin
+
+| Item | Where | What is missing (plain English) | Impact | Size |
+|---|---|---|---|---|
+| Community server owners cannot kick, ban or promote members | `launcher/main.cpp:23956` (members list only marks the owner); SQL already allows kick `docs/sql/social.sql:392-393` | The database lets the owner remove a member, the page has no button; roles are just "owner" and "member", no moderators, no mute, no invite expiry or revoke. | High | Medium |
+| Marketplace downloads are not scanned or size-checked and extraction shells out | `launcher/main.cpp:613-627` (`ExtractZip`: `unzip`/`tar`/PowerShell, no size cap, no path check of our own), `:22903-22927` (only a warning that uploads are not vetted) | Review (pending/approved) exists for listings, but nothing checks the file itself. On a minimal Linux box without `unzip` the "Install to Community" button just fails with "Couldn't extract the archive". | Medium | Medium |
+| Downloads page forgets its list on restart | `launcher/main.cpp:24997-25113` (`g_dls` is in memory only) | After a restart finished downloads vanish from the list (files stay in `downloads/`); interrupted ones leave `.part` files with no resume; only `.zip` has an install action. | Low | Small |
+| Marketplace, Forums, Servers, Admin pages have no tests and no user doc | feature map 17.5, 17.6, 17.8, 17.9 ("untested"); docs have only `launcher-multiplayer.md` and `launcher_versions.md` | Behaviour is only checked by hand against a live Supabase project. | Medium | Large |
+| Admin cannot create test servers without a game | feature map 17.9 "Open" | Known gap, still open. | Low | Small |
+
+## 4. Updater, Versions, release and platform support
+
+| Item | Where | What is missing (plain English) | Impact | Size |
+|---|---|---|---|---|
+| Updates are not signed; the checksum check is optional | `launcher/main.cpp:988-996` (no index means "no check"), `:738-741`; index is plain JSON from the same bucket | Feature map 17.1 says the updater "verifies nothing but a version string": that is now out of date (sizes and SHA-256 are checked when `versions.json` loads), but the index itself is unsigned and a missing index silently turns the check off. A hijacked bucket can still ship a bad launcher. Plan: ed25519-sign `versions.json` (as anti-cheat manifests already are) and refuse updates without a valid signature. | High | Large |
+| A failed launcher self-update is silent | `launcher/main.cpp:1030-1037`, `:1039-1055` | `launcherOk` false does not mark the update as failed; the user sees "Updated engine & player to vX" and the launcher stays on the old version with no retry hint. | Medium | Small |
+| Release ships a Windows launcher only | `.github/workflows/release.yml:3,197`; `launcher/VersionsManager.cpp:125-127` and `launcher/main.cpp:1019-1037` hard-code `OkayEngine.exe`, `OkaySpacePlayer.exe`, `SDL2.dll`, `OkaySpace.exe`; no macOS job anywhere in `.github/workflows/` | The Versions page and the updater cannot install or update on Linux or macOS (they look for .exe names). On those systems every network call also spawns `curl` (`NativeHttp.hpp:65-70` is Windows-only), and settings/downloads live next to the launcher exe (`main.cpp:16582`), which fails if it sits in a read-only folder. Decide: Windows-only (say so in docs) or add real Linux/macOS packaging. | Medium | Large |
+| Release warns but still ships without trusted anti-cheat keys | `.github/workflows/release.yml:43-56`; `CMakeLists.txt:84-91`, `:130` | If the repository variable `OKAY_AC_TRUSTED_KEYS` is empty, the launcher cannot verify who signed the official game (integrity checks become telemetry only). Owner step: generate the key pair and set the variable. | Medium | Small (owner step) |
+| Supabase URL and public key are hard-coded in the build file | `CMakeLists.txt:64-66` | Already in UNFINISHED.md; the key is a public one, but a fork or a second environment needs a source edit. | Low | Small |
+| A launcher folder with non-ASCII characters cannot start the editor on Windows | `docs/launcher_versions.md:88-91` ("this was already so") | Old helpers use `CreateProcessA`. Documented limitation, not fixed. | Medium | Medium |
+| The Supabase ticket function is not wired to the launcher and has no CI | `supabase/functions/session-ticket/*`; `shared/AntiCheatBackend.hpp:315` builder has no caller; no Deno step in `.github/workflows/` | Known from 39.3; note the Deno tests (`ticket_test.ts`) never run in CI. | Medium | Medium |
+| What's New shows a hard-coded "Highlights" list when offline | `launcher/main.cpp:18993-19000` | Stale marketing bullets (Script Editor, Camera...) appear until the first update check succeeds. | Low | Small |
+| The release bucket step is not enforced | `docs/launcher_versions.md` (index "a failure there only warns"); `scripts/publish-supabase.sh:16` | A release can go out without `versions.json`, which turns the checksum check off for every user (see the signing row). | Medium | Small |
+
+## 5. Backend setup (supabase/ and SQL)
+
+| Item | Where | What is missing (plain English) | Impact | Size |
+|---|---|---|---|---|
+| 16 SQL files must be run by hand with no run-order list or version check | `docs/sql/*.sql` (16 files); `docs/supabase-backend.md`; per-feature docs say "run once" (`docs/launcher-multiplayer.md:72,161,209,235`) | There is no single "set up a new project" script, no order (admin before anticheat is only in `docs/anticheat.md:680`), and the launcher cannot tell the owner which files are missing; features quietly hide. | Medium | Medium |
+| `cloud_saves` and `leaderboards` SQL exists only inside a Markdown page | `docs/supabase-backend.md:28-60` (not in `docs/sql/`) | Easy to miss and not covered by the SQL test harness; `tests/scripts/test_anticheat_sql.sh` tests anti-cheat SQL only. The other 15 files have no automated check. | Low | Small |
+| `supabase/` holds one Edge Function only | `supabase/functions/session-ticket/` | There is no `config.toml`, migrations folder or deploy script for the schema; everything else is copy-paste SQL. | Low | Medium |
+
+## 6. Docs and feature map drift (launcher area, row 17)
+
+| Item | Where | What is missing (plain English) | Impact | Size |
+|---|---|---|---|---|
+| Versions page, update channels (Latest/LTS) and Open-with are not in the feature map | `docs/launcher_versions.md` exists; `docs/feature_map/17-launcher-platform.md` has rows 17.1 to 17.16 and no Versions row | A shipped page has no map row, tests entry (`launcher_versions`) or "Ask me like". | Low | Small |
+| Stale facts in row 17 | `17-launcher-platform.md:3` ("24,802-line main.cpp", now 25,206); `:19` (tray claimed, see row above); `:29` (updater "verifies nothing"); `:75-91` (typing and read marks "Works") | Update the numbers and statuses. | Low | Small |
+| No user-facing docs for Chat, Forums, Marketplace, Servers, Admin or the Settings page | `docs/` (only launcher-multiplayer.md and launcher_versions.md are launcher docs) | An owner or helper cannot learn the features without reading code. | Low | Medium |
+| Tests that exist for the launcher are narrow | `tests/test_launcher_join.cpp`, `test_launcher_versions.cpp`, `test_official_game.cpp`, `test_crash_reports.cpp`, `test_chat_json.cpp` | Nothing covers the download manager, ExtractZip, updater swap/relaunch, project creation templates UI, chat logic, friends, forums, marketplace, profiles, or notification storage. 59 `catch (...) {}` blocks in `main.cpp` swallow errors silently. | Medium | Large |
+
+## Counts
+
+High: 8 | Medium: 16 | Low: 14 (38 rows).
+
+## Top 10 to tackle first
+
+1. **Create `typing_state` and `message_reads` SQL** (Small). The code already calls them; two visible chat features silently do nothing on a clean database.
+2. **Password-reset landing page + doc** (Small). Locked-out users have no recovery path today.
+3. **Deploy the voice server and set it in Admin > Chat** (Small, owner step). Calls are advertised but dead until then.
+4. **Real "Report" for messages, posts, items and profiles** (Medium). Public chat and Marketplace without user reporting is the biggest safety gap.
+5. **Server-side block list and enforced privacy settings** (Medium). Today a blocked user can still message and call.
+6. **Kick/ban/remove-member buttons for community servers and group chats** (Small to Medium). The database already allows it; only UI is missing.
+7. **Delete my account / export my data** (Medium). Legal and trust requirement for any online account system.
+8. **Fail loudly when the launcher self-update does not apply, and require the checksum index** (Small, then Large for signing). Update integrity is the one path that can compromise every user.
+9. **Set `OKAY_AC_TRUSTED_KEYS` and make the release step enforce `versions.json`** (Small, owner step). Cheap, and it turns two "warn only" release checks into real protection.
+10. **Decide Windows-only vs cross-platform, then fix docs or packaging** (Large). Versions page, updater and curl-per-call networking all assume Windows; saying so (or fixing it) avoids support surprises. Ship a shared Tenor key (Small) in the same pass to make GIFs work for everyone.

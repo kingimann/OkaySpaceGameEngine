@@ -26,7 +26,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneLocalization.hpp"
 #include "imgui.h"
-#include "tinyfiledialogs.h"
+#include "FileDialog.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -596,18 +596,20 @@ void DrawPopups(EditorState& ed) {
         if (ImGui::IsItemDeactivatedAfterEdit()) EndEdit(ed);
         ImGui::SameLine();
         if (ImGui::SmallButton("...")) {
-            static const char* filt[] = {"*.ttf", "*.otf", "*.ttc"};
-            if (const char* p = tinyfd_openFileDialog("A font with this language's characters", "", 3, filt, "Fonts", 0)) {
+            // May answer on a later frame (built-in browser): keep pointers to long-lived data only.
+            const EditorState* edp = &ed; auto* lp = l;
+            okay::filedialog::OpenOne("A font with this language's characters", "", okay::filedialog::Filters("Fonts", {"*.ttf", "*.otf", "*.ttc"}),
+                [edp, lp](const std::string& p) {
                 std::string path = p;
                 std::error_code ec;   // inside the project: relative to it, so the build and other machines find it
-                if (!ed.projectDir().empty()) {
-                    const fs::path rel = fs::relative(fs::u8path(path), fs::u8path(ed.projectDir()), ec);
+                if (!edp->projectDir().empty()) {
+                    const fs::path rel = fs::relative(fs::u8path(path), fs::u8path(edp->projectDir()), ec);
                     if (!ec && !rel.empty() && rel.native().find(fs::path("..").native()) != 0) path = rel.generic_u8string();
                 }
-                const std::string before = t.Write();
-                l->font = path;
-                Commit(ed, before);
-            }
+                const std::string before = Localization::Table().Write();
+                lp->font = path;
+                Commit(*edp, before);
+            });
         }
         Tip("Text in this language is drawn with this font when the font a text uses lacks its characters\n"
             "(Japanese, Chinese, Korean, Arabic...). Build Game ships it.");
@@ -635,10 +637,15 @@ void DrawPopups(EditorState& ed) {
     }
 }
 
+void ImportCsvFrom(const EditorState& ed, const std::string& p);
+void ExportCsvTo(const std::string& p);
 void ImportCsv(const EditorState& ed) {
-    static const char* filt[] = {"*.csv", "*.txt"};
-    const char* p = tinyfd_openFileDialog("Import translations (CSV)", "", 2, filt, "CSV", 0);
-    if (!p) return;
+    const EditorState* edp = &ed;
+    okay::filedialog::OpenOne("Import translations (CSV)", "", okay::filedialog::Filters("CSV", {"*.csv", "*.txt"}),
+        [edp](const std::string& p) { ImportCsvFrom(*edp, p); });
+}
+
+void ImportCsvFrom(const EditorState& ed, const std::string& p) {
     std::ifstream f(fs::u8path(p), std::ios::binary);
     std::stringstream ss;
     ss << f.rdbuf();
@@ -646,21 +653,23 @@ void ImportCsv(const EditorState& ed) {
     const std::string before = t.Write();
     std::string err;
     int rows = 0;
-    if (!t.ImportCsv(ss.str(), &err, &rows)) { ConsoleLog("Localization: couldn't import " + std::string(p) + ": " + err, 2); return; }
+    if (!t.ImportCsv(ss.str(), &err, &rows)) { ConsoleLog("Localization: couldn't import " + p + ": " + err, 2); return; }
     Commit(ed, before);
     ConsoleLog("Localization: imported " + std::to_string(rows) + " rows from " + p);
 }
 
 void ExportCsv(const EditorState& ed) {
-    static const char* filt[] = {"*.csv"};
     const std::string suggest = ed.projectDir().empty() ? std::string("strings.csv")
                               : (fs::u8path(ed.projectDir()) / "strings.csv").u8string();
-    const char* p = tinyfd_saveFileDialog("Export for translators (CSV)", suggest.c_str(), 1, filt, "CSV");
-    if (!p) return;
+    okay::filedialog::SaveOne("Export for translators (CSV)", suggest, okay::filedialog::Filters("CSV", {"*.csv"}),
+        [](const std::string& p) { ExportCsvTo(p); });
+}
+
+void ExportCsvTo(const std::string& p) {
     std::ofstream f(fs::u8path(p), std::ios::binary | std::ios::trunc);
     f << Localization::Table().ExportCsv();
     if (f) ConsoleLog("Localization: exported " + std::to_string(Localization::Table().Size()) + " keys to " + p);
-    else ConsoleLog("Localization: couldn't write " + std::string(p), 2);
+    else ConsoleLog("Localization: couldn't write " + p, 2);
 }
 
 } // namespace

@@ -227,8 +227,7 @@ Open pull request #554 (Grok's sessions, in flight) touches the controller panel
 ### 4.12 Premade players
 - **What:** The GameObject > Player menu: one-click players already wired with controller, camera, collider and animation, so a new scene is playable straight away.
 - **Parts:**
-  - 4.12.1 Player menu - `editor/main.cpp` - Third Person, Humanoid (foot IK), First Person, Mixamo Soldier, Mixamo Xbot, Third Person Shooter, Top Down (3D), Top Down Shooter (3D), 2.5D Platformer, Top Down (2D), Click To Move
-  - 4.12.2 Sample Mixamo models - `editor/main.cpp` - Soldier and Xbot are downloaded with curl from a GitHub URL into a `mixamo-cache` folder on first use
+  - 4.12.1 Player menu - `editor/main.cpp` - Third Person, Humanoid (foot IK), First Person, Third Person Shooter, Top Down (3D), Top Down Shooter (3D), 2.5D Platformer, Top Down (2D), Click To Move
 - **Code:** `editor/main.cpp`, `Components/PlayerController`
 - **API:** `PlayerController::Add`, `AttachCharacterModel`
 - **Editor:** GameObject > Player submenu
@@ -237,6 +236,6 @@ Open pull request #554 (Grok's sessions, in flight) touches the controller panel
 - **Status:** Works - player test checks that the shortcuts build fully wired players; the Mixamo items depend on the network
 - **Open:** the two Mixamo samples rely on a third-party URL and an external curl process (possible fragility)
 - **Related:** 3.7, 4.1, 15.2
-- **Words:** premade player, Player menu, template, Mixamo Soldier, Xbot, starter
+- **Words:** premade player, Player menu, template, starter
 - **Seen as:** the Mixamo menu item logs "could not download"; a new player has no camera; two players after adding a premade one
 - **Ask me like:** "add a Vehicle driver to the Player menu"; "ship the sample Soldier in the repo instead of downloading"

@@ -1,5 +1,60 @@
 OkaySpace Game Engine — Changelog
 
+v2.859.0
+  Visual Script
+  - The Add Node panel has topics, Basic/Intermediate/Advanced levels, a Starter
+    list and Recently used, and typing searches every topic. Named pins (clips,
+    tags, layers, scenes, variables, events, sounds) are dropdowns of the real
+    choices; a required pin that is empty is marked; a wire that cannot work is
+    refused with the reason; drag an object or prefab onto a slot; Save then Play
+    runs the graph you just edited (#628).
+  - 241 new gameplay nodes (movement, health and combat, items and inventory,
+    physics, perception and AI, camera, UI text, audio, quests, dialogue, saving,
+    input, time) plus loops that wait across frames, maps, switches and runtime
+    errors that name the node. Every node has a test showing it does something;
+    nodes that need a network or PlayFab service and have no test are hidden from
+    the palette (old graphs still load). Network nodes now say when no session is
+    running instead of doing nothing. Fixed vault and mantle failing after a scene
+    ended mid-move (#629).
+  Runtime UI
+  - Twelve in-game UI themes, style roles (Primary, Secondary, Danger, Ghost,
+    Outline, Pill), whole-scene theming and .okaytheme files. New radio buttons,
+    draggable windows, floating damage numbers, a dialogue box with choices and an
+    inventory screen, with script calls for each. File > Examples > UI Gallery
+    builds every widget. Typing in a text box no longer moves menu focus, and
+    widgets under a panel can be blocked from clicks (#622).
+  Project panel (editor)
+  - Create folders, scripts, scenes, prefabs, materials, data assets and visual
+    scripts through a name prompt. Renaming and moving keep every scene, prefab and
+    material pointing at the file. Copy, cut, paste and duplicate; delete asks
+    first and moves to a trash folder; Ctrl+Z undoes it all. Find References,
+    Reimport, per-asset favourites, folder-tree arrow keys, a Folder/Project search
+    switch and a thumbnail size slider. Opening a project no longer writes a
+    metadata file next to every asset. Files and folders dropped in from outside
+    are imported safely (#619, #627).
+  Inspector and Hierarchy (editor)
+  - Every edit is one undo step. Dropping on the empty Hierarchy area, dragging a
+    group, and dropping a prefab or model on a row work. Hierarchy search
+    understands t:tag, c:component, l:layer, is:state and -word. The Inspector
+    lists what changed from a prefab with Revert and Apply, edits several objects
+    at once, shows which values differ, copies, pastes and resets component values,
+    has tooltips on the common components' fields, and is wider by default
+    (#621, #626).
+  Import settings
+  - Model Normals (from the file, calculated with a smoothing angle, or flat) and
+    Import animations on or off, plus texture Largest side and model Scale. Open
+    from the Project panel or the Inspector (#634).
+  Launcher
+  - The Create tab is a home with a + New Project wizard and a recent-projects
+    grid. A failed create tells you why and leaves no folders behind (#624).
+  Game builds
+  - A Development build writes a timestamped log file next to the game; a release
+    build writes none. The first-person controller's Bob Sway is a real camera
+    roll. Developer demo panels (F1 Test UI) and other features that were not
+    finished are hidden in released builds (#632, #635).
+  Removed
+  - The Mixamo Soldier and Xbot sample entries in the Player menu.
+
 v2.858.0
   Visual Script
   - The add-node panel searches name, category, keywords and description,

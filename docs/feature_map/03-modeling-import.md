@@ -144,7 +144,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.7.7 Rig test assets and harness - `tests/rig_harness.hpp` - eleven rigs (Mixamo, VRoid, Character Creator, Daz, UE mannequin, Fox...) walked through the same motions
 - **Code:** `Render/ModelImport`, `Components/Character`, `Physics/ColliderFit`, `Animation/HumanoidBones`, `editor/main.cpp`, `tests/rig_harness.hpp`
 - **API:** `AttachCharacterModel`, `MakePlayableCharacter`, `FaceCharacterModel`, `FitCharacterCollider`, `DescribeCharacterModel`, `EnableBuiltinAnimations`, `Character::BindCustomMesh`; script `set_character_model(path)`
-- **Editor:** Hierarchy right-click > Rig Model (Humanoid) / Map Humanoid Bones... / Use Built-in Animations; Project panel right-click > Make Playable Character; Character Model panel (Set Character Model..., Fix Facing, Turn 180/90, Fit Collider); GameObject > Player > Mixamo Soldier / Xbot
+- **Editor:** Hierarchy right-click > Rig Model (Humanoid) / Map Humanoid Bones... / Use Built-in Animations; Project panel right-click > Make Playable Character; Character Model panel (Set Character Model..., Fix Facing, Turn 180/90, Fit Collider)
 - **Docs:** `docs/animation.md`, `docs/ik.md`
 - **Tests:** `make_playable`, `character_model_setup`, `imported_glitches`, `rig_sweep`, `humanoid_bones`, `collider_fit`
 - **Status:** Works - make_playable, character_model_setup and rig_sweep (11 rigs) exist; In flight: #554 adds PlayerSetup (a status read-out and a "wire missing animation and IK" step on the controller panel) and small ModelImport.hpp edits

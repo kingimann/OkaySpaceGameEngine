@@ -1,6 +1,6 @@
 # 13. Scripting
 
-Text scripting for games and for the editor: the default OkayScript language (one big VM with several hundred built-in functions), a newer typed C#-style language that is checked before it runs, optional Lua and C# backends, the Script component that runs them, and the Script Editor.
+Text scripting for games and for the editor: the default OkayScript language (one big VM with several hundred built-in functions), a newer typed C#-style language that is checked before it runs, the Script component that runs them, and the Script Editor.
 Covers `engine/include/okay/Scripting/*`, `engine/include/okay/Script/*`, `engine/src/Scripting/*`, `engine/src/Script/*` (about 11.3k + 7.1k lines), `Components/ScriptComponent`, `docs/scripting*.md` and the Script Editor inside `editor/main.cpp` (about 3k lines plus completion and docs windows).
 Two OkayScript languages exist side by side: id `okayscript` (old VM, the default) and `okayscript-next` (typed, `class Name : Behaviour`); the typed language is being grown to replace the old one, with several branches not on main yet.
 
@@ -49,22 +49,21 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Seen as:** a script is rejected with "isn't supported yet"; a new feature works in one language and not the other; "A script needs a class"; errors point at the wrong column
 - **Ask me like:** "work on 13.2.2, add try/catch to the typed language"; "which branch has coroutines for the new OkayScript"
 
-### 13.3 C# and Lua VMs
-- **What:** Optional backends that run real Lua (embedded) or C# (Mono compiler plus runtime) against the same host surface; built only with CMake switches.
+### 13.3 Removed Lua and C# (Mono) backends
+- **What:** The optional third-party Lua and Mono C# backends were removed (our own scripting languages replace them). An old scene or project whose script names language `lua`, `csharp` or `cs` still loads; the script just does not run, and loading it reports "script language 'lua' is no longer supported" (Console, scene validator, project diagnostics).
 - **Parts:**
-  - 13.3.1 Lua backend - `Scripting/LuaScriptVM` - `start()`/`update(dt)` plus the host API (move, set_pos, key, print, get/set); needs `-DOKAY_WITH_LUA=ON`
-  - 13.3.2 C# backend - `Scripting/CSharpScriptVM` - compiled with `mcs`, run in embedded Mono; `class Script` with Start/Update and the `Okay` host class; needs `-DOKAY_WITH_CSHARP=ON` and Mono at run time
-- **Code:** `Scripting/LuaScriptVM`, `Scripting/CSharpScriptVM`
-- **API:** `CreateScriptVM("lua")`, `CreateScriptVM("csharp")`, `AvailableScriptLanguages()`
-- **Editor:** language dropdown in the Script Editor appears only when more than one backend is available
-- **Docs:** `docs/scripting.md` ("Other backends")
-- **Tests:** `lua` (tests/test_lua.cpp), `csharp` (tests/test_csharp.cpp): both only registered when the matching option is on
-- **Status:** Basic - minimal Start/Update backends; neither implements events, validation, builtin names or globals listing
-- **Open:** off in the shipped builds (options default off); no event or diagnostics support (the base class defaults apply)
+  - 13.3.1 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `lua`, `csharp`, `cs`; used by `ScriptComponent::LoadSource` and the scene validator
+- **Code:** `Scripting/ScriptVM`, `Components/ScriptComponent`
+- **API:** `CreateScriptVM(lang)` (returns null for the removed names), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()`
+- **Editor:** `.lua` and `.cs` files still show as scripts in the Project Browser; opening one loads it with the "no longer supported" message
+- **Docs:** `docs/scripting.md`
+- **Tests:** `script_removed_langs`
+- **Status:** Works
+- **Open:** a future Lua-style, JS-style and Python-style text language on our own VM (see UNFINISHED.md) is planned; nothing converts old Lua or C# scripts
 - **Related:** 13.4, 13.5
-- **Words:** Lua, C#, Mono, mcs, csharp, lua backend, OKAY_WITH_LUA, OKAY_WITH_CSHARP, script language dropdown
-- **Seen as:** the language dropdown is missing; a Lua or C# script does nothing; the editor shows no errors for those languages
-- **Ask me like:** "work on 13.3.1, add on_collision to the Lua backend"
+- **Words:** Lua, C#, Mono, mcs, csharp, lua backend, removed language, language not supported, old project, script language dropdown
+- **Seen as:** a Lua or C# script does nothing; the Console says the script language is no longer supported; an old scene loads but its script is silent
+- **Ask me like:** "why does my old Lua script not run"
 
 ### 13.4 Script components and script UI
 - **What:** The glue that puts a script on an object: the language-neutral VM interface, the Script component with its source and public fields, starter scripts, and the bridge that lets scripts draw immediate-mode UI.

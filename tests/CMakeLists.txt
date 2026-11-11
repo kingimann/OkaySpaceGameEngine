@@ -490,19 +490,10 @@ target_link_libraries(test_steam PRIVATE okay::engine)
 add_test(NAME steam COMMAND test_steam)
 
 
-# Built only when the optional Lua backend is enabled.
-if(OKAY_WITH_LUA)
-    add_executable(test_lua test_lua.cpp)
-    target_link_libraries(test_lua PRIVATE okay::engine)
-    add_test(NAME lua COMMAND test_lua)
-endif()
-
-# Built only when the optional C# (Mono) backend is enabled.
-if(OKAY_WITH_CSHARP)
-    add_executable(test_csharp test_csharp.cpp)
-    target_link_libraries(test_csharp PRIVATE okay::engine)
-    add_test(NAME csharp COMMAND test_csharp)
-endif()
+# Old scenes naming the removed Lua / Mono C# backends still load and say "no longer supported".
+add_executable(test_script_removed_langs test_script_removed_langs.cpp)
+target_link_libraries(test_script_removed_langs PRIVATE okay::engine)
+add_test(NAME script_removed_langs COMMAND test_script_removed_langs)
 
 add_executable(test_follow test_follow.cpp)
 target_link_libraries(test_follow PRIVATE okay::engine)

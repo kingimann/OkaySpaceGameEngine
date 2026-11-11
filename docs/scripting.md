@@ -5,7 +5,7 @@
 > [scripting_reference.md](scripting_reference.md). All docs: [README.md](README.md).
 
 OkayScript is the engine's built-in scripting language — a small, dependency-free
-language that ships in every build (no Lua/C# toolchain required). It's its own
+language that ships in every build (no external toolchain required). It's its own
 tiny language, designed so you write almost nothing and still do a lot.
 
 The whole point is minimal code:
@@ -1085,7 +1085,6 @@ foreach (float w in new int[] { 1, 2 }) Debug.Log(w / 2);   // ints convert to f
 
 ## Other backends
 
-OkayScript is the default, but the engine also supports **Lua** and **C#**
-backends when built with `-DOKAY_WITH_LUA=ON` / `-DOKAY_WITH_CSHARP=ON`, and a
+OkayScript is the engine's text scripting language, alongside a
 node-based **visual scripting** graph (see [visual_scripting.md](visual_scripting.md)).
 Scripts can be edited in the in-engine Script Editor panel or in an external IDE.

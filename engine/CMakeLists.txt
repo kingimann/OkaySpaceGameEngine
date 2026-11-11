@@ -140,6 +140,7 @@ add_library(okay_engine
     src/Audio/AudioMixer.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
+    src/Audio/VorbisDecoder.cpp
     src/AI/Pathfinding.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
@@ -222,7 +223,7 @@ if(MSVC)
     set_source_files_properties(src/Audio/AudioDecode.cpp PROPERTIES COMPILE_OPTIONS "/w;/O2")
 else()
     set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "-w;-O2")
-    # The vendored OGG/MP3 decoders (stb_vorbis, dr_mp3) build inside this file.
+    # The vendored MP3 decoder (dr_mp3) builds inside this file.
     set_source_files_properties(src/Audio/AudioDecode.cpp PROPERTIES COMPILE_OPTIONS "-w;-O2")
 endif()
 # Silence warnings from the third-party single-header libraries. `-Wno-narrowing`

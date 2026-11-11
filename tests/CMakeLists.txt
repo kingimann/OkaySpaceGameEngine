@@ -63,6 +63,12 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+# Own Ogg Vorbis decoder: SNR vs libvorbis references, Ogg framing, headers, truncation, bit-flip and noise fuzzing.
+add_executable(test_vorbis_decoder test_vorbis_decoder.cpp)
+target_link_libraries(test_vorbis_decoder PRIVATE okay::engine)
+target_compile_definitions(test_vorbis_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vorbis_decoder COMMAND test_vorbis_decoder)
+
 add_executable(test_audio_music test_audio_music.cpp)
 target_link_libraries(test_audio_music PRIVATE okay::engine)
 add_test(NAME audio_music COMMAND test_audio_music)

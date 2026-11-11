@@ -944,7 +944,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the cutscene plays twice or from the middle after loading | [10.1](10-story-cinematics.md#101-cutscene-sequences-and-sequence-player) Cutscene sequences and Sequence Player |
 | the demo prints text frames | [42.1](42-examples-samples.md#421-sandbox-demo-solar-system) Sandbox demo (solar system) |
 | the device preview shows the wrong insets | [12.9](12-ingame-ui.md#129-mobile-scaling) Mobile scaling |
-| the dialog opens in the wrong folder | [37.3](37-platform-windowing.md#373-native-file-dialogs) Native file dialogs |
+| the dialog opens in the wrong folder | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the dialogue box covers the screen or is too small | [10.4](10-story-cinematics.md#104-story-ui-dialogue-box-quest-tracker-and-journal) Story UI: dialogue box, quest tracker and journal |
 | the dialogue box is hidden behind the game image | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
 | the dialogue Test panel does not match Play | [15.6](15-editor.md#156-navigation-behavior-tree-dialogue-localization-modeling-windows) Navigation, Behavior Tree, Dialogue, Localization, Modeling windows |
@@ -966,7 +966,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the exported game cannot find the mesh file | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | the exported game is missing a texture or sound | [18.6](18-build-export-release.md#186-desktop-game-export-build-game-and-the-export-check) Desktop game export (Build Game) and the export check |
 | the F1 panel is missing | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
-| the file filter hides my files | [37.3](37-platform-windowing.md#373-native-file-dialogs) Native file dialogs |
+| the file filter hides my files | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the first build fails for a missing SDL2 | [41.3](41-build-tools-infra.md#413-local-build-and-launch-scripts) Local build and launch scripts |
 | the Flow Graph window cannot be opened | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | the fly camera is too fast | [4.4](04-characters-cameras.md#44-shooter-and-top-down) Shooter and top-down |
@@ -1028,7 +1028,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the NPC dies but nothing drops | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
 | the object sinks into the chest | [5.9](05-animation-ik.md#59-object-holding) Object holding |
 | the official game card is missing | [17.14](17-launcher-platform.md#1714-official-game-install-update-publish) Official game: install, update, publish |
-| the Open button does nothing | [37.3](37-platform-windowing.md#373-native-file-dialogs) Native file dialogs |
+| the Open button does nothing | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
 | the panel does not show in the Scene view | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
 | the panel is slow on a big project | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |

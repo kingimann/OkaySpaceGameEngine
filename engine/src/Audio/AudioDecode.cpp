@@ -1,8 +1,9 @@
 // OGG Vorbis and MP3 decoding for AudioClip, plus Load() by file extension and
-// the shared decode cache. The decoders are vendored single-file libraries
-// (stb_vorbis and dr_mp3, both public domain), compiled only in this file
-// (warnings off for it in engine/CMakeLists.txt).
+// the shared decode cache. OGG goes through the engine's own decoder
+// (VorbisDecoder.cpp); MP3 goes through the vendored dr_mp3 (public domain),
+// compiled only in this file (warnings off for it in engine/CMakeLists.txt).
 #include "okay/Audio/AudioClip.hpp"
+#include "okay/Audio/VorbisDecoder.hpp"
 #include "okay/Core/Log.hpp"
 
 #include <algorithm>
@@ -14,16 +15,9 @@
 #include <mutex>
 #include <vector>
 
-#define STB_VORBIS_NO_PUSHDATA_API
-#define STB_VORBIS_NO_STDIO
-#include "stb_vorbis.c"
 #define DR_MP3_IMPLEMENTATION
 #define DR_MP3_NO_STDIO
 #include "dr_mp3.h"
-// stb_vorbis leaks single-letter macros (C, L, R) into the rest of the file.
-#undef C
-#undef L
-#undef R
 
 namespace okay {
 
@@ -62,19 +56,13 @@ bool AudioClip::LoadOGG(const std::string& path, std::string* error) {
     samples.clear();
     std::vector<unsigned char> buf;
     if (!ReadFile(path, buf, error)) return false;
-    int channels = 0, rate = 0;
-    short* pcm = nullptr;
-    const int frames = stb_vorbis_decode_memory(buf.data(), (int)buf.size(), &channels, &rate, &pcm);
-    if (frames <= 0 || !pcm || channels <= 0) {
-        if (pcm) std::free(pcm);
+    VorbisAudio audio;
+    if (!DecodeVorbis(buf.data(), buf.size(), audio, nullptr) || audio.FrameCount() == 0) {
         if (error) *error = "not a readable OGG Vorbis file";
         return false;
     }
-    std::vector<float> f(static_cast<std::size_t>(frames) * channels);
-    for (std::size_t i = 0; i < f.size(); ++i) f[i] = pcm[i] / 32768.0f;
-    std::free(pcm);
-    Downmix(f.data(), (std::size_t)frames, channels, samples);
-    sampleRate = rate;
+    Downmix(audio.samples.data(), audio.FrameCount(), audio.channels, samples);
+    sampleRate = audio.sampleRate;
     return true;
 }
 

@@ -12,7 +12,7 @@ A step ships only when it is finished and tested. Nothing here is started yet un
 | Assimp (optional) | `okay::ModelImport` entry point | OBJ and glTF/GLB readers (glTF already exists), then Collada, 3DS, PLY, STL; FBX stays on ufbx until our own FBX reader exists | Not started |
 | ufbx | same | Binary FBX reader, then ASCII FBX | Not started |
 | SDL2 | `okay::Platform` (window, events, GL context, gamepad, audio device, clipboard, timers) | Win32 first (window, input, WGL/D3D), then X11, then macOS; gamepad and audio device per OS (XInput, evdev/ALSA, CoreAudio) | Not started |
-| Dear ImGui | `okay::ui` editor toolkit built on `okayui` | Own immediate-mode core (layout, widgets, text, docking), then port panels one at a time | Not started |
+| Dear ImGui | `okayui` (our existing own toolkit) is the replacement | Give OkayUI a headless software renderer and golden/input test harness first (in progress), then close the gaps the ImGui usage audit lists (docking, tables, tabs, plots, fonts, GPU backends), then port editor and launcher panels one at a time | Started |
 | libsodium | `okay::crypto` wrapper | Start now, side by side: ChaCha20-Poly1305, BLAKE2b, X25519, Ed25519, checked against the published RFC and libsodium test vectors, constant-time by construction, fuzzed. It is not the default, and nothing switches over, until an outside expert has reviewed it | Not started |
 | Steamworks, Photon | `okay::net` and Steam service interfaces (exist) | Not replaced. These are services our users want to publish on and connect through, so we keep supporting them as optional integrations, and keep improving the interfaces. Our own relay and matchmaking sit next to them as an option, not instead | Supported |
 

@@ -159,6 +159,7 @@ add_library(okay_engine
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
+    src/Graphics/TtfRaster.cpp
     src/Graphics/EmbeddedFont.cpp
     src/Debug/FrameHistory.cpp
     src/Debug/GpuTimer.cpp
@@ -240,7 +241,7 @@ endif()
 # is required in addition to `-w`: vendored tables (stb) may initialise `char`
 # arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR
 # that `-w` does not downgrade, even though GCC/MinGW accept it.
-set_source_files_properties(src/Graphics/Image.cpp src/Graphics/TtfFont.cpp
+set_source_files_properties(src/Graphics/Image.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES

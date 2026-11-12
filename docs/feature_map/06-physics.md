@@ -92,8 +92,8 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **API:** `Physics3D::Raycast`, `RaycastAll`, `Linecast`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `Physics2D::Raycast`, `OverlapCircle`, `RaycastHit3D`, `RaycastHit2D`, `PhysicsDebug::Collect`, script builtins `raycast_hit` and `overlap` (registered in area 13)
 - **Editor:** View > Scene Overlays > Physics Debug > Show physics, Rays cast from scripts
 - **Docs:** -
-- **Tests:** `queries`, `physics_queries_ext`, `script_physics`, `phys_math`
-- **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`
+- **Tests:** `queries`, `physics_queries_ext`, `script_physics`, `phys_math`, `physics_nan`
+- **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`; shape casts always end (a NaN or infinite reach is a miss, and a cast far from the origin stops after a fixed number of samples; `physics_nan`)
 - **Open:** no physics doc, so the query list is only in the headers and `docs/engine_api.md`; 3D shape casts skip triggers by default while rays include them (by design, per the header); no 2D box or capsule casts
 - **Related:** 6.7, 13.6, 14.4, 9.5
 - **Words:** raycast, linecast, spherecast, boxcast, capsulecast, overlap, RaycastHit, hit.point, hit.normal, ignore, layerMask, queryTriggers, physics debug, contact points

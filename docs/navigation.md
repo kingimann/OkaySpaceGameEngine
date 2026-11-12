@@ -207,10 +207,17 @@ links K
 l from to ax ay az bx by bz   # a portal: the part of the shared edge both polygons own
 ```
 
-Unknown records are skipped, so a newer build's file still loads.
+Unknown records are skipped, so a newer build's file still loads. A file whose vertices are
+not finite numbers (`nan`, `inf`) is refused with "non-finite vertex" and loads nothing. The
+lookup grid behind the queries is at most 2048 cells a side, so a mesh far larger than 16 km
+gets bigger cells rather than a bigger grid. A mesh whose extent overflows a float loads but
+has no grid, and every query on it finds nothing.
 
 ## Limits
 
+- The older grid pathfinder (`Pathfinding::AStar`, `OnTilemap`) takes at most
+  `Pathfinding::kMaxCells` cells (width times height, 4096 x 4096); a larger grid
+  returns no path.
 - Polygons are axis-aligned rectangles at cell resolution: walls at an angle
   get a staircase edge one cell wide. Lower the cell size where it shows.
 - One agent radius per bake. A game with both rats and ogres bakes for the

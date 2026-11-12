@@ -110,6 +110,13 @@ struct Event {
 // ---- Windows and the OpenGL context -----------------------------------------
 constexpr int kCentered = 0x2FFF0000;   // x / y: let the window manager centre it
 
+/// The largest window edge the player will ask for (a bigger number is a typo, not a screen).
+constexpr int kMaxWindowExtent = 16384;
+/// A window width or height read from a config file: anything below 1 (zero, negative) or past
+/// kMaxWindowExtent is not a size, so it becomes `fallback`. Backends refuse such sizes, which
+/// leaves the caller with no window at all.
+inline int ValidWindowExtent(int v, int fallback) { return v >= 1 && v <= kMaxWindowExtent ? v : fallback; }
+
 struct WindowDesc {
     std::string title = "OkaySpace";
     int x = kCentered, y = kCentered;

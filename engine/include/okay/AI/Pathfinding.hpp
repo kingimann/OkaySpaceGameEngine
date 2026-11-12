@@ -12,6 +12,10 @@ class Pathfinding {
 public:
     struct Cell { int x = 0; int y = 0; };
 
+    /// The most cells (width * height) a search will take on: 4096 x 4096. A larger grid has no
+    /// path (an empty result), so a bad size can never size an allocation or wrap an index.
+    static constexpr long long kMaxCells = 1LL << 24;
+
     /// Find a path from (sx, sy) to (gx, gy) over a width*height grid where
     /// `walkable[y * width + x]` is true for passable cells. Returns the cells
     /// from start to goal inclusive, or an empty vector if no path exists.

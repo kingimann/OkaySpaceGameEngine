@@ -20,7 +20,7 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **Editor:** View > Editors & Tools > Navigation (Add Nav Mesh Surface, Bake, Clear); Scene view mesh overlay; Add Component > Gameplay > Nav Mesh Surface
 - **Docs:** `docs/navigation.md`
 - **Tests:** `navmesh`, `script_nav`
-- **Status:** Works - NavMesh.cpp, NavMeshSurface.cpp, Navigation.cpp and the facade header read; bake and path behaviour (walls, doorways, ramps, islands) covered by `navmesh` and `script_nav`
+- **Status:** Works - NavMesh.cpp, NavMeshSurface.cpp, Navigation.cpp and the facade header read; bake and path behaviour (walls, doorways, ramps, islands) covered by `navmesh` and `script_nav`; a `.okaynav` with a non-finite vertex is refused and the lookup grid is capped at 2048 cells a side (`navmesh`)
 - **Open:** per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; no obstacle carving (area types and off-mesh links are 9.6); Navigation uses only the first enabled surface in a scene; with no mesh `FindPath` always returns a path (a straight line when the grid finds none), so the grid cannot report an unreachable goal
 - **Related:** 9.2, 9.5, 4.4, 6.2, 2.6, 27.4
 - **Words:** navmesh, nav mesh, NavMeshSurface, bake, .okaynav, pathfinding, funnel, walkable, navigation window, NavGrid3D, probe grid, agent radius, max slope, step height
@@ -57,7 +57,7 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **Docs:** `docs/navigation.md`
 - **Tests:** `pathfinding`
 - **Status:** Works - Pathfinding.hpp and Pathfinding.cpp read in full (A* with Manhattan or octile cost); covered by `pathfinding` (detours, no path, diagonals, tilemap)
-- **Open:** 2D grid only; no weighted cells, no path smoothing, no moving obstacles; a start or goal on a wall returns no path; not used by the 3D agents, which go through `Navigation` (9.1.4)
+- **Open:** 2D grid only; no weighted cells, no path smoothing, no moving obstacles; a start or goal on a wall returns no path; a grid over `Pathfinding::kMaxCells` (4096 x 4096) returns no path; not used by the 3D agents, which go through `Navigation` (9.1.4)
 - **Related:** 9.1, 4.3, 2.6
 - **Words:** A*, astar, grid pathfinding, tilemap path, walkable grid, tower defense, 2D pathfinding, Pathfinding
 - **Seen as:** 2D enemies cut through walls or cannot find a route on a tilemap; a path zig-zags; no route is found when one exists

@@ -11,9 +11,12 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshLink.hpp"
+#include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Math/Mat4.hpp"
+#include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -41,7 +44,7 @@ bool g_showNavigation = false;
 
 namespace {
 
-bool s_showMesh = true, s_showPortals = false, s_showPaths = true, s_showObstacles = true;
+bool s_showMesh = true, s_showPortals = false, s_showPaths = true, s_showObstacles = true, s_showLinks = true;
 bool s_sendMode = false;    // Scene-view clicks send the selected agent
 
 std::string SafeName(const std::string& n) {
@@ -121,6 +124,107 @@ float FileKB(const std::string& p) {
 }
 
 void Tip(const char* text) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text); }
+
+// The colour an area is drawn in (Scene view overlay, area table): blue ground, red blocked,
+// teal water, tan road, and a stable hue per custom area.
+ImU32 AreaColor(int area, int alpha) {
+    switch (area) {
+        case NavArea::Walkable:    return IM_COL32(70, 150, 255, alpha);
+        case NavArea::NotWalkable: return IM_COL32(230, 60, 60, alpha);
+        case NavArea::Water:       return IM_COL32(40, 200, 190, alpha);
+        case NavArea::Road:        return IM_COL32(225, 190, 90, alpha);
+        default: {
+            float r, g, b;
+            ImGui::ColorConvertHSVtoRGB(std::fmod((float)(area - 4) * 0.137f + 0.08f, 1.0f), 0.65f, 0.95f, r, g, b);
+            return IM_COL32((int)(r * 255), (int)(g * 255), (int)(b * 255), alpha);
+        }
+    }
+}
+
+// The scene's surface for area names (any surface will do: there is one per scene in practice).
+const NavMeshSurface* NamesSurface(Scene& sc) { return sc.FindObjectOfType<NavMeshSurface>(); }
+std::string AreaLabel(Scene& sc, int area) {
+    const NavMeshSurface* ns = NamesSurface(sc);
+    return std::to_string(area) + "  " + (ns ? ns->AreaName(area) : NavAreaDefaultName(area));
+}
+
+// A combo of the 32 areas; true when the choice changed.
+bool AreaCombo(Scene& sc, const char* label, int* area) {
+    bool changed = false;
+    *area = std::clamp(*area, 0, kNavAreaCount - 1);
+    if (ImGui::BeginCombo(label, AreaLabel(sc, *area).c_str())) {
+        for (int i = 0; i < kNavAreaCount; ++i) {
+            ImGui::PushID(i);
+            ImGui::ColorButton("##c", ImGui::ColorConvertU32ToFloat4(AreaColor(i, 255)), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, ImVec2(10, 10));
+            ImGui::SameLine();
+            if (ImGui::Selectable(AreaLabel(sc, i).c_str(), i == *area)) { *area = i; changed = true; }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+// An area mask as a combo of checkboxes.
+bool AreaMaskCombo(Scene& sc, const char* label, std::uint32_t* mask) {
+    bool changed = false;
+    int on = 0; for (int i = 0; i < kNavAreaCount; ++i) if ((*mask >> i) & 1u) ++on;
+    char summary[48];
+    if (on == kNavAreaCount) std::snprintf(summary, sizeof(summary), "Everything");
+    else if (*mask == kNavDefaultAreaMask) std::snprintf(summary, sizeof(summary), "All but Not Walkable");
+    else if (on == 0) std::snprintf(summary, sizeof(summary), "Nothing");
+    else std::snprintf(summary, sizeof(summary), "%d of %d areas", on, kNavAreaCount);
+    if (ImGui::BeginCombo(label, summary)) {
+        if (ImGui::SmallButton("All but Not Walkable")) { *mask = kNavDefaultAreaMask; changed = true; }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Everything")) { *mask = kNavAllAreas; changed = true; }
+        for (int i = 0; i < kNavAreaCount; ++i) {
+            bool b = ((*mask >> i) & 1u) != 0;
+            ImGui::PushID(i);
+            if (ImGui::Checkbox(AreaLabel(sc, i).c_str(), &b)) { if (b) *mask |= (1u << i); else *mask &= ~(1u << i); changed = true; }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+// The area table on the surface: name and traversal cost per area. Costs apply at once
+// (no rebake); an area's number is what the baked polygons carry.
+bool AreasUI(EditorState& ed, NavMeshSurface* ns, const char* id) {
+    bool changed = false;
+    ImGui::PushID(id);
+    if (ImGui::TreeNode("Areas")) {
+        ImGui::TextDisabled("Cost multiplies distance in the path search: below 1 is preferred, above 1 avoided.");
+        const bool open = ImGui::BeginChild("##areas", ImVec2(0, 170), ImGuiChildFlags_Borders);
+        if (open) {
+            for (int i = 0; i < kNavAreaCount; ++i) {
+                ImGui::PushID(i);
+                ImGui::ColorButton("##c", ImGui::ColorConvertU32ToFloat4(AreaColor(i, 255)), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, ImVec2(12, 12));
+                ImGui::SameLine();
+                ImGui::Text("%2d", i);
+                ImGui::SameLine();
+                char nm[48]; std::snprintf(nm, sizeof(nm), "%s", ns->areaName[i].c_str());
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::InputTextWithHint("##n", NavAreaDefaultName(i), nm, sizeof(nm))) { ns->areaName[i] = nm; changed = true; }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(70);
+                if (i == NavArea::NotWalkable) ImGui::TextDisabled("not baked");
+                else if (ImGui::DragFloat("##cost", &ns->areaCost[i], 0.05f, 0.0f, 100.0f, "x%.2f")) { ns->areaCost[i] = std::max(ns->areaCost[i], 0.0f); changed = true; }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        if (ImGui::SmallButton("Reset Costs")) {
+            for (int i = 0; i < kNavAreaCount; ++i) ns->areaCost[i] = NavAreaDefaultCost(i);
+            changed = true;
+        }
+        ImGui::TreePop();
+    }
+    ImGui::PopID();
+    if (changed) ed.dirty = true;
+    return changed;
+}
 
 bool BakeSettingsUI(EditorState& ed, NavMeshSurface* ns, const char* id) {
     bool changed = false;
@@ -253,6 +357,7 @@ void DrawNavigationWindow(EditorState& ed) {
     if (ns->gameObject) ImGui::TextDisabled("Surface on \"%s\"", ns->gameObject->name.c_str());
     ImGui::SeparatorText("Bake Settings");
     BakeSettingsUI(ed, ns, "navwin");
+    AreasUI(ed, ns, "navwinareas");
     ImGui::Spacing();
     if (ns->IsBaking()) {
         char pb[32]; std::snprintf(pb, sizeof(pb), "Baking %.0f%%", ns->BakeProgress() * 100.0f);
@@ -296,12 +401,15 @@ void DrawNavigationWindow(EditorState& ed) {
     ImGui::Checkbox("Portals", &s_showPortals);
     ImGui::Checkbox("Show Agent Paths", &s_showPaths); ImGui::SameLine();
     ImGui::Checkbox("Show Obstacles", &s_showObstacles);
+    ImGui::Checkbox("Show Links", &s_showLinks);
+    Tip("Draw every Nav Mesh Link: start and end rings, the crossing arc, an arrow when it is one way. The mesh is coloured by area.");
     if (!g_showGizmos) ImGui::TextDisabled("(Gizmos are off in the Scene view, so the overlays are hidden.)");
     ImGui::SeparatorText("Agents");
     const auto& agents = Navigation::Agents(sc);
     const auto& obstacles = Navigation::Obstacles(sc);
-    ImGui::TextDisabled("%d agent%s, %d obstacle%s", (int)agents.size(), agents.size() == 1 ? "" : "s",
-                        (int)obstacles.size(), obstacles.size() == 1 ? "" : "s");
+    ImGui::TextDisabled("%d agent%s, %d obstacle%s, %d link%s", (int)agents.size(), agents.size() == 1 ? "" : "s",
+                        (int)obstacles.size(), obstacles.size() == 1 ? "" : "s",
+                        (int)Navigation::Links(sc).size(), Navigation::Links(sc).size() == 1 ? "" : "s");
     if (ImGui::Checkbox("Send Selected Agent To Click", &s_sendMode)) {}
     Tip("While on, a left click on the ground in the Scene view sends the selected object's Nav Mesh Agent there "
         "(the scene's first agent when none is selected). Agents walk in Play. Esc turns it off.");
@@ -311,7 +419,8 @@ void DrawNavigationWindow(EditorState& ed) {
         const bool sel = ed.selected() == a->gameObject;
         if (ImGui::Selectable(a->gameObject->name.c_str(), sel, 0, ImVec2(150, 0))) ed.Select(a->gameObject);
         ImGui::SameLine();
-        if (a->HasPath()) ImGui::Text("%s %.1f m left", a->IsStopped() ? "stopped," : "walking,", a->RemainingDistance());
+        if (a->IsTraversingLink()) ImGui::Text("crossing a link, %.0f%%", a->LinkProgress() * 100.0f);
+        else if (a->HasPath()) ImGui::Text("%s %.1f m left", a->IsStopped() ? "stopped," : "walking,", a->RemainingDistance());
         else ImGui::TextDisabled(a->Arrived() ? "arrived" : "idle");
         ImGui::PopID();
     }
@@ -327,15 +436,40 @@ void DrawNavigationOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, ImVe
     const View v{&vp, center, canvasSize};
     const NavMesh* mesh = Navigation::Mesh(sc);
     if (s_showMesh && mesh) {
-        const ImU32 fill = IM_COL32(70, 150, 255, 60), edge = IM_COL32(100, 180, 255, 180);
         Vec3 w[4];
         for (const NavMesh::Poly& p : mesh->polys) {
             for (int k = 0; k < 4; ++k) { w[k] = mesh->vertices[(std::size_t)p.v[k]]; w[k].y += 0.03f; }
-            v.Poly(dl, w, 4, fill, edge, 1.0f);
+            v.Poly(dl, w, 4, AreaColor(p.area, p.area == NavArea::Walkable ? 60 : 90), AreaColor(p.area, 180), 1.0f);
         }
         if (s_showPortals)
             for (const NavMesh::Link& l : mesh->links)
                 v.Line(dl, l.a + Vec3{0, 0.05f, 0}, l.b + Vec3{0, 0.05f, 0}, IM_COL32(255, 255, 255, 70), 1.0f);
+    }
+    if (s_showLinks) {
+        for (NavMeshLink* l : Navigation::Links(sc)) {
+            if (!l || !l->transform || !l->gameObject || !l->gameObject->active) continue;
+            const bool sel = ed.selected() == l->gameObject;
+            const bool usable = l->Usable();
+            const ImU32 col = !usable ? IM_COL32(150, 150, 150, 150)
+                            : sel ? IM_COL32(255, 235, 120, 255) : AreaColor(l->area == NavArea::Walkable ? 3 : l->area, 230);
+            const Vec3 a = l->WorldStart(), b = l->WorldEnd();
+            v.Ring(dl, a + Vec3{0, 0.05f, 0}, 0.3f, col, 2.0f);
+            v.Ring(dl, b + Vec3{0, 0.05f, 0}, 0.3f, col, 2.0f);
+            Vec3 prev = a;
+            for (int k = 1; k <= 16; ++k) { const Vec3 q = l->PointAt(a, b, (float)k / 16.0f); v.Line(dl, prev, q, col, sel ? 3.0f : 2.0f); prev = q; }
+            // An arrow head at the end (and at the start when the link works both ways).
+            auto head = [&](const Vec3& tip, const Vec3& from) {
+                Vec3 d = from - tip; d.y = 0.0f;
+                const float m = std::sqrt(d.x * d.x + d.z * d.z);
+                if (m < 1e-3f) return;
+                d = d * (0.35f / m);
+                const Vec3 perp{-d.z * 0.5f, 0.0f, d.x * 0.5f};
+                v.Line(dl, tip, tip + d + perp, col, 2.0f);
+                v.Line(dl, tip, tip + d - perp, col, 2.0f);
+            };
+            head(b, l->PointAt(a, b, 0.9f));
+            if (l->bidirectional) head(a, l->PointAt(a, b, 0.1f));
+        }
     }
     if (s_showObstacles) {
         for (NavMeshObstacle* o : Navigation::Obstacles(sc)) {
@@ -419,6 +553,7 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
             bool ok = false;
             if (ns->PollBake(&ok)) { if (ok) StoreBake(ed, ns); else ConsoleLog("Navigation: bake cancelled", 1); }
             BakeSettingsUI(ed, ns, "navinsp");
+            AreasUI(ed, ns, "navinspareas");
             ImGui::Spacing();
             if (ns->IsBaking()) {
                 ImGui::ProgressBar(ns->BakeProgress(), ImVec2(-1, 0));
@@ -454,12 +589,15 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
             if (ImGui::Checkbox("Face Movement##nava", &na->faceMovement)) ed.dirty = true;
             if (ImGui::Checkbox("Drive Animation##nava", &na->driveAnimation)) ed.dirty = true;
             Tip("Set a sibling Character's idle / walk / run from the movement.");
+            if (AreaMaskCombo(ed.scene(), "Area Mask##nava", &na->areaMask)) ed.dirty = true;
+            Tip("Areas this agent may walk on and use links of. A forbidden area is never entered; a goal inside one has no path.");
             if (ImGui::DragFloat("Base Offset##nava", &na->baseOffset, 0.01f, -5.0f, 5.0f, "%.2f")) ed.dirty = true;
             Tip("The object's origin above its feet: 0 for a character pivoted at the feet, half the height for a cube.");
             if (go->GetComponent<NPCController>() || go->GetComponent<ClickToMoveController>())
                 ImGui::TextDisabled("Walks through this object's NPC / Click To Move controller.");
             if (ed.isPlaying()) {
-                if (na->HasPath()) ImGui::Text("%s: %.1f m left", na->IsStopped() ? "Stopped" : "Walking", na->RemainingDistance());
+                if (na->IsTraversingLink()) ImGui::Text("Crossing a link: %.0f%%", na->LinkProgress() * 100.0f);
+                else if (na->HasPath()) ImGui::Text("%s: %.1f m left", na->IsStopped() ? "Stopped" : "Walking", na->RemainingDistance());
                 else ImGui::TextDisabled(na->Arrived() ? "Arrived" : "Idle");
                 if (na->HasPath() && !na->IsStopped()) { if (ImGui::SmallButton("Stop##navagent")) na->Stop(); }
                 else if (na->IsStopped()) { if (ImGui::SmallButton("Resume##navagent")) na->Resume(); }
@@ -467,6 +605,46 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
             if (ImGui::SmallButton(s_sendMode ? "Stop Sending##nava" : "Send To Click (Scene view)##nava")) { s_sendMode = !s_sendMode; if (s_sendMode) ed.Select(go); }
             Tip("Click the ground in the Scene view to order this agent there (it walks in Play).");
             if (ImGui::SmallButton("Remove##navagent")) toRemove = na;
+        }
+    }
+    if (auto* nm = dynamic_cast<NavMeshModifier*>(comp)) {
+        if (header("Nav Mesh Modifier", nm, &toRemove, true)) {
+            if (AreaCombo(ed.scene(), "Area##navm", &nm->area)) ed.dirty = true;
+            Tip("The area this object's colliders bake as: Water and custom areas cost what the surface says, Road is cheap, Not Walkable cuts a hole in the mesh. Bake again after changing it.");
+            if (ImGui::Checkbox("Apply To Children##navm", &nm->applyToChildren)) ed.dirty = true;
+            Tip("Also the colliders of child objects that have no modifier of their own.");
+            if (!go->GetComponent<Collider3D>() && !nm->applyToChildren) ImGui::TextDisabled("No 3D collider on this object: nothing to mark.");
+            if (ImGui::SmallButton("Remove##navmod")) toRemove = nm;
+        }
+    }
+    if (auto* nl = dynamic_cast<NavMeshLink*>(comp)) {
+        if (header("Nav Mesh Link", nl, &toRemove, true)) {
+            int ty = (int)nl->type;
+            if (ImGui::Combo("Type##navl", &ty, "Jump\0Drop\0Ladder\0")) { nl->type = (NavMeshLink::Type)ty; ed.dirty = true; }
+            Tip("How an agent crosses: Jump follows an arc, Drop falls (slow, then fast), Ladder climbs in a straight line.");
+            if (ImGui::DragFloat3("Start##navl", &nl->startPoint.x, 0.05f)) ed.dirty = true;
+            Tip("Where the crossing begins, in this object's local space. Keep it on the baked mesh (within 1.5 m).");
+            if (ImGui::DragFloat3("End##navl", &nl->endPoint.x, 0.05f)) ed.dirty = true;
+            if (ImGui::Checkbox("Bidirectional##navl", &nl->bidirectional)) ed.dirty = true;
+            Tip("Off: agents cross from Start to End only (a drop off a ledge).");
+            if (ImGui::DragFloat("Cost##navl", &nl->cost, 0.05f, 0.0f, 100.0f, "x%.2f")) { nl->cost = std::max(nl->cost, 0.0f); ed.dirty = true; }
+            Tip("Multiplies the crossing distance in the path search, on top of the area cost. Raise it so agents prefer walking when it is nearly as short.");
+            if (AreaCombo(ed.scene(), "Area##navl", &nl->area)) ed.dirty = true;
+            Tip("Agents whose Area Mask lacks this area ignore the link.");
+            if (ImGui::DragFloat("Speed##navl", &nl->speed, 0.05f, 0.0f, 100.0f, "%.2f")) { nl->speed = std::max(nl->speed, 0.0f); ed.dirty = true; }
+            Tip("Crossing speed in units per second; 0 uses the agent's own speed.");
+            if (nl->type == NavMeshLink::Type::Jump) {
+                if (ImGui::DragFloat("Arc Height##navl", &nl->arcHeight, 0.05f, 0.0f, 50.0f, "%.2f")) { nl->arcHeight = std::max(nl->arcHeight, 0.0f); ed.dirty = true; }
+            }
+            if (ImGui::SmallButton("Swap Start / End##navl")) { ed.PushUndo(); std::swap(nl->startPoint, nl->endPoint); ed.dirty = true; }
+            // Does each end sit on the baked mesh? A link whose end is off it is silently unusable.
+            if (const NavMesh* mesh = Navigation::Mesh(ed.scene())) {
+                const Vec3 ext{1.5f, 3.0f, 1.5f};
+                const bool a = mesh->FindNearestPoly(nl->WorldStart(), ext) >= 0, b = mesh->FindNearestPoly(nl->WorldEnd(), ext) >= 0;
+                if (!a || !b) ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%s is not on the baked mesh: the link is not used.", !a && !b ? "Neither end" : (!a ? "The start" : "The end"));
+                else ImGui::TextDisabled("Both ends are on the mesh.");
+            } else ImGui::TextDisabled("Bake the surface to check the ends are on the mesh.");
+            if (ImGui::SmallButton("Remove##navlink")) toRemove = nl;
         }
     }
     if (auto* no = dynamic_cast<NavMeshObstacle*>(comp)) {
@@ -502,6 +680,12 @@ void NavigationAddComponentItems(EditorState& ed, GameObject* go, const std::fun
                 a->baseOffset = -lo.y * s.y;
         }
         ed.dirty = true;
+    }
+    if (item(!go->GetComponent<NavMeshModifier>(), "Nav Mesh Modifier (mark water, road or blocked ground)")) {
+        ed.PushUndo(); go->AddComponent<NavMeshModifier>(); ed.dirty = true;
+    }
+    if (item(!go->GetComponent<NavMeshLink>(), "Nav Mesh Link (jump, drop or ladder between two points)")) {
+        ed.PushUndo(); go->AddComponent<NavMeshLink>(); ed.dirty = true;
     }
     if (item(!go->GetComponent<NavMeshObstacle>(), "Nav Mesh Obstacle (agents steer around it)")) {
         ed.PushUndo();

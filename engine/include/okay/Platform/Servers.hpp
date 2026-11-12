@@ -191,10 +191,12 @@ public:
         return out;
     }
 
-    // Leave a server (RLS only lets a non-owner delete their own membership row).
+    // Leave a server: delete MY membership row only. (Without the member filter an
+    // owner or admin would also match, and be allowed to remove, everyone below them.)
     bool Leave(long serverId) {
         if (serverId <= 0) return false;
-        return acct_.Api("/rest/v1/server_members?server_id=eq." + std::to_string(serverId), "DELETE").ok;
+        const std::string me = MyUid(); if (me.empty()) return false;
+        return acct_.Api("/rest/v1/server_members?server_id=eq." + std::to_string(serverId) + "&member=eq." + me, "DELETE").ok;
     }
 
     // ---- owner management (RLS restricts these to the server's owner) ------

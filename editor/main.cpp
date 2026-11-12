@@ -6011,7 +6011,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Import Model...")) PickAndImportModel();   // OS file explorer, then settings
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ%s", okay::AssimpAvailable() ? ", DAE, STL, ..." : "");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ, STL, PLY%s", okay::AssimpAvailable() ? ", DAE, 3DS, ..." : "");
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
         oked::DrawExamplesMenu(ed, [&ed](const std::function<void()>& run) { RunAfterSavePrompt(ed, "opening an example", run); });
         if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
@@ -7704,7 +7704,7 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
     GameObject* root = okay::AttachCharacterModel(ed.scene(), target, path, &log);
     if (!root) {
         ConsoleLog("Character model import failed: " + path +
-                   (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.gltf/.glb; other formats need Assimp)"), 2);
+                   (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
         return;
     }
     ed.Select(target); ed.dirty = true;
@@ -18843,7 +18843,7 @@ static GameObject* HierInstantiateAsset(EditorState& ed, const std::string& path
         if (!ok || !placed) {
             placed = nullptr;
             ConsoleLog("Model import failed: " + path +
-                       (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.gltf/.glb; other formats need Assimp)"), 2);
+                       (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
         }
     } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
         placed = ed.CreateSprite(std::filesystem::path(path).stem().string());   // takes its own undo step
@@ -44405,7 +44405,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 if (ok && placed) ApplyModelImportScale(placed, path);
                 if (!ok || !placed)
                     ConsoleLog("Model import failed: " + path +
-                               (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.gltf/.glb; other formats need Assimp)"), 2);
+                               (okay::AssimpAvailable() ? "" : " (this build reads .fbx/.obj/.stl/.ply/.gltf/.glb; other formats need Assimp)"), 2);
             }
             if (placed) {
                 placed->transform->SetPosition(drop);

@@ -55,6 +55,7 @@
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Render/ModelData.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/ModelAnimator.hpp"

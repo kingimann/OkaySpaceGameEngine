@@ -1,0 +1,12 @@
+# test materials
+newmtl red
+Kd 0.8 0.1 0.1
+Ke 0 0 0
+Ns 50
+map_Kd textures\red.png
+
+newmtl blue
+Kd 0.1 0.1 0.9
+map_Bump -bm 1.0 blue_n.png
+map_Kd -s 1 1 1 blue.png
+map_Ks spec.png

@@ -5,6 +5,7 @@
 // joining, leaving, kicking and promoting go through SECURITY DEFINER functions.
 // Drives an okay::account::AccountService; no-ops when signed out / offline.
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Privacy.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -73,7 +74,7 @@ public:
             out.members.push_back(m);
         }
         if (!inList.empty()) {
-            auto p = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen,playing&id=in.(" + inList + ")", "GET");
+            auto p = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen,playing&id=in.(" + inList + ")");
             if (p.ok)
                 for (const auto& o : SplitObjects(p.body)) {
                     const std::string id = Field(o, "id");

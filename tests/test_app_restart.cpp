@@ -690,6 +690,8 @@ int main(int argc, char** argv) {
             o.resultThere = fs::exists(result, ec);
             if (o.resultThere) o.resultBody = ReadFile(result);
             o.state = su::Read(state);
+            std::fprintf(stderr, "--- scenario %s: rc=%d, target %zu bytes, result file %s, state phase %d\n%s\n", tag.c_str(), o.rc,
+                         o.targetBytes.size(), o.resultThere ? "there" : "missing", (int)o.state.phase, o.log.c_str());   // shown by ctest -V
             return o;
         };
         const std::string oldProg = selfBytes + "OLD-LAUNCHER", newProg = selfBytes + "NEW-LAUNCHER";

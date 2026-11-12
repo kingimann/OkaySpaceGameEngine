@@ -2,6 +2,7 @@
 // The add-node panel: search, collapsible categories, favourites, and a details
 // pane. Shared by the right-click menu, a wire dropped in empty space, and Add node.
 #include "VisualScriptNodeDocs.hpp"
+#include "VisualScriptSearch.hpp"
 #include "imgui.h"
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <fstream>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace okay::editor::vsed {
@@ -229,6 +231,38 @@ inline bool VsPaletteStepIsDuplicate(const std::string& label) {
     return false;
 }
 
+/// True when the Add Node list shows this registry row.
+inline bool VsPaletteListed(const VsDef& d) {
+    return !(VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type));
+}
+
+/// What the search sees of one node: its name, the words it is also known by,
+/// topic, pins and help text. DrawNodePalette caches one per row.
+inline VsSearchItem VsSearchItemForDef(const VsDef& d) {
+    VsSearchItem it;
+    const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
+    const VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
+    it.title = d.title ? d.title : "";
+    it.topic = std::string(place.category ? place.category : "") + " " + (place.subcategory ? place.subcategory : "");
+    it.names = VsNodeSearchText(d.type) + " " + d.type + (api ? " engine api" : "");
+    if (d.cat >= 0 && d.cat < CAT_COUNT) {
+        static const char* oldCat[] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API","Script builtins"};
+        it.names += std::string(" ") + oldCat[d.cat];
+    }
+    for (int i = 0; i < (int)d.dataIn.size(); ++i)
+        it.pins += std::string(d.dataIn[i] ? d.dataIn[i] : "") + " " + okay::vs::PinTypeName(okay::vs::InputType(d.type, i)) + " ";
+    for (int i = 0; i < (int)d.dataOut.size(); ++i)
+        it.pins += std::string(d.dataOut[i] ? d.dataOut[i] : "") + " " + okay::vs::PinTypeName(okay::vs::OutputType(d.type, i, "")) + " ";
+    for (const char* x : d.execOut) if (x && *x) it.pins += std::string(x) + " ";
+    if (const char* what = VsNodeHelp(d.type)) it.desc = what;
+    else if (api) it.desc = api->doc;
+    if (const VsNodeDoc* doc = VsNodeDocFor(d.type)) it.desc += " " + VsSearchBlob(*doc);
+    it.aliases = VsAliasWordsFor(d.type);
+    it.level = (int)d.level;
+    VsSearchPrepare(it);
+    return it;
+}
+
 /// `addNode(def, arg)` places the node. `arg` is set for action steps.
 /// Topics (VisualScriptCategories.hpp) on the left, nodes in the middle, what the
 /// highlighted node does on the right. Levels filter the list.
@@ -244,6 +278,9 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     auto fits = [&](const VsDef& d) {
         return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput, dragged);
     };
+    // A wire dragged from a pin lists the nodes that can take it; this shows the rest after them.
+    static bool s_showAll = false;
+    int notFitting = 0;
     auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
     auto bright = [](ImU32 c) {   // the category colour, lifted so a dot reads on the dark list
         ImVec4 v = ImGui::ColorConvertU32ToFloat4(c);
@@ -252,7 +289,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     // Every placeable thing: nodes, script-API nodes, and Actions steps, each in a topic.
     struct Entry {
         const VsDef* def = nullptr; const VsStepInfo* step = nullptr; bool cond = false;
-        std::string title, cat, sub, key, desc, keywords, helpLine, example;
+        std::string title, cat, sub, key, desc, helpLine, example;
+        const VsSearchItem* si = nullptr; bool fit = true;
         const VsNodeDoc* doc = nullptr;
         VsLevel level = VsLevel::Intermediate;
         int catIndex = 0, rank = 0; bool browse = true; ImU32 col = 0;
@@ -273,12 +311,13 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     };
     std::vector<Entry> all;
     for (const auto& d : Registry()) {
-        if (!fits(d)) continue;
+        const bool fit = fits(d);
+        if (!fit && !s_showAll) { ++notFitting; continue; }
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
         if (VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type)) continue;   // one row per job; untested nodes wait
         const bool dup = false;
-        Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type;
+        Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type; e.fit = fit;
         e.cat = place.category ? place.category : "";
         e.sub = place.subcategory ? place.subcategory : "";
         e.catIndex = VsPaletteCategoryIndex(place.category);
@@ -290,13 +329,6 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         else if (api && !api->doc.empty()) e.helpLine = api->doc;
         else if (d.title && d.title[0]) e.helpLine = std::string(d.title) + ".";
         if (const char* ex = VsNodeExample(d.type)) e.example = ex;
-        e.keywords = VsNodeSearchText(d.type);
-        if (api) { if (!e.keywords.empty()) e.keywords += ' '; e.keywords += "engine api"; }
-        if (d.cat >= 0 && d.cat < CAT_COUNT) {
-            static const char* oldCat[] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API","Script builtins"};
-            if (!e.keywords.empty()) e.keywords += ' ';
-            e.keywords += oldCat[d.cat];
-        }
         e.col = bright(catColor(e.catIndex));
         // Built from the pins: what goes in, what comes out.
         auto join = [](const std::vector<const char*>& v) {
@@ -318,14 +350,16 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     for (int pass = 0; pass < 2; ++pass) {
         const bool cond = pass == 1;
         const VsDef* sd = FindDef(cond ? "Condition" : "Action");
-        if (!StepCatalog || !sd || !fits(*sd)) continue;
+        if (!StepCatalog || !sd) continue;
+        const bool stepFit = fits(*sd);
         if (const auto* cat = StepCatalog(cond))
             for (const auto& si : *cat) {
                 if (si.listOnly) continue;
                 VsPlace place = VsPlaceForStep(si.op.c_str(), si.group.c_str());
                 if (VsPaletteStepIsDuplicate(si.label)) continue;   // the hand-written node is the one row
+                if (!stepFit && !s_showAll) { ++notFitting; continue; }
                 const bool sameAsNode = false;
-                Entry e; e.def = sd; e.step = &si; e.cond = cond; e.title = si.label;
+                Entry e; e.def = sd; e.step = &si; e.cond = cond; e.title = si.label; e.fit = stepFit;
                 e.cat = place.category ? place.category : "";
                 e.sub = place.subcategory ? place.subcategory : "";
                 e.catIndex = VsPaletteCategoryIndex(place.category);
@@ -334,13 +368,29 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 e.helpLine = si.desc;
                 e.rank = 1;
                 e.key = std::string(cond ? "c:" : "a:") + si.op; e.desc = si.desc;
-                e.keywords = si.group + (cond ? " check something" : " do something");
                 e.col = bright(catColor(e.catIndex));
                 all.push_back(std::move(e));
             }
     }
+    // One search item per row, built the first time the row is listed.
+    static std::unordered_map<std::string, VsSearchItem> s_items;
+    for (Entry& e : all) {
+        auto it = s_items.find(e.key);
+        if (it == s_items.end()) {
+            VsSearchItem si;
+            if (e.step) {
+                si.title = e.title; si.topic = e.cat + " " + e.sub; si.desc = e.desc;
+                si.names = e.step->op + " " + e.step->group + (e.cond ? " check something" : " do something");
+                si.level = (int)e.level;
+                VsSearchPrepare(si);
+            } else si = VsSearchItemForDef(*e.def);
+            it = s_items.emplace(e.key, std::move(si)).first;
+        }
+        e.si = &it->second;
+    }
     // Favourites and recently added, remembered between sessions.
     static std::vector<std::string> s_fav, s_recent;
+    static std::unordered_map<std::string, int> s_use;   // how often each row was added
     static int s_filter = 0;   // VsLevelFilter: 0 all, 1 basic, 2 intermediate, 3 advanced
     static bool s_loaded = false;
     auto saveLists = [&] {
@@ -348,12 +398,14 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         f << "lvl " << s_filter << "\n";
         for (const auto& k : s_fav) f << "fav " << k << "\n";
         for (const auto& k : s_recent) f << "rec " << k << "\n";
+        for (const auto& u : s_use) f << "use " << u.first << "|" << u.second << "\n";
     };
     if (!s_loaded) {
         s_loaded = true;
         std::ifstream f("okay_vsnodes.txt"); std::string kind, k;
         while (f >> kind >> k) {
             if (kind == "lvl") s_filter = std::clamp(std::atoi(k.c_str()), 0, 3);
+            else if (kind == "use") { const auto bar = k.rfind('|'); if (bar != std::string::npos) s_use[k.substr(0, bar)] = std::atoi(k.c_str() + bar + 1); }
             else (kind == "fav" ? s_fav : s_recent).push_back(k);
         }
     }
@@ -366,6 +418,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         s_recent.erase(std::remove(s_recent.begin(), s_recent.end(), e.key), s_recent.end());
         s_recent.insert(s_recent.begin(), e.key);
         if (s_recent.size() > 12) s_recent.resize(12);
+        ++s_use[e.key];
         saveLists();
         ImGui::CloseCurrentPopup();
     };
@@ -377,14 +430,20 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     static int s_kb = 0;
     static char search[64] = "";
     if (ImGui::IsWindowAppearing()) {
-        search[0] = '\0'; s_kb = 0; ImGui::SetKeyboardFocusHere();
+        search[0] = '\0'; s_kb = 0; s_showAll = false; ImGui::SetKeyboardFocusHere();
         // A wire dropped on empty space: start on the whole list, compatible nodes first.
         if (st.linkPending) { s_side = -3; s_sub = -1; s_subName.clear(); }
     }
-    if (st.linkPending && st.linkExec)
-        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit this flow pin");
-    else if (st.linkPending)
-        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit a %s pin", okay::vs::PinTypeName(dragged));
+    if (st.linkPending) {
+        if (st.linkExec) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Nodes that fit this flow pin come first");
+        else ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Nodes that fit a %s pin come first", okay::vs::PinTypeName(dragged));
+        ImGui::SameLine();
+        char lbl[48];
+        if (s_showAll) std::snprintf(lbl, sizeof lbl, "Show all nodes##showall");
+        else std::snprintf(lbl, sizeof lbl, "Show all nodes (+%d)##showall", notFitting);
+        if (ImGui::Checkbox(lbl, &s_showAll)) s_kb = 0;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also list the nodes that cannot take this wire. They come after the ones that can.");
+    }
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::InputTextWithHint("##vssearch", "Search nodes and actions...  (Up / Down, Enter to add)", search, sizeof search))
         s_kb = 0;
@@ -402,43 +461,6 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     ImGui::PopStyleVar();
     const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
     const std::string needle = lower(search);
-
-    // Fuzzy score: whole title > start > start of a word > anywhere > letters in
-    // order; type, category and description count a little. `hits` marks the
-    // matched letters of the title.
-    auto score = [&](const Entry& e, std::vector<int>& hits) -> int {
-        hits.clear();
-        if (needle.empty()) return 1;
-        const std::string t = lower(e.title);
-        if (t == needle) { for (int i = 0; i < (int)t.size(); ++i) hits.push_back(i); return 1000; }
-        std::size_t p = t.find(needle);
-        if (p != std::string::npos) {
-            for (std::size_t i = 0; i < needle.size(); ++i) hits.push_back((int)(p + i));
-            if (p == 0) return 800;
-            if (t[p - 1] == ' ' || t[p - 1] == '(') return 650;
-            return 500 - (int)p;
-        }
-        int run = 0, sc = 0; std::size_t j = 0;
-        for (std::size_t i = 0; i < t.size() && j < needle.size(); ++i) {
-            if (t[i] == needle[j]) { hits.push_back((int)i); ++j; run++; sc += 3 + run * 2 + (i == 0 || t[i - 1] == ' ' ? 6 : 0); }
-            else run = 0;
-        }
-        if (j == needle.size()) return 100 + sc;
-        hits.clear();
-        std::string pins;
-        if (e.def) {
-            for (int i = 0; i < (int)e.def->dataIn.size(); ++i)
-                pins += std::string(okay::vs::PinTypeName(okay::vs::InputType(e.def->type, i))) + " ";
-            for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
-                pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
-        }
-        const std::string extra = lower(e.cat + " " + e.sub + " " + e.keywords + " " +
-                                        (e.def ? e.def->type : "") + " " +
-                                        (e.def ? VsNodeSearchText(e.def->type) : std::string()) + " " +
-                                        (e.step ? e.step->op : "") + " " + e.desc + " " + pins +
-                                        (e.doc ? " " + VsSearchBlob(*e.doc) : std::string()));
-        return extra.find(needle) != std::string::npos ? 40 : 0;
-    };
 
     // ---- Sidebar ----
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
@@ -525,7 +547,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     ImGui::SameLine();
 
     // ---- Results ----
-    struct Row { const Entry* e; int sc; std::vector<int> hits; };
+    struct Row { const Entry* e; int sc; std::vector<int> hits; std::string why; };
     std::vector<Row> rows;
     auto recentRank = [&](const std::string& key) {
         const auto it = std::find(s_recent.begin(), s_recent.end(), key);
@@ -543,16 +565,25 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             if (s_side == -1 && !isFav(e.key)) continue;
             if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
         }
-        Row r{&e, 0, {}};
-        r.sc = score(e, r.hits);
-        if (r.sc > 0) rows.push_back(std::move(r));
+        if (needle.empty()) rows.push_back(Row{&e, 1, {}, {}});
     }
-    if (!needle.empty())
-        std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
-            return VsSearchRanksBefore(a.sc, a.e->level, recentRank(a.e->key),
-                                       b.sc, b.e->level, recentRank(b.e->key));
-        });
-    else if (s_side == -2)
+    if (!needle.empty()) {
+        // Ranked by VisualScriptSearch.hpp: names, synonyms, typos, abbreviations, several words.
+        std::vector<const VsSearchItem*> items;
+        std::vector<const Entry*> owners;
+        for (const auto& e : all) {
+            if (!passesLevel(e.level)) continue;
+            VsSearchItem* si = const_cast<VsSearchItem*>(e.si);
+            si->recentRank = recentRank(e.key);
+            const auto use = s_use.find(e.key);
+            si->uses = use == s_use.end() ? 0 : use->second;
+            si->fits = e.fit;
+            items.push_back(si); owners.push_back(&e);
+        }
+        VsSearchOptions opt; opt.fitFirst = st.linkPending;
+        for (VsSearchHit& h : VsSearchRun(items, search, opt))
+            rows.push_back(Row{owners[h.index], h.score, std::move(h.hits), VsSearchWhyText(h)});
+    } else if (s_side == -2)
         std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
             return std::find(s_recent.begin(), s_recent.end(), a.e->key) < std::find(s_recent.begin(), s_recent.end(), b.e->key);
         });
@@ -562,6 +593,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         });
     else if (st.linkPending)
         std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+            if (a.e->fit != b.e->fit) return a.e->fit;
             if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
             if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
             return a.e->rank < b.e->rank;
@@ -577,6 +609,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         });
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) s_kb = std::min(s_kb + 1, (int)rows.size() - 1);
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   s_kb = std::max(s_kb - 1, 0);
+    if (ImGui::IsKeyPressed(ImGuiKey_PageDown))  s_kb = std::min(s_kb + 8, (int)rows.size() - 1);
+    if (ImGui::IsKeyPressed(ImGuiKey_PageUp))    s_kb = std::max(s_kb - 8, 0);
     if (s_kb >= (int)rows.size()) s_kb = std::max(0, (int)rows.size() - 1);
 
     const float detailsW = 360.0f;
@@ -595,6 +629,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImGui::TextDisabled("Start here");
     }
     const float lh = ImGui::GetTextLineHeight();
+    // A search (or the suggestions for a wire) shows a second line: why it matched, then what it does.
+    const float rowH = (needle.empty() && !st.linkPending) ? lh + 14 : lh * 2 + 12;
     std::string lastHeader;
     for (int i = 0; i < (int)rows.size(); ++i) {
         const Entry& e = *rows[i].e;
@@ -610,7 +646,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImGui::PushID(i);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const bool kbSel = i == s_kb;
-        if (ImGui::Selectable("##row", kbSel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, lh + 14))) toAdd = &e;
+        if (ImGui::Selectable("##row", kbSel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, rowH))) toAdd = &e;
         if (ImGui::IsItemHovered()) {
             hovered = &e;
             ImGui::BeginTooltip();
@@ -627,10 +663,10 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (kbSel && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow))) ImGui::SetScrollHereY(0.5f);
         ImDrawList* rdl = ImGui::GetWindowDrawList();
         const float w = ImGui::GetContentRegionAvail().x;
-        rdl->AddCircleFilled(ImVec2(p.x + 8, p.y + (lh + 14) * 0.5f), 5.0f, e.col);
+        rdl->AddCircleFilled(ImVec2(p.x + 8, p.y + (rowH > lh + 14 ? lh * 0.5f + 7 : rowH * 0.5f)), 5.0f, e.col);
         // Title, matched letters in the accent colour.
         float x = p.x + 18;
-        const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = IM_COL32(110, 180, 255, 255);
+        const ImU32 normal = ImGui::GetColorU32(e.fit ? ImGuiCol_Text : ImGuiCol_TextDisabled), hit = IM_COL32(110, 180, 255, 255);
         for (int c = 0; c < (int)e.title.size(); ++c) {
             const char buf[2] = {e.title[c], 0};
             const bool h = std::find(rows[i].hits.begin(), rows[i].hits.end(), c) != rows[i].hits.end();
@@ -651,14 +687,34 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 rdl->AddText(ImVec2(b0.x + 4.0f, b0.y + 1.0f), IM_COL32(230, 236, 244, 255), badge);
             }
         }
-        // Category on the right, then the favourite star.
-        const float catW = ImGui::CalcTextSize(e.cat.c_str()).x;
+        // Topic on the right (with the subcategory when there is room), then the favourite star.
+        const std::string where = e.sub.empty() ? e.cat : e.cat + " / " + e.sub;
+        const std::string& topicText = (x + 20 < p.x + w - ImGui::CalcTextSize(where.c_str()).x - 32) ? where : e.cat;
+        const float catW = ImGui::CalcTextSize(topicText.c_str()).x;
         if (x + 20 < p.x + w - catW - 32)
-            rdl->AddText(ImVec2(p.x + w - catW - 32, p.y + 2), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.cat.c_str());
+            rdl->AddText(ImVec2(p.x + w - catW - 32, p.y + 2), ImGui::GetColorU32(ImGuiCol_TextDisabled), topicText.c_str());
+        if (rowH > lh + 14) {
+            // Second line: the reason a synonym or typo matched (accent), then the one-line help.
+            const std::string& reason = rows[i].why;
+            const float tx = p.x + 18, ty = p.y + lh + 5, clipR = p.x + w - 32;
+            rdl->PushClipRect(ImVec2(tx, ty), ImVec2(clipR, ty + lh + 2), true);
+            float lx = tx;
+            if (!e.fit) {
+                const char* no = "cannot take this wire  ";
+                rdl->AddText(ImVec2(lx, ty), IM_COL32(220, 150, 90, 255), no);
+                lx += ImGui::CalcTextSize(no).x;
+            }
+            if (!reason.empty()) {
+                rdl->AddText(ImVec2(lx, ty), IM_COL32(110, 180, 255, 255), reason.c_str());
+                lx += ImGui::CalcTextSize(reason.c_str()).x + ImGui::CalcTextSize("  ").x;
+            }
+            rdl->AddText(ImVec2(lx, ty), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.helpLine.c_str());
+            rdl->PopClipRect();
+        }
         ImGui::SameLine(w - 18);
         const bool fav = isFav(e.key);
         const ImVec2 sp = ImGui::GetCursorScreenPos();
-        if (ImGui::InvisibleButton("##fav", ImVec2(22, lh + 14))) {
+        if (ImGui::InvisibleButton("##fav", ImVec2(22, rowH))) {
             if (fav) s_fav.erase(std::remove(s_fav.begin(), s_fav.end(), e.key), s_fav.end());
             else s_fav.push_back(e.key);
             saveLists();
@@ -666,7 +722,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const bool sh = ImGui::IsItemHovered();
         if (sh) ImGui::SetTooltip(fav ? "Remove from favourites" : "Add to favourites");
         {   // a drawn star (the UI font has no star glyph)
-            const ImVec2 c(sp.x + 10, sp.y + (lh + 14) * 0.5f);
+            const ImVec2 c(sp.x + 10, sp.y + rowH * 0.5f);
             ImVec2 pts[10];
             for (int k = 0; k < 10; ++k) {
                 const float a = -1.5707963f + k * 0.6283185f, r = (k % 2) ? 2.6f : 6.0f;

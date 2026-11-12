@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.861.1
+  Editor
+  - Visual script: the Add Node menu no longer lowers the frame rate when it
+    opens or while you type in its search box. The node list is built once and
+    reused instead of being rebuilt on every frame.
+
 v2.861.0
   Editor
   - Prefabs: an override header shows what an instance changes, with revert and

@@ -256,6 +256,10 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const VsNodeDoc* doc = nullptr;
         VsLevel level = VsLevel::Intermediate;
         int catIndex = 0, rank = 0; bool browse = true; ImU32 col = 0;
+        bool fits = true;                       // can take the wire being dragged (set each frame, cheap)
+        std::string titleLower;                 // lower-cased once, when the list is built
+        mutable std::string blobLower;          // everything searchable, lower-cased on first use
+        mutable bool blobBuilt = false;
     };
     auto catColor = [&](int index) {
         // Stable hues so a topic keeps its dot. Common topics stay in the documented order.
@@ -271,9 +275,18 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const int n = (int)(sizeof cols / sizeof cols[0]);
         return cols[(index >= 0 && index < n) ? index : 0];
     };
-    std::vector<Entry> all;
-    for (const auto& d : Registry()) {
-        if (!fits(d)) continue;
+    // The list is built once and reused every frame: rebuilding ~2300 entries (a dozen strings and several
+    // lookups each) 60 times a second is what made the pop-up drop the frame rate. It is rebuilt only when
+    // the registry or a step catalogue changes size (a plugin or graph function was added or removed).
+    static std::vector<Entry> s_all;
+    static std::size_t s_regN = (std::size_t)-1, s_actN = (std::size_t)-1, s_condN = (std::size_t)-1;
+    const std::size_t regN = Registry().size();
+    const std::size_t actN = StepCatalog ? (StepCatalog(false) ? StepCatalog(false)->size() : 0) : 0;
+    const std::size_t condN = StepCatalog ? (StepCatalog(true) ? StepCatalog(true)->size() : 0) : 0;
+    const bool rebuild = regN != s_regN || actN != s_actN || condN != s_condN;
+    std::vector<Entry>& all = s_all;
+    if (rebuild) { all.clear(); s_regN = regN; s_actN = actN; s_condN = condN; }
+    if (rebuild) for (const auto& d : Registry()) {
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
         if (VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type)) continue;   // one row per job; untested nodes wait
@@ -313,12 +326,13 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (!out.empty()) e.desc += "Gives: " + out + ". ";
         if (!ex.empty())  e.desc += "Continues to: " + ex + ". ";
         if (d.param && d.paramHint) e.desc += std::string("Setting: ") + d.paramHint + ".";
+        e.titleLower = lower(e.title);
         all.push_back(std::move(e));
     }
-    for (int pass = 0; pass < 2; ++pass) {
+    if (rebuild) for (int pass = 0; pass < 2; ++pass) {
         const bool cond = pass == 1;
         const VsDef* sd = FindDef(cond ? "Condition" : "Action");
-        if (!StepCatalog || !sd || !fits(*sd)) continue;
+        if (!StepCatalog || !sd) continue;
         if (const auto* cat = StepCatalog(cond))
             for (const auto& si : *cat) {
                 if (si.listOnly) continue;
@@ -336,9 +350,12 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 e.key = std::string(cond ? "c:" : "a:") + si.op; e.desc = si.desc;
                 e.keywords = si.group + (cond ? " check something" : " do something");
                 e.col = bright(catColor(e.catIndex));
+                e.titleLower = lower(e.title);
                 all.push_back(std::move(e));
             }
     }
+    // Which entries take the wire being dragged: only worked out while a wire is being dragged.
+    for (auto& e : all) e.fits = !st.linkPending || !e.def || fits(*e.def);
     // Favourites and recently added, remembered between sessions.
     static std::vector<std::string> s_fav, s_recent;
     static int s_filter = 0;   // VsLevelFilter: 0 all, 1 basic, 2 intermediate, 3 advanced
@@ -409,7 +426,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     auto score = [&](const Entry& e, std::vector<int>& hits) -> int {
         hits.clear();
         if (needle.empty()) return 1;
-        const std::string t = lower(e.title);
+        const std::string& t = e.titleLower;
         if (t == needle) { for (int i = 0; i < (int)t.size(); ++i) hits.push_back(i); return 1000; }
         std::size_t p = t.find(needle);
         if (p != std::string::npos) {
@@ -425,19 +442,22 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         }
         if (j == needle.size()) return 100 + sc;
         hits.clear();
-        std::string pins;
-        if (e.def) {
-            for (int i = 0; i < (int)e.def->dataIn.size(); ++i)
-                pins += std::string(okay::vs::PinTypeName(okay::vs::InputType(e.def->type, i))) + " ";
-            for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
-                pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
+        if (!e.blobBuilt) {   // the long searchable text is built the first time a search reaches this entry
+            std::string pins;
+            if (e.def) {
+                for (int i = 0; i < (int)e.def->dataIn.size(); ++i)
+                    pins += std::string(okay::vs::PinTypeName(okay::vs::InputType(e.def->type, i))) + " ";
+                for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
+                    pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
+            }
+            e.blobLower = lower(e.cat + " " + e.sub + " " + e.keywords + " " +
+                                (e.def ? e.def->type : "") + " " +
+                                (e.def ? VsNodeSearchText(e.def->type) : std::string()) + " " +
+                                (e.step ? e.step->op : "") + " " + e.desc + " " + pins +
+                                (e.doc ? " " + VsSearchBlob(*e.doc) : std::string()));
+            e.blobBuilt = true;
         }
-        const std::string extra = lower(e.cat + " " + e.sub + " " + e.keywords + " " +
-                                        (e.def ? e.def->type : "") + " " +
-                                        (e.def ? VsNodeSearchText(e.def->type) : std::string()) + " " +
-                                        (e.step ? e.step->op : "") + " " + e.desc + " " + pins +
-                                        (e.doc ? " " + VsSearchBlob(*e.doc) : std::string()));
-        return extra.find(needle) != std::string::npos ? 40 : 0;
+        return e.blobLower.find(needle) != std::string::npos ? 40 : 0;
     };
 
     // ---- Sidebar ----
@@ -478,14 +498,14 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     auto browseCount = [&](int cat, const std::string& sub, bool anySub) {
         int n = 0;
         for (const auto& e : all) {
-            if (!e.browse || !passesLevel(e.level) || e.catIndex != cat) continue;
+            if (!e.fits || !e.browse || !passesLevel(e.level) || e.catIndex != cat) continue;
             if (!anySub && e.sub != sub) continue;
             ++n;
         }
         return n;
     };
     int browseAll = 0, starterN = 0;
-    for (const auto& e : all) if (e.browse && passesLevel(e.level)) {
+    for (const auto& e : all) if (e.fits && e.browse && passesLevel(e.level)) {
         ++browseAll;
         if (e.def && VsIsStarter(e.def->type)) ++starterN;
     }
@@ -503,7 +523,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (s_side != c) continue;   // expanded: the topic you are in shows its subcategories
         std::vector<std::pair<std::string, int>> subs;
         for (const auto& e : all) {
-            if (!e.browse || !passesLevel(e.level) || e.catIndex != c || e.sub.empty()) continue;
+            if (!e.fits || !e.browse || !passesLevel(e.level) || e.catIndex != c || e.sub.empty()) continue;
             bool found = false;
             for (auto& s : subs) if (s.first == e.sub) { ++s.second; found = true; break; }
             if (!found) subs.push_back({e.sub, 1});
@@ -532,7 +552,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         return it == s_recent.end() ? 10000 : (int)(it - s_recent.begin());
     };
     for (const auto& e : all) {
-        if (!passesLevel(e.level)) continue;
+        if (!e.fits || !passesLevel(e.level)) continue;
         if (needle.empty() && !e.browse) continue;
         // Typing searches every topic, so a name is found wherever it lives.
         // Only the level filter still applies.

@@ -10,6 +10,7 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsProblems.hpp"
 #include "okay/VisualScript/VsRefs.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
@@ -2182,6 +2183,11 @@ struct VsEditState {
     // The graph checker's findings for the graph on screen (recomputed when it changes).
     std::string checkedText; std::vector<okay::vs::VsIssue> issues;
     bool   showIssues = false;
+    okay::vs::VsProblemFilter issueFilter;   // which severities the Problems list shows
+    int    issueRow = -1;        // the row last jumped to (Up / Down walk from it)
+    float  issuePanelH = 0.0f;   // height the Problems panel took last frame (the view centres above it)
+    double checkedAt = 0.0;      // when the checker last ran (disk-dependent rules are re-run every couple of seconds)
+    int    flashNode = -1, flashPin = -1, flashDir = 0; float flashT = 0.0f;   // the pin a jump points at
     std::string refuseMsg; float refuseTime = 0.0f;   // why a wire was refused (shown a few seconds)
     // Text last saved (or the text a new graph was created with). Dirty is true
     // only while the graph differs from this, including after undo and redo.
@@ -2315,6 +2321,41 @@ inline void ShowGraphFile(const std::string& path, int nodeId) {
     if (!st.g.load(path)) return;
     if (nodeId >= 0) { st.focusNode = nodeId; st.sel = {nodeId}; st.selected = nodeId; }
     else st.frameAll = true;
+}
+
+// Select `node`, centre the view on it, and (when the problem is about a pin) flash
+// that pin. False when the graph has no such node. The Problems list, F8 and the
+// events list all land here.
+inline bool VsJumpToNode(VsEditState& st, int node, int pin = -1, int pinDir = 0) {
+    if (!st.g.find(node)) return false;
+    st.sel = {node}; st.selected = node; st.focusNode = node;
+    st.flashNode = pin >= 0 ? node : -1; st.flashPin = pin; st.flashDir = pinDir; st.flashT = pin >= 0 ? 2.0f : 0.0f;
+    return true;
+}
+/// The node ids in the order the graph lists them (the order problems are sorted by).
+inline std::vector<int> VsNodeOrder(const VsEditGraph& g) {
+    std::vector<int> ids;
+    for (const auto& n : g.nodes) ids.push_back(n.id);
+    return ids;
+}
+/// F8 / Shift+F8: select the next (dir 1) or previous (dir -1) node that has a
+/// visible problem. Returns the node, or -1 when there is none.
+inline int VsJumpToNextProblem(VsEditState& st, int dir) {
+    const int n = okay::vs::StepProblemNode(okay::vs::ProblemNodes(st.issues, VsNodeOrder(st.g), st.issueFilter), st.selected, dir);
+    if (n >= 0) {
+        int pin = -1, pinDir = 0;
+        for (const auto& is : st.issues) if (is.node == n && is.pin >= 0) { pin = is.pin; pinDir = is.pinDir; break; }
+        VsJumpToNode(st, n, pin, pinDir);
+    }
+    return n;
+}
+/// A click on a Problems row: the first node it names, or - when that one is
+/// already selected - the next, so a row that covers several nodes can be walked.
+inline int VsJumpToGroup(VsEditState& st, const okay::vs::VsProblemGroup& grp) {
+    if (grp.nodes.empty()) return -1;
+    const int to = okay::vs::StepProblemNode(grp.nodes, st.selected, 1);
+    VsJumpToNode(st, to, to == grp.nodes.front() ? grp.pin : -1, grp.pinDir);
+    return to;
 }
 
 // ---- Debugger (Play mode) ----------------------------------------------------
@@ -3417,29 +3458,39 @@ inline void Draw(EditorState& ed, bool* open) {
     // work, nodes nothing runs, unset variables, bad key names, missing prefabs).
     {
         std::string now = g.toText();
-        if (now != st.checkedText) {
+        // Also every couple of seconds: a prefab file added or removed outside the
+        // editor changes the answer without the graph changing.
+        const double t = ImGui::GetTime();
+        if (now != st.checkedText || t - st.checkedAt > 2.0) {
             st.issues = okay::vs::ValidateGraphText(now, ed.projectDir());
             st.checkedText = std::move(now);
+            st.checkedAt = t;
         }
     }
     // Right side of the one toolbar: problems, fit, zoom, the two panels.
     {
-        int nErr = 0, nWarn = 0;
-        for (const auto& is : st.issues) (is.severity == 0 ? nErr : nWarn)++;
-        const float rightW = 520.0f;
-        const float avail = ImGui::GetWindowContentRegionMax().x;
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, avail - rightW));
+        const okay::vs::VsProblemCounts cnt = okay::vs::CountProblems(st.issues);
+        const int nErr = cnt.errors, nWarn = cnt.warnings, nTotal = cnt.total();
+        // The label is the same words as the panel's header when there is room, and
+        // "X 2  ! 3" when the window is narrow (the other buttons keep 380 px).
+        std::string full = okay::vs::VsProblemSummary(cnt);
+        const std::string shortLbl = std::string(okay::vs::VsSeverityGlyph(0)) + " " + std::to_string(cnt.errors) + "  " +
+                                     okay::vs::VsSeverityGlyph(1) + " " + std::to_string(cnt.warnings);
+        const float restW = 380.0f, avail = ImGui::GetWindowContentRegionMax().x;
+        const float room = avail - ImGui::GetCursorPosX() - 16.0f - restW;
+        const float fullW = ImGui::CalcTextSize(full.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        const bool useShort = nTotal > 0 && fullW > room;
+        const float btnW = (useShort ? ImGui::CalcTextSize(shortLbl.c_str()).x : ImGui::CalcTextSize(full.c_str()).x) + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, avail - restW - btnW));
         {
-            char lbl[64];
-            if (nErr + nWarn == 0) std::snprintf(lbl, sizeof lbl, "No problems##vsissues");
-            else std::snprintf(lbl, sizeof lbl, "%d problem%s##vsissues", nErr + nWarn, nErr + nWarn == 1 ? "" : "s");
+            const std::string lbl = (nTotal == 0 ? std::string("No problems") : useShort ? shortLbl : full) + "##vsissues";
             const ImVec4 tc = nErr ? ImVec4(1.0f, 0.55f, 0.48f, 1) : nWarn ? ImVec4(0.95f, 0.78f, 0.42f, 1) : ImVec4(0.62f, 0.82f, 0.68f, 1);
             ImGui::PushStyleColor(ImGuiCol_Text, tc);
-            if (ImGui::Button(lbl) && nErr + nWarn > 0) st.showIssues = !st.showIssues;
+            if (ImGui::Button(lbl.c_str())) st.showIssues = !st.showIssues;
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(nErr + nWarn == 0 ? "The graph checker found nothing wrong." :
-                                  "%d error(s), %d warning(s). Click to list them. Click a row to jump to its node.", nErr, nWarn);
+                ImGui::SetTooltip("%s. Click to %s the list. F8 / Shift+F8 jump to the next / previous problem.",
+                                  nTotal == 0 ? "The graph checker found nothing wrong" : full.c_str(), st.showIssues ? "hide" : "show");
             ImGui::SameLine();
         }
         if (ImGui::Button("Fit")) st.frameAll = true;
@@ -3573,6 +3624,10 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SetClipboardText(VsSelectionText(g, st.sel).c_str());
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) addComment = true;
         if (ImGui::IsKeyPressed(ImGuiKey_F9, false)) for (int id : std::vector<int>(st.sel.begin(), st.sel.end())) toggleBreakpoint(id);
+        if (ImGui::IsKeyPressed(ImGuiKey_F8, true)) {   // next / previous problem
+            if (VsJumpToNextProblem(st, io.KeyShift ? -1 : 1) < 0)
+            { st.refuseMsg = st.issues.empty() ? "No problems to jump to." : "No problems to jump to: every kind is switched off in the Problems list."; st.refuseTime = 3.0f; st.offerOn = false; }
+        }
     }
 
     // ---- Events list: every event chain in the graph; click one to jump to it ----
@@ -3766,8 +3821,10 @@ inline void Draw(EditorState& ed, bool* open) {
     if (st.focusNode >= 0) {   // centre on one node, keeping the zoom readable
         if (const VsEditNode* fn = g.find(st.focusNode)) {
             z = std::max(z, 0.8f);
+            // Centre it in the part of the canvas the Problems panel (docked at the bottom) leaves free.
+            const float freeH = std::max(120.0f, (canvasMax.y - canvasMin.y) - (st.showIssues ? st.issuePanelH : 0.0f));
             st.pan = ImVec2((canvasMax.x - canvasMin.x) * 0.35f - fn->x * kLayout * z,
-                            (canvasMax.y - canvasMin.y) * 0.45f - fn->y * kLayout * z);
+                            freeH * 0.45f - fn->y * kLayout * z);
         }
         st.focusNode = -1;
     }
@@ -3940,7 +3997,7 @@ inline void Draw(EditorState& ed, bool* open) {
     // A function node's pins follow its signature. Wires to pins it doesn't
     // have right now (mid-edit of the signature) are kept, not deleted: they come
     // back when the pin does, and the checker reports them meanwhile.
-    struct VsBadge { ImVec2 c; ImU32 col; std::string tips; };
+    struct VsBadge { ImVec2 c; ImU32 col; std::string tips; int sev; int count; };
     std::vector<VsBadge> badges;   // checker findings, drawn over the nodes
     // The object this graph is attached to, so a node can warn about a missing component.
     GameObject* vsOwner = nullptr;
@@ -3958,6 +4015,12 @@ inline void Draw(EditorState& ed, bool* open) {
     dl->ChannelsSetCurrent(2);
     int pendingDelete = -1, pendingDup = -1;
     bool startNodeDrag = false;
+    if (st.flashT > 0.0f) st.flashT -= io.DeltaTime;
+    // A pin a Problems jump points at pulses a white ring for a couple of seconds.
+    auto flashRing = [&](const VsEditNode& n, int pin, int dir, ImVec2 pp) {
+        if (st.flashT > 0.0f && st.flashNode == n.id && st.flashPin == pin && st.flashDir == dir)
+            dl->AddCircle(pp, PIN_R + (7.0f + 3.0f * std::sin(st.flashT * 9.0f)) * z, IM_COL32(255, 255, 255, 235), 24, 3.0f * z);
+    };
     for (auto& n : g.nodes) {
         const VsDef* d = VsDefFor(g, n);
         if (!d) continue;
@@ -4018,14 +4081,19 @@ inline void Draw(EditorState& ed, bool* open) {
         // Checker findings for this node: red (error) / amber (warning) dot on the
         // header, the messages on hover.
         {
-            int worst = 2; std::string tips;
+            int worst = 3, count = 0; std::string tips;
             for (const auto& is : st.issues)
-                if (is.node == n.id) { worst = std::min(worst, is.severity); tips += (tips.empty() ? "" : "\n") + std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message; }
+                if (is.node == n.id && st.issueFilter.shows(is.severity)) {
+                    worst = std::min(worst, is.severity); ++count;
+                    tips += (tips.empty() ? "" : "\n") + std::string(okay::vs::VsSeverityName(is.severity)) + ": " + is.message +
+                            "\n    Fix: " + okay::vs::VsProblemFix(okay::vs::VsProblemRule(is));
+                }
             if (worst < 2) {
                 const ImVec2 bc(p1.x - 12.0f * z, p0.y + HEADER_H * 0.5f);
                 const ImU32 col = worst == 0 ? IM_COL32(255, 85, 75, 255) : IM_COL32(240, 185, 70, 255);
-                dl->AddRect(ImVec2(p0.x - 2 * z, p0.y - 2 * z), ImVec2(p1.x + 2 * z, p1.y + 2 * z), col, ROUND + 2 * z, 0, 2.0f * z);
-                badges.push_back({bc, col, tips});
+                // Errors get a thick outline and warnings a thin one, so the two differ without colour too.
+                dl->AddRect(ImVec2(p0.x - 2 * z, p0.y - 2 * z), ImVec2(p1.x + 2 * z, p1.y + 2 * z), col, ROUND + 2 * z, 0, (worst == 0 ? 3.0f : 1.5f) * z);
+                badges.push_back({bc, col, tips, worst, count});
             }
         }
         const bool pausedHere = dv.stopped && dv.key == g.path && dv.node == n.id;
@@ -4145,6 +4213,7 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& is : st.issues)
                 if (is.node == n.id && is.pin == i && is.pinDir == 0 && is.severity == 0) badPin = true;
             dataDot(pp, linked || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
+            flashRing(n, i, 0, pp);
             const bool req = VsRequiredWhat(n.type, i) && !linked && n.pinDefault.count(i) == 0;
             if (req) dl->AddCircle(pp, PIN_R + 3.0f * z, IM_COL32(255, 80, 70, 255), 16, 2.0f * z);
             if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f) {
@@ -4201,6 +4270,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (is.node == n.id && is.pin == i && is.pinDir == 1 && is.severity == 0) badPin = true;
             const okay::vs::PinType pt = VsOutPinType(g, n.id, i);
             dataDot(pp, used || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
+            flashRing(n, i, 1, pp);
             if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
                 ImGui::SetTooltip("%s  (%s)", d->dataOut[i], okay::vs::PinTypeName(pt));
             ImVec2 ts = ImGui::CalcTextSize(d->dataOut[i]);
@@ -4553,10 +4623,23 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     dl->ChannelsSetCurrent(2);
     for (const VsBadge& b : badges) {
-        const float r = 7.0f * std::max(0.8f, z);
-        dl->AddCircleFilled(b.c, r, b.col, 16);
-        const ImVec2 ts = ImGui::CalcTextSize("!");
-        dl->AddText(ImVec2(b.c.x - ts.x * 0.5f, b.c.y - ts.y * 0.5f), IM_COL32(20, 20, 24, 255), "!");
+        const float r = 8.0f * std::max(0.8f, z);
+        const ImU32 ink = IM_COL32(24, 18, 14, 255);
+        if (b.sev == 0) {   // error: a square with an X
+            dl->AddRectFilled(ImVec2(b.c.x - r, b.c.y - r), ImVec2(b.c.x + r, b.c.y + r), b.col, 2.5f);
+            dl->AddLine(ImVec2(b.c.x - r * 0.5f, b.c.y - r * 0.5f), ImVec2(b.c.x + r * 0.5f, b.c.y + r * 0.5f), ink, 2.0f);
+            dl->AddLine(ImVec2(b.c.x - r * 0.5f, b.c.y + r * 0.5f), ImVec2(b.c.x + r * 0.5f, b.c.y - r * 0.5f), ink, 2.0f);
+        } else {            // warning: a triangle with a !
+            dl->AddTriangleFilled(ImVec2(b.c.x, b.c.y - r * 1.1f), ImVec2(b.c.x - r * 1.15f, b.c.y + r * 0.9f), ImVec2(b.c.x + r * 1.15f, b.c.y + r * 0.9f), b.col);
+            dl->AddLine(ImVec2(b.c.x, b.c.y - r * 0.35f), ImVec2(b.c.x, b.c.y + r * 0.2f), ink, 2.0f);
+            dl->AddCircleFilled(ImVec2(b.c.x, b.c.y + r * 0.55f), 1.4f, ink);
+        }
+        if (b.count > 1) {
+            char c[8]; std::snprintf(c, sizeof c, "%d", b.count);
+            const ImVec2 ts = ImGui::CalcTextSize(c);
+            dl->AddRectFilled(ImVec2(b.c.x - r - ts.x - 6.0f, b.c.y - ts.y * 0.5f - 1.0f), ImVec2(b.c.x - r - 2.0f, b.c.y + ts.y * 0.5f + 1.0f), IM_COL32(30, 30, 36, 235), 3.0f);
+            dl->AddText(ImVec2(b.c.x - r - ts.x - 4.0f, b.c.y - ts.y * 0.5f), IM_COL32(240, 240, 245, 255), c);
+        }
         if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - b.c.x) < r * 1.6f && std::fabs(io.MousePos.y - b.c.y) < r * 1.6f)
             ImGui::SetTooltip("%s", b.tips.c_str());
     }
@@ -4799,7 +4882,7 @@ inline void Draw(EditorState& ed, bool* open) {
     if (st.refuseTime > 0.0f && !st.refuseMsg.empty()) {
         st.refuseTime -= io.DeltaTime;
         const float boxW = std::min(560.0f, canvasMax.x - canvasMin.x - 32.0f);
-        ImGui::SetCursorScreenPos(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 120.0f));
+        ImGui::SetCursorScreenPos(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 120.0f - (st.showIssues ? st.issuePanelH : 0.0f)));
         ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(64, 22, 22, 245));
         ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(220, 90, 80, 255));
         ImGui::BeginChild("##vsrefuse", ImVec2(boxW, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
@@ -4819,29 +4902,175 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::EndChild();
         ImGui::PopStyleColor(2);
     }
-    // The checker's list (toolbar button): click a row to jump to its node.
-    if (st.showIssues && !st.issues.empty()) {
-        const float w = std::min(820.0f, canvasMax.x - canvasMin.x - 36.0f);
-        ImGui::SetCursorScreenPos(ImVec2(canvasMax.x - w - 14, canvasMin.y + 40));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(28, 29, 34, 245));
-        ImGui::BeginChild("##vsissuelist", ImVec2(w, std::min(260.0f, 34.0f + 26.0f * (float)st.issues.size())), ImGuiChildFlags_Borders);
-        ImGui::TextDisabled("Problems the checker found");
-        ImGui::Separator();
-        for (std::size_t i = 0; i < st.issues.size(); ++i) {
-            const auto& is = st.issues[i];
-            ImGui::PushID((int)i);
-            ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.5f, 0.45f, 1) : ImVec4(0.95f, 0.78f, 0.4f, 1));
-            std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message;
-            if (ImGui::Selectable(row.c_str()) && is.node >= 0) { st.sel = {is.node}; st.selected = is.node; st.focusNode = is.node; }
-            if (ImGui::IsItemHovered()) {   // long messages: the whole text
-                ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36.0f);
-                ImGui::TextUnformatted(row.c_str()); ImGui::PopTextWrapPos(); ImGui::EndTooltip();
+    // The checker's list (toolbar button), docked along the bottom of the canvas so the
+    // node a click jumps to stays in view above it. Header: counts, filters, previous /
+    // next. Rows: severity icon + word, the message (wrapped), a "how to fix" line,
+    // where it is, and a count when the same finding is on several nodes.
+    st.issuePanelH = 0.0f;
+    if (st.showIssues) {
+        using namespace okay::vs;
+        const VsProblemCounts cnt = CountProblems(st.issues);
+        const std::vector<int> order = VsNodeOrder(g);
+        const std::vector<VsProblemGroup> rows = GroupProblems(st.issues, order, st.issueFilter);
+        const float canvasW = canvasMax.x - canvasMin.x, canvasH = canvasMax.y - canvasMin.y;
+        const float pw = std::max(220.0f, canvasW - 24.0f);
+        const float lineH = ImGui::GetTextLineHeight();
+        const float iconCol = 84.0f, sideCol = std::min(150.0f, std::max(90.0f, pw * 0.2f));
+        const float msgW = std::max(80.0f, pw - iconCol - sideCol - 36.0f);
+        const float pad = 6.0f;
+        auto where = [&](const VsProblemGroup& r) -> std::string {
+            if (r.nodes.empty()) return "Whole graph";
+            if (r.nodes.size() > 1) return std::to_string(r.nodes.size()) + " nodes";
+            const VsEditNode* n = g.find(r.nodes[0]);
+            const VsDef* d = n ? VsDefFor(g, *n) : nullptr;
+            return std::string(d ? d->title : "Node") + " #" + std::to_string(r.nodes[0]);
+        };
+        auto rowH = [&](const VsProblemGroup& r) {
+            const float m = ImGui::CalcTextSize(r.message.c_str(), nullptr, false, msgW).y;
+            const float f = ImGui::CalcTextSize(("Fix: " + r.fix).c_str(), nullptr, false, msgW).y;
+            return std::max(m + f + pad * 2.0f + 2.0f, lineH * 2.0f + pad * 2.0f);
+        };
+        float listH = 0.0f;
+        for (const auto& r : rows) listH += rowH(r);
+        const float headH = lineH * 2.0f + 26.0f;
+        const float maxH = std::max(150.0f, canvasH * 0.45f);
+        const float emptyH = lineH * 2.0f + 26.0f;
+        const float ph = std::min(maxH, headH + (rows.empty() ? emptyH : listH) + 12.0f);
+        st.issuePanelH = ph + 14.0f;
+        ImGui::SetCursorScreenPos(ImVec2(canvasMin.x + 12.0f, canvasMax.y - ph - 10.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(26, 27, 33, 255));
+        ImGui::PushStyleColor(ImGuiCol_Border, cnt.errors ? IM_COL32(230, 110, 100, 255) : cnt.warnings ? IM_COL32(225, 180, 70, 255) : IM_COL32(110, 170, 130, 255));
+        ImGui::BeginChild("##vsissuelist", ImVec2(pw, ph), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
+        ImDrawList* pd = ImGui::GetWindowDrawList();   // re-taken inside the rows child below
+        const ImU32 colErr = IM_COL32(255, 112, 100, 255), colWarn = IM_COL32(245, 195, 80, 255), colHint = IM_COL32(120, 175, 245, 255);
+        // A severity icon whose SHAPE tells the kind apart (square X, triangle !, circle i), so colour is not the only cue.
+        auto icon = [&](ImDrawList* d, ImVec2 c, float r, int sev) {
+            if (sev <= 0) {
+                d->AddRectFilled(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), colErr, 2.0f);
+                d->AddLine(ImVec2(c.x - r * 0.5f, c.y - r * 0.5f), ImVec2(c.x + r * 0.5f, c.y + r * 0.5f), IM_COL32(30, 20, 20, 255), 2.0f);
+                d->AddLine(ImVec2(c.x - r * 0.5f, c.y + r * 0.5f), ImVec2(c.x + r * 0.5f, c.y - r * 0.5f), IM_COL32(30, 20, 20, 255), 2.0f);
+            } else if (sev == 1) {
+                d->AddTriangleFilled(ImVec2(c.x, c.y - r * 1.1f), ImVec2(c.x - r * 1.15f, c.y + r * 0.9f), ImVec2(c.x + r * 1.15f, c.y + r * 0.9f), colWarn);
+                d->AddLine(ImVec2(c.x, c.y - r * 0.35f), ImVec2(c.x, c.y + r * 0.2f), IM_COL32(40, 30, 10, 255), 2.0f);
+                d->AddCircleFilled(ImVec2(c.x, c.y + r * 0.55f), 1.3f, IM_COL32(40, 30, 10, 255));
+            } else {
+                d->AddCircleFilled(c, r, colHint, 16);
+                d->AddLine(ImVec2(c.x, c.y - r * 0.1f), ImVec2(c.x, c.y + r * 0.5f), IM_COL32(15, 25, 40, 255), 2.0f);
+                d->AddCircleFilled(ImVec2(c.x, c.y - r * 0.5f), 1.3f, IM_COL32(15, 25, 40, 255));
             }
+        };
+        // ---- Header ----
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Problems");
+        ImGui::SameLine(0, 14.0f);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(cnt.errors ? ImVec4(1.0f, 0.55f, 0.48f, 1) : cnt.warnings ? ImVec4(0.95f, 0.78f, 0.42f, 1) : ImVec4(0.62f, 0.82f, 0.68f, 1),
+                           "%s", VsProblemSummary(cnt).c_str());
+        if (cnt.total() > 0 && (int)rows.size() != cnt.total()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%d row%s)", (int)rows.size(), rows.size() == 1 ? "" : "s");
+        }
+        auto toggle = [&](bool& on, int sev, int n, const char* word) {
+            char l[48]; std::snprintf(l, sizeof l, "%s %d %s##vsflt%d", VsSeverityGlyph(sev), n, word, sev);
+            ImGui::SameLine();
+            const bool was = on;
+            ImGui::PushStyleColor(ImGuiCol_Button, was ? ImVec4(0.26f, 0.34f, 0.50f, 1) : ImVec4(0.17f, 0.18f, 0.22f, 1));
+            if (!was) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.57f, 0.62f, 1));
+            if (ImGui::SmallButton(l)) on = !on;
+            if (!was) ImGui::PopStyleColor();
             ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s %s. Click to %s.", on ? "Showing" : "Hiding", word, on ? "hide them" : "show them");
+        };
+        ImGui::SameLine(0, 18.0f);
+        toggle(st.issueFilter.errors, 0, cnt.errors, "Errors");
+        toggle(st.issueFilter.warnings, 1, cnt.warnings, "Warnings");
+        if (cnt.hints > 0) toggle(st.issueFilter.hints, 2, cnt.hints, "Hints");
+        ImGui::SameLine(0, 18.0f);
+        if (ImGui::SmallButton("< Prev##vsprob")) VsJumpToNextProblem(st, -1);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Previous problem (Shift+F8)");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Next >##vsprob")) VsJumpToNextProblem(st, 1);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Next problem (F8)");
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 12.0f, ImGui::GetWindowWidth() - 64.0f));
+        if (ImGui::SmallButton("Close##vsprob")) st.showIssues = false;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide the list. The problems stay marked on the nodes.");
+        ImGui::Separator();
+        // ---- Rows (their own scrolling area, so the header stays put) ----
+        ImGui::BeginChild("##vsissuerows", ImVec2(0, 0), ImGuiChildFlags_None);
+        pd = ImGui::GetWindowDrawList();
+        if (rows.empty()) {
+            ImGui::Dummy(ImVec2(0, 4.0f));
+            const ImVec2 c0 = ImGui::GetCursorScreenPos();
+            if (cnt.total() == 0) {
+                pd->AddCircleFilled(ImVec2(c0.x + 10.0f, c0.y + lineH * 0.6f), 9.0f, IM_COL32(110, 190, 140, 255), 16);
+                pd->AddLine(ImVec2(c0.x + 5.0f, c0.y + lineH * 0.6f), ImVec2(c0.x + 9.0f, c0.y + lineH * 0.6f + 4.0f), IM_COL32(18, 30, 22, 255), 2.2f);
+                pd->AddLine(ImVec2(c0.x + 9.0f, c0.y + lineH * 0.6f + 4.0f), ImVec2(c0.x + 16.0f, c0.y + lineH * 0.6f - 4.0f), IM_COL32(18, 30, 22, 255), 2.2f);
+                ImGui::SetCursorScreenPos(ImVec2(c0.x + 28.0f, c0.y));
+                ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.68f, 1), "No problems");
+                ImGui::SetCursorScreenPos(ImVec2(c0.x + 28.0f, c0.y + lineH + 2.0f));
+                ImGui::TextDisabled("The checker found nothing wrong. It re-checks as you edit.");
+            } else {
+                ImGui::TextDisabled("Every kind of problem is switched off above (%s).", VsProblemSummary(cnt).c_str());
+            }
+        }
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const VsProblemGroup& r = rows[i];
+            const float h = rowH(r);
+            const bool here = std::find(r.nodes.begin(), r.nodes.end(), st.selected) != r.nodes.end();
+            ImGui::PushID((int)i);
+            const ImVec2 p0 = ImGui::GetCursorScreenPos();
+            ImGui::SetNextItemAllowOverlap();
+            if (ImGui::Selectable("##row", here || (int)i == st.issueRow, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(pw - 20.0f, h))) {
+                st.issueRow = (int)i;
+                if (!r.nodes.empty()) {
+                    VsJumpToGroup(st, r);
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) st.showDetails = true;   // its settings, on the right
+                } else st.frameAll = true;
+            }
+            const bool hot = ImGui::IsItemHovered();
+            if (hot) {
+                ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 34.0f);
+                ImGui::Text("%s: %s", VsSeverityName(r.severity), r.message.c_str());
+                ImGui::TextDisabled("Fix: %s", r.fix.c_str());
+                if (r.nodes.size() > 1) {
+                    std::string ids;
+                    for (int n : r.nodes) ids += (ids.empty() ? "#" : ", #") + std::to_string(n);
+                    ImGui::TextDisabled("On %s. Click again to go to the next one.", ids.c_str());
+                } else if (!r.nodes.empty()) ImGui::TextDisabled("Click to select the node and centre on it. Double-click to open its details.");
+                ImGui::PopTextWrapPos(); ImGui::EndTooltip();
+            }
+            const ImU32 sevCol = r.severity <= 0 ? colErr : r.severity == 1 ? colWarn : colHint;
+            icon(pd, ImVec2(p0.x + 14.0f, p0.y + pad + lineH * 0.55f), 7.0f, r.severity);
+            pd->AddText(ImVec2(p0.x + 28.0f, p0.y + pad), sevCol, VsSeverityName(r.severity));
+            const float tx = p0.x + iconCol;
+            pd->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, p0.y + pad), IM_COL32(236, 238, 244, 255), r.message.c_str(), nullptr, msgW);
+            const float mh = ImGui::CalcTextSize(r.message.c_str(), nullptr, false, msgW).y;
+            pd->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, p0.y + pad + mh + 2.0f), IM_COL32(150, 158, 172, 255), ("Fix: " + r.fix).c_str(), nullptr, msgW);
+            const float sx = p0.x + iconCol + msgW + 14.0f;
+            std::string loc = where(r);
+            while (loc.size() > 4 && ImGui::CalcTextSize(loc.c_str()).x > sideCol - 8.0f) loc.pop_back();
+            pd->AddText(ImVec2(sx, p0.y + pad), IM_COL32(190, 198, 212, 255), loc.c_str());
+            if (r.count > 1) {
+                char c[16]; std::snprintf(c, sizeof c, "x%d", r.count);
+                const ImVec2 ts = ImGui::CalcTextSize(c);
+                pd->AddRectFilled(ImVec2(sx, p0.y + pad + lineH + 2.0f), ImVec2(sx + ts.x + 10.0f, p0.y + pad + lineH * 2.0f + 4.0f), IM_COL32(60, 64, 78, 255), 4.0f);
+                pd->AddText(ImVec2(sx + 5.0f, p0.y + pad + lineH + 3.0f), IM_COL32(236, 238, 244, 255), c);
+            }
+            pd->AddLine(ImVec2(p0.x, p0.y + h - 1.0f), ImVec2(p0.x + pw - 20.0f, p0.y + h - 1.0f), IM_COL32(255, 255, 255, 18));
             ImGui::PopID();
         }
+        // Up / Down walk the rows while the pointer is over the list.
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && !rows.empty()) {
+            int d = 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) d = 1; else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) d = -1;
+            if (d) {
+                st.issueRow = std::clamp(st.issueRow + d, 0, (int)rows.size() - 1);
+                if (!rows[(std::size_t)st.issueRow].nodes.empty()) VsJumpToNode(st, rows[(std::size_t)st.issueRow].nodes[0], rows[(std::size_t)st.issueRow].pin, rows[(std::size_t)st.issueRow].pinDir);
+            }
+        }
+        ImGui::EndChild();   // rows
         ImGui::EndChild();
-        ImGui::PopStyleColor();
+        ImGui::PopStyleColor(2);
     }
     if (live) {
         std::string lv = "\xE2\x97\x8F LIVE: " + liveName;
@@ -4956,8 +5185,9 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& is : st.issues) if (is.node == sn->id) {
                 if (!anyIssue) { ImGui::Spacing(); ImGui::Separator(); ImGui::TextUnformatted("Problems"); anyIssue = true; }
                 ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.55f, 0.48f, 1) : ImVec4(0.95f, 0.78f, 0.42f, 1));
-                ImGui::TextWrapped("%s", is.message.c_str());
+                ImGui::TextWrapped("%s: %s", okay::vs::VsSeverityName(is.severity), is.message.c_str());
                 ImGui::PopStyleColor();
+                ImGui::TextDisabled("Fix: %s", okay::vs::VsProblemFix(okay::vs::VsProblemRule(is)).c_str());
             }
             ImGui::Spacing();
             if (ImGui::Button("Frame this node", ImVec2(-1, 0))) { st.focusNode = sn->id; st.sel = {sn->id}; }

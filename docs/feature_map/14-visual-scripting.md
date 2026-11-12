@@ -13,7 +13,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
   - 14.1.2 Node palette and registry - `editor/VisualScriptEditor.hpp` (`Registry()`), `editor/VisualScriptPalette.hpp` - every node type with category, pins and defaults; right-click, Space or Add node opens one search panel; engine API nodes appended
   - 14.1.3 Node help - `editor/VisualScriptNodeDocs.hpp`, `editor/VisualScriptNodeDocs.inc`, `docs/visual_scripting_nodes.md` - description, every pin (type, meaning, default), requirements, example and keywords for every registered node; the same text is the search details pane, the node tooltip and the generated page
   - 14.1.10 Graph tabs and save prompts - `editor/VisualScriptEditor.hpp` - several graphs open at once; a dirty graph asks Save / Cancel / Don't Save before a tab closes; New adds an Untitled tab; tabs restore from `okay_vs_tabs.txt` and a missing file is an error tab
-  - 14.1.4 Toolbar, templates and shortcuts - `editor/VisualScriptEditor.hpp` - File/Edit/+ Add/Templates, events list (click to jump), problems list, key picker for key nodes
+  - 14.1.4 Toolbar, templates and shortcuts - `editor/VisualScriptEditor.hpp` - File/Edit/+ Add/Templates, events list (click to jump), Problems list (counts, kind filters, grouped rows with a fix line, click to jump, F8), key picker for key nodes
   - 14.1.5 Editable graph model - `editor/VisualScriptEditor.hpp` (`VsEditGraph`) - load, save, copy and paste, undo by gesture, layout coordinates, starter graph
   - 14.1.6 Runtime graph - `VisualScript/NodeGraph` - `NodeGraph::Parse`, `Run`, entries, exec and data links, suspended waits, `MakeNode` by type name
   - 14.1.7 Graph component - `Components/VisualScriptComponent` - attaches a graph to an object: OnStart, OnUpdate and event entries, LoadFromText, LoadFromFile, serialized with the scene
@@ -39,11 +39,12 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
   - 14.2.3 Values - `VisualScript/VsValue` - one value type; `VsObject` holds an instance id, never a pointer
   - 14.2.4 Scene and global variables - `VisualScript/VsVariables` - scene variables go with the scene, globals survive loading another scene
   - 14.2.5 Function signatures - `VisualScript/VsTypes` - `FunctionSig` parsing for Function / Call / Return nodes
-- **Code:** `VisualScript/VsTypes`, `VisualScript/VsValue`, `VisualScript/VsVariables`, `editor/EditorState.*`
+  - 14.2.6 Problem presentation - `VisualScript/VsProblems` - rule id and one-line fix for every checker finding, grouping of repeats with a count, worst-first order, counts ("2 errors, 3 warnings"), kind filters, next / previous problem; the editor's Problems list and node badges draw from it
+- **Code:** `VisualScript/VsTypes`, `VisualScript/VsProblems`, `VisualScript/VsValue`, `VisualScript/VsVariables`, `editor/EditorState.*`
 - **API:** `vs::PinType`, `vs::SignatureFor`, `vs::ValidateGraphText`, `vs::ValidateSceneGraphs`, `vs::VsValue`, `vs::VsObject`
 - **Editor:** pin colours and wire refusal in the graph editor; problems list in the toolbar; Play logs graph errors and warnings to the Console (`EditorState::Play`); Build Settings stops the build on graph errors and offers a retry
 - **Docs:** `docs/visual_scripting.md` ("Pin types and the graph checker", "Scene and global variables")
-- **Tests:** `vs_types`, `vs_pin_defaults`, `vs_acceptance`
+- **Tests:** `vs_types`, `vs_problems` (every rule has a fix line; grouping, order, counts), `vs_editor_model` (jump to a problem's node), `vs_pin_defaults`, `vs_acceptance`
 - **Status:** Works - table and checker are on main and exercised by `vs_types`; `vs_acceptance` saves and reloads real scenes
 - **Open:** none found; object variables and SyncVars are covered in 14.4
 - **Related:** 14.1, 14.3, 15.7, 1.5

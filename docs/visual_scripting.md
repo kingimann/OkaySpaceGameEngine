@@ -572,10 +572,34 @@ Anything else is **refused when you drop the wire**, with a tip, for example
 "A Vector3 can't go into a Number input - use Vec X / Vec Y / Vec Z or Vec3
 Length". Wires like that in an older or hand-written graph are drawn red.
 
-**The checker** runs whenever the graph changes. The toolbar shows "✓ No
-problems" or "⚠ N problems"; click it for the list, and click a row to jump to
-the node. Problem nodes are outlined, red for errors and amber for warnings,
-with a "!" you can hover for the details. It finds:
+**The checker** runs whenever the graph changes. The toolbar button says what it
+found in words ("2 errors, 3 warnings", or "No problems"); in a narrow window it
+shrinks to "X 2  ! 3". Click it to open the **Problems list**, docked along the
+bottom of the graph. Problem nodes are outlined and carry a badge you can hover:
+an error is a square with an X and a thick outline, a warning is a triangle with
+a "!" and a thin outline (the shape, not only the colour, tells them apart), and
+a number beside the badge says how many problems the node has.
+
+The Problems list:
+
+- **Header:** the counts, a switch for each kind (Errors, Warnings, and Hints when
+  there are any), **< Prev** / **Next >**, and **Close**. A kind you switch off
+  also leaves the badges and F8.
+- **Rows:** worst first (errors, then warnings), in the order the nodes are in the
+  graph. Each row has an icon and the word for its kind, the message (long ones
+  wrap), a **Fix:** line saying what to do, and where it is. The same message on
+  several nodes is **one row with a count** ("x3"; "3 nodes").
+- **Click a row** to select the node and centre the view on it above the list (a
+  pin the problem is about pulses a white ring). A row that covers several nodes
+  goes to the next one on each click. **Double-click** also opens Details on the
+  right. **Up / Down** walk the rows while the pointer is over the list.
+- **F8 / Shift+F8** jump to the next / previous node with a problem, from the
+  canvas, with or without the list open.
+- The list updates as you edit, and re-checks every couple of seconds, so a
+  prefab file added outside the editor clears its problem. With nothing wrong it
+  says **No problems**.
+
+The checker finds:
 
 - **errors** (that part won't work):
   - wires whose types don't fit;
@@ -586,6 +610,10 @@ with a "!" you can hover for the details. It finds:
   - nodes no event's chain ever reaches;
   - events with nothing wired to them;
   - variables the graph reads but never sets.
+
+Every kind of finding has a rule id and a one-line fix in
+`VisualScript/VsProblems`; the `vs_problems` test fails when the checker gets a
+finding with no id or an id has no fix text.
 
 **Play** writes every problem in every graph of the scene to the Console.
 **Build** checks every graph in the scenes going into the build. If there are

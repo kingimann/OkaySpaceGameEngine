@@ -376,6 +376,51 @@ int main() {
         }
     }
 
+    // ---- Problems list: jumping to the node a problem names ----
+    {
+        VsEditState st;
+        const int a = st.g.add("OnStart", 0, 0), br = st.g.add("Branch", 300, 0), p1 = st.g.add("Print", 600, 0), p2 = st.g.add("Print", 900, 0);
+        st.g.linkExec(a, 0, br);
+        st.issues = okay::vs::ValidateGraphText(st.g.toText());
+        CHECK(!st.issues.empty());
+        // A row's node is selected and the view is asked to centre on it.
+        CHECK(VsJumpToNode(st, br));
+        CHECK(st.selected == br && st.sel == std::set<int>({br}) && st.focusNode == br);
+        CHECK(!VsJumpToNode(st, 4242) && st.selected == br);       // a node that is not there changes nothing
+        // A pin problem also points at the pin.
+        CHECK(VsJumpToNode(st, p1, 0, 0) && st.flashNode == p1 && st.flashPin == 0 && st.flashT > 0.0f);
+        CHECK(VsJumpToNode(st, p2) && st.flashNode == -1);
+        // F8 walks the nodes that have a problem, Shift+F8 walks back, both wrap.
+        st.selected = -1; st.sel.clear();
+        const std::vector<int> bad = okay::vs::ProblemNodes(st.issues, VsNodeOrder(st.g), st.issueFilter);
+        CHECK(bad.size() >= 2);
+        CHECK(VsJumpToNextProblem(st, 1) == bad.front() && st.selected == bad.front() && st.sel.size() == 1);
+        CHECK(VsJumpToNextProblem(st, 1) == bad[1]);
+        CHECK(VsJumpToNextProblem(st, -1) == bad.front());
+        CHECK(VsJumpToNextProblem(st, -1) == bad.back());
+        // Filtering a severity out takes its nodes out of the walk.
+        st.issueFilter.warnings = false; st.issueFilter.errors = false; st.issueFilter.hints = false;
+        CHECK(VsJumpToNextProblem(st, 1) == -1);
+        st.issueFilter = {};
+        // A row that covers several nodes: each click goes to the next node.
+        VsEditState s2;
+        const int b1 = s2.g.add("Branch", 0, 0), b2 = s2.g.add("Branch", 300, 0), b3 = s2.g.add("Branch", 600, 0);
+        s2.issues = okay::vs::ValidateGraphText(s2.g.toText());
+        const auto rows = okay::vs::GroupProblems(s2.issues, VsNodeOrder(s2.g));
+        const okay::vs::VsProblemGroup* req = nullptr;
+        for (const auto& r : rows) if (r.rule == "required") req = &r;
+        CHECK(req && req->count == 3 && req->nodes == std::vector<int>({b1, b2, b3}));
+        if (req) {
+            CHECK(VsJumpToGroup(s2, *req) == b1 && s2.selected == b1);
+            CHECK(VsJumpToGroup(s2, *req) == b2 && VsJumpToGroup(s2, *req) == b3 && VsJumpToGroup(s2, *req) == b1);
+        }
+        // After a fix the list is empty again (the checker is re-run on the new text).
+        s2.g.find(b1)->pinDefault[0] = "true"; s2.g.find(b2)->pinDefault[0] = "true"; s2.g.find(b3)->pinDefault[0] = "true";
+        bool stillRequired = false;
+        for (const auto& is : okay::vs::ValidateGraphText(s2.g.toText())) if (is.message.rfind("Required: condition", 0) == 0) stillRequired = true;
+        CHECK(!stillRequired);
+    }
+
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

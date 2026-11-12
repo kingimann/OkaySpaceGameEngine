@@ -306,6 +306,8 @@
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Audio/AudioLoad.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
+#include "okay/Audio/AudioByteSource.hpp"
+#include "okay/Audio/AudioStream.hpp"
 
 // Multiplayer networking
 #include "okay/Net/Packet.hpp"

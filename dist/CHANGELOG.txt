@@ -39,10 +39,8 @@ v2.861.0
     then the launcher says deletion is not set up).
   - Report a message, post, item or profile; reports are reviewed by staff
     (#652, needs docs/sql/reports.sql, applied to the live project).
-  Fonts and models
-  - TrueType fonts are rasterised by our own code (#655). OBJ, MTL, STL and PLY
-    models are read by our own readers first; the existing importer stays as
-    the fallback for files they reject and for other formats (#660).
+  Fonts
+  - TrueType fonts are rasterised by our own code (#655).
 
 v2.860.0
   Audio

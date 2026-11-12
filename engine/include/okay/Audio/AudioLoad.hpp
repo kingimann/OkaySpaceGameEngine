@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Audio/AudioMixer.hpp"
+#include "okay/Audio/AudioStream.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -26,8 +27,21 @@ inline std::shared_ptr<const AudioClip> LoadAudioFile(const std::string& path, i
     return clip;
 }
 
+/// Open `path` (WAV, OGG or MP3) as a stream, trying it as given and then under
+/// AudioBaseDir(). A stream of its own each call (position is per source).
+inline std::shared_ptr<AudioStream> OpenAudioStream(const std::string& path) {
+    if (path.empty()) return nullptr;
+    auto st = AudioStream::OpenFile(path);
+    const std::string& base = AudioBaseDir();
+    if (!st && !base.empty()) {
+        const char last = base.back();
+        st = AudioStream::OpenFile(base + ((last == '/' || last == '\\') ? "" : "/") + path);
+    }
+    return st;
+}
+
 /// Load the file of every AudioSource in `scene` that names one, resampled to
-/// `rate`, and remember `baseDir` for later loads (MusicPlayer tracks).
+/// `rate` (sources with `stream` set open a stream instead), and remember `baseDir` for later loads (MusicPlayer tracks).
 /// Returns how many sources got their clip; `failed` collects the paths that
 /// could not be read.
 inline int LoadSceneAudio(Scene& scene, const std::string& baseDir, int rate,
@@ -36,6 +50,11 @@ inline int LoadSceneAudio(Scene& scene, const std::string& baseDir, int rate,
     int loaded = 0;
     for (AudioSource* au : scene.FindObjectsOfType<AudioSource>()) {
         if (au->clipPath.empty()) continue;
+        if (au->stream) {           // long sounds: decoded in small pieces while they play
+            if (auto st = OpenAudioStream(au->clipPath)) { au->UseStream(std::move(st)); ++loaded; }
+            else if (failed) failed->push_back(au->clipPath);
+            continue;
+        }
         if (auto clip = LoadAudioFile(au->clipPath, rate)) { au->clip = *clip; ++loaded; }
         else if (failed) failed->push_back(au->clipPath);
     }

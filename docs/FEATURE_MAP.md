@@ -5,7 +5,7 @@ Point at anything and I know where it lives. Say **"work on 5.6.2"** (one number
 see ("feet slide on slopes", "the Hierarchy window"). Every number leads to the files, classes, tests,
 docs and editor windows involved, what already works, what is missing, and what is in flight.
 
-This map holds 58 areas, 374 sub-areas and 1690 numbered parts, and every source file in the repo is meant to appear in it
+This map holds every area, sub-area and numbered part, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
 **How it is organised**
@@ -413,7 +413,7 @@ Details for every sub-area and numbered part: [docs/feature_map/15-editor.md](fe
 | [15.6](feature_map/15-editor.md#156-navigation-behavior-tree-dialogue-localization-modeling-windows) | Navigation, Behavior Tree, Dialogue, Localization, Modeling windows | Works | The editor windows for world-building and content systems: navigation bake, behavior trees, dialogue and quests, the string table, and the 3D... | #574 added localization tools on the engine side (translation tables, missing-key reports, language previews, 31.1); per its docs... |
 | [15.7](feature_map/15-editor.md#157-build-settings) | Build Settings | Works | File > Build Settings (Ctrl+B): export the current scenes as a standalone game for Windows, Web, Android or a dedicated server, with named build... | the Android and Web targets export a project that still needs outside tools (Emscripten, NDK) per `docs/editor.md`; about 1.5k... |
 | [15.8](feature_map/15-editor.md#158-plugin-system-and-plugins-menu) | Plugin system and Plugins menu | Works | Editor plugins written in OkayScript: a file in `<project>/EditorPlugins/` or the editor's `plugins/` folder can add a panel, a menu command, and... | `editor_plugins` runs the examples against its own fake editor, so the real `RegisterPluginBuiltins` is not under test (possible... |
-| [15.9](feature_map/15-editor.md#159-layout-undo-autosave) | Layout, undo, autosave | Works | The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model. | #572 added an engine-side command undo stack, recovery and backups (`docs/undo_recovery.md`: "engine side only", the editor still... |
+| [15.9](feature_map/15-editor.md#159-layout-undo-autosave) | Layout, undo, autosave | Works | The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model. | audit in `docs/editor_undo.md`; each Undo rebuilds the whole scene (no per-object or per-property commands); moving an asset the... |
 | [15.10](feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | Partial | The ongoing move of panels out of the huge `main.cpp` into their own files with small headers, so each can be edited and reviewed alone. | no PR for the next split found (#577 changed about 280 lines of `main.cpp` for the layouts, the Script Editor find and replace... |
 | [15.11](feature_map/15-editor.md#1511-console-and-diagnostics-panels) | Console and diagnostics panels | Works | The panels that show what the editor and game are doing: the Console log, Crash Log, Stats, Profiler, History, the Net panel and the live variable... | planned area 23 still wants a CPU and GPU timeline window, memory tracking and a frame debugger |
 | [15.12](feature_map/15-editor.md#1512-scene-manager-panel) | Scene Manager panel | Works | The project's scene list, file actions and the build order that Build Settings uses. | none found |
@@ -501,7 +501,7 @@ Details for every sub-area and numbered part: [docs/feature_map/18-build-export-
 
 ## 19. Docs, tests & code health
 
-The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 406 test files and 414 `add_test` lines in one
+The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 407 test files and 415 `add_test` lines in one
 `tests/CMakeLists.txt`), the developer and QA working loop, and the housekeeping that keeps the repository healthy (file sizes,
 stray files, warnings, sanitizers). 19.1 holds the index of every docs file; 19.2 explains how the tests are organised and how to
 run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs pages: #571 (core wave 4), #572 (undo, recovery, play-tests, save framework), #574, #575 and #578, the loop and time passes #579, #581 and #585 (`docs/loop_and_time.md`), the scene graph wave #586 and the timers and tweens wave #587 are all merged. Nothing else is moving here.
@@ -562,7 +562,7 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [22.1](feature_map/20-35-planned.md#221-undo-history) | Undo history | Partial | Step back and forward through your edits with Ctrl+Z and Ctrl+Y, and jump to any earlier step from a history list. | each snapshot is a full scene text (memory grows with scene size); three separate stacks can confuse Ctrl+Z; behaviour of the... |
+| [22.1](feature_map/20-35-planned.md#221-undo-history) | Undo history | Partial | Step back and forward through your edits with Ctrl+Z and Ctrl+Y, and jump to any earlier step from a history list. | per-object commands (`ObjectOps`, Guid) would avoid the rebuild and keep Inspector state; asset moves clear the scene history... |
 | [22.2](feature_map/20-35-planned.md#222-autosave) | Autosave | Partial | The editor quietly saves a recovery copy of your work every few minutes so a crash costs little. | a leftover `.autosave` from an older editor can still sit beside the scene until it is recovered or discarded; a project under... |
 | [22.3](feature_map/20-35-planned.md#223-crash-recovery) | Crash recovery | Partial | After a crash or a killed editor, offer the last autosave, and keep a record of what crashed. | the report format is only parsed by the launcher; no upload; the player has no handler. |
 | [22.4](feature_map/20-35-planned.md#224-backups) | Backups | Partial | Older versions of your files are kept so a bad save or a bad edit can be rolled back. | a scene save still keeps one `.bak` beside the scene, and a leftover `.autosave` from an older editor may too; a project under... |

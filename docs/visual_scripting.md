@@ -378,6 +378,12 @@ Every N Times.
   drag from it again to add another. They run in the order you made them.
 - **Alt+click a pin** to break its wires; **Alt+click a wire** to break just that
   one; right-click a node ▸ Break All Wires.
+- **Right-click a node ▸ Connect to...** shows what can plug into it. Each pin of
+  the node (flow in, each flow out, each value in and out) has its own list of
+  the nodes that fit that pin, easiest first and exact type matches ahead of
+  nodes that merely accept it. Pick one and it is added already wired; **Search
+  all** opens the full list for that pin (the same list as dropping a wire on
+  empty canvas).
 - **Comments** (toolbar *Comment*, or **C**): a titled, coloured frame around the
   selected nodes. Drag its title to move the group, drag the corner to resize,
   double-click to rename, right-click for colour / delete.

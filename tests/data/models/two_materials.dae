@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hand-written test fixture: one triangle (red) and one quad as a polylist (textured), parent/child nodes. -->
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset>
+    <unit name="meter" meter="1"/>
+    <up_axis>Y_UP</up_axis>
+  </asset>
+  <library_images>
+    <image id="wood-img" name="wood"><init_from>tex/wood%20floor.png</init_from></image>
+    <image id="bumpimg"><init_from>tex\bump.png</init_from></image>
+  </library_images>
+  <library_effects>
+    <effect id="red-fx">
+      <profile_COMMON>
+        <technique sid="common">
+          <phong>
+            <emission><color>0.1 0.2 0.3 1</color></emission>
+            <diffuse><color>1 0 0 1</color></diffuse>
+            <specular><color>1 1 1 1</color></specular>
+            <shininess><float>32</float></shininess>
+          </phong>
+        </technique>
+      </profile_COMMON>
+    </effect>
+    <effect id="wood-fx">
+      <profile_COMMON>
+        <newparam sid="wood-surface"><surface type="2D"><init_from>wood-img</init_from></surface></newparam>
+        <newparam sid="wood-sampler"><sampler2D><source>wood-surface</source></sampler2D></newparam>
+        <technique sid="common">
+          <blinn>
+            <diffuse><texture texture="wood-sampler" texcoord="UVMap"/></diffuse>
+          </blinn>
+          <extra><technique profile="FCOLLADA"><bump><texture texture="bumpimg" texcoord="UVMap"/></bump></technique></extra>
+        </technique>
+      </profile_COMMON>
+    </effect>
+  </library_effects>
+  <library_materials>
+    <material id="red-mat" name="Red"><instance_effect url="#red-fx"/></material>
+    <material id="wood-mat" name="Wood"><instance_effect url="#wood-fx"/></material>
+  </library_materials>
+  <library_geometries>
+    <geometry id="plate-mesh" name="Plate">
+      <mesh>
+        <source id="plate-pos">
+          <float_array id="plate-pos-array" count="12">0 0 0  1 0 0  1 1 0  0 1 0</float_array>
+          <technique_common><accessor source="#plate-pos-array" count="4" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common>
+        </source>
+        <source id="plate-nrm">
+          <float_array id="plate-nrm-array" count="3">0 0 1</float_array>
+          <technique_common><accessor source="#plate-nrm-array" count="1" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common>
+        </source>
+        <source id="plate-uv">
+          <float_array id="plate-uv-array" count="8">0 0  1 0  1 1  0 1</float_array>
+          <technique_common><accessor source="#plate-uv-array" count="4" stride="2"><param name="S" type="float"/><param name="T" type="float"/></accessor></technique_common>
+        </source>
+        <vertices id="plate-vtx"><input semantic="POSITION" source="#plate-pos"/></vertices>
+        <triangles material="matA" count="1">
+          <input semantic="VERTEX" source="#plate-vtx" offset="0"/>
+          <input semantic="NORMAL" source="#plate-nrm" offset="1"/>
+          <input semantic="TEXCOORD" source="#plate-uv" offset="2" set="0"/>
+          <p>0 0 0  1 0 1  2 0 2</p>
+        </triangles>
+        <polylist material="matB" count="1">
+          <input semantic="VERTEX" source="#plate-vtx" offset="0"/>
+          <input semantic="NORMAL" source="#plate-nrm" offset="1"/>
+          <input semantic="TEXCOORD" source="#plate-uv" offset="2" set="0"/>
+          <vcount>4</vcount>
+          <p>0 0 0  1 0 1  2 0 2  3 0 3</p>
+        </polylist>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_visual_scenes>
+    <visual_scene id="Scene" name="Scene">
+      <node id="Parent" name="Parent" type="NODE">
+        <translate>1 2 3</translate>
+        <rotate>0 0 1 90</rotate>
+        <scale>2 2 2</scale>
+        <node id="Child" name="Child" type="NODE">
+          <matrix>1 0 0 5  0 1 0 0  0 0 1 0  0 0 0 1</matrix>
+          <instance_geometry url="#plate-mesh">
+            <bind_material><technique_common>
+              <instance_material symbol="matA" target="#red-mat"/>
+              <instance_material symbol="matB" target="#wood-mat"/>
+            </technique_common></bind_material>
+          </instance_geometry>
+        </node>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+  <scene><instance_visual_scene url="#Scene"/></scene>
+</COLLADA>

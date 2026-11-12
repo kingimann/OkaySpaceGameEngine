@@ -43,8 +43,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| No reverb, doppler, occlusion or distance filtering | `Audio/AudioMixer.hpp` (only low-pass and a stereo pan, `kSpatialPan` at :71); no matches for reverb or doppler in `engine/` | Caves, rooms and fast fly-bys sound flat. Spatial audio is pan plus fade only | Medium | Medium |
-| No audio streaming; every clip fully decoded to mono | `engine/src/Audio/AudioClip.cpp` (decode into memory), `AudioDecode.cpp:106` | Long music tracks use large memory; stereo music is downmixed to mono, which is a quality loss players will hear | High | Medium |
+| No reverb, doppler, occlusion or distance filtering | `Audio/AudioMixer.hpp` (only low-pass and a stereo pan or balance, `kSpatialPan`); no matches for reverb or doppler in `engine/` | Caves, rooms and fast fly-bys sound flat. Spatial audio is pan plus fade only | Medium | Medium |
 | Audio import settings stored but never read | `Core/ImportSidecar.hpp` is read only from `engine/src/Render/ModelImport.cpp`; nothing in `engine/src/Audio` | Import options for audio (and texture compress) have no effect. Already hidden in the UI, but the data path is dead | Low | Small |
 | Only four fixed buses, no effect chain or snapshots | `AudioMixer.hpp:40` (`SFX, Music, UI, Voice`) | Games cannot add an Ambience or Dialogue bus | Low | Medium |
 | Formats: WAV, OGG, MP3 only (no FLAC) | `AudioDecode.cpp:106` | Common asset format rejected with an error | Low | Small |
@@ -168,7 +167,7 @@ High: 8. Medium: 58. Low: 26. Total rows: 92.
 5. **Mesh Collider 3D is a box** (sec 2). Users believe they get model collision; start with a convex hull, then triangle meshes for static objects.
 6. **Save framework has no no-code route** (sec 13). The engine work is done; a Save/Load slot component and a window make it usable without scripts.
 7. **Direct3D 12 has no post-processing** (sec 1). Either bring it to parity or label it "preview" in Build Settings and keep it off by default.
-8. **Audio is mono and fully decoded** (sec 4). Streaming plus stereo for music is a clear quality and memory win.
+8. ~~**Audio is mono and fully decoded** (sec 4).~~ Done: clips keep stereo, long music streams from disk in a fixed small amount of memory (AudioSource "Stream", Music Player), see `docs/audio.md`. The other audio gaps stay in section 4.
 9. **(Resolved) Undo uses full snapshots** (sec 13). The editor now records scene deltas on `UndoStack` (named steps, merged drags, GUID-exact delete restore, history kept across Play, no recording during Play). What is left is a narrower Medium row in sec 13: per-object commands, and the unrun GUI paths.
 10. **Navigation: off-mesh links and area costs** (sec 6). Biggest AI limit; NPCs cannot use gaps, ladders or avoid hazards.
 11. **Cast shadows from spot and point lights on D3D12 and software** (sec 1) or a visible warning in the Light Inspector (small).

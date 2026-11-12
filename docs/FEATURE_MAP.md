@@ -5,7 +5,7 @@ Point at anything and I know where it lives. Say **"work on 5.6.2"** (one number
 see ("feet slide on slopes", "the Hierarchy window"). Every number leads to the files, classes, tests,
 docs and editor windows involved, what already works, what is missing, and what is in flight.
 
-This map holds 58 areas, 374 sub-areas and 1683 numbered parts, and every source file in the repo is meant to appear in it
+This map holds 58 areas, 374 sub-areas and 1684 numbered parts, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
 **How it is organised**
@@ -243,8 +243,8 @@ Details for every sub-area and numbered part: [docs/feature_map/06-physics.md](f
 
 ## 7. Audio
 
-Software stereo mixer, WAV/OGG/MP3 clips, audio sources with 3D falloff, a music player and saved volume settings. Code is
-`engine/include/okay/Audio/*` (3 headers), `engine/src/Audio/*` (about 500 lines) and two components; the host programs
+Software stereo mixer, WAV/OGG/MP3 clips (mono or stereo) and streamed long sounds, audio sources with 3D falloff, a music player and saved volume settings. Code is
+`engine/include/okay/Audio/*` (6 headers), `engine/src/Audio/*` (about 1,800 lines) and two components; the host programs
 (`player/main.cpp`, `editor/main.cpp`) open the sound device. Doc: `docs/audio.md`. Nothing is in flight; #574 added a captions
 model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 
@@ -253,8 +253,8 @@ Details for every sub-area and numbered part: [docs/feature_map/07-audio.md](fea
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
 | [7.1](feature_map/07-audio.md#71-mixer-and-audio-mixer) | Mixer and Audio Mixer | Works | The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice and distance panning... | only four fixed groups (no user-made buses, effect chain or snapshots); low-pass is the only effect; no reverb, occlusion or... |
-| [7.2](feature_map/07-audio.md#72-formats-and-clips) | Formats and clips | Works | Audio files (WAV, OGG, MP3) are decoded once into mono float clips at the mixer's rate and shared between sources; generators make simple test tones. | clips are always mono (stereo files are downmixed) and fully decoded into memory, so long music is memory heavy and there is no... |
-| [7.3](feature_map/07-audio.md#73-audio-sources-and-music-player) | Audio sources and music player | Works | The AudioSource component plays a clip with volume, pitch, pan, loop, 3D falloff, low-pass, fades and overlapping one-shots; the Music Player plays a... | one listener (the main camera); no streaming sources; the editor Add Component menu labels and script bindings for audio live in... |
+| [7.2](feature_map/07-audio.md#72-formats-and-clips) | Formats and clips | Works | Audio files (WAV, OGG, MP3) are decoded once into float clips that keep their channels (mono or stereo; downmix only on request) at the mixer's rate... | the Vorbis decoder rejects more than 32 channels and codebooks that claim more than 2M entries, and floor type 0 (written by no... |
+| [7.3](feature_map/07-audio.md#73-audio-sources-and-music-player) | Audio sources and music player | Works | The AudioSource component plays a clip or, with Stream, a file read as it plays, with volume, pitch, pan or balance, loop, seek, 3D falloff... | one listener (the main camera); Seek is C++ only (no script or visual-script call); the editor Add Component menu labels and... |
 | [7.4](feature_map/07-audio.md#74-saved-volume-settings) | Saved volume settings | Works | The player's master, group volumes and mutes are saved to Prefs (`audio.*` keys) and loaded on the next start; the Pause Menu and Settings screen... | the volume sliders belong to the pause and settings screens (area 12.8); no subtitle or caption link yet (`CaptionManager` from... |
 
 ## 8. Input

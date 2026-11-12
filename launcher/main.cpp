@@ -17747,7 +17747,6 @@ int main(int argc, char** argv) {
     bool running = true;
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
-        Uint64 frameStart = SDL_GetPerformanceCounter();   // for the frame-rate cap below
         bool okayFrame = false;   // this frame has an OkayUI frame open (the OkayUI backend is on): closed after ImGui's draw data
         Uint64 frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing

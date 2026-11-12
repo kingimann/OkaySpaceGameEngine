@@ -3,16 +3,20 @@ OkaySpace Game Engine — Changelog
 v2.861.0
   Editor
   - Prefabs: an override header shows what an instance changes, with revert and
-    apply per property or for all (#666); Open on a prefab enters prefab mode,
+    apply per property or for all (#666). Open on a prefab enters prefab mode,
     with its own scene view, a leave prompt for unsaved edits and undo (#676).
+    Prefab variants are changed by their overrides or by opening their base
+    prefab; they are not opened directly.
   - Level design: foliage painting (paint, erase, rescale; slope, height and
     spacing limits; merged into chunks for speed), up to four painted terrain
     texture layers, decal projector, cable between two objects, true
     orthographic Top/Front/Side views, and a measuring tool (#677). Volumes
     and logic zones: checkpoint, kill, force, atmosphere and ambience regions
-    drawn in the scene view (#675). Wires between any logic outputs and inputs
-    (#672). Navigation areas, costs and off-mesh links (#661). Mesh Collider 3D
-    uses the real triangles for static objects (#663).
+    drawn in the scene view; an ambience region fades in the Audio Source on
+    its object while the camera is inside (#675). I/O links on logic objects:
+    when a named output fires, any object's input is triggered, with a delay
+    and a once option (#672). Navigation areas, costs and off-mesh links
+    (#661). Mesh Collider 3D uses the real triangles for static objects (#663).
   - Project panel rebuilt on the asset database (#673). Undo records named
     scene steps that survive Play (#662).
   - Scene view and layout: the camera readout is an optional overlay that no
@@ -30,18 +34,15 @@ v2.861.0
     screen (#664).
   Launcher
   - "Download my data" and "Delete my account" in Account > Sign-in & security;
-    deleting needs your password and removes or anonymises your rows (#651).
+    deleting needs your password and removes or anonymises your rows (#651;
+    needs the delete-account function deployed, see docs/account_data.md; until
+    then the launcher says deletion is not set up).
   - Report a message, post, item or profile; reports are reviewed by staff
     (#652, needs docs/sql/reports.sql, applied to the live project).
   Fonts and models
   - TrueType fonts are rasterised by our own code (#655). OBJ, MTL, STL and PLY
-    models are read by our own readers; Assimp stays for other formats (#660).
-  Under construction (not ready, switched off, not for use; nothing changes in your games)
-  - Our own replacements for third-party code are being built next to the
-    originals: cryptography, windows and input, UI toolkit, COLLADA reading
-    (#656, #654, #681, #659, #678, #679). They stay off, with no setting to
-    turn them on, until they are ready and bug free. The libraries you use
-    today are unchanged.
+    models are read by our own readers first; the existing importer stays as
+    the fallback for files they reject and for other formats (#660).
 
 v2.860.0
   Audio

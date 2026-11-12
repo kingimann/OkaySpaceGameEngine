@@ -59,6 +59,7 @@
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/SurvivalZone.hpp"
+#include "okay/Components/Volume.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
@@ -647,7 +648,7 @@ bool AllowsMultiple(const Component* c) {
            dynamic_cast<const Joint2D*>(c) || dynamic_cast<const Joint3D*>(c) ||          // one joint per neighbour
            dynamic_cast<const Spawner*>(c) || dynamic_cast<const Light*>(c) || dynamic_cast<const ParticleSystem*>(c) ||
            dynamic_cast<const TriggerZone*>(c) || dynamic_cast<const UIAnimation*>(c) ||
-           dynamic_cast<const SequencePlayer*>(c) || dynamic_cast<const QuestTrigger*>(c);
+           dynamic_cast<const SequencePlayer*>(c) || dynamic_cast<const QuestTrigger*>(c) || dynamic_cast<const Volume*>(c);
 }
 
 // `compoff` records for every component that is switched off (per-component flags
@@ -9119,6 +9120,43 @@ void RegisterBuiltinComponentSerializers() {
             lg->RebuildFromRatios(mr->DisplayMesh());
     };
     ComponentSerializerRegistry::Register(std::move(lod));
+
+    ComponentSerializerRegistry::Entry vol;
+    vol.name = "volume";
+    vol.write = [](const GameObject& go, std::ostream& out) {
+        for (const Volume* v : go.GetComponents<Volume>()) {
+            if (!v) continue;
+            out << "  volume";
+            KvOut k{out};
+            k("kind", (int)v->kind)("shape", (int)v->shape)
+             ("sx", v->size.x)("sy", v->size.y)("sz", v->size.z)
+             ("ox", v->offset.x)("oy", v->offset.y)("oz", v->offset.z)
+             .str("tag", v->activatorTag).str("event", v->eventName)
+             ("kact", v->killAction)("kdmg", v->killDamage)
+             ("fshape", v->forceShape)("fx", v->forceDirection.x)("fy", v->forceDirection.y)("fz", v->forceDirection.z)
+             .b("flocal", v->forceLocal)("fstr", v->forceStrength)
+             .col("fog", v->fogColor)("fstart", v->fogStart)("fend", v->fogEnd)("vig", v->vignette)("blend", v->blend)
+             ("fade", v->fadeTime);
+            out << "\n";
+        }
+    };
+    vol.read = [](GameObject& go, std::istream& in) {
+        auto* v = go.AddComponent<Volume>();
+        KvIn k(in);
+        int kind = 0, shape = 0;
+        k.i("kind", kind); k.i("shape", shape);
+        v->kind = (Volume::Kind)std::clamp(kind, 0, Volume::kKindCount - 1);
+        v->shape = (VolumeShape)std::clamp(shape, 0, kVolumeShapeCount - 1);
+        k.f("sx", v->size.x); k.f("sy", v->size.y); k.f("sz", v->size.z);
+        k.f("ox", v->offset.x); k.f("oy", v->offset.y); k.f("oz", v->offset.z);
+        k.str("tag", v->activatorTag); k.str("event", v->eventName);
+        k.i("kact", v->killAction); k.f("kdmg", v->killDamage);
+        k.i("fshape", v->forceShape); k.f("fx", v->forceDirection.x); k.f("fy", v->forceDirection.y); k.f("fz", v->forceDirection.z);
+        k.b("flocal", v->forceLocal); k.f("fstr", v->forceStrength);
+        k.col("fog", v->fogColor); k.f("fstart", v->fogStart); k.f("fend", v->fogEnd); k.f("vig", v->vignette); k.f("blend", v->blend);
+        k.f("fade", v->fadeTime);
+    };
+    ComponentSerializerRegistry::Register(std::move(vol));
 
     ComponentSerializerRegistry::Entry occ;
     occ.name = "occluder";

@@ -21,6 +21,7 @@
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
+#include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -2436,6 +2437,9 @@ void LoadSettings() {
         else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
         else if (k == "showgizmos") g_showGizmos = (v != 0);
+        else if (k == "showvolumes") oked::g_showVolumes = (v != 0);
+        else if (k == "volumelabels") oked::g_showVolumeLabels = (v != 0);
+        else if (k == "volumekinds") oked::g_volumeKinds = (unsigned)v & oked::kVolumeKindsAll;
         else if (k == "showgrid") g_showGrid = (v != 0);
         else if (k == "sceneskybox") g_sceneSkybox = (v != 0);
         else if (k == "wireframeall") g_wireframeAll = (v != 0);
@@ -2493,6 +2497,9 @@ void SaveSettings() {
       << "ssaa "       << g_ssaa << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
       << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n"
+      << "showvolumes " << (oked::g_showVolumes ? 1 : 0) << "\n"
+      << "volumelabels " << (oked::g_showVolumeLabels ? 1 : 0) << "\n"
+      << "volumekinds " << (int)oked::g_volumeKinds << "\n"
       << "showgrid " << (g_showGrid ? 1 : 0) << "\n"
       << "sceneskybox " << (g_sceneSkybox ? 1 : 0) << "\n"
       << "wireframeall " << (g_wireframeAll ? 1 : 0) << "\n"
@@ -6208,6 +6215,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         if (ImGui::BeginMenu("Scene Overlays")) {
             ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
+            oked::DrawVolumeOverlayMenu([] { SaveSettings(); });
             if (ImGui::BeginMenu("Physics Debug")) {
                 if (ImGui::MenuItem("Show physics (Scene + Game)", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw colliders (green), triggers (blue), this frame's contact\npoints + normals (red) and query rays, also in the Game view\nwhile playing. Editor only - never in a build.");
@@ -6500,6 +6508,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
+        oked::DrawVolumeGameObjectMenu(ed, created);
         if (ImGui::MenuItem("Create Tilemap")) {
             GameObject* go = ed.CreateEmpty("Tilemap");
             auto* tm = go->AddComponent<Tilemap>();
@@ -38955,6 +38964,7 @@ void DrawInspector(EditorState& ed) {
     DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
+    oked::DrawVolumeInspector(ed, go, curComp, toRemove, &CompHeader);  // Volume (checkpoint, kill, force, atmosphere, ambience)
     oked::DrawFallbackInspector(ed, go, curComp, toRemove, fbCursorY, &CompHeader);   // anything still undrawn: from the property registry
     if (multiEdit.active && oked::PropagateComponentEdit(ed.MultiSelection(), go, *curComp, multiEdit) > 0) ed.dirty = true;
     } // end component-order loop
@@ -39317,6 +39327,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<StatusEffectStat>(), "Status Effects")) { go->AddComponent<StatusEffectStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalSave>(), "Survival Save / Load")) { go->AddComponent<SurvivalSave>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalZone>(), "Survival Zone (trigger)")) { go->AddComponent<SurvivalZone>(); ed.dirty = true; }
+            oked::VolumeAddComponentItems(ed, go, item);   // Volume: checkpoint, kill, force, atmosphere, ambience
             if (item(!go->GetComponent<Consumables>(), "Consumables (items -> stats)")) { go->AddComponent<Consumables>(); ed.dirty = true; }
             if (item(!go->GetComponent<DayNightCycle>(), "Day / Night Cycle")) { go->AddComponent<DayNightCycle>(); ed.dirty = true; }
             if (item(!go->GetComponent<NPCController>(), "NPC Controller")) { go->AddComponent<NPCController>(); ed.dirty = true; }
@@ -41350,7 +41361,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // Orbit controls (Scene view only).
     if (!gameView && hovered && io.MouseWheel != 0.0f && !io.KeyCtrl && g_ptool != PolyTool::LoopCut && g_ptool != PolyTool::Bevel)  // Ctrl+Wheel = UI zoom; loop cut / bevel: number of cuts / segments
         ed.camDist = Mathf::Clamp(ed.camDist * (1.0f - io.MouseWheel * 0.1f), 2.0f, 400.0f);
-    if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ed.selected()) {
+    if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ed.selected() && !oked::VolumeDrawActive()) {
         ed.camYaw   -= io.MouseDelta.x * 0.4f;
         ed.camPitch = Mathf::Clamp(ed.camPitch + io.MouseDelta.y * 0.4f, -85.0f, 85.0f);
     }
@@ -42133,6 +42144,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && g_showGizmos)
         DrawSplineOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
                           hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
+    // Volumes: every region as a translucent shape, the selected one's resize handles, and the draw-by-drag tool.
+    if (!gameView && ed.view3D) {
+        if (oked::DrawVolumeOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
+                                    hovered && !g_uiHandled && !g_gizmoGrab, io))
+            g_uiHandled = true;
+    }
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {
         for (const SkelDraw& d : g_skelDraw) {

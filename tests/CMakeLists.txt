@@ -851,6 +851,10 @@ add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
 add_test(NAME survival COMMAND test_survival)
 
+add_executable(test_volumes test_volumes.cpp)
+target_link_libraries(test_volumes PRIVATE okay::engine)
+add_test(NAME volumes COMMAND test_volumes)
+
 add_executable(test_minimap test_minimap.cpp)
 target_link_libraries(test_minimap PRIVATE okay::engine)
 add_test(NAME minimap COMMAND test_minimap)

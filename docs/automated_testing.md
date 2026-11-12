@@ -157,6 +157,9 @@ textures and URLs are built in and always found.
 | `object.inactive` | info | the top of an inactive subtree (reported once, with the descendant count) |
 | `object.layer_range` | warning | a layer outside 0..31 |
 | `physics.rigidbody_no_collider` | warning | a `Rigidbody2D` / `Rigidbody3D` with no collider on the object |
+| `volume.zero_size` | warning | a `Volume`, or a Logic Source plate or trigger zone, with a size of zero or less on an axis (docs/volumes.md) |
+| `volume.force_zero` | warning | a Force `Volume` with strength 0 |
+| `volume.no_audio` | warning | an Ambience `Volume` with no Audio Source, or an Audio Source with no clip |
 | `scene.duplicate_guid` | warning | `ValidateText` / `ValidateFile`: two objects carry the same `guid` (the loader gives one a new guid) |
 | `scene.broken_parent` | error | `ValidateText` / `ValidateFile`: `parent N` names an object that is not in the file (it loads as a root) |
 

@@ -102,6 +102,11 @@ add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
 
+# MeshCollider3D: real triangle-mesh collision (BVH): rays, overlaps, casts, bodies, edits, perf
+add_executable(test_meshcollider3d test_meshcollider3d.cpp)
+target_link_libraries(test_meshcollider3d PRIVATE okay::engine)
+add_test(NAME meshcollider3d COMMAND test_meshcollider3d)
+
 # Robustness: removing colliders / bodies / components from contact callbacks
 add_executable(test_physics_callback_removal test_physics_callback_removal.cpp)
 target_link_libraries(test_physics_callback_removal PRIVATE okay::engine)
@@ -769,6 +774,13 @@ target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
+# The editor's prefab actions (editor/PrefabEdit; ImGui-free): override detection, per-field and per-component Revert / Apply, Apply updating the
+# other instances, nested prefabs and variants, objects added to or lost from an instance, Create Variant, and undo / redo that moves the prefab files too.
+add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_prefab_editor PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_prefab_editor PRIVATE okay::engine)
+add_test(NAME prefab_editor COMMAND test_prefab_editor)
+
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
 add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
 target_link_libraries(test_project_save PRIVATE okay::engine)
@@ -861,6 +873,10 @@ add_test(NAME vehicle COMMAND test_vehicle)
 add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
 add_test(NAME survival COMMAND test_survival)
+
+add_executable(test_volumes test_volumes.cpp)
+target_link_libraries(test_volumes PRIVATE okay::engine)
+add_test(NAME volumes COMMAND test_volumes)
 
 add_executable(test_minimap test_minimap.cpp)
 target_link_libraries(test_minimap PRIVATE okay::engine)
@@ -1810,6 +1826,10 @@ add_test(NAME post_sky COMMAND test_post_sky)
 add_executable(test_navmesh test_navmesh.cpp)
 target_link_libraries(test_navmesh PRIVATE okay::engine)
 add_test(NAME navmesh COMMAND test_navmesh)
+# Navigation areas (modifier, costs, masks) and off-mesh links (jump / drop / ladder): bake, path search, crossing, scene file
+add_executable(test_navmesh_areas test_navmesh_areas.cpp)
+target_link_libraries(test_navmesh_areas PRIVATE okay::engine)
+add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)
@@ -2319,6 +2339,22 @@ add_executable(test_file_dialog test_file_dialog.cpp ${PROJECT_SOURCE_DIR}/share
 target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
+
+# "Download my data" / "Delete my account": client request building, confirmation
+# gating, export assembly, error mapping (engine/include/okay/Platform/Account/AccountData.hpp).
+add_executable(test_account_data test_account_data.cpp)
+target_compile_features(test_account_data PRIVATE cxx_std_17)
+target_include_directories(test_account_data PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME account_data COMMAND test_account_data)
+
+# The delete-account Edge Function's logic against a fake client (needs Node 22+;
+# skipped without it). Same file also runs under Deno.
+find_program(OKAY_NODE node)
+if(OKAY_NODE)
+    add_test(NAME delete_account_function
+             COMMAND ${OKAY_NODE} --experimental-strip-types --test
+                     ${CMAKE_SOURCE_DIR}/supabase/functions/delete-account/delete_account_test.ts)
+endif()
 
 # Our own FBX reader (okay::fbx), side by side with ufbx: fixtures from scripts/gen_fbx_fixtures.py
 add_executable(test_fbx_reader test_fbx_reader.cpp)

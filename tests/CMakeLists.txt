@@ -63,6 +63,16 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+# Stereo clips and placement (balance for 2D, mono-then-pan for 3D).
+add_executable(test_audio_stereo test_audio_stereo.cpp)
+target_link_libraries(test_audio_stereo PRIVATE okay::engine)
+add_test(NAME audio_stereo COMMAND test_audio_stereo)
+
+# Streaming audio: streamed vs whole-file decode, seek, loop, memory bound, underruns, hostile files.
+add_executable(test_audio_stream test_audio_stream.cpp)
+target_link_libraries(test_audio_stream PRIVATE okay::engine)
+target_compile_definitions(test_audio_stream PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME audio_stream COMMAND test_audio_stream)
 # Own Ogg Vorbis decoder: SNR vs libvorbis references, Ogg framing, headers, truncation, bit-flip and noise fuzzing.
 add_executable(test_vorbis_decoder test_vorbis_decoder.cpp)
 target_link_libraries(test_vorbis_decoder PRIVATE okay::engine)
@@ -1539,6 +1549,16 @@ add_executable(test_chat_json test_chat_json.cpp)
 target_compile_features(test_chat_json PRIVATE cxx_std_17)
 target_include_directories(test_chat_json PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME chat_json COMMAND test_chat_json)
+# Kick / ban / unban / promote logic for servers and group chats (shared/MemberModeration.hpp): permissions, requests, error mapping.
+add_executable(test_member_moderation test_member_moderation.cpp)
+target_compile_features(test_member_moderation PRIVATE cxx_std_17)
+target_include_directories(test_member_moderation PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/shared)
+add_test(NAME member_moderation COMMAND test_member_moderation)
+# Typing indicator / read receipts: missing-table detection (docs/sql/chat_receipts.sql).
+add_executable(test_chat_receipts test_chat_receipts.cpp)
+target_compile_features(test_chat_receipts PRIVATE cxx_std_17)
+target_include_directories(test_chat_receipts PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME chat_receipts COMMAND test_chat_receipts)
 # ...and the friends / profile JSON (Friends.hpp).
 add_executable(test_friends_json test_friends_json.cpp)
 target_compile_features(test_friends_json PRIVATE cxx_std_17)
@@ -1577,6 +1597,11 @@ add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
 if(UNIX)
     add_test(NAME anticheat_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_anticheat_sql.sh)
     set_tests_properties(anticheat_sql PROPERTIES SKIP_RETURN_CODE 77)
+    # docs/sql/member_moderation.sql (kick / ban / roles) on a LOCAL Postgres, same opt-in as above.
+    add_test(NAME member_moderation_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_member_moderation_sql.sh)
+    set_tests_properties(member_moderation_sql PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME chat_receipts_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_chat_receipts_sql.sh)
+    set_tests_properties(chat_receipts_sql PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_executable(test_tween test_tween.cpp)
@@ -2254,6 +2279,14 @@ add_executable(test_image_write test_image_write.cpp)
 target_link_libraries(test_image_write PRIVATE okay::engine)
 add_test(NAME image_write COMMAND test_image_write)
 
+# Our own image decoder (Core/ImageDecode): PNG / JPEG / BMP / TGA / GIF / HDR / PSD fixtures vs reference pixels
+# (tests/data/images), the inflater, and truncated / bit-flipped / absurd input.
+add_executable(test_image_decoder test_image_decoder.cpp)
+target_compile_definitions(test_image_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(test_image_decoder PRIVATE okay::engine)
+add_test(NAME image_decoder COMMAND test_image_decoder)
+set_tests_properties(image_decoder PROPERTIES TIMEOUT 300)
+
 # shared/FileDialog: our own open / save / folder dialogs (replaced the vendored tinyfiledialogs): path and glob helpers,
 # argument lists for zenity / kdialog / osascript (no injection), result parsing, extension enforcing, the built-in browser's
 # model and queue, and a run through fake helper programs on PATH. No window.
@@ -2290,3 +2323,18 @@ endif()
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
 add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
+
+# Our own FBX reader (okay::fbx), side by side with ufbx: fixtures from scripts/gen_fbx_fixtures.py
+add_executable(test_fbx_reader test_fbx_reader.cpp)
+target_link_libraries(test_fbx_reader PRIVATE okay::engine)
+target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_reader COMMAND test_fbx_reader)
+
+# Hostile-input tests for okay::fbx. Standalone (no engine library) so it can run under sanitizers:
+#   cmake -DOKAY_SANITIZE=address,undefined ...   (CI's sanitizer job), OKAY_FBX_FUZZ_ITERS=20000 for a longer fuzz.
+add_executable(test_fbx_hostile test_fbx_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+target_include_directories(test_fbx_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_fbx_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_hostile COMMAND test_fbx_hostile)

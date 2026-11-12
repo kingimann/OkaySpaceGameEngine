@@ -135,7 +135,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a limb pops at full extension | [36.5](36-math-geometry.md#365-ik-math) IK math |
 | a link stops working after loading | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
 | a long list is slow or drops rows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
-| a long song uses a lot of memory | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
+| a long song uses a lot of memory (tick Stream) | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
 | a look changes in one system and not the other | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a loop cut previews but does not apply | [3.2](03-modeling-import.md#32-edge-and-loop-tools) Edge and loop tools |
 | a loop never ends or runs once | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
@@ -865,7 +865,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | steamcmd asks for Steam Guard | [18.8](18-build-export-release.md#188-steam-release-steampipe) Steam release (SteamPipe) |
 | step goes to the wrong node | [14.5](14-visual-scripting.md#145-debugger-breakpoints-step-call-stack-watch) Debugger (breakpoints, step, call stack, watch) |
 | steps run in the wrong order | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
-| stereo sound comes out mono | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
+| stereo music sounds off-centre or one-sided (Pan on a stereo clip is a balance) | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
 | subtitles ignore the language setting | [32.2](20-35-planned.md#322-subtitles) Subtitles |
 | subtitles too small or hard to read | [32.2](20-35-planned.md#322-subtitles) Subtitles |
 | sunrise does not change the sky | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |

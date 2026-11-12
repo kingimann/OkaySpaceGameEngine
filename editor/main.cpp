@@ -35891,6 +35891,11 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Loop", &a->loop);
             ImGui::SameLine();
             ImGui::Checkbox("Play On Awake", &a->playOnAwake);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Stream##audio", &a->stream)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play the file in small pieces as it plays instead of loading it whole.\n"
+                                                          "Use it for long music and ambience: it takes a fixed small amount of memory\n"
+                                                          "however long the file is. Takes effect when the file loads (Play, or Load here).");
             if (ImGui::Button("Beep"))  a->clip = AudioClip::Sine(440.0f, 0.3f);
             ImGui::SameLine();
             if (ImGui::Button("Noise")) a->clip = AudioClip::Noise(0.3f);
@@ -35912,7 +35917,7 @@ void DrawInspector(EditorState& ed) {
                 okay::filedialog::OpenOne("Choose an audio file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3)", {"*.wav", "*.ogg", "*.mp3"}), [edp, ap](const std::string& p) {
                     ap->clipPath = p; edp->dirty = true;
                     std::string werr;
-                    if (ap->clip.Load(p, &werr)) ConsoleLog("Loaded " + p);
+                    if (ap->stream ? ap->OpenStream(p, &werr) : ap->clip.Load(p, &werr)) ConsoleLog((ap->stream ? "Streaming " : "Loaded ") + p);
                     else ConsoleLog("Audio load failed: " + werr, 2);
                 });
             }
@@ -35922,12 +35927,13 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Load##audiowavload")) {   // preview a typed/dropped path
                     std::string werr;
-                    if (a->clip.Load(a->clipPath, &werr)) ConsoleLog("Loaded " + a->clipPath);
+                    if (a->stream ? a->OpenStream(a->clipPath, &werr) : a->clip.Load(a->clipPath, &werr)) ConsoleLog((a->stream ? "Streaming " : "Loaded ") + a->clipPath);
                     else ConsoleLog("Audio load failed: " + werr, 2);
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this file now to hear it with the Play button here");
             }
-            ImGui::TextDisabled("WAV, OGG or MP3; loads on Play and in the built game; %.2fs clip", a->clip.Duration());
+            ImGui::TextDisabled("WAV, OGG or MP3; loads on Play and in the built game; %.2fs %s%s", a->Duration(),
+                                a->IsStreaming() ? "stream" : "clip", a->clip.channels == 2 ? ", stereo" : (a->IsStreaming() && a->Stream()->Channels() == 2 ? ", stereo" : ""));
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
             oked::FieldTip("3D (spatial)");
             if (a->spatial) {
@@ -35983,6 +35989,8 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Loop##music", &mp->loopPlaylist)) ed.dirty = true;
             oked::FieldTip("Loop##music");
+            if (ImGui::Checkbox("Stream##music", &mp->stream)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Read each track from its file as it plays (a small fixed amount of memory)\ninstead of loading it whole when it starts.");
             if (ed.isPlaying()) {
                 ImGui::Text("Now: %s", mp->CurrentTrack().empty() ? "(nothing)" : mp->CurrentTrack().c_str());
                 if (ImGui::Button("Previous##music")) mp->Previous();

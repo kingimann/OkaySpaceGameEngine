@@ -17,7 +17,7 @@ Size: Small < 1 day, Medium = a few days, Large = a week or more.
 | No way to report a message, forum post, marketplace item or profile | only `launcher/main.cpp:8782` and `:13001-13015` ("Report cheating") | The one report button is for cheating and goes to the anti-cheat inbox. Abuse, spam and illegal content cannot be reported by users anywhere; moderators have to find it themselves in Admin. | High | Medium |
 | Chat is polling, not push | polling loops `launcher/main.cpp:9945` (4 s tick), `:7372`, `:14919`, `:15048` | No realtime socket and no desktop (OS) notifications: with the launcher minimized you get a chime and a taskbar flash only; calls ring up to about 3 s late. Fine for now, but it multiplies request load per user. | Medium | Large |
 | GIF search is off until each user pastes their own Tenor key | `launcher/main.cpp:3622`, `:3911-3926`, `:3941` | Out of the box the GIF tab shows "GIF search is off". The owner could ship one shared key (app_config) or a small proxy so it works for everybody. | Medium | Small |
-| Group chat members cannot be removed | `launcher/main.cpp:6585-6625` (Members popup is read-only); SQL allows it at `docs/sql/group_chats.sql:88` | The popup lists members only. No remove, no make-admin, no ownership transfer, so one troublemaker in a group can only be escaped by leaving. | Medium | Small |
+| Group chats: no ownership transfer | `launcher/main.cpp` (group Members popup), `docs/sql/member_moderation.sql` | Remove, Ban, Unban and Make/Remove admin now work from the Members popup (see the servers row in section 3; owner must apply `member_moderation.sql`). Still missing: handing ownership to someone else, so an owner who leaves strands the group. | Low | Small |
 | Voice calls have no tests | `launcher/VoiceChat.hpp` (582 lines); no tests/test_voice*; feature map 16.7 | ADPCM encode/decode, jitter handling, room key and the v3 relay hello are untested. | Medium | Medium |
 | Scheduled messages, notifications and device-only pins live in local files | `launcher/main.cpp:5606` (sent only while the launcher is open), `:1856-1860` (notifications.cfg), `:4401` (local pins when chat_extras.sql is missing) | None of these follow the account to another PC; a scheduled message does not send if the launcher is closed at that time. The screen says so for scheduled messages, not for the others. | Low | Medium |
 | Voice-note waveform is a made-up shape until the clip downloads, and only 16-bit clips get a real one | `launcher/main.cpp:4893-4936`, `:5076` | Cosmetic: other formats keep the placeholder waveform. | Low | Small |
@@ -38,7 +38,7 @@ Size: Small < 1 day, Medium = a few days, Large = a week or more.
 
 | Item | Where | What is missing (plain English) | Impact | Size |
 |---|---|---|---|---|
-| Community server owners cannot kick, ban or promote members | `launcher/main.cpp:23956` (members list only marks the owner); SQL already allows kick `docs/sql/social.sql:392-393` | The database lets the owner remove a member, the page has no button; roles are just "owner" and "member", no moderators, no mute, no invite expiry or revoke. | High | Medium |
+| ~~Community server owners cannot kick, ban or promote members~~ DONE in code, owner step left (mute and invite expiry still missing) | `launcher/main.cpp` (members lists, `ModMenuItems`, `ModDrawBanned`), `shared/MemberModeration.hpp`, `docs/sql/member_moderation.sql`, `docs/member_moderation.md` | Done in this pass: Remove, Ban (reason, length), Unban, Banned list and Make/Remove admin on the existing members lists, owner > admin > member enforced by the database, audit rows in `admin_log`, honest toasts (accepted, refused with reason, not applied). Still missing: the owner must apply `member_moderation.sql` (steps in `docs/member_moderation.md`; until then the buttons say so), no mute, no invite expiry or revoke, no moderator role below admin, admins cannot add group members. | High | Small |
 | Marketplace downloads are not scanned or size-checked and extraction shells out | `launcher/main.cpp:613-627` (`ExtractZip`: `unzip`/`tar`/PowerShell, no size cap, no path check of our own), `:22903-22927` (only a warning that uploads are not vetted) | Review (pending/approved) exists for listings, but nothing checks the file itself. On a minimal Linux box without `unzip` the "Install to Community" button just fails with "Couldn't extract the archive". | Medium | Medium |
 | Downloads page forgets its list on restart | `launcher/main.cpp:24997-25113` (`g_dls` is in memory only) | After a restart finished downloads vanish from the list (files stay in `downloads/`); interrupted ones leave `.part` files with no resume; only `.zip` has an install action. | Low | Small |
 | Marketplace, Forums, Servers, Admin pages have no tests and no user doc | feature map 17.5, 17.6, 17.8, 17.9 ("untested"); docs have only `launcher-multiplayer.md` and `launcher_versions.md` | Behaviour is only checked by hand against a live Supabase project. | Medium | Large |
@@ -79,7 +79,7 @@ How to apply the chat receipts SQL (owner): Supabase dashboard > SQL Editor > Ne
 
 ## Counts
 
-High: 7 (+1 done in code, waiting on the owner to run the SQL) | Medium: 16 | Low: 14 (38 rows).
+High: 6 (+2 done in code, waiting on the owner to run the SQL) | Medium: 15 | Low: 15 (38 rows).
 
 ## Top 10 to tackle first
 
@@ -88,7 +88,7 @@ High: 7 (+1 done in code, waiting on the owner to run the SQL) | Medium: 16 | Lo
 3. **Deploy the voice server and set it in Admin > Chat** (Small, owner step). Calls are advertised but dead until then.
 4. **Real "Report" for messages, posts, items and profiles** (Medium). Public chat and Marketplace without user reporting is the biggest safety gap.
 5. **Server-side block list and enforced privacy settings** (Medium). Today a blocked user can still message and call.
-6. **Kick/ban/remove-member buttons for community servers and group chats** (Small to Medium). The database already allows it; only UI is missing.
+6. ~~Kick/ban/remove-member buttons for community servers and group chats~~ done in code; owner applies `docs/sql/member_moderation.sql` (docs/member_moderation.md). Mute and invite expiry remain (Small).
 7. **Delete my account / export my data** (Medium). Legal and trust requirement for any online account system.
 8. **Fail loudly when the launcher self-update does not apply, and require the checksum index** (Small, then Large for signing). Update integrity is the one path that can compromise every user.
 9. **Set `OKAY_AC_TRUSTED_KEYS` and make the release step enforce `versions.json`** (Small, owner step). Cheap, and it turns two "warn only" release checks into real protection.

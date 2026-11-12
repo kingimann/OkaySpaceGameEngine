@@ -46779,11 +46779,27 @@ int main(int argc, char** argv) {
         }
         Input::ClearTypedText();   // collect this frame's typed characters
         g_okayUITyped[0] = '\0'; g_okayUIBack = false;   // OkayUI demo's per-frame keys
+        {   // The frame after a pop-out menu closes: hand the keyboard back to the editor window if the window system did not
+            // (no window manager, or one that leaves focus on nothing). Only then, and only with the pointer over the editor, so
+            // another program's focus is never taken.
+            static int s_prevViewports = 1;
+            const int vps = ImGui::GetPlatformIO().Viewports.Size;
+            if (s_prevViewports > 1 && vps <= 1 && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) == 0 &&
+                SDL_GetKeyboardFocus() == nullptr && SDL_GetMouseFocus() == window)
+                SDL_SetWindowInputFocus(window);
+            s_prevViewports = vps;
+        }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_KEYDOWN && !e.key.repeat &&
                 e.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
                 g_escapeEdge = true;
+            // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
+            // keyboard back (no window manager, or one that does not), Esc, F2 and the other keys would go nowhere and a
+            // dialog could only be closed with the mouse. A click in the editor window takes the keyboard focus back.
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.windowID == SDL_GetWindowID(window) &&
+                (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) == 0)
+                SDL_SetWindowInputFocus(window);
             // While the play cursor is grabbed, absolute motion is frozen where
             // the grab began. Feeding those events to ImGui clicks the Play
             // button and stops the game. The game still reads relative motion.

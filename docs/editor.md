@@ -536,6 +536,10 @@ thumbnail cache (`okay::ThumbnailCache`); it has no folder scan of its own. Deta
 - **Pictures.** Textures, audio waveforms, models, mesh files, materials, prefabs and scenes; made lazily within a few milliseconds per
   frame, kept in `.okay/thumbs`, made again when the file (or what it uses) changes. Tile size: slider, or Small / Medium / Large.
 - **Broken References.** A list of missing and stale references from the dependency graph; Fix rewrites the stale ones (Ctrl+Z in the panel undoes it).
+- **Keyboard after a menu closes.** A pop-out menu or context menu can be its own operating-system window. With a window manager the
+  keyboard goes back to the editor when it closes. Without one (a bare X server) it does not, so Esc and F2 are lost and a dialog can only
+  be closed with its Close button; a click in the editor window now takes the keyboard back. A click right after such a menu closes can
+  still be lost there. Dialogs are checked with a window manager in the tour.
 - **Info strip.** Type, size, GUID (short), uses and used-by counts, tags and a broken-reference warning (also a triangle on the tile).
 - **Rename, move, delete.** The GUID stays with the asset, references are rewritten, Ctrl+Z in the panel undoes them and puts the open
   scene's paths back, and a deleted asset's references show as broken until it is restored.

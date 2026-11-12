@@ -15,7 +15,7 @@ types a new password. This repo provides that page; **nothing is hosted or chang
    `OKAY_RESET_CONFIG = { supabaseUrl: "https://<ref>.supabase.co", anonKey: "<publishable key>" }`.
    Both are public values (the same ones the launcher ships). Never use a service-role key. Until they are filled in,
    the page shows "This page is not set up yet" and does nothing else.
-2. **Host the file over HTTPS** at any static host (GitHub Pages, Netlify, Cloudflare Pages, a bucket with website
+2. **Host the file over HTTPS** (this repository publishes it for you: `.github/workflows/pages.yml` puts only `supabase/auth-pages` on GitHub Pages at `https://<owner>.github.io/<repo>/reset-password/` once Settings > Pages > Source is set to "GitHub Actions"). Any static host also works: at any static host (GitHub Pages, Netlify, Cloudflare Pages, a bucket with website
    hosting, or your own web server), for example `https://example.com/reset-password/`. Serve it as-is; the page carries
    its own Content-Security-Policy.
 3. **Supabase dashboard > Authentication > URL Configuration**:

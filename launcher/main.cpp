@@ -2520,7 +2520,7 @@ void EmojiPicker(const char* id, char* buf, std::size_t cap) {
 ImFont* g_fontMono = nullptr;   // JetBrains Mono for `code` (loaded in main)
 // Merge the system's emoji font into the font just added, so emoji typed into
 // text boxes draw as emoji rather than "?" (message bodies use Twemoji images).
-// stb_truetype renders their outlines in one colour. Missing font = no-op.
+// Dear ImGui's own font rasterizer draws their outlines in one colour. Missing font = no-op.
 static void MergeEmojiFallback(float size) {
     static const char* kPaths[] = {
 #if defined(_WIN32)

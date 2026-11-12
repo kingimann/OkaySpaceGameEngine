@@ -4162,7 +4162,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 };
                 ImGui::TextDisabled("Pick a pin to see what fits it");
                 bool any = false;
-                if (d->execIn) { pinMenu("Flow in  <-  runs this node", true, false, 0, okay::vs::PinType::Any); any = true; }
+                if (d->execIn) { pinMenu("Flow in  <-  what runs this node", true, false, 0, okay::vs::PinType::Any); any = true; }
                 for (int j = 0; j < (int)d->execOut.size(); ++j) {
                     const char* lbl = d->execOut[(std::size_t)j];
                     pinMenu(std::string("Flow out  ->  ") + (lbl && *lbl ? lbl : "Next"), true, true, j, okay::vs::PinType::Any); any = true;

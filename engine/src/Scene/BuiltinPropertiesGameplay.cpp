@@ -22,6 +22,8 @@
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshLink.hpp"
+#include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Components/NetworkObject.hpp"
@@ -40,6 +42,7 @@
 #include "okay/Components/TopDownShooterController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/Volume.hpp"
 #include "okay/Components/Water.hpp"
 
 namespace okay {
@@ -687,6 +690,30 @@ void RegisterProjectile3D() {
     b.Commit();
 }
 
+// Volume
+void RegisterVolume() {
+    PropertyBuilder<Volume> b("Volume", "volume", "Gameplay");
+    b.AddEnum("kind", &Volume::kind, {"Checkpoint", "Kill", "Force", "Atmosphere", "Ambience"}).Tooltip("What the region does")
+     .AddEnum("shape", &Volume::shape, {"Box", "Sphere", "Cylinder"}).Tooltip("Box, the ellipsoid inside the box, or the cylinder standing on the Y axis")
+     .AddVec3("size", &Volume::size).Range(0.05, kBig, 0.1).Tooltip("The box the shape fills, in local units (scaled by the Transform)")
+     .AddVec3("offset", &Volume::offset).Range(-kBig, kBig, 0.1).Tooltip("Centre of the region, in local units")
+     .AddString("activatorTag", &Volume::activatorTag).Tooltip("Who counts: a tag or name text. Blank = any body (Force)")
+     .AddString("eventName", &Volume::eventName).Tooltip("Checkpoint / Kill: sent to scripts as an On Logic Signal when it fires")
+     .AddEnum("killAction", &Volume::killAction, {"Respawn", "Destroy"}).Tooltip("Kill: send the body back to its checkpoint, or remove it")
+     .AddFloat("killDamage", &Volume::killDamage).Range(0, kBig, 1).Tooltip("Kill: health taken before the respawn")
+     .AddEnum("forceShape", &Volume::forceShape, {"Direction", "Radial"}).Tooltip("Force: one steady direction, or away from / toward the centre")
+     .AddVec3("forceDirection", &Volume::forceDirection).Range(-1, 1, 0.05).Tooltip("Force (Direction): which way it pushes")
+     .AddBool("forceLocal", &Volume::forceLocal).Tooltip("Force (Direction): the direction turns with the object")
+     .AddFloat("forceStrength", &Volume::forceStrength).Range(-kBig, kBig, 0.5).Tooltip("Force: acceleration in m/s^2 (Radial: negative pulls in)")
+     .AddColor("fogColor", &Volume::fogColor).Tooltip("Atmosphere: fog colour inside")
+     .AddFloat("fogStart", &Volume::fogStart).Range(0, kBig, 0.5).Tooltip("Atmosphere: where the fog starts")
+     .AddFloat("fogEnd", &Volume::fogEnd).Range(0, kBig, 0.5).Tooltip("Atmosphere: where the fog is solid")
+     .AddFloat("vignette", &Volume::vignette).Range(0, 1, 0.01).Tooltip("Atmosphere: edge darkening inside")
+     .AddFloat("blend", &Volume::blend).Range(0, 1, 0.01).Tooltip("Atmosphere: how far in from the edge it takes to reach full strength")
+     .AddFloat("fadeTime", &Volume::fadeTime).Range(0, 60, 0.1).Tooltip("Ambience: seconds to fade the sound in and out");
+    b.Commit();
+}
+
 // Spawner
 void RegisterSpawner() {
     PropertyBuilder<Spawner> b("Spawner", "spawner", "Gameplay");
@@ -715,7 +742,8 @@ void RegisterMusicPlayer() {
      .AddBool("shuffle", &MusicPlayer::shuffle).Tooltip("Play the tracks in random order")
      .AddBool("loopPlaylist", &MusicPlayer::loopPlaylist).Tooltip("After the last track, start over")
      .AddFloat("crossfade", &MusicPlayer::crossfade).Range(0, 3600, 0.05).Tooltip("Seconds two tracks overlap")
-     .AddFloat("volume", &MusicPlayer::volume).Range(0, 1, 0.01).Tooltip("Playback volume (0 to 1)");
+     .AddFloat("volume", &MusicPlayer::volume).Range(0, 1, 0.01).Tooltip("Playback volume (0 to 1)")
+     .AddBool("stream", &MusicPlayer::stream).Tooltip("Read each track from its file as it plays (small fixed memory) instead of loading it whole");
     b.Commit();
 }
 
@@ -949,7 +977,30 @@ void RegisterNavMeshAgent() {
      .AddBool("autoBraking", &NavMeshAgent::autoBraking).Tooltip("Slow down over the last stretch instead of stopping dead")
      .AddBool("faceMovement", &NavMeshAgent::faceMovement).Tooltip("Turn to face the direction of travel")
      .AddBool("driveAnimation", &NavMeshAgent::driveAnimation).Tooltip("Drive a sibling Character's idle / walk / run")
-     .AddFloat("baseOffset", &NavMeshAgent::baseOffset).Range(-kBig, kBig, 0.05).Tooltip("The object's origin above its feet (a cube's centre: half its height)");
+     .AddFloat("baseOffset", &NavMeshAgent::baseOffset).Range(-kBig, kBig, 0.05).Tooltip("The object's origin above its feet (a cube's centre: half its height)")
+     .AddInt("areaMask", &NavMeshAgent::areaMask).Tooltip("Areas this agent may enter (bit n = area n). Default: all but Not Walkable");
+    b.Commit();
+}
+
+// NavMeshModifier
+void RegisterNavMeshModifier() {
+    PropertyBuilder<NavMeshModifier> b("NavMeshModifier", "navmod", "Navigation");
+    b.AddInt("area", &NavMeshModifier::area).Range(0, kNavAreaCount - 1, 1).Tooltip("Navigation area (0 Walkable, 1 Not Walkable, 2 Water, 3 Road, 4..31 custom) the colliders on this object bake as")
+     .AddBool("applyToChildren", &NavMeshModifier::applyToChildren).Tooltip("Also colliders on child objects that have no modifier of their own");
+    b.Commit();
+}
+
+// NavMeshLink
+void RegisterNavMeshLink() {
+    PropertyBuilder<NavMeshLink> b("NavMeshLink", "navlink", "Navigation");
+    b.AddEnum("type", &NavMeshLink::type, {"Jump", "Drop", "Ladder"}).Tooltip("How an agent crosses: an arc, a fall, or a straight climb")
+     .AddVec3("startPoint", &NavMeshLink::startPoint).Range(-kBig, kBig, 0.1).Tooltip("Where the crossing starts, in local space (must be on the baked mesh)")
+     .AddVec3("endPoint", &NavMeshLink::endPoint).Range(-kBig, kBig, 0.1).Tooltip("Where the crossing ends, in local space (must be on the baked mesh)")
+     .AddBool("bidirectional", &NavMeshLink::bidirectional).Tooltip("Off: only from the start point to the end point")
+     .AddFloat("cost", &NavMeshLink::cost).Range(0, kBig, 0.1).Tooltip("Multiplier on the crossing distance in the path search")
+     .AddInt("area", &NavMeshLink::area).Range(0, kNavAreaCount - 1, 1).Tooltip("Navigation area, checked against each agent's area mask")
+     .AddFloat("speed", &NavMeshLink::speed).Range(0, kBig, 0.1).Tooltip("Crossing speed in units per second (0 = the agent's own speed)")
+     .AddFloat("arcHeight", &NavMeshLink::arcHeight).Range(0, kBig, 0.1).Tooltip("Jump: how high the arc peaks");
     b.Commit();
 }
 
@@ -1056,6 +1107,7 @@ void RegisterGameplayProperties() {
     RegisterVehicleController2D();
     RegisterProjectile3D();
     RegisterSpawner();
+    RegisterVolume();
     RegisterMusicPlayer();
     RegisterCollectible();
     RegisterDamageOnTouch();
@@ -1073,6 +1125,8 @@ void RegisterGameplayProperties() {
     RegisterWater();
     RegisterNavMeshAgent();
     RegisterNavMeshObstacle();
+    RegisterNavMeshModifier();
+    RegisterNavMeshLink();
     RegisterNavMeshSurface();
     RegisterNetworkObject();
     RegisterNetworkSync();

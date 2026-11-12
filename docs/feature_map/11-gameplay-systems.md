@@ -97,15 +97,15 @@ No open PR touches this area.
 - **What:** Several ways to build: a Build Mode players use in your game (palette, snapping, undo, logic links, saved creations), a Rust-style tiered Structure Builder, a Minecraft-style Block Builder, and a developer Builder Mode for modelling while walking.
 - **Parts:**
   - 11.5.1 Build Mode - `Components/BuildMode`, `Components/Buildable` - palette hotbar, grid snap, rotate, move, copy, delete, undo and redo, reach and object caps, `BuildCreation` save and load to a creations file
-  - 11.5.2 Logic links - `Components/LogicLinks` - Logic Source (button, pressure plate, trigger zone, timer) wired to Logic Targets (door, mover, light, spawner, event) by Buildable id
+  - 11.5.2 Logic links - `Components/LogicLinks` - Logic Source (button, pressure plate, trigger zone, timer) wired to Logic Targets (door, mover, light, spawner, event) by Buildable id; I/O links on a source (named output to target object, input, parameter, delay, fire-once, enabled; Relay kind; Fire Output action and script call)
   - 11.5.3 Structure Builder - `Components/StructureBuilder`, `Components/BuildPiece` - foundations, walls, floors, pillars and ramps that snap to each other, wood-stone-metal upgrades, repair, cost from the inventory
   - 11.5.4 Block Builder - `Components/BlockBuilder` - place and remove grid cubes by aiming at surfaces
   - 11.5.5 Builder Mode - `Components/BuilderMode` - developer tool: drop primitives or stamp prefabs, rotate and scale, save the assembly as a `.okayprefab`
 - **Code:** `Components/BuildMode`, `Components/Buildable`, `Components/LogicLinks`, `Components/StructureBuilder`, `Components/BuildPiece`, `Components/BlockBuilder`, `Components/BuilderMode`, `editor/main.cpp` (build inspectors)
-- **API:** `BuildMode`, `Buildable`, `BuildPaletteItem`, `BuildCreation`, `LogicSource`, `LogicTarget`, `StructureBuilder`, `BuildPiece`, `BlockBuilder`, `BuilderMode`, script `build_enter`, `build_exit`, `build_toggle`, `on_object_placed`
-- **Editor:** Add Component > Gameplay rows "Build Mode (players build + wire)", "Buildable (players may edit)", Logic Source, Logic Target, "Block Builder (voxel)", "Structure Builder (Rust-style)"; Builder Mode is toggled in Play from the editor
+- **API:** `BuildMode`, `Buildable`, `BuildPaletteItem`, `BuildCreation`, `LogicSource`, `LogicTarget`, `StructureBuilder`, `BuildPiece`, `BlockBuilder`, `BuilderMode`, script `build_enter`, `build_exit`, `build_toggle`, `on_object_placed`, `fire_output`, Actions step `fire_output`, `LogicSource::IoLink`, `FireOutput`
+- **Editor:** Add Component > Gameplay rows "Build Mode (players build + wire)", "Buildable (players may edit)", Logic Source (with an I/O Links list: Add, Test, Remove, broken-target warning), Logic Target, "Block Builder (voxel)", "Structure Builder (Rust-style)"; Builder Mode is toggled in Play from the editor
 - **Docs:** `docs/build_mode.md`
-- **Tests:** `build_mode`, `structure_builder`, `block_builder`, `builder_mode`, `inventory_build_charge`
+- **Tests:** `build_mode`, `io_links`, `structure_builder`, `block_builder`, `builder_mode`, `inventory_build_charge`
 - **Status:** Works - BuildMode.hpp, Buildable.hpp, LogicLinks.hpp and the other builder headers read; placement, undo, links and charging for pieces covered by `build_mode`, `structure_builder` and `inventory_build_charge`
 - **Open:** per `docs/build_mode.md` "Not covered yet": placements and links are not synced between players, building is 3D only, pressure plates need a collider; Build Mode and Builder Mode are different features with confusingly similar names
 - **Related:** 6.6, 11.1, 11.3, 12.8, 16.8, 2.6
@@ -218,3 +218,24 @@ No open PR touches this area.
 - **Words:** drag and drop, Draggable, DropZone, drag items, puzzle, snap to zone, on_drop
 - **Seen as:** an item cannot be dragged; it drops but nothing receives it; the item does not snap to the zone
 - **Ask me like:** "drag ingredients onto a cauldron"; "snap puzzle pieces to a grid"
+
+### 11.12 Volumes and zones
+- **What:** One region shape (box, sphere or cylinder, no collider needed) with five zone kinds: checkpoint and kill (a respawn point per body), force (wind, updraft, current), atmosphere (fog and vignette that fade in around the camera) and ambience (a sound that fades in around the camera). Drawn as a coloured translucent shape in the Scene view, drawn and resized by dragging.
+- **Parts:**
+  - 11.12.1 Shape - `Components/Volume` - `VolumeGeometry`: box, sphere (ellipsoid) and cylinder from one `size` and `offset`; `Contains`, `DepthAt`, `DragFace` (move one face, the opposite stays), `FromGroundDrag`
+  - 11.12.2 Checkpoint and Kill - `Components/Volume` - a body inside a Checkpoint takes the floor middle as its respawn point; a body entering a Kill takes `killDamage` and goes back to its checkpoint (or where it was first seen), or is destroyed; optional On Logic Signal `eventName`
+  - 11.12.3 Force - `Components/Volume` - pushes dynamic Rigidbody 3D bodies each physics step: one direction (turning with the object or fixed to the world) or radial, in m/s squared
+  - 11.12.4 Atmosphere and Ambience - `Components/Volume` - while the camera is inside, the scene fog and vignette blend to the volume's (several volumes blend, the scene's own values come back on exit); an Audio Source on the object fades in and out
+  - 11.12.5 Scene view tooling - `editor/VolumeTools.*` - translucent shape and label per volume in a colour per kind, six face handles on the selection, GameObject > Volume (draw by dragging on the ground, or create at the view), Scene Overlays > Volumes (show or hide by kind), Inspector, Add Component rows; Logic Source plates and trigger zones get the same shape, handles and switch
+  - 11.12.6 Save and checks - `Scene/SceneSerializer`, `Testing/SceneValidator` - `volume` scene and prefab record (several per object), property registry entries, validator codes `volume.zero_size`, `volume.force_zero`, `volume.no_audio`
+- **Code:** `Components/Volume`, `editor/VolumeTools.*`, `Scene/SceneSerializer`, `Scene/BuiltinPropertiesGameplay`, `Testing/SceneValidator`
+- **API:** `Volume`, `Volume::Kind`, `VolumeGeometry`, `Volume::RespawnPoint`, `Volume::SetRespawnPoint`, `Volume::Occupants`, `Volume::ViewerWeight`
+- **Editor:** GameObject > Volume; Scene Overlays > Volumes; Add Component > Gameplay > Volume rows; Inspector "Volume (zone)"
+- **Docs:** `docs/volumes.md`
+- **Tests:** `volumes`, `save_coverage`, `property_registry`
+- **Status:** Works - all five kinds act in Play and are covered by the `volumes` test (shapes, handle math, respawn, force, fog and sound blend, scene and prefab round trip, validator); the Scene view tools were driven in the real editor
+- **Open:** no reverb (the mixer has only a low-pass), no per-scene post settings beyond fog and vignette, no navigation-area volume, no convex region shape; Force reaches Rigidbody 3D bodies only (not 2D, and a character controller that sets its own velocity each frame overrides it); Atmosphere overrides weather fog while the camera is inside; a Kill needs the body to have been seen outside the volume to know where to send it
+- **Related:** 6.2, 11.4, 11.6, 11.5, 2.4, 7.1, 15.3, 44.4
+- **Words:** volume, zone, trigger volume, checkpoint, respawn, kill zone, kill plane, out of bounds, wind zone, force field, updraft, current, fog volume, ambient sound zone, region, box, sphere, cylinder, draw volume
+- **Seen as:** cannot see where my zones are; the player falls into lava and stays dead; no checkpoint between rooms; need a wind tunnel or a fan; fog should change in a cave; a room needs its own background sound
+- **Ask me like:** "add a kill zone under the bridge that sends the player to the last checkpoint"; "a wind tunnel that blows crates along"; "fog that thickens when I enter the swamp"

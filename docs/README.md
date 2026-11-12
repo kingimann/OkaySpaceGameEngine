@@ -9,10 +9,12 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [making_a_game.md](making_a_game.md): make your first game, from an empty editor to a shipped one.
 - [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
 - [prefab_system.md](prefab_system.md): nested prefabs, variants, unpack, per-record and per-field apply and revert, and the prefab validator.
+- [prefab_mode.md](prefab_mode.md): open a prefab on its own in the editor, edit it (nested prefabs too), save it, and see every instance update.
 - [scene_serializer.md](scene_serializer.md): what a scene round trip keeps, and the component serializer registry.
 - [properties.md](properties.md): the property registry: read, write, watch, snapshot and diff any component field by name (the base for per-property undo, live editing and prefab overrides).
 - [scene_diff_merge.md](scene_diff_merge.md): canonical scene text, structured diffs, three-way merge and format migration for version control.
 - [editor.md](editor.md): the editor, its panels and Build Game.
+- [platform_layer.md](platform_layer.md): the okay::platform seam over SDL2, our own Linux / Windows backends, the SDL audit and what is tested.
 - [project_upgrade.md](project_upgrade.md): the engine version a project was saved with, the upgrade question when an editor of another version opens it, safe upgrade with a full backup, restore, and the launcher's Versions folder.
 - [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.
@@ -45,6 +47,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [survival_kit.md](survival_kit.md): health, hunger, thirst, stamina, oxygen and temperature components.
 - [npcs_and_crafting.md](npcs_and_crafting.md): NPCs and crafting.
 - [navigation.md](navigation.md): navigation meshes and agents.
+- [volumes.md](volumes.md): box, sphere and cylinder zones: checkpoint, kill, force, fog and sound, drawn and resized in the Scene view.
 - [behavior_trees.md](behavior_trees.md): behavior trees for NPC AI.
 - [dialogue_quests.md](dialogue_quests.md): dialogue graphs, story variables and quests.
 - [cutscenes.md](cutscenes.md): sequences and the Timeline window.
@@ -55,6 +58,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [save_framework.md](save_framework.md): saveable objects, checkpoints, quick save and autosave slots, slot headers, migrations, sync hooks, load menus.
 - [day_night_cycle.md](day_night_cycle.md): the day and night cycle.
 - [splines.md](splines.md): splines, followers, lines and trails.
+- [level_tools.md](level_tools.md): foliage brush, terrain texture layers, decal projector, cable, measuring tool, orthographic views.
 
 ## Look, models and sound
 - [rendering.md](rendering.md): post-processing, sky, fog and weather.

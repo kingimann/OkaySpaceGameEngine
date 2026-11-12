@@ -14,32 +14,32 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
   - 8.1.2 Mouse - `Input/Input` - position, `MouseDelta` (first sample is not a jump), buttons 0-2, wheel via `FeedMouseWheel`
   - 8.1.3 Typed text - `Input/Input` - `TypedText` and `FeedText` carry real typed characters (shift, caps, symbols) from the OS text event
   - 8.1.4 Terminal fallback - `Input/Input` - raw non-blocking console keys when there is no window; no input in a headless run
-  - 8.1.5 Extended keys (#571) - `Input/Input`, `Input/SdlKeys` - F1-F12, Insert/Delete/Home/End/PageUp/PageDown, left and right Shift, Ctrl and Alt, `Input::KeyF(n)`; `SdlKeys` feeds them from SDL scancodes (the player includes it, `editor/main.cpp` does not)
+  - 8.1.5 Extended keys (#571) - `Input/Input`, `Input/PlatformKeys` - F1-F12, Insert/Delete/Home/End/PageUp/PageDown, left and right Shift, Ctrl and Alt, `Input::KeyF(n)`; `PlatformKeys` (`AppendExtendedKeys`) feeds them from physical keys through `okay::platform` (the player includes it, `editor/main.cpp` does not; it replaced `SdlKeys`)
 - **Code:** `Input/Input`, `engine/src/Input/Input.cpp`, `player/main.cpp` (SDL event feed), `editor/main.cpp` (Play-mode feed)
 - **API:** `Input::GetKey`, `Input::GetKeyDown`, `Input::GetKeyUp`, `Input::AxisWASD`, `Input::MousePosition`, `Input::MouseDelta`, `Input::GetMouseButton`, `Input::MouseWheel`, `Input::TypedText`, `Input::FeedKeys`, `Input::FeedMouse`, script `Input.GetKey`, `key("space")`
 - **Editor:** none (Play mode in the Game view feeds keys and mouse)
 - **Docs:** `docs/input.md`
 - **Tests:** `transform_input`, `core_audit_input`, `input_actions`, `input_keys_gamepad`
-- **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `SdlKeys`)
-- **Open:** the editor's Play mode does not include `SdlKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
+- **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `PlatformKeys`)
+- **Open:** the editor's Play mode does not include `PlatformKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
 - **Related:** 8.3, 8.5, 12.3, 13.4
 - **Words:** Input, GetKey, GetKeyDown, keyboard, mouse, mouse look, wheel, scroll, typed text, text input, key code, KeyFromName, press any key, WASD, arrow keys, function keys, F1, modifiers, Alt
 - **Seen as:** a key does nothing in the game; F-keys or Alt cannot be bound; mouse-look jumps on the first frame; typed text misses capitals or symbols; holding two keys drops one
 - **Ask me like:** "let me bind F5 to quick-save"; "the camera jumps when the game starts"
 
 ### 8.2 Gamepad (SDL)
-- **What:** One SDL game controller is read into Input: both sticks (radial dead zone 0.18), both triggers, 14 buttons plus trigger-as-button, and the left stick, d-pad and A also press W, A, S, D and Space so keyboard games play on a pad.
+- **What:** Game controllers (read through `okay::platform`: SDL2, or our own evdev backend) are read into Input: both sticks (radial dead zone 0.18), both triggers, 14 buttons plus trigger-as-button, and the left stick, d-pad and A also press W, A, S, D and Space so keyboard games play on a pad.
 - **Parts:**
   - 8.2.1 Pad state - `Input/Input` - `GamepadAxis`, `GamepadRightAxis`, `GamepadTrigger`, `GetGamepadButton`(Down/Up), `GamepadConnected`, button names and `FirstGamepadButtonDown`
-  - 8.2.2 SDL bridge - `Input/SdlGamepad` - header-only `FeedSdlGamepad` opens nothing itself; the host picks the first controller and calls it each frame
-  - 8.2.3 Multiple controllers, dead zones and curves (#571) - `Input/Input`, `Input/SdlGamepad` - up to four players (`kMaxGamepads`), `GamepadSettings(player)` shape, dead zone, outer zone, curve, trigger threshold, `SdlGamepadSet` (the player uses it; the editor still calls the single-pad `FeedSdlGamepad`)
-- **Code:** `Input/Input`, `Input/SdlGamepad`, `engine/src/Input/Input.cpp`, `player/main.cpp`, `editor/main.cpp`
-- **API:** `Input::GamepadAxis`, `Input::GetGamepadButton`, `Input::PadA`, `Input::GamepadTrigger`, `Input::GamepadConnected`, `FeedSdlGamepad`, script `Input.gamepadConnected`
+  - 8.2.2 Platform bridge - `Input/PlatformGamepad`, `Platform/Platform` - header-only `FeedPad` reads an `okay::platform::Gamepad` (no SDL types); the host picks the first controller and calls it each frame
+  - 8.2.3 Multiple controllers, dead zones and curves (#571) - `Input/Input`, `Input/PlatformGamepad` - up to four players (`kMaxGamepads`), `GamepadSettings(player)` shape, dead zone, outer zone, curve, trigger threshold, `PadSet` (the player uses it; the editor still calls the single-pad `FeedPad`)
+- **Code:** `Input/Input`, `Input/PlatformGamepad`, `engine/src/Platform/SdlBackend.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Input/Input.cpp`, `player/main.cpp`, `editor/main.cpp`
+- **API:** `Input::GamepadAxis`, `Input::GetGamepadButton`, `Input::PadA`, `Input::GamepadTrigger`, `Input::GamepadConnected`, `FeedPad`, `PadSet`, `platform::Gamepad`, script `Input.gamepadConnected`
 - **Editor:** none (controller works in Play mode)
 - **Docs:** `docs/input.md`
 - **Tests:** `transform_input`, `input_actions`, `input_keys_gamepad`
-- **Status:** Works - up to four controllers with per-player settings (Input.hpp read; `player/main.cpp` uses `SdlGamepadSet`; test `input_keys_gamepad`); the editor Play view still feeds one pad
-- **Open:** the editor reads only one controller through `FeedSdlGamepad`; no couch co-op example or settings screen for the dead zone and curve; no controller hint icons per brand
+- **Status:** Works - up to four controllers with per-player settings (Input.hpp read; `player/main.cpp` uses `PadSet`; tests `input_keys_gamepad` and, for the own evdev mapping, `platform`); the editor Play view still feeds one pad
+- **Open:** the editor reads only one controller through `FeedPad`; the controller hot-plug events still come from each app's SDL event loop; no couch co-op example or settings screen for the dead zone and curve; no controller hint icons per brand
 - **Related:** 8.3, 8.6, 12.4, 32.1
 - **Words:** gamepad, controller, joystick, stick, dead zone, trigger, d-pad, Xbox, PlayStation, SDL_GameController, FeedGamepad, rumble, hot-plug, split screen
 - **Seen as:** the character drifts with the stick untouched; the pad does nothing in the editor Play view; a second controller is ignored; triggers act as buttons too early or late

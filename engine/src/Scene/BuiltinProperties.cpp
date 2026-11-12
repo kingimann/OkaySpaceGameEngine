@@ -382,7 +382,8 @@ void RegisterColliders3D() {
     }
     {
         PropertyBuilder<MeshCollider3D> b("MeshCollider3D", "meshcollider3d", "Physics 3D");
-        b.AddVec3("size", &MeshCollider3D::size).Range(0, kBig, 0.1);
+        b.AddVec3("size", &MeshCollider3D::size).Range(0, kBig, 0.1)
+         .Tooltip("Fallback box, used only when the object has no mesh with triangles");
         Collider3DCommon(b);
         b.Commit();
     }
@@ -393,13 +394,14 @@ void RegisterColliders3D() {
 
 void RegisterAudioSource() {
     PropertyBuilder<AudioSource> b("AudioSource", "audio", "Audio");
-    b.AddAssetPath("clipPath", &AudioSource::clipPath, "audio").Tooltip("WAV file to play")
+    b.AddAssetPath("clipPath", &AudioSource::clipPath, "audio").Tooltip("Audio file to play (WAV, OGG or MP3)")
      .AddFloat("volume", &AudioSource::volume).Range(0, 1, 0.01)
      .AddFloat("pitch", &AudioSource::pitch).Range(0.01, 8, 0.01).Tooltip("Speed and pitch together")
      .AddFloat("pan", &AudioSource::pan).Range(-1, 1, 0.01).Tooltip("-1 left, 0 centre, 1 right")
      .AddEnum("group", &AudioSource::group, {"SFX", "Music", "UI", "Voice"}).Tooltip("Mixer group")
      .AddBool("loop", &AudioSource::loop)
      .AddBool("playOnAwake", &AudioSource::playOnAwake)
+     .AddBool("stream", &AudioSource::stream).Tooltip("Play the file in small pieces as it plays instead of loading it whole: for long music")
      .AddFloat("lowPass", &AudioSource::lowPass).Range(10, AudioSource::kLowPassOff, 10).Tooltip("Cutoff in Hz; the top of the range leaves the sound untouched")
      .Section("3D sound")
      .AddBool("spatial", &AudioSource::spatial)

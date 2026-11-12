@@ -59,6 +59,7 @@
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/SurvivalZone.hpp"
+#include "okay/Components/Volume.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
@@ -78,6 +79,8 @@
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshLink.hpp"
+#include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -138,6 +141,9 @@
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/Foliage.hpp"
+#include "okay/Components/Cable.hpp"
+#include "okay/Components/Decal.hpp"
 #include "okay/Components/TerrainDigger.hpp"
 #include "okay/Components/WorldStreamer.hpp"
 #include "okay/Components/Destructible.hpp"
@@ -175,6 +181,7 @@
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/AutoSave.hpp"
+#include "okay/Core/GameSaves.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIRawImage.hpp"
@@ -647,7 +654,7 @@ bool AllowsMultiple(const Component* c) {
            dynamic_cast<const Joint2D*>(c) || dynamic_cast<const Joint3D*>(c) ||          // one joint per neighbour
            dynamic_cast<const Spawner*>(c) || dynamic_cast<const Light*>(c) || dynamic_cast<const ParticleSystem*>(c) ||
            dynamic_cast<const TriggerZone*>(c) || dynamic_cast<const UIAnimation*>(c) ||
-           dynamic_cast<const SequencePlayer*>(c) || dynamic_cast<const QuestTrigger*>(c);
+           dynamic_cast<const SequencePlayer*>(c) || dynamic_cast<const QuestTrigger*>(c) || dynamic_cast<const Volume*>(c);
 }
 
 // `compoff` records for every component that is switched off (per-component flags
@@ -820,7 +827,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
     if (auto* mr = go->GetComponent<MeshRenderer>();
-        mr && !go->GetComponent<Terrain>() && !go->GetComponent<Character>()) {
+        mr && !go->GetComponent<Terrain>() && !go->GetComponent<Character>() && !go->GetComponent<Decal>()) {   // a decal's mesh is cut from the scene again on load
         out << "  mesh " << Quote(mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
@@ -1357,6 +1364,18 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << pm->panelColor.r << " " << pm->panelColor.g << " " << pm->panelColor.b << " " << pm->panelColor.a
             << " " << Quote(pm->title) << " " << Quote(pm->mainMenuScene) << "\n";
     }
+    // Saveable: flags, then the save id, prefab, and the property paths ("Light.intensity" ...).
+    if (auto* sv = go->GetComponent<Saveable>()) {
+        out << "  saveable " << (sv->dynamic ? 1 : 0) << " " << (sv->saveTransform ? 1 : 0)
+            << " " << (sv->saveActive ? 1 : 0) << " " << (sv->saveComponents ? 1 : 0)
+            << " " << (sv->saveVariables ? 1 : 0) << " " << (sv->saveSceneVariables ? 1 : 0)
+            << " " << Quote(sv->saveId) << " " << Quote(sv->prefab) << " " << sv->properties.size();
+        for (const std::string& p : sv->properties) out << " " << Quote(p);
+        out << "\n";
+    }
+    if (auto* ss = go->GetComponent<SaveConfig>())
+        out << "  savesettings " << ss->autosaveInterval << " " << (ss->autosaveOnSceneStart ? 1 : 0)
+            << " " << ss->autosaveSlots << "\n";
     if (auto* as = go->GetComponent<AutoSave>())
         out << "  autosave " << as->interval << " " << (as->saveOnStart ? 1 : 0)
             << " " << Quote(as->slot) << " " << Quote(as->label) << "\n";
@@ -2004,6 +2023,16 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("ox", ls->zoneOffset.x)("oy", ls->zoneOffset.y)("oz", ls->zoneOffset.z)
          .str("tag", ls->activatorTag).key("key", ls->pressKey)("pad", ls->pressPadButton)
          ("reach", ls->pressReach).str("links", links);
+        if (!ls->ioLinks.empty()) {
+            k("io", ls->ioLinks.size());
+            for (std::size_t i = 0; i < ls->ioLinks.size(); ++i) {
+                const auto& l = ls->ioLinks[i];
+                const std::string p = "io" + std::to_string(i);
+                k.str((p + "o").c_str(), l.output).str((p + "t").c_str(), l.target)
+                 .str((p + "i").c_str(), l.input).str((p + "p").c_str(), l.param)
+                 ((p + "d").c_str(), l.delay).b((p + "x").c_str(), l.once).b((p + "e").c_str(), l.enabled);
+            }
+        }
         out << "\n";
     }
     if (auto* lt = go->GetComponent<LogicTarget>()) {
@@ -2814,13 +2843,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
             << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << " "
             << au->pitch << " " << au->pan << " " << (int)au->group << " " << (int)au->rolloff << " "
-            << au->lowPass << "\n";
+            << au->lowPass << " " << (au->stream ? 1 : 0) << "\n";
     }
     if (auto* mp = go->GetComponent<MusicPlayer>()) {
         out << "  music " << (mp->playOnStart ? 1 : 0) << " " << (mp->shuffle ? 1 : 0) << " "
             << (mp->loopPlaylist ? 1 : 0) << " " << mp->crossfade << " " << mp->volume << " " << mp->tracks.size();
         for (const auto& t : mp->tracks) out << " " << Quote(t);
-        out << "\n";
+        out << " " << (mp->stream ? 1 : 0) << "\n";
     }
     if (auto* anim = go->GetComponent<Animator>()) {
         out << "  animator " << anim->speed << " " << (anim->playing ? 1 : 0) << " "
@@ -3490,6 +3519,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("bcx", ns->boundsCenter.x)("bcy", ns->boundsCenter.y)("bcz", ns->boundsCenter.z)
          ("bsx", ns->boundsSize.x)("bsy", ns->boundsSize.y)("bsz", ns->boundsSize.z)
          .b("dyn", ns->includeDynamic)("layers", ns->layerMask).b("bakeplay", ns->bakeBeforePlay);
+        for (int a = 0; a < kNavAreaCount; ++a) {   // only what differs from the defaults
+            if (ns->areaCost[a] != NavAreaDefaultCost(a)) k(("ac" + std::to_string(a)).c_str(), ns->areaCost[a]);
+            if (!ns->areaName[a].empty()) k.str(("an" + std::to_string(a)).c_str(), ns->areaName[a]);
+        }
         out << "\n";
     }
     if (auto* na = go->GetComponent<NavMeshAgent>()) {
@@ -3498,7 +3531,22 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         k("radius", na->radius)("height", na->height)("speed", na->speed)("accel", na->acceleration)
          ("angular", na->angularSpeed)("stop", na->stoppingDistance).b("repath", na->autoRepath)
          ("repathT", na->repathInterval)("prio", na->avoidancePriority)("avoid", na->avoidanceRange)
-         .b("brake", na->autoBraking).b("face", na->faceMovement).b("anim", na->driveAnimation)("base", na->baseOffset);
+         .b("brake", na->autoBraking).b("face", na->faceMovement).b("anim", na->driveAnimation)("base", na->baseOffset)
+         ("mask", na->areaMask);
+        out << "\n";
+    }
+    if (auto* nm = go->GetComponent<NavMeshModifier>()) {
+        out << "  navmod";
+        KvOut k{out};
+        k("area", nm->area).b("kids", nm->applyToChildren);
+        out << "\n";
+    }
+    if (auto* nl = go->GetComponent<NavMeshLink>()) {
+        out << "  navlink";
+        KvOut k{out};
+        k("type", (int)nl->type)("sx", nl->startPoint.x)("sy", nl->startPoint.y)("sz", nl->startPoint.z)
+         ("ex", nl->endPoint.x)("ey", nl->endPoint.y)("ez", nl->endPoint.z).b("both", nl->bidirectional)
+         ("cost", nl->cost)("area", nl->area)("speed", nl->speed)("arc", nl->arcHeight);
         out << "\n";
     }
     if (auto* no = go->GetComponent<NavMeshObstacle>()) {
@@ -5635,6 +5683,16 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     std::replace(links.begin(), links.end(), ',', ' ');
                     std::istringstream ids(links);
                     for (int id = 0; ids >> id;) if (id != 0) ls->links.push_back(id);
+                    int nio = 0; k.i("io", nio);
+                    for (int i = 0; i < nio && i < 256; ++i) {
+                        const std::string p = "io" + std::to_string(i);
+                        LogicSource::IoLink l;
+                        k.str((p + "o").c_str(), l.output); k.str((p + "t").c_str(), l.target);
+                        k.str((p + "i").c_str(), l.input); k.str((p + "p").c_str(), l.param);
+                        k.f((p + "d").c_str(), l.delay); k.b((p + "x").c_str(), l.once); k.b((p + "e").c_str(), l.enabled);
+                        if (!(l.delay >= 0.0f)) l.delay = 0.0f;
+                        ls->ioLinks.push_back(l);
+                    }
                 } else if (field == "logictarget") {
                     auto* lt = go->AddComponent<LogicTarget>();
                     KvIn k(in);
@@ -6899,7 +6957,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             if (grp >= 0 && grp < (int)AudioGroup::Count) au->group = (AudioGroup)grp;
                             if (ro >= 0 && ro <= (int)AudioRolloff::Logarithmic) au->rolloff = (AudioRolloff)ro;
                             in >> std::ws;   // optional low-pass cutoff
-                            if (std::isdigit(in.peek())) in >> au->lowPass;
+                            if (std::isdigit(in.peek())) {
+                                in >> au->lowPass;
+                                in >> std::ws;   // optional stream flag
+                                if (std::isdigit(in.peek())) { int stv = 0; in >> stv; au->stream = stv != 0; }
+                            }
                         }
                     }
                 } else if (field == "music") {
@@ -6908,6 +6970,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> pos >> sh >> lp >> mp->crossfade >> mp->volume >> n;
                     mp->playOnStart = pos != 0; mp->shuffle = sh != 0; mp->loopPlaylist = lp != 0;
                     for (std::size_t t = 0; t < n && in; ++t) mp->tracks.push_back(ReadQuoted(in));
+                    in >> std::ws;   // optional stream flag (older files stream by default)
+                    if (std::isdigit(in.peek())) { int stv = 1; in >> stv; mp->stream = stv != 0; }
                 } else if (field == "animator") {
                     float speed = 1.0f; int playing = 1, loop = 1, tc = 0;
                     in >> speed >> playing >> loop;
@@ -7161,6 +7225,23 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     pm->toggleKey = (char)tk; pm->showResume = (sr != 0); pm->showQuit = (sq != 0);
                     pm->title = ReadQuoted(in);
                     pm->mainMenuScene = ReadQuoted(in);
+                } else if (field == "saveable") {
+                    auto* sv = go->AddComponent<Saveable>();
+                    int dyn = 0, tr = 1, act = 1, comps = 1, vars = 0, svars = 0;
+                    std::size_t np = 0;
+                    in >> dyn >> tr >> act >> comps >> vars >> svars;
+                    sv->dynamic = dyn != 0; sv->saveTransform = tr != 0; sv->saveActive = act != 0;
+                    sv->saveComponents = comps != 0; sv->saveVariables = vars != 0; sv->saveSceneVariables = svars != 0;
+                    sv->saveId = ReadQuoted(in);
+                    sv->prefab = ReadQuoted(in);
+                    in >> np;
+                    for (std::size_t pi = 0; pi < np && pi < 1000 && in; ++pi) sv->properties.push_back(ReadQuoted(in));
+                } else if (field == "savesettings") {
+                    auto* ss = go->AddComponent<SaveConfig>();
+                    int onStart = 0;
+                    in >> ss->autosaveInterval >> onStart >> ss->autosaveSlots;
+                    ss->autosaveOnSceneStart = onStart != 0;
+                    ss->autosaveSlots = std::min(std::max(1, ss->autosaveSlots), 20);
                 } else if (field == "autosave") {
                     auto* as = go->AddComponent<AutoSave>();
                     int sos = 0;
@@ -8326,6 +8407,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("bcx", ns->boundsCenter.x); k.f("bcy", ns->boundsCenter.y); k.f("bcz", ns->boundsCenter.z);
                     k.f("bsx", ns->boundsSize.x); k.f("bsy", ns->boundsSize.y); k.f("bsz", ns->boundsSize.z);
                     k.b("dyn", ns->includeDynamic); k.u("layers", ns->layerMask); k.b("bakeplay", ns->bakeBeforePlay);
+                    for (int a = 0; a < kNavAreaCount; ++a) {
+                        k.f(("ac" + std::to_string(a)).c_str(), ns->areaCost[a]);
+                        k.str(("an" + std::to_string(a)).c_str(), ns->areaName[a]);
+                    }
                     ns->sceneDir = g_loadingSceneDir;   // the .okaynav is looked for next to the scene too
                 } else if (field == "navagent") {
                     auto* na = go->AddComponent<NavMeshAgent>();
@@ -8334,7 +8419,21 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("accel", na->acceleration); k.f("angular", na->angularSpeed); k.f("stop", na->stoppingDistance);
                     k.b("repath", na->autoRepath); k.f("repathT", na->repathInterval); k.i("prio", na->avoidancePriority);
                     k.f("avoid", na->avoidanceRange); k.b("brake", na->autoBraking); k.b("face", na->faceMovement);
-                    k.b("anim", na->driveAnimation); k.f("base", na->baseOffset);
+                    k.b("anim", na->driveAnimation); k.f("base", na->baseOffset); k.u("mask", na->areaMask);
+                } else if (field == "navmod") {
+                    auto* nm = go->AddComponent<NavMeshModifier>();
+                    KvIn k(in);
+                    k.i("area", nm->area); k.b("kids", nm->applyToChildren);
+                    nm->area = std::clamp(nm->area, 0, kNavAreaCount - 1);
+                } else if (field == "navlink") {
+                    auto* nl = go->AddComponent<NavMeshLink>();
+                    KvIn k(in);
+                    int ty = 0; k.i("type", ty); nl->type = (NavMeshLink::Type)std::clamp(ty, 0, 2);
+                    k.f("sx", nl->startPoint.x); k.f("sy", nl->startPoint.y); k.f("sz", nl->startPoint.z);
+                    k.f("ex", nl->endPoint.x); k.f("ey", nl->endPoint.y); k.f("ez", nl->endPoint.z);
+                    k.b("both", nl->bidirectional); k.f("cost", nl->cost); k.i("area", nl->area);
+                    k.f("speed", nl->speed); k.f("arc", nl->arcHeight);
+                    nl->area = std::clamp(nl->area, 0, kNavAreaCount - 1);
                 } else if (field == "navobstacle") {
                     auto* no = go->AddComponent<NavMeshObstacle>();
                     KvIn k(in);
@@ -8942,7 +9041,7 @@ GameObject* SceneSerializer::InstantiateFromText(Scene& scene, const std::string
 std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) {
     std::vector<std::string> out;
     auto add = [&](const std::string& p) {
-        if (p.empty()) return;
+        if (p.empty() || p[0] == '@') return;   // '@name' is a picture made in memory (a terrain's baked layers): no file to ship
         for (const auto& e : out) if (e == p) return; // unique
         out.push_back(p);
     };
@@ -8951,7 +9050,9 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         for (auto* au : go->GetComponents<AudioSource>())  add(au->clipPath);   // every source: a music bed and an effect can share an object
         if (auto* mp = go->GetComponent<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
         if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
-        if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); }
+        if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); for (const auto& l : tr->layers) add(l.texture); }
+        for (auto* fo : go->GetComponents<Foliage>())       { add(fo->meshPath); add(fo->prefabPath); }
+        for (auto* de : go->GetComponents<Decal>())         add(de->texture);
         for (auto* ps : go->GetComponents<ParticleSystem>()) add(ps->texture);
         for (auto* sw : go->GetComponents<Spawner>())       add(sw->prefabPath);   // the prefab a spawner makes ships with the scene
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
@@ -9114,6 +9215,43 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(lod));
 
+    ComponentSerializerRegistry::Entry vol;
+    vol.name = "volume";
+    vol.write = [](const GameObject& go, std::ostream& out) {
+        for (const Volume* v : go.GetComponents<Volume>()) {
+            if (!v) continue;
+            out << "  volume";
+            KvOut k{out};
+            k("kind", (int)v->kind)("shape", (int)v->shape)
+             ("sx", v->size.x)("sy", v->size.y)("sz", v->size.z)
+             ("ox", v->offset.x)("oy", v->offset.y)("oz", v->offset.z)
+             .str("tag", v->activatorTag).str("event", v->eventName)
+             ("kact", v->killAction)("kdmg", v->killDamage)
+             ("fshape", v->forceShape)("fx", v->forceDirection.x)("fy", v->forceDirection.y)("fz", v->forceDirection.z)
+             .b("flocal", v->forceLocal)("fstr", v->forceStrength)
+             .col("fog", v->fogColor)("fstart", v->fogStart)("fend", v->fogEnd)("vig", v->vignette)("blend", v->blend)
+             ("fade", v->fadeTime);
+            out << "\n";
+        }
+    };
+    vol.read = [](GameObject& go, std::istream& in) {
+        auto* v = go.AddComponent<Volume>();
+        KvIn k(in);
+        int kind = 0, shape = 0;
+        k.i("kind", kind); k.i("shape", shape);
+        v->kind = (Volume::Kind)std::clamp(kind, 0, Volume::kKindCount - 1);
+        v->shape = (VolumeShape)std::clamp(shape, 0, kVolumeShapeCount - 1);
+        k.f("sx", v->size.x); k.f("sy", v->size.y); k.f("sz", v->size.z);
+        k.f("ox", v->offset.x); k.f("oy", v->offset.y); k.f("oz", v->offset.z);
+        k.str("tag", v->activatorTag); k.str("event", v->eventName);
+        k.i("kact", v->killAction); k.f("kdmg", v->killDamage);
+        k.i("fshape", v->forceShape); k.f("fx", v->forceDirection.x); k.f("fy", v->forceDirection.y); k.f("fz", v->forceDirection.z);
+        k.b("flocal", v->forceLocal); k.f("fstr", v->forceStrength);
+        k.col("fog", v->fogColor); k.f("fstart", v->fogStart); k.f("fend", v->fogEnd); k.f("vig", v->vignette); k.f("blend", v->blend);
+        k.f("fade", v->fadeTime);
+    };
+    ComponentSerializerRegistry::Register(std::move(vol));
+
     ComponentSerializerRegistry::Entry occ;
     occ.name = "occluder";
     occ.write = [](const GameObject& go, std::ostream& out) {
@@ -9130,6 +9268,135 @@ void RegisterBuiltinComponentSerializers() {
         k.b("mesh", o->useMesh);
     };
     ComponentSerializerRegistry::Register(std::move(occ));
+    // Terrain texture layers: the layer list and the painted weights (run-length text). Written after the
+    // `terrain` record so the Terrain exists when this is read.
+    ComponentSerializerRegistry::Entry tl;
+    tl.name = "terrainlayers";
+    tl.write = [](const GameObject& go, std::ostream& out) {
+        auto* t = go.GetComponent<Terrain>();
+        if (!t || t->layers.empty()) return;
+        out << "  terrainlayers";
+        KvOut k{out};
+        k("n", (int)t->layers.size())("res", t->splatResolution);
+        for (std::size_t i = 0; i < t->layers.size(); ++i) {
+            const std::string p = "l" + std::to_string(i);
+            const TerrainLayer& l = t->layers[i];
+            k.str((p + "n").c_str(), l.name).str((p + "t").c_str(), l.texture).col((p + "c").c_str(), l.tint)((p + "s").c_str(), l.tiling);
+        }
+        k.str("w", t->EncodeSplat());
+        out << "\n";
+    };
+    tl.read = [](GameObject& go, std::istream& in) {
+        KvIn k(in);
+        auto* t = go.GetComponent<Terrain>();
+        if (!t) return;
+        int n = 0;
+        k.i("n", n); k.i("res", t->splatResolution);
+        t->splatResolution = std::min(4096, std::max(64, t->splatResolution));
+        n = std::min(n, Terrain::kMaxLayers);
+        t->layers.clear();
+        for (int i = 0; i < n; ++i) {
+            const std::string p = "l" + std::to_string(i);
+            TerrainLayer l;
+            k.str((p + "n").c_str(), l.name); k.str((p + "t").c_str(), l.texture);
+            k.col((p + "c").c_str(), l.tint); k.f((p + "s").c_str(), l.tiling);
+            t->layers.push_back(l);
+        }
+        t->ResetSplatPublic();
+        std::string w;
+        k.str("w", w);
+        if (!w.empty()) t->DecodeSplat(w);   // a damaged string keeps the base-only weights
+        t->Apply();
+    };
+    ComponentSerializerRegistry::Register(std::move(tl));
+
+    ComponentSerializerRegistry::Entry fol;
+    fol.name = "foliage";
+    fol.write = [](const GameObject& go, std::ostream& out) {
+        auto* f = go.GetComponent<Foliage>();
+        if (!f) return;
+        out << "  foliage";
+        KvOut k{out};
+        k.str("mesh", f->mesh).str("path", f->meshPath).str("prefab", f->prefabPath).col("t", f->tint)("var", f->variants)
+         ("r", f->radius)("dens", f->density)("smin", f->minScale)("smax", f->maxScale)("slope", f->maxSlope)
+         ("hmin", f->minHeight)("hmax", f->maxHeight).b("yaw", f->randomYaw)("align", f->alignToSurface)
+         ("gap", f->spacing)("seed", f->seed)("tris", f->maxTriangles)("chunk", f->chunkSize).b("shadow", f->castShadows);
+        std::string s;
+        char buf[160];
+        for (const auto& i : f->instances) {
+            std::snprintf(buf, sizeof(buf), "%.2f,%.2f,%.2f,%.0f,%.2f,%d,%.3f,%.3f;", i.position.x, i.position.y, i.position.z,
+                          i.yaw, i.scale, i.variant, i.leanX, i.leanZ);
+            s += buf;
+        }
+        k.str("inst", s);
+        out << "\n";
+    };
+    fol.read = [](GameObject& go, std::istream& in) {
+        auto* f = go.AddComponent<Foliage>();
+        KvIn k(in);
+        k.str("mesh", f->mesh); k.str("path", f->meshPath); k.str("prefab", f->prefabPath); k.col("t", f->tint);
+        k.i("var", f->variants); k.f("r", f->radius); k.f("dens", f->density); k.f("smin", f->minScale); k.f("smax", f->maxScale);
+        k.f("slope", f->maxSlope); k.f("hmin", f->minHeight); k.f("hmax", f->maxHeight); k.b("yaw", f->randomYaw);
+        k.f("align", f->alignToSurface); k.f("gap", f->spacing); k.u("seed", f->seed); k.i("tris", f->maxTriangles);
+        k.f("chunk", f->chunkSize); k.b("shadow", f->castShadows);
+        std::string s;
+        k.str("inst", s);
+        const char* c = s.c_str();
+        while (*c) {
+            FoliageInstance i;
+            char* e = nullptr;
+            i.position.x = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.position.y = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.position.z = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.yaw = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.scale = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.variant = (int)std::strtol(c, &e, 10); if (*e != ',') break; c = e + 1;
+            i.leanX = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.leanZ = std::strtof(c, &e); if (*e != ';') break; c = e + 1;
+            if (i.variant < 0) i.variant = 0;
+            f->instances.push_back(i);
+            if (f->instances.size() > 2000000) break;
+        }
+    };
+    ComponentSerializerRegistry::Register(std::move(fol));
+    ComponentSerializerRegistry::Entry cab;
+    cab.name = "cable";
+    cab.write = [](const GameObject& go, std::ostream& out) {
+        auto* c = go.GetComponent<Cable>();
+        if (!c) return;
+        out << "  cable";
+        KvOut{out}.str("from", c->startObject).str("to", c->endObject)("sx", c->startOffset.x)("sy", c->startOffset.y)
+            ("sz", c->startOffset.z)("ex", c->endOffset.x)("ey", c->endOffset.y)("ez", c->endOffset.z)("sag", c->sag)
+            ("seg", c->segments)("w", c->width).col("c", c->color);
+        out << "\n";
+    };
+    cab.read = [](GameObject& go, std::istream& in) {
+        auto* c = go.AddComponent<Cable>();
+        KvIn k(in);
+        k.str("from", c->startObject); k.str("to", c->endObject);
+        k.f("sx", c->startOffset.x); k.f("sy", c->startOffset.y); k.f("sz", c->startOffset.z);
+        k.f("ex", c->endOffset.x); k.f("ey", c->endOffset.y); k.f("ez", c->endOffset.z);
+        k.f("sag", c->sag); k.i("seg", c->segments); k.f("w", c->width); k.col("c", c->color);
+    };
+    ComponentSerializerRegistry::Register(std::move(cab));
+
+    ComponentSerializerRegistry::Entry dec;
+    dec.name = "decal";
+    dec.write = [](const GameObject& go, std::ostream& out) {
+        auto* d = go.GetComponent<Decal>();
+        if (!d) return;
+        out << "  decal";
+        KvOut{out}.str("tex", d->texture).col("t", d->tint)("x", d->size.x)("y", d->size.y)("z", d->size.z)
+            ("angle", d->maxAngle)("lift", d->lift);
+        out << "\n";
+    };
+    dec.read = [](GameObject& go, std::istream& in) {
+        auto* d = go.AddComponent<Decal>();
+        KvIn k(in);
+        k.str("tex", d->texture); k.col("t", d->tint); k.f("x", d->size.x); k.f("y", d->size.y); k.f("z", d->size.z);
+        k.f("angle", d->maxAngle); k.f("lift", d->lift);
+    };
+    ComponentSerializerRegistry::Register(std::move(dec));
 }
 } // namespace detail
 

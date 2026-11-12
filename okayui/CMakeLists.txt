@@ -19,10 +19,9 @@ endif()
 # so it compiles to nothing off Windows and never affects the Linux/SDL build.
 add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_FontAtlas.cpp src/OkayUI_D3D11.cpp)
 target_include_directories(okay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# The launcher look's font: Roboto (shared/RobotoFont.h) baked with stb_truetype,
-# whose implementation lives in the engine.
-target_include_directories(okay_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared
-                                           ${CMAKE_CURRENT_SOURCE_DIR}/../engine/third_party/stb)
+# The launcher look's font: Roboto (shared/RobotoFont.h) baked with the engine's own
+# TrueType rasterizer (Graphics/TtfRaster).
+target_include_directories(okay_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 if(NOT TARGET SDL2::SDL2)
     target_include_directories(okay_ui PUBLIC ${SDL2_INCLUDE_DIRS})
 endif()
@@ -43,4 +42,32 @@ if(WIN32)
     target_link_libraries(okayui_d3d11_demo PRIVATE okay_ui d3d11)
     set_target_properties(okayui_d3d11_demo PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
+
+# ---- Headless harness: software backend, tests, demo ---------------------------------------
+# OkayUI's draw list (OkayUI::GetDrawData) rasterised on the CPU into an RGBA bitmap, so the toolkit
+# is tested with no window, GPU or display: behaviour tests (synthetic mouse, keys and text fed to
+# OkayUI::BeginFrame), golden images, a fuzz test. See docs/own_ui_toolkit.md.
+if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
+    add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp)
+    target_include_directories(okay_ui_soft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/soft)
+    target_link_libraries(okay_ui_soft PUBLIC okay_ui)
+
+    # What the tests need: the shared test framework header and the committed golden images.
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz)
+        add_executable(test_${t} tests/test_${t}.cpp)
+        target_link_libraries(test_${t} PRIVATE okay_ui_soft)
+        target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        target_compile_definitions(test_${t} PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
+        add_test(NAME ${t} COMMAND test_${t})
+        # No window, no GPU: make sure SDL never tries to open a display.
+        set_tests_properties(${t} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    endforeach()
+endif()
+
+if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
+    # Renders a window of widgets to a PNG: okayui_headless_demo [out.png] [classic|launcher]
+    add_executable(okayui_headless_demo demo/okayui_headless_demo.cpp)
+    target_link_libraries(okayui_headless_demo PRIVATE okay_ui_soft)
+    target_include_directories(okayui_headless_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 endif()

@@ -10,22 +10,23 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 ## 16. Networking & multiplayer
 
 ### 16.1 Transport, sealed channels, packets
-- **What:** The UDP layer under all multiplayer: sockets, byte packets that are split when large, authenticated encryption with libsodium, and two per-channel delivery modes on top of plain UDP (reliable ordered, and unreliable where only the newest counts).
+- **What:** The UDP layer under all multiplayer: sockets, byte packets that are split when large, authenticated encryption with libsodium (or, opt-in and unreviewed, our own okay::crypto), and two per-channel delivery modes on top of plain UDP (reliable ordered, and unreliable where only the newest counts).
 - **Parts:**
   - 16.1.1 UDP socket and endpoints - `Net/UdpSocket` - non-blocking UDP, an `Endpoint` (IPv4 address and port) that can key a table, wait-until-readable for the relay loop
   - 16.1.2 Packet buffer and fragmentation - `Net/Packet` - little-endian byte buffer; sends over 1200 bytes are split and reassembled; receive buffer is 64 KB
-  - 16.1.3 Sealed channel - `Net/SecureChannel` - X25519 key pair per peer, one key per direction, XChaCha20-Poly1305 sealing, opt-in sequence numbers (replay window of 64); a harmless stub when built without libsodium
+  - 16.1.3 Sealed channel - `Net/SecureChannel` - X25519 key pair per peer, one key per direction, XChaCha20-Poly1305 sealing, opt-in sequence numbers (replay window of 64); a harmless stub when built without a crypto backend
   - 16.1.4 Reliable ordered and sequenced channels - `Net/NetChannels` - one ordered stream per named channel (resent until a cumulative ack) and unreliable-sequenced (newer replaces older); wire types 30 to 32
   - 16.1.5 Transport interface - `Net/NetTransport` - `INetTransport` seam with a Native provider that wraps NetworkManager (Photon provider: 16.10)
-- **Code:** `Net/UdpSocket`, `Net/Packet`, `Net/SecureChannel`, `Net/NetChannels`, `Net/NetTransport`, `Net/NetworkManager`
-- **API:** `NetworkManager::StartServer`, `StartClient`, `Stop`, `encryption`, `SendOrdered`, `SendSequenced`, `SecureChannel::Available`, `INetTransport`, `NetTransport::Get`
+  - 16.1.6 Own crypto, side by side (UNREVIEWED, off by default) - `Crypto/Crypto`, `Net/NetCrypto` - our own ChaCha20, Poly1305, ChaCha20-Poly1305 and XChaCha20-Poly1305, BLAKE2b, SHA-256/512, X25519, Ed25519, Kx session keys and OS random; `-DOKAY_OWN_CRYPTO=ON` makes the net layer use them instead of libsodium; never the default until an outside expert has reviewed them
+- **Code:** `Net/UdpSocket`, `Net/Packet`, `Net/SecureChannel`, `Net/NetChannels`, `Net/NetTransport`, `Net/NetworkManager`, `Net/NetCrypto`, `Crypto/Crypto` (sources `engine/src/Crypto/*.cpp`), CMake option `OKAY_OWN_CRYPTO`
+- **API:** `NetworkManager::StartServer`, `StartClient`, `Stop`, `encryption`, `SendOrdered`, `SendSequenced`, `SecureChannel::Available`, `INetTransport`, `NetTransport::Get`, `okay::crypto::XChaCha20Poly1305Seal`, `Ed25519Sign`, `X25519`, `RandomBytes`
 - **Editor:** Inspector: Network Manager has no encryption field (set `encryption` in code or script; Anti-Cheat Config has Require encryption); View > Panels > Services has Host Game, Join and Disconnect for a quick test
-- **Docs:** `docs/relay.md`, `docs/anticheat.md` (Network hardening), `docs/launcher-multiplayer.md`
-- **Tests:** `net`, `net_crypto`, `net_auth`, `net_hardening`, `net_races`, `net_anticheat_p2`, `net_anticheat_ph3`, `net_backend`; sources `tests/test_net.cpp`, `tests/test_net_crypto.cpp`
-- **Status:** Works - client and server talk over loopback in `net`; sealing, replay and malformed-packet cases have tests. NetChannels (#423) is wired into NetworkManager but no test names it
-- **Open:** possible gap: the Ubuntu CI job installs no libsodium-dev, so `net_crypto` and `net_anticheat_p2` may only run their "no libsodium" branch there (unverified: depends on the runner image); `net_races` says it is meant for ThreadSanitizer but CI runs it only under ASan/UBSan; no test names `NetChannels` or `UdpSocket` directly
+- **Docs:** `docs/relay.md`, `docs/anticheat.md` (Network hardening), `docs/launcher-multiplayer.md`, `docs/crypto.md` (own crypto: status, tests, what is not done)
+- **Tests:** `net`, `net_crypto`, `net_crypto_own`, `net_crypto_sodium`, `crypto`, `crypto_sodium_xcheck`, `crypto_python_xcheck`, `crypto_fuzz_smoke`, `net_auth`, `net_hardening`, `net_races`, `net_anticheat_p2`, `net_anticheat_ph3`, `net_backend`; sources `tests/test_net.cpp`, `tests/test_net_crypto.cpp`, `tests/test_crypto.cpp`, `tests/crypto_rfc_vectors.hpp`, `tests/test_crypto_sodium_xcheck.cpp`, `tests/scripts/crypto_xcheck.py`, `tests/fuzz_crypto.cpp`
+- **Status:** Works - client and server talk over loopback in `net`; sealing, replay and malformed-packet cases have tests. NetChannels (#423) is wired into NetworkManager but no test names it. Our own crypto (16.1.6) passes every RFC vector and agrees with libsodium and Python on random inputs, but it is unreviewed and off by default
+- **Open:** possible gap: the Ubuntu CI job installs no libsodium-dev, so `net_crypto` and `net_anticheat_p2` may only run their "no libsodium" branch there (unverified: depends on the runner image); `net_races` says it is meant for ThreadSanitizer but CI runs it only under ASan/UBSan; no test names `NetChannels` or `UdpSocket` directly; own crypto (16.1.6): no outside review, no timing measurement of the built code, no Windows or macOS run yet, no libFuzzer run in CI, X25519/Ed25519 are slower than libsodium's
 - **Related:** 16.2, 16.3, 16.10, 39.2
-- **Words:** UDP, socket, datagram, packet, fragment, MTU, encryption, libsodium, SecureChannel, XChaCha20, X25519, crypto_kx, sealed, replay window, reliable, ordered, unreliable, sequenced, channel, SendOrdered, SendSequenced, OrderedEnd, SequencedRx
+- **Words:** UDP, socket, datagram, packet, fragment, MTU, encryption, libsodium, SecureChannel, XChaCha20, X25519, crypto_kx, okay::crypto, OKAY_OWN_CRYPTO, own crypto, Ed25519, BLAKE2b, Poly1305, sealed, replay window, reliable, ordered, unreliable, sequenced, channel, SendOrdered, SendSequenced, OrderedEnd, SequencedRx
 - **Seen as:** a client can't connect or says "encryption required"; messages arrive late or out of order; a big message never arrives; a build says "built without libsodium"
 - **Ask me like:** "make this event reliable and ordered but let position updates drop", "why does the join say encryption required?"
 

@@ -26,6 +26,7 @@
 #include "okay/Core/DataPack.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -147,14 +148,125 @@ const char* LogicSource::KindName(Kind k) {
         case Kind::PressurePlate: return "Pressure Plate";
         case Kind::TriggerZone: return "Trigger Zone";
         case Kind::Timer: return "Timer";
+        case Kind::Relay: return "Relay";
     }
     return "Button";
 }
 
 void LogicSource::Press() {
-    if (!m_init) { m_init = true; m_out = startOn && toggle; }
-    if (toggle) m_out = !m_out;
-    else { m_out = true; m_timer = holdTime; }
+    if (!m_init) { m_init = true; m_out = startOn && toggle; m_prevOut = m_out; }
+    if (kind != Kind::Relay) {
+        if (toggle) m_out = !m_out;
+        else { m_out = true; m_timer = holdTime; }
+    }
+    FireOutput("OnPressed");
+}
+
+// ---- I/O links ---------------------------------------------------------------
+
+const std::vector<std::string>& LogicSource::InputNames() {
+    static const std::vector<std::string> n = {"Enable", "Disable", "ToggleActive", "TurnOn", "TurnOff",
+                                               "Toggle", "Spawn", "Press", "Fire"};
+    return n;
+}
+const std::vector<std::string>& LogicSource::BuiltInOutputs() {
+    static const std::vector<std::string> n = {"OnTurnedOn", "OnTurnedOff", "OnPressed"};
+    return n;
+}
+
+GameObject* LogicSource::IoTarget(const IoLink& l) const {
+    if (!gameObject) return nullptr;
+    if (l.target.empty() || l.target == "self") return gameObject;
+    if (transform) {
+        Transform* t = l.target.find('/') != std::string::npos ? transform->Find(l.target) : transform->FindDeep(l.target);
+        if (t && t->gameObject && !t->gameObject->IsDestroyed()) return t->gameObject;
+    }
+    Scene* s = GetScene();
+    GameObject* g = s ? s->Find(l.target) : nullptr;
+    return g && !g->IsDestroyed() ? g : nullptr;
+}
+
+std::string LogicSource::IoProblem(const IoLink& l) const {
+    if (l.output.empty()) return "no output name";
+    if (l.input.empty()) return "no input";
+    if (!IoTarget(l)) return "target '" + l.target + "' not found";
+    return "";
+}
+
+namespace { int g_ioDepth = 0; }   // Fire links that fire links: stop runaway loops
+
+bool LogicSource::DeliverIo(const IoLink& l, const std::string& param, std::string* why) {
+    GameObject* t = IoTarget(l);
+    if (!t) { if (why) *why = "target '" + l.target + "' not found"; return false; }
+    if (l.input.empty()) { if (why) *why = "no input"; return false; }
+    if (g_ioDepth >= 8) { if (why) *why = "links nest too deeply"; return false; }
+    struct Depth { Depth() { ++g_ioDepth; } ~Depth() { --g_ioDepth; } } depth;
+    const std::string& in = l.input;
+    const std::string name = t->name;
+    auto note = [&](const std::string& m) { if (why) *why = m; return true; };
+    if (in == "Enable")       { t->active = true;  return note("enabled " + name); }
+    if (in == "Disable")      { t->active = false; return note("disabled " + name); }
+    if (in == "ToggleActive") { t->active = !t->active; return note(std::string(t->active ? "enabled " : "disabled ") + name); }
+    if (in == "TurnOn" || in == "TurnOff" || in == "Toggle") {
+        auto ts = InTree<LogicTarget>(t);
+        if (ts.empty()) { if (why) *why = name + " has no Logic Target"; return false; }
+        for (LogicTarget* lt : ts) lt->SetState(in == "Toggle" ? !lt->State() : in == "TurnOn");
+        return note(in + " -> " + name);
+    }
+    if (in == "Spawn") {
+        auto ts = InTree<LogicTarget>(t);
+        if (ts.empty()) { if (why) *why = name + " has no Logic Target"; return false; }
+        int made = 0;
+        for (LogicTarget* lt : ts) if (lt->SpawnNow()) ++made;
+        return note("spawned " + std::to_string(made) + " from " + name);
+    }
+    if (in == "Press") {
+        auto ss = InTree<LogicSource>(t);
+        if (ss.empty()) { if (why) *why = name + " has no Logic Source"; return false; }
+        for (LogicSource* ls : ss) ls->Press();
+        return note("pressed " + name);
+    }
+    if (in == "Fire") {
+        auto ss = InTree<LogicSource>(t);
+        if (ss.empty()) { if (why) *why = name + " has no Logic Source"; return false; }
+        int n = 0;
+        for (LogicSource* ls : ss) n += ls->FireOutput(param);
+        return note("fired '" + param + "' on " + name + " (" + std::to_string(n) + " links)");
+    }
+    // Anything else: a custom event, the way the Send Event node delivers it.
+    char* end = nullptr;
+    const float num = std::strtof(param.c_str(), &end);
+    const bool isNum = !param.empty() && end && *end == 0;
+    ActionList::StrVars()["event_text"] = param;
+    DeliverCustomEvent(t, in, vs::VsValue(isNum ? num : 0.0f), gameObject);
+    if (isNum) ActionList::Vars()["event_value"] = num;
+    return note("sent '" + in + "' to " + name);
+}
+
+int LogicSource::FireOutput(const std::string& name, const std::string& param) {
+    int n = 0;
+    // Index loop: delivering may edit this very list through a script.
+    for (std::size_t i = 0; i < ioLinks.size(); ++i) {
+        IoLink l = ioLinks[i];
+        if (!l.enabled || l.output != name || (l.once && l.spent)) continue;
+        if (l.once) ioLinks[i].spent = true;
+        const std::string p = param.empty() ? l.param : param;
+        if (l.delay > 0.0f) { m_pendingIo.push_back({l, l.delay, p}); ++n; }
+        else if (DeliverIo(l, p, nullptr)) ++n;
+    }
+    return n;
+}
+
+std::string LogicSource::TestFire(std::size_t index) {
+    if (index >= ioLinks.size()) return "no such link";
+    std::string why;
+    const IoLink& l = ioLinks[index];
+    return DeliverIo(l, l.param, &why) ? "OK: " + why : "Failed: " + why;
+}
+
+void LogicSource::ResetIo() {
+    m_pendingIo.clear();
+    for (IoLink& l : ioLinks) l.spent = false;
 }
 
 void LogicSource::SetOutput(bool on) {
@@ -250,8 +362,17 @@ void LogicSource::Update(float dt) {
         m_out = (kind == Kind::Button && toggle) ? startOn : false;
         m_timer = 0.0f;
         if (kind == Kind::Timer) m_timer = startOn ? 0.0f : std::min(onTime, std::max(interval, 0.05f));
+        m_prevOut = m_out;
+    }
+    // Deliveries that have waited out their delay (a delivery may queue more).
+    if (!m_pendingIo.empty()) {
+        std::vector<QueuedIo> due, keep;
+        for (QueuedIo& p : m_pendingIo) { p.left -= dt; (p.left <= 0.0f ? due : keep).push_back(std::move(p)); }
+        m_pendingIo = std::move(keep);
+        for (QueuedIo& p : due) DeliverIo(p.link, p.param, nullptr);
     }
     switch (kind) {
+        case Kind::Relay: break;
         case Kind::Button: {
             Scene* s = GetScene();
             const bool key = pressKey && Input::GetKeyDown(pressKey);
@@ -276,6 +397,10 @@ void LogicSource::Update(float dt) {
         }
     }
     for (LogicTarget* t : Targets()) t->Feed(m_out);
+    if (m_out != m_prevOut) {
+        m_prevOut = m_out;
+        FireOutput(m_out ? "OnTurnedOn" : "OnTurnedOff");
+    }
 }
 
 // ===========================================================================
@@ -365,8 +490,9 @@ void LogicTarget::LateUpdate(float dt) {
         ApplyLight();
     } else {
         bool next = m_state;
+        const bool prevAct = m_prevAct;
         const bool rising = act && !m_prevAct;
-        if (mode == Mode::Follow) next = act;
+        if (mode == Mode::Follow) { if (act != prevAct) next = act; }
         else if (rising) next = !m_state;
         m_prevAct = act;
         m_powered = powered;

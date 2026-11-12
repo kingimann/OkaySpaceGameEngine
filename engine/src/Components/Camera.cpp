@@ -3,6 +3,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include <cmath>
 
 namespace okay {
@@ -93,6 +94,7 @@ Mat4 Camera::ViewMatrix() const {
 }
 
 void Camera::Shake(float strength) {
+    if (Accessibility::MotionScale() <= 0.0f) return;   // the player turned off screen shake
     m_trauma = Mathf::Clamp(m_trauma + strength, 0.0f, 1.0f);
 }
 
@@ -110,6 +112,7 @@ void Camera::LateUpdate(float dt) {
         zoom = m_zoomFrom + (m_zoomTarget - m_zoomFrom) * t;
         if (m_zoomTime >= m_zoomDur) { zoom = m_zoomTarget; m_zoomDur = 0.0f; }
     }
+    if (Accessibility::MotionScale() <= 0.0f) m_trauma = 0.0f;   // reduced motion switched on mid-shake: stop at once
     if (m_trauma <= 0.0f) { m_shakePos = {0, 0, 0}; m_shakeRot = {0, 0, 0}; return; }
     m_shakeTime += dt;
     // Smooth pseudo-noise: two incommensurate sines per channel.

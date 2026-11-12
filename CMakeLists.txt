@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.859.0
+    VERSION 2.861.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -26,7 +26,12 @@ option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
+option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
+option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" OFF)
+option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
+option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
 if(MSVC)
@@ -70,6 +75,12 @@ if(OKAY_DEFAULT_ACCOUNT_URL)
 endif()
 if(OKAY_DEFAULT_ACCOUNT_KEY)
     add_compile_definitions(OKAY_DEFAULT_ACCOUNT_KEY="${OKAY_DEFAULT_ACCOUNT_KEY}")
+endif()
+# Hosted password-reset page (supabase/auth-pages/reset-password, docs/password-reset.md).
+# Empty = not configured; the launcher then says so when it sends a reset email.
+set(OKAY_DEFAULT_PASSWORD_RESET_URL "" CACHE STRING "URL of the hosted password-reset page, sent to Supabase as redirect_to")
+if(OKAY_DEFAULT_PASSWORD_RESET_URL)
+    add_compile_definitions(OKAY_DEFAULT_PASSWORD_RESET_URL="${OKAY_DEFAULT_PASSWORD_RESET_URL}")
 endif()
 # Default voice server for launcher calls ("host" or "host:port" of a running
 # okayspace-relay; see docs/relay.md). Empty = players set one in Settings > Chat.

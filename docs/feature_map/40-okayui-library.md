@@ -2,7 +2,8 @@
 
 OkayUI is a small immediate-mode UI toolkit (about 3.7k lines in `okayui/`): you call `OkayUI::Button(...)` every frame and it draws and returns the click. It draws through SDL_Renderer (or a raw Direct3D 11 backend on Windows) on top of the game or of Dear ImGui.
 It is what script `ui_*` calls, the F1 Test UI panel, the "Find a server" and "Matchmaking" windows and the dialogue box and quest tracker use. It is NOT the scene UI of area 12 (Canvas, `UIButton` and friends): that is a separate retained system with its own renderer.
-This area stands alone (own CMake target `okay_ui`, own backends, own font atlas, own test), so it is not folded into area 12.
+This area stands alone (own CMake target `okay_ui`, own backends, own font atlas, own tests), so it is not folded into area 12.
+OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (owner decision, `docs/own_ui_toolkit.md`); the headless software backend and test harness of 40.6 are part of it.
 
 ## 40. OkayUI standalone library
 
@@ -16,12 +17,12 @@ This area stands alone (own CMake target `okay_ui`, own backends, own font atlas
   - 40.1.5 Data display - `okayui/src/OkayUI.cpp` - `PlotLines`, `PlotHistogram`, `LabelText`, `Image`, `ImageButton`, bullets, wrapped and coloured text
   - 40.1.6 Drag and drop - `okayui/src/OkayUI.cpp` - `DragSource(payload)`, `DropTarget(&payload)`, `IsDragging`
 - **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp`
-- **API:** namespace `OkayUI`: `BeginFrame(Input)`, widgets above, `Style()`, `Input` struct (mouse, buttons, typed text, backspace, wheel, `blocked`)
+- **API:** namespace `OkayUI`: `BeginFrame(Input)`, widgets above, `Style()`, `Input` struct (mouse, buttons, typed text, key edges for Backspace, Delete, arrows, Home, End, Enter, Escape, select-all, shift, wheel, `blocked`), `GetItemRect`, `IsItemHovered`, `WantsTextInput`, `ResetState`, `ResizableNextWindow`, `InputText` flags
 - **Editor:** View > Rendering & Performance > Test UI draws the sample panel over the editor; Game view overlays
 - **Docs:** `docs/game_ui.md` (Building blocks, Theming), `docs/scripting_reference.md` (OkayUI section)
-- **Tests:** `okayui` (software renderer, reads pixels back: press and release, hover, the ImGui-capture gate)
-- **Status:** Works - implemented (2.7k-line .cpp) and used by the player and editor; one headless test covers rendering and click logic
-- **Open:** only one test file, and it mostly covers `Button`; text field and the layout widgets have no test of their own; stale header comment says "v1 scope: OkayUI::Button" while the file has about 70 widgets; header says "no STL" but the .cpp includes `<algorithm>`
+- **Tests:** `okayui` (SDL software renderer, reads pixels back: widgets, windows, launcher look), `okayui_behaviour` (synthetic mouse, keys and text: button, checkbox, sliders, input text, combo, tree, scrolling child, layout, windows, popups), `okayui_fuzz`
+- **Status:** Works - implemented (about 2.8k-line .cpp) and used by the player and editor; text field edits whole UTF-8 characters with caret and selection; open combos and popups block the mouse below them
+- **Open:** see "Not done" in `docs/own_ui_toolkit.md` (no window z-order, no `BeginGroup`, no `##` label hiding, no public draw-list API, no cursor and content-region queries, no docking); stale header comment says "v1 scope: OkayUI::Button" while the file has about 70 widgets; header says "no STL" but the .cpp includes `<algorithm>`
 - **Related:** 40.2, 40.4, 12.4
 - **Words:** OkayUI, immediate mode, IMGUI, Button, Checkbox, Slider, TextField, Begin End window, SameLine, table, combo, tree node, popup
 - **Seen as:** a button does not click in the player; a window cannot be dragged; text typed into a field goes to the game; a table column is the wrong width; a Combo list draws under other widgets
@@ -50,17 +51,17 @@ This area stands alone (own CMake target `okay_ui`, own backends, own font atlas
 - **What:** How a host feeds input, builds the frame and gets pixels: the SDL_Renderer path (one batched `SDL_RenderGeometry` call on top of ImGui) and a Windows-only raw Direct3D 11 path with its own demo app.
 - **Parts:**
   - 40.3.1 Frame loop - `okayui/src/OkayUI.cpp` - `BeginFrame(input)`, widgets, `EndFrame(SDL_Renderer*)`; blend mode saved and restored; draws after ImGui so it sits on top
-  - 40.3.2 Draw data - `okayui/include/okay/UI/OkayUI.hpp` - `GetDrawData()` (20-byte vertices, 32-bit indices) and `EndFrameData()` for custom backends
+  - 40.3.2 Draw data - `okayui/include/okay/UI/OkayUI.hpp` - `GetDrawData()` (20-byte `DrawVertex`, 32-bit indices, `DrawCmd` ranges with clip rectangle and texture, the launcher atlas pixels) and `EndFrameData()` for custom backends
   - 40.3.3 Direct3D 11 backend - `okayui/include/okay/UI/OkayUI_D3D11.hpp`, `okayui/src/OkayUI_D3D11.cpp` - `D3D11Backend::Init/Render/Shutdown`, compiled to nothing off Windows
   - 40.3.4 D3D11 demo - `okayui/d3d11_demo/main.cpp` - standalone Win32 + DX11 app, shipped in the Windows dist `Tools/` folder
   - 40.3.5 Build wiring - `okayui/CMakeLists.txt` - static lib `okay_ui` (alias `okay::ui`), built only when SDL2 is found, skipped on Emscripten/web; linked by editor, player and tests
 - **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/include/okay/UI/OkayUI_D3D11.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_D3D11.cpp`, `okayui/d3d11_demo/main.cpp`, `okayui/CMakeLists.txt`, `scripts/build-windows-dist.sh`
-- **API:** `OkayUI::Input`, `BeginFrame`, `EndFrame`, `GetDrawData`, `EndFrameData`, `OkayUI::D3D11Backend`
+- **API:** `OkayUI::Input`, `BeginFrame`, `EndFrame`, `GetDrawData`, `DrawCmd`, `EndFrameData`, `OkayUI::D3D11Backend`, `OkayUI::soft::Render` (40.6)
 - **Editor:** none (the editor links `okay_ui` with `OKAY_HAVE_OKAYUI=1`)
 - **Docs:** -
-- **Tests:** `okayui` (SDL software renderer only)
-- **Status:** Partial - SDL path is tested; the D3D11 backend and demo compile only on Windows, so nothing here could verify them (not run in this survey)
-- **Open:** no test of the D3D11 path found; skipped in the web build (per `CMakeLists.txt` and `scripts/build-web.sh` comments)
+- **Tests:** `okayui` (SDL software renderer), `okayui_soft` (the draw list through the CPU backend)
+- **Status:** Partial - SDL path and the software backend are tested; the D3D11 backend and demo compile only on Windows, so nothing here could verify them (not run in this survey)
+- **Open:** no test of the D3D11 path found, and it still draws only vertices and indices (no clip rectangles, no atlas texture: it should use `DrawCmd` like the SDL path); skipped in the web build (per `CMakeLists.txt` and `scripts/build-web.sh` comments)
 - **Related:** 40.1, 18.1, 18.2, 2.1
 - **Words:** SDL_Renderer, SDL_RenderGeometry, Direct3D 11, D3D11, DX11, okay_ui, okay::ui, draw data, EndFrame, demo, okayui_d3d11_demo
 - **Seen as:** OkayUI draws under ImGui or the game; nothing draws on web; the DX11 demo opens a blank window; clicks go through to ImGui
@@ -105,3 +106,43 @@ This area stands alone (own CMake target `okay_ui`, own backends, own font atlas
 - **Words:** OkayUI versus Canvas, immediate mode versus scene UI, which UI system, UI toolkit, two UI systems, ui_ calls versus UI components
 - **Seen as:** "which UI should I use"; a look changes in one system and not the other; a script UI window and a scene HUD overlap; a feature exists in OkayUI but not in the scene UI (or the reverse)
 - **Ask me like:** "do I use OkayUI or a Canvas for a lobby screen"; "make the Matchmaking window a scene UI prebuilt screen"
+
+### 40.6 Headless software backend and test harness
+- **What:** OkayUI's draw list rasterised on the CPU into an RGBA bitmap, plus a synthetic-input test harness, so the toolkit is tested with no window, GPU or display: behaviour tests, golden images, a sanitizer fuzz test and a demo that writes a PNG. Folded in from the first `okay::imui` core (which is gone: OkayUI is the one toolkit).
+- **Parts:**
+  - 40.6.1 Software rasteriser - `okayui/soft/OkayUI_Soft.hpp`, `okayui/soft/OkayUI_Soft.cpp` - `OkayUI::soft::Render(DrawData, Bitmap&)`: top-left fill rule, per-command scissor, source-over blend, flat colour and launcher atlas sampling, hostile draw data skipped
+  - 40.6.2 Test kit - `okayui/tests/OkayUITestKit.hpp` - `Sim` (persistent mouse, one-shot text and key edges fed as a plain `OkayUI::Input`), `Reset()`, PNG reader, golden comparison with tolerance
+  - 40.6.3 Behaviour and rasteriser tests - `okayui/tests/test_okayui_behaviour.cpp`, `okayui/tests/test_okayui_soft.cpp` - the okay::imui widget tests ported to OkayUI widgets, and exact-pixel rasteriser tests
+  - 40.6.4 Golden images and demo - `okayui/tests/test_okayui_golden.cpp`, `okayui/tests/golden/`, `okayui/demo/` - five committed PNGs; `okayui_headless_demo [out.png] [classic|launcher]`
+  - 40.6.5 Fuzz - `okayui/tests/test_okayui_fuzz.cpp` - seeded random input and widget trees, text-editing reference model, layout properties, batch overflow, hostile draw data; run under ASan and UBSan
+- **Code:** `okayui/soft/OkayUI_Soft.hpp`, `okayui/soft/OkayUI_Soft.cpp`, `okayui/tests/OkayUITestKit.hpp`, `okayui/tests/test_okayui_soft.cpp`, `okayui/tests/test_okayui_behaviour.cpp`, `okayui/tests/test_okayui_golden.cpp`, `okayui/tests/test_okayui_fuzz.cpp`, `okayui/demo/DemoScene.hpp`, `okayui/demo/okayui_headless_demo.cpp`, `okayui/CMakeLists.txt`
+- **API:** `OkayUI::soft::Render`, `OkayUI::soft::Bitmap`, `OkayUI::ResetState`, CMake option `OKAY_BUILD_OKAYUI_TESTS` (ON by default; needs `OKAY_BUILD_TESTS`), library `okay_ui_soft`; env `OKAYUI_UPDATE_GOLDEN=1`, `OKAYUI_FUZZ_ITERS`, `OKAYUI_FUZZ_SEED`
+- **Editor:** none (test infrastructure; the editor, player and launcher are not wired to it)
+- **Docs:** `docs/own_ui_toolkit.md`, `docs/own_code_roadmap.md`
+- **Tests:** `okayui_soft`, `okayui_behaviour`, `okayui_golden`, `okayui_fuzz`, `okayui_drawlist` (draw list and cursor, 40.7)
+- **Status:** Works - implemented; not run against the real editor or player. The software backend skips user and fallback-font textures and samples the atlas without filtering
+- **Open:** the behaviour `okay::imui` had that OkayUI lacks is listed under "Not done" in `docs/own_ui_toolkit.md` (window z-order, key repeat, `BeginGroup`, label hiding); the ranked list of Dear ImGui calls still uncovered is in the same page
+- **Related:** 40.1, 40.3, 15.1, 17.1
+- **Words:** headless UI test, software UI renderer, golden image, okayui_soft, okayui_behaviour, okayui_golden, okayui_fuzz, OKAY_BUILD_OKAYUI_TESTS, Sim, ResetState, UI fuzz, replace Dear ImGui
+- **Seen as:** a UI golden test differs by a few pixels; typing in a text field drops a character; a window cannot be dragged in the demo; the okayui test targets are missing from a build
+- **Ask me like:** "work on 40.6.3, add a test for the table widget"; "run the OkayUI fuzz test under the sanitizers"
+
+### 40.7 Draw list, cursor, item state and disabled blocks
+- **What:** the first gap closed from the Dear ImGui usage audit: a public draw list for custom drawing (lines, shapes, curves, paths, text, clip), the cursor and measurement calls that put custom drawing inside the auto layout, `InvisibleButton` with item-state and mouse queries, and `BeginDisabled`/`EndDisabled`. Side by side with Dear ImGui; nothing in the editor or launcher calls it yet.
+- **Parts:**
+  - 40.7.1 Draw list - `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp` - `GetWindowDrawList()` and `GetForegroundDrawList()`: `AddLine`, `AddRect`, `AddRectFilled`, `AddRectFilledMultiColor`, `AddCircle`, `AddCircleFilled`, `AddTriangle`, `AddQuad`, `AddPolyline` (mitred joins), `AddConvexPolyFilled`, `AddBezierCubic`, `AddText`, `AddImage`, the path calls, `PushClipRect`; packed `Color32` with `RGBA`, `GetColorU32`, `ColorMulAlpha`
+  - 40.7.2 Cursor and measurement - `okayui/src/OkayUI.cpp` - `GetCursorScreenPos`, `SetCursorScreenPos`, `GetCursorPos` and `SetCursorPos` (and the X and Y forms), `GetContentRegionAvail`, `CalcTextSize`, `GetTextLineHeight`, `GetFontSize`, `GetFrameHeight`
+  - 40.7.3 Item state and mouse queries - `okayui/src/OkayUI.cpp` - `InvisibleButton`, `IsItemActive`, `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked`, `IsMouseDown`, `IsMouseClicked`, `IsMouseReleased`, `GetMousePos`, `GetMouseDelta`, `IsMouseHoveringRect`
+  - 40.7.4 Disabled blocks - `okayui/src/OkayUI.cpp` - `BeginDisabled(bool)`, `EndDisabled`, `IsDisabled`: no hover or input and colours halfway to the panel colour for the widgets inside; a focused text field gives up the keyboard
+  - 40.7.5 Draw list lab - `okayui/demo/DemoScene.hpp`, `okayui/demo/okayui_headless_demo.cpp` - a canvas page using all of the above, rendered with `okayui_headless_demo out.png lab` (or `lab-launcher`)
+- **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp`, `okayui/tests/test_okayui_drawlist.cpp`, `okayui/tests/test_okayui_fuzz.cpp`, `okayui/demo/DemoScene.hpp`, `okayui/demo/okayui_headless_demo.cpp`
+- **API:** `OkayUI::DrawList`, `OkayUI::GetWindowDrawList`, `OkayUI::GetForegroundDrawList`, `OkayUI::Vec2`, `OkayUI::Color32`, `OkayUI::InvisibleButton`, `OkayUI::BeginDisabled`, `OkayUI::GetContentRegionAvail`
+- **Editor:** none (library and headless demo only; the editor's Test UI and the player overlay do not show it)
+- **Docs:** `docs/own_ui_toolkit.md` (section 4)
+- **Tests:** `okayui_drawlist`, `okayui_fuzz`
+- **Status:** Works - implemented and tested headless (pixels, goldens, fuzz); not run in the real editor or launcher. Concave polygons, rounded-corner masks, anti-aliasing, a printf-style text call and text with newlines are not covered
+- **Open:** the remaining gaps are ranked in `docs/own_ui_toolkit.md` section 4; the Direct3D 11 backend still ignores clip spans, so draw-list clipping does not work there
+- **Related:** 40.1, 40.6
+- **Words:** draw list, GetWindowDrawList, custom drawing, canvas, InvisibleButton, BeginDisabled, cursor position, content region, CalcTextSize, polyline, bezier, replace Dear ImGui
+- **Seen as:** a custom-drawn panel does not clip; a disabled widget still reacts; a translucent line is darker at its corners
+- **Ask me like:** "work on 40.7.1, add AddConcavePolyFilled"; "render the draw list lab page to a PNG"

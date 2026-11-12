@@ -144,6 +144,7 @@ textures and URLs are built in and always found.
 | `scene.no_active_camera` | warning | cameras exist but none is enabled and active |
 | `name.duplicate` | warning | siblings share a name, so `Find("X")` reaches only the first |
 | `component.duplicate_singleton` | warning | two `EventSystem`, `DayNightCycle`, `CinemachineBrain`, `PauseMenu` or `SteamManager` |
+| `io.link_broken` | warning | a Logic Source I/O link with no output name, no input, or a target that no object has |
 | `script.missing_file` | error, or warning if the scene carries a copy of the source | a Script or Visual Script file path that does not exist |
 | `script.empty` | warning | a script with neither source nor file |
 | `script.compile` | error | the script text (or the referenced file) does not compile |
@@ -156,6 +157,9 @@ textures and URLs are built in and always found.
 | `object.inactive` | info | the top of an inactive subtree (reported once, with the descendant count) |
 | `object.layer_range` | warning | a layer outside 0..31 |
 | `physics.rigidbody_no_collider` | warning | a `Rigidbody2D` / `Rigidbody3D` with no collider on the object |
+| `volume.zero_size` | warning | a `Volume`, or a Logic Source plate or trigger zone, with a size of zero or less on an axis (docs/volumes.md) |
+| `volume.force_zero` | warning | a Force `Volume` with strength 0 |
+| `volume.no_audio` | warning | an Ambience `Volume` with no Audio Source, or an Audio Source with no clip |
 | `scene.duplicate_guid` | warning | `ValidateText` / `ValidateFile`: two objects carry the same `guid` (the loader gives one a new guid) |
 | `scene.broken_parent` | error | `ValidateText` / `ValidateFile`: `parent N` names an object that is not in the file (it loads as a root) |
 

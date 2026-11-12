@@ -207,7 +207,7 @@ Recent additions (v2.12–2.14):
   **Bring to Front / Send to Back** reorder a widget among its siblings). The
   editor preview uses the exact same order as the built game.
 - **Sprite textures** — set a Sprite Renderer's *Texture* to a PNG/JPG/BMP path
-  (loaded via `okay::Image`/stb_image). The built game draws the image, tinted by
+  (loaded via `okay::Image`, which uses our own decoder). The built game draws the image, tinted by
   the sprite color; the editor viewport still shows the colored quad. Keep the
   image next to the built `.exe` (relative paths resolve there).
 - **Mesh Renderer (3D)** — pick a built-in primitive (Cube, Pyramid, Quad,
@@ -523,6 +523,27 @@ collider keeps all its shapes) and **audio sources**. Other types still save the
 - Build and Export stop Play first and ship the scene you edited.
 - Title bar and status bar show the project and scene and the save state.
 
+## Project panel on the asset database
+
+The Project panel lists, searches and counts assets from the asset database (`okay::AssetDatabase`) and gets its pictures from the
+thumbnail cache (`okay::ThumbnailCache`); it has no folder scan of its own. Details are in `project_panel.md` and `asset_database.md`.
+
+- **Refresh.** An incremental database scan runs every two seconds or more (30 times as long as the last scan took on a big project);
+  files whose size and time did not change are not read again and an unchanged project rebuilds nothing. The "..." menu shows how
+  many assets are indexed and how long the last refresh took. There is no file watcher.
+- **Search.** Names, tags and type words, plus `t:`, `ext:`, `l:`, `is:unused`, `is:broken`, `uses:` and `deps:`. Right-click > Find
+  References and Show Dependencies list the users and the dependencies, with a whole-graph switch; click a line to show it.
+- **Pictures.** Textures, audio waveforms, models, mesh files, materials, prefabs and scenes; made lazily within a few milliseconds per
+  frame, kept in `.okay/thumbs`, made again when the file (or what it uses) changes. Tile size: slider, or Small / Medium / Large.
+- **Broken References.** A list of missing and stale references from the dependency graph; Fix rewrites the stale ones (Ctrl+Z in the panel undoes it).
+- **Keyboard after a menu closes.** A pop-out menu or context menu can be its own operating-system window. With a window manager the
+  keyboard goes back to the editor when it closes. Without one (a bare X server) it does not, so Esc and F2 are lost and a dialog can only
+  be closed with its Close button; a click in the editor window now takes the keyboard back. A click right after such a menu closes can
+  still be lost there. Dialogs are checked with a window manager in the tour.
+- **Info strip.** Type, size, GUID (short), uses and used-by counts, tags and a broken-reference warning (also a triangle on the tile).
+- **Rename, move, delete.** The GUID stays with the asset, references are rewritten, Ctrl+Z in the panel undoes them and puts the open
+  scene's paths back, and a deleted asset's references show as broken until it is restored.
+
 ## Notes
 
 This editor renders the scene with ImGui's 2D draw lists, which is perfect for
@@ -535,6 +556,10 @@ unchanged.
 
 - **View axis gizmo** (Scene view, top-right): the X/Y/Z tips track the camera
   orientation; **click a tip** to snap the view to look along that axis.
+- **Orthographic views and measuring** (Scene view, View options ...): Perspective or Orthographic, the Top, Bottom,
+  Front, Back, Right and Left views (numpad 7, 1, 3; Ctrl for the opposite), and a Measure tool (M) that reads the
+  distance between two clicked points. See [level_tools.md](level_tools.md), which also covers the foliage brush,
+  terrain texture layers, the decal projector and the cable.
 - **Game view Stats**: toggle in the Game toolbar (the arrow beside it picks what
   to show). While the game runs it overlays the Play loop's own numbers, the same
   text as the player's F3 panel: FPS, average / min / max / p99 frame time, the 1%
@@ -592,6 +617,48 @@ unchanged.
   saving height. On the left it shows the Hierarchy's group, on the right the
   Inspector's; right-click any tab ▸ **Show Group as Side Tabs** picks another.
   Click an entry to show that panel, right-click it for its tab menu. Off by default.
+
+## Scene view overlays, toolbar, density and layout
+
+- **Overlays** (Scene view `...` menu ▸ Overlays; every choice is remembered):
+  - **Stats line** (`3D | 5 objects | 25 FPS | name`, top left) can be turned off. It sits on a
+    see-through pill with a dark outline so it stays readable on a bright sky.
+  - **Camera overlay** (zoom, yaw / pitch, eye, target, FOV) is **off by default**. Switched on it
+    lives in a corner you choose (**Camera overlay corner**, top right by default), is
+    semi-transparent (**Opacity** slider) and **collapsible**: click its title in the view, or use
+    **Collapse camera overlay**. It places itself clear of the stats line, the view-axis gizmo, the
+    camera inset and the isolation banner, and hides rather than cover them when the view is too small.
+    The same switch is in Preferences ▸ Debug View.
+  - **Object names** (on by default) shows the name chip of the selected object (drag it onto a visual-script
+    object slot, as before) and the names of cameras and lights. Each takes a spot clear of the gizmo handles,
+    the overlays and the other names; a name that has to sit further from its object gets a thin line back to
+    it, a name that cannot find room shrinks and dims, and a crowded view fades the camera and light names. The
+    names have a dark outline so they read on a bright sky. Off hides all of them (the Hierarchy rows still drag
+    an object into a script slot).
+  - The **view-axis gizmo** (top right: click a tip to look along that axis) is now drawn on top of the 3D
+    view; it used to be hidden under it.
+- **Toolbar**: every icon button has a tooltip with its name and shortcut, including the remove (x),
+  browse (...) and step buttons in the Inspector and the playback speed buttons. The Scene view toolbar is
+  grouped with dividers (Move / Rotate / Scale / IK, then Global-Local / Snap, then Frame). **Toolbar
+  labels** (`...` menu) writes the tool names beside the icons for beginners. When the view is too narrow
+  for every label, the leading tools (Move, Rotate, Scale, ...) keep theirs and the rest stay bare icons; when
+  even bare icons do not fit the last tools move into the `...` menu under **Tools**. The remembered choice
+  is only a preference: a wide Scene view shows all the labels, a narrow one fewer.
+- **Density** (View ▸ Appearance ▸ Density): **Comfortable** (the default) or **Compact**. It sets the row
+  spacing and field height of every panel and, in the Inspector, how wide the value column is next to the
+  label (the label keeps at least about 96 px, so it stays readable in a 440 px wide Inspector) and the
+  space above each component.
+- **Maximize viewport** (**Shift+Space**, View ▸ Layout ▸ Maximize Viewport, or the Scene `...` menu): the
+  Scene fills the editor; the other panels hide and a **Restore panels** button appears in the Scene
+  toolbar. Pressing Shift+Space again brings back the previous arrangement and open panels exactly. While
+  maximized the layout file is not written, so the next launch opens the layout you had before.
+- **Panels**: every docked panel is resizable by its splitters, floats from the tab right-click menu (**Float
+  (undock)**) or by dragging its tab out (outside the editor it becomes its own window), and now also
+  collapses: tab right-click ▸ **Collapse Group** shrinks a docked group to its tab strip and **Expand Group**
+  brings its size back. **The arrangement you leave is now restored at the next start** (the dock tree is in
+  `imgui.ini`, and the built-in layout you were on is saved in `okay_settings.txt` so the Layout dropdown names it);
+  before, every launch rebuilt the Default layout. With no `imgui.ini`, or none with a split in it, the Default layout is
+  built as before, and **Reset Layout** always rebuilds it. Layout presets and **Save Layout...** are as before.
 
 ## Editor quality-of-life
 
@@ -817,13 +884,28 @@ step, a press that changes nothing is none, and a field that already made its ow
   Project panel use the same `ASSET_PATH` payload as before. The registry field also checks the kind (an `image`
   field takes pictures only). Object fields take a drag from the Hierarchy (`GO_PTR`), have a searchable picker and a
   clear button.
-- Prefab: the banner stays. Under it, **Changed from the prefab** lists every record that differs (what changed, with
-  old and new value) with **Revert** and **Apply** per change, and **Revert All** / **Apply All** for the instance
-  root. A component header turns blue when its component is changed. Objects inside an instance say which prefab they
-  belong to. (Uses `PrefabTools::Diff`, `RevertOverride`, `ApplyToSource`.)
+- Prefab: see "Prefab instances in the Inspector and Hierarchy" below (header, per-property marks, Create Variant).
 - **Save as Prefab** in the Inspector header now saves into the project's `Assets` folder (it used to write into the
   editor's working folder).
 
+
+### Prefab instances in the Inspector and Hierarchy
+
+Everything below is wired to `PrefabTools` (nothing is a second prefab system); the full list is in
+[prefab_system.md](prefab_system.md#in-the-editor).
+- **Header.** An object in a prefab instance shows **Prefab: <name>** with **Open**, **Select Asset**, **Revert All**,
+  **Apply All**, **Create Variant**, **Update All** and **Unpack** (an object inside the instance also has **Select Instance
+  Root**). Revert All and Apply All are off, with a tooltip, when nothing differs.
+- **Per property.** A property that differs from the prefab has a blue bar at the left of its row; right-click it for
+  **Revert Property** / **Apply Property to Prefab**. The component's `...` menu has **Revert Component to Prefab** /
+  **Apply Component to Prefab**.
+- **Changed from the prefab** lists components, fields (old -> new), components added or lost, and child objects added or
+  lost, each with Revert and Apply.
+- **Apply** writes the prefab file and updates the other instances in the scene that did not change the same thing.
+  Every action is one undo step that moves the prefab file back and forth with the scene.
+- **Hierarchy.** Blue mark: instance root; violet: instance of a variant; square in a square: a prefab nested in
+  another; orange dot: differs from its prefab. Row menu > **Prefab**. Project panel: **Create Variant** on a prefab.
+- Tests: `prefab_editor` (`tests/test_prefab_editor.cpp`).
 
 ### Inspector and Hierarchy, finishing pass
 
@@ -833,7 +915,7 @@ step, a press that changes nothing is none, and a field that already made its ow
 - **Tooltips on the fields.** Hover any field of the commonly used components (Transform, Rigidbody 2D/3D, colliders,
   Light, Camera, Audio Source, Sprite and Mesh Renderer) for a short plain explanation. Every property of those
   components has one (tested in `tests/test_inspector_model.cpp`).
-- **Revert keeps the place.** Reverting a top-level prefab instance (Revert, Revert All, or the banner's Revert) no
+- **Revert keeps the place.** Reverting a top-level prefab instance (Revert, Revert All) no
   longer moves it to the end of the Hierarchy list.
 - **Wider Inspector.** The default layout (and Reset Layout) gives the Inspector about 40% of the width beside the
   Scene view, so rows are not cramped. Layouts you saved are not changed.

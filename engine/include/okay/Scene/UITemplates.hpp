@@ -8,6 +8,7 @@
 // Everything is styled like the OkaySpace launcher ("Slate"): blue-tinted dark
 // cards with hairline borders and soft shadows, the accent colour for the main
 // action, dim secondary text, pill badges and round avatars.
+#include <vector>
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -376,11 +377,11 @@ inline GameObject* AddPauseMenu(Scene& scene) {
     return root;
 }
 
-// Settings panel: Music / SFX sliders, Fullscreen / VSync switches, Quality dropdown, Back.
+// Settings panel: Music / SFX sliders, Fullscreen / VSync switches, Quality dropdown, Accessibility rows, Back.
 inline GameObject* AddSettings(Scene& scene) {
     using namespace detail;
     GameObject* canvas = EnsureCanvas(scene);
-    GameObject* root = Panel(scene, canvas, "Settings", UIAnchor::Center, {0, 0}, {440, 480},
+    GameObject* root = Panel(scene, canvas, "Settings", UIAnchor::Center, {0, 0}, {440, 680},
                              slate::Panel(), 16.0f, true);
     Text(scene, root, "Title", "Settings", UIAnchor::TopLeft, {32, 24}, {376, 40}, 30.0f, slate::Text(), 0, true);
     Caption(scene, root, "AudioCaption", "AUDIO", UIAnchor::TopLeft, {32, 82}, 376);
@@ -407,8 +408,82 @@ inline GameObject* AddSettings(Scene& scene) {
     { GameObject* g = Child(scene, root, "QualityDropdown"); auto* dd = g->AddComponent<UIDropdown>();
       dd->anchor = UIAnchor::TopLeft; dd->position = {208, 306}; dd->size = {200, 32};
       dd->options = {"Low", "Medium", "High"}; dd->value = 2; }
+    Divider(scene, root, UIAnchor::TopLeft, {32, 356}, 376);
+    Caption(scene, root, "AccessibilityCaption", "ACCESSIBILITY", UIAnchor::TopLeft, {32, 372}, 376);
+    auto dropdown = [&](const char* name, const char* label, float y, std::vector<std::string> opts, int v) {
+        Text(scene, root, (std::string(name) + "Label").c_str(), label, UIAnchor::TopLeft, {32, y}, {170, 32}, 16.0f);
+        GameObject* g = Child(scene, root, (std::string(name) + "Dropdown").c_str());
+        auto* dd = g->AddComponent<UIDropdown>();
+        dd->anchor = UIAnchor::TopLeft; dd->position = {208, y}; dd->size = {200, 32};
+        dd->options = std::move(opts); dd->value = v;
+    };
+    dropdown("TextSize", "Text size", 396, {"75%", "100%", "125%", "150%", "200%"}, 1);
+    dropdown("ColorFilter", "Colour filter", 436, {"Off", "Protanopia", "Deuteranopia", "Tritanopia"}, 0);
+    toggle("HighContrast", "High contrast", 484, false);
+    toggle("ReduceMotion", "Reduce motion", 520, false);
+    toggle("ReduceFlashing", "Reduce flashing", 556, false);
     Button(scene, root, "BackButton", "Done", UIAnchor::BottomLeft, {32, -28}, {376, 48});
     root->AddComponent<SettingsScreen>();
+    return root;
+}
+
+// Save slots: three slots, each with its saved time and Save / Load / Delete, plus Continue and Close.
+// Works with the save framework (docs/save_framework.md): mark the objects to keep with a Saveable
+// component. The buttons run the script builtins game_save, game_load, game_delete_slot and
+// game_continue; the text shows game_slot_label / game_slot_text. Every error goes to the Console.
+inline GameObject* AddSaveSlots(Scene& scene) {
+    using namespace detail;
+    GameObject* canvas = EnsureCanvas(scene);
+    GameObject* root = Panel(scene, canvas, "Save Slots", UIAnchor::Center, {0, 0}, {540, 410},
+                             slate::Panel(), 16.0f, true);
+    Text(scene, root, "Title", "Save Slots", UIAnchor::TopLeft, {32, 22}, {476, 40}, 30.0f, slate::Text(), 0, true);
+    for (int i = 1; i <= 3; ++i) {
+        const std::string n = std::to_string(i);
+        const float y = 80.0f + (float)(i - 1) * 74.0f;
+        Text(scene, root, ("Slot" + n + "Info").c_str(), "Empty", UIAnchor::TopLeft, {32, y}, {476, 22}, 16.0f, slate::Dim());
+        auto bind = [&](GameObject* b, const std::string& src) {
+            std::string err;
+            b->AddComponent<ScriptComponent>("okayscript")->LoadSource(src, &err);
+        };
+        bind(Button(scene, root, ("Slot" + n + "Save").c_str(), "Save", UIAnchor::TopLeft, {32, y + 28}, {150, 36}),
+             "function on_click() {\n"
+             "  if (game_save(\"slot_" + n + "\", \"Slot " + n + "\")) { ui_set_text(\"SaveStatus\", \"Saved to slot " + n + "\"); }\n"
+             "  else { ui_set_text(\"SaveStatus\", \"Couldn't save slot " + n + " (see the Console)\"); }\n"
+             "}\n");
+        bind(Button(scene, root, ("Slot" + n + "Load").c_str(), "Load", UIAnchor::TopLeft, {196, y + 28}, {150, 36}, ButtonKind::Secondary),
+             "function on_click() {\n"
+             "  if (game_load(\"slot_" + n + "\")) { ui_set_text(\"SaveStatus\", \"Loading slot " + n + "...\"); }\n"
+             "  else { ui_set_text(\"SaveStatus\", \"Slot " + n + " can't be loaded (see the Console)\"); }\n"
+             "}\n");
+        bind(Button(scene, root, ("Slot" + n + "Delete").c_str(), "Delete", UIAnchor::TopLeft, {360, y + 28}, {148, 36}, ButtonKind::Ghost),
+             "function on_click() {\n"
+             "  if (game_delete_slot(\"slot_" + n + "\")) { ui_set_text(\"SaveStatus\", \"Deleted slot " + n + "\"); }\n"
+             "}\n");
+    }
+    Divider(scene, root, UIAnchor::TopLeft, {32, 304}, 476);
+    GameObject* cont = Button(scene, root, "ContinueButton", "Continue", UIAnchor::TopLeft, {32, 318}, {300, 44});
+    cont->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function on_click() {\n"
+        "  if (game_can_continue()) { game_continue(); ui_set_text(\"SaveStatus\", \"Loading the newest save...\"); }\n"
+        "  else { ui_set_text(\"SaveStatus\", \"There is no save to continue yet\"); }\n"
+        "}\n");
+    GameObject* close = Button(scene, root, "CloseButton", "Close", UIAnchor::TopLeft, {348, 318}, {160, 44}, ButtonKind::Secondary);
+    close->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function on_click() { set_active_of(\"Save Slots\", 0); }\n");
+    Text(scene, root, "SaveStatus", "", UIAnchor::TopLeft, {32, 372}, {476, 22}, 14.0f, slate::Accent());
+    // The root keeps each slot's line up to date (label and saved time, or "Empty").
+    root->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function slot_line(n) {\n"
+        "  var s = \"slot_\" + n;\n"
+        "  if (game_slot_exists(s)) { return game_slot_label(s) + \"   \" + game_slot_text(s); }\n"
+        "  return \"Empty\";\n"
+        "}\n"
+        "function update(dt) {\n"
+        "  ui_set_text(\"Slot1Info\", slot_line(1));\n"
+        "  ui_set_text(\"Slot2Info\", slot_line(2));\n"
+        "  ui_set_text(\"Slot3Info\", slot_line(3));\n"
+        "}\n");
+    IntroAnim(root, UIAnimation::Intro::Pop);
     return root;
 }
 

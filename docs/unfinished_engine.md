@@ -23,7 +23,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| "Mesh Collider 3D" is only the mesh's bounding box | `engine/include/okay/Physics/Collider3D.hpp:157-163` (`class MeshCollider3D : public BoxCollider3D`) | The name promises per-triangle or convex collision. Anything non-box-shaped (arches, bowls, rooms, terrain meshes) blocks as a solid box. Character cannot enter a hollow building model | High | Large |
+| Mesh Collider 3D is static-only and raises no collision callbacks | `engine/include/okay/Physics/Collider3D.hpp` (`MeshCollider3D`), `engine/src/Physics/Physics3D.cpp` (mesh pass in `Step`) | Exact per-triangle collision (BVH, rays, overlaps, casts, `ResolveSphere`, rigidbody contact, trigger overlap) now works against concave, hollow and holed meshes. Still open: a mesh collider cannot be a dynamic body (no convex-hull shape or concave-vs-concave contact in the solver; a dynamic Rigidbody3D on the same object is refused with a warning and an Inspector message); bodies landing on a solid mesh get no `OnCollisionEnter3D/Stay/Exit`; the navmesh bake treats it as its bounding box | Medium | Medium |
 | 3D hinge joint has no angle limits | `engine/include/okay/Components/Joint3D.hpp:22` (modes Distance, Spring, Pin, Hinge; no limit fields). 2D has them via `Math/JointLimit.hpp` | Doors and flaps swing a full circle; the 3D joint headers still say "no hinge" in comments | Medium | Small |
 | No 2D box or capsule casts, no 2D explosion force | `Physics/Physics2D.hpp` queries; `AddExplosionForce` only in `Rigidbody3D.hpp:111` | 2D games cannot sweep a box or capsule, or blast bodies away, without writing it in script | Medium | Small |
 | Bodies must be un-parented; no step-rate setting in the editor | `Rigidbody3D.hpp` header comment; feature map 6.4 | A rigidbody under a moving parent is wrong; no UI for the fixed step | Low | Medium |
@@ -43,8 +43,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| No reverb, doppler, occlusion or distance filtering | `Audio/AudioMixer.hpp` (only low-pass and a stereo pan, `kSpatialPan` at :71); no matches for reverb or doppler in `engine/` | Caves, rooms and fast fly-bys sound flat. Spatial audio is pan plus fade only | Medium | Medium |
-| No audio streaming; every clip fully decoded to mono | `engine/src/Audio/AudioClip.cpp` (decode into memory), `AudioDecode.cpp:106` | Long music tracks use large memory; stereo music is downmixed to mono, which is a quality loss players will hear | High | Medium |
+| No reverb, doppler, occlusion or distance filtering | `Audio/AudioMixer.hpp` (only low-pass and a stereo pan or balance, `kSpatialPan`); no matches for reverb or doppler in `engine/` | Caves, rooms and fast fly-bys sound flat. Spatial audio is pan plus fade only | Medium | Medium |
 | Audio import settings stored but never read | `Core/ImportSidecar.hpp` is read only from `engine/src/Render/ModelImport.cpp`; nothing in `engine/src/Audio` | Import options for audio (and texture compress) have no effect. Already hidden in the UI, but the data path is dead | Low | Small |
 | Only four fixed buses, no effect chain or snapshots | `AudioMixer.hpp:40` (`SFX, Music, UI, Voice`) | Games cannot add an Ambience or Dialogue bus | Low | Medium |
 | Formats: WAV, OGG, MP3 only (no FLAC) | `AudioDecode.cpp:106` | Common asset format rejected with an error | Low | Small |
@@ -55,16 +54,16 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | Editor Play mode does not feed function keys, Alt, Tab or left/right modifiers | `editor/main.cpp:47007-47027` builds keys by hand; the built game calls `okay::AppendSdlExtendedKeys(ks, down)` at `player/main.cpp:1890` | A game that binds F-keys, Alt or Tab works when built and silently fails in the editor Play button | High | Small |
-| Editor Play feeds one controller only | `editor/main.cpp:47025` (`FeedSdlGamepad(g_pad, down)`), player uses `pads.Feed` for all pads (`player/main.cpp:1891`) | Co-op controller games cannot be tested in the editor | Medium | Small |
+| Editor Play feeds one controller only | `editor/main.cpp:47025` (`FeedPad(g_pad.get(), down)`), player uses `pads.Feed` for all pads (`player/main.cpp:1891`) | Co-op controller games cannot be tested in the editor | Medium | Small |
 | No on-screen virtual stick, D-pad, or touch buttons; no pinch, swipe, long-press recognisers | no matches for joystick, gesture or swipe in `engine/include/okay/Components` or `UI/` | Mobile and web-touch games must build their own controls | Medium | Medium |
 | Input contexts (`PushContext`) have no consumer | no reference from `engine/include/okay/Components`, editor or player | The feature exists but a pause menu does not use it; `Input::SetUICaptured` is the real path | Low | Small |
-| `SdlGamepad` has no test | no test names `FeedSdlGamepad` or `SdlGamepad` | Controller mapping regressions go unseen | Low | Small |
+| `PlatformGamepad` has no test | no test names `FeedPad` or `PadSet` (the platform controller mapping is tested in `platform`, not this feed) | Controller mapping regressions go unseen | Low | Small |
 
 ## 6. AI and navigation
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| No off-mesh links, area costs or obstacle carving | no matches in `engine/src/AI`, `AI/NavMesh*.hpp`, `Components/NavMeshAgent.hpp` | NPCs cannot jump gaps, climb ladders, or avoid mud or water. Moving obstacles do not cut the mesh | High | Large |
+| Moving obstacles do not cut the mesh (no obstacle carving) | `Components/NavMeshObstacle.hpp` | Agents dodge a moving obstacle locally but the path search does not route around it, so a closed door or a parked cart can wedge a path. (Resolved: off-mesh links and area types with costs and per-agent masks, see `docs/navigation.md`.) | Medium | Medium |
 | NavMesh polygons are axis-aligned rectangles, one agent radius per bake, one surface per scene | feature map 9.1 | Angled walls become staircases; two NPC sizes need two scenes | Medium | Large |
 | 2D grid pathfinder: no weights, smoothing or moving obstacles | `AI/Pathfinding.hpp` | 2D games get jagged unweighted paths | Low | Medium |
 | Behavior tree cannot run another tree; no breakpoints | `AI/BehaviorTree.hpp:100-110` (no sub-tree node type) | Large trees cannot be modular | Medium | Medium |
@@ -94,7 +93,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 |---|---|---|---|---|
 | UI frames have no rotation or scale | `Components/UIFrame.hpp` (only anchors, pivot, size) | Cannot spin or zoom a widget (spinning icons, pop-in) except through UIAnimation tricks | Medium | Medium |
 | Missing widgets: search bar, date and time picker, file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | `engine/include/okay/Components/UI*.hpp` file list has none of these | App-style UI must be assembled by hand | Medium | Large |
-| UI controller focus visuals and accessibility not wired | `UI/FocusGraph` is used by `UINavigation.hpp` but nothing reads `AccessibilitySettings` (see section 14) | Gamepad users get no consistent focus ring | Medium | Medium |
+| UI controller focus visuals not wired to accessibility | `UI/FocusGraph` is used by `UINavigation.hpp`; high contrast changes UI text only (see section 14) | Gamepad users get no consistent focus ring | Medium | Medium |
 | UI scripting needs the OkayUI bridge; without it `ui_*` calls draw nothing | `Scripting/ScriptUI` has only the OkayUI implementation in `shared/` (feature map 13.x) | A build without OkayUI silently ignores UI script calls | Low | Medium |
 | Steeply tilted world-space UI draws as axis-aligned rectangles | `docs/ui_world_space.md` | In-world screens at an angle look wrong | Low | Medium |
 | UI text is left-to-right only, no shaping | no bidi, shaping or Arabic code in `engine/src` or `include` | Arabic, Hebrew, Thai text draws wrong or mirrored by hand; the preview mirror only reverses characters | Medium | Large |
@@ -136,9 +135,11 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| Editor uses full-scene text snapshots for Undo; the engine `UndoStack` is unused there | no reference to `UndoStack` in `editor/` or `player/` (engine only, `Core/Undo.hpp`) | Undo memory grows with scene size, no per-field undo or undo across Play | High | Large |
-| Save framework has no editor UI, component, or scene record | `Core/SaveFramework.cpp`, `SaveFrameworkScene.cpp`; zero references in `editor/`, `player/`; script calls (`save_*`) only | A no-code user cannot make a save or load screen | High | Medium |
+| Editor undo is on `UndoStack` now (resolved, see `docs/editor_undo.md`), but each step is a scene-text delta and each Undo rebuilds the whole scene | `editor/SceneUndo.hpp`, `EditorState.cpp`; GUI paths (Edit menu, shortcuts, History panel, `WatchEditUndo`) compiled but never run | Inserting or deleting an early object stores text up to the end of the scene; moving an asset the scene uses clears the scene history; mesh edit, Project panel, Timeline, Localization and the script editors keep their own undo; no per-object or per-property commands, so Inspector state and big scenes feel the rebuild | Medium | Medium |
 | Engine accessors with no editor or player caller | `Debug/DrawCallRecorder`, `GpuTimer`, `MemoryTracker`, `FrameRecord`, `Optimize/StreamingGrid`, `Core/Cvar` and `Core/Jobs` stats: zero mentions in `editor/` and `player/` | Code and tests exist, no window or switch shows them (partly known as 23.x; this lists the rest) | Medium | Large |
+| Project panel: no operating-system file watcher | `editor/ProjectBrowser.cpp` `Poll` (incremental `AssetDatabase::Scan`, at most every 2 s and 30x the last scan time; about 45 ms for 5,000 unchanged assets in a Release build, 135 ms in Debug, in the test) | A file changed outside the editor shows up on the next poll, not at once | Low | Medium |
+| Project panel: thumbnails are made on the main thread | `Browser::ThumbFrame` budget (10 ms per frame), generators in `editor/main.cpp` (`RenderPrefabImage` and friends) | A folder of many big models fills in over several frames and the frame time grows by up to the budget; a worker thread needs a scene renderer that does not touch editor state | Low | Large |
+| Project panel: colour labels are not the database's labels | `.okaylabels` in `editor/main.cpp` vs `AssetRecord::labels` | Two label systems; colour labels do not travel in the `.okaymeta` | Low | Medium |
 | Plugin API has no native plugins | feature map 24.1 (Planned) | Only script-level plugin windows | Medium | Large |
 | `editor/main.cpp` and `player/main.cpp` still hold panels, build, UI and server entry | feature map 15.10, 19.4 | Slow to change, merge conflicts | Low | Large |
 | Dead code: `DrawFlowGraph` (about 1,060 lines), `g_bevelWidth` | `editor/main.cpp:24374, 3032` (already in `unfinished-audit.md`) | None for users | Low | Small |
@@ -147,7 +148,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| Accessibility settings have no consumer at all | `engine/include/okay/Core/AccessibilitySettings.hpp:40-52`: text scale, high contrast, reduce motion, reduce flashing, colour-blind mode, hold-to-toggle, aim assist, screen-reader hints. Grep across `engine/src`, `Components`, `UI`, `player`, `editor`, `shared` finds no reader | A player can set them, but nothing scales text, damps camera shake, shifts colours (`Graphics/ColorVision.cpp` has the maths, no caller), or toggles holds. There is also no settings screen in the player that sets them | High | Large |
+| Accessibility: five settings are wired, five are not (partly done) | Wired and tested (`accessibility_wired`, `accessibility_render`): text size (screen-space text, button, toggle, keybind, tooltip, context-menu labels), colour filter (3D frame in the player plus UI flat colours and text), high contrast (UI text), reduce motion (camera shake, UI slide, pop and loop animations), reduce flashing (`flash` action, UI blink loop). All five rows sit on the Settings screen (`SettingsScreen`, saved to Prefs). NOT DONE and not in the UI: subtitles and sound captions (no widget draws `CaptionManager` lines), hold-to-toggle, aim assist, screen-reader hints, head bob and landing dip under reduce motion, Achromatopsia (no correction exists) | A player can use the five wired rows; the others still have no reader, so no control for them is offered. Wired limits: slider, dropdown, input and progress text keep their size; images drawn by UI widgets are not colour filtered; the editor and launcher (okayui) do not read the settings; Settings screens saved before this change lack the new rows until the Settings prefab is added again | Medium | Medium |
 | Localization tools (`LocTable`, `LocCheck`, `LocPreview`, `LocScan`) not reachable from the editor | zero references in `editor/` or `player/` | Missing-key reports, placeholder mismatches and pseudo-locale preview cannot be used by a normal user (this sharpens 1.16 and 31.1 with the exact consumer count) | Medium | Medium |
 | Duplicate components of one type save only the first (except a few listed types) | `SceneSerializer.cpp` (feature map 1.7) | Two colliders or two lights on one object lose one on save | Medium | Medium |
 | Right-to-left languages unsupported (see section 9) | see above | | Medium | Large |
@@ -157,20 +158,20 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 9. Medium: 57. Low: 26. Total rows: 92.
+High: 7. Medium: 58. Low: 29. Total rows: 94.
 
 ## Top 15 to tackle first
 
-1. **Accessibility settings have no readers** (sec 14). The class and tests exist, nothing uses them. Quickest wins: text scale in the UI painter and reduce-motion on camera shake. Shipping an accessibility feature that does nothing is a trust problem.
+1. **(Mostly resolved) Accessibility settings** (sec 14). Text size, colour filter, high contrast, reduce motion and reduce flashing now change the player and are on the Settings screen. Still open: subtitles and captions, hold-to-toggle, aim assist, screen-reader hints, editor and launcher chrome.
 2. **SSAO missing on Direct3D 11** (sec 1). Windows is the main target and D3D11 is its default; a lighting switch that does nothing there is the most visible renderer gap.
 3. **Editor Play lacks the extended keys and extra pads** (sec 5). A few lines copying `AppendSdlExtendedKeys` and `pads.Feed` fix games that behave differently in Play and in a build.
 4. **(Resolved) Lua and C# backends removed** (sec 10). The optional third-party backends were dropped; old scenes naming them load and report "language not supported".
-5. **Mesh Collider 3D is a box** (sec 2). Users believe they get model collision; start with a convex hull, then triangle meshes for static objects.
-6. **Save framework has no no-code route** (sec 13). The engine work is done; a Save/Load slot component and a window make it usable without scripts.
+5. **Mesh Collider 3D** (sec 2). Exact triangle collision for static geometry is done; the remaining gap is a convex-hull shape so a mesh can be a dynamic body, and collision callbacks for bodies landing on it.
+6. **(Resolved) Save framework no-code route** (was sec 13). A Saveable component stored in the scene file (transform, active, registry properties, script and visual-script variables), a Save Settings component (autosave interval and on scene start), Save / Load / Delete / Continue / slot exists / last saved time as script builtins, visual-script `Fn.game_*` nodes and Action List `game_*` actions, and a Save Slots UI screen. See `docs/save_framework.md`.
 7. **Direct3D 12 has no post-processing** (sec 1). Either bring it to parity or label it "preview" in Build Settings and keep it off by default.
-8. **Audio is mono and fully decoded** (sec 4). Streaming plus stereo for music is a clear quality and memory win.
-9. **Undo uses full snapshots** (sec 13). Moving the editor to the existing `UndoStack` reduces memory and unlocks undo across Play.
-10. **Navigation: off-mesh links and area costs** (sec 6). Biggest AI limit; NPCs cannot use gaps, ladders or avoid hazards.
+8. ~~**Audio is mono and fully decoded** (sec 4).~~ Done: clips keep stereo, long music streams from disk in a fixed small amount of memory (AudioSource "Stream", Music Player), see `docs/audio.md`. The other audio gaps stay in section 4.
+9. **(Resolved) Undo uses full snapshots** (sec 13). The editor now records scene deltas on `UndoStack` (named steps, merged drags, GUID-exact delete restore, history kept across Play, no recording during Play). What is left is a narrower Medium row in sec 13: per-object commands, and the unrun GUI paths.
+10. ~~**Navigation: off-mesh links and area costs** (sec 6).~~ Done: Nav Mesh Modifier areas with per-area costs and agent masks, and Nav Mesh Links (jump, drop, ladder) that agents plan through and cross, see `docs/navigation.md`. Obstacle carving stays open in section 6.
 11. **Cast shadows from spot and point lights on D3D12 and software** (sec 1) or a visible warning in the Light Inspector (small).
 12. **Visual script export turns Wait or Delay into comments** (sec 10). Emit working `after(t, fn)` code and add one export-vs-runtime test.
 13. **Joint3D hinge limits** (sec 2). Small change with big effect on doors and levers; reuse `Math/JointLimit.hpp`.

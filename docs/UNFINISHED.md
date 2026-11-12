@@ -4,20 +4,20 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **124** rows that are Partial or Planned.
+The feature map currently has **123** rows that are Partial or Planned.
 
 ## Audits
 
 - [Engine-wide audit](unfinished_engine.md): 92 findings across 14 subsystems (9 High, 57 Medium, 26 Low), each with the file and line, what is missing, impact and size, and a top 15 to tackle first. The High items: accessibility settings that nothing reads, SSAO missing on Direct3D 11, no post-processing on Direct3D 12, the editor's Play differing from a built game on keys and gamepads, a mesh collider that is only a bounding box, navigation without off-mesh links or area costs, audio that is mono and fully decoded, editor undo that uses full-scene snapshots, and a save framework with no editor UI.
 
-- [Launcher audit](unfinished_launcher.md): 38 findings in six areas (8 High, 16 Medium, 14 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, server owners cannot kick, ban or promote, and updates are not signed.
+- [Launcher audit](unfinished_launcher.md): 38 findings in six areas (6 High open, 2 more High done in code and waiting on the owner to run SQL; 15 Medium, 15 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, and updates are not signed (kick, ban and admin roles for servers and group chats are now built; the owner applies `docs/sql/member_moderation.sql`).
 
 ## Hidden, removed or limited today
 
 | What | State | What is missing |
 |---|---|---|
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
-| Import settings sRGB, Compress, audio options | Removed from the UI | The renderers do no colour-space handling, no compressed GPU path exists, audio is always mono and never streamed |
+| Import settings sRGB, Compress, audio options | Removed from the UI | The renderers do no colour-space handling, no compressed GPU path exists, audio import options (stream, mono, quality) are not read by the loader (clips keep their channels and long music is streamed per source instead) |
 | Models already in a scene on import-settings Apply | Limited | Stored meshes are not re-imported; the setting applies the next time the model is added |
 | Ten visual-script nodes: `Fn.net_join_link`, `Fn.net_pin_host`, `Fn.pf_*` (delete, leaderboard_top, load, login, login_password, register, save, set_stat) | Hidden from the palette (`kHiddenUntilTested`) | No test covers them; they need a network or PlayFab service |
 | 15 online nodes with only indirect coverage (net host/join/relay/queue/browser) | Visible | Never run as nodes in a test; the calls under them are covered by network suites |
@@ -33,6 +33,18 @@ The feature map currently has **124** rows that are Partial or Planned.
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
+
+## Planned: visual-script core upgrade
+
+Not started. Today graphs can call functions, have variable scopes, and use Broadcast / On Event and the list builtins; these steps build on that. One at a time, each shipped only when finished, tested and usable in the editor:
+
+1. A better variable system for all types: vectors, colors, structs, objects, arrays and maps, with local, graph, object and global scopes and defaults editable in the Inspector.
+2. A full set of array and map nodes: add, remove, insert, find, sort, for each, length, with typed element pins.
+3. Custom events with typed parameters, and delegates (bind, unbind, call).
+4. Graphs talking to each other: call a function, fire an event or read a variable on another object's graph, with the graph checker flagging broken links.
+5. Custom function nodes: user-defined nodes with typed pins, reusable across graphs and listed in the palette.
+
+The text-script nodes below depend on this.
 
 ## Planned: text-script nodes in visual script
 
@@ -73,13 +85,13 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | prefab overrides in the editor (apply, revert, per-field, prefab mode, variant creation, nested roots in the Hierarchy); the old... |
+| [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | prefab mode (editing a prefab in its own scene; Open only isolates the instance); the old... |
 | [1.11](feature_map/01-core-scene.md#111-asset-manager) | Asset manager | Partial | move existing loaders (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) onto it; track GPU resources; an... |
-| [1.12](feature_map/01-core-scene.md#112-asset-database) | Asset database | Partial | asset browser window and thumbnail grid (an old branch claude/asset-browser exists but shares no history with main); importers... |
+| [1.12](feature_map/01-core-scene.md#112-asset-database) | Asset database | Partial | importers reading the remaining settings; GUID references inside scene files; build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no file watcher (the Project panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings... |
 | [1.13](feature_map/01-core-scene.md#113-object-pooling) | Object pooling | Partial | a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job |
 | [1.16](feature_map/01-core-scene.md#116-localization-tools) | Localization tools | Partial | wire the window to `LocTable`, the checker and the scanner (31.1), a language preview that mirrors right-to-left text (31.3)... |
 | [1.19](feature_map/01-core-scene.md#119-property-reflection) | Property reflection | Partial | not registered yet: controllers, scripts, the other UI widgets, navigation, networking; animation and IK components are left to... |
-| [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | generators for meshes, materials, prefabs, models and scenes (the docs show a mesh example); move the Project panel's `GetThumb`... |
+| [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | pictures are made on the main thread inside a per-frame time budget, not on a worker thread; one 128 px size scaled to the tile size; no pictures for fonts or data assets; a scene picture loads the whole scene... |
 
 ### 3. 3D modeling & import
 
@@ -143,19 +155,18 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [20.1](feature_map/20-35-planned.md#201-asset-browser) | Asset browser | Partial | Two sources of truth for labels (the editor's own file vs `.okaymeta` labels); the panel re-lists the folder every 0.6 s instead... |
+| [20.1](feature_map/20-35-planned.md#201-asset-browser) | Asset browser | Partial | Two sources of truth for labels (colour labels in `.okaylabels` vs tags in `.okaymeta`); no file watcher, outside changes show on the next poll (2 s or more); no automated UI test of the window... |
 | [20.2](feature_map/20-35-planned.md#202-dependencies-and-references) | Dependencies and references | Partial | possible bug: Build Game collects assets from the open scene only (extra scenes in the build list are copied but not scanned)... |
 | [20.3](feature_map/20-35-planned.md#203-guids) | GUIDs | Partial | meta files are matched by content hash (FNV-1a, not cryptographic); files over 512 MB hash only head and tail; a project already... |
 | [20.4](feature_map/20-35-planned.md#204-import-settings) | Import settings | Partial | no UI; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins... |
-| [20.5](feature_map/20-35-planned.md#205-thumbnails) | Thumbnails | Partial | the editor's current thumbnails are rebuilt each session (memory only); a scene thumbnail loads the whole scene; no thumbnail for... |
+| [20.5](feature_map/20-35-planned.md#205-thumbnails) | Thumbnails | Partial | pictures are made on the main thread inside a time budget, not on a worker thread; a scene thumbnail loads the whole scene; no thumbnail for fonts or data assets |
 
 ### 21. Prefab system (Critical)
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [21.2](feature_map/20-35-planned.md#212-nested-prefabs) | Nested prefabs | Partial | the editor does not use it (see Status); objects are matched by depth-first position and name, so reordering many objects can... |
-| [21.3](feature_map/20-35-planned.md#213-variants) | Variants | Partial | no UI; scene files never contain variant records (only prefab files do); override unit is a whole record, with field-level apply... |
-| [21.4](feature_map/20-35-planned.md#214-overrides) | Overrides | Partial | `Diff` is exact for well-known records and falls back to whole records for others; objects added or lost on an instance are... |
+| [21.2](feature_map/20-35-planned.md#212-nested-prefabs) | Nested prefabs | Partial | objects are matched by depth-first position and name, so reordering many objects can pair the wrong ones; nesting errors are not listed in the Console on load; a second instance of the applied file inside the same outer instance is not updated by Apply... |
+| [21.3](feature_map/20-35-planned.md#213-variants) | Variants | Partial | no variant badge on the Project panel tile; scene files never contain variant records (only prefab files do); objects added to or lost from a variant instance cannot be applied into the variant... |
 
 ### 22. Undo/redo & recovery (Critical)
 

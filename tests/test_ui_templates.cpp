@@ -57,7 +57,7 @@ int main() {
 
     struct Screen { const char* name; GameObject* (*fn)(Scene&); };
     const Screen screens[] = {
-        {"Main Menu", &AddMainMenu}, {"Pause Menu", &AddPauseMenu}, {"Settings", &AddSettings},
+        {"Main Menu", &AddMainMenu}, {"Pause Menu", &AddPauseMenu}, {"Settings", &AddSettings}, {"Save Slots", &AddSaveSlots},
         {"HUD", &AddHUD}, {"Dialog Box", &AddDialogBox}, {"Health Bar", &AddHealthBar},
         {"Lobby", &AddLobby}, {"Scoreboard", &AddScoreboard}, {"Game Over", &AddGameOver},
         {"Loading Screen", &AddLoadingScreen}, {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog},

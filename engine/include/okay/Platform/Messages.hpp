@@ -5,6 +5,7 @@
 // just "messages where that friend is sender or recipient" — and whichever side
 // isn't the friend is me, so we never need our own uuid.
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Privacy.hpp"
 #include <string>
 #include <vector>
 #include <map>
@@ -42,8 +43,13 @@ public:
         std::string j = "{\"recipient\":" + JStr(friendUid) + ",\"body\":" + JStr(body);
         if (replyTo > 0) j += ",\"reply_to\":" + std::to_string(replyTo);
         j += "}";
-        return acct_.Api("/rest/v1/messages", "POST", j).ok;
+        auto r = acct_.Api("/rest/v1/messages", "POST", j);
+        // Why it failed, in words (a server privacy rule, or no connection); empty
+        // when the cause is unknown or it worked. See docs/sql/blocks.sql.
+        lastSendError_ = r.ok ? std::string() : privacy::FailureText(r, "");
+        return r.ok;
     }
+    const std::string& LastSendError() const { return lastSendError_; }
 
     // Delete one of my own sent messages (RLS blocks deleting others').
     bool Delete(long messageId) {
@@ -237,14 +243,41 @@ public:
         return out;
     }
 
+    // ---- Server support for typing / read marks ---------------------------
+    // Both features need the tables from docs/sql/chat_receipts.sql. When the
+    // server answers "no such table" the launcher must say so instead of
+    // silently showing nothing, so every call below records what it saw.
+    // IsMissingTable is the pure decision (unit tested): 404 (PostgREST
+    // PGRST205 "not in the schema cache") or a 400 whose body names a missing
+    // relation (42P01). 401/403/5xx and "couldn't reach the server" are NOT
+    // "missing": an RLS refusal or an outage must not be reported as an
+    // un-run migration.
+    static bool IsMissingTable(long status, const std::string& body) {
+        if (status == 404) return true;
+        if (status == 400)
+            return body.find("42P01") != std::string::npos || body.find("PGRST205") != std::string::npos ||
+                   body.find("does not exist") != std::string::npos;
+        return false;
+    }
+    enum class Support { Unknown, Yes, Missing };
+    // Yes once a call succeeded, Missing once the table was reported missing,
+    // Unknown until then (e.g. offline).
+    Support TypingSupport() const { return typingState_; }
+    Support ReadMarksSupport() const { return messageReads_; }
+    static const char* ReceiptsSetupNote() {
+        return "Not set up on the server yet: the server owner must run docs/sql/chat_receipts.sql once.";
+    }
+
     // ---- Typing indicator -------------------------------------------------
     // Tell `peer` I'm typing to them right now (upsert a fresh timestamp). Call
     // this throttled while the composer has text.
     bool SetTyping(const std::string& peerUid) {
         if (!acct_.IsLoggedIn() || peerUid.empty()) return false;
-        return acct_.Api("/rest/v1/typing_state?on_conflict=sender", "POST",
-                         "{\"peer\":" + JStr(peerUid) + ",\"at\":" + JStr(IsoNow()) + "}",
-                         "Prefer: resolution=merge-duplicates").ok;
+        auto r = acct_.Api("/rest/v1/typing_state?on_conflict=sender", "POST",
+                           "{\"peer\":" + JStr(peerUid) + ",\"at\":" + JStr(IsoNow()) + "}",
+                           "Prefer: resolution=merge-duplicates");
+        NoteTable(typingState_, r);
+        return r.ok;
     }
     // Is `peer` currently typing to me? True when their row is fresh (<6s old).
     bool PeerTyping(const std::string& peerUid) {
@@ -252,6 +285,7 @@ public:
         std::string mine = MyId(); if (mine.empty()) return false;
         auto r = acct_.Api("/rest/v1/typing_state?select=at&sender=eq." + peerUid +
                            "&peer=eq." + mine, "GET");
+        NoteTable(typingState_, r);
         if (!r.ok) return false;
         auto o = SplitObjects(r.body);
         if (o.empty()) return false;
@@ -267,10 +301,12 @@ public:
     // is open and focused, that doubles as "I'm in the chat" presence.
     bool MarkRead(const std::string& peerUid, long lastId) {
         if (!acct_.IsLoggedIn() || peerUid.empty() || lastId <= 0) return false;
-        return acct_.Api("/rest/v1/message_reads?on_conflict=reader,peer", "POST",
-                         "{\"peer\":" + JStr(peerUid) + ",\"last_read_id\":" + std::to_string(lastId) +
-                         ",\"updated_at\":" + JStr(IsoNow()) + "}",
-                         "Prefer: resolution=merge-duplicates").ok;
+        auto r = acct_.Api("/rest/v1/message_reads?on_conflict=reader,peer", "POST",
+                           "{\"peer\":" + JStr(peerUid) + ",\"last_read_id\":" + std::to_string(lastId) +
+                           ",\"updated_at\":" + JStr(IsoNow()) + "}",
+                           "Prefer: resolution=merge-duplicates");
+        NoteTable(messageReads_, r);
+        return r.ok;
     }
     // Everything the sender side shows about `peer` in one place: how far they
     // have read, when their read row was last refreshed (fresh = they have our
@@ -283,6 +319,7 @@ public:
         std::string mine = MyId(); if (mine.empty()) return st;
         auto r = acct_.Api("/rest/v1/message_reads?select=last_read_id,updated_at&reader=eq." + peerUid +
                            "&peer=eq." + mine, "GET");
+        NoteTable(messageReads_, r);
         if (!r.ok) return st;
         st.ok = true;
         auto o = SplitObjects(r.body);
@@ -291,7 +328,7 @@ public:
             st.viewingAt = ParseIso(Field(o[0], "updated_at"));
         }
         if (withLastSeen) {
-            auto p = acct_.Api("/rest/v1/profiles?select=last_seen&id=eq." + peerUid, "GET");
+            auto p = privacy::ProfilesGet(acct_, "select=last_seen&id=eq." + peerUid);
             if (p.ok) { auto po = SplitObjects(p.body); if (!po.empty()) st.lastSeen = ParseIso(Field(po[0], "last_seen")); }
         }
         return st;
@@ -384,23 +421,27 @@ public:
     // Everyone in a group with their name, avatar, how far they've read
     // (last_read: drives "Seen by") and when they were last online. Two
     // round-trips: the member rows, then their profiles.
-    struct GroupMemberInfo { std::string uid, username, name, avatar; long lastRead = 0; long lastSeen = 0; };
+    struct GroupMemberInfo { std::string uid, username, name, avatar, role; long lastRead = 0; long lastSeen = 0; };   // role: owner/admin/member ("" before member_moderation.sql)
     std::vector<GroupMemberInfo> GroupMembersInfo(long convoId) {
         std::vector<GroupMemberInfo> out;
         if (!acct_.IsLoggedIn() || convoId <= 0) return out;
+        // `role` exists only after docs/sql/member_moderation.sql; fall back without it.
         auto r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
-                           "&select=member,last_read", "GET");
+                           "&select=member,last_read,role", "GET");
+        if (!r.ok) r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
+                                 "&select=member,last_read", "GET");
         if (!r.ok) return out;
         std::string ids;
         for (const auto& o : SplitObjects(r.body)) {
             GroupMemberInfo m; m.uid = Field(o, "member"); m.lastRead = std::atol(Field(o, "last_read").c_str());
+            m.role = Field(o, "role");
             if (m.uid.empty()) continue;
             if (!ids.empty()) ids += ",";
             ids += m.uid;
             out.push_back(m);
         }
         if (ids.empty()) return out;
-        auto p = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen&id=in.(" + ids + ")", "GET");
+        auto p = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen&id=in.(" + ids + ")");
         if (p.ok)
             for (const auto& o : SplitObjects(p.body)) {
                 const std::string id = Field(o, "id");
@@ -738,6 +779,12 @@ public:
 
 private:
     okay::account::AccountService& acct_;
+    std::string lastSendError_;
+    Support typingState_ = Support::Unknown, messageReads_ = Support::Unknown;
+    static void NoteTable(Support& s, const okay::account::ApiResponse& r) {
+        if (r.ok) s = Support::Yes;
+        else if (r.reached && IsMissingTable(r.status, r.body)) s = Support::Missing;
+    }
     std::string myId_;
 
     // My own profile/user uuid (looked up by username, cached).

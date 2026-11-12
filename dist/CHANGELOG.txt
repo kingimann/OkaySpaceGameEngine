@@ -1,5 +1,79 @@
 OkaySpace Game Engine — Changelog
 
+v2.861.0
+  Editor
+  - Prefabs: an override header shows what an instance changes, with revert and
+    apply per property or for all (#666). Open on a prefab enters prefab mode,
+    with its own scene view, a leave prompt for unsaved edits and undo (#676).
+    Prefab variants are changed by their overrides or by opening their base
+    prefab; they are not opened directly.
+  - Level design: foliage painting (paint, erase, rescale; slope, height and
+    spacing limits; merged into chunks for speed), up to four painted terrain
+    texture layers, decal projector, cable between two objects, true
+    orthographic Top/Front/Side views, and a measuring tool (#677). Volumes
+    and logic zones: checkpoint, kill, force, atmosphere and ambience regions
+    drawn in the scene view; an ambience region fades in the Audio Source on
+    its object while the camera is inside (#675). I/O links on logic objects:
+    when a named output fires, any object's input is triggered, with a delay
+    and a once option (#672). Navigation areas, costs and off-mesh links
+    (#661). Mesh Collider 3D uses the real triangles for static objects (#663).
+  - Project panel rebuilt on the asset database (#673). Undo records named
+    scene steps that survive Play (#662).
+  - Scene view and layout: the camera readout is an optional overlay that no
+    longer overlaps the stats line; toolbar tooltips and an icon-plus-label
+    mode, with overflow moved into the "..." menu on narrow views; Compact and
+    Comfortable inspector density; object and camera/light names avoid each
+    other and the gizmo; Shift+Space maximizes the Scene view; panel groups
+    collapse and expand; the last layout is restored at start (#682).
+  Game features
+  - The player's Settings screen has Text size, Colour filter, High contrast,
+    Reduce motion and Reduce flashing, and the engine and UI components honour
+    them (#657).
+  - Save games without code: a Saveable component, Save Settings, Save / Load /
+    Delete / Continue as nodes, actions and script functions, and a Save Slots
+    screen (#664).
+  Launcher
+  - "Download my data" and "Delete my account" in Account > Sign-in & security;
+    deleting needs your password and removes or anonymises your rows (#651;
+    needs the delete-account function deployed, see docs/account_data.md; until
+    then the launcher says deletion is not set up).
+  - Report a message, post, item or profile; reports are reviewed by staff
+    (#652, needs docs/sql/reports.sql, applied to the live project).
+  Fonts
+  - TrueType fonts are rasterised by our own code (#655).
+
+v2.860.0
+  Audio
+  - Clips keep their stereo channels and long music streams from disk in a
+    small fixed amount of memory (AudioSource "Stream", Music Player). Ogg
+    streaming runs on our own decoder (#665).
+  - Ogg Vorbis and MP3 files are decoded by our own decoders, checked against
+    reference decodes of many encoder settings; damaged files are skipped, not
+    crashed on (#644, #642).
+  Images, fonts and dialogs
+  - PNG, JPEG, BMP, TGA, GIF, HDR and PSD loading, PNG saving, the built-in 8x8 font and the file
+    open/save dialogs now use our own code (#649, #639, #641, #640).
+  Scripting
+  - The optional Lua and C# (Mono) script backends are removed; OkayScript and
+    Visual Script are the supported ways to script (#643).
+  Launcher
+  - Kick, ban, unban and admin role for community servers and group chats.
+    Run docs/sql/member_moderation.sql on your Supabase project first; it also
+    closes a hole that let anyone join a server as admin (#668).
+  - Blocking and privacy are enforced by the server, not just the PC: nobody can
+    DM, call or friend-request someone who blocked them, and the DM, friend
+    request and online-status settings are applied by the database. Needs
+    docs/sql/blocks.sql (applied to the live project with this release) (#667).
+  - Password-reset page and an honest message when no reset page is set up
+    (#647). Typing indicators and read receipts say "Not set up on the server
+    yet" until docs/sql/chat_receipts.sql is run (#646).
+  - The updater refuses to install any file without a SHA-256 in the versions
+    index, verifies everything before replacing anything, and shows why when an
+    update fails (#650).
+  Models
+  - okay::fbx, our own FBX reader, is built next to the existing reader and is
+    off by default (#658).
+
 v2.859.0
   Visual Script
   - The Add Node panel has topics, Basic/Intermediate/Advanced levels, a Starter

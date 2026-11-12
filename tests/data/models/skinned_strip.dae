@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written test fixture: a 4-vertex strip skinned to two bones (Root, Tip), and a matrix animation on Tip.
+     A second animation drives a single component (Tip/rotateZ.ANGLE), which our reader reports as not read. -->
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset><unit meter="1"/><up_axis>Y_UP</up_axis></asset>
+  <library_geometries>
+    <geometry id="strip" name="Strip">
+      <mesh>
+        <source id="strip-pos">
+          <float_array id="strip-pos-a" count="12">0 0 0  0 1 0  0 2 0  0 3 0</float_array>
+          <technique_common><accessor source="#strip-pos-a" count="4" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common>
+        </source>
+        <vertices id="strip-vtx"><input semantic="POSITION" source="#strip-pos"/></vertices>
+        <triangles count="2">
+          <input semantic="VERTEX" source="#strip-vtx" offset="0"/>
+          <p>0 1 2  1 2 3</p>
+        </triangles>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_controllers>
+    <controller id="strip-skin" name="Skin">
+      <skin source="#strip">
+        <bind_shape_matrix>1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1</bind_shape_matrix>
+        <source id="skin-joints">
+          <Name_array id="skin-joints-a" count="2">Root Tip</Name_array>
+          <technique_common><accessor source="#skin-joints-a" count="2" stride="1"><param name="JOINT" type="name"/></accessor></technique_common>
+        </source>
+        <source id="skin-bind">
+          <float_array id="skin-bind-a" count="32">1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1   1 0 0 0  0 1 0 -2  0 0 1 0  0 0 0 1</float_array>
+          <technique_common><accessor source="#skin-bind-a" count="2" stride="16"><param name="TRANSFORM" type="float4x4"/></accessor></technique_common>
+        </source>
+        <source id="skin-weights">
+          <float_array id="skin-weights-a" count="4">1 0.75 0.25 0.5</float_array>
+          <technique_common><accessor source="#skin-weights-a" count="4" stride="1"><param name="WEIGHT" type="float"/></accessor></technique_common>
+        </source>
+        <joints>
+          <input semantic="JOINT" source="#skin-joints"/>
+          <input semantic="INV_BIND_MATRIX" source="#skin-bind"/>
+        </joints>
+        <vertex_weights count="4">
+          <input semantic="JOINT" source="#skin-joints" offset="0"/>
+          <input semantic="WEIGHT" source="#skin-weights" offset="1"/>
+          <vcount>1 2 2 1</vcount>
+          <v>0 0  0 1  1 2  0 3  1 3  1 0</v>
+        </vertex_weights>
+      </skin>
+    </controller>
+  </library_controllers>
+  <library_animations>
+    <animation id="lift" name="Lift">
+      <source id="lift-time"><float_array id="lift-time-a" count="2">0 1</float_array>
+        <technique_common><accessor source="#lift-time-a" count="2" stride="1"><param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="lift-mat"><float_array id="lift-mat-a" count="32">1 0 0 0  0 1 0 2  0 0 1 0  0 0 0 1   1 0 0 0  0 1 0 2  0 0 1 1  0 0 0 1</float_array>
+        <technique_common><accessor source="#lift-mat-a" count="2" stride="16"><param name="TRANSFORM" type="float4x4"/></accessor></technique_common></source>
+      <source id="lift-interp"><Name_array id="lift-interp-a" count="2">LINEAR LINEAR</Name_array>
+        <technique_common><accessor source="#lift-interp-a" count="2" stride="1"><param name="INTERPOLATION" type="name"/></accessor></technique_common></source>
+      <sampler id="lift-sampler">
+        <input semantic="INPUT" source="#lift-time"/>
+        <input semantic="OUTPUT" source="#lift-mat"/>
+        <input semantic="INTERPOLATION" source="#lift-interp"/>
+      </sampler>
+      <channel source="#lift-sampler" target="Tip/transform"/>
+    </animation>
+    <animation id="spin" name="Spin">
+      <source id="spin-time"><float_array id="spin-time-a" count="2">0 1</float_array>
+        <technique_common><accessor source="#spin-time-a" count="2" stride="1"><param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="spin-angle"><float_array id="spin-angle-a" count="2">0 90</float_array>
+        <technique_common><accessor source="#spin-angle-a" count="2" stride="1"><param name="ANGLE" type="float"/></accessor></technique_common></source>
+      <sampler id="spin-sampler">
+        <input semantic="INPUT" source="#spin-time"/>
+        <input semantic="OUTPUT" source="#spin-angle"/>
+      </sampler>
+      <channel source="#spin-sampler" target="Tip/rotateZ.ANGLE"/>
+    </animation>
+  </library_animations>
+  <library_visual_scenes>
+    <visual_scene id="Scene">
+      <node id="Armature" name="Armature" type="NODE">
+        <node id="Root" name="Root" sid="Root" type="JOINT">
+          <translate>0 0 0</translate>
+          <node id="Tip" name="Tip" sid="Tip" type="JOINT"><matrix sid="transform">1 0 0 0  0 1 0 2  0 0 1 0  0 0 0 1</matrix></node>
+        </node>
+        <node id="StripNode" name="StripNode" type="NODE">
+          <instance_controller url="#strip-skin"><skeleton>#Root</skeleton></instance_controller>
+        </node>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+  <scene><instance_visual_scene url="#Scene"/></scene>
+</COLLADA>

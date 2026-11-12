@@ -57,6 +57,11 @@ if(WIN32)
     enable_language(RC)
     list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc)
 endif()
+# Our own image decoder (cover art, avatars, chat images): self-contained, std-only, so it is
+# compiled straight into the launcher rather than linking the engine.
+list(APPEND OKAY_LAUNCHER_SOURCES
+    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 add_executable(okayspace-launcher ${OKAY_LAUNCHER_SOURCES})
 okay_win_version(okayspace-launcher "OkaySpace Launcher" "OkaySpace.exe")
 target_compile_definitions(okayspace-launcher PRIVATE ${OKAY_VERSION_DEFINE})
@@ -66,9 +71,9 @@ target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 # link the engine library — the account core needs only the standard library.
 target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
-    ${CMAKE_SOURCE_DIR}/engine/include
-    ${CMAKE_SOURCE_DIR}/engine/third_party/stb)    # stb_image for game cover art
-target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
+    ${CMAKE_SOURCE_DIR}/engine/include)
+# okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.
+target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL} okay::platform)
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)
     target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + file dialogs, voice UDP, native HTTPS

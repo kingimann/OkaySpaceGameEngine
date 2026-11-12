@@ -3958,6 +3958,8 @@ inline void Draw(EditorState& ed, bool* open) {
     dl->ChannelsSetCurrent(2);
     int pendingDelete = -1, pendingDup = -1;
     bool startNodeDrag = false;
+    // "Connect to..." from a node's right-click menu: add this node (def) wired to one pin, or open the full list for it.
+    struct PendingConnect { bool on = false, openAll = false, exec = false, fromOutput = false; int node = -1, pin = -1; const VsDef* def = nullptr; ImVec2 at{0, 0}; } pconn;
     for (auto& n : g.nodes) {
         const VsDef* d = VsDefFor(g, n);
         if (!d) continue;
@@ -4109,6 +4111,53 @@ inline void Draw(EditorState& ed, bool* open) {
             if (ImGui::MenuItem(hasBp ? "Remove Breakpoint" : "Add Breakpoint", "F9")) toggleBreakpoint(n.id);
             if (ImGui::MenuItem("Break All Wires")) {
                 for (int k = 0; k < 2; ++k) for (int sd = 0; sd < 2; ++sd) for (int pi = 0; pi < 8; ++pi) g.unlinkPin(n.id, k, sd, pi);
+            }
+            // What can plug into this node: one entry per pin, listing the nodes that fit it (the same rule as a wire
+            // dropped in empty space). Pick one to add it already wired, or open the full list for that pin.
+            if (ImGui::BeginMenu("Connect to...")) {
+                const ImVec2 outAt = S2W(ImVec2(p0.x + NODE_W + 50.0f * z, p0.y));
+                ImVec2 inAt = S2W(ImVec2(p0.x - NODE_W_BASE - 50.0f * z, p0.y));
+                inAt.x += 170.0f;   // a new node feeding an input is shifted left by the same amount when it is added
+                auto pinMenu = [&](const std::string& label, bool exec, bool fromOutput, int pin, okay::vs::PinType pt) {
+                    if (!ImGui::BeginMenu(label.c_str())) return;
+                    const std::vector<const VsDef*>& fit = VsNodesFittingPin(exec, fromOutput, pt);
+                    if (fit.empty()) ImGui::TextDisabled("Nothing fits this pin.");
+                    const int shown = std::min((int)fit.size(), 16);
+                    for (int i = 0; i < shown; ++i) {
+                        if (ImGui::MenuItem(fit[(std::size_t)i]->title && fit[(std::size_t)i]->title[0] ? fit[(std::size_t)i]->title : fit[(std::size_t)i]->type)) {
+                            pconn.on = true; pconn.def = fit[(std::size_t)i];
+                            pconn.exec = exec; pconn.fromOutput = fromOutput; pconn.node = n.id; pconn.pin = pin;
+                            pconn.at = fromOutput ? outAt : inAt;
+                        }
+                    }
+                    if (!fit.empty()) {
+                        ImGui::Separator();
+                        const std::string all = "Search all " + std::to_string(fit.size()) + " that fit...";
+                        if (ImGui::MenuItem(all.c_str())) {
+                            pconn.on = true; pconn.openAll = true; pconn.def = nullptr;
+                            pconn.exec = exec; pconn.fromOutput = fromOutput; pconn.node = n.id; pconn.pin = pin;
+                            pconn.at = fromOutput ? outAt : inAt;
+                        }
+                    }
+                    ImGui::EndMenu();
+                };
+                ImGui::TextDisabled("Pick a pin to see what fits it");
+                bool any = false;
+                if (d->execIn) { pinMenu("Flow in  <-  runs this node", true, false, 0, okay::vs::PinType::Any); any = true; }
+                for (int j = 0; j < (int)d->execOut.size(); ++j) {
+                    const char* lbl = d->execOut[(std::size_t)j];
+                    pinMenu(std::string("Flow out  ->  ") + (lbl && *lbl ? lbl : "Next"), true, true, j, okay::vs::PinType::Any); any = true;
+                }
+                for (int i = 0; i < (int)d->dataIn.size(); ++i) {
+                    const okay::vs::PinType pt = VsInPinType(g, n.id, i);
+                    pinMenu(std::string("Value in  <-  ") + d->dataIn[(std::size_t)i] + " (" + okay::vs::PinTypeName(pt) + ")", false, false, i, pt); any = true;
+                }
+                for (int o = 0; o < (int)d->dataOut.size(); ++o) {
+                    const okay::vs::PinType pt = VsOutPinType(g, n.id, o);
+                    pinMenu(std::string("Value out  ->  ") + d->dataOut[(std::size_t)o] + " (" + okay::vs::PinTypeName(pt) + ")", false, true, o, pt); any = true;
+                }
+                if (!any) ImGui::TextDisabled("This node has no pins.");
+                ImGui::EndMenu();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Delete", "Del")) pendingDelete = n.id;
@@ -4709,6 +4758,13 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Minimap: click or drag to move the view");
     }
 
+    // "Connect to... > Search all": the wire-drop list, started from that pin of the node.
+    bool pconnPlace = false;
+    if (pconn.on && pconn.openAll) {
+        st.linkPending = true; st.linkExec = pconn.exec; st.linkFromOutput = pconn.fromOutput;
+        st.linkNode = pconn.node; st.linkPin = pconn.pin;
+        openPaletteNow = true; pconnPlace = true;
+    }
     // Right-click empty canvas (or Space): node palette.
     if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < 36.0f && !st.dragging) ||
         (winFocused && !typing && canvasWindowHovered && ImGui::IsKeyPressed(ImGuiKey_Space, false)) || openPaletteNow || st.addAtCenter) {
@@ -4717,6 +4773,7 @@ inline void Draw(EditorState& ed, bool* open) {
         st.paletteWorld = st.addAtCenter ? S2W(ImVec2((canvasMin.x + canvasMax.x) * 0.5f - 100.0f, (canvasMin.y + canvasMax.y) * 0.5f - 40.0f))
                                          : S2W(io.MousePos);
         st.addAtCenter = false;
+        if (pconnPlace) st.paletteWorld = pconn.at;
         ImGui::OpenPopup("##vspalette");
     }
     // A template picked in the toolbar: drop its nodes in the middle of the view.
@@ -4752,6 +4809,14 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
+    // "Connect to... > a node": add it already wired to the pin it was chosen for.
+    if (pconn.on && !pconn.openAll && pconn.def) {
+        st.linkPending = true; st.linkExec = pconn.exec; st.linkFromOutput = pconn.fromOutput;
+        st.linkNode = pconn.node; st.linkPin = pconn.pin;
+        st.paletteWorld = pconn.at;
+        addFromPalette(*pconn.def);
+        st.linkPending = false;
+    }
     ImGui::SetNextWindowSize(ImVec2(1180, 760), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });

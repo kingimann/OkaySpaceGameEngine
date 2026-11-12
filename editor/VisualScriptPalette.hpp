@@ -12,8 +12,10 @@
 #include <cfloat>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 namespace okay::editor::vsed {
@@ -224,6 +226,48 @@ inline bool VsPaletteHidesAsDuplicate(const VsDef& d) {
     return false;
 }
 
+/// Hidden from the palette (a duplicate of another row, or waiting to be tested). Worked out once per row: the
+/// duplicate check walks the whole registry, which is slow to repeat.
+inline bool VsPaletteHidden(const VsDef& d) {
+    static std::unordered_map<const VsDef*, bool> memo;
+    static std::size_t memoN = (std::size_t)-1;
+    if (Registry().size() != memoN) { memo.clear(); memoN = Registry().size(); }
+    const auto it = memo.find(&d);
+    if (it != memo.end()) return it->second;
+    const bool hidden = VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type);
+    memo.emplace(&d, hidden);
+    return hidden;
+}
+
+/// The listed nodes that can take (fromOutput) or give (!fromOutput) a wire at one pin of a node, easiest first.
+/// This is the same rule as the list shown when a wire is dropped in empty space (VsCompatible), so the node
+/// right-click "Connect to..." menu and the wire-drop palette always agree.
+inline const std::vector<const VsDef*>& VsNodesFittingPin(bool exec, bool fromOutput, okay::vs::PinType pin) {
+    static std::map<std::tuple<bool, bool, int>, std::vector<const VsDef*>> cache;
+    static std::size_t cacheN = (std::size_t)-1;
+    if (Registry().size() != cacheN) { cache.clear(); cacheN = Registry().size(); }
+    const auto key = std::make_tuple(exec, fromOutput, exec ? 0 : (int)pin);
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    std::vector<const VsDef*> out;
+    for (const auto& d : Registry()) {
+        if (!VsCompatible(d, exec, fromOutput, pin) || VsPaletteHidden(d)) continue;
+        out.push_back(&d);
+    }
+    // A pin of exactly the same type is a better suggestion than one that merely accepts it (Any, or a conversion).
+    auto exactMatch = [&](const VsDef* d) {
+        if (exec || pin == okay::vs::PinType::Any) return false;
+        if (fromOutput) { for (int i = 0; i < (int)d->dataIn.size(); ++i) if (okay::vs::InputType(d->type, i) == pin) return true; }
+        else            { for (int i = 0; i < (int)d->dataOut.size(); ++i) if (okay::vs::OutputType(d->type, i, "") == pin) return true; }
+        return false;
+    };
+    std::vector<std::pair<const VsDef*, int>> ranked;   // (node, rank): lower is listed first
+    for (const VsDef* d : out) ranked.push_back({d, (int)d->level * 4 + (exactMatch(d) ? 0 : 2) + (std::strchr(d->type, '.') ? 1 : 0)});
+    std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.second < b.second; });   // easy first, exact type first, hand-written before engine-API
+    for (std::size_t i = 0; i < ranked.size(); ++i) out[i] = ranked[i].first;
+    return cache.emplace(key, std::move(out)).first->second;
+}
+
 /// An Actions step with the same label as a hand-written node: the node is the one row.
 inline bool VsPaletteStepIsDuplicate(const std::string& label) {
     for (const auto& h : Registry()) if (h.title && label == h.title) return true;
@@ -291,7 +335,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     if (rebuild) for (const auto& d : Registry()) {
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
-        if (VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type)) continue;   // one row per job; untested nodes wait
+        if (VsPaletteHidden(d)) continue;   // one row per job; untested nodes wait
         const bool dup = false;
         Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type;
         e.cat = place.category ? place.category : "";

@@ -3,6 +3,7 @@
 // the one a build starts on. The list is <project>/.okay/scene_build.txt and is
 // copied into Build Settings so File > Build Settings ships the same order.
 #include "SceneManagerPanel.hpp"
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "EditorCommon.hpp"
 #include "ConsolePanel.hpp"
 
@@ -121,7 +122,7 @@ void SaveFile(EditorState& ed, const std::vector<SceneBuildEntry>& entries) {
 const std::vector<std::string>& DiskScenes(EditorState& ed) {
     fs::path root = AssetsRoot(ed);
     std::string key = root.generic_string();
-    std::uint32_t now = SDL_GetTicks();
+    std::uint32_t now = okay::platform::TicksMs32();
     if (!s_forceScan && key == s_scanRoot && now - s_scanAt < 1000) return s_disk;
     s_forceScan = false;
     s_scanRoot = key;

@@ -7,11 +7,12 @@
 // game is just <Game>.exe + game.okayscene (+ any assets).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/Input/SdlKeys.hpp"      // F1-F12, nav keys, left / right modifiers
-#include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
+#include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
@@ -454,7 +455,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
                     OkayUI::PushID(i);
                     const std::string label = fit(std::string(e.info.password ? "(locked) " : "") + (e.info.name.empty() ? e.info.Address() : e.info.name), nameW);
                     if (OkayUI::Selectable(label.c_str(), sel == i)) {
-                        const Uint32 now = SDL_GetTicks();
+                        const Uint32 now = okay::platform::TicksMs32();
                         if (lastClickRow == i && now - lastClick < 400 && !e.info.password) joinLink(e.Link());   // double-click joins
                         lastClick = now; lastClickRow = i; sel = i;
                     }
@@ -552,7 +553,7 @@ static void DrawMatchmakingBanner(SDL_Window* window) {
     if (st != okay::Matchmaker::State::Found) foundAt = 0;
     if (st != okay::Matchmaker::State::Failed) failedAt = 0;
     if (st == okay::Matchmaker::State::Idle) return;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (st == okay::Matchmaker::State::Found) { if (!foundAt) foundAt = now; if (now - foundAt > 4000) return; }
     if (st == okay::Matchmaker::State::Failed) { if (!failedAt) failedAt = now; if (now - failedAt > 8000) { mm.Cancel(); return; } }
     int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
@@ -1633,12 +1634,13 @@ int main(int argc, char** argv) {
     std::vector<std::uint32_t> mesh3DGpu;
     int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
 
-    SDL_AudioSpec want{}, have{};
-    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2; want.samples = 1024;
+    okay::platform::AudioSpec want, have;
+    want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
+    want.allowChange = true;
     // Float output at whatever rate and channel count the device gives us.
-    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have,
-        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
-    if (audioDev) { AudioMixer::sampleRate = have.freq; SDL_PauseAudioDevice(audioDev, 0); }
+    std::unique_ptr<okay::platform::AudioDevice> audioDev;
+    if (okay::platform::Backend* pb = okay::platform::Default()) audioDev = pb->OpenAudio(want, false, nullptr, &have);
+    if (audioDev) { AudioMixer::sampleRate = have.freq; audioDev->Pause(false); }
     AudioMixer::masterVolume = cfg.volume;   // global mix scale from build settings
     AudioMixer::LoadSettings();   // the player's own volume settings win over it
     InputActions::Load();   // the player's own control bindings
@@ -1690,7 +1692,7 @@ int main(int argc, char** argv) {
     scene.Start();
 
     // Open every connected game controller (up to Input::kMaxGamepads, one per player).
-    okay::SdlGamepadSet pads;
+    okay::PadSet pads;
     pads.OpenAll();
 
     bool running = true;
@@ -1735,7 +1737,7 @@ int main(int argc, char** argv) {
     std::string presenceLast;
     std::map<std::string, Uint32> playedWith;   // who we've logged this run (key -> when)
     auto pumpPresence = [&]() {
-        const Uint32 now = SDL_GetTicks();
+        const Uint32 now = okay::platform::TicksMs32();
         if (now - presenceAt < 1000) return;
         presenceAt = now;
         okay::NetworkManager* nm = scene.FindObjectOfType<okay::NetworkManager>();
@@ -1784,13 +1786,13 @@ int main(int argc, char** argv) {
         }
     };
 #endif
-    Uint64 last = SDL_GetPerformanceCounter();
+    Uint64 last = okay::platform::PerfCounter();
     bool windowFocused = true;   // Run In Background / mute-on-focus-loss
     bool cursorReleased = false; // Esc / focus loss freed a game-locked cursor; a click re-locks it
     // Debugger / injected-module / speedhack checks (Windows; idle elsewhere and when off).
     okayac::RuntimeGuard acGuard(acMode, okayac::SystemGuardProbes(acRoot, acHaveManifest ? &acManifest : nullptr), acLog);
     auto frame = [&]() {
-        Uint64 fStart = SDL_GetPerformanceCounter();
+        Uint64 fStart = okay::platform::PerfCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
 #ifdef OKAY_HAVE_OKAYUI
         g_uiText[0] = '\0'; g_uiBack = false; g_uiWheel = 0.0f;
@@ -1989,8 +1991,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        Uint64 now = SDL_GetPerformanceCounter();
-        const float measuredDt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
+        Uint64 now = okay::platform::PerfCounter();
+        const float measuredDt = (float)((now - last) / (double)okay::platform::PerfFrequency());
         last = now;
         if (okay::devlog::Active()) hitchWatch.Frame(measuredDt);
         // The game steps by an evened-out frame time (vsync: whole refresh
@@ -2125,7 +2127,7 @@ int main(int argc, char** argv) {
             // dt drifts against the sound card, which starves or piles up audio.
             const int ch = have.channels >= 2 ? 2 : 1;
             const int target = have.freq / 14;
-            const int queued = (int)(SDL_GetQueuedAudioSize(audioDev) / (sizeof(float) * ch));
+            const int queued = (int)(audioDev->QueuedBytes() / (sizeof(float) * ch));
             const int n = std::min(target - queued, 8192);
             if (n > 0) {
                 if (scene.mainCamera) {   // listener for 3D/spatial audio sources
@@ -2135,7 +2137,7 @@ int main(int argc, char** argv) {
                 std::vector<float> st((size_t)n * 2);
                 AudioMixer::RenderStereo(scene, st.data(), n);
                 if (ch == 1) for (int i = 0; i < n; ++i) st[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
-                SDL_QueueAudio(audioDev, st.data(), (Uint32)((size_t)n * ch * sizeof(float)));
+                audioDev->Queue(st.data(), (uint32_t)((size_t)n * ch * sizeof(float)));
             }
         }
 
@@ -2704,10 +2706,10 @@ int main(int argc, char** argv) {
         // Optional frame-rate cap: sleep the remainder of the frame budget.
         if (cfg.fpsCap > 0) {
             double budget = 1.0 / cfg.fpsCap;
-            double freq = (double)SDL_GetPerformanceFrequency();
-            double elapsed = (SDL_GetPerformanceCounter() - fStart) / freq;
+            double freq = (double)okay::platform::PerfFrequency();
+            double elapsed = (okay::platform::PerfCounter() - fStart) / freq;
             double remain = budget - elapsed;
-            if (remain > 0.0015) SDL_Delay((Uint32)((remain - 0.0005) * 1000.0));
+            if (remain > 0.0015) okay::platform::DelayMs((Uint32)((remain - 0.0005) * 1000.0));
         }
     };
 
@@ -2722,12 +2724,12 @@ int main(int argc, char** argv) {
     // out, before the game proper. Skippable with a key/click; closing quits.
     if (running && !cfg.splash.empty()) {
         if (SDL_Texture* stex = GetTexture(renderer, cfg.splash, baseDir, textureCache)) {
-            Uint64 t0 = SDL_GetPerformanceCounter();
+            Uint64 t0 = okay::platform::PerfCounter();
             const double dur = cfg.splashTime > 0.1f ? cfg.splashTime : 2.0;
             const double fade = std::min(0.5, dur * 0.3);
             bool done = false;
             while (running && !done) {
-                double el = (double)(SDL_GetPerformanceCounter() - t0) / (double)SDL_GetPerformanceFrequency();
+                double el = (double)(okay::platform::PerfCounter() - t0) / (double)okay::platform::PerfFrequency();
                 if (el >= dur) break;
                 SDL_Event e;
                 while (SDL_PollEvent(&e)) {
@@ -2751,7 +2753,7 @@ int main(int argc, char** argv) {
                     SDL_RenderCopy(renderer, stex, nullptr, &dst);
                 }
                 SDL_RenderPresent(renderer);
-                SDL_Delay(8);
+                okay::platform::DelayMs(8);
             }
         }
     }
@@ -2774,7 +2776,7 @@ int main(int argc, char** argv) {
     for (auto& kv : textureCache)
         if (kv.second) SDL_DestroyTexture(kv.second);
     if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
-    if (audioDev) SDL_CloseAudioDevice(audioDev);
+    audioDev.reset();
 #if defined(_WIN32)
     if (d3d12Renderer) { d3d12Renderer->Destroy(); delete d3d12Renderer; }
     if (d3dRenderer) { d3dRenderer->Destroy(); delete d3dRenderer; }

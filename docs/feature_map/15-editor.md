@@ -62,6 +62,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.3.9 Game view - `editor/main.cpp` (`DrawGameView` ~42926-43174) - runs the game image, Resolution presets, Safe area, Stats overlay, Capture mouse, Physics toggle
   - 15.3.10 Mobile emulator and shared game resolution - `editor/main.cpp` (~41398-41507, ~42845-42925) - phone and tablet frames shared by Game view and UI editing
   - 15.3.11 Play mode - `editor/EditorState.*`, `editor/main.cpp` - Play snapshots the scene and Stop restores it; mouse capture rules; Error Pause
+  - 15.3.12 Orthographic views - `editor/LevelTools.*` - View options > Perspective / Orthographic and Top, Bottom, Front, Back, Right, Left (numpad 7, 1, 3 with Ctrl for the opposite, numpad 5 switches projection); a true orthographic projection of the Scene view, zoomed with the wheel; a label names the view
 - **Code:** `editor/main.cpp`, `editor/SplineTools.*`, `editor/NavigationWindow.*`, `editor/EditorState.*`, `editor/UIPreviewPainter.*`
 - **API:** View > Panels > Game; Scene toolbar; GameObject > Spline
 - **Editor:** Scene panel, Game panel, UI panel (12.10)
@@ -70,7 +71,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Status:** Works - used daily; only the non-GUI play and snapshot logic is tested
 - **Open:** world-space canvases show only in the Game view (12.6); Scene view 3D render does a GPU-to-CPU readback each frame (the code comments call it the biggest per-frame cost); live editing during Play is planned (area 34)
 - **Related:** 15.9, 12.10, 2.1, 2.7, 6.5
-- **Words:** Scene view, Game view, gizmo, move rotate scale, snap, frame selected, 2D 3D toggle, view cube, axis gizmo, Play, Stop, Capture mouse, resolution, Stats overlay, spline editing, collider handles
+- **Words:** Scene view, Game view, gizmo, move rotate scale, snap, frame selected, 2D 3D toggle, view cube, axis gizmo, Play, Stop, Capture mouse, resolution, Stats overlay, spline editing, collider handles, orthographic, top view, front view, side view, numpad view, measure tool
 - **Seen as:** gizmo handles are hard to hit or move the wrong axis; the Game view differs from the built game; Play does not restore the scene; the mouse is stuck in Play; low FPS in the editor
 - **Ask me like:** "work on 15.3.4, a pivot-to-centre toggle for the gizmo"; "the Game view stats overlay is wrong"
 

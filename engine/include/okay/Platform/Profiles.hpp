@@ -16,6 +16,7 @@
 // the session + anon key + bearer token). Calls block on HTTP, so the launcher
 // runs them on a worker thread.
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Privacy.hpp"
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
 #include "okay/Platform/Workshop.hpp"
@@ -95,15 +96,15 @@ public:
         static const char* kBase =
             "id,username,display_name,avatar_url,bio,accent,status,favorite_game,location,"
             "playing,session_code,last_seen,created_at";
-        auto r = acct_.Api(std::string("/rest/v1/profiles?select=") + kBase +
-                           ",showcase_achievements,showcase_games,banner_accent,social_links,verified&id=eq." + Url(uid), "GET");
+        auto r = privacy::ProfilesGet(acct_, std::string("select=") + kBase +
+                           ",showcase_achievements,showcase_games,banner_accent,social_links,verified&id=eq." + Url(uid));
         b.reached = b.reached || r.reached;
         if (r.ok) { b.showcaseSupported = true; b.extrasSupported = true; }
         else {
-            r = acct_.Api(std::string("/rest/v1/profiles?select=") + kBase +
-                          ",showcase_achievements,showcase_games,banner_accent&id=eq." + Url(uid), "GET");
+            r = privacy::ProfilesGet(acct_, std::string("select=") + kBase +
+                          ",showcase_achievements,showcase_games,banner_accent&id=eq." + Url(uid));
             if (r.ok) b.showcaseSupported = true;
-            else      r = acct_.Api(std::string("/rest/v1/profiles?select=") + kBase + "&id=eq." + Url(uid), "GET");
+            else      r = privacy::ProfilesGet(acct_, std::string("select=") + kBase + "&id=eq." + Url(uid));
         }
         if (!r.ok) { b.failed = r.reached; return b; }
         auto objs = SplitObjects(r.body);
@@ -345,7 +346,7 @@ public:
         if (ids.empty()) return out;
         std::string in;
         for (const auto& id : ids) { if (!in.empty()) in += ","; in += Url(id); }
-        auto rp = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen&id=in.(" + in + ")", "GET");
+        auto rp = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen&id=in.(" + in + ")");
         if (!rp.ok) return out;
         const auto objs = SplitObjects(rp.body);
         for (const auto& id : ids)   // keep newest-first order

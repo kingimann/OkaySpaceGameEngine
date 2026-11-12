@@ -5,7 +5,7 @@ Point at anything and I know where it lives. Say **"work on 5.6.2"** (one number
 see ("feet slide on slopes", "the Hierarchy window"). Every number leads to the files, classes, tests,
 docs and editor windows involved, what already works, what is missing, and what is in flight.
 
-This map holds 58 areas, 374 sub-areas and 1684 numbered parts, and every source file in the repo is meant to appear in it
+This map holds 58 areas, 374 sub-areas and 1687 numbered parts, and every source file in the repo is meant to appear in it
 (`python3 scripts/check_feature_map.py --list` shows any that do not).
 
 **How it is organised**
@@ -891,7 +891,7 @@ Details for every sub-area and numbered part: [docs/feature_map/41-build-tools-i
 | [41.3](feature_map/41-build-tools-infra.md#413-local-build-and-launch-scripts) | Local build and launch scripts | Works | Convenience scripts for a first build and run on Linux, macOS and Windows, plus the launch shortcuts at the repo root. | `launch.sh` and `launch.bat` say "update from GitHub, build, and run" but only build and run (stale comment); `build.sh` places... |
 | [41.4](feature_map/41-build-tools-infra.md#414-developer-tools) | Developer tools | Works | Two small tools that generate files the repository ships. | no doc page for the tools; nothing checks the generated files stay in sync with the generators |
 | [41.5](feature_map/41-build-tools-infra.md#415-server-deployment-kits) | Server deployment kits | Basic | Ready-made ways to run the relay (which also serves voice calls) on a VPS, and the relay program itself. | the Docker build copies the whole repository (`COPY . .`) and builds without libsodium on purpose; no health check or log... |
-| [41.6](feature_map/41-build-tools-infra.md#416-supabase-functions-and-sql-schema) | Supabase functions and SQL schema | Works | The server side of the online platform. SQL files run by hand in the Supabase SQL editor, plus one Edge function. There is no migration runner: each... | no migration tracking (re-run by hand); 15 of 16 SQL files have no test; the Edge function is not deployed and its self-test is... |
+| [41.6](feature_map/41-build-tools-infra.md#416-supabase-functions-and-sql-schema) | Supabase functions and SQL schema | Works | The server side of the online platform. SQL files run by hand in the Supabase SQL editor, plus one Edge function. There is no migration runner: each... | no migration tracking (re-run by hand); 15 of 18 SQL files have no test; the Edge function is not deployed and its self-test is... |
 | [41.7](feature_map/41-build-tools-infra.md#417-steam-upload-kit) | Steam upload kit | Basic | The SteamPipe scripts that upload the Windows distribution to Steam. Described in 18.8. | see 18.8 |
 | [41.8](feature_map/41-build-tools-infra.md#418-github-workflows-and-templates) | GitHub workflows and templates | Works | Everything under `.github/`: two workflows and a PR template. Nothing else (no Dependabot, CODEOWNERS or issue templates). | see 18.3 and 18.4 for the gaps (no libsodium in the Ubuntu job, no TSan, no tests in the release); action versions are pinned by... |
 | [41.9](feature_map/41-build-tools-infra.md#419-versioning-and-release-prep) | Versioning and release prep | Works | One number, set in one place, flows everywhere. A release is a small pull request. | `dist/VERSION.txt` is stale and `release.yml`'s comment still points at it (19.6); the changelog is hand-written |

@@ -715,7 +715,8 @@ void RegisterMusicPlayer() {
      .AddBool("shuffle", &MusicPlayer::shuffle).Tooltip("Play the tracks in random order")
      .AddBool("loopPlaylist", &MusicPlayer::loopPlaylist).Tooltip("After the last track, start over")
      .AddFloat("crossfade", &MusicPlayer::crossfade).Range(0, 3600, 0.05).Tooltip("Seconds two tracks overlap")
-     .AddFloat("volume", &MusicPlayer::volume).Range(0, 1, 0.01).Tooltip("Playback volume (0 to 1)");
+     .AddFloat("volume", &MusicPlayer::volume).Range(0, 1, 0.01).Tooltip("Playback volume (0 to 1)")
+     .AddBool("stream", &MusicPlayer::stream).Tooltip("Read each track from its file as it plays (small fixed memory) instead of loading it whole");
     b.Commit();
 }
 

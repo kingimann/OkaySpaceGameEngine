@@ -50,6 +50,7 @@
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
+#include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
@@ -8104,7 +8105,7 @@ static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir)
     std::string base = go->name.empty() ? std::string("Prefab") : go->name;
     fs::path out = destDir / (base + ".okayprefab");
     for (int n = 2; fs::exists(out, ec); ++n) out = destDir / (base + " " + std::to_string(n) + ".okayprefab");
-    if (SceneSerializer::SaveObjectToFile(*go, out.string())) {
+    if (oked::SaveAsPrefabFile(*go, out.string())) {
         ConsoleLog("Saved prefab " + out.filename().string() + " -> " + destDir.filename().string());
         go->prefabSource = out.string();   // the dragged object becomes an instance of it
     } else
@@ -9981,6 +9982,23 @@ void DrawProject(EditorState& ed) {
                     ed.Select(r); ed.dirty = true;
                 } else ConsoleLog("Prefab load failed: " + err);
             }
+            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Create Variant")) {
+                // A new prefab that is based on this one and stores only its differences (none yet): open it, change it, Apply.
+                const std::string vp = oked::DefaultVariantPath(full);
+                const oked::PrefabOpResult vr = oked::PrefabNewVariantFile(ed, full, vp);
+                ConsoleLog(vr.message, vr.ok ? 0 : 2);
+                if (vr.ok) g_pingAsset = vp;
+            }
+            if (!isDir && ext == ".okayprefab" && ImGui::IsItemHovered())
+                ImGui::SetTooltip("Make a variant of this prefab next to it. Place it in a scene and change it; the variant keeps only the differences.");
+            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Validate Prefab")) {
+                // The check PrefabTools runs on a file and everything it reaches (nested prefabs, variant bases, cycles, depth).
+                const PrefabReport rep = PrefabTools::ValidateAsset(full);
+                if (rep.issues.empty()) ConsoleLog("Prefab " + fs::path(full).filename().string() + " is fine (" + std::to_string(rep.files.size()) + " file" + (rep.files.size() == 1 ? "" : "s") + " checked)");
+                for (const PrefabIssue& is : rep.issues) ConsoleLog(fs::path(is.file).filename().string() + ": " + is.message, is.severity == PrefabIssue::Severity::Error ? 2 : (is.severity == PrefabIssue::Severity::Warning ? 1 : 0));
+            }
+            if (!isDir && ext == ".okayprefab" && ImGui::IsItemHovered())
+                ImGui::SetTooltip("Check this prefab and every prefab it holds or is based on: missing files, cycles, stale overrides. The result is in the Console.");
             if (!isDir && (ext == ".okay" || ext == ".lua" || ext == ".cs") && ImGui::MenuItem("Edit Script")) { OpenScriptFileInEditor(full); g_showScriptEditor = true; }
             ImGui::Separator();
             // -- Edit --
@@ -18769,13 +18787,32 @@ static std::vector<GameObject*> HierTargets(EditorState& ed, GameObject* node) {
     return {node};
 }
 
-// A small blue mark on the corner of a row's icon: this object is (part of) a prefab instance.
+// A small mark on the corner of a row's icon: this object is (part of) a prefab instance. Blue square: an instance root;
+// violet: an instance of a variant; a square with an inner square: a prefab nested inside a bigger one; faint blue: a part of
+// an instance. An orange dot above it: the instance differs from its prefab (Inspector lists what). Hover for the details.
 static void HierPrefabBadge(GameObject* go, ImVec2 pos, float sz, ImDrawList* dl) {
     if (!go || !PrefabTools::IsPrefabInstance(*go)) return;
     const bool root = !go->prefabSource.empty();
     const ImVec2 a(pos.x + sz - 6.0f, pos.y + sz - 6.0f), b(pos.x + sz + 1.0f, pos.y + sz + 1.0f);
-    dl->AddRectFilled(a, b, root ? IM_COL32(90, 165, 255, 255) : IM_COL32(90, 165, 255, 130), 1.5f);
+    if (!root) {
+        dl->AddRectFilled(a, b, IM_COL32(90, 165, 255, 130), 1.5f);
+        dl->AddRect(a, b, IM_COL32(20, 24, 32, 200), 1.5f);
+        return;
+    }
+    const bool variant = oked::PrefabKindOfFile(go->prefabSource) == oked::PrefabKind::Variant;
+    const bool nested = PrefabTools::PrefabRoot(*go) != go;
+    dl->AddRectFilled(a, b, variant ? IM_COL32(176, 128, 255, 255) : IM_COL32(90, 165, 255, 255), 1.5f);
     dl->AddRect(a, b, IM_COL32(20, 24, 32, 200), 1.5f);
+    if (nested) dl->AddRectFilled(ImVec2(a.x + 2.0f, a.y + 2.0f), ImVec2(b.x - 2.0f, b.y - 2.0f), IM_COL32(20, 24, 32, 230));
+    if (oked::PrefabOverrideCount(*go) > 0) dl->AddCircleFilled(ImVec2(b.x - 1.0f, a.y - 2.0f), 3.0f, IM_COL32(255, 160, 40, 255));
+    if (ImGui::IsMouseHoveringRect(ImVec2(a.x - 4.0f, a.y - 6.0f), ImVec2(b.x + 3.0f, b.y + 3.0f)) && ImGui::IsWindowHovered()) {
+        oked::PrefabInstanceInfo info;
+        if (oked::DescribePrefabInstance(*go, info)) {
+            const int n = oked::PrefabOverrideCount(*go);
+            ImGui::SetTooltip("%s: %s%s%s", oked::PrefabKindLabel(info).c_str(), info.name.c_str(),
+                              n ? ("\n" + std::to_string(n) + " change" + (n == 1 ? "" : "s") + " from the prefab (select it to see them)").c_str() : "", "");
+        }
+    }
 }
 
 // Dragging a prefab, a model or a picture from the Project panel into the Hierarchy makes an object from it.
@@ -19437,6 +19474,29 @@ void DrawHierarchy(EditorState& ed) {
                     ImGui::EndMenu();
                 }
                 ImGui::Separator();
+                if (GameObject* proot = PrefabTools::NearestPrefabRoot(*node); proot && !proot->prefabSource.empty()) {
+                    if (ImGui::BeginMenu("Prefab")) {
+                        const std::string pn = std::filesystem::path(proot->prefabSource).filename().string();
+                        ImGui::TextDisabled("%s", pn.c_str());
+                        const bool changed = oked::PrefabOverrideCount(*proot) > 0;
+                        if (ImGui::MenuItem("Open")) {
+                            ed.Select(proot); g_isolate = proot;
+                            ConsoleLog("Editing prefab " + pn + ": the Scene view shows only this instance (Esc to leave). Apply All writes your changes into the prefab.");
+                        }
+                        if (ImGui::MenuItem("Select Asset")) { g_pingAsset = proot->prefabSource; g_showProject = true; ImGui::SetWindowFocus("Project"); }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Revert All", nullptr, false, changed)) oked::QueuePrefabAction(oked::PrefabAction::RevertAll, proot);
+                        if (ImGui::MenuItem("Apply All", nullptr, false, changed)) oked::QueuePrefabAction(oked::PrefabAction::ApplyAll, proot);
+                        if (ImGui::MenuItem("Create Variant...")) { ed.Select(proot); g_showInspector = true; oked::OpenCreateVariantDialog(); }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Opens the name box in the Inspector.");
+                        if (ImGui::MenuItem("Update All Instances")) oked::QueuePrefabAction(oked::PrefabAction::UpdateAll, proot);
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Unpack")) oked::QueuePrefabAction(oked::PrefabAction::Unpack, proot);
+                        if (ImGui::MenuItem("Unpack Completely", nullptr, false, !PrefabTools::NestedInstances(*proot, false).empty()))
+                            oked::QueuePrefabAction(oked::PrefabAction::UnpackCompletely, proot);
+                        ImGui::EndMenu();
+                    }
+                }
                 if (ImGui::MenuItem("Save As Prefab...")) {
                     g_prefabSaveTarget = node;
                     std::strncpy(g_prefabNameBuf, node->name.c_str(), sizeof(g_prefabNameBuf) - 1);
@@ -19464,6 +19524,7 @@ void DrawHierarchy(EditorState& ed) {
         const int n = ed.DeleteChildrenOfSelected();
         ConsoleLog("Deleted " + std::to_string(n) + " child" + (n == 1 ? "" : "ren") + " (and everything below them)");
     }
+    oked::RunPrefabRequests(ed);   // Prefab menu of a row: Revert All / Apply All / Unpack / Update All
     // Shift+click: select the whole range between the active object and the
     // clicked row, in visible order.
     if (rangeClick) {
@@ -19683,7 +19744,7 @@ void DrawHierarchy(EditorState& ed) {
                 if (g_prefabNameBuf[0]) {
                     fs::create_directories(dir, ec);
                     fs::path out = dir / (std::string(g_prefabNameBuf) + ".okayprefab");
-                    if (SceneSerializer::SaveObjectToFile(*g_prefabSaveTarget, out.string()))
+                    if (oked::SaveAsPrefabFile(*g_prefabSaveTarget, out.string()))
                         ConsoleLog("Saved prefab " + out.string());
                     else ConsoleLog("Prefab save failed");
                 }
@@ -27998,49 +28059,6 @@ void DrawModeling(EditorState& ed) {
     ImGui::End();
 }
 
-// Re-instantiate a prefab instance from its source .okayprefab, discarding local
-// edits but keeping the instance's place in the scene (world transform, parent,
-// name, and the prefab link). The passed-in `inst` is DESTROYED — callers must
-// drop every reference to it and use the returned fresh root instead (nullptr on
-// failure). This is the engine side of per-instance "Revert".
-static GameObject* RevertPrefabInstance(EditorState& ed, GameObject* inst) {
-    if (!inst || inst->prefabSource.empty()) return nullptr;
-    const std::string path = inst->prefabSource;
-    // Capture the instance's scene placement so reverting doesn't make it jump.
-    Vec3 pos = inst->transform->localPosition;
-    Quat rot = inst->transform->localRotation;
-    Vec3 scl = inst->transform->localScale;
-    Transform* parent = inst->transform->Parent();
-    std::string name = inst->name;
-    std::string err;
-    const oked::RootSlot slot = oked::CaptureRootSlot(ed.scene(), *inst);   // a top-level instance keeps its place in the list
-    GameObject* fresh = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
-    if (!fresh) { ConsoleLog("Revert failed: " + err, 2); return nullptr; }
-    fresh->transform->SetParent(parent, false);  // keep local values; we set them next
-    fresh->transform->localPosition = pos;
-    fresh->transform->localRotation = rot;
-    fresh->transform->localScale    = scl;
-    fresh->name = name;              // the scene keeps the instance's own name
-    fresh->prefabSource = path;      // InstantiateFromFile already set this; be explicit
-    ed.Deselect(inst);
-    ed.scene().Destroy(inst);
-    oked::RestoreRootSlot(ed.scene(), fresh, slot);
-    return fresh;
-}
-
-// Revert EVERY instance in the scene spawned from `path` ("reload all
-// instances" after the prefab file changed). Returns how many were reloaded.
-static int ReloadPrefabInstances(EditorState& ed, const std::string& path) {
-    if (path.empty()) return 0;
-    // Snapshot matching roots first — reverting mutates the scene's object list.
-    std::vector<GameObject*> targets;
-    for (const auto& up : ed.scene().Objects())
-        if (up->prefabSource == path) targets.push_back(up.get());
-    int n = 0;
-    for (GameObject* g : targets) if (RevertPrefabInstance(ed, g)) ++n;
-    return n;
-}
-
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     // Roomier spacing for the Inspector specifically (it was too compact).
@@ -28236,7 +28254,7 @@ void DrawInspector(EditorState& ed) {
             std::filesystem::create_directories(std::filesystem::path(ed.projectDir()) / "Assets", pe);
             p = (std::filesystem::path(ed.projectDir()) / "Assets" / p).string();
         }
-        if (SceneSerializer::SaveObjectToFile(*go, p)) {
+        if (oked::SaveAsPrefabFile(*go, p)) {
             ConsoleLog("Saved prefab " + p);
             go->prefabSource = p;   // link the live object so it becomes an instance
             ed.dirty = true;
@@ -28274,81 +28292,30 @@ void DrawInspector(EditorState& ed) {
     ImGui::PopStyleColor();
     ImGui::Spacing();
 
-    // ---- Prefab instance banner --------------------------------
-    // Shown when this object was instantiated from a .okayprefab: it links back to
-    // its source so you can Apply local edits to the prefab, Revert this instance,
-    // Reload every instance in the scene, find the asset in Project, or Unlink.
-    if (!go->prefabSource.empty()) {
-        std::string pname  = std::filesystem::path(go->prefabSource).filename().string();
-        std::error_code pec;
-        bool exists = std::filesystem::exists(go->prefabSource, pec) && !pec;
-        bool doRevert = false, doReloadAll = false;
-
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.20f, 0.23f, 1.0f));
-        ImGui::BeginChild("##prefabbanner", ImVec2(0, 0),
-                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
-        ImGui::TextColored(ImVec4(0.31f, 0.82f, 0.88f, 1.0f), "Prefab");
-        ImGui::SameLine();
-        if (exists) ImGui::TextDisabled("%s", pname.c_str());
-        else        ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "%s (missing)", pname.c_str());
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", go->prefabSource.c_str());
-
-        if (ImGui::SmallButton("Apply")) {
-            if (SceneSerializer::SaveObjectToFile(*go, go->prefabSource))
-                ConsoleLog("Applied changes to prefab " + pname);
-            else ConsoleLog("Apply failed: " + go->prefabSource, 2);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Overwrite the .okayprefab with this instance's current state");
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!exists);
-        if (ImGui::SmallButton("Revert"))     doRevert = true;
-        if (ImGui::IsItemHovered() && exists) ImGui::SetTooltip("Discard local changes; reload this instance from the saved prefab");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Reload All")) doReloadAll = true;
-        if (ImGui::IsItemHovered() && exists) ImGui::SetTooltip("Revert every instance of this prefab in the scene");
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Select")) {
-            g_pingAsset = go->prefabSource;
-            g_showProject = true;
-            ImGui::SetWindowFocus("Project");
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find this prefab asset in the Project panel");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Unlink")) {
-            ed.PushUndo();
-            go->prefabSource.clear();
-            ed.dirty = true;
-            ConsoleLog("Unlinked instance from prefab");
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Break the prefab connection (this becomes a plain object)");
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-        ImGui::Spacing();
-
-        // Destructive actions run AFTER the banner child is fully closed, since they
-        // destroy `go`. Bail out of the inspector for this frame when they fire.
-        if (doRevert) {
-            ed.PushUndo();
-            if (GameObject* fresh = RevertPrefabInstance(ed, go)) {
-                ed.Select(fresh); ed.dirty = true;
-                ConsoleLog("Reverted instance to prefab " + pname);
-            }
-            ImGui::PopStyleVar(3); ImGui::End();
-            return;
-        }
-        if (doReloadAll) {
-            ed.PushUndo();
-            int n = ReloadPrefabInstances(ed, go->prefabSource);
-            ed.dirty = true;
-            ConsoleLog("Reloaded " + std::to_string(n) + " instance(s) of " + pname);
-            ImGui::PopStyleVar(3); ImGui::End();
-            return;
+    // ---- Prefab instance header, per-property marks and the changes list ------------------
+    // "Prefab: <name>" with Open / Select Asset / Revert All / Apply All / Create Variant / Update All / Unpack, then what differs
+    // from the prefab per component and field (logic: PrefabEdit.cpp over PrefabTools). Buttons queue; RunPrefabRequests carries
+    // them out, and a rebuilt instance means the object drawn here is gone.
+    {
+        static bool s_prefabHooks = false;
+        if (!s_prefabHooks) {
+            s_prefabHooks = true;
+            oked::PrefabUiHooks h;
+            h.selectAsset = [](const std::string& path) { g_pingAsset = path; g_showProject = true; ImGui::SetWindowFocus("Project"); };
+            h.open = [&ed](GameObject* root) {
+                if (!root) return;
+                ed.Select(root);
+                g_isolate = root;
+                ConsoleLog("Editing prefab " + std::filesystem::path(root->prefabSource).filename().string() +
+                           ": the Scene view shows only this instance (Esc to leave). Apply All writes your changes into the prefab.");
+            };
+            oked::SetPrefabUiHooks(std::move(h));
         }
     }
-
     oked::RefreshPrefabChanges(go);
-    if (oked::DrawPrefabChanges(ed, go)) {   // a revert rebuilt the instance: this object is gone
+    oked::DrawPrefabHeader(ed, go);
+    oked::DrawPrefabChanges(ed, go);
+    if (oked::RunPrefabRequests(ed)) {   // a revert rebuilt the instance: this object is gone
         ImGui::PopStyleVar(3); ImGui::End();
         return;
     }
@@ -39006,6 +38973,10 @@ void DrawInspector(EditorState& ed) {
         ed.dirty = true;
     }
     oked::ApplyComponentValueRequests(ed, go);   // the component menu's Copy / Paste / Reset Values
+    if (oked::RunPrefabRequests(ed)) {           // Revert / Apply Property or Component from a right-click menu
+        ImGui::PopItemWidth(); ImGui::PopStyleVar(3); ImGui::End();
+        return;
+    }
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
 

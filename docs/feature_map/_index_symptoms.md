@@ -284,6 +284,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a trigger blocks a ray | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
 | a tween keeps going after its object was deleted | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a typed distance goes the wrong way | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
+| a UI golden test differs by a few pixels | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | a UI tween freezes with the game pause | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a value edited in Play cannot be kept | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
 | a variable differs between players | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
@@ -297,6 +298,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a widget cannot be dragged or resized in the UI view | [12.10](12-ingame-ui.md#1210-ui-editing-in-the-editor) UI editing in the editor |
 | a widget draws in the wrong order | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
 | a window cannot be dragged | [40.1](40-okayui-library.md#401-core-widgets-and-auto-layout) Core widgets and auto-layout |
+| a window cannot be dragged in the demo | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | a wire is refused | [14.1](14-visual-scripting.md#141-graph-editor) Graph editor |
 | a workflow run is cancelled | [41.8](41-build-tools-infra.md#418-github-workflows-and-templates) GitHub workflows and templates |
 | accent colours differ from the launcher | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
@@ -1028,6 +1030,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the NPC dies but nothing drops | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
 | the object sinks into the chest | [5.9](05-animation-ik.md#59-object-holding) Object holding |
 | the official game card is missing | [17.14](17-launcher-platform.md#1714-official-game-install-update-publish) Official game: install, update, publish |
+| the okayui test targets are missing from a build | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | the Open button does nothing | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
 | the panel does not show in the Scene view | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
@@ -1145,6 +1148,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | typed text misses capitals or symbols | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
 | typing does nothing or opens game input | [12.3](12-ingame-ui.md#123-input-widgets-slider-toggle-input-field-dropdown-stepper-keybind) Input widgets: slider, toggle, input field, dropdown, stepper, keybind |
 | typing in a script UI input also moves the character | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
+| typing in a text field drops a character | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | typing lags in a big script | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | UDP port blocked by a firewall | [41.5](41-build-tools-infra.md#415-server-deployment-kits) Server deployment kits |
 | UI is slow with many widgets | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |

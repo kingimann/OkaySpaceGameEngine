@@ -764,6 +764,13 @@ target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
+# The editor's prefab actions (editor/PrefabEdit; ImGui-free): override detection, per-field and per-component Revert / Apply, Apply updating the
+# other instances, nested prefabs and variants, objects added to or lost from an instance, Create Variant, and undo / redo that moves the prefab files too.
+add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_prefab_editor PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_prefab_editor PRIVATE okay::engine)
+add_test(NAME prefab_editor COMMAND test_prefab_editor)
+
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
 add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
 target_link_libraries(test_project_save PRIVATE okay::engine)
@@ -2327,6 +2334,21 @@ target_link_libraries(test_model_readers_fuzz PRIVATE okay::engine)
 target_compile_definitions(test_model_readers_fuzz PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME model_readers_fuzz COMMAND test_model_readers_fuzz WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_readers_fuzz PROPERTIES TIMEOUT 300)
+# "Download my data" / "Delete my account": client request building, confirmation
+# gating, export assembly, error mapping (engine/include/okay/Platform/Account/AccountData.hpp).
+add_executable(test_account_data test_account_data.cpp)
+target_compile_features(test_account_data PRIVATE cxx_std_17)
+target_include_directories(test_account_data PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME account_data COMMAND test_account_data)
+
+# The delete-account Edge Function's logic against a fake client (needs Node 22+;
+# skipped without it). Same file also runs under Deno.
+find_program(OKAY_NODE node)
+if(OKAY_NODE)
+    add_test(NAME delete_account_function
+             COMMAND ${OKAY_NODE} --experimental-strip-types --test
+                     ${CMAKE_SOURCE_DIR}/supabase/functions/delete-account/delete_account_test.ts)
+endif()
 
 # Our own FBX reader (okay::fbx), side by side with ufbx: fixtures from scripts/gen_fbx_fixtures.py
 add_executable(test_fbx_reader test_fbx_reader.cpp)

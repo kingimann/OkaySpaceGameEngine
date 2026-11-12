@@ -8,6 +8,7 @@
 //  - the component menu (copy / paste / reset values), prefab changes, the Play-mode note
 #include "EditorState.hpp"
 #include "imgui.h"
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -51,13 +52,35 @@ void ComponentValueMenu(okay::Component* comp);
 /// Run what the menu asked for. After the component loop, with the object that was drawn.
 void ApplyComponentValueRequests(okay::editor::EditorState& ed, okay::GameObject* go);
 
-/// Prefab: refresh the list of changes for the selected object's instance (cheap; re-reads the file only now and then).
+// ---- Prefab instances (logic: PrefabEdit.hpp, PrefabTools) ----------------------------------------------------
+/// What the editor's main.cpp provides to the prefab header: find the asset in the Project panel, and open the prefab for editing.
+struct PrefabUiHooks {
+    std::function<void(const std::string& path)> selectAsset;
+    std::function<void(okay::GameObject* instanceRoot)> open;
+};
+void SetPrefabUiHooks(PrefabUiHooks hooks);
+/// Refresh the list of changes for the selected object's instance (cheap; re-reads the file only now and then).
 void RefreshPrefabChanges(okay::GameObject* go);
+/// Forget the cached list now (after anything that rewrote a prefab or an instance).
+void InvalidatePrefabChanges();
 /// True when this component is changed in the instance compared with its prefab (for the header tint).
 bool PrefabChangedFor(const okay::Component* comp);
-/// The "Changes from the prefab" list with Revert / Apply per change. True when it rebuilt the instance
-/// (the object the Inspector shows is gone: stop drawing this frame).
-bool DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go);
+/// The "Prefab: <name>" header with Open, Select Asset, Revert All, Apply All, Create Variant, Update All and Unpack. For any object in an instance.
+void DrawPrefabHeader(okay::editor::EditorState& ed, okay::GameObject* go);
+/// The "Changed from the prefab" list for the selected object: per component and per field Revert / Apply, added and lost components and child objects.
+void DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go);
+/// Right after a field's widget: when that property differs from the prefab, draws the marker and the right-click menu
+/// (Revert Property / Apply Property to Prefab). `label` is the text the field is drawn with. Called by FieldTip and the generic card.
+void PrefabFieldMark(const char* label);
+/// The prefab rows of a component's "..." menu (Revert / Apply Component). Call inside its popup.
+void PrefabComponentMenu(okay::Component* comp);
+/// Actions the Hierarchy's context menu asks for on an instance (the Inspector runs the same code from its buttons).
+enum class PrefabAction { RevertAll, ApplyAll, Unpack, UnpackCompletely, UpdateAll };
+void QueuePrefabAction(PrefabAction action, okay::GameObject* instanceRoot);
+/// Make the Inspector show the "Create Variant" name box for this instance on its next frame.
+void OpenCreateVariantDialog();
+/// Carry out what the buttons queued. True when the instance was rebuilt: the object the Inspector shows is gone, so stop drawing this frame.
+bool RunPrefabRequests(okay::editor::EditorState& ed);
 
 /// Hand-written Inspectors: tell the tooltip lookup which component is being drawn (CompHeader does it) ...
 void SetTipComponent(const okay::Component* comp);

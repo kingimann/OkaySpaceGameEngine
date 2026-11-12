@@ -88,8 +88,8 @@ High: 5 (+5 done in code, SQL applied or waiting on the owner: typing and read m
 1. **Create `typing_state` and `message_reads` SQL** (Small). The code already calls them; two visible chat features silently do nothing on a clean database.
 2. ~~Password-reset landing page + doc~~ done in the repo; owner must host it (docs/password-reset.md).
 3. **Deploy the voice server and set it in Admin > Chat** (Small, owner step). Calls are advertised but dead until then.
-4. **Real "Report" for messages, posts, items and profiles** (Medium). Public chat and Marketplace without user reporting is the biggest safety gap.
-5. **Server-side block list and enforced privacy settings** (Medium). Today a blocked user can still message and call.
+4. ~~Real "Report" for messages, posts, items and profiles~~ done in code; `docs/sql/reports.sql` is applied.
+5. ~~Server-side block list and enforced privacy settings~~ done; `docs/sql/blocks.sql` is applied.
 6. ~~Kick/ban/remove-member buttons for community servers and group chats~~ done in code; owner applies `docs/sql/member_moderation.sql` (docs/member_moderation.md). Mute and invite expiry remain (Small).
 7. ~~Delete my account / export my data~~ DONE in the launcher (Account > Sign-in & security > Your data) and `supabase/functions/delete-account`. Owner step left: deploy the function (`docs/account_data.md`). Follow-up (Medium): schema change so other people's message history can be kept as "[deleted]" instead of removed (see that doc).
 8. **Fail loudly when the launcher self-update does not apply, and require the checksum index** (Small, then Large for signing). Update integrity is the one path that can compromise every user.

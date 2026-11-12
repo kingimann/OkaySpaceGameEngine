@@ -34,6 +34,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "ufbx.h"
+#include "okay/Render/FbxReader.hpp"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -88,6 +89,8 @@ static bool EndsWith(const std::string& s, const char* suf) {
     return s.size() >= t.size() && s.compare(s.size() - t.size(), t.size(), t) == 0;
 }
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture);   // (FBX section below)
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture);   // our own reader (okay::fbx)
+static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err);
 // Imported clips: every node track spans the whole clip (see ModelAnimator::NormalizeClip).
 static void NormalizeImportedClips(GameObject* root) {
     if (!root) return;
@@ -887,6 +890,11 @@ bool IsIdentity(const ufbx_matrix& m) {
 // Every mesh flattened into one (world space) — the single-mesh ImportModel path.
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
     Mesh merged;
+    if (fbx::OwnReaderEnabled()) {   // our reader first (opt-in); ufbx below if it could not read the file
+        bool ownOk = false;
+        Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
+        if (ownOk) { if (ok) *ok = true; return m; }
+    }
     ufbx_scene* sc = LoadFbx(path, nullptr);
     if (!sc) { if (ok) *ok = false; return merged; }
     for (const ufbx_node* node : sc->nodes) {
@@ -913,6 +921,8 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
 }
 
 static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err) {
+    if (fbx::OwnReaderEnabled())
+        if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) return r;
     ufbx_scene* sc = LoadFbx(path, err);
     if (!sc) { if (ok) *ok = false; return nullptr; }
 
@@ -1065,6 +1075,334 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     }
 
     ufbx_free_scene(sc);
+    NormalizeImportedClips(root);
+    AutoNormalizeImportScale(scene, root);
+    if (ok) *ok = true;
+    return root;
+}
+
+// ============================================================================
+// FBX via OUR reader (okay::fbx, Render/FbxReader). Side by side with the ufbx
+// path above and OFF by default: selected by -DOKAY_OWN_FBX=ON, the OKAY_OWN_FBX
+// environment variable, or okay::fbx::SetOwnReaderEnabled(true). It produces the
+// same scene data (hierarchy, per-material meshes, skins, blend shapes, baked
+// clips) so the rest of the engine does not care which reader ran. On failure
+// the ufbx path runs instead.
+// ============================================================================
+namespace {
+
+Mat4 OwnToMat4(const fbx::Mat& a) {
+    Mat4 r = Mat4::Identity();
+    for (int row = 0; row < 4; ++row) for (int col = 0; col < 4; ++col) r.at(col, row) = (float)a.m[row * 4 + col];
+    return r;
+}
+
+std::string OwnTexturePath(const fbx::Texture* tex, const std::string& modelPath, int serial) {
+    if (!tex) return {};
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::path(modelPath).parent_path();
+    for (const std::string* s : {&tex->fileName, &tex->relativeFileName}) {
+        if (s->empty()) continue;
+        fs::path p(*s);
+        if (fs::exists(p, ec)) return p.string();
+        if (fs::exists(dir / p, ec)) return (dir / p).string();
+        // Windows paths in the file ("C:\art\x.png") on a POSIX host: use the part after the last separator.
+        std::string base = *s; const std::size_t sl = base.find_last_of("/\\"); if (sl != std::string::npos) base = base.substr(sl + 1);
+        if (!base.empty()) {
+            if (fs::exists(dir / base, ec)) return (dir / base).string();
+            if (fs::exists(dir / "textures" / base, ec)) return (dir / "textures" / base).string();
+        }
+    }
+    if (!tex->content.empty()) {
+        std::string ext = fs::path(tex->fileName).extension().string();
+        if (ext.empty()) ext = (tex->content.size() > 2 && tex->content[0] == 0xFF && tex->content[1] == 0xD8) ? ".jpg" : ".png";
+        const fs::path out = dir / (fs::path(modelPath).stem().string() + "_tex" + std::to_string(serial) + ext);
+        if (!fs::exists(out, ec)) {
+            std::ofstream of(out, std::ios::binary);
+            if (!of) return {};
+            of.write((const char*)tex->content.data(), (std::streamsize)tex->content.size());
+        }
+        return out.string();
+    }
+    return {};
+}
+
+void ApplyOwnMaterial(MeshRenderer& mr, const fbx::Scene& sc, int matIdx, const std::string& modelPath, int serial) {
+    if (matIdx < 0 || matIdx >= (int)sc.materials.size()) return;
+    const fbx::Material& m = sc.materials[(std::size_t)matIdx];
+    if (m.diffuseTexture >= 0) {
+        std::string p = OwnTexturePath(&sc.textures[(std::size_t)m.diffuseTexture], modelPath, serial);
+        if (!p.empty()) mr.texture = p;
+    }
+    if (m.hasDiffuse && mr.texture.empty())   // with a texture the factor would only darken it (see ApplyFbxMaterial)
+        mr.color = Color((float)m.diffuse[0], (float)m.diffuse[1], (float)m.diffuse[2], 1.0f);
+    if (m.normalTexture >= 0) {
+        std::string p = OwnTexturePath(&sc.textures[(std::size_t)m.normalTexture], modelPath, serial + 1000);
+        if (!p.empty()) mr.normalMap = p;
+    }
+    if (m.hasEmissive) {
+        const float f = m.hasEmissiveFactor ? (float)m.emissiveFactor : 1.0f;
+        if (m.emissive[0] + m.emissive[1] + m.emissive[2] > 0.0) mr.emissive = Color((float)m.emissive[0] * f, (float)m.emissive[1] * f, (float)m.emissive[2] * f, 1.0f);
+    }
+    if (m.hasRoughness || m.hasMetalness) {
+        const float rough = m.hasRoughness ? (float)m.roughness : 0.6f;
+        const float metal = m.hasMetalness ? (float)m.metalness : 0.0f;
+        const float smooth = 1.0f - std::fmin(1.0f, std::fmax(0.0f, rough));
+        mr.metallic = metal;
+        mr.shininess = 4.0f + smooth * 124.0f;
+        mr.specular = 0.15f + smooth * 0.85f;
+        mr.reflectivity = metal * smooth;
+    }
+}
+
+int OwnMaterialOfSlot(const fbx::Mesh& m, int slot) {
+    return slot >= 0 && slot < (int)m.materials.size() ? m.materials[(std::size_t)slot] : -1;
+}
+
+// One material part: deduplicated vertices + triangle list (first occurrence order, like the ufbx path).
+Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
+                  std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt,
+                  std::vector<uint32_t>* outVi) {
+    Mesh out;
+    std::vector<FbxVert> verts;
+    verts.reserve(part.corners.size());
+    for (const fbx::Corner& c : part.corners) {
+        FbxVert fv{};
+        fv.px = c.p[0]; fv.py = c.p[1]; fv.pz = c.p[2];
+        fv.nx = c.n[0]; fv.ny = c.n[1]; fv.nz = c.n[2];
+        fv.u = c.uv[0]; fv.v = 1.0f - c.uv[1];   // FBX UVs are bottom-up
+        fv.w[0] = 1.0f;
+        fv.vi = c.cp;
+        if (skinned && c.cp < mesh.skinWeights.size()) {
+            const auto& inf = mesh.skinWeights[c.cp];
+            float sum = 0.0f;
+            fv.w[0] = 0.0f;
+            const std::size_t nw = inf.size() < 4 ? inf.size() : 4;
+            for (std::size_t wi = 0; wi < nw; ++wi) { fv.j[wi] = (int)inf[wi].cluster; fv.w[wi] = inf[wi].weight; sum += fv.w[wi]; }
+            if (sum > 1e-6f) for (float& w : fv.w) w /= sum;
+        }
+        verts.push_back(fv);
+    }
+    if (verts.empty()) return out;
+    std::unordered_map<std::string, uint32_t> seen;
+    seen.reserve(verts.size());
+    std::vector<uint32_t> indices(verts.size());
+    std::vector<uint32_t> unique;
+    for (std::size_t i = 0; i < verts.size(); ++i) {
+        auto ins = seen.emplace(std::string((const char*)&verts[i], sizeof(FbxVert)), (uint32_t)unique.size());
+        if (ins.second) unique.push_back((uint32_t)i);
+        indices[i] = ins.first->second;
+    }
+    const bool hasN = mesh.hasNormals, hasUV = mesh.hasUV;
+    for (uint32_t u : unique) {
+        const FbxVert& v = verts[u];
+        out.vertices.push_back(Vec3{v.px, v.py, v.pz});
+        if (hasN) out.normals.push_back(Vec3{v.nx, v.ny, v.nz});
+        if (hasUV) out.uvs.push_back(Vec2{v.u, v.v});
+        if (jIdx) { jIdx->push_back({v.j[0], v.j[1], v.j[2], v.j[3]}); jWt->push_back({v.w[0], v.w[1], v.w[2], v.w[3]}); }
+        if (outVi) outVi->push_back(v.vi);
+    }
+    for (uint32_t ix : indices) out.triangles.push_back((int)ix);
+    return out;
+}
+
+void AddOwnBlendShapes(const fbx::Mesh& mesh, const std::vector<uint32_t>& vi, GameObject* g, const Mat4* lin) {
+    if (!g || mesh.channels.empty()) return;
+    BlendShapes* bs = nullptr;
+    for (const fbx::BlendChannel& ch : mesh.channels) {
+        std::vector<Vec3> dp(vi.size(), Vec3{0, 0, 0}), dn;
+        const bool hasN = !ch.dn.empty() && ch.dn.size() == ch.dp.size();
+        if (hasN) dn.assign(vi.size(), Vec3{0, 0, 0});
+        std::unordered_map<uint32_t, uint32_t> slot;
+        for (std::size_t k = 0; k < ch.indices.size(); ++k) slot[ch.indices[k]] = (uint32_t)k;
+        for (std::size_t v = 0; v < vi.size(); ++v) {
+            auto it = slot.find(vi[v]);
+            if (it == slot.end()) continue;
+            const std::size_t k = it->second;
+            Vec3 d{ch.dp[k * 3], ch.dp[k * 3 + 1], ch.dp[k * 3 + 2]};
+            dp[v] = lin ? lin->MultiplyVector(d) : d;
+            if (hasN) { Vec3 n{ch.dn[k * 3], ch.dn[k * 3 + 1], ch.dn[k * 3 + 2]}; dn[v] = lin ? lin->MultiplyVector(n) : n; }
+        }
+        if (!bs) bs = g->AddComponent<BlendShapes>();
+        std::string nm = ch.name;
+        if (std::size_t dot = nm.find_last_of('.'); dot != std::string::npos && dot + 1 < nm.size()) nm = nm.substr(dot + 1);
+        if (nm.empty()) nm = "shape" + std::to_string(bs->shapes.size());
+        bs->AddShape(nm, dp, dn, (float)ch.weight);
+    }
+    if (!bs) return;
+    if (!g->GetComponent<SkinnedMesh>())
+        if (auto* mr = g->GetComponent<MeshRenderer>()) {
+            auto* sm = g->AddComponent<SkinnedMesh>();
+            sm->bind = mr->mesh;
+            sm->jointIdx.assign(mr->mesh.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
+            sm->jointWt.assign(mr->mesh.vertices.size(), std::array<float, 4>{1, 0, 0, 0});
+            sm->joints = {g->transform}; sm->jointNames = {g->name};
+            sm->inverseBind = {Mat4::Identity()};
+        }
+    bs->Apply(true);
+}
+
+bool OwnIsIdentity(const fbx::Mat& m) {
+    static const double id[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    for (int i = 0; i < 12; ++i) if (std::fabs(m.m[i] - id[i]) > 1e-6) return false;
+    return true;
+}
+
+} // namespace
+
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture) {
+    Mesh merged;
+    fbx::Scene sc; std::string err;
+    if (!fbx::LoadFile(path, sc, &err)) { if (ok) *ok = false; return merged; }
+    for (const fbx::SceneNode& node : sc.nodes) {
+        if (node.mesh < 0) continue;
+        const fbx::Mesh& fm = sc.meshes[(std::size_t)node.mesh];
+        const Mat4 g2w = OwnToMat4(node.geometryToWorld);
+        for (const fbx::Part& part : fm.parts) {
+            Mesh m = TransformedMesh(BuildOwnPart(fm, part, false, nullptr, nullptr, nullptr), g2w);
+            const int base = (int)merged.vertices.size();
+            const bool keepN = merged.normals.size() == merged.vertices.size() && m.normals.size() == m.vertices.size();
+            const bool keepUV = merged.uvs.size() == merged.vertices.size() && m.uvs.size() == m.vertices.size();
+            merged.vertices.insert(merged.vertices.end(), m.vertices.begin(), m.vertices.end());
+            if (keepN) merged.normals.insert(merged.normals.end(), m.normals.begin(), m.normals.end()); else merged.normals.clear();
+            if (keepUV) merged.uvs.insert(merged.uvs.end(), m.uvs.begin(), m.uvs.end()); else merged.uvs.clear();
+            for (int t : m.triangles) merged.triangles.push_back(base + t);
+            if (outTexture && outTexture->empty()) {
+                MeshRenderer tmp; ApplyOwnMaterial(tmp, sc, OwnMaterialOfSlot(fm, part.slot), path, 0);
+                *outTexture = tmp.texture;
+            }
+        }
+    }
+    if (ok) *ok = !merged.vertices.empty();
+    return merged;
+}
+
+static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err) {
+    fbx::Scene sc;
+    if (!fbx::LoadFile(path, sc, err)) { if (ok) *ok = false; return nullptr; }
+    GameObject* root = scene.CreateGameObject(BaseName(path));
+    std::vector<GameObject*> goOf(sc.nodes.size(), nullptr);
+    std::unordered_map<std::string, int> nameUse;
+    int texSerial = 0;
+
+    for (std::size_t i = 0; i < sc.nodes.size(); ++i) {   // parents come before children
+        const fbx::SceneNode& n = sc.nodes[i];
+        std::string nm = n.name;
+        if (nm.empty()) nm = n.mesh >= 0 ? "mesh" : "node";
+        if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
+        GameObject* g = scene.CreateGameObject(nm);
+        goOf[i] = g;
+        g->transform->localPosition = Vec3{(float)n.translation[0], (float)n.translation[1], (float)n.translation[2]};
+        g->transform->localRotation = Quat{(float)n.rotation[0], (float)n.rotation[1], (float)n.rotation[2], (float)n.rotation[3]};
+        g->transform->localScale    = Vec3{(float)n.scale[0], (float)n.scale[1], (float)n.scale[2]};
+        g->transform->SetParent(n.parent >= 0 ? goOf[(std::size_t)n.parent]->transform : root->transform, false);
+    }
+
+    for (std::size_t ni = 0; ni < sc.nodes.size(); ++ni) {
+        const fbx::SceneNode& node = sc.nodes[ni];
+        if (node.mesh < 0) continue;
+        const fbx::Mesh& mesh = sc.meshes[(std::size_t)node.mesh];
+        GameObject* host = goOf[ni];
+        const bool skinned = !mesh.clusters.empty();
+        const bool geomOffset = !OwnIsIdentity(node.geometryToNode);
+        const Mat4 g2n = OwnToMat4(node.geometryToNode);
+        const std::size_t parts = mesh.parts.size();
+        int made = 0;
+        for (std::size_t pi = 0; pi < parts; ++pi) {
+            const fbx::Part& part = mesh.parts[pi];
+            std::vector<std::array<int, 4>> jIdx; std::vector<std::array<float, 4>> jWt;
+            std::vector<uint32_t> vi;
+            Mesh bind = BuildOwnPart(mesh, part, skinned, skinned ? &jIdx : nullptr, skinned ? &jWt : nullptr, mesh.channels.empty() ? nullptr : &vi);
+            if (bind.vertices.empty()) continue;
+            GameObject* g = host;
+            const int matIdx = OwnMaterialOfSlot(mesh, part.slot);
+            if (made++ > 0 || parts > 1) {
+                g = scene.CreateGameObject(host->name + "_" + (matIdx >= 0 ? sc.materials[(std::size_t)matIdx].name : ("mat" + std::to_string(pi))));
+                g->transform->SetParent(host->transform, false);
+            }
+            auto* mr = g->AddComponent<MeshRenderer>();
+            mr->doubleSided = true;
+            ApplyOwnMaterial(*mr, sc, matIdx, path, texSerial);
+            texSerial += 2;
+            if (!skinned) {
+                mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
+                AddOwnBlendShapes(mesh, vi, g, geomOffset ? &g2n : nullptr);
+                continue;
+            }
+            mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
+            auto* sm = g->AddComponent<SkinnedMesh>();
+            sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
+            for (const fbx::Cluster& cl : mesh.clusters) {
+                GameObject* bg = cl.boneNode >= 0 ? goOf[(std::size_t)cl.boneNode] : nullptr;
+                sm->joints.push_back(bg ? bg->transform : nullptr);
+                sm->jointNames.push_back(bg ? bg->name : std::string());
+                sm->inverseBind.push_back(OwnToMat4(cl.geometryToBone));
+            }
+            if (g != host) g->transform->localPosition = Vec3{0, 0, 0};
+            AddOwnBlendShapes(mesh, vi, g, nullptr);
+        }
+    }
+
+    // Baked clips -> ModelAnimator
+    std::unordered_map<long long, std::pair<std::string, int>> chanOf;   // (mesh, channel) -> (node name, shape index)
+    for (std::size_t ni = 0; ni < sc.nodes.size(); ++ni) {
+        if (sc.nodes[ni].mesh < 0) continue;
+        const int mi = sc.nodes[ni].mesh;
+        for (std::size_t c = 0; c < sc.meshes[(std::size_t)mi].channels.size(); ++c)
+            chanOf.emplace((long long)mi * 100000 + (long long)c, std::make_pair(goOf[ni]->name, (int)c));
+    }
+    if (!sc.clips.empty()) {
+        auto* ma = root->AddComponent<ModelAnimator>();
+        for (const fbx::Clip& fc : sc.clips) {
+            ModelAnimator::Clip clip;
+            std::string cn = fc.name;
+            { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
+            if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
+                cn = std::filesystem::path(path).stem().string();
+                if (sc.clips.size() > 1) cn += "_" + std::to_string(ma->clips.size());
+            }
+            clip.name = cn;
+            for (const fbx::NodeAnim& bn : fc.nodes) {
+                if (bn.node < 0 || (std::size_t)bn.node >= goOf.size() || !goOf[(std::size_t)bn.node]) continue;
+                clip.nodes.push_back({goOf[(std::size_t)bn.node]->name, AnimationClip{}});
+                AnimationClip& ac = clip.nodes.back().clip;
+                ac.smoothKeys = false;
+                for (const fbx::Key3& k : bn.translation) {
+                    const float t = (float)k.time;
+                    ac.AddKey("position.x", t, (float)k.v[0]); ac.AddKey("position.y", t, (float)k.v[1]); ac.AddKey("position.z", t, (float)k.v[2]);
+                }
+                double prev[4] = {0, 0, 0, 1}; bool hasPrev = false;
+                for (const fbx::Key4& k : bn.rotation) {
+                    double q[4] = {k.v[0], k.v[1], k.v[2], k.v[3]};
+                    if (hasPrev && q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3] < 0.0) for (double& c : q) c = -c;
+                    for (int a = 0; a < 4; ++a) prev[a] = q[a];
+                    hasPrev = true;
+                    const float t = (float)k.time;
+                    ac.AddKey("rotation.qx", t, (float)q[0]); ac.AddKey("rotation.qy", t, (float)q[1]);
+                    ac.AddKey("rotation.qz", t, (float)q[2]); ac.AddKey("rotation.qw", t, (float)q[3]);
+                }
+                for (const fbx::Key3& k : bn.scale) {
+                    const float t = (float)k.time;
+                    ac.AddKey("scale.x", t, (float)k.v[0]); ac.AddKey("scale.y", t, (float)k.v[1]); ac.AddKey("scale.z", t, (float)k.v[2]);
+                }
+                if (ac.Tracks().empty()) clip.nodes.pop_back();
+            }
+            for (const fbx::BlendAnim& ba : fc.blends) {
+                auto it = chanOf.find((long long)ba.mesh * 100000 + ba.channel);
+                if (it == chanOf.end() || ba.percent.empty()) continue;
+                ModelAnimator::NodeClip* ncp = nullptr;
+                for (auto& ncx : clip.nodes) if (ncx.node == it->second.first) { ncp = &ncx; break; }
+                if (!ncp) { clip.nodes.push_back({it->second.first, AnimationClip{}}); ncp = &clip.nodes.back(); ncp->clip.smoothKeys = false; }
+                const std::string track = "weights." + std::to_string(it->second.second);
+                for (const fbx::Key3& k : ba.percent) ncp->clip.AddKey(track, (float)k.time, (float)k.v[0] * 0.01f);
+            }
+            if (!clip.nodes.empty()) ma->clips.push_back(std::move(clip));
+        }
+        if (ma->clips.empty()) root->RemoveComponent<ModelAnimator>();
+        else { ma->active = 0; ma->autoPlay = true; }
+    }
+
     NormalizeImportedClips(root);
     AutoNormalizeImportScale(scene, root);
     if (ok) *ok = true;

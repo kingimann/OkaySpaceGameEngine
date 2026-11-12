@@ -105,7 +105,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "parent", "particles", "particlesfx", "particleswind", "pausemenu", "pcfirst", "pcfirstfeel",
     "pcfirststance", "pcthird", "pcthirdfeel", "pcthirdstance", "playercontroller", "playerview", "polygoncollider2d",
     "posecap", "prefab", "proj3d", "questlog", "questlogdef", "questtrigger", "ragdoll",
-    "reflect", "rigidbody2d", "rigidbody3d", "rim", "rootmotion", "script", "scriptfields",
+    "reflect", "rigidbody2d", "rigidbody3d", "rim", "rootmotion", "saveable", "savesettings", "script", "scriptfields",
     "scriptpath", "seat", "sequenceplayer", "shader", "sibling", "skinmesh", "skinx",
     "spawner", "specmap", "spherecollider3d", "spinner", "spline", "splinefollower", "splineinstancer",
     "splinemesh", "splinept", "sprite", "spriteanim", "srcscene", "stat_bleed", "stat_carry",

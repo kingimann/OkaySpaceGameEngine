@@ -55,6 +55,8 @@ export const STEPS: Step[] = [
   { id: "forum_section_bans.banned_by", kind: "anonymise", table: "forum_section_bans", filter: eq("banned_by"), patch: { banned_by: null } },
   // a ban outlives the moderator's account: keep the row, drop the link to who issued it
   { id: "community_bans.banned_by", kind: "anonymise", table: "community_bans", filter: eq("banned_by"), patch: { banned_by: null } },
+  // a moderator's review of a report stays for the people it concerns; only the link to the reviewer goes
+  { id: "reports.reviewed_by", kind: "anonymise", table: "reports", filter: eq("reviewed_by"), patch: { reviewed_by: null } },
   // --- deleted ---
   { id: "message_reactions", kind: "delete", table: "message_reactions", filter: eq("reactor") },
   { id: "forum_votes", kind: "delete", table: "forum_votes", filter: eq("voter") },
@@ -101,6 +103,10 @@ export const STEPS: Step[] = [
   { id: "game_sessions", kind: "delete", table: "game_sessions", filter: eq("host_id") },
   { id: "ac_reports.filed", kind: "delete", table: "ac_reports", filter: eq("reporter") },
   { id: "ac_reports.about_me", kind: "delete", table: "ac_reports", filter: eq("reported") },
+  // user reports (docs/sql/reports.sql): ones you filed, and ones about you or your content
+  // (their snapshot holds your words, so they go with the account)
+  { id: "reports.filed", kind: "delete", table: "reports", filter: eq("reporter") },
+  { id: "reports.about_me", kind: "delete", table: "reports", filter: eq("target_user") },
   { id: "ac_appeals", kind: "delete", table: "ac_appeals", filter: eq("user_id") },
   { id: "ac_report_servers", kind: "delete", table: "ac_report_servers", filter: eq("user_id") },
   { id: "profiles", kind: "delete", table: "profiles", filter: eq("id") },

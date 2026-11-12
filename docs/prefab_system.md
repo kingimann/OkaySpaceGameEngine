@@ -2,7 +2,9 @@
 
 This page covers `PrefabTools` (`okay/Scene/PrefabTools.hpp`), which builds on the
 prefab instances and overrides described in [prefabs.md](prefabs.md). Everything here is
-data and API. The editor calls it through `editor/PrefabEdit.*` (see "In the editor" at the end of this page).
+data and API. The editor calls it through `editor/PrefabEdit.*` (see "In the editor" at the end of this page),
+which drives the Inspector's per-property marks and "Changed from the prefab" list (per-record revert and apply),
+and prefab mode (open a prefab on its own and save it: [prefab_mode.md](prefab_mode.md)).
 
 ```cpp
 #include <Okay.hpp>
@@ -307,8 +309,8 @@ prefab code of its own: reading and writing prefab files, overrides, nesting and
   new variant. **Create Variant** (Project panel) writes a variant file with no differences yet.
 - **Update All** re-applies every instance of the prefab from the file, keeping what each changed (use it after
   the file was edited outside the editor). **Unpack** / **Unpack Completely** use `Unpack`.
-- **Open** shows the instance on its own in the Scene view (Isolate; Esc leaves) and selects it; **Apply All**
-  writes the edits back. A separate prefab-editing scene with a breadcrumb is not built (feature map 21.1).
+- **Open** enters prefab mode: the prefab opens on its own with a breadcrumb bar, Save and Back
+  ([prefab_mode.md](prefab_mode.md)). **Apply All** writes an instance's edits back to the prefab without leaving the scene.
 
 **Undo.** Every action is one step, on the editor's `UndoStack`. `EditorState::PushUndo(name)` opens the step (named
 "Apply to Enemy", "Revert Prefab", "Create Prefab Variant" ...); the scene part is recorded at the next boundary as a

@@ -136,7 +136,6 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | Editor undo is on `UndoStack` now (resolved, see `docs/editor_undo.md`), but each step is a scene-text delta and each Undo rebuilds the whole scene | `editor/SceneUndo.hpp`, `EditorState.cpp`; GUI paths (Edit menu, shortcuts, History panel, `WatchEditUndo`) compiled but never run | Inserting or deleting an early object stores text up to the end of the scene; moving an asset the scene uses clears the scene history; mesh edit, Project panel, Timeline, Localization and the script editors keep their own undo; no per-object or per-property commands, so Inspector state and big scenes feel the rebuild | Medium | Medium |
-| Save framework has no editor UI, component, or scene record | `Core/SaveFramework.cpp`, `SaveFrameworkScene.cpp`; zero references in `editor/`, `player/`; script calls (`save_*`) only | A no-code user cannot make a save or load screen | High | Medium |
 | Engine accessors with no editor or player caller | `Debug/DrawCallRecorder`, `GpuTimer`, `MemoryTracker`, `FrameRecord`, `Optimize/StreamingGrid`, `Core/Cvar` and `Core/Jobs` stats: zero mentions in `editor/` and `player/` | Code and tests exist, no window or switch shows them (partly known as 23.x; this lists the rest) | Medium | Large |
 | Project panel: no operating-system file watcher | `editor/ProjectBrowser.cpp` `Poll` (incremental `AssetDatabase::Scan`, at most every 2 s and 30x the last scan time; about 45 ms for 5,000 unchanged assets in a Release build, 135 ms in Debug, in the test) | A file changed outside the editor shows up on the next poll, not at once | Low | Medium |
 | Project panel: thumbnails are made on the main thread | `Browser::ThumbFrame` budget (10 ms per frame), generators in `editor/main.cpp` (`RenderPrefabImage` and friends) | A folder of many big models fills in over several frames and the frame time grows by up to the budget; a worker thread needs a scene renderer that does not touch editor state | Low | Large |
@@ -159,7 +158,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 8. Medium: 58. Low: 29. Total rows: 95.
+High: 7. Medium: 58. Low: 29. Total rows: 94.
 
 ## Top 15 to tackle first
 
@@ -168,7 +167,7 @@ High: 8. Medium: 58. Low: 29. Total rows: 95.
 3. **Editor Play lacks the extended keys and extra pads** (sec 5). A few lines copying `AppendSdlExtendedKeys` and `pads.Feed` fix games that behave differently in Play and in a build.
 4. **(Resolved) Lua and C# backends removed** (sec 10). The optional third-party backends were dropped; old scenes naming them load and report "language not supported".
 5. **Mesh Collider 3D** (sec 2). Exact triangle collision for static geometry is done; the remaining gap is a convex-hull shape so a mesh can be a dynamic body, and collision callbacks for bodies landing on it.
-6. **Save framework has no no-code route** (sec 13). The engine work is done; a Save/Load slot component and a window make it usable without scripts.
+6. **(Resolved) Save framework no-code route** (was sec 13). A Saveable component stored in the scene file (transform, active, registry properties, script and visual-script variables), a Save Settings component (autosave interval and on scene start), Save / Load / Delete / Continue / slot exists / last saved time as script builtins, visual-script `Fn.game_*` nodes and Action List `game_*` actions, and a Save Slots UI screen. See `docs/save_framework.md`.
 7. **Direct3D 12 has no post-processing** (sec 1). Either bring it to parity or label it "preview" in Build Settings and keep it off by default.
 8. ~~**Audio is mono and fully decoded** (sec 4).~~ Done: clips keep stereo, long music streams from disk in a fixed small amount of memory (AudioSource "Stream", Music Player), see `docs/audio.md`. The other audio gaps stay in section 4.
 9. **(Resolved) Undo uses full snapshots** (sec 13). The editor now records scene deltas on `UndoStack` (named steps, merged drags, GUID-exact delete restore, history kept across Play, no recording during Play). What is left is a narrower Medium row in sec 13: per-object commands, and the unrun GUI paths.

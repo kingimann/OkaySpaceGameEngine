@@ -1,4 +1,5 @@
 #include "okay/Components/ActionList.hpp"
+#include "okay/Components/LogicLinks.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -41,6 +42,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/GameSaves.hpp"
 #include "okay/Core/Game.hpp"          // win / lose / quit instructions
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -1153,6 +1155,12 @@ void ActionList::Update(float dt) {
         }
         // Events with a payload: the receiver reads `event_value` (number) and
         // `event_text` (text), set just before the message fires.
+        // fire_output name [value]: raise a named output on this object's Logic Source, so
+        // its I/O links (target, input, delay, once) run. The value replaces each link's parameter.
+        else if (op == "fire_output") {
+            if (gameObject) for (LogicSource* ls : gameObject->GetComponents<LogicSource>())
+                ls->FireOutput(Str(it, 0), it.args.size() > 1 ? Str(it, 1) : std::string());
+        }
         else if (op == "send_value") {
             Vars()["event_value"] = Num(it, 1); StrVars()["event_text"].clear();
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));
@@ -1580,6 +1588,16 @@ void ActionList::Update(float dt) {
                 Log::Error("[actions] save_prefs: refusing '", name, "' (absolute paths and '..' aren't allowed)");
             else Prefs::Save(Save::Resolve(name));
         }
+        // Save slots (Saveable components mark what is stored; problems go to the Console).
+        else if (op == "game_save")        { if (scene) GameSaves::Save(*scene, Str(it, 0).empty() ? "slot_1" : Str(it, 0), Rest(it, 1)); }
+        else if (op == "game_load")        { if (scene) GameSaves::Load(*scene, Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "game_continue")    { if (scene) GameSaves::Continue(*scene); }
+        else if (op == "game_autosave")    { if (scene) GameSaves::AutoSave(*scene); }
+        else if (op == "game_delete_slot") { GameSaves::Delete(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "game_slot_exists") { Vars()[Str(it, 1).empty() ? "slot_exists" : Str(it, 1)] = GameSaves::Exists(Str(it, 0).empty() ? "slot_1" : Str(it, 0)) ? 1.0f : 0.0f; }
+        else if (op == "game_can_continue") { Vars()[Str(it, 0).empty() ? "can_continue" : Str(it, 0)] = GameSaves::CanContinue() ? 1.0f : 0.0f; }
+        else if (op == "game_slot_age")    { Vars()[Str(it, 1).empty() ? "slot_age" : Str(it, 1)] = (float)GameSaves::SecondsSinceSave(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "game_slot_text")   { StrVars()[Str(it, 1).empty() ? "slot_text" : Str(it, 1)] = GameSaves::SavedText(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
         else if (op == "set_tag") { if (gameObject) gameObject->tag = Str(it, 0); }
         else if (op == "set_timescale_var") { Vars()[Str(it, 0)] = Time::TimeScale(); }
         else if (op == "log") { Log::Info("[actions] ", Rest(it, 0)); }

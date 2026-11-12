@@ -112,6 +112,8 @@ inline VsPlace VsPlaceForBuiltin(const char* name) {
     auto has = [&](const char* t) { return VsTokenIs(low, t); };
     if (has("print") || has("log") || has("warn") || has("assert") || has("debug") || has("trace"))
         return VsAt("Debug");
+    if (low.rfind("game_", 0) == 0 && (has("save") || has("load") || has("slot") || has("continue") || has("autosave")))
+        return VsAt("Variables", "Saved");   // game_save, game_load, game_continue ... (save slots)
     if (has("sound") || has("music") || has("audio") || has("sfx")) return VsAt("Audio");
     if (has("anim") || has("clip") || has("ik")) return VsAt("Animation");
     if (has("camera") || has("fov") || has("shake")) return VsAt("Camera");

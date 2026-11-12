@@ -351,6 +351,18 @@ struct Checker {
                 Reference(path, "TriggerZone", "targetName", c->targetName);
     }
 
+    // I/O links on a Logic Source: an output or input left empty, or a target that is not in the scene.
+    void IoLinks(const GameObject& go, const std::string& path) {
+        for (LogicSource* ls : go.GetComponents<LogicSource>())
+            for (std::size_t i = 0; i < ls->ioLinks.size(); ++i) {
+                const std::string why = ls->IoProblem(ls->ioLinks[i]);
+                if (!why.empty())
+                    Add(Severity::Warning, "io.link_broken", path, "LogicSource",
+                        "I/O link " + std::to_string(i + 1) + " (" + ls->ioLinks[i].output + " -> " +
+                        ls->ioLinks[i].input + ") cannot work: " + why);
+            }
+    }
+
     void Physics(const GameObject& go, const std::string& path) {
         if (go.GetComponent<Rigidbody2D>() && !go.GetComponent<Collider2D>())
             Add(Severity::Warning, "physics.rigidbody_no_collider", path, "Rigidbody2D",
@@ -462,7 +474,7 @@ struct Checker {
             if (opt.checkTransforms) { CheckTransform(go, path); Layer(go, path); }
             if (opt.checkAssets) Assets(go, path);
             if (opt.checkScripts) Scripts(go, path);
-            if (opt.checkReferences) References(go, path);
+            if (opt.checkReferences) { References(go, path); IoLinks(go, path); }
             if (opt.checkPhysics) { Physics(go, path); Volumes(go, path); }
             if (opt.checkInactive) Inactive(go, path);
         }

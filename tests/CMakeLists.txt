@@ -2404,6 +2404,8 @@ if(_okay_xc_sodium)
     target_link_libraries(test_net_crypto_sodium PRIVATE okay::engine ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_net_crypto_sodium SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME net_crypto_sodium COMMAND test_net_crypto_sodium)
+endif()
+
 # "Download my data" / "Delete my account": client request building, confirmation
 # gating, export assembly, error mapping (engine/include/okay/Platform/Account/AccountData.hpp).
 add_executable(test_account_data test_account_data.cpp)

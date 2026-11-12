@@ -6,14 +6,14 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "5c4aeccb907f36df25c08d0bb551284c"
+  guid "41085f6d9a78e43a2d8cadc48fa7c472"
   active 1
   parent -1
   transform 0 0 12 0 0 0 1 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"
-  guid "82705bde0436890e96a2c9639eb2827d"
+  guid "41dadb0a1381b384806a6f354d7e8f37"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -22,14 +22,14 @@ Every half second, Ticks goes up by 1 and the square steps right.
 Loop stays 3. After about 2 seconds, Ticks should read 4." 1 1 1 1 2.2 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 760 150 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 2 "Readout"
-  guid "5c4a8b0e37708bf8d16a01f5229baa75"
+  guid "3eec91cc77d28e09544dad26b1ded917"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play" 0.45 1 0.55 1 3.2 1 24 200 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 760 80 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 3 "Runner"
-  guid "26eccf568dcab1f94ba5bdb3cf68356a"
+  guid "3f1f6992fb2cb6cd02c60e065165238e"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -285,34 +285,63 @@ exec 118 1 120
 node 123 OnStart
 exec 123 0 118
 entry OnStart 123
-node 124 OnUpdate
-node 125 Timer 0.5
-node 126 AddVar ticks
-node 127 Translate
-node 128 SetText Readout
-node 129 Format \"Ticks {0}   X {1}   Loop {2}\"
-node 130 Const 1
-data 126 0 130 0
-node 131 Const 1
-data 127 0 131 0
-node 132 Const 0
-data 127 1 132 0
-node 133 Const 0
-data 127 2 133 0
-node 134 GetVar ticks
-data 129 0 134 0
-node 135 GetX
-data 129 1 135 0
-node 136 GetVar loop
-data 129 2 136 0
-data 128 0 129 0
+event Ping(Number n)
+dispatcher Done(Number n)
+node 124 OnCustomEvent Ping
+node 125 AddVar pinged
+data 125 0 124 0
 exec 124 0 125
-exec 125 0 126
+entry OnCustomEvent:Ping 124
+node 126 FunctionStart \"Cheer(n: Number)\"
+node 127 AddVar cheered
+data 127 0 126 0
 exec 126 0 127
-exec 127 0 128
-entry OnUpdate 124
-node 137 OnStart
-exec 137 0 128
-entry OnStart 137
+node 128 BindEvent \"Done -> Cheer\"
+node 129 RaiseEvent Ping
+node 130 CallDispatcher Done
+node 131 UnbindEvent \"Done -> Cheer\"
+node 132 CallDispatcher Done
+node 133 Const 5
+data 129 1 133 0
+node 134 Const 7
+data 130 1 134 0
+node 135 Const 7
+data 132 1 135 0
+exec 128 0 129
+exec 129 0 130
+exec 130 0 131
+exec 131 0 132
+node 136 OnStart
+exec 136 0 128
+entry OnStart 136
+node 137 OnUpdate
+node 138 Timer 0.5
+node 139 AddVar ticks
+node 140 Translate
+node 141 SetText Readout
+node 142 Format \"Ticks {0}   X {1}   Loop {2}\"
+node 143 Const 1
+data 139 0 143 0
+node 144 Const 1
+data 140 0 144 0
+node 145 Const 0
+data 140 1 145 0
+node 146 Const 0
+data 140 2 146 0
+node 147 GetVar ticks
+data 142 0 147 0
+node 148 GetX
+data 142 1 148 0
+node 149 GetVar loop
+data 142 2 149 0
+data 141 0 142 0
+exec 137 0 138
+exec 138 0 139
+exec 139 0 140
+exec 140 0 141
+entry OnUpdate 137
+node 150 OnStart
+exec 150 0 141
+entry OnStart 150
 "
 end

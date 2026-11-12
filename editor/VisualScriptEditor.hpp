@@ -743,6 +743,11 @@ inline const std::vector<VsDef>& Registry() {
         {"GetTag",          "Get Tag",          CAT_XFORM, false, {}, {}, {"Tag"}, 0, nullptr},
         // Functions: pins come from the Function node's signature (see VsDefFor).
         {"FunctionStart",   "Function",         CAT_FLOW,  false, {""}, {}, {}, 1, "Name(a: Number) -> out: Number"},
+        {"OnCustomEvent",   "On Event Raised",  CAT_EVENT, false, {""}, {}, {}, 1, "event name"},
+        {"RaiseEvent",      "Raise Event",      CAT_FLOW,  true, {""}, {"Target"}, {"Handlers"}, 1, "event name"},
+        {"CallDispatcher",  "Call Dispatcher",  CAT_FLOW,  true, {""}, {"Target"}, {"Handlers"}, 1, "dispatcher name"},
+        {"BindEvent",       "Bind to Dispatcher",   CAT_FLOW, true, {""}, {"Owner"}, {}, 1, "Dispatcher -> Handler"},
+        {"UnbindEvent",     "Unbind Dispatcher", CAT_FLOW, true, {""}, {"Owner"}, {}, 1, "Dispatcher -> Handler"},
         {"Return",          "Return",           CAT_FLOW,  true, {}, {}, {}, 6, nullptr},
         {"CallFunction",    "Call Function",    CAT_FLOW,  true, {""}, {}, {}, 6, nullptr},
         {"SetLocal",        "Set Local",        CAT_VAR,   true, {""}, {"Value"}, {}, 1, "name"},
@@ -961,6 +966,7 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
     if (type == "OnTimer") return "OnTimer:" + tok(arg, "1");
     if (type == "OnEvent") return "OnEvent:" + tok(arg, "Event");
+    if (type == "OnCustomEvent") return "OnCustomEvent:" + tok(arg, "Event");
     if (type == "OnNetRpc") return "OnNetRpc:" + tok(arg, "rpc");
     if (type == "OnVarChanged" || type == "OnSceneVarChanged" || type == "OnGlobalVarChanged") return type + ":" + tok(arg, "x");
     if (type == "OnLanguageChanged" || type == "OnInteract" || type == "OnDeath" || type == "OnHealthChanged") return type;
@@ -974,6 +980,8 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
 
 inline bool IsSwitchNode(const std::string& t);
 inline std::vector<std::string> VsEditorSwitchCases(const std::string& arg);
+/// Nodes whose parameter pins come from a declared event: On Event (outputs), Raise Event / Call Dispatcher (inputs after Target).
+inline bool IsEventPinNode(const std::string& t) { return t == "OnCustomEvent" || t == "RaiseEvent" || t == "CallDispatcher"; }
 
 struct VsEditGraph {
     std::vector<VsEditNode> nodes;
@@ -995,6 +1003,10 @@ struct VsEditGraph {
     struct StructFieldEd { std::string name, type = "Number", value; };
     struct StructEd { std::string name; std::vector<StructFieldEd> fields; };
     std::vector<StructEd> structs;
+    /// `event Name(Type p, ...)` and `dispatcher Name(Type p, ...)` lines: custom events with typed parameters.
+    struct EventParamEd { std::string type = "Number", name; };
+    struct EventEd { std::string name; bool dispatcher = false; std::vector<EventParamEd> params; };
+    std::vector<EventEd> events;
     int nextId = 1;
     std::string path;      // .okayvs file (empty = unsaved)
     bool dirty = false;
@@ -1002,13 +1014,14 @@ private:
     mutable std::string m_declKey, m_declError;
     mutable std::vector<okay::vs::VarDecl> m_decls;
     mutable std::vector<okay::vs::StructDef> m_structDefs;
+    mutable std::vector<okay::vs::EventDecl> m_eventDecls;
     void refreshDecls() const {
         const std::string key = declText();
         if (key == m_declKey && !key.empty()) return;
-        if (key.empty()) { m_declKey.clear(); m_decls.clear(); m_structDefs.clear(); m_declError.clear(); return; }
-        m_declKey = key; m_decls.clear(); m_structDefs.clear(); m_declError.clear();
+        if (key.empty()) { m_declKey.clear(); m_decls.clear(); m_structDefs.clear(); m_eventDecls.clear(); m_declError.clear(); return; }
+        m_declKey = key; m_decls.clear(); m_structDefs.clear(); m_eventDecls.clear(); m_declError.clear();
         std::string err;
-        if (auto g = okay::vs::NodeGraph::Parse(key, &err)) { m_decls = g->Decls(); m_structDefs = g->Structs(); }
+        if (auto g = okay::vs::NodeGraph::Parse(key, &err)) { m_decls = g->Decls(); m_structDefs = g->Structs(); m_eventDecls = g->Events(); }
         else {
             m_declError = err;
             // Struct names alone still let a type be picked while a default is wrong.
@@ -1024,7 +1037,7 @@ public:
         // Sensible starting values for nodes that need a name / number.
         static const std::map<std::string, std::string> kArg = {
             {"Compare", ">"}, {"Timer", "1"}, {"Const", "0"}, {"OnKey", "space"}, {"OnKeyUp", "space"},
-            {"OnTimer", "1"}, {"OnEvent", "Event"}, {"OnNetRpc", "rpc"}, {"SendEvent", "Event"}, {"BroadcastEvent", "Event"},
+            {"OnTimer", "1"}, {"OnEvent", "Event"}, {"OnCustomEvent", ""}, {"RaiseEvent", ""}, {"CallDispatcher", ""}, {"OnNetRpc", "rpc"}, {"SendEvent", "Event"}, {"BroadcastEvent", "Event"},
             {"NetObjRpc", "rpc"}, {"SyncVarSet", "var"}, {"SyncVarGet", "var"},
             {"SetObjectVar", "hp"}, {"GetObjectVar", "hp"}, {"SaveValue", "score"}, {"LoadValue", "score"},
             {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"}, {"FindObject", "Player"},
@@ -1087,6 +1100,11 @@ public:
             }
             o << "\n";
         }
+        for (const auto& e : events) {
+            o << (e.dispatcher ? "dispatcher " : "event ") << e.name << '(';
+            for (std::size_t i = 0; i < e.params.size(); ++i) o << (i ? ", " : "") << e.params[i].type << ' ' << e.params[i].name;
+            o << ")\n";
+        }
         for (const auto& v : vars) {
             if (v.typed) {
                 o << "decl " << v.name << ' ' << okay::vs::QuoteIfNeeded(v.type) << ' ' << v.scope;
@@ -1102,6 +1120,102 @@ public:
     const std::vector<okay::vs::VarDecl>& typedDecls() const { refreshDecls(); return m_decls; }
     const std::vector<okay::vs::StructDef>& structDefs() const { refreshDecls(); return m_structDefs; }
     const std::string& declError() const { refreshDecls(); return m_declError; }
+    /// The declared events and dispatchers as the runtime reads them (empty while the declaration lines don't load).
+    const std::vector<okay::vs::EventDecl>& eventDecls() const { refreshDecls(); return m_eventDecls; }
+    const EventEd* findEvent(const std::string& name) const { for (const auto& e : events) if (e.name == name) return &e; return nullptr; }
+    /// Nodes that name event / dispatcher `name` (handlers, raises, calls, binds, unbinds).
+    int eventUseCount(const std::string& name) const {
+        int n = 0;
+        for (const auto& nd : nodes) {
+            if (nd.type == "OnCustomEvent" || nd.type == "RaiseEvent" || nd.type == "CallDispatcher") { if (okay::vs::FunctionNameOf(nd.arg) == name) ++n; }
+            else if (nd.type == "BindEvent" || nd.type == "UnbindEvent") {
+                std::string d, h; okay::vs::ParseBindText(nd.arg, d, h);
+                if (d == name || h == name) ++n;
+            }
+        }
+        return n;
+    }
+    /// Add an event (or a dispatcher). False with `err` for a bad or repeated name.
+    bool declareEvent(const std::string& name, bool dispatcher, std::string* err = nullptr) {
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid event name (letters, digits and _, not starting with a digit)"; return false; }
+        if (findEvent(name)) { if (err) *err = "there is already an event or dispatcher named '" + name + "'"; return false; }
+        if ((int)events.size() >= okay::vs::kMaxEventDecls) { if (err) *err = "a graph can declare at most " + std::to_string(okay::vs::kMaxEventDecls) + " events"; return false; }
+        events.push_back({name, dispatcher, {}}); dirty = true; m_declKey.clear();
+        return true;
+    }
+    /// Rename an event; the nodes that use it (On Event, Raise, Call, Bind, Unbind) follow.
+    bool renameEvent(std::size_t i, const std::string& name, std::string* err = nullptr) {
+        if (i >= events.size()) return false;
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid event name"; return false; }
+        for (std::size_t k = 0; k < events.size(); ++k) if (k != i && events[k].name == name) { if (err) *err = "there is already an event or dispatcher named '" + name + "'"; return false; }
+        const std::string old = events[i].name;
+        if (old == name) return true;
+        events[i].name = name; dirty = true; m_declKey.clear();
+        for (auto& n : nodes) {
+            if (n.type == "OnCustomEvent" || n.type == "RaiseEvent" || n.type == "CallDispatcher") { if (okay::vs::FunctionNameOf(n.arg) == old) n.arg = name; }
+            else if (n.type == "BindEvent" || n.type == "UnbindEvent") {
+                std::string d, h;
+                if (!okay::vs::ParseBindText(n.arg, d, h) && h.empty()) { if (d == old) n.arg = name; continue; }
+                if (d == old) d = name;
+                if (h == old) h = name;
+                n.arg = d + " -> " + h;
+            }
+        }
+        return true;
+    }
+    void removeEvent(std::size_t i) { if (i < events.size()) { events.erase(events.begin() + (long)i); dirty = true; m_declKey.clear(); } }
+    bool addEventParam(std::size_t i, const std::string& type, const std::string& name, std::string* err = nullptr) {
+        if (i >= events.size()) return false;
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid parameter name (letters, digits and _)"; return false; }
+        for (const auto& p : events[i].params) if (p.name == name) { if (err) *err = "'" + events[i].name + "' already has a parameter '" + name + "'"; return false; }
+        if ((int)events[i].params.size() >= okay::vs::kMaxEventParams) { if (err) *err = "an event can have at most " + std::to_string(okay::vs::kMaxEventParams) + " parameters"; return false; }
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(type, structDefs(), vt, err)) return false;
+        events[i].params.push_back({okay::vs::VarTypeText(vt), name}); dirty = true; m_declKey.clear();
+        return true;
+    }
+    bool renameEventParam(std::size_t i, std::size_t j, const std::string& name, std::string* err = nullptr) {
+        if (i >= events.size() || j >= events[i].params.size()) return false;
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid parameter name"; return false; }
+        for (std::size_t k = 0; k < events[i].params.size(); ++k)
+            if (k != j && events[i].params[k].name == name) { if (err) *err = "'" + events[i].name + "' already has a parameter '" + name + "'"; return false; }
+        events[i].params[j].name = name; dirty = true; m_declKey.clear();
+        return true;
+    }
+    bool setEventParamType(std::size_t i, std::size_t j, const std::string& type, std::string* err = nullptr) {
+        if (i >= events.size() || j >= events[i].params.size()) return false;
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(type, structDefs(), vt, err)) return false;
+        events[i].params[j].type = okay::vs::VarTypeText(vt); dirty = true; m_declKey.clear();
+        return true;
+    }
+    /// Remove a parameter; the wires on that pin go and the pins after it move up (on every node of the event).
+    void removeEventParam(std::size_t i, std::size_t j) {
+        if (i >= events.size() || j >= events[i].params.size()) return;
+        const std::string ev = events[i].name;
+        events[i].params.erase(events[i].params.begin() + (long)j);
+        std::vector<int> handlers, callers;
+        for (const auto& n : nodes) {
+            if (okay::vs::FunctionNameOf(n.arg) != ev) continue;
+            if (n.type == "OnCustomEvent") handlers.push_back(n.id);
+            else if (n.type == "RaiseEvent" || n.type == "CallDispatcher") callers.push_back(n.id);
+        }
+        auto in = [](const std::vector<int>& v, int id) { return std::find(v.begin(), v.end(), id) != v.end(); };
+        const int outPin = (int)j, inPin = (int)j + 1;
+        dataLinks.erase(std::remove_if(dataLinks.begin(), dataLinks.end(), [&](const VsDataLink& l) {
+            return (in(handlers, l.producer) && l.outPin == outPin) || (in(callers, l.consumer) && l.inPin == inPin); }), dataLinks.end());
+        for (auto& l : dataLinks) {
+            if (in(handlers, l.producer) && l.outPin > outPin) --l.outPin;
+            if (in(callers, l.consumer) && l.inPin > inPin) --l.inPin;
+        }
+        for (auto& n : nodes) {
+            if (!in(callers, n.id)) continue;
+            std::map<int, std::string> moved;
+            for (auto& kv : n.pinDefault) { if (kv.first == inPin) continue; moved[kv.first > inPin ? kv.first - 1 : kv.first] = kv.second; }
+            n.pinDefault = std::move(moved);
+        }
+        dirty = true; m_declKey.clear();
+    }
     /// Add a typed variable at its type's default. False (with `err`) for a bad or repeated name or type.
     bool declare(const std::string& name, const std::string& type, const std::string& scope, std::string* err = nullptr) {
         auto bad = [&](const std::string& m) { if (err) *err = m; return false; };
@@ -1227,7 +1341,7 @@ public:
         f << toText();
         path = p; dirty = false; return true;
     }
-    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); vars.clear(); structs.clear(); m_declKey.clear(); nextId = 1; path.clear(); dirty = false; }
+    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); vars.clear(); structs.clear(); events.clear(); m_declKey.clear(); nextId = 1; path.clear(); dirty = false; }
     bool load(const std::string& p) {
         std::ifstream f(p, std::ios::binary);
         if (!f) return false;
@@ -1286,6 +1400,16 @@ public:
                     float probe = 0;
                     e.type = (v == "true" || v == "false") ? "Bool" : okay::vs::VsParseFinite(v, probe) ? "Number" : "Text";
                     vars.push_back(e);
+                }
+            } else if (kind == "event" || kind == "dispatcher") {
+                const std::vector<std::string> t = okay::vs::TokenizeLine(line);
+                std::string rest;
+                for (std::size_t k = 1; k < t.size(); ++k) { if (k > 1) rest += ' '; rest += t[k]; }
+                okay::vs::EventLine el;
+                if (okay::vs::ParseEventLine(rest, el)) {
+                    EventEd e; e.name = el.name; e.dispatcher = kind == "dispatcher";
+                    for (const auto& p : el.params) e.params.push_back({p.type, p.name});
+                    events.push_back(std::move(e));
                 }
             } else if (kind == "decl" || kind == "struct") {
                 const std::vector<std::string> t = okay::vs::TokenizeLine(line);
@@ -1413,9 +1537,30 @@ inline void VsMoveSwitchDefault(VsEditGraph& g, int node, int oldDef, int newDef
 }
 inline const VsDef* VsDefFor(const VsEditGraph& g, const VsEditNode& n) {
     const VsDef* base = FindDef(n.type);
-    if (!base || (!IsFunctionNode(n.type) && !IsSwitchNode(n.type))) return base;
+    if (!base || (!IsFunctionNode(n.type) && !IsSwitchNode(n.type) && !IsEventPinNode(n.type))) return base;
     struct Dyn { std::string key; std::vector<std::string> labels; VsDef def; };
     static std::map<int, std::unique_ptr<Dyn>> cache;   // node id -> its pins
+    if (IsEventPinNode(n.type)) {
+        const auto* ev = g.findEvent(okay::vs::FunctionNameOf(n.arg));
+        std::string key = n.type + "|ev|" + n.arg + "|";
+        if (ev) for (const auto& p : ev->params) key += p.name + ",";
+        auto& slot = cache[n.id];
+        if (slot && slot->key == key) return &slot->def;
+        slot = std::make_unique<Dyn>();
+        slot->key = key;
+        slot->def = *base;
+        if (ev) {
+            slot->labels.reserve(ev->params.size());
+            for (const auto& p : ev->params) slot->labels.push_back(p.name);
+            if (n.type == "OnCustomEvent") {
+                slot->def.dataOut.clear();
+                for (const auto& l : slot->labels) slot->def.dataOut.push_back(l.c_str());
+            } else {
+                for (const auto& l : slot->labels) slot->def.dataIn.push_back(l.c_str());
+            }
+        }
+        return &slot->def;
+    }
     okay::vs::FunctionSig sig;
     const bool ok = VsSigFor(g, n, sig);
     std::string key = n.type + "|" + n.arg + "|";
@@ -1460,6 +1605,12 @@ inline okay::vs::PinType VsOutPinType(const VsEditGraph& g, int nodeId, int pin)
         const auto& pins = n->type == "FunctionStart" ? sig.params : sig.returns;
         return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : okay::vs::PinType::Any;
     }
+    if (n->type == "OnCustomEvent") {
+        const auto* ev = g.findEvent(okay::vs::FunctionNameOf(n->arg));
+        if (!ev || pin < 0 || pin >= (int)ev->params.size()) return okay::vs::PinType::Any;
+        okay::vs::VarType vt;
+        return okay::vs::ParseVarType(ev->params[(std::size_t)pin].type, g.structDefs(), vt) ? vt.base : okay::vs::PinType::Any;
+    }
     if (const auto dt = okay::vs::DeclOutType(n->type, n->arg, pin, g.typedDecls()); dt != okay::vs::PinType::Any) return dt;
     return okay::vs::OutputType(n->type, pin, n->arg);
 }
@@ -1471,6 +1622,12 @@ inline okay::vs::PinType VsInPinType(const VsEditGraph& g, int nodeId, int pin) 
         if (!VsSigFor(g, *n, sig)) return okay::vs::PinType::Any;
         const auto& pins = n->type == "Return" ? sig.returns : sig.params;
         return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : okay::vs::PinType::Any;
+    }
+    if ((n->type == "RaiseEvent" || n->type == "CallDispatcher") && pin >= 1) {
+        const auto* ev = g.findEvent(okay::vs::FunctionNameOf(n->arg));
+        if (!ev || pin - 1 >= (int)ev->params.size()) return okay::vs::PinType::Any;
+        okay::vs::VarType vt;
+        return okay::vs::ParseVarType(ev->params[(std::size_t)pin - 1].type, g.structDefs(), vt) ? vt.base : okay::vs::PinType::Any;
     }
     if (const auto dt = okay::vs::DeclInType(n->type, n->arg, pin, g.typedDecls()); dt != okay::vs::PinType::Any) return dt;
     return okay::vs::InputType(n->type, pin);
@@ -3846,6 +4003,7 @@ inline void Draw(EditorState& ed, bool* open) {
             const std::vector<VsVarRef> vars = VsCollectVariables(refs);
             const std::vector<VsParamRef> params = VsCollectParameters(refs);
             VsDrawVariableDecls(g);
+            VsDrawEventDecls(g, [&](int id) { st.sel = {id}; st.selected = id; st.focusNode = id; });
             ImGui::Spacing();
             ImGui::TextUnformatted("Variables used");
             ImGui::Separator();
@@ -4166,7 +4324,8 @@ inline void Draw(EditorState& ed, bool* open) {
         const bool showAdd = reqGap.missing && inlineMsg.empty();
         if (showAdd) inlineMsg = "Needs " + reqGap.addId;
         const float msgH = inlineMsg.empty() ? 0.0f : (showAdd ? ROW_H * 2.4f : ROW_H * 1.35f);
-        float bodyH = rows * ROW_H + (d->param ? ROW_H + 10.0f * z : 0) + (isSwitch ? ROW_H : 0.0f) + PAD;
+        float bodyH = rows * ROW_H + (d->param ? ROW_H + 10.0f * z : 0) + (isSwitch ? ROW_H : 0.0f) +
+                      ((n.type == "BindEvent" || n.type == "UnbindEvent") ? ROW_H : 0.0f) + PAD;
         float h = HEADER_H + bodyH + msgH;
         // Wider when it has data inputs: their value boxes sit between the input
         // labels and the output labels.
@@ -4472,6 +4631,11 @@ inline void Draw(EditorState& ed, bool* open) {
                     if (!any) ImGui::TextDisabled("No functions yet: add a Function node first");
                     ImGui::EndCombo();
                 }
+            } else if (n.type == "OnCustomEvent" || n.type == "RaiseEvent" || n.type == "CallDispatcher") {   // one of this graph's declared events
+                std::string cur = okay::vs::FunctionNameOf(n.arg);
+                if (VsEventCombo(g, "##evpick", cur, n.type == "CallDispatcher", NODE_W - PAD * 2)) { n.arg = cur; g.dirty = true; }
+            } else if (n.type == "BindEvent" || n.type == "UnbindEvent") {
+                if (VsBindCombos(g, n.arg, NODE_W - PAD * 2, ImVec2(p0.x + PAD, py + ROW_H + 2.0f * z))) g.dirty = true;
             } else if (n.type == "FunctionStart") {   // the signature (may be long)
                 char sbuf[256]; std::snprintf(sbuf, sizeof(sbuf), "%s", n.arg.c_str());
                 if (ImGui::InputTextWithHint("##sig", d->paramHint, sbuf, sizeof(sbuf))) {
@@ -5065,20 +5229,23 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::TextWrapped("%s", VsDebugText(v).c_str());
         };
         if (ImGui::CollapsingHeader("Call stack", ImGuiTreeNodeFlags_DefaultOpen)) {
-            for (int i = (int)dv.frames.size() - 1; i >= 0; --i)
-                ImGui::BulletText("%s  (function)", dv.frames[(std::size_t)i].name.c_str());
+            for (int i = (int)dv.frames.size() - 1; i >= 0; --i) {
+                const auto& fr = dv.frames[(std::size_t)i];
+                ImGui::BulletText("%s  (%s)", fr.name.c_str(), fr.isEvent ? (fr.name.rfind("event ", 0) == 0 ? "event handler" : "bound function") : "function");
+                if (!fr.origin.empty()) { ImGui::Indent(); ImGui::TextDisabled("%s", fr.origin.c_str()); ImGui::Unindent(); }
+            }
             ImGui::BulletText("%s  (event on '%s')", dv.event.c_str(), dv.object.c_str());
         }
         if (!dv.frames.empty()) {
             const auto& f = dv.frames.back();
-            const std::string hdr = "Function " + f.name;
+            const std::string hdr = (f.name.rfind("event ", 0) == 0 ? "Handler " : "Function ") + f.name;
             if (ImGui::CollapsingHeader(hdr.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
                 okay::vs::FunctionSig sig;
                 bool haveSig = false;
                 for (const auto& m : g.nodes)
                     if (m.type == "FunctionStart" && okay::vs::FunctionNameOf(m.arg) == f.name) { haveSig = okay::vs::ParseFunctionSignature(m.arg, sig); break; }
                 for (std::size_t i = 0; i < f.args.size(); ++i)
-                    row(haveSig && i < sig.params.size() ? sig.params[i].name : "arg " + std::to_string(i), f.args[i]);
+                    row(i < f.paramNames.size() ? f.paramNames[i] : haveSig && i < sig.params.size() ? sig.params[i].name : "arg " + std::to_string(i), f.args[i]);
                 std::vector<std::pair<std::string, okay::vs::VsValue>> locals(f.locals.begin(), f.locals.end());
                 std::sort(locals.begin(), locals.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
                 for (const auto& kv : locals) row("local " + kv.first, kv.second);

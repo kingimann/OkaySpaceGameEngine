@@ -1,0 +1,14 @@
+# Lever: after half a second, raises the typed event Pulled(force, by) on the object named "Door".
+# Part of the custom events example: custom_events_door.okayvs handles it, custom_events_light.okayvs
+# listens to the Door's dispatcher. Put the three graphs on objects named Lever, Door and Light.
+event Pulled(Number force, Text by)
+
+node 1 OnStart
+entry OnStart 1
+node 2 Delay 0.5
+node 3 RaiseEvent Pulled
+default 3 0 "Door"
+default 3 1 3
+default 3 2 "the Lever"
+exec 1 0 2
+exec 2 0 3

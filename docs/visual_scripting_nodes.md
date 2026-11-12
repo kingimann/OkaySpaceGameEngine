@@ -5858,6 +5858,96 @@ Runs a function defined by a Function node in this graph, then continues. Pick t
 
 **Related:** Function, Return, Set Local
 
+### On Event Raised
+
+`OnCustomEvent`
+
+Runs when a Raise Event (from this or another graph) sends this declared event. Each output is one of the event's typed parameters; they only have values inside this handler. A Delay inside it keeps them. Other Name says who raised it.
+
+**Requires:** No component is required. It runs in Play mode when its event happens on this object.
+
+**Setting:** event name. The value typed into the node.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | out | Flow | After On Event Raised finishes, the flow continues from here to the next step. | — |
+
+**Example:** Drop On Event Raised into the graph and wire it the way its pins describe.
+
+### Raise Event
+
+`RaiseEvent`
+
+Runs the handlers of a declared event right now, on Target (empty = this object), with the typed parameters wired in. Handlers is how many ran. A value that doesn't fit a parameter's type is reported on this node and nothing is raised. A handler that raises the event that ran it stops after 32 levels with an error.
+
+**Requires:** No component is required. It changes the order of the flow. It runs in Play mode.
+
+**Setting:** event name. The value typed into the node.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Raise Event runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Raise Event finishes, the flow continues from here to the next step. | — |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+| Handlers | out | Number | What Raise Event produces on Handlers. It is a Number. Wire it into an input that expects a Number. | — |
+
+**Example:** Put Raise Event after an event such as On Start or On Update, and wire a value into Target.
+
+### Call Dispatcher
+
+`CallDispatcher`
+
+Runs every handler bound to a dispatcher (on Target, empty = this object), in the order they were bound, with the typed parameters wired in. Handlers is how many ran. Nobody bound = nothing runs, no error.
+
+**Requires:** No component is required. It changes the order of the flow. It runs in Play mode.
+
+**Setting:** dispatcher name. The value typed into the node.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Call Dispatcher runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Call Dispatcher finishes, the flow continues from here to the next step. | — |
+| Target | in | Object | The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object. | this object |
+| Handlers | out | Number | What Call Dispatcher produces on Handlers. It is a Number. Wire it into an input that expects a Number. | — |
+
+**Example:** Put Call Dispatcher after an event such as On Start or On Update, and wire a value into Target.
+
+### Bind to Dispatcher
+
+`BindEvent`
+
+Makes this object's handler (a custom event or a function of this graph, picked in the node) run whenever Owner's dispatcher is called. Binding twice is the same as once. The binding goes away when either object is destroyed or the scene unloads.
+
+**Requires:** No component is required. It changes the order of the flow. It runs in Play mode.
+
+**Setting:** Dispatcher -> Handler. The value typed into the node.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Bind to Dispatcher runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Bind to Dispatcher finishes, the flow continues from here to the next step. | — |
+| Owner | in | Object | The Owner input of Bind to Dispatcher. It is an Object. Unwired, this is no object. | no object |
+
+**Example:** Put Bind to Dispatcher after an event such as On Start or On Update, and wire a value into Owner.
+
+### Unbind Dispatcher
+
+`UnbindEvent`
+
+Stops this object's handler from running when Owner's dispatcher is called. Nothing happens if it wasn't bound.
+
+**Requires:** No component is required. It changes the order of the flow. It runs in Play mode.
+
+**Setting:** Dispatcher -> Handler. The value typed into the node.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Unbind Dispatcher runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Unbind Dispatcher finishes, the flow continues from here to the next step. | — |
+| Owner | in | Object | The Owner input of Unbind Dispatcher. It is an Object. Unwired, this is no object. | no object |
+
+**Example:** Put Unbind Dispatcher after an event such as On Start or On Update, and wire a value into Owner.
+
 ### Set Local
 
 `SetLocal`

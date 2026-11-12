@@ -204,15 +204,10 @@ public:
     /// next frame" (Delay, Action blocks with a Wait inside). Resume() picks every
     /// parked chain up again; the chain continues from that node once it returns a pin.
     static constexpr int kSuspend = -2;
-    /// Continue parked chains (called once per frame by the owning component).
-    void Resume(VsContext& ctx) {
-        if (m_suspended.empty()) return;
-        std::vector<int> ids; ids.swap(m_suspended);
-        const std::string prevEvent = m_event;
-        m_event = "(continuing after a wait)";
-        for (int id : ids) Run(id, ctx, true);
-        m_event = prevEvent;
-    }
+    /// Continue parked chains (called once per frame by the owning component). A chain
+    /// parked inside an event handler or a bound function gets its frames (parameters,
+    /// locals) back for the time it runs.
+    void Resume(VsContext& ctx);
     /// True while a parked node is being resumed (only for that node's own Exec).
     bool Resuming() const { return m_resuming; }
     /// True when node `id` is parked waiting to resume.
@@ -281,6 +276,28 @@ public:
         if (!d || d->legacy) return true;
         return VsCoerce(d->type, v, m_structs, err);
     }
+
+    /// `event` / `dispatcher` lines: custom events with typed parameters (see docs).
+    const std::vector<EventDecl>& Events() const { return m_events; }
+    void AddEvent(EventDecl e) { m_events.push_back(std::move(e)); }
+    const EventDecl* FindEvent(const std::string& name) const { return FindEventDecl(m_events, name); }
+    /// The entry name an On Event handler node registers under ("OnCustomEvent:Hit").
+    static std::string EventEntryName(const std::string& event) { return "OnCustomEvent:" + event; }
+    /// Most typed events that may raise each other in a chain (a handler raising the
+    /// event that ran it): the next raise is refused with an error on the raising node.
+    static constexpr int kMaxEventDepth = 32;
+    /// Run this graph's handlers of event `name` with `args` already fitted to its
+    /// parameters. Each handler runs as a call (its own frame) so parameters, the debugger's
+    /// call stack and a Delay inside it work like a function's. `origin` says who raised it
+    /// (shown in the debugger). Returns how many handler nodes ran.
+    int RunEventHandlers(const std::string& name, const std::vector<VsValue>& args, VsContext& ctx, const std::string& origin);
+    /// Run function `fn` as a bound handler: a call from outside the graph's own chains.
+    /// False (with `err`) when it doesn't exist or the call was refused.
+    bool RunFunctionAsHandler(const std::string& fn, const std::vector<VsValue>& args, VsContext& ctx, const std::string& origin, std::string* err);
+    /// Parameter `i` of the innermost running handler of event `name` (null when none runs).
+    const VsValue* EventArg(const std::string& name, int i) const;
+    /// Fit `args` to event `e`'s parameters (count and types). False with `err` saying which.
+    bool FitEventArgs(const EventDecl& e, std::vector<VsValue>& args, std::string* err) const;
 
     /// Record execution counts + last data values on the nodes (editor debugging).
     static bool& Tracing() { static bool on = false; return on; }
@@ -361,12 +378,11 @@ public:
         std::string name;
         std::vector<VsValue> args;
         std::unordered_map<std::string, VsValue> locals;
+        std::string origin;      ///< who raised it ("raised by node #4 'Raise Event' of 'Boss'"), "" for a plain call
+        bool isEvent = false;    ///< an event handler or bound function rather than a function call
+        std::vector<std::string> paramNames;   ///< names of `args` (event parameters / function parameters)
     };
-    std::vector<DebugFrame> DebugFrames() const {
-        std::vector<DebugFrame> out;
-        for (const Frame& f : m_frames) out.push_back({f.name, f.args, f.locals});
-        return out;
-    }
+    std::vector<DebugFrame> DebugFrames() const;
     /// The last runtime error ("" if none) and the file id of the node it was
     /// reported on (-1 if unknown). Each distinct error is logged once; repeats count up.
     const std::string& LastError() const { return m_lastError; }
@@ -394,6 +410,7 @@ private:
     std::unordered_map<std::string, std::vector<int>> m_entries;
     std::vector<VarDecl> m_exposed;
     std::vector<StructDef> m_structs;
+    std::vector<EventDecl> m_events;
     int m_execGuard = 0;     // current data-pull depth (cycle guard)
     int m_runDepth = 0;      // nested Run() calls (loop bodies, sequences)
     long m_steps = 0;        // node executions in the current event
@@ -403,12 +420,18 @@ private:
     std::vector<int> m_loops;   // running loops: the function-frame depth each started at
     int m_loopSignal = 0;       // a Break / Continue waiting for its loop
     struct Frame {
-        std::string name;
+        std::string name;                // a function's name, or "event:<Name>" for an event handler
         std::vector<VsValue> args, rets;
         std::unordered_map<std::string, VsValue> locals;
         bool returned = false;
+        std::string origin;              // who raised the event / called the bound function
+        bool handler = false;            // pushed by RunEventHandlers / RunFunctionAsHandler
     };
     std::vector<Frame> m_frames;                        // running function calls, innermost last
+    /// Chains parked by a Delay inside a handler: node id -> the frames to put back while it runs.
+    std::unordered_map<int, std::vector<Frame>> m_parked;
+    /// Push `frame`, run the chain from `start`, then pop it; frames of anything that paused are kept.
+    void RunFramed(Frame frame, int start, VsContext& ctx);
     std::unordered_map<std::string, int> m_functions;   // function name -> its Function node
     std::string m_lastError;
     int m_lastErrorNode = -1;

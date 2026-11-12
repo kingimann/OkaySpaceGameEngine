@@ -1,4 +1,5 @@
 #include "okay/VisualScript/VsDecl.hpp"
+#include "okay/VisualScript/VsTypes.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -44,6 +45,91 @@ constexpr std::size_t kMaxText = 1u << 20;
 } // namespace
 
 bool VsValidIdent(const std::string& s) { return ValidIdent(s); }
+
+const EventDecl* FindEventDecl(const std::vector<EventDecl>& events, const std::string& name) {
+    for (const auto& e : events) if (e.name == name) return &e;
+    return nullptr;
+}
+
+namespace {
+std::string Trim(const std::string& s) {
+    std::size_t a = 0, b = s.size();
+    while (a < b && std::isspace((unsigned char)s[a])) ++a;
+    while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
+    return s.substr(a, b - a);
+}
+} // namespace
+
+bool ParseEventLine(const std::string& restIn, EventLine& out, std::string* err) {
+    auto bad = [&](const std::string& m) { if (err) *err = m; return false; };
+    out = EventLine{};
+    const std::string rest = Trim(restIn);
+    const auto open = rest.find('(');
+    if (open == std::string::npos) return bad("write it as Name(Type param, ...), e.g. Hit(Number amount)");
+    if (rest.back() != ')') return bad("the parameter list needs a closing ')'");
+    out.name = Trim(rest.substr(0, open));
+    if (!ValidIdent(out.name)) return bad("'" + out.name + "' isn't a valid event name (letters, digits and _, not starting with a digit)");
+    const std::string inner = rest.substr(open + 1, rest.size() - open - 2);
+    if (Trim(inner).empty()) return true;
+    std::size_t pos = 0;
+    while (pos <= inner.size()) {
+        const auto comma = inner.find(',', pos);
+        const std::string item = Trim(inner.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos));
+        if (item.empty()) return bad("a parameter is empty (stray comma?)");
+        const auto sp = item.find_last_of(" \t");
+        if (sp == std::string::npos) return bad("parameter '" + item + "' needs a type and a name (e.g. Number amount)");
+        EventLine::Param p;
+        p.type = Trim(item.substr(0, sp));
+        p.name = Trim(item.substr(sp + 1));
+        if (p.type.empty()) return bad("parameter '" + p.name + "' has no type");
+        if (!ValidIdent(p.name)) return bad("'" + p.name + "' isn't a valid parameter name (letters, digits and _)");
+        for (const auto& o : out.params) if (o.name == p.name) return bad("parameter '" + p.name + "' is listed twice");
+        out.params.push_back(std::move(p));
+        if ((int)out.params.size() > kMaxEventParams) return bad("an event can have at most " + std::to_string(kMaxEventParams) + " parameters");
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+    return true;
+}
+
+bool ParseBindText(const std::string& textIn, std::string& dispatcher, std::string& handler) {
+    const std::string text = Trim(textIn);
+    std::size_t arrow = text.find("->"), skip = 2;
+    if (arrow == std::string::npos) { arrow = text.find_first_of(" \t"); skip = 1; }
+    if (arrow == std::string::npos) { dispatcher = text; handler.clear(); return false; }
+    dispatcher = Trim(text.substr(0, arrow));
+    handler = Trim(text.substr(arrow + skip));
+    return !dispatcher.empty() && !handler.empty();
+}
+
+bool EventSigCompatible(const EventDecl& a, const EventDecl& b, std::string* why) {
+    if (a.params.size() != b.params.size()) {
+        if (why) *why = "one has " + std::to_string(a.params.size()) + " parameter" + (a.params.size() == 1 ? "" : "s") +
+                        " " + EventParamsText(a) + ", the other " + std::to_string(b.params.size()) + " " + EventParamsText(b);
+        return false;
+    }
+    for (std::size_t i = 0; i < a.params.size(); ++i) {
+        const PinType x = a.params[i].type.base, y = b.params[i].type.base;
+        if (!PinCompatible(x, y) || (a.params[i].type.IsStruct() && b.params[i].type.IsStruct() && a.params[i].type.structName != b.params[i].type.structName)) {
+            if (why) *why = "parameter " + std::to_string(i + 1) + " is " + VarTypeText(a.params[i].type) + " in one and " +
+                            VarTypeText(b.params[i].type) + " in the other";
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string EventLineText(const EventLine& e) {
+    std::string s = e.name + "(";
+    for (std::size_t i = 0; i < e.params.size(); ++i) s += (i ? ", " : "") + e.params[i].type + " " + e.params[i].name;
+    return s + ")";
+}
+
+std::string EventParamsText(const EventDecl& e) {
+    std::string s = "(";
+    for (std::size_t i = 0; i < e.params.size(); ++i) s += (i ? ", " : "") + VarTypeText(e.params[i].type) + " " + e.params[i].name;
+    return s + ")";
+}
 
 const StructDef* FindStruct(const std::vector<StructDef>& structs, const std::string& name) {
     for (const auto& s : structs) if (s.name == name) return &s;

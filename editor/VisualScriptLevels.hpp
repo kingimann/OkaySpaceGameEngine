@@ -127,6 +127,9 @@ inline const VsSharedLevel kCollectionLevels[] = {
     {"MapCount", VsLevel::Intermediate}, {"MapCopy", VsLevel::Intermediate}, {"StructNew", VsLevel::Advanced},
     {"StructGet", VsLevel::Advanced}, {"StructSet", VsLevel::Advanced}, {"MakeColor", VsLevel::Intermediate},
     {"SplitColor", VsLevel::Intermediate},
+    // Custom events with typed parameters and dispatchers.
+    {"OnCustomEvent", VsLevel::Advanced}, {"RaiseEvent", VsLevel::Advanced}, {"CallDispatcher", VsLevel::Advanced},
+    {"BindEvent", VsLevel::Advanced}, {"UnbindEvent", VsLevel::Advanced},
 };
 
 inline int VsLogicLevelCount() { return (int)(sizeof kLogicLevels / sizeof kLogicLevels[0]); }

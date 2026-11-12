@@ -1,0 +1,15 @@
+# Light: binds its function Glow to the Door's dispatcher Opened when it starts. Glow gets the angle the Door sent.
+dispatcher Opened(Number angle)
+
+node 1 OnStart
+entry OnStart 1
+node 2 BindEvent "Opened -> Glow"
+default 2 0 "Door"
+exec 1 0 2
+
+node 10 FunctionStart "Glow(a: Number)"
+node 11 Format "Light: the door opened to {0} degrees"
+node 12 Print
+data 11 0 10 0
+data 12 0 11 0
+exec 10 0 12

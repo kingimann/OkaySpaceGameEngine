@@ -328,6 +328,11 @@ const Row kRows[] = {
         {"LootRoll", true, "", "N"},
         {"SpawnPickup", true, "NNNN", "T"},
         {"FunctionStart", false, "", ""},
+        {"OnCustomEvent", false, "", ""},
+        {"RaiseEvent", true, "O", "N"},
+        {"CallDispatcher", true, "O", "N"},
+        {"BindEvent", true, "O", ""},
+        {"UnbindEvent", true, "O", ""},
         {"Return", true, "", ""},
         {"CallFunction", true, "", ""},
         {"SetLocal", true, "A", ""},
@@ -869,10 +874,15 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             }
         } catch (...) {}
     }
+    for (const auto& kv : nodes) if (kv.second.type == "OnCustomEvent") entries.insert(kv.first);
     auto title = [&](int id) {
         auto it = nodes.find(id);
         return it == nodes.end() ? std::string("?") : "'" + it->second.type + "' (#" + std::to_string(id) + ")";
     };
+    const std::vector<EventDecl>& evDecls = parsedGraph->Events();
+    auto isEventNode = [](const std::string& t) { return t == "OnCustomEvent" || t == "RaiseEvent" || t == "CallDispatcher"; };
+    auto evNameOf = [&](const N& n) { return FunctionNameOf(n.arg); };
+    auto evOf = [&](const N& n) -> const EventDecl* { return isEventNode(n.type) ? FindEventDecl(evDecls, evNameOf(n)) : nullptr; };
 
     // 0) Functions: each Function node's signature (its pins come from it).
     std::map<std::string, FunctionSig> fns;
@@ -952,6 +962,10 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             const auto& pins = !f ? std::vector<FunctionSig::Pin>{} : n.type == "FunctionStart" ? f->params : f->returns;
             return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : PinType::Any;
         }
+        if (n.type == "OnCustomEvent") {
+            const EventDecl* e = evOf(n);
+            return e && pin >= 0 && pin < (int)e->params.size() ? e->params[(std::size_t)pin].type.base : PinType::Any;
+        }
         return OutputType(n.type, pin, n.arg);
     };
     auto inType = [&](int id, int pin) {
@@ -969,6 +983,10 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             const FunctionSig* f = fnOf(n);
             const auto& pins = !f ? std::vector<FunctionSig::Pin>{} : n.type == "Return" ? f->returns : f->params;
             return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : PinType::Any;
+        }
+        if ((n.type == "RaiseEvent" || n.type == "CallDispatcher") && pin >= 1) {
+            const EventDecl* e = evOf(n);
+            return e && pin - 1 < (int)e->params.size() ? e->params[(std::size_t)pin - 1].type.base : PinType::Any;
         }
         return InputType(n.type, pin);
     };
@@ -997,6 +1015,72 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             if (f.empty()) issues.push_back({0, kv.first, "no function is picked"});
             else if (!fns.count(f)) issues.push_back({0, kv.first, "there's no function named '" + f + "' in this graph"});
         }
+
+    // 0b) Custom events and dispatchers: declared names, parameter pins, bind targets.
+    auto wired = [&](int id, int pin) {
+        for (const Data& d : datas) if (d.consumer == id && d.inPin == pin) return true;
+        return typed.count({id, pin}) != 0;
+    };
+    {
+        auto plural = [](std::size_t n) { return std::to_string(n) + " parameter" + (n == 1 ? "" : "s"); };
+        for (const Data& d : datas) {   // wires to parameters an event doesn't have (any more)
+            auto c = nodes.find(d.consumer), p = nodes.find(d.producer);
+            if (c == nodes.end() || p == nodes.end()) continue;
+            if (p->second.type == "OnCustomEvent")
+                if (const EventDecl* e = evOf(p->second); e && d.outPin >= (int)e->params.size())
+                    issues.push_back({0, d.consumer, "it's wired to parameter #" + std::to_string(d.outPin + 1) + " of event '" + e->name + "', which it doesn't have (any more)"});
+            if (c->second.type == "RaiseEvent" || c->second.type == "CallDispatcher")
+                if (const EventDecl* e = evOf(c->second); e && d.inPin >= 1 && d.inPin - 1 >= (int)e->params.size())
+                    issues.push_back({0, d.consumer, "a wire goes into parameter #" + std::to_string(d.inPin) + " of '" + e->name + "', which it doesn't have (any more)", d.inPin, 0});
+        }
+        std::map<std::string, std::set<int>> handlerNodes;   // event name -> its On Event nodes
+        for (const auto& kv : nodes) if (kv.second.type == "OnCustomEvent") handlerNodes[evNameOf(kv.second)].insert(kv.first);
+        for (const auto& kv : nodes) {
+            const N& n = kv.second;
+            if (isEventNode(n.type)) {
+                const std::string nm = evNameOf(n);
+                const EventDecl* e = FindEventDecl(evDecls, nm);
+                const bool wantDisp = n.type == "CallDispatcher";
+                if (nm.empty()) issues.push_back({0, kv.first, std::string("no ") + (wantDisp ? "dispatcher" : "event") + " is picked"});
+                else if (!e) issues.push_back({0, kv.first, std::string("there's no ") + (wantDisp ? "dispatcher" : "event") + " named '" + nm +
+                                                            "' declared in this graph (add it in the Events list)"});
+                else if (e->dispatcher && n.type == "OnCustomEvent")
+                    issues.push_back({0, kv.first, "'" + nm + "' is a dispatcher: other objects bind to it, they don't handle it with On Event. Declare an event, or Bind a handler to the dispatcher"});
+                else if (e->dispatcher && n.type == "RaiseEvent")
+                    issues.push_back({0, kv.first, "'" + nm + "' is a dispatcher: use Call Dispatcher"});
+                else if (!e->dispatcher && n.type == "CallDispatcher")
+                    issues.push_back({0, kv.first, "'" + nm + "' is an event: use Raise Event"});
+                else if (n.type == "RaiseEvent" && !wired(kv.first, 0) && !handlerNodes.count(nm))
+                    issues.push_back({1, kv.first, "this raises '" + nm + "' on its own object, but nothing in this graph has an On Event node for it"});
+            } else if (n.type == "BindEvent" || n.type == "UnbindEvent") {
+                std::string disp, handler;
+                ParseBindText(n.arg, disp, handler);
+                const EventDecl* de = FindEventDecl(evDecls, disp);
+                if (disp.empty()) { issues.push_back({0, kv.first, "no dispatcher is picked"}); continue; }
+                if (!de) { issues.push_back({0, kv.first, "there's no dispatcher named '" + disp + "' declared in this graph (add it in the Events list)"}); continue; }
+                if (!de->dispatcher) { issues.push_back({0, kv.first, "'" + disp + "' is an event, not a dispatcher: Raise Event runs handlers directly, only a dispatcher can be bound"}); continue; }
+                if (handler.empty()) { issues.push_back({0, kv.first, "no handler is picked: choose a custom event or a function of this graph"}); continue; }
+                if (n.type == "UnbindEvent") continue;
+                if (const EventDecl* he = FindEventDecl(evDecls, handler)) {
+                    std::string why;
+                    if (he->dispatcher) issues.push_back({0, kv.first, "'" + handler + "' is a dispatcher, not a handler: pick a custom event or a function"});
+                    else if (!EventSigCompatible(*de, *he, &why))
+                        issues.push_back({0, kv.first, "handler event '" + handler + "' doesn't fit dispatcher '" + disp + "': " + why});
+                    else if (!handlerNodes.count(handler))
+                        issues.push_back({1, kv.first, "event '" + handler + "' has no On Event node in this graph, so the bound handler does nothing"});
+                } else if (auto f = fns.find(handler); f != fns.end()) {
+                    if (f->second.params.size() != de->params.size())
+                        issues.push_back({0, kv.first, "function '" + handler + "' takes " + plural(f->second.params.size()) + " but dispatcher '" + disp + "' sends " + plural(de->params.size())});
+                    else for (std::size_t i = 0; i < de->params.size(); ++i) {
+                        const PinType want = f->second.params[i].type;
+                        if (want != PinType::Any && !PinCompatible(de->params[i].type.base, want))
+                            issues.push_back({0, kv.first, "parameter '" + f->second.params[i].name + "' of function '" + handler + "' is a " + PinTypeName(want) +
+                                                           " but dispatcher '" + disp + "' sends a " + VarTypeText(de->params[i].type)});
+                    }
+                } else issues.push_back({0, kv.first, "'" + handler + "' is neither an event nor a function declared in this graph"});
+            }
+        }
+    }
 
     // 1) Wires whose value can't mean what the input expects.
     for (const Data& d : datas) {
@@ -1038,7 +1122,10 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
 
     // 2b) Function rules: where Return / locals / pauses may be, and whether it's called.
     std::set<std::string> called;
-    for (const auto& kv : nodes) if (kv.second.type == "CallFunction") called.insert(FunctionNameOf(kv.second.arg));
+    for (const auto& kv : nodes) {
+        if (kv.second.type == "CallFunction") called.insert(FunctionNameOf(kv.second.arg));
+        if (kv.second.type == "BindEvent") { std::string d, h; ParseBindText(kv.second.arg, d, h); called.insert(h); }   // a bound function is called by its dispatcher
+    }
     for (const auto& kv : fnNode) {
         if (!called.count(kv.first)) issues.push_back({1, kv.second, "function '" + kv.first + "' is never called"});
         if (!hasExecOut.count(kv.second)) issues.push_back({1, kv.second, "function '" + kv.first + "' does nothing: nothing is wired to it"});
@@ -1098,6 +1185,25 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                 const FunctionSig* f = fnOf(kv.second);
                 issues.push_back({0, kv.first, "a parameter of function '" + (f ? f->name : std::string("?")) +
                                                "' is read by an event's chain, outside the function (it reads 0)"});
+            }
+        }
+        {   // An event's parameters only have values inside that event's handlers.
+            std::map<std::string, std::set<int>> handlerReach;
+            for (const auto& kv : nodes)
+                if (kv.second.type == "OnCustomEvent") {
+                    const std::set<int> r = reach({kv.first});
+                    handlerReach[evNameOf(kv.second)].insert(r.begin(), r.end());
+                }
+            std::set<int> flagged;
+            for (const auto& kv : handlerReach) {
+                for (int e : fromEvents) {
+                    if (kv.second.count(e)) continue;
+                    for (int rd : readers({e})) {
+                        auto it = nodes.find(rd);
+                        if (it != nodes.end() && it->second.type == "OnCustomEvent" && evNameOf(it->second) == kv.first && flagged.insert(rd).second)
+                            issues.push_back({0, rd, "a parameter of event '" + kv.first + "' is read by a chain that isn't one of its handlers (it reads 0)"});
+                    }
+                }
             }
         }
         for (const auto& f : inFn) {
@@ -1160,10 +1266,6 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     }
 
     // 4c) Required inputs left empty (the node says so in the editor too).
-    auto wired = [&](int id, int pin) {
-        for (const Data& d : datas) if (d.consumer == id && d.inPin == pin) return true;
-        return typed.count({id, pin}) != 0;
-    };
     for (const auto& kv : nodes) {
         const std::string& t = kv.second.type;
         if (t == "PlayClip" && kv.second.arg.empty())
@@ -1198,6 +1300,99 @@ std::string SceneGraphIssue::Describe() const {
     return d + ": " + issue.message;
 }
 
+namespace {
+/// One graph of a scene, parsed for the cross-graph event rules.
+struct SceneGraphInfo {
+    std::string object, path;
+    std::vector<EventDecl> events;
+    struct Use { int id; std::string type, arg, targetName; bool targetWired; };
+    std::vector<Use> uses;   // Raise Event / Call Dispatcher / Bind / Unbind nodes
+};
+
+void CheckSceneEvents(const Scene& scene, std::vector<SceneGraphIssue>& out) {
+    std::vector<SceneGraphInfo> infos;
+    for (const auto& up : scene.Objects()) {
+        if (!up) continue;
+        for (VisualScriptComponent* vc : up->GetComponents<VisualScriptComponent>()) {
+            const std::string& src = vc->Source();
+            if (src.empty()) continue;
+            auto g = NodeGraph::Parse(src);
+            if (!g) continue;
+            SceneGraphInfo info; info.object = up->name; info.path = vc->Path(); info.events = g->Events();
+            std::map<int, std::pair<std::string, std::string>> nodes;
+            std::map<int, std::string> pin0;
+            std::set<int> wired0;
+            std::istringstream in(src); std::string line;
+            while (std::getline(in, line)) {
+                const auto t = Tokens(line);
+                try {
+                    if (t.size() >= 3 && t[0] == "node") {
+                        std::string a; for (std::size_t i = 3; i < t.size(); ++i) a += (i > 3 ? " " : "") + t[i];
+                        nodes[std::stoi(t[1])] = {t[2], Unquote(a)};
+                    } else if (t.size() >= 4 && t[0] == "default" && t[2] == "0") pin0[std::stoi(t[1])] = Unquote(t[3]);
+                    else if (t.size() >= 5 && t[0] == "data" && t[2] == "0") wired0.insert(std::stoi(t[1]));
+                } catch (...) {}
+            }
+            for (const auto& kv : nodes) {
+                const std::string& ty = kv.second.first;
+                if (ty != "RaiseEvent" && ty != "CallDispatcher" && ty != "BindEvent" && ty != "UnbindEvent") continue;
+                const bool w = wired0.count(kv.first) != 0;
+                auto d = pin0.find(kv.first);
+                info.uses.push_back({kv.first, ty, kv.second.second, !w && d != pin0.end() ? d->second : std::string(), w});
+            }
+            if (!info.events.empty() || !info.uses.empty()) infos.push_back(std::move(info));
+        }
+    }
+    auto graphsOf = [&](const std::string& objName) {
+        std::vector<const SceneGraphInfo*> v;
+        for (const auto& i : infos) if (i.object == objName) v.push_back(&i);
+        return v;
+    };
+    auto add = [&](const SceneGraphInfo& at, int node, const std::string& type, int severity, const std::string& msg) {
+        SceneGraphIssue si; si.object = at.object; si.graph = at.path; si.nodeType = type; si.issue = {severity, node, msg};
+        out.push_back(std::move(si));
+    };
+    // A node that names its target object: that object's graphs must declare the event.
+    for (const auto& gi : infos) {
+        for (const auto& u : gi.uses) {
+            if (u.targetName.empty() || u.targetName == "self") continue;
+            const bool isBind = u.type == "BindEvent" || u.type == "UnbindEvent";
+            std::string nm = FunctionNameOf(u.arg), handler;
+            if (isBind) ParseBindText(u.arg, nm, handler);
+            const bool wantDisp = u.type != "RaiseEvent";
+            const EventDecl* mine = FindEventDecl(gi.events, nm);
+            if (!mine) continue;   // the graph-level check already says so
+            const auto targets = graphsOf(u.targetName);
+            bool exists = false;
+            for (const auto& o : scene.Objects()) if (o && o->name == u.targetName) { exists = true; break; }
+            if (!exists) { add(gi, u.id, u.type, 1, "its Target '" + u.targetName + "' isn't an object in this scene (it may be spawned later)"); continue; }
+            bool found = false; std::string why;
+            for (const SceneGraphInfo* t : targets) {
+                const EventDecl* te = FindEventDecl(t->events, nm);
+                if (!te || te->dispatcher != wantDisp) continue;
+                if (EventSigCompatible(*mine, *te, &why)) { found = true; break; }
+            }
+            if (!found)
+                add(gi, u.id, u.type, 0, "'" + u.targetName + "' " + (why.empty() ? std::string("has no Visual Script that declares ") + (wantDisp ? "dispatcher" : "event") + " '" + nm + "'"
+                                                                                  : "declares " + std::string(wantDisp ? "dispatcher" : "event") + " '" + nm + "' differently than this graph (" + why + ")"));
+        }
+    }
+    // Two graphs declaring the same name with different parameters: values are converted or refused at run time.
+    std::map<std::string, const SceneGraphInfo*> firstOf;
+    for (const auto& gi : infos)
+        for (const auto& e : gi.events) {
+            auto it = firstOf.find(e.name);
+            if (it == firstOf.end()) { firstOf[e.name] = &gi; continue; }
+            const EventDecl* other = FindEventDecl(it->second->events, e.name);
+            std::string why;
+            if (other && it->second != &gi && (other->dispatcher != e.dispatcher || !EventSigCompatible(e, *other, &why)))
+                add(gi, -1, "", 1, std::string(e.dispatcher ? "dispatcher" : "event") + " '" + e.name + "' " + EventParamsText(e) + " is declared differently on '" +
+                                   it->second->object + "' " + EventParamsText(*other) + (why.empty() ? " (one is an event, the other a dispatcher)" : " (" + why + ")") +
+                                   ": a raise between them fits what it can and reports the rest");
+        }
+}
+} // namespace
+
 std::vector<SceneGraphIssue> ValidateSceneGraphs(const Scene& scene, const std::string& baseDir) {
     std::vector<SceneGraphIssue> out;
     for (const auto& up : scene.Objects()) {
@@ -1222,6 +1417,7 @@ std::vector<SceneGraphIssue> ValidateSceneGraphs(const Scene& scene, const std::
             }
         }
     }
+    CheckSceneEvents(scene, out);
     return out;
 }
 

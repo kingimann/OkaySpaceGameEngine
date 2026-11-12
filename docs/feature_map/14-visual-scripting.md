@@ -60,15 +60,16 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
   - 14.3.3 Lists, maps and structs - `VisualScript/NodesLoops`, `VisualScript/NodesLogic` - New List, Add, Insert, Set, Get, Find, Remove At / Item, Sort, Reverse, Clear, Copy, Length, Contains; maps with Clear, Count, Copy; New Struct / Get Field / Set Field; Make / Split Color; all objects with a tag
   - 14.3.4 Core flow nodes - `VisualScript/Nodes` - Branch, Sequence, Once, Repeat, Toggle, Flip Flop, Timer, Wait, Select, Chance
   - 14.3.5 Event entries - `VisualScript/Nodes`, `VisualScript/NodesWave4` - On Start, On Update, On Key, timers, custom events, collision and mouse entries
-- **Code:** `VisualScript/NodesFunctions`, `VisualScript/NodesLoops`, `VisualScript/Nodes`
-- **API:** node types `Function`, `Return`, `CallFunction`, `While`, `ForEach`, `Break`, `Continue`, `Branch`, `Sequence`
-- **Editor:** palette categories Flow, Events, Variables; Function node signature field
-- **Docs:** `docs/visual_scripting.md` ("Functions", "Loops, lists and variable scopes")
-- **Tests:** `visualscript`, `vs_acceptance`, `vs_debug` (stepping into and out of functions), `vs_wave4`
+  - 14.3.6 Typed events and dispatchers - `VisualScript/NodesEvents`, `VisualScript/VsEvents`, `VisualScript/VsDecl`, `editor/VsVariablePanel.hpp` - `event` and `dispatcher` lines with typed parameters; Raise Event, On Event Raised, Bind / Unbind / Call Dispatcher across objects; bindings dropped when either object or the scene goes; a 32-deep raise cap; handlers show in the debugger with who raised them; the sidebar's Custom events section
+- **Code:** `VisualScript/NodesFunctions`, `VisualScript/NodesLoops`, `VisualScript/Nodes`, `VisualScript/NodesEvents`, `VisualScript/VsEvents`
+- **API:** node types `Function`, `Return`, `CallFunction`, `While`, `ForEach`, `Break`, `Continue`, `Branch`, `Sequence`, `OnCustomEvent`, `RaiseEvent`, `CallDispatcher`, `BindEvent`, `UnbindEvent`; `vs::VsEventBindings`, `vs::NodeGraph::Events`, `VisualScriptComponent::RunTypedEvent`
+- **Editor:** palette categories Flow, Events, Variables; Function node signature field; sidebar Custom events (declare, rename, add / retype / remove parameters, add handler and raise nodes); event pickers on the nodes
+- **Docs:** `docs/visual_scripting.md` ("Functions", "Loops, lists and variable scopes", "Custom events with typed parameters, and dispatchers")
+- **Tests:** `visualscript`, `vs_acceptance`, `vs_debug` (stepping into and out of functions), `vs_wave4`, `vs_events` (declarations, typed delivery, ordering, bind / unbind, cleanup, reentrancy, Delay in a handler, debugger frames, checker, round trips, fuzz), `vs_editor_model` (event declarations in the editor)
 - **Status:** Works - implemented and covered, including stepping through function calls
 - **Open:** none found
 - **Related:** 14.4, 14.5, 14.2
-- **Words:** function node, call function, return, while loop, for each, break, continue, branch, if, sequence, list, local variable, timer, wait
+- **Words:** function node, call function, return, while loop, for each, break, continue, branch, if, sequence, list, local variable, timer, wait, typed event, event parameters, raise event, dispatcher, delegate, bind event, unbind event, event handler
 - **Seen as:** a loop never ends or runs once; a function returns nothing; a Wait node never resumes; a branch goes the wrong way
 - **Ask me like:** "work on 14.3.1, recursion limit for function nodes"; "my For Each runs forever"
 

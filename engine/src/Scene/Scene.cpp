@@ -1,6 +1,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
+#include "okay/VisualScript/VsEvents.hpp"
 #include "okay/Scripting/NextScriptVM.hpp"
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -46,6 +47,7 @@ Scene::Scene(std::string name) : m_name(std::move(name)) {
 Scene::~Scene() {   // its scene variables and script statics go with it
     DestroyAllLive();   // OnDisable / OnDestroy for what is still alive
     vs::ForgetSceneVariables(this);
+    vs::VsEventBindings::Get().ForgetScene(this);   // dispatcher bindings of its objects
     NextScriptVM::ForgetSceneStatics(this);
     ActionList::ForgetScene(this);
     ObjectPool::ForgetScene(Uid());   // the pools scripts made for this scene (ObjectPool::ForPrefab) go with it
@@ -189,6 +191,7 @@ void Scene::Clear() {
     if (m_busy > 0) { m_clearPending = true; return; }   // objects are in use right now: the end of the frame does it
     DestroyAllLive();   // OnDestroy for what the old scene still had running
     vs::ForgetSceneVariables(this);   // a fresh scene (another level loaded) starts with none
+    vs::VsEventBindings::Get().ForgetScene(this);   // ... and no dispatcher bindings
     NextScriptVM::ForgetSceneStatics(this);   // ... and script statics start again
     ActionList::ForgetScene(this);    // action-list variables too — they belong to this scene
     std::vector<std::function<void(bool)>> abandoned;   // callbacks of loads this Clear cancels

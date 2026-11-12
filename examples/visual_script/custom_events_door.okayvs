@@ -1,0 +1,20 @@
+# Door: handles the typed event Pulled(force, by), prints what it got, then calls its dispatcher Opened(angle)
+# so every object that bound a handler to it (see custom_events_light.okayvs) runs.
+event Pulled(Number force, Text by)
+dispatcher Opened(Number angle)
+
+node 1 OnCustomEvent Pulled
+entry OnCustomEvent:Pulled 1
+node 2 Format "Door: pulled by {0} with force {1}"
+node 3 Print
+node 4 Mul
+node 5 Const 10
+node 6 CallDispatcher Opened
+data 2 0 1 1
+data 2 1 1 0
+data 3 0 2 0
+data 4 0 1 0
+data 4 1 5 0
+data 6 1 4 0
+exec 1 0 3
+exec 3 0 6

@@ -4,6 +4,8 @@
 //
 //   decl <name> <Type> <object|scene|global> [<literal>]
 //   struct <Name> <field>:<Type>[=<literal>] ...
+//   event <Name>(<Type> <param>, ...)        a custom event with typed parameters
+//   dispatcher <Name>(<Type> <param>, ...)   an event other objects bind handlers to
 //
 // Types: Number, Bool, Text, Vector3, Color, Object, List<T>, Map<T>, Any, or a
 // struct's name. A literal is `1.5`, `true`, `"text"`, `(1, 2, 3)`, `#ff8800`
@@ -49,6 +51,39 @@ struct VarDecl {
     /// Back-compat spelling for code that read the old exposed values.
     VsValue& Value() { return value; }
 };
+
+/// A declared custom event (`event`) or dispatcher (`dispatcher`) and its typed parameters.
+struct EventParam { std::string name; VarType type; };
+struct EventDecl {
+    std::string name;
+    bool dispatcher = false;
+    std::vector<EventParam> params;
+};
+/// Most parameters one event may have, and most events a graph may declare.
+constexpr int kMaxEventParams = 32;
+constexpr int kMaxEventDecls = 1000;
+/// An `event` / `dispatcher` line split into its words, types not yet resolved
+/// (the editor keeps the text; the runtime resolves it against the structs).
+struct EventLine {
+    std::string name;
+    struct Param { std::string type, name; };
+    std::vector<Param> params;
+};
+/// Split `Name(Type a, Type b)`. False with `err` when the text is malformed
+/// (missing parentheses, a parameter without a type or name, a repeated or invalid
+/// name, more than kMaxEventParams).
+bool ParseEventLine(const std::string& rest, EventLine& out, std::string* err = nullptr);
+/// `Name(Type a, Type b)` for a declaration (the text a file line holds).
+std::string EventLineText(const EventLine& e);
+/// "(Number amount, Object who)" for messages.
+std::string EventParamsText(const EventDecl& e);
+const EventDecl* FindEventDecl(const std::vector<EventDecl>& events, const std::string& name);
+/// A Bind / Unbind node's text, `Dispatcher -> Handler` (a space also works): the dispatcher
+/// declared in this graph and the handler (a custom event or a function of this graph).
+bool ParseBindText(const std::string& text, std::string& dispatcher, std::string& handler);
+/// Do two declarations of the same event line up: same parameter count, and each pair of
+/// types can convert (so a value raised from one graph fits the other)? False with `why`.
+bool EventSigCompatible(const EventDecl& a, const EventDecl& b, std::string* why = nullptr);
 
 /// "Number", "Vector3", "List<Vector3>", "Enemy"...
 std::string VarTypeText(const VarType& t);

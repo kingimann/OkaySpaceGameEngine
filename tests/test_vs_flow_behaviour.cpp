@@ -191,6 +191,23 @@ std::string FlowDemoGraph() {
         b.E(seq, 0, a); b.E(seq, 1, bvar); on(seq);
     }
 
+    // Typed events: Start binds Cheer to the Done dispatcher, raises Ping(5) (its handler adds 5 to "pinged"),
+    // calls Done(7) (Cheer adds 7 to "cheered"), then unbinds and calls again (nothing more happens).
+    {
+        b.s += "event Ping(Number n)\ndispatcher Done(Number n)\n";
+        const int h = b.N("OnCustomEvent", "Ping");
+        const int addp = b.N("AddVar", "pinged");
+        b.D(addp, 0, h, 0); b.E(h, 0, addp); b.Entry("OnCustomEvent:Ping", h);
+        const int fn = b.N("FunctionStart", "\"Cheer(n: Number)\"");
+        const int addc = b.N("AddVar", "cheered");
+        b.D(addc, 0, fn, 0); b.E(fn, 0, addc);
+        const int bind = b.N("BindEvent", "\"Done -> Cheer\""), raise = b.N("RaiseEvent", "Ping");
+        const int call = b.N("CallDispatcher", "Done"), unbind = b.N("UnbindEvent", "\"Done -> Cheer\""), call2 = b.N("CallDispatcher", "Done");
+        b.D(raise, 1, b.Num(5)); b.D(call, 1, b.Num(7)); b.D(call2, 1, b.Num(7));
+        b.E(bind, 0, raise); b.E(raise, 0, call); b.E(call, 0, unbind); b.E(unbind, 0, call2);
+        on(bind);
+    }
+
     // What you watch while playing: every half second, Ticks and X go up.
     const int upd = b.N("OnUpdate");
     const int timer = b.N("Timer", "0.5");
@@ -253,7 +270,7 @@ void ExpectDemo(Scene& scene, const char* where) {
         CHECK(std::fabs(got - want) < 0.01f);
     };
     nearVal("loop", 3); nearVal("each", 30); nearVal("c", 3); nearVal("reps", 4);
-    nearVal("patha", 1); nearVal("pathb", 10); nearVal("gatev", 5); nearVal("don", 2);
+    nearVal("patha", 1); nearVal("pathb", 10); nearVal("pinged", 5); nearVal("cheered", 7); nearVal("gatev", 5); nearVal("don", 2);
     nearVal("oncev", 1); nearVal("ch", 4); nearVal("en", 2); nearVal("sw", 7); nearVal("ctr", 3);
     nearVal("cd", 1); nearVal("delayed", 1); nearVal("waited", 1); nearVal("brk", 3);
     nearVal("cont", 8); nearVal("fun", 8); nearVal("branched", 1); nearVal("seqa", 1); nearVal("seqb", 10);

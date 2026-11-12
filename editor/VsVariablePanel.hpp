@@ -7,6 +7,8 @@
 #include "okay/VisualScript/VsDecl.hpp"
 #include <cstdio>
 #include <cstring>
+#include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -36,9 +38,9 @@ inline const std::vector<std::string>& VsVarTypeChoices() {
 }
 
 /// A type picker: the fixed types, then the graph's structs. True when the choice changed.
-inline bool VsTypeCombo(const char* id, std::string& type, const std::vector<std::string>& structNames, bool structsToo) {
+inline bool VsTypeCombo(const char* id, std::string& type, const std::vector<std::string>& structNames, bool structsToo, float width = -1.0f) {
     bool changed = false;
-    ImGui::SetNextItemWidth(-1);
+    ImGui::SetNextItemWidth(width);
     if (ImGui::BeginCombo(id, type.c_str())) {
         for (const auto& t : VsVarTypeChoices())
             if (ImGui::Selectable(t.c_str(), type == t)) { type = t; changed = true; }
@@ -376,6 +378,177 @@ inline void VsDrawVariableDecls(Graph& g) {
         if (g.declareStruct(newStruct, &err)) { newStruct[0] = '\0'; msg.clear(); } else msg = err;
     }
     (void)newFieldType;
+}
+
+/// A dropdown of this graph's events (or dispatchers, `dispatchers` true) for a node's text field.
+/// `value` is the chosen name. True when it changed.
+template <class Graph>
+inline bool VsEventCombo(const Graph& g, const char* id, std::string& value, bool dispatchers, float width) {
+    bool changed = false;
+    ImGui::SetNextItemWidth(width);
+    const char* what = dispatchers ? "dispatcher" : "event";
+    const std::string preview = value.empty() ? std::string("(pick a ") + what + ")" : value;
+    if (ImGui::BeginCombo(id, preview.c_str())) {
+        bool any = false;
+        for (const auto& e : g.events) {
+            if (e.dispatcher != dispatchers) continue;
+            any = true;
+            std::string label = e.name + "(";
+            for (std::size_t i = 0; i < e.params.size(); ++i) label += (i ? ", " : "") + e.params[i].type + " " + e.params[i].name;
+            label += ")";
+            if (ImGui::Selectable(label.c_str(), e.name == value)) { value = e.name; changed = true; }
+        }
+        if (!any) ImGui::TextDisabled("None declared yet: add one under Events in the sidebar");
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+/// A Bind / Unbind node's text field: pick the dispatcher, then a handler (a custom event or a function).
+template <class Graph>
+inline bool VsBindCombos(const Graph& g, std::string& arg, float width, ImVec2 secondAt) {
+    using namespace okay::vs;
+    std::string disp, handler;
+    ParseBindText(arg, disp, handler);
+    bool changed = false;
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::BeginCombo("##bdisp", disp.empty() ? "(pick a dispatcher)" : disp.c_str())) {
+        bool any = false;
+        for (const auto& e : g.events) if (e.dispatcher) {
+            any = true;
+            if (ImGui::Selectable(e.name.c_str(), e.name == disp)) { disp = e.name; changed = true; }
+        }
+        if (!any) ImGui::TextDisabled("Declare a dispatcher under Events first");
+        ImGui::EndCombo();
+    }
+    ImGui::SetCursorScreenPos(secondAt);
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::BeginCombo("##bhandler", handler.empty() ? "(pick a handler)" : handler.c_str())) {
+        bool any = false;
+        for (const auto& e : g.events) if (!e.dispatcher) {
+            any = true;
+            if (ImGui::Selectable(("event  " + e.name).c_str(), e.name == handler)) { handler = e.name; changed = true; }
+        }
+        for (const auto& n : g.nodes) if (n.type == "FunctionStart") {
+            const std::string nm = FunctionNameOf(n.arg);
+            if (nm.empty()) continue;
+            any = true;
+            if (ImGui::Selectable(("function  " + nm).c_str(), nm == handler)) { handler = nm; changed = true; }
+        }
+        if (!any) ImGui::TextDisabled("Declare an event or add a Function node first");
+        ImGui::EndCombo();
+    }
+    if (changed) arg = disp + " -> " + handler;
+    return changed;
+}
+
+/// The Events section of the sidebar: declare events and dispatchers, edit their typed parameters.
+/// `onAdded(nodeId)` is told about a node the section created (to select it).
+template <class Graph>
+inline void VsDrawEventDecls(Graph& g, const std::function<void(int)>& onAdded = {}) {
+    using namespace okay::vs;
+    static std::string msg;
+    static char newName[64] = "";
+    static int newKind = 0;
+    static std::map<std::string, std::string> newParamName, newParamType;
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Custom events");
+    ImGui::Separator();
+    ImGui::TextWrapped("An event carries typed values. Raise Event runs the handlers (On Event Raised nodes) on this object or another one. "
+                       "A dispatcher lets other objects Bind one of their handlers to it; Call Dispatcher then runs every handler bound to it. "
+                       "Declare the same event in each graph that raises or handles it.");
+    std::vector<std::string> structNames;
+    for (const auto& st : g.structs) structNames.push_back(st.name);
+    int removeAt = -1;
+    for (std::size_t i = 0; i < g.events.size(); ++i) {
+        auto& e = g.events[i];
+        ImGui::PushID((int)i + 960000);
+        const std::string head = e.name + "  (" + std::string(e.dispatcher ? "dispatcher" : "event") + ", " + std::to_string(e.params.size()) +
+                                 (e.params.size() == 1 ? " parameter)" : " parameters)");
+        if (ImGui::TreeNodeEx("##evhead", ImGuiTreeNodeFlags_DefaultOpen, "%s", head.c_str())) {
+            char nb[64]; std::snprintf(nb, sizeof(nb), "%s", e.name.c_str());
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 28.0f);
+            if (ImGui::InputText("##evname", nb, sizeof(nb), ImGuiInputTextFlags_EnterReturnsTrue) || (ImGui::IsItemDeactivatedAfterEdit() && std::string(nb) != e.name)) {
+                std::string err; msg = g.renameEvent(i, nb, &err) ? "" : err;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The event's name. Press Enter to rename; the nodes that use it follow.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) removeAt = (int)i;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this declaration. Nodes that still name it are flagged by the checker.");
+            int removeParam = -1;
+            for (std::size_t k = 0; k < e.params.size(); ++k) {
+                ImGui::PushID((int)k);
+                char pb[64]; std::snprintf(pb, sizeof(pb), "%s", e.params[k].name.c_str());
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.38f);
+                if (ImGui::InputText("##pname", pb, sizeof(pb), ImGuiInputTextFlags_EnterReturnsTrue) || (ImGui::IsItemDeactivatedAfterEdit() && std::string(pb) != e.params[k].name)) {
+                    std::string err; msg = g.renameEventParam(i, k, pb, &err) ? "" : err;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Parameter name. Enter to rename.");
+                ImGui::SameLine();
+                std::string ty = e.params[k].type;
+                if (VsTypeCombo("##ptype", ty, structNames, true, ImGui::GetContentRegionAvail().x - 40.0f)) { std::string err; msg = g.setEventParamType(i, k, ty, &err) ? "" : err; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) removeParam = (int)k;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this parameter (its wires go, later pins move up).");
+                ImGui::PopID();
+            }
+            if (removeParam >= 0) g.removeEventParam(i, (std::size_t)removeParam);
+            std::string& pn = newParamName[e.name];
+            std::string& pt = newParamType.emplace(e.name, "Number").first->second;
+            char pbuf[64]; std::snprintf(pbuf, sizeof(pbuf), "%s", pn.c_str());
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::InputTextWithHint("##newp", "new parameter name", pbuf, sizeof(pbuf))) pn = pbuf;
+            VsTypeCombo("##newptype", pt, structNames, true);
+            if (ImGui::Button("+ Add parameter", ImVec2(-1, 0))) {
+                std::string err;
+                if (g.addEventParam(i, pt, pn, &err)) { pn.clear(); msg.clear(); } else msg = err;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a typed parameter at the end.");
+            const int uses = g.eventUseCount(e.name);
+            ImGui::TextDisabled("Used by %d node%s", uses, uses == 1 ? "" : "s");
+            auto addNode = [&](const char* type, const char* what) {
+                float y = 40.0f;
+                for (const auto& n : g.nodes) y = std::max(y, n.y + 150.0f);
+                const int id = g.add(type, 60.0f, y);
+                if (auto* n = g.find(id)) n->arg = e.name;
+                if (onAdded) onAdded(id);
+                msg = std::string("Added a ") + what + " node for '" + e.name + "' below the others.";
+            };
+            if (e.dispatcher) {
+                if (ImGui::SmallButton("+ Call node")) addNode("CallDispatcher", "Call Dispatcher");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a Call Dispatcher node for this dispatcher.");
+            } else {
+                if (ImGui::SmallButton("+ Handler node")) addNode("OnCustomEvent", "On Event Raised");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an On Event Raised node: its outputs are the parameters.");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("+ Raise node")) addNode("RaiseEvent", "Raise Event");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a Raise Event node: its inputs are the parameters.");
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+    if (removeAt >= 0) g.removeEvent((std::size_t)removeAt);
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("New event");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##newev", "name, e.g. Hit", newName, sizeof(newName));
+    ImGui::RadioButton("Event", &newKind, 0);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Handled with On Event Raised, raised with Raise Event.");
+    ImGui::SameLine();
+    ImGui::RadioButton("Dispatcher", &newKind, 1);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Other objects Bind handlers to it; Call Dispatcher runs them all.");
+    if (ImGui::Button("Add event##ev", ImVec2(-1, 0))) {
+        std::string err;
+        if (g.declareEvent(newName, newKind == 1, &err)) { newName[0] = '\0'; msg.clear(); } else msg = err;
+    }
+    if (!msg.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
+        ImGui::TextWrapped("%s", msg.c_str());
+        ImGui::PopStyleColor();
+    }
 }
 
 } // namespace okay::editor::vsed

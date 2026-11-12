@@ -16525,6 +16525,91 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "OnCustomEvent";
+        d.title = "On Event Raised";
+        d.description = "Runs when a Raise Event (from this or another graph) sends this declared event. Each output is one of the event's typed parameters; they only have values inside this handler. A Delay inside it keeps them. Other Name says who raised it.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Event Raised into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on event raised";
+        d.setting = "event name. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Event Raised finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "RaiseEvent";
+        d.title = "Raise Event";
+        d.description = "Runs the handlers of a declared event right now, on Target (empty = this object), with the typed parameters wired in. Handlers is how many ran. A value that doesn't fit a parameter's type is reported on this node and nothing is raised. A handler that raises the event that ran it stops after 32 levels with an error.";
+        d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Raise Event after an event such as On Start or On Update, and wire a value into Target.";
+        d.related = "";
+        d.keywords = "raise event";
+        d.setting = "event name. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Raise Event runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Raise Event finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Handlers", "Number", "What Raise Event produces on Handlers. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "CallDispatcher";
+        d.title = "Call Dispatcher";
+        d.description = "Runs every handler bound to a dispatcher (on Target, empty = this object), in the order they were bound, with the typed parameters wired in. Handlers is how many ran. Nobody bound = nothing runs, no error.";
+        d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Call Dispatcher after an event such as On Start or On Update, and wire a value into Target.";
+        d.related = "";
+        d.keywords = "call dispatcher";
+        d.setting = "dispatcher name. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Call Dispatcher runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Call Dispatcher finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Handlers", "Number", "What Call Dispatcher produces on Handlers. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "BindEvent";
+        d.title = "Bind to Dispatcher";
+        d.description = "Makes this object's handler (a custom event or a function of this graph, picked in the node) run whenever Owner's dispatcher is called. Binding twice is the same as once. The binding goes away when either object is destroyed or the scene unloads.";
+        d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Bind to Dispatcher after an event such as On Start or On Update, and wire a value into Owner.";
+        d.related = "";
+        d.keywords = "bind to dispatcher";
+        d.setting = "Dispatcher -> Handler. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Bind to Dispatcher runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Bind to Dispatcher finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Owner", "Object", "The Owner input of Bind to Dispatcher. It is an Object. Unwired, this is no object.", "no object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "UnbindEvent";
+        d.title = "Unbind Dispatcher";
+        d.description = "Stops this object's handler from running when Owner's dispatcher is called. Nothing happens if it wasn't bound.";
+        d.requirements = "No component is required. It changes the order of the flow. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Unbind Dispatcher after an event such as On Start or On Update, and wire a value into Owner.";
+        d.related = "";
+        d.keywords = "unbind dispatcher";
+        d.setting = "Dispatcher -> Handler. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Unbind Dispatcher runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Unbind Dispatcher finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Owner", "Object", "The Owner input of Unbind Dispatcher. It is an Object. Unwired, this is no object.", "no object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "Return";
         d.title = "Return";
         d.description = "Leaves the function that is running and goes back to whoever called it.";

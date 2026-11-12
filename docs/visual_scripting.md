@@ -12,6 +12,10 @@ node <id> <Type> [args...]   # declare a node with a file-local id
 exec <fromId> <pin> <toId>   # control flow: pin of <from> -> <to>
 data <consumerId> <inPin> <producerId> <outPin>   # value wire
 entry <name> <id>            # mark an entry node ("OnStart" / "OnUpdate")
+decl <name> <Type> <scope> [default]       # a typed variable (see Declared variables)
+struct <Name> <field>:<Type> ...           # a record type
+event <Name>(<Type> <param>, ...)          # a custom event with typed parameters (see Custom events)
+dispatcher <Name>(<Type> <param>, ...)     # an event other objects bind handlers to
 # comments start with '#'
 ```
 
@@ -946,6 +950,107 @@ values are written back to the graph file.
 - The editor refuses a wrong wire only for the pin's own type; a wrong element or struct field type shows in the Problems list instead.
 - Renaming a variable renames the nodes that use it in the open graph; other graphs that reach it by Get Object Var are not touched.
 
+## Custom events with typed parameters, and dispatchers
+
+*Send Event* and *Broadcast Event* (see "Fourth wave") send an event **name** and one untyped **Value**. A graph can now **declare**
+events with typed parameters, raise them on its own object or another, and let other objects **bind** handlers to a **dispatcher**.
+Send / Broadcast Event and *On Custom Event* are unchanged and keep working beside the new nodes.
+
+### What was already there, and what was added
+
+HAVE = it worked before, GAP = it did not.
+
+| Area | Before | Now |
+|---|---|---|
+| Name-based events | HAVE: Send Event (one object, or this one), Broadcast Event (every active object; also Actions lists and text scripts' `OnEvent_<name>`), On Custom Event with a **Value** output, Event Value / Event Name | Unchanged. They stay the way to reach text scripts and Actions lists, and for a loose "something happened" message |
+| Parameters | GAP: one untyped Value, a name that is only free text, never checked | `event Name(Type p, ...)` declares typed parameters (any declared type: Number, Bool, Text, Vector3, Color, Object, `List<T>`, `Map<T>`, a struct). Raise Event fits each value to its type (`"7"` to 7) and refuses a misfit |
+| Graphs defining events | GAP: an event existed only as a string that matched | Declared in the graph (file lines and the sidebar's **Custom events** section: add, rename, retype, remove; a rename and a removed parameter's pins follow the nodes) |
+| Handlers | HAVE: On Custom Event (one Value output, runs in the graph's own context) | **On Event Raised**: one typed output per parameter. Each handler runs as a call with its own frame: parameters are per call (nested raises don't overwrite them) and survive a Delay |
+| Bind / unbind at run time | GAP | **Bind to Dispatcher** / **Unbind Dispatcher**: a handler (a custom event or a function of the binding graph) on another object's dispatcher; binding twice is once; at most 256 listeners per dispatcher and 1024 bindings per object |
+| Dispatchers | GAP | `dispatcher Name(Type p, ...)` on the owning graph; **Call Dispatcher** runs every bound handler in the order they were bound and reports how many ran |
+| Cross-graph | HAVE by name only (Send Event Target, untyped, no error if nothing listened) | Raise Event / Call Dispatcher / Bind / Unbind take an object by reference (**Target** / **Owner**: Find Object, Get Object Var, Self...). A target with no graph that declares the event is an error on the node |
+| Cleanup | n/a | Bindings hold object ids only. Destroying the listener or the owner drops its bindings at once; clearing or destroying the scene drops all of them; a call never reaches a destroyed object |
+| Reentrancy | HAVE: Send Event chain cap of 64, dropped with a log line | Typed events and dispatchers share a depth cap of 32 raises in a row; the 33rd is refused with an error **on the raising node**; the stack unwinds normally |
+| Checker | GAP: nothing | Undeclared / wrong kind of name, wires of the wrong type into parameters (and from handler outputs), wires to parameters that no longer exist, a handler's parameters read outside it, Bind to something that isn't a dispatcher or doesn't fit it (count and types, functions included), a handler with no On Event node. **Scene check:** a named Target whose graphs don't declare the event, or declare it differently, and two graphs declaring the same name with different parameters |
+| Debugger | HAVE for functions and the event name | The call stack shows each handler as `event Name (event handler)` or `Name (bound function)` with **who raised it** (the node id, the object and its graph file); the watch panel shows its parameters by name; breakpoints work on any node in a handler, in whichever graph it runs |
+| Serialization | HAVE: graph text is scene / prefab data | The `event` / `dispatcher` lines are part of the graph text, so scenes, prefabs (and their overrides) and the editor's save keep them. Bindings are run-time state, not saved: the Bind nodes (usually in On Start) make them again, and binding twice is harmless |
+| Editor | GAP | Sidebar **Custom events** section, event pickers on the nodes, **+ Handler node** / **+ Raise node** / **+ Call node** buttons that add and select a node, parameter pins coloured by type |
+
+### Declaring and raising an event
+
+```
+event Hit(Number amount, Object who)
+dispatcher Died(Number code)
+```
+
+In the Visual Script window's sidebar, **Custom events**: type a name, pick **Event** or **Dispatcher**, press **Add event**; then
+add parameters with a name and a type (**+ param**). The same event is declared in every graph that raises or handles it, each in its own file;
+the checker compares them across a scene.
+
+- **On Event Raised** (`OnCustomEvent`, text: the event): an entry node. Its outputs are the parameters. They have values only inside the
+  handler (the checker flags reading them elsewhere); **Other Name** gives the object that raised it. Several handler nodes for one event all run, in
+  the order they were added.
+- **Raise Event** (`RaiseEvent`, text: the event; inputs **Target** (empty = this object) and one per parameter; out **Handlers**): runs the handlers *now*,
+  depth first: a handler that raises another event lets that one finish before it carries on. An unwired parameter is its type's default.
+  A value that can't fit its type is reported on this node (`parameter 1 'amount' of 'Hit' needs a Number: ...`) and nothing is raised; the chain goes on.
+  The target's own declaration of the event decides what its handlers receive, so a graph that declares a parameter as Text gets `"7"` for a Number 7.
+  A target object with no Visual Script that declares the event is an error on the node (`'Door' has no Visual Script that declares event 'Hit'`).
+- If the target has an event declared but no On Event Raised node, nothing runs and that is not an error: the declaration is the contract.
+
+### Dispatchers and binding
+
+A dispatcher is an event other objects subscribe to. The owner declares `dispatcher Died(Number code)` and calls it with **Call Dispatcher**; a listener
+declares the same dispatcher (so its Bind node and handler are type-checked) and **Binds** a handler:
+
+- **Bind to Dispatcher** (`BindEvent`, text `Died -> Mourn`; input **Owner**, empty = this object): the handler is a custom event **or a function** of the
+  binding graph. The binder is the object the node runs on. The node errors (and binds nothing) when the owner has no graph declaring that dispatcher, declares it
+  with other parameter types or a different count, the handler isn't an event or function of this graph, or its parameters don't fit.
+- **Unbind Dispatcher** (`UnbindEvent`): removes it. Unbinding what isn't bound, or from an owner that is gone, does nothing.
+- **Call Dispatcher** (`CallDispatcher`; inputs **Target** (the owner, empty = this object) and the parameters; out **Handlers**): runs the bindings in bind order. Every
+  listener gets the parameters fitted to *its* declaration; one that doesn't fit is reported and skipped, the rest still run. Nobody bound is fine.
+
+Cleanup is automatic: destroying the listener or the owner removes the bindings, as does clearing or destroying the scene (the table holds ids, never pointers, and a call
+looks the listener up again, so it can't reach a destroyed object). A handler may Bind or Unbind (even itself) while a call runs: the call works from a snapshot.
+
+### Reentrancy, errors and limits
+
+- Raise Event and Call Dispatcher share one depth counter. 32 nested raises in a row is the cap; the next is refused with an error on the raising node
+  (`'Again' was sent more than 32 deep in a row (a handler that raises the event that ran it?); this one was skipped`).
+- A handler runs with the graph's usual budgets (steps and reads per event), so a runaway loop inside it is stopped the same way as anywhere else.
+- A Delay in a handler parks that chain with its parameters; a second raise of the same event while the Delay waits is ignored by that Delay node (a Delay already counting down), like any Delay.
+  A graph reloaded while a handler is parked keeps the Delay but loses the parameters: they read 0 with an error on the node.
+- Functions bound as handlers run as a call from outside: they get the parameters, may call other functions, and their return values are dropped.
+
+### In the file
+
+```
+event Hit(Number amount, Text who)
+dispatcher Died(Number code)
+node 1 OnCustomEvent Hit
+entry OnCustomEvent:Hit 1
+node 2 RaiseEvent Hit
+default 2 0 "Door"           # Target: an object by name (or wire an object into pin 0)
+default 2 1 3                # parameter 1
+node 3 BindEvent "Died -> Mourn"
+default 3 0 "Boss"
+```
+
+`event` and `dispatcher` lines go anywhere. Parameters are `Type name` separated by commas; at most 32 per event and 1000 declarations per graph. A malformed line
+refuses the whole graph with its line number, like a bad `decl`. Pins: On Event Raised outputs are the parameters in order; Raise Event / Call Dispatcher inputs are
+**Target** then the parameters; Bind / Unbind have **Owner**.
+
+An example is three graphs for three objects named Lever, Door and Light: `examples/visual_script/custom_events_lever.okayvs` raises a typed `Pulled(Number force, Text by)`
+event on the Door, `custom_events_door.okayvs` handles it, prints the parameters and calls its own `Opened(Number angle)` dispatcher, and `custom_events_light.okayvs` bound a
+function to that dispatcher when it started. `vs_events` loads the three on three objects, plays them and checks every printed line; the checker finds nothing to say about any of them.
+
+### Known limits
+
+- Events must be declared in the raising graph and in the handling graph (each file has its own copy); there is no shared event file yet. The scene checker compares them.
+- A binding is made by a node at run time; there is no editor UI that binds in the scene without a graph, and bindings aren't saved.
+- Delivery is immediate and depth first: there is no queued ("send at the end of the frame") raise, and no priority between listeners (bind order).
+- Handlers of the same event on different graphs of one object all run; the order between graphs follows the object's component order.
+- Reading a handler's parameters after the graph was hot-reloaded while the handler was parked on a Delay reads 0 with an error.
+
 ## Tweens, springs and eases
 
 Seven node types shape motion with the engine's tween, spring and ease code (the same code behind the script
@@ -1106,6 +1211,7 @@ Script-binding nodes are the generated list in [engine_api.md](engine_api.md): o
 - **On Trigger Exit** (`OnTriggerExit`)
 - **On Animation Marker** (`OnAnimEvent`) — was On Anim Event; setting: event (blank = any)
 - **On Message** (`OnEvent`) — was On Custom Event; out Value; setting: event name
+- **On Event Raised** (`OnCustomEvent`) — a declared event's handler; one output per typed parameter; setting: event
 - **On Object Placed** (`OnObjectPlaced`)
 - **On Object Removed** (`OnObjectRemoved`)
 - **On Signal** (`OnLogicSignal`) — was On Logic Signal
@@ -1152,6 +1258,10 @@ Script-binding nodes are the generated list in [engine_api.md](engine_api.md): o
 - **Define Function** (`FunctionStart`) — was Function
 - **Return** (`Return`)
 - **Call Function** (`CallFunction`)
+- **Raise Event** (`RaiseEvent`) — runs a declared event's handlers now; in Target and the typed parameters; out Handlers; setting: event
+- **Call Dispatcher** (`CallDispatcher`) — runs every handler bound to a dispatcher; in Target and the parameters; out Handlers; setting: dispatcher
+- **Bind to Dispatcher** (`BindEvent`) — in Owner; setting: `Dispatcher -> Handler`
+- **Unbind Dispatcher** (`UnbindEvent`) — in Owner; setting: `Dispatcher -> Handler`
 - **While** (`While`) — in Condition
 - **For Each** (`ForEach`) — in List; out Item, Index
 - **For Each Map** (`ForEachMap`) — in Map; out Key, Value

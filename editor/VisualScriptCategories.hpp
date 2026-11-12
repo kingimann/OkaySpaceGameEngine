@@ -259,13 +259,14 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsIs(type, "OnLanguageChanged")) return VsAt("Text", "Language");
     if (VsIs(type, "OnObjectPlaced") || VsIs(type, "OnObjectRemoved") || VsIs(type, "OnLogicSignal")) return VsAt("Scene");
     if (VsIs(type, "OnStart") || VsIs(type, "OnUpdate") || VsIs(type, "OnLateUpdate") || VsIs(type, "OnEnable") ||
-        VsIs(type, "OnDisable") || VsIs(type, "OnDestroy") || VsIs(type, "OnEvent")) return VsAt("Events");
+        VsIs(type, "OnDisable") || VsIs(type, "OnDestroy") || VsIs(type, "OnEvent") || VsIs(type, "OnCustomEvent")) return VsAt("Events");
     // Flow
     if (VsIs(type, "Timer") || VsIs(type, "Wait") || VsIs(type, "Delay") || VsIs(type, "Cooldown") || VsIs(type, "EveryN"))
         return VsAt("Flow", "Timing");
     if (VsIs(type, "ForLoop") || VsIs(type, "Repeat") || VsIs(type, "While") || VsIs(type, "ForEach") ||
         VsIs(type, "Break") || VsIs(type, "Continue")) return VsAt("Flow", "Loops");
     if (VsIs(type, "FunctionStart") || VsIs(type, "Return") || VsIs(type, "CallFunction")) return VsAt("Flow", "Functions");
+    if (VsIs(type, "RaiseEvent") || VsIs(type, "CallDispatcher") || VsIs(type, "BindEvent") || VsIs(type, "UnbindEvent")) return VsAt("Events");
     if (VsIs(type, "Branch") || VsIs(type, "Sequence") || VsIs(type, "Once") || VsIs(type, "FlipFlop") ||
         VsIs(type, "Gate") || VsIs(type, "DoN") || VsIs(type, "SwitchInt") || VsIs(type, "ChanceBranch") ||
         VsIs(type, "Counter") || VsIs(type, "Action") || VsIs(type, "Actions") ||

@@ -7,6 +7,7 @@
 #include "okay/VisualScript/NodesLoops.hpp"
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/VisualScript/NodesWave4.hpp"
+#include "okay/VisualScript/NodesEvents.hpp"
 #include "okay/VisualScript/NodesBuild.hpp"
 #include "okay/VisualScript/NodesInventory.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
@@ -225,6 +226,126 @@ void NodeGraph::CancelSuspended() {
     for (int id : m_suspended)
         if (VsNode* n = Node(id)) n->OnSuspendRejected();
     m_suspended.clear();
+    m_parked.clear();
+}
+
+void NodeGraph::Resume(VsContext& ctx) {
+    if (m_suspended.empty()) return;
+    std::vector<int> ids; ids.swap(m_suspended);
+    const std::string prevEvent = m_event;
+    m_event = "(continuing after a wait)";
+    for (int id : ids) {
+        auto it = m_parked.find(id);
+        if (it == m_parked.end()) { Run(id, ctx, true); continue; }
+        // A chain that paused inside an event handler / bound function: its frames come back while it runs.
+        std::vector<Frame> frames = std::move(it->second);
+        m_parked.erase(it);
+        const std::size_t depth = m_frames.size();
+        const std::size_t before = m_suspended.size();
+        for (Frame& f : frames) m_frames.push_back(f);
+        Run(id, ctx, true);
+        if (m_suspended.size() > before && m_frames.size() > depth) {   // paused again: keep the frames as they are now
+            std::vector<Frame> keep(m_frames.begin() + (long)depth, m_frames.end());
+            for (std::size_t i = before; i < m_suspended.size(); ++i) m_parked[m_suspended[i]] = keep;
+        }
+        if (m_frames.size() > depth) m_frames.resize(depth);
+    }
+    m_event = prevEvent;
+}
+
+void NodeGraph::RunFramed(Frame frame, int start, VsContext& ctx) {
+    frame.handler = true;
+    const std::size_t depth = m_frames.size();
+    const std::size_t before = m_suspended.size();
+    m_frames.push_back(std::move(frame));
+    Run(start, ctx);
+    if (m_suspended.size() > before && m_frames.size() > depth) {   // a Delay inside: keep the frames for when it resumes
+        std::vector<Frame> keep(m_frames.begin() + (long)depth, m_frames.end());
+        for (std::size_t i = before; i < m_suspended.size(); ++i) m_parked[m_suspended[i]] = keep;
+    }
+    if (m_frames.size() > depth) m_frames.resize(depth);
+}
+
+int NodeGraph::RunEventHandlers(const std::string& name, const std::vector<VsValue>& args, VsContext& ctx, const std::string& origin) {
+    const std::vector<int> ids = Entries(EventEntryName(name));   // a copy: a handler could reload the graph
+    if (ids.empty()) return 0;
+    const std::string prevEvent = m_event;
+    m_event = "event " + name;
+    int ran = 0;
+    for (int id : ids) {
+        if (m_abort) break;
+        if ((int)m_frames.size() >= kMaxCallDepth + kMaxEventDepth) {
+            ReportError(Node(id), ctx, "event '" + name + "' handlers are nested too deep; the handler was skipped");
+            break;
+        }
+        Frame f;
+        f.name = "event:" + name;
+        f.args = args;
+        f.origin = origin;
+        RunFramed(std::move(f), id, ctx);
+        ++ran;
+    }
+    m_event = prevEvent;
+    return ran;
+}
+
+bool NodeGraph::RunFunctionAsHandler(const std::string& fn, const std::vector<VsValue>& args, VsContext& ctx, const std::string& origin, std::string* err) {
+    const int start = FunctionNode(fn);
+    if (start < 0) { if (err) *err = "there's no function named '" + fn + "' in the listening graph"; return false; }
+    if ((int)m_frames.size() >= kMaxCallDepth + kMaxEventDepth) {
+        if (err) *err = "function '" + fn + "' was reached through bound events nested too deep";
+        return false;
+    }
+    const std::string prevEvent = m_event;
+    m_event = "bound function " + fn;
+    Frame f;
+    f.name = fn;
+    f.args = args;
+    f.origin = origin;
+    RunFramed(std::move(f), start, ctx);
+    m_event = prevEvent;
+    return true;
+}
+
+const VsValue* NodeGraph::EventArg(const std::string& name, int i) const {
+    const std::string key = "event:" + name;
+    for (std::size_t k = m_frames.size(); k-- > 0;) {
+        if (m_frames[k].name != key) continue;
+        return i >= 0 && i < (int)m_frames[k].args.size() ? &m_frames[k].args[(std::size_t)i] : nullptr;
+    }
+    return nullptr;
+}
+
+bool NodeGraph::FitEventArgs(const EventDecl& e, std::vector<VsValue>& args, std::string* err) const {
+    if (args.size() != e.params.size()) {
+        if (err) *err = "'" + e.name + "' takes " + std::to_string(e.params.size()) + " parameter" + (e.params.size() == 1 ? "" : "s") +
+                        " " + EventParamsText(e) + " but " + std::to_string(args.size()) + " " + (args.size() == 1 ? "was" : "were") + " given";
+        return false;
+    }
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        std::string why;
+        if (!VsCoerce(e.params[i].type, args[i], m_structs, &why)) {
+            if (err) *err = "parameter " + std::to_string(i + 1) + " '" + e.params[i].name + "' of '" + e.name + "' needs a " +
+                            VarTypeText(e.params[i].type) + ": " + why;
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<NodeGraph::DebugFrame> NodeGraph::DebugFrames() const {
+    std::vector<DebugFrame> out;
+    for (const Frame& f : m_frames) {
+        DebugFrame d{f.name, f.args, f.locals, f.origin, f.handler, {}};
+        if (f.name.rfind("event:", 0) == 0) {
+            d.name = "event " + f.name.substr(6);
+            if (const EventDecl* e = FindEvent(f.name.substr(6))) for (const auto& p : e->params) d.paramNames.push_back(p.name);
+        } else if (auto* fs = dynamic_cast<FunctionStartNode*>(Node(FunctionNode(f.name)))) {
+            for (const auto& p : fs->sig.params) d.paramNames.push_back(p.name);
+        }
+        out.push_back(std::move(d));
+    }
+    return out;
 }
 
 void NodeGraph::CaptureFlow(std::vector<VsFlowRecord>& flows, std::vector<int>& suspendedFileIds) const {
@@ -404,7 +525,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (const auto colon = type.find(':'); colon != std::string::npos && colon + 1 < type.size()) {
         const std::string base = type.substr(0, colon);
         if (base == "OnKey" || base == "OnKeyUp" || base == "OnTimer" || base == "OnEvent" || base == "OnAnimEvent" ||
-            base == "OnNetRpc" || base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
+            base == "OnNetRpc" || base == "OnCustomEvent" || base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
             std::vector<std::string> a{type.substr(colon + 1)};
             a.insert(a.end(), args.begin(), args.end());
             return MakeNode(base, a, err);
@@ -713,6 +834,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "Return")        return std::make_unique<ReturnNode>(FunctionNameOf(text));
         return std::make_unique<CallFunctionNode>(FunctionNameOf(text));
     }
+    if (type == "OnCustomEvent" || type == "RaiseEvent" || type == "CallDispatcher" || type == "BindEvent" || type == "UnbindEvent") {
+        std::string text;   // an event name (or `Dispatcher -> Handler`) may be typed with spaces
+        for (const auto& a : args) { if (!text.empty()) text += ' '; text += a; }
+        return MakeEventNode(type, text);
+    }
     if (type == "SetLocal")       return std::make_unique<SetLocalNode>(argOr("x"));
     // Loops, lists, scene / global variables (NodesLoops.hpp).
     if (type == "While")          return std::make_unique<WhileNode>();
@@ -1018,6 +1144,8 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
     std::vector<PendingStruct> pendingStructs;
     struct PendingDecl { int line; VarDecl d; std::string type, lit; bool hasLit; };
     std::vector<PendingDecl> pendingDecls;
+    struct PendingEvent { int line; bool dispatcher; std::string rest; };
+    std::vector<PendingEvent> pendingEvents;
 
     std::istringstream in(text);
     std::string line;
@@ -1127,6 +1255,12 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
                 if (other.d.name == name && other.d.scope == d.scope) return fail("variable '" + name + "' is declared twice");
             if (pendingDecls.size() >= 2000) return fail("a graph can declare at most 2000 variables");
             pendingDecls.push_back({lineNo, d, type, lit, tok.size() > 4 && !lit.empty()});   // a blank default = the type's default
+        } else if (kind == "event" || kind == "dispatcher") {
+            // event Name(Type param, ...) / dispatcher Name(Type param, ...): a custom event with typed parameters.
+            std::string rest;
+            for (std::size_t i = 1; i < tok.size(); ++i) { if (i > 1) rest += ' '; rest += tok[i]; }
+            if (pendingEvents.size() >= (std::size_t)kMaxEventDecls) return fail("a graph can declare at most " + std::to_string(kMaxEventDecls) + " events");
+            pendingEvents.push_back({lineNo, kind == "dispatcher", rest});
         } else if (kind == "pos" || kind == "comment") {
             // Editor layout (node positions, comment frames): nothing to run.
         } else {
@@ -1178,6 +1312,21 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         }
     }
 
+    for (const auto& pe : pendingEvents) {
+        lineNo = pe.line;
+        const char* what = pe.dispatcher ? "dispatcher" : "event";
+        EventLine el; std::string perr;
+        if (!ParseEventLine(pe.rest, el, &perr)) return fail(std::string(what) + ": " + perr);
+        if (graph->FindEvent(el.name)) return fail("there's already an event or dispatcher named '" + el.name + "'");
+        EventDecl ed; ed.name = el.name; ed.dispatcher = pe.dispatcher;
+        for (const auto& p : el.params) {
+            EventParam ep; ep.name = p.name;
+            if (!ParseVarType(p.type, graph->Structs(), ep.type, &perr)) return fail(std::string(what) + " " + el.name + ", parameter " + p.name + ": " + perr);
+            ed.params.push_back(std::move(ep));
+        }
+        graph->AddEvent(std::move(ed));
+    }
+
     // Each end resolves on its own: a bad first end isn't hidden by a good second one.
     auto resolve = [&](int fileId, bool& ok) {
         auto it = fileToGraph.find(fileId);
@@ -1205,6 +1354,9 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         if (!ok) return fail("entry references unknown node");
         graph->SetEntry(en.name, n);
     }
+    // An On Event handler node is its event's entry even when the file has no `entry` line for it.
+    for (const auto& node : graph->m_nodes)
+        if (auto* h = dynamic_cast<OnCustomEventNode*>(node.get())) graph->SetEntry(EventEntryName(h->name), node->id);
     // Old Switch (name) / Switch (cases) files put Default on pin 4. Fewer than
     // four cases now put Default on the pin just after the last case.
     for (const auto& node : graph->m_nodes) {

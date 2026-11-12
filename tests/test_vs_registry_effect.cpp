@@ -553,6 +553,8 @@ static std::vector<Ev> BuildEvents() {
     for (const char* t : {"OnObjectPlaced", "OnObjectRemoved", "OnLogicSignal", "OnCheatDetected", "OnValidateRpc", "OnValidateHit", "OnLanguageChanged"})
         e.push_back({t, "", "bus", "Me", raise(t, "")});
     e.push_back({"OnNetRpc", "ping", "bus", "Me", raise("OnNetRpc", "ping")});
+    // A declared event is run by the delivery call Raise Event and Call Dispatcher use.
+    e.push_back({"OnCustomEvent", "Ping", "bus", "Me", [](Scene&, GameObject*, VC* vc) { vc->RunTypedEvent("Ping", {}, nullptr, "test"); }});
     return e;
 }
 

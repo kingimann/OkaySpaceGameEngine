@@ -447,10 +447,105 @@ int main() {
         for (const auto& i : vs::ValidateGraphText(g.toText())) CHECK(i.severity != 0);   // no errors
     }
 
+    // ---- Custom events: declared in the editor model, pins follow, renames follow the nodes, save round trips ----
+    {
+        VsEditGraph g; std::string err;
+        CHECK(g.declareEvent("Hit", false, &err));
+        CHECK(g.declareEvent("Died", true, &err));
+        CHECK(!g.declareEvent("Hit", false, &err) && err.find("already") != std::string::npos);
+        CHECK(!g.declareEvent("Died", false, &err));                       // a dispatcher already has the name
+        CHECK(!g.declareEvent("9x", false, &err) && !g.declareEvent("", false, &err) && !g.declareEvent("a b", false, &err));
+        CHECK(g.addEventParam(0, "Number", "amount", &err) && g.addEventParam(0, "Text", "who", &err) && g.addEventParam(0, "Vector3", "at", &err));
+        CHECK(!g.addEventParam(0, "Number", "amount", &err) && err.find("already") != std::string::npos);
+        CHECK(!g.addEventParam(0, "Banana", "z", &err));
+        CHECK(!g.addEventParam(0, "Number", "1bad", &err));
+        CHECK(g.addEventParam(1, "Number", "code", &err));
+        CHECK(g.declError().empty() && g.eventDecls().size() == 2 && g.eventDecls()[0].params.size() == 3);
+        // pins come from the declaration
+        const int onEv = g.add("OnCustomEvent", 0, 0), raise = g.add("RaiseEvent", 0, 100), call = g.add("CallDispatcher", 0, 200);
+        g.find(onEv)->arg = "Hit"; g.find(raise)->arg = "Hit"; g.find(call)->arg = "Died";
+        const VsDef* de = VsDefFor(g, *g.find(onEv));
+        CHECK(de && de->dataOut.size() == 3 && std::string(de->dataOut[0]) == "amount" && std::string(de->dataOut[2]) == "at" && de->execOut.size() == 1 && !de->execIn);
+        const VsDef* dr = VsDefFor(g, *g.find(raise));
+        CHECK(dr && dr->dataIn.size() == 4 && std::string(dr->dataIn[0]) == "Target" && std::string(dr->dataIn[1]) == "amount" && dr->execIn);
+        CHECK(VsDefFor(g, *g.find(call))->dataIn.size() == 2);
+        CHECK(VsOutPinType(g, onEv, 0) == vs::PinType::Number && VsOutPinType(g, onEv, 1) == vs::PinType::Text && VsOutPinType(g, onEv, 2) == vs::PinType::Vec3);
+        CHECK(VsInPinType(g, raise, 0) == vs::PinType::Object && VsInPinType(g, raise, 1) == vs::PinType::Number && VsInPinType(g, raise, 3) == vs::PinType::Vec3);
+        // wires: a Text output can't feed the Number parameter, a Number can
+        const int cn = g.add("Const", 0, 0), cv = g.add("MakeVec3", 0, 0);
+        g.find(cn)->arg = "5";
+        CHECK(VsWireOk(g, raise, 1, cn, 0));
+        CHECK(!VsWireOk(g, raise, 1, cv, 0));                              // Vector3 into Number
+        CHECK(VsWireOk(g, raise, 3, cv, 0));
+        CHECK(!VsWireOk(g, raise, 1, onEv, 1));                            // Text (who) into Number (amount)
+        CHECK(VsWireOk(g, raise, 2, onEv, 0));                             // Number into Text: converts
+        // the file keeps the lines and the nodes' entries, and reads back the same
+        g.linkExec(onEv, 0, raise);
+        const std::string text = g.toText();
+        CHECK(text.find("event Hit(Number amount, Text who, Vector3 at)\n") != std::string::npos);
+        CHECK(text.find("dispatcher Died(Number code)\n") != std::string::npos);
+        CHECK(text.find("entry OnCustomEvent:Hit ") != std::string::npos);
+        VsEditGraph back; back.fromText(text);
+        CHECK(back.events.size() == 2 && back.events[0].params.size() == 3 && back.events[1].dispatcher && back.events[0].params[1].type == "Text");
+        CHECK(back.toText() == text);
+        std::string perr;
+        auto parsed = vs::NodeGraph::Parse(text, &perr);
+        CHECK(parsed && parsed->Events().size() == 2 && parsed->Entries("OnCustomEvent:Hit").size() == 1);
+        // rename: the nodes that use it follow (handler, raise, bind text), others stay
+        const int bind = g.add("BindEvent", 0, 0), other = g.add("RaiseEvent", 0, 0);
+        g.find(bind)->arg = "Died -> Hit"; g.find(other)->arg = "Hit2";
+        CHECK(g.eventUseCount("Hit") == 3 && g.eventUseCount("Died") == 2);
+        CHECK(g.renameEvent(0, "Damaged", &err));
+        CHECK(g.find(onEv)->arg == "Damaged" && g.find(raise)->arg == "Damaged" && g.find(bind)->arg == "Died -> Damaged" && g.find(other)->arg == "Hit2");
+        CHECK(g.renameEvent(1, "Gone", &err) && g.find(call)->arg == "Gone" && g.find(bind)->arg == "Gone -> Damaged");
+        CHECK(!g.renameEvent(1, "Damaged", &err) && !g.renameEvent(1, "bad name", &err));
+        CHECK(g.toText().find("entry OnCustomEvent:Damaged ") != std::string::npos);
+        // rename a parameter keeps its pin; removing one drops its wires and moves later pins up, on the handler and the raisers
+        const int sink0 = g.add("Print", 0, 0), sink2 = g.add("Print", 0, 0);
+        g.linkData(sink0, 0, onEv, 0); g.linkData(sink2, 0, onEv, 2);
+        g.find(raise)->pinDefault[3] = "(1, 2, 3)";
+        g.linkData(raise, 1, cn, 0);
+        CHECK(g.renameEventParam(0, 1, "name", &err) && g.events[0].params[1].name == "name");
+        CHECK(!g.renameEventParam(0, 1, "amount", &err));
+        g.removeEventParam(0, 0);                                           // drop "amount"
+        CHECK(g.events[0].params.size() == 2 && g.events[0].params[0].name == "name");
+        bool sink0Gone = true, sink2Moved = false, rWireGone = true;
+        for (const auto& l : g.dataLinks) {
+            if (l.consumer == sink0) sink0Gone = false;
+            if (l.consumer == sink2 && l.producer == onEv && l.outPin == 1) sink2Moved = true;
+            if (l.consumer == raise && l.producer == cn) rWireGone = false;
+        }
+        CHECK(sink0Gone && sink2Moved && rWireGone);
+        CHECK(g.find(raise)->pinDefault.count(2) == 1 && g.find(raise)->pinDefault.count(3) == 0);   // the typed value moved with its pin
+        // changing a parameter's type changes its pin
+        CHECK(g.setEventParamType(0, 0, "Number", &err) && VsOutPinType(g, onEv, 0) == vs::PinType::Number);
+        CHECK(!g.setEventParamType(0, 0, "Banana", &err));
+        // removing the declaration leaves the nodes (the checker flags them)
+        g.removeEvent(0);
+        CHECK(g.events.size() == 1 && g.find(onEv) != nullptr && g.eventUseCount("Damaged") == 3);
+        bool flagged = false;
+        for (const auto& i : vs::ValidateGraphText(g.toText())) if (i.severity == 0 && i.message.find("no event named 'Damaged'") != std::string::npos) flagged = true;
+        CHECK(flagged);
+        // the editor's own graph drives a real run: a handler's typed output reaches a variable
+        VsEditGraph r; r.declareEvent("Ping", false); r.addEventParam(0, "Number", "n");
+        const int st = r.add("OnStart", 0, 0), rs = r.add("RaiseEvent", 0, 0), h = r.add("OnCustomEvent", 0, 0), sv = r.add("SetVar", 0, 0);
+        r.find(rs)->arg = "Ping"; r.find(h)->arg = "Ping"; r.find(sv)->arg = "got"; r.find(rs)->pinDefault[1] = "41";
+        r.linkExec(st, 0, rs); r.linkExec(h, 0, sv); r.linkData(sv, 0, h, 0);
+        CHECK(RunVar(r.toText(), "got").s == "41");
+        for (const auto& i : vs::ValidateGraphText(r.toText())) CHECK(i.severity != 0);
+        // the node registry knows the new nodes (palette entry, friendly name, level, category, docs)
+        for (const char* t : {"OnCustomEvent", "RaiseEvent", "CallDispatcher", "BindEvent", "UnbindEvent"}) {
+            CHECK(FindDef(t) != nullptr);
+            CHECK(FindVsName(t) != nullptr);
+            CHECK(okay::vs::SignatureFor(t) != nullptr);
+            CHECK(VsNodeDocFor(t) != nullptr);
+        }
+    }
+
+
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }
-
 namespace {
 VsValueStr RunVar(const std::string& text, const char* var, std::string* err) {
     Scene sc("M");

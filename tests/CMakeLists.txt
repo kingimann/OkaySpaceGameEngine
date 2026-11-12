@@ -2548,3 +2548,8 @@ add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
 add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
+
+add_executable(test_vs_events test_vs_events.cpp)
+target_link_libraries(test_vs_events PRIVATE okay::engine)
+target_compile_definitions(test_vs_events PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_events COMMAND test_vs_events)

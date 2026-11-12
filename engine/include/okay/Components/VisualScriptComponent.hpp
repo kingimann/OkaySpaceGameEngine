@@ -109,6 +109,13 @@ public:
         for (char& c : key) if (c == ' ' || c == '\t') c = '_';
         Fire(("OnEvent:" + key).c_str(), sender);
     }
+    /// Run this graph's handlers of declared event `name` (On Event nodes) with `args` already
+    /// fitted to its parameters. `sender` is readable with Other Name, `origin` shows in the
+    /// debugger's call stack. Returns how many handler nodes ran.
+    int RunTypedEvent(const std::string& name, const std::vector<vs::VsValue>& args, GameObject* sender, const std::string& origin);
+    /// Run function `fn` of this graph as a bound dispatcher handler. False (with `err`) when refused.
+    bool RunBoundFunction(const std::string& fn, const std::vector<vs::VsValue>& args, GameObject* sender, const std::string& origin, std::string* err);
+    ~VisualScriptComponent() override;
     /// Run this graph's `entry` event nodes for an engine event (On Object Placed,
     /// On Logic Signal, ...): `other` is readable with Other Name, `name` / `value`
     /// with Event Name / Event Value. Nothing happens if the graph has no such node.

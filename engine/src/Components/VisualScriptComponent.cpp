@@ -9,6 +9,7 @@
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/VisualScript/NodesLoops.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
+#include "okay/VisualScript/VsEvents.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -308,9 +309,37 @@ void VisualScriptComponent::PollGameplay(float) {
     }
 }
 
+VisualScriptComponent::~VisualScriptComponent() {
+    // Dispatcher bindings this object owned or listened with go with it (the table holds ids only).
+    if (gameObject && gameObject->IsDestroyed()) vs::VsEventBindings::Get().ForgetObject(gameObject->InstanceId());
+}
+
+int VisualScriptComponent::RunTypedEvent(const std::string& name, const std::vector<vs::VsValue>& args, GameObject* sender, const std::string& origin) {
+    if (!m_graph || !gameObject || !ScriptsRun(gameObject)) return 0;
+    m_ctx.gameObject = gameObject; m_ctx.transform = transform;
+    GameObject* prev = m_ctx.other;
+    m_ctx.other = sender;
+    const int ran = m_graph->RunEventHandlers(name, args, m_ctx, origin);
+    m_ctx.other = prev;
+    CheckWatches();
+    return ran;
+}
+
+bool VisualScriptComponent::RunBoundFunction(const std::string& fn, const std::vector<vs::VsValue>& args, GameObject* sender, const std::string& origin, std::string* err) {
+    if (!m_graph || !gameObject || !ScriptsRun(gameObject)) return true;   // scripts are off: nothing to run, not an error
+    m_ctx.gameObject = gameObject; m_ctx.transform = transform;
+    GameObject* prev = m_ctx.other;
+    m_ctx.other = sender;
+    const bool ok = m_graph->RunFunctionAsHandler(fn, args, m_ctx, origin, err);
+    m_ctx.other = prev;
+    CheckWatches();
+    return ok;
+}
+
 void VisualScriptComponent::OnDestroy() {
-    if (!m_started) return;   // never ran: nothing to tear down
-    Fire("OnDestroy", nullptr);
+    if (m_started) Fire("OnDestroy", nullptr);   // never ran: nothing to tear down
+    // The object is going: it no longer owns dispatchers or listens to any (the OnDestroy handler may still have called one).
+    if (gameObject) vs::VsEventBindings::Get().ForgetObject(gameObject->InstanceId());
 }
 
 void VisualScriptComponent::LateUpdate(float dt) {

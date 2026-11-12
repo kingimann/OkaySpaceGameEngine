@@ -83,6 +83,7 @@ add_library(okay_engine
     src/VisualScript/VsApi.cpp
     src/VisualScript/VsBuiltins.cpp
     src/VisualScript/VsVariables.cpp
+    src/VisualScript/VsDecl.cpp
     src/VisualScript/VsDebug.cpp
     src/VisualScript/ActionGraph.cpp
     src/Components/VisualScriptComponent.cpp

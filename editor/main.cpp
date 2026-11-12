@@ -29704,65 +29704,60 @@ void DrawInspector(EditorState& ed) {
                 if (vsc->Reload(&err)) ConsoleLog("Reloaded " + nm);
                 else ConsoleLog("Reload failed: " + err, 2);
             }
-            if (vsc->Graph() && !vsc->Graph()->ExposedVars().empty()) {
-                ImGui::TextDisabled("Change these, then press Play.");
-                for (const auto& v : vsc->Graph()->ExposedVars()) {
-                    ImGui::PushID(v.name.c_str());
-                    bool edited = false;
-                    std::string literal, plain;
-                    if (v.value.IsNumber()) {
-                        float f = v.value.AsFloat();
-                        if (ed.isPlaying()) {
-                            auto it = vsc->Variables().find(v.name);
-                            if (it != vsc->Variables().end() && it->second.IsNumber()) f = it->second.AsFloat();
-                        }
-                        if (ImGui::DragFloat(v.name.c_str(), &f, 0.05f)) {
-                            edited = true;
-                            literal = std::to_string(f);
-                            plain = literal;
-                            if (ed.isPlaying()) vsc->SetVariable(v.name, okay::vs::VsValue(f));
-                        }
-                    } else {
-                        char buf[128];
-                        std::snprintf(buf, sizeof(buf), "%s", v.value.AsString().c_str());
-                        if (ImGui::InputText(v.name.c_str(), buf, sizeof(buf))) {
-                            edited = true;
-                            plain = buf;
-                            literal = std::string("\"") + buf + "\"";
-                            if (ed.isPlaying()) vsc->SetVariable(v.name, okay::vs::VsValue(std::string(buf)));
-                        }
+            if (vsc->Graph() && !vsc->Graph()->Decls().empty()) {
+                ImGui::TextDisabled(ed.isPlaying() ? "Declared variables (live; edits apply now)." : "Starting values. Change them, then press Play.");
+                const std::vector<okay::vs::StructDef> structs = vsc->Graph()->Structs();
+                // Copy: reloading the graph below replaces the list being walked.
+                const std::vector<okay::vs::VarDecl> decls = vsc->Graph()->Decls();
+                for (const auto& d : decls) {
+                    ImGui::PushID(d.name.c_str());
+                    okay::vs::VsValue value = d.value;
+                    const bool live = ed.isPlaying() && d.scope == okay::vs::VarScope::Object;
+                    if (live) {
+                        auto it = vsc->Variables().find(d.name);
+                        if (it != vsc->Variables().end()) value = it->second;   // lists / maps edit the live ones in place
+                    } else if (!ed.isPlaying()) {
+                        value = okay::vs::VsDeepCopy(d.value);
                     }
-                    if (edited && !ed.isPlaying()) {
-                        std::string src = vsc->Source();
-                        const std::string prefix = "var " + v.name + " ";
-                        const auto at = src.find(prefix);
-                        if (at != std::string::npos) {
-                            const auto end = src.find('\n', at);
-                            src.replace(at, end == std::string::npos ? std::string::npos : end - at, prefix + literal);
+                    std::string label = d.name;
+                    if (d.scope != okay::vs::VarScope::Object) label += std::string("  [") + okay::vs::VarScopeName(d.scope) + "]";
+                    ImGui::TextDisabled("%s", okay::vs::VarTypeText(d.type).c_str());
+                    ImGui::SameLine();
+                    const bool edited = okay::editor::vsed::VsEditValue(label.c_str(), d.type, value, structs);
+                    if (edited && live) {
+                        std::string err;
+                        if (okay::vs::VsCoerce(d.type, value, structs, &err)) vsc->SetVariable(d.name, value);
+                        else ConsoleLog("Variable " + d.name + ": " + err, 2);
+                    } else if (edited && !ed.isPlaying()) {
+                        std::string src;
+                        const std::string legacyType = okay::vs::VarTypeText(d.type);
+                        if (okay::editor::vsed::VsSetDeclDefaultInText(vsc->Source(), d.name, d.scope, okay::vs::VsToLiteral(value), legacyType, src)) {
                             std::string err;
-                            vsc->LoadFromText(src, &err);
-                            if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
-                            ed.dirty = true;
-                            // Keep the open graph in step, or the next Save / Play
-                            // would put the old number back.
-                            auto& eg = okay::editor::vsed::State().g;
-                            const bool sameFile = !vsc->Path().empty() && okay::editor::vsed::VsSamePath(vsc->Path(), eg.path);
-                            const bool bound = std::find(okay::editor::vsed::State().boundGuids.begin(),
-                                                         okay::editor::vsed::State().boundGuids.end(),
-                                                         go->Guid()) != okay::editor::vsed::State().boundGuids.end();
-                            if (sameFile || bound) {
-                                for (auto& ev : eg.vars)
-                                    if (ev.name == v.name) ev.value = plain;
-                                eg.dirty = true;
-                            }
+                            if (vsc->LoadFromText(src, &err)) {
+                                if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
+                                ed.dirty = true;
+                                // Keep the open graph in step, or the next Save / Play would put the old value back.
+                                auto& eg = okay::editor::vsed::State().g;
+                                const bool sameFile = !vsc->Path().empty() && okay::editor::vsed::VsSamePath(vsc->Path(), eg.path);
+                                const bool bound = std::find(okay::editor::vsed::State().boundGuids.begin(),
+                                                             okay::editor::vsed::State().boundGuids.end(),
+                                                             go->Guid()) != okay::editor::vsed::State().boundGuids.end();
+                                if (sameFile || bound) {
+                                    for (auto& ev : eg.vars)
+                                        if (ev.name == d.name && ev.scope == okay::vs::VarScopeName(d.scope)) { ev.value = okay::vs::VsToLiteral(value); ev.typed = true; ev.type = legacyType; }
+                                    eg.declsChanged();
+                                }
+                            } else ConsoleLog("Variable " + d.name + ": " + err, 2);
                         }
                     }
                     ImGui::PopID();
                 }
             }
             if (ed.isPlaying() && !vsc->Variables().empty() && ImGui::TreeNode("Variables##vsc")) {
-                for (const auto& kv : vsc->Variables())
-                    ImGui::Text("%s = %s", kv.first.c_str(), kv.second.AsString().c_str());
+                std::vector<std::pair<std::string, okay::vs::VsValue>> live(vsc->Variables().begin(), vsc->Variables().end());
+                std::sort(live.begin(), live.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+                for (const auto& kv : live)
+                    ImGui::Text("%s = %s", kv.first.c_str(), okay::vs::VsDescribe(kv.second).c_str());
                 ImGui::TreePop();
             }
         }

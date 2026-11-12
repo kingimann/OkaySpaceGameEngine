@@ -346,7 +346,14 @@ struct SetVarNode : VsNode {
     explicit SetVarNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        ctx.variables[name] = In(0, g, ctx);
+        VsValue v = In(0, g, ctx);
+        std::string err;
+        // A declared variable keeps its type: a value that doesn't fit is reported and not stored.
+        if (!g.CoerceForStore(name, VarScope::Object, v, &err)) {
+            g.Error(this, ctx, "Set Var '" + name + "': " + err + "; the variable keeps its value");
+            return 0;
+        }
+        ctx.variables[name] = std::move(v);
         return 0;
     }
 };
@@ -402,9 +409,18 @@ struct AddVarNode : VsNode {
     explicit AddVarNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        float cur = 0.0f;
-        if (auto it = ctx.variables.find(name); it != ctx.variables.end()) cur = it->second.AsFloat();
-        ctx.variables[name] = cur + In(0, g, ctx).AsFloat();
+        VsValue cur;
+        if (auto it = ctx.variables.find(name); it != ctx.variables.end()) cur = it->second;
+        const VsValue add = In(0, g, ctx);
+        // Vectors add component by component; everything else adds as numbers.
+        VsValue next = (cur.IsVec3() || add.IsVec3()) ? VsValue(cur.AsVec3() + add.AsVec3())
+                                                      : VsValue(cur.AsFloat() + add.AsFloat());
+        std::string err;
+        if (!g.CoerceForStore(name, VarScope::Object, next, &err)) {
+            g.Error(this, ctx, "Add Var '" + name + "': " + err + "; the variable keeps its value");
+            return 0;
+        }
+        ctx.variables[name] = std::move(next);
         return 0;
     }
 };

@@ -9,6 +9,7 @@
 
 #include <cctype>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <set>
 #include <sstream>
@@ -356,6 +357,22 @@ const Row kRows[] = {
         {"ListGet", false, "LN", "A"},
         {"ListLength", false, "L", "N"},
         {"ListContains", false, "LA", "B"},
+        {"ListInsert", true, "LNA", ""},
+        {"ListSet", true, "LNA", ""},
+        {"ListFind", false, "LA", "NB"},
+        {"ListRemoveItem", true, "LA", "B"},
+        {"ListSort", true, "LB", ""},
+        {"ListReverse", true, "L", ""},
+        {"ListClear", true, "L", ""},
+        {"ListCopy", false, "LB", "L"},
+        {"MapClear", true, "M", ""},
+        {"MapCount", false, "M", "N"},
+        {"MapCopy", false, "MB", "M"},
+        {"StructNew", false, "", "M"},
+        {"StructGet", false, "M", "A"},
+        {"StructSet", true, "MA", ""},
+        {"MakeColor", false, "NNNN", "C"},
+        {"SplitColor", false, "C", "NNNN"},
         {"AllWithTag", false, "", "L"},
         {"GetSceneVar", false, "", "A"},
         {"SetSceneVar", true, "A", ""},
@@ -645,11 +662,43 @@ PinType InputType(const std::string& type, int pin) {
     return (PinType)s->ins[(std::size_t)pin];
 }
 
+namespace {
+bool VarNodeScope(const std::string& type, const char* verb, VarScope& scope) {
+    const std::string v = verb;
+    if (type == v + "Var") { scope = VarScope::Object; return true; }
+    if (type == v + "SceneVar") { scope = VarScope::Scene; return true; }
+    if (type == v + "GlobalVar") { scope = VarScope::Global; return true; }
+    return false;
+}
+const VarDecl* FindDeclIn(const std::vector<VarDecl>& decls, const std::string& name, VarScope scope) {
+    for (const auto& d : decls) if (d.name == name && d.scope == scope && !d.legacy) return &d;
+    return nullptr;
+}
+} // namespace
+
+PinType DeclOutType(const std::string& type, const std::string& arg, int pin, const std::vector<VarDecl>& decls, PinType* elem) {
+    VarScope sc;
+    if (pin != 0 || !VarNodeScope(type, "Get", sc)) return PinType::Any;
+    const VarDecl* d = FindDeclIn(decls, arg, sc);
+    if (!d) return PinType::Any;
+    if (elem) *elem = d->type.elem;
+    return d->type.base;
+}
+
+PinType DeclInType(const std::string& type, const std::string& arg, int pin, const std::vector<VarDecl>& decls) {
+    VarScope sc;
+    if (pin != 0 || !VarNodeScope(type, "Set", sc)) return PinType::Any;
+    const VarDecl* d = FindDeclIn(decls, arg, sc);
+    return d ? d->type.base : PinType::Any;
+}
+
 bool PinCompatible(PinType from, PinType to) {
     if (from == to || from == PinType::Any || to == PinType::Any) return true;
     if (to == PinType::Text) return true;                                   // everything prints
     if ((from == PinType::Number && to == PinType::Bool) || (from == PinType::Bool && to == PinType::Number)) return true;
+    if ((from == PinType::Vec3 && to == PinType::Color) || (from == PinType::Color && to == PinType::Vec3)) return true;   // RGB
     if (from == PinType::Text && to == PinType::Object) return true;        // a name
+    if (from == PinType::Text && to == PinType::Color) return true;         // "#rrggbb"
     if (from == PinType::Object && to == PinType::Bool) return true;        // still exists?
     return false;
 }
@@ -664,11 +713,14 @@ const char* PinTypeName(PinType t) {
         case PinType::Object: return "Object";
         case PinType::List:   return "List";
         case PinType::Map:    return "Map";
+        case PinType::Color:  return "Color";
     }
     return "?";
 }
 
 std::string ConversionHint(PinType from, PinType to) {
+    if (from == PinType::Color && to == PinType::Number) return "use Split Color to get a channel";
+    if (from == PinType::Number && to == PinType::Color) return "use Make Color";
     if (from == PinType::Vec3 && to == PinType::Number) return "use Vec X / Vec Y / Vec Z or Vec3 Length";
     if (from == PinType::Number && to == PinType::Vec3) return "use Make Vec3";
     if (from == PinType::Text && to == PinType::Number) return "use To Number";
@@ -702,6 +754,7 @@ bool TypeFromName(std::string t, PinType& out) {
     if (t == "bool" || t == "boolean" || t == "b") { out = PinType::Bool; return true; }
     if (t == "text" || t == "string" || t == "t") { out = PinType::Text; return true; }
     if (t == "vector3" || t == "vec3" || t == "v") { out = PinType::Vec3; return true; }
+    if (t == "color" || t == "colour" || t == "c") { out = PinType::Color; return true; }
     if (t == "object" || t == "gameobject" || t == "o") { out = PinType::Object; return true; }
     if (t == "list" || t == "l") { out = PinType::List; return true; }
     if (t == "map" || t == "dictionary" || t == "m") { out = PinType::Map; return true; }
@@ -718,7 +771,7 @@ bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std:
         const std::string type = colon == std::string::npos ? "" : Trim(item.substr(colon + 1));
         if (!ValidName(p.name)) { if (err) *err = std::string(what) + " name '" + p.name + "' isn't a valid name"; return false; }
         if (!TypeFromName(type, p.type)) {
-            if (err) *err = "unknown type '" + type + "' (use Number, Bool, Text, Vector3, Object, List, Map or Any)";
+            if (err) *err = "unknown type '" + type + "' (use Number, Bool, Text, Vector3, Color, Object, List, Map or Any)";
             return false;
         }
         for (const auto& q : out) if (q.name == p.name) { if (err) *err = std::string(what) + " '" + p.name + "' is listed twice"; return false; }
@@ -770,10 +823,14 @@ bool IsEventType(const std::string& t) {
 
 std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::string& baseDir) {
     std::vector<VsIssue> issues;
+    std::unique_ptr<NodeGraph> parsedGraph;
     {   // Anything the runtime itself refuses comes first.
         std::string err;
-        if (!NodeGraph::Parse(text, &err)) { issues.push_back({0, -1, "the graph can't be loaded: " + err}); return issues; }
+        parsedGraph = NodeGraph::Parse(text, &err);
+        if (!parsedGraph) { issues.push_back({0, -1, "the graph can't be loaded: " + err}); return issues; }
     }
+    const std::vector<VarDecl>& decls = parsedGraph->Decls();
+    const std::vector<StructDef>& structDefs = parsedGraph->Structs();
     struct N { std::string type, arg; };
     std::map<int, N> nodes;
     struct Data { int consumer, inPin, producer, outPin; };
@@ -807,7 +864,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                 std::string v;
                 for (std::size_t i = 3; i < t.size(); ++i) v += (i > 3 ? " " : "") + t[i];
                 typed[{std::stoi(t[1]), std::stoi(t[2])}] = Unquote(v);
-            } else if (t[0] == "var" && t.size() >= 2) {
+            } else if ((t[0] == "var" || t[0] == "decl") && t.size() >= 2) {
                 exposed.insert(Unquote(t[1]));
             }
         } catch (...) {}
@@ -831,8 +888,65 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         auto it = fns.find(FunctionNameOf(n.arg));
         return it != fns.end() ? &it->second : nullptr;
     };
+    std::map<std::pair<int, int>, std::pair<int, int>> srcOf;   // (consumer, in pin) -> (producer, out pin)
+    for (const Data& d : datas) srcOf[{d.consumer, d.inPin}] = {d.producer, d.outPin};
+    // The element type of the list / map a node's output pin holds, when the graph says (a typed
+    // variable, a typed New List, a copy of one...). Any = unknown.
+    std::function<PinType(int, int, int)> elemOf = [&](int id, int pin, int depth) -> PinType {
+        auto it = nodes.find(id);
+        if (it == nodes.end() || depth > 8) return PinType::Any;
+        const N& n = it->second;
+        PinType e = PinType::Any;
+        if (DeclOutType(n.type, n.arg, pin, decls, &e) != PinType::Any) return e;
+        auto in0 = srcOf.find({id, 0});
+        if (n.type == "NewList" || n.type == "NewMap") {
+            VarType vt;
+            if (!n.arg.empty() && ParseVarType(n.arg, structDefs, vt) && !vt.IsStruct()) return vt.base;
+            return PinType::Any;
+        }
+        if ((n.type == "ListCopy" || n.type == "MapCopy" || n.type == "MapValues" || n.type == "ShuffleList") && in0 != srcOf.end())
+            return elemOf(in0->second.first, in0->second.second, depth + 1);
+        if (n.type == "MapKeys") return PinType::Text;
+        return PinType::Any;
+    };
+    auto srcElem = [&](int id, int inPin) {
+        auto s2 = srcOf.find({id, inPin});
+        return s2 == srcOf.end() ? PinType::Any : elemOf(s2->second.first, s2->second.second, 0);
+    };
+    // The struct (declared type) a node's output holds, for Struct Get / Set field types.
+    std::function<const StructDef*(int, int, int)> structOfOut = [&](int id, int pin, int depth) -> const StructDef* {
+        auto it = nodes.find(id);
+        if (it == nodes.end() || depth > 8) return nullptr;
+        const N& n = it->second;
+        VarScope sc;
+        for (const char* verb : {"Get"}) {
+            if (VarNodeScope(n.type, verb, sc)) {
+                for (const auto& d : decls) if (d.name == n.arg && d.scope == sc && d.type.IsStruct()) return FindStruct(structDefs, d.type.structName);
+            }
+        }
+        if (n.type == "StructNew") return FindStruct(structDefs, n.arg);
+        (void)pin;
+        return nullptr;
+    };
+    auto fieldType = [&](int id, int inPin0) -> PinType {   // the struct on `id`'s input 0: its field `arg`
+        auto s2 = srcOf.find({id, inPin0});
+        if (s2 == srcOf.end()) return PinType::Any;
+        const StructDef* sd = structOfOut(s2->second.first, s2->second.second, 0);
+        if (!sd) return PinType::Any;
+        for (const auto& f : sd->fields) if (f.name == nodes[id].arg) return f.type.base;
+        return PinType::Any;
+    };
     auto outType = [&](int id, int pin) {
         const N& n = nodes[id];
+        if (const PinType dt = DeclOutType(n.type, n.arg, pin, decls); dt != PinType::Any) return dt;
+        if (n.type == "StructNew") return PinType::Map;
+        if (n.type == "StructGet" && pin == 0) return fieldType(id, 0);
+        if (pin == 0 && (n.type == "ListGet" || n.type == "ForEach")) {
+            const PinType e = srcElem(id, 0);
+            if (e != PinType::Any) return e;
+        }
+        if (n.type == "ForEachMap" && pin == 1) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
+        if (n.type == "MapGet" && pin == 0) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
         if (n.type == "FunctionStart" || n.type == "CallFunction") {
             const FunctionSig* f = fnOf(n);
             const auto& pins = !f ? std::vector<FunctionSig::Pin>{} : n.type == "FunctionStart" ? f->params : f->returns;
@@ -842,6 +956,15 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     };
     auto inType = [&](int id, int pin) {
         const N& n = nodes[id];
+        if (const PinType dt = DeclInType(n.type, n.arg, pin, decls); dt != PinType::Any) return dt;
+        if (n.type == "StructSet" && pin == 1) { const PinType f = fieldType(id, 0); if (f != PinType::Any) return f; }
+        {   // an item going into a typed list / map
+            int listPin = -1;
+            if (n.type == "ListAdd" || n.type == "ListContains" || n.type == "ListFind" || n.type == "ListRemoveItem") listPin = 1;
+            else if (n.type == "ListInsert" || n.type == "ListSet") listPin = 2;
+            else if (n.type == "MapSet") listPin = 2;
+            if (pin == listPin) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
+        }
         if (n.type == "Return" || n.type == "CallFunction") {
             const FunctionSig* f = fnOf(n);
             const auto& pins = !f ? std::vector<FunctionSig::Pin>{} : n.type == "Return" ? f->returns : f->params;

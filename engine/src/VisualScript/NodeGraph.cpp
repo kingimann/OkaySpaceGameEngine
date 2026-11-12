@@ -733,6 +733,22 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "ListGet")        return std::make_unique<ListGetNode>();
     if (type == "ListLength")     return std::make_unique<ListLengthNode>();
     if (type == "ListContains")   return std::make_unique<ListContainsNode>();
+    if (type == "ListInsert")     return std::make_unique<ListInsertNode>();
+    if (type == "ListSet")        return std::make_unique<ListSetNode>();
+    if (type == "ListFind")       return std::make_unique<ListFindNode>();
+    if (type == "ListRemoveItem") return std::make_unique<ListRemoveItemNode>();
+    if (type == "ListSort")       return std::make_unique<ListSortNode>();
+    if (type == "ListReverse")    return std::make_unique<ListReverseNode>();
+    if (type == "ListClear")      return std::make_unique<ListClearNode>();
+    if (type == "ListCopy")       return std::make_unique<ListCopyNode>();
+    if (type == "MapClear")       return std::make_unique<MapClearNode>();
+    if (type == "MapCount")       return std::make_unique<MapCountNode>();
+    if (type == "MapCopy")        return std::make_unique<MapCopyNode>();
+    if (type == "StructNew")      return std::make_unique<StructNewNode>(argOr(""));
+    if (type == "StructGet")      return std::make_unique<StructGetNode>(argOr(""));
+    if (type == "StructSet")      return std::make_unique<StructSetNode>(argOr(""));
+    if (type == "MakeColor")      return std::make_unique<MakeColorNode>();
+    if (type == "SplitColor")     return std::make_unique<SplitColorNode>();
     if (type == "AllWithTag")     return std::make_unique<AllWithTagNode>(argOr("Enemy"));
     {
         using S = ScopedVarNode::Scope; using O = ScopedVarNode::Op;
@@ -998,6 +1014,10 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
     std::vector<PendingEntry> entries;
     struct PendingDefault { int node, pin; VsValue v; };
     std::vector<PendingDefault> defaults;
+    struct PendingStruct { int line; std::string name; std::vector<std::string> fields; };
+    std::vector<PendingStruct> pendingStructs;
+    struct PendingDecl { int line; VarDecl d; std::string type, lit; bool hasLit; };
+    std::vector<PendingDecl> pendingDecls;
 
     std::istringstream in(text);
     std::string line;
@@ -1080,12 +1100,81 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             // var <name> <value>: a starting value, shown in the Inspector.
             if (tok.size() < 3) return fail("var needs <name> <value>");
             graph->AddExposedVar(tok[1], ParseValue(tok[2]));
+        } else if (kind == "struct") {
+            // struct <Name> <field>:<Type>[=<literal>] ...: a record type (a map with these fields).
+            if (tok.size() < 2) return fail("struct needs a name");
+            StructDef sd;
+            sd.name = tok[1];
+            if (sd.name.size() >= 2 && sd.name.front() == '"') sd.name = sd.name.substr(1, sd.name.size() - 2);
+            if (!VsValidIdent(sd.name)) return fail("'" + sd.name + "' isn't a valid struct name (letters, digits and _)");
+            if (FindStruct(graph->Structs(), sd.name)) return fail("there's already a struct named '" + sd.name + "'");
+            if (tok.size() > 65) return fail("a struct can have at most 64 fields");
+            pendingStructs.push_back({lineNo, sd.name, std::vector<std::string>(tok.begin() + 2, tok.end())});
+            graph->AddStruct(sd);   // name first, so fields and decls can refer to it
+        } else if (kind == "decl") {
+            // decl <name> <Type> <object|scene|global> [<literal>]: a typed variable and its default.
+            if (tok.size() < 4) return fail("decl needs <name> <Type> <scope>");
+            std::string name = tok[1], type = tok[2], scope = tok[3], lit = tok.size() > 4 ? tok[4] : "";
+            auto unq = [](std::string& t) { if (t.size() >= 2 && t.front() == '"' && t.back() == '"') t = t.substr(1, t.size() - 2); };
+            unq(name); unq(type); unq(scope); unq(lit);
+            if (!VsValidIdent(name)) return fail("'" + name + "' isn't a valid variable name (letters, digits and _)");
+            VarDecl d; d.name = name;
+            if (!VarScopeFromName(scope, d.scope)) return fail("variable scope '" + scope + "' isn't object, scene or global");
+            if (tok.size() > 5) return fail("decl takes one default value (quote it if it has spaces)");
+            for (const auto& other : graph->Decls())
+                if (other.name == name && other.scope == d.scope) return fail("variable '" + name + "' is declared twice");
+            for (const auto& other : pendingDecls)
+                if (other.d.name == name && other.d.scope == d.scope) return fail("variable '" + name + "' is declared twice");
+            if (pendingDecls.size() >= 2000) return fail("a graph can declare at most 2000 variables");
+            pendingDecls.push_back({lineNo, d, type, lit, tok.size() > 4 && !lit.empty()});   // a blank default = the type's default
         } else if (kind == "pos" || kind == "comment") {
             // Editor layout (node positions, comment frames): nothing to run.
         } else {
             // A directive from a newer editor: skip it rather than refusing the
             // whole graph.
             OKAY_WARN("VisualScript: ignoring unknown line ", lineNo, " ('", kind, "')");
+        }
+    }
+
+    // Struct fields, in file order: a field may use an earlier struct, never itself or a later one
+    // (so a struct can't contain itself).
+    {
+        std::vector<StructDef> built;
+        for (const auto& ps : pendingStructs) {
+            lineNo = ps.line;
+            std::vector<StructField> fields;
+            for (std::string f : ps.fields) {
+                if (f.size() >= 2 && f.front() == '"' && f.back() == '"') f = f.substr(1, f.size() - 2);
+                const auto colon = f.find(':');
+                if (colon == std::string::npos) return fail("struct " + ps.name + ": field '" + f + "' needs a type (name:Type)");
+                StructField sf;
+                sf.name = f.substr(0, colon);
+                std::string typeText = f.substr(colon + 1), lit;
+                const auto eq = typeText.find('=');
+                const bool hasLit = eq != std::string::npos;
+                if (hasLit) { lit = typeText.substr(eq + 1); typeText = typeText.substr(0, eq); }
+                if (!VsValidIdent(sf.name)) return fail("struct " + ps.name + ": '" + sf.name + "' isn't a valid field name");
+                for (const auto& o : fields) if (o.name == sf.name) return fail("struct " + ps.name + ": field '" + sf.name + "' is listed twice");
+                std::string terr;
+                if (!ParseVarType(typeText, built, sf.type, &terr)) return fail("struct " + ps.name + ", field " + sf.name + ": " + terr);
+                if (hasLit) {
+                    if (!VsParseTyped(sf.type, lit, built, sf.def, &terr)) return fail("struct " + ps.name + ", field " + sf.name + ": " + terr);
+                } else sf.def = VsDefaultFor(sf.type, built);
+                fields.push_back(std::move(sf));
+            }
+            StructDef sd; sd.name = ps.name; sd.fields = fields;
+            built.push_back(sd);
+            graph->SetStructFields(ps.name, std::move(fields));
+        }
+        for (auto& pd : pendingDecls) {
+            lineNo = pd.line;
+            std::string terr;
+            if (!ParseVarType(pd.type, graph->Structs(), pd.d.type, &terr)) return fail("variable " + pd.d.name + ": " + terr);
+            if (pd.hasLit) {
+                if (!VsParseTyped(pd.d.type, pd.lit, graph->Structs(), pd.d.value, &terr))
+                    return fail("variable " + pd.d.name + ": default " + terr);
+            } else pd.d.value = VsDefaultFor(pd.d.type, graph->Structs());
+            graph->AddDecl(pd.d);
         }
     }
 

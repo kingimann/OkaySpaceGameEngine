@@ -10,6 +10,7 @@
 #include "okay/Core/Subtitles.hpp"
 #include "okay/Graphics/ColorVision.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <set>
@@ -107,6 +108,9 @@ public:
     static float FlashScale();
     /// `c` shifted for the player's colour vision (unchanged with no deficiency set).
     static Color FilterColor(const Color& c);
+    /// The player's colour vision correction over a rendered frame of `pixels` RGBA8 pixels
+    /// (the player's 3D view), in place. Does nothing with no deficiency set.
+    static void FilterFrame(std::uint8_t* rgba, std::size_t pixels);
     /// `foreground` as it should be drawn over `background`: with high contrast on, moved until
     /// the contrast is at least 7:1 (WCAG AAA), else unchanged.
     static Color TextColor(const Color& foreground, const Color& background);

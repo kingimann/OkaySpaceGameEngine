@@ -1804,6 +1804,12 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_compile_definitions(test_ui_renderer_golden PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_renderer_golden COMMAND test_ui_renderer_golden)
+
+    # Accessibility settings in rendered pixels (text size, colour filter, high contrast)
+    add_executable(test_accessibility_render test_accessibility_render.cpp)
+    target_link_libraries(test_accessibility_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_accessibility_render PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME accessibility_render COMMAND test_accessibility_render)
 else()
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()
@@ -2376,6 +2382,11 @@ target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
 
+# Accessibility settings that change behaviour: reduced motion and flashing, colour filter on a software
+# frame, text size layout, and the Settings screen controls that set and save them
+add_executable(test_accessibility_wired test_accessibility_wired.cpp)
+target_link_libraries(test_accessibility_wired PRIVATE okay::engine)
+add_test(NAME accessibility_wired COMMAND test_accessibility_wired)
 # okay::platform (engine/include/okay/Platform): the seam over SDL2 and our own backends.
 # platform: registry, timers, audio devices, controllers on each compiled-in backend (no
 # display needed; SDL's dummy audio driver, ALSA's null device) + the own evdev mapping.
@@ -2501,6 +2512,7 @@ target_link_libraries(test_model_readers_fuzz PRIVATE okay::engine)
 target_compile_definitions(test_model_readers_fuzz PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME model_readers_fuzz COMMAND test_model_readers_fuzz WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_readers_fuzz PROPERTIES TIMEOUT 300)
+
 # "Download my data" / "Delete my account": client request building, confirmation
 # gating, export assembly, error mapping (engine/include/okay/Platform/Account/AccountData.hpp).
 add_executable(test_account_data test_account_data.cpp)
@@ -2531,3 +2543,8 @@ add_executable(test_fbx_hostile test_fbx_hostile.cpp
 target_include_directories(test_fbx_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_fbx_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
+
+# The editor's layout maths (editor/EditorLayoutMath.hpp, UI-library free): overlay anchoring, label placement and crowd fading, Inspector density, toolbar planning, maximize bookkeeping, view preferences.
+add_executable(test_editor_layout test_editor_layout.cpp)
+target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME editor_layout COMMAND test_editor_layout)

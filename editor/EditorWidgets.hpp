@@ -42,6 +42,12 @@ enum class TbIcon { More, Plus, Move, Rotate, Scale, Global, Local, Snap, Frame,
 void DrawTbIcon(ImDrawList* dl, TbIcon ic, ImVec2 c, float s, ImU32 col);
 // Square icon button (frame height); accent-tinted while `active`. `tip` shows on hover.
 bool IconButton(const char* id, TbIcon ic, const char* tip = nullptr, bool active = false);
+// Icon button with the tool's name beside the icon (the Scene toolbar's "Toolbar labels" mode); same look and tooltip as IconButton.
+bool IconLabelButton(const char* id, TbIcon ic, const char* label, const char* tip = nullptr, bool active = false);
+// Plain buttons that always show a tooltip on hover: for the small remove (x), browse (...), step and arrow buttons.
+bool TipButton(const char* tip, const char* label, const ImVec2& size = ImVec2(0, 0));
+bool TipSmallButton(const char* tip, const char* label);
+bool TipArrowButton(const char* tip, const char* id, ImGuiDir dir);
 // A search field with a magnifier and a clear (x) button. `width` <= 0 fills the rest minus |width|.
 bool SearchField(const char* id, char* buf, std::size_t bufSize, const char* hint, float width);
 // Right-align the next `w` pixels of items on the current line.

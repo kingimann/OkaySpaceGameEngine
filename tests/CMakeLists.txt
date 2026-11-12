@@ -2387,6 +2387,11 @@ target_link_libraries(test_scene_validator PRIVATE okay::engine)
 target_compile_definitions(test_scene_validator PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME scene_validator COMMAND test_scene_validator)
 
+# Level-design validation rules: degenerate geometry, duplicates, light leaks, nav reach, camera / light sanity, fixes, 10k budget
+add_executable(test_level_validation test_level_validation.cpp)
+target_link_libraries(test_level_validation PRIVATE okay::engine)
+add_test(NAME level_validation COMMAND test_level_validation)
+
 # Core wave 6, 1.17: the two validators agree (asset rule, damaged packs, fonts) and the semantic one carries the file-level checks
 add_executable(test_core_validation test_core_validation.cpp)
 target_link_libraries(test_core_validation PRIVATE okay::engine)

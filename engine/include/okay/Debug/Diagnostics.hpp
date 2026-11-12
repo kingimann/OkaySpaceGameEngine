@@ -35,7 +35,14 @@ enum class DiagFixKind {
     ClearReference,    // blank the field named by the source
     Reimport,          // point the field at arg (a file that is actually on disk)
     AddCamera,         // create a Main Camera
-    MakeMainCamera     // flag the source object's camera as the main camera
+    MakeMainCamera,    // flag the source object's camera as the main camera
+    ClearMainCamera,   // un-flag the source object's camera (another one stays Main)
+    AddLight,          // create a Directional Light
+    ResetScale,        // replace every zero scale component by 1
+    ResetTransform,    // replace NaN / infinite transform values by identity values
+    ResetColliderSize, // replace a zero or negative collider size, radius or height by the default
+    AddKinematicBody,  // add a Kinematic Rigidbody (3D or 2D, to match the collider)
+    DeleteObject       // delete the (childless, component-for-component identical) duplicate
 };
 
 /// A safe one-click fix. None means the row is only a report.
@@ -73,6 +80,9 @@ struct Diagnostic {
     DiagSource source;
     std::string owner;     // which validator owns the row, for ClearOwner / ReplaceOwner
     DiagFix fix;
+    /// Other objects the row is about (the original of a duplicate, the other box of a light leak), by guid.
+    /// Clicking the row selects the source object and these too.
+    std::vector<std::string> relatedGuids;
 };
 
 /// What a visual-script node needs on its object. The node browser registers

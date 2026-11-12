@@ -28,6 +28,15 @@
 //   object.inactive        an inactive object: it and its children never run
 //   object.layer_range     a layer outside 0..31
 //   physics.rigidbody_no_collider    a Rigidbody with no Collider on the object
+//   physics.moving_collider_no_rigidbody  a collider that a Mover pushes around, with no Rigidbody on it or above it
+//   geometry.zero_collider           a collider whose size, radius or height is zero or negative (and not auto-fitted)
+//   geometry.empty_mesh              a MeshRenderer with no triangles and nothing that fills it at run time
+//   object.duplicate_overlap         two objects with the same mesh (or sprite) and a near-identical transform
+//   lighting.light_leak              two static boxes a sliver apart (see LevelChecks.cpp for the exact test)
+//   nav.off_mesh                     an agent, spawn point, goal or pickup that is not on the baked navmesh
+//   nav.unreachable                  a spawn point, goal or pickup on a navmesh region no agent can reach
+//   scene.multiple_main_cameras      more than one enabled, active camera is flagged Main
+//   scene.no_light                   a lit 3D scene with no enabled, active Light
 //   scene.load / scene.load_warning  (ValidateText / ValidateFile) the document did not load cleanly
 //   scene.duplicate_guid   (ValidateText / ValidateFile) two objects carry the same guid (the loader renames one)
 //   scene.broken_parent    (ValidateText / ValidateFile) `parent N` names an object that is not in the file (it loads as a root)
@@ -63,6 +72,9 @@ struct ValidationIssue {
     std::string object;      // path of the object ("Root/Child"); empty for a scene-wide issue
     std::string component;   // the component type involved, when there is one
     std::string message;
+    std::string guid;                        // the object's guid when the issue is about one object ("" = look up by path)
+    std::vector<std::string> related;        // paths of the other objects involved (the original of a duplicate ...)
+    std::vector<std::string> relatedGuids;   // the same objects by guid
 };
 
 struct ValidationReport {
@@ -112,6 +124,9 @@ struct ValidatorOptions {
     bool checkTransforms = true;
     bool checkInactive = true;
     bool checkPhysics = true;
+    /// Level-design rules: degenerate geometry, overlapping duplicates, light leaks, unreachable navigation,
+    /// main-camera and light sanity, moving colliders with no body. All are linear or near-linear in the object count.
+    bool checkLevel = true;
     /// ValidateText / ValidateFile only: duplicate guids and parent links into nowhere, which the loader repairs
     /// and a check on the loaded scene can no longer see.
     bool checkLinks = true;
@@ -124,6 +139,15 @@ struct ValidatorOptions {
     std::vector<std::string> allowDuplicateNames;
     /// Positions beyond this on any axis are flagged (float precision falls apart far from the origin).
     float maxCoordinate = 1.0e6f;
+    /// Two objects with the same mesh closer than this (world units; rotation and scale to a thousandth) are duplicates.
+    float duplicatePositionEpsilon = 0.01f;
+    /// Light leaks: a gap between two static boxes wider than leakMinGap and not wider than leakMaxGap counts as a
+    /// sliver; the faces must face each other over at least leakMinFace on both other axes.
+    float leakMinGap = 0.0005f;
+    float leakMaxGap = 0.05f;
+    float leakMinFace = 0.1f;
+    /// At most this many light-leak issues are reported (the rest are summed up in one more issue).
+    int leakMaxReports = 200;
 };
 
 class SceneValidator {

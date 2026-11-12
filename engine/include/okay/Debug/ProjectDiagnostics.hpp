@@ -20,6 +20,7 @@ struct ProjectDiagOptions {
 
     bool checkSceneFile = true;     // Scene::Validate (format, duplicate guids, broken parents)
     bool checkSemantic = true;      // SceneValidator (assets, scripts, names, physics, camera)
+    bool checkLevelDesign = true;   // inside the semantic pass: degenerate geometry, duplicates, light leaks, nav reach, camera and light sanity
     bool checkRequirements = true;  // RequireComponent that is not satisfied
     bool checkGameplay = true;      // main camera, player body, animator, navmesh
     bool checkGraphs = true;        // visual-script graph errors and node requirements

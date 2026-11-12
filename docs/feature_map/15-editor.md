@@ -234,13 +234,13 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.11.5 Net panel - `editor/NetSimPanel.*` - network simulator toggles and bytes and messages per object
   - 15.11.6 Variables watch - `editor/main.cpp` (`DrawVarWatch` ~2252) - live visual-script variables
   - 15.11.7 Status bar - `editor/main.cpp` (`DrawStatusBar` ~6412) - selection, object count, tool, mode, FPS, and a Problems count that opens the Problems panel
-  - 15.11.8 Problems panel - `editor/ProblemsPanel.*`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - one live list of what is wrong, grouped by object, asset or script, with error / warning / info filters; a click selects the object, opens the script or frames the graph node; Fix adds a missing component, clears a broken reference, re-imports a file that is on disk, or adds a Main Camera
+  - 15.11.8 Problems panel - `editor/ProblemsPanel.*`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - one live list of what is wrong, grouped by object, asset or script, with error / warning / info filters; a click selects the object, opens the script or frames the graph node; Fix adds a missing component, clears a broken reference, re-imports a file that is on disk, adds a Main Camera, or (level rules, see docs/editor.md "Problems panel: the rules") resets a zero scale or collider size, deletes an exact duplicate, adds a Kinematic Rigidbody or a Light; a row about two objects selects both and frames the pair; rows sort by severity, object and rule; the scene fingerprint includes transforms so level rules refresh on a move
   - 15.11.9 Inline markers - `editor/main.cpp` (Hierarchy rows, Inspector component headers), `editor/VisualScriptEditor.hpp` - a warning or error badge with a tooltip on the object and on the component; a long name is cut with an ellipsis before the badge; graph nodes keep an error or warning badge and a bad wire's pins are drawn red
 - **Code:** `editor/ConsolePanel.*`, `editor/ProblemsPanel.*`, `editor/NetSimPanel.*`, `editor/main.cpp`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics`
 - **API:** `ConsoleLog(text, level)`; `EditorDiagnostics`, `CollectProjectDiagnostics`, `ApplyDiagnosticFix`, `AddNodeRequirement`; View > Panels > Console, Problems, Crash Log, Stats, Profiler, Net, Variables (watch)
 - **Editor:** each panel; Problems is docked with the Console
 - **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/core_logging_profiling.md`
-- **Tests:** `profiler`, `profiler_export`, `log` (engine side), `crash_reports`, `diagnostics`, `debug_console`
+- **Tests:** `profiler`, `profiler_export`, `log` (engine side), `crash_reports`, `diagnostics`, `debug_console`, `level_validation`
 - **Status:** Works - the Console, Problems and the inline badges read one diagnostic list; the list updates in edit mode when the scene changes
 - **Open:** planned area 23 still wants a CPU and GPU timeline window, memory tracking and a frame debugger
 - **Related:** 23, 1.10, 19.2, 33.2, 14.2, 13.5

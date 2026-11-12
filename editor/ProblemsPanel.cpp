@@ -4,9 +4,14 @@
 #include "ConsolePanel.hpp"
 #include "MainShared.hpp"
 #include "VisualScriptEditor.hpp"
+#include "okay/Components/Mover.hpp"
+#include "okay/Components/NavMeshSurface.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Testing/ObjectPath.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
@@ -35,7 +40,13 @@ std::uint64_t SceneFingerprint(const Scene& scene) {
         if (!up) continue;
         h = Mix(h, up->Guid());
         h = Mix(h, up->name);
-        h = h * 131u + (up->active ? 1u : 0u);
+        h = h * 131u + (up->active ? 1u : 0u) + (up->isStatic ? 7u : 0u);
+        if (up->transform) {   // the level rules (duplicates, leaks, nav reach, zero scale) depend on where things are
+            const Transform& t = *up->transform;
+            const float v[10] = {t.localPosition.x, t.localPosition.y, t.localPosition.z, t.localRotation.x, t.localRotation.y,
+                                 t.localRotation.z, t.localRotation.w, t.localScale.x, t.localScale.y, t.localScale.z};
+            for (float f : v) { std::uint32_t bits; std::memcpy(&bits, &f, sizeof(bits)); h = h * 1099511628211ull ^ bits; }
+        }
         for (const auto& c : up->Components()) {
             if (!c) continue;
             h = Mix(h, testing::ComponentTypeName(*c));
@@ -54,7 +65,12 @@ std::uint64_t SceneFingerprint(const Scene& scene) {
             if (auto* ft = dynamic_cast<FollowTarget2D*>(c.get())) h = Mix(h, ft->target);
             if (auto* cam = dynamic_cast<Camera*>(c.get())) h = h * 131u + (cam->main ? 3u : 1u);
             if (auto* sm = dynamic_cast<AnimStateMachine*>(c.get())) h = h * 131u + (std::uint64_t)sm->states.size();
-            if (auto* nav = dynamic_cast<NavMeshSurface*>(c.get())) h = Mix(h, nav->navPath);
+            if (auto* nav = dynamic_cast<NavMeshSurface*>(c.get())) { h = Mix(h, nav->navPath); h = h * 131u + (nav->HasMesh() ? 5u : 2u); }
+            if (auto* bc = dynamic_cast<BoxCollider3D*>(c.get())) {
+                const float v[3] = {bc->size.x, bc->size.y, bc->size.z};
+                for (float f : v) { std::uint32_t bits; std::memcpy(&bits, &f, sizeof(bits)); h = h * 1099511628211ull ^ bits; }
+            }
+            if (auto* mr = dynamic_cast<MeshRenderer*>(c.get())) h = h * 131u + (std::uint64_t)mr->DisplayMesh().triangles.size();
         }
     }
     return h;
@@ -101,8 +117,18 @@ void OpenDiagnostic(okay::editor::EditorState& ed, const Diagnostic& d) {
     if (!go && !d.source.objectPath.empty()) go = ed.scene().FindByPath(d.source.objectPath);
     if (go) {
         ed.Select(go);
+        Vec3 lo = go->transform ? go->transform->Position() : Vec3{0, 0, 0}, hi = lo;
+        for (const std::string& rg : d.relatedGuids) {   // the other object of a duplicate / seam: select it too and frame both
+            GameObject* other = ed.scene().FindByGuid(rg);
+            if (!other || !other->transform) continue;
+            ed.ToggleSelect(other);
+            const Vec3 q = other->transform->Position();
+            lo = {std::min(lo.x, q.x), std::min(lo.y, q.y), std::min(lo.z, q.z)};
+            hi = {std::max(hi.x, q.x), std::max(hi.y, q.y), std::max(hi.z, q.z)};
+        }
+        if (!d.relatedGuids.empty()) { ed.ToggleSelect(go); ed.ToggleSelect(go); }   // the offender stays the primary selection
         if (go->transform) {
-            Vec3 p = go->transform->Position();
+            const Vec3 p = (lo + hi) * 0.5f;
             ed.camTarget = p;
             ed.cameraPos = {p.x, p.y};
         }
@@ -174,6 +200,7 @@ bool ComponentMatches(const Diagnostic& d, const char* label) {
 
 // Demo bookkeeping. The dev hook builds the scene; drawing records the row to click.
 bool g_demo = false;
+bool g_levelDemo = false;
 int g_demoFrame = 0;
 ImVec2 g_rowClick{}, g_fixClick{};
 bool g_haveRow = false, g_haveFix = false;
@@ -222,17 +249,19 @@ void TickProjectDiagnostics(okay::editor::EditorState& ed) {
     if (ed.isPlaying()) return;
     static std::uint64_t lastHash = 0;
     static double lastRun = -1000.0;
+    static double lastCost = 0.0;   // seconds the last run took: a big scene is re-checked less often while it is dragged
     static bool have = false;
     const std::uint64_t hash = SceneFingerprint(ed.scene());
     const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (have && hash == lastHash) return;
-    if (have && now - lastRun < 0.25) return;
+    if (have && now - lastRun < std::max(0.25, lastCost * 10.0)) return;   // at most about a tenth of the time
     ProjectDiagOptions opt;
     opt.assetRoot = ed.projectDir();
     ProjectDiagResult result = CollectProjectDiagnostics(ed.scene(), opt);
     EditorDiagnostics().ReplaceOwner("project", std::move(result.items));
     lastHash = hash;
     lastRun = now;
+    lastCost = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count() - now;
     have = true;
 }
 
@@ -351,7 +380,10 @@ void DrawProblems(okay::editor::EditorState& ed) {
     std::vector<Diagnostic> rows = EditorDiagnostics().Items();
     std::stable_sort(rows.begin(), rows.end(), [](const Diagnostic& a, const Diagnostic& b) {
         if ((int)a.severity != (int)b.severity) return (int)a.severity > (int)b.severity;
-        return GroupOf(a) < GroupOf(b);
+        const std::string ga = GroupOf(a), gb = GroupOf(b);
+        if (ga != gb) return ga < gb;
+        if (a.code != b.code) return a.code < b.code;
+        return a.message < b.message;   // the same rows always list in the same order
     });
 
     std::unordered_map<std::string, std::vector<int>> groups;
@@ -400,6 +432,10 @@ void DrawProblems(okay::editor::EditorState& ed) {
             if (canFix) {
                 if (ImGui::SmallButton("Fix")) {
                     ed.PushUndo();
+                    if (d.fix.kind == DiagFixKind::DeleteObject) {   // do not leave the selection pointing at the freed object
+                        if (GameObject* dead = d.source.objectGuid.empty() ? nullptr : ed.scene().FindByGuid(d.source.objectGuid))
+                            ed.Deselect(dead);
+                    }
                     std::string err;
                     if (ApplyDiagnosticFix(ed.scene(), d, &err)) {
                         ed.dirty = true;
@@ -439,7 +475,7 @@ void DrawProblems(okay::editor::EditorState& ed) {
     }
     ImGui::End();
 
-    if (g_demo) {
+    if (g_demo && !g_levelDemo) {   // the scripted tour; OKAY_UI_DIAG=level is driven from outside instead
         const std::string dir = "/opt/cursor/artifacts";
         if (g_demoFrame == 5) RequestShot(dir + "/diag-console.png", 1);
         if (g_demoFrame == 8) RequestShot(dir + "/diag-problems.png", 1);
@@ -474,6 +510,58 @@ void DiagnosticsDemoPrepare(okay::editor::EditorState& ed) {
     for (GameObject* c : cameras) ed.scene().Destroy(c);
     ed.scene().FlushDestroyed();
 
+    const char* mode = std::getenv("OKAY_UI_DIAG");
+    if (mode && std::string(mode) == "level") {
+        g_levelDemo = true;   // OKAY_UI_DIAG=level: a scene with level-design problems, for the screenshots
+        Scene& sc = ed.scene();
+        std::vector<GameObject*> old;   // start from an empty level (keep the Sun)
+        for (const auto& up : sc.Objects())
+            if (up && !up->GetComponent<Light>()) old.push_back(up.get());
+        for (GameObject* g : old) sc.Destroy(g);
+        sc.FlushDestroyed();
+        auto box = [&](const char* name, Vec3 pos, Vec3 size, bool stat) {
+            GameObject* g = ed.CreateEmpty(name);
+            g->transform->SetPosition(pos);
+            g->AddComponent<BoxCollider3D>()->size = size;
+            g->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+            g->transform->localScale = size;
+            g->GetComponent<BoxCollider3D>()->size = {1, 1, 1};
+            g->isStatic = stat;
+            return g;
+        };
+        GameObject* floorA = box("Floor A", {0, -0.5f, 0}, {12, 1, 12}, true);
+        floorA->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+        GameObject* floorB = box("Floor B (island)", {40, -0.5f, 0}, {12, 1, 12}, true);
+        floorB->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+        box("Wall West", {-3, 1.5f, 0}, {1, 3, 6}, true);
+        box("Wall East", {-1.98f, 1.5f, 0}, {1, 3, 6}, true);   // 2 cm seam: light leak
+        GameObject* a = box("Crate", {4, 0.5f, 4}, {1, 1, 1}, false);
+        GameObject* b = box("Crate", {4.002f, 0.5f, 4}, {1, 1, 1}, false);   // accidental duplicate
+        (void)a; (void)b;
+        GameObject* flat = ed.CreateEmpty("Flat Trigger");
+        flat->AddComponent<BoxCollider3D>()->size = {2, 0, 2};
+        GameObject* squash = box("Squashed Pillar", {6, 1, -3}, {1, 2, 1}, false);
+        squash->transform->localScale = {1, 0, 1};
+        GameObject* lift = box("Lift", {-5, 0.5f, 5}, {2, 0.4f, 2}, false);
+        lift->AddComponent<Mover>()->velocity = {0, 0.5f, 0};
+        GameObject* agent = ed.CreateEmpty("Guard");
+        agent->transform->SetPosition({0, 0.9f, 0});
+        agent->AddComponent<NavMeshAgent>()->baseOffset = 0.9f;
+        GameObject* goal = ed.CreateEmpty("Goal Island");
+        goal->tag = "Goal";
+        goal->transform->SetPosition({40, 0, 0});
+        GameObject* pick = ed.CreateEmpty("Pickup Far Away");
+        pick->tag = "Pickup";
+        pick->transform->SetPosition({90, 0, 0});
+        GameObject* cam1 = ed.CreateEmpty("Camera A"); cam1->AddComponent<Camera>();
+        GameObject* cam2 = ed.CreateEmpty("Camera B"); cam2->AddComponent<Camera>();
+        auto* nav = ed.CreateEmpty("Nav Mesh")->AddComponent<NavMeshSurface>();
+        nav->settings.cellSize = 0.5f;
+        nav->Bake(sc);
+        ed.Select(nullptr);
+        ed.dirty = true;
+        return;
+    }
     GameObject* crate = ed.CreateEmpty("Crate");
     crate->AddComponent<SpriteRenderer>()->texture = "Assets/missing_crate.png";
 

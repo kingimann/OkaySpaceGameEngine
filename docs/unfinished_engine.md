@@ -153,11 +153,12 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Right-to-left languages unsupported (see section 9) | see above | | Medium | Large |
 | ~~Lightmap baking has no test~~ Resolved: `lightmap` bakes face colours for a sun, point, spot and area light, a shadow ray, ambient occlusion and the mesh transform. | `Render/Lightmap.hpp` | Bake regressions are now visible. The bake is still per-face colours, not a UV lightmap texture. | Low | Small |
 | ~~Other code with no test naming it~~ Resolved: `ui_touch_scroll`, `item_presentation` (`DescribeItem`, `InventoryKeyWarning`), `loading_screen_layout`, `death_lock`. | those headers | A living body with a Health component no longer freezes because the animator still says `dead`. Health owns that flag when it is present. | Low | Small |
+| Level-design validation: what the new rules do not cover | `engine/src/Testing/LevelChecks.cpp` | Light leaks are a box-collider geometry test, not the lighting bake: holes in meshes, rotated or mesh-collider walls and non-static geometry are not judged, and an intended slit is flagged. Navigation reach ignores dynamic obstacles, jump links and doors, and with no agent in the scene only off-mesh is reported. A Mover is the only "moving object" the body rule knows (scripts, tweens and animation are not). Material asset paths do not exist as a field (materials are inline on the renderer), so only texture, mesh, audio, prefab, script and data paths are checked. Zero scale through a parent is not reported. The Problems panel has no automated UI test (the engine side has `level_validation`) | Low | Medium |
 | Anti-cheat Windows probes vs Linux: stubbed clock probe | `shared/AntiCheatChecks.hpp:337` (`#else`) | Behaviour differs by OS | Low | Small |
 
 ## Counts
 
-High: 7. Medium: 55. Low: 23. Total rows: 86.
+High: 7. Medium: 55. Low: 24. Total rows: 87.
 
 ## Top 15 to tackle first
 

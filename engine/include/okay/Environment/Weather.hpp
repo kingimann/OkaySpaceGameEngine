@@ -180,7 +180,7 @@ inline void UpdateWeather(Scene& scene, float dt, const Vec3* follow = nullptr) 
                 if (rig->loadedClip != ws.thunderSound) {
                     if (auto clip = LoadAudioFile(ws.thunderSound)) { rig->audio->clip = *clip; rig->loadedClip = ws.thunderSound; }
                 }
-                if (!rig->audio->clip.samples.empty()) rig->audio->PlayOneShot(0.6f + 0.4f * intensity);
+                if (rig->audio->HasAudio()) rig->audio->PlayOneShot(0.6f + 0.4f * intensity);
             }
         }
     }

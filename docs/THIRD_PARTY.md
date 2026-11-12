@@ -42,7 +42,6 @@ hosting) are not libraries and stay outside the goal unless we choose to self-ho
 | [Dear ImGui](https://github.com/ocornut/imgui) | Editor and launcher UI | MIT | Downloaded at configure time, pinned to one commit |
 | [Assimp](https://github.com/assimp/assimp) v5.4.3 | Importing many 3D model formats | BSD 3-clause | Downloaded at configure time (optional, `OKAY_USE_ASSIMP`) |
 | [ufbx](https://github.com/ufbx/ufbx) | FBX import | MIT or public domain | Vendored in `engine/third_party/ufbx` |
-| [stb_truetype](https://github.com/nothings/stb) | TrueType fonts | Public domain or MIT | Vendored in `engine/third_party/stb` (own rasterizer in review) |
 | [DejaVu Sans](https://dejavu-fonts.github.io) | Default UI font | Free font licence (see `assets/fonts/DejaVuSans-LICENSE.txt`) | In `assets/fonts` |
 | [libsodium](https://libsodium.org) | Authenticated packet encryption | ISC | System package (optional, `OKAY_USE_SODIUM`) |
 

@@ -26,7 +26,6 @@ Rules:
 
 | Library | Status |
 |---|---|
-| tinyfiledialogs, stb_image_write, font8x8, dr_mp3, stb_vorbis, stb_image, Lua, Mono | Replaced or removed, merged |
-| stb_truetype | Own TrueType and OpenType rasterizer in review |
+| tinyfiledialogs, stb_image_write, font8x8, dr_mp3, stb_vorbis, stb_image, stb_truetype, Lua, Mono | Replaced or removed, merged |
 
 Update this page and `docs/THIRD_PARTY.md` whenever one of these merges.

@@ -1,9 +1,13 @@
-# Modular gameplay systems on shared contracts
+# Modular engine: modules, shared contracts, per-project stripping
 
 Status: design only, no code. Written against origin/main a73fdb22.
-Goal: each gameplay system is a module (components, editor panel, docs, tests) that a project can add or
-remove, and modules talk through a few shared interfaces instead of each one re-inventing health, damage,
-"press E", ammo and seats.
+Goal: the WHOLE engine is a set of modules (rendering features, physics, animation, audio, UI, AI, gameplay,
+networking, scripting, tools) with a manifest each. A project turns modules on and off; off means the code is
+not in the exported game. Modules work together by default through a few shared contracts (health, damage,
+interaction, weapon, seat) with no manual wiring, and nothing is duplicated: whatever a contract or module replaces
+is deleted in the same PR. Sections: 1 what exists, 2 the module system (list, graph, stripping options),
+3 gameplay contracts, 4 working together, 5 project UX, 6 migration of old files, 7 multiplayer,
+8 verification, 9 PR plan, 10 open questions.
 
 "verified" means read in code on this commit (header or source, path given). The earlier grep-based audit
 was checked; where it was wrong this document says so (section 1.9).
@@ -133,387 +137,672 @@ for example `reloadKey = 'r'`, `interactKey = 'e'`). `RemapModel` exists but has
   `editor/VisualScriptNodeDocs.inc` from `scripts/gen_vs_node_docs.py`; test `tests/test_vs_node_docs.cpp`).
 - Script events: `InventoryEvents::Fire(go, "on_x", "vsEntry", args)`.
 
-## 2. The contracts
+### 1.11 How the engine is built and exported today (verified)
+- One engine library: `engine/CMakeLists.txt:2` is a single `add_library(okay_engine ...)` with an explicit list of
+  258 `.cpp` files (static, `BUILD_SHARED_LIBS` is forced OFF at `:408`). Tests (`tests/CMakeLists.txt`, 525 test
+  files), the editor, the player, the sandbox and the launcher all link `okay::engine`. There is no per-area target.
+- The player (`player/main.cpp`) is one generic program that loads a scene at run time; the dedicated server is
+  the same program (`Net/DedicatedServer.hpp`). Because scenes are data, "which components exist" is decided by the
+  binary, never by the project.
+- Build Game (`editor/main.cpp`, `builder::Build`) copies a prebuilt player (`FindPlayer()`, line ~3767: next to
+  the editor, `bin/`, `runtime/`), or downloads it (`EnsurePlayer`) from the release, plus `Data/`. Users do not
+  compile anything. `dist/OkaySpacePlayer.exe` is 6.5 MB; the editor is a separate 4-6 MB launcher-sized set.
+- Release builds are cross-compiled in CI with MinGW (`scripts/build-windows-dist.sh`, `.github/workflows/
+  release.yml`); CI also builds a player and an editor and runs the whole `ctest` once (`ci.yml:27-52`). Web is a
+  separate Emscripten build (`scripts/build-web.sh`). No toolchain ships with the editor.
+- PR #683 (`claude/build-pipeline`, not merged) adds `Core/BuildPipeline.hpp`: `WalkAssets` dependency walk from the
+  scenes, `Report::AddExcluded`, `FindUnshipped`, layouts. It strips assets, not code.
 
-Principles:
-1. Contracts live in `engine/include/okay/Gameplay/` (new folder, headers only plus small `.cpp`), no editor
-   dependency, no dependency on any module. A module depends on contracts, never on another module.
-2. A contract is an abstract interface plus one reference component. Existing classes either become the
-   reference component (kept name and record) or implement the interface.
-3. One lookup per contract, `Find<I>(GameObject*)`, walking up parents like `DamageGameObject` does today.
-4. Events go out through one helper (`GameplayEvents::Fire`) that does script event + visual-script entry +
-   C++ listener list + optional network replication, mirroring `InventoryEvents::Fire`.
-5. Server authority for anything that changes health, ammo, or seat occupancy in multiplayer.
+### 1.12 Engine-wide coupling (measured from `#include "okay/..."` lines, verified)
+Areas are the folders under `engine/include/okay` and `engine/src`. Rough size in header+source lines:
+Components 59k (210 headers + 49 sources), Core 33k, Scene 29k, Render 22k, VisualScript 14k, Scripting 11k +
+Script 7k, Net 11k, Platform 10k, Physics 4.5k, AI 4.7k, Animation 4.7k, Audio 4.6k, Debug 4.8k, Math 3.4k,
+Modeling 3.4k, Optimize 3.3k, UI 4k, Testing 2.9k, Inventory 2.7k, Crypto 1.4k, ECS 1k.
 
-### 2.1 Health (absorbs HealthStat, SurvivalStats health, Stats health, NPC health)
+Findings:
+1. **`Components/` is not a layer, it is every feature.** The 210 component headers belong to ~25 different
+   features (UI kit 48, controllers 24, rendering 25, animation 14, inventory 15 ...). Folders do not equal modules;
+   modules must be defined by component groups (table in 2.2).
+2. **Everything points at `Components`.** Include counts by area into `Components/`: Scene 373, Scripting 75,
+   VisualScript 63, Inventory 47, AI 45, Script 44, Render 43, Testing 37, Debug 18, Core 18, Input 15, Net 5.
+   The lower layers (`Scene`, `Core`, `Input`, `Render`, `Math`) include feature components.
+3. **Hard-wired registries (the real blockers), each with the count of components it names:**
+   - `Scene/SceneSerializer.cpp` (9752 lines, 175 component includes): the if/else chain writes and reads every
+     component. `ComponentSerializerRegistry` exists (`Scene/ComponentSerializer.hpp`) but only some components use it.
+   - `Scripting/OkayScriptVM.cpp` (10869 lines, 75 component includes) and `Script/EngineApi.cpp` (33): script
+     bindings reference every system directly.
+   - `Scene/BuiltinProperties.cpp`, `BuiltinPropertiesGameplay.cpp` (36), `BuiltinPropertiesUI.cpp` (25): the
+     Inspector property tables. `PropertyRegistry` already has `ComponentTypeInfo::add`, i.e. the mechanism for
+     registration exists.
+   - `Testing/SceneValidator.cpp` (35), `Debug/ProjectDiagnostics.cpp` (18), `Scene/SceneLocalization.cpp` (12),
+     `Core/Tween.cpp` (9), `Core/SaveFrameworkScene.cpp` (5): per-component rules and savers.
+   - `VisualScript/` nodes (`NodesGameplay`, `NodesInventory`, `NodesStory`, `NodesPhysics`... header-only, built into
+     one registry in `VsTypes.cpp`/`NodeGraph.cpp:878` factory chain) plus editor generated tables
+     (`editor/generated/gplib_*.inc`).
+   - `Input/GameInput.cpp` (UI-blocking logic) includes InventoryUI, ChestInventory, CraftingStation, ItemPickup,
+     HoldPrompt, DialogueRunner, SettingsScreen, Minimap, SequencePlayer: the input layer knows the features.
+   - `Core/` includes `Components` 18, `Render` 8, `Physics` 6, `Audio` 3 times (SaveFramework scene savers, Tween,
+     GameLoop).
+   - `include/Okay.hpp` is a 306-line umbrella including everything (fine for users, must not be used inside the
+     engine). No `#ifdef OKAY_*` exists in component headers (0 hits), which is good: nothing is conditional yet.
+4. **Layers that are already clean:** `Math` (almost none outward), `Platform` (-> Core only), `Crypto` (0),
+   `Graphics` (-> Core, Render), `Audio` (-> Scene, Math, Core; 3 Components), `Net` (-> Platform, Scene, Math,
+   Core; 5 Components), `Physics` (-> Scene, Math; 8 Components), `Optimize`, `Modeling`, `Environment`.
+   These are the leaves.
+5. **Already data-driven:** `ComponentSerializerRegistry`, `PropertyRegistry`, `InputActions` (named actions, saved
+   bindings). Nothing needs inventing; the existing registries are finished and used for everything.
+6. **Input facts relevant to interaction:** `InputActions::Define("Interact", {"key:e", "pad:x"})`
+   (`Input/InputActions.cpp:67`) already exists, also Reload (R / pad Y), Fire, Aim, Jump... but no engine component
+   reads "Interact": `Seat.cpp` uses `Input::GetKeyDown('e')` (`HumanoidActions.cpp:2177`),
+   `VisualScriptComponent.cpp:240-271` uses `GetKeyDown('e')` for `interact`/`use` and `OnInteract`, `ItemPickup`,
+   `DialogueRunner`, `HoldPrompt` and `InventoryInteractable` each store their own `char interactKey`.
 
+## 2. Module system, engine-wide
+
+Owner requirement: every engine area is a module with a manifest; a project turns modules on and off; turning one
+off removes its code from the exported game, not only its menus. Requirement 2: no duplicates: when a contract or
+module replaces something, the old thing is deleted in the same PR.
+
+### 2.1 Core (never strippable)
+Math, `Core` (application, loop, time, paths, cvars, console, logging, prefs, jobs, scheduler, asset database,
+localization tables), `Scene` (GameObject, Transform, Component/Behaviour, Scene, prefabs, serializer framework,
+migration, `PropertyRegistry`, `ComponentSerializerRegistry`), `Platform` base + window/SDL backend, `Input` (Input,
+InputActions, GameInput), `Graphics` (Image, Font), the renderer base (`Render/Renderer.hpp`, Camera, MeshRenderer,
+Light, SpriteRenderer, Material, Mesh, software renderer) and `Debug` base (logging, profiler), `Crypto` (used by
+save and net). Editor shell (window, dock, Hierarchy, Inspector, Console, Project panel, Build Settings) is core of
+the editor. Core must not include any module; this is checked (2.4).
+
+### 2.2 Module table (derived from the code; sizes are approximate lines, headers + sources)
+
+| Module | Area | Contains (code) | Requires | Provides | Size | Strip |
+|---|---|---|---|---|---|---|
+| `physics3d` | Physics | Physics3D, Rigidbody3D, Collider3D, MeshCollider3D, TriMesh, Joint3D | core | IPhysics3D | 3k | yes |
+| `physics2d` | Physics | Physics2D, Rigidbody2D, Collider2D, Joint2D, TilemapCollider2D | core | IPhysics2D | 2k | yes |
+| `render3d_effects` | Render | Decal, LODGroup, Occluder, Volume, Water, LineRenderer, Cable, MeshModifiers; the `Optimize/` LOD, batch, occlusion, streaming code | core | - | 8k | yes (components); renderer-internal post effects, shadows, SSAO sit inside `GLRenderer.cpp`/`D3D*Renderer.cpp` and are not separable yet (see 2.6) |
+| `particles` | Render | ParticleSystem | core | IFx | 1k | yes |
+| `terrain_foliage` | Render | Terrain, TerrainDigger, VoxelTerrain, VoxelDigger, Foliage, WorldStreamer | physics3d | - | 5k | yes |
+| `sky_weather` | Environment | DayNightCycle, Atmosphere, SkyStars, Weather, Wind | core | - | 1.5k | yes |
+| `tilemap2d` | Render | Tilemap, SpriteAnimator | physics2d | - | 1.5k | yes |
+| `splines` | Geometry | Spline, SplineMesh, DollyPath | core | - | 1k | yes |
+| `modeling` | Modeling | PolyMesh, PolyOps, Modifiers, UVUnwrap, MeshAsset, EditTransform + editor Modeling window | core | - | 3.4k | yes (editor + engine) |
+| `model_import` | Render | FbxReader/FbxScene, ColladaReader, Gltf, ModelImport, Assimp bridge | core | IModelImport | 6k | yes in the player (editor-time only; player needs only the baked mesh) |
+| `audio` | Audio | AudioMixer, AudioClip, Mp3/Vorbis decoders, AudioSource, MusicPlayer | core | IAudio | 5k | yes |
+| `animation` | Animation | Animator, AnimStateMachine, AnimClip/Control, Character(+AnimBackend), ModelAnimator, SkinnedMesh, BlendShapes, RootMotion, HumanoidLibrary/Actions/Motion, PlayerSetup, HumanoidRetarget | core | IAnimation | 11k | yes |
+| `ik` | Animation | CharacterIK, ChainIK, FootIK, FullBodyIK, LimbIK, LookAtIK, AimIK, IKTarget | animation | - | 2.3k | yes |
+| `cutscenes` | Animation | Sequence, SequencePlayer, VirtualCamera, camera brain, CameraFollow | animation | - | 1.7k | yes |
+| `ragdoll` | Physics | Ragdoll | animation, physics3d | - | 0.5k | yes |
+| `character_controllers` | Gameplay | Character/First/Third person, TopDown, Platformer, FreeRoam, ClickToMove, Stance, Traversal, StepUp, MoveSpeed, ControllerFeel | physics (2D or 3D), animation (soft) | IController | 10k | yes |
+| `ui_kit` | UI | Canvas, UI* components, UIRenderer/Batcher/Layout, FocusGraph, EventSystem, TextRenderer, WorldUI, PauseMenu, SettingsScreen, LoadingScreen, Minimap | core | IUI | 14k | yes |
+| `ai_navigation` | AI | NavMesh*, Navigation, Pathfinding, NavMeshAgent/Surface/Link/Modifier/Obstacle | physics3d | INav | 3k | yes |
+| `ai_behavior` | AI | BehaviorTree, BehaviorTreeRunner, NPCController, perception (sight/hearing in NPCController) | ai_navigation, health | IPerception | 3k | yes |
+| `health_damage` | Gameplay | HealthStat (the one model), HitZones, Damage types, Destructible, DeathLock, UIDamageNumbers hook | core | IHealth, IDamageable | 2k | no-by-default: core of gameplay; strippable only when no gameplay module is on |
+| `interaction` | Gameplay | Interactable, InteractionSensor, HoldPrompt, HoldableObject, ProceduralObjectHolding, ItemPickup, LootSource | core | IInteractable | 2k | yes |
+| `inventory` | Gameplay | Inventory, GridInventory, Equipment, Sockets, ItemDatabase, InventoryOps, Consumables, InventoryUI | interaction | IAmmoSource, IItems | 5k | yes |
+| `crafting` | Gameplay | Recipe, Crafting, CraftingMenu, CraftingStation, ChestInventory | inventory | - | 1.5k | yes |
+| `weapons` | Gameplay | Weapon, WeaponAttachment, Projectile3D, MeleeAttacker, Crosshair | health_damage, physics3d | IWeapon | 2k | yes |
+| `vehicles` | Gameplay | VehicleController(+2D), Seat (vehicle seats), VehicleDamage | physics, interaction, health_damage | IVehicle | 1.5k | yes |
+| `survival` | Gameplay | SurvivalStats (hunger/thirst/...), afflictions, zones | health_damage | - | 2k | yes |
+| `rpg_stats` | Gameplay | Stats (levels, mana) | health_damage | - | 0.2k | yes |
+| `dialogue_quests` | Gameplay | DialogueGraph/Runner, UIDialogueBox, QuestLog, StoryState + editor Dialogue window | interaction, ui_kit | IStory | 3k | yes |
+| `building` | Gameplay | BuildMode, BuilderMode, StructureBuilder, BlockBuilder, BuildPiece | inventory (cost) | - | 3k | yes |
+| `save_games` | Gameplay | SaveGame, SaveFramework(+Scene/Sync), GameSaves, Saveable, AutoSave | core | ISave | 5k | yes |
+| `networking` | Net | NetworkManager, NetworkSync/Object/PlayerSpawner, NetInventory, transports, matchmaking, server browser, DedicatedServer, NetSim | core | INet | 11k | yes |
+| `anticheat` | Net | AntiCheat, NetValidator, AntiCheatConfig, ClockCheck | networking | - | 2k | yes |
+| `relay_online` | Platform | RelayServer client, accounts, friends, parties, store-platform glue | networking | - | 8k | yes |
+| `voice` | Net | not present in the code (searched) | networking | - | 0 | slot reserved |
+| `scripting_okayscript` | Scripting | OkayScriptVM, Script/ interpreter, ScriptComponent, ActionList, EngineApi | core | IScripting | 18k | yes (no-code games) |
+| `scripting_visual` | Scripting | VisualScript graph, nodes, VisualScriptComponent, editor VS window | core | IVisualScript | 14k | yes |
+| `ecs` | ECS | World, Systems, SceneBridge, NetWorld | core | - | 1k | yes |
+| `localization_tools` | Core | LocScan/Check/Preview, SceneLocalization, Subtitles | core | - | 1k | yes (tables are core) |
+| `editor_tools_*` | Editor | per-module editor panels (Navigation, BehaviorTree, Dialogue, FpHands, Animator, NetSim, Localization windows) | the module they edit | - | editor only | follows its module |
+
+Notes: the `Optimize/` and `Debug/` (frame history, GPU timer, report) code is editor-time or dev-time and goes into
+`dev_diagnostics` (strippable from the player); `Testing/` (SceneValidator, PlayTest, golden images) is dev-only. The
+renderer backends (GL, D3D11, D3D12, console) are already chosen by platform and stay as build options, not modules.
+
+### 2.3 Dependency graph and the edges to cut
+Direction of the final graph: `core <- physics*, audio, animation, ui_kit, particles ... <- ik, ragdoll, controllers,
+ai_* <- health_damage <- interaction <- inventory <- crafting, weapons, vehicles, dialogue_quests, building <-
+networking-aware features`. `networking`, `scripting_*`, `save_games`, `ui_kit` are consumed by many modules but must
+only be reached through an interface registered by the module.
+
+Edges that block independent stripping, and the cut for each:
+
+| Edge (verified in 1.12) | Cut |
+|---|---|
+| `SceneSerializer.cpp` names 175 components | Each module registers its records through `ComponentSerializerRegistry` (`write/read` lambdas) from its own `.cpp`; the chain shrinks until only core records remain. Move one component at a time with a byte-identical round-trip test on every existing sample scene (golden text). |
+| `OkayScriptVM.cpp` and `EngineApi.cpp` name 75/33 components | An `ScriptApiRegistry`: a module registers its functions (`name, signature, doc, callback`) at module registration; VM looks up by name. The existing call sites become registrations in the owning module file. Unknown function in a script = "needs module X" error from the manifest `scriptApi` list. |
+| Property tables (`BuiltinProperties*.cpp`) | Already `PropertyRegistry::Register(ComponentTypeInfo)`; split each table into the module's `.cpp`. |
+| `SceneValidator`, `ProjectDiagnostics`, `SceneLocalization`, `Tween`, `SaveFrameworkScene` | A `ValidatorRegistry`/`SaverRegistry`/`LocalizableRegistry` of per-component callbacks, registered by the module (same pattern). |
+| VisualScript nodes (header-only, one factory chain `NodeGraph.cpp:878`) | `VsNodeRegistry::Register(typeName, factory, pins, help, group)`; each node header moves into the module and registers in its module init. Group id = module name; the palette filters by the enabled set. |
+| `Input/GameInput.cpp` includes 10 feature components | `UiBlockers` registry: a module registers `bool WantsInput(const Scene*)` ("inventory open", "dialogue active", "field focused"). `GameInput` iterates the registry. |
+| `Core/` -> Components (SaveFramework scene savers, Tween, GameLoop) | Savers via registry (above); Tween's component targets via a `Tweenable` interface in `Scene`. |
+| `Render` -> Components (43): renderer reads MeshRenderer, Light, Camera, Decal, ParticleSystem, Water, Terrain ... | Renderer base keeps Camera/MeshRenderer/Light/SpriteRenderer. Others implement `IRenderContribution { void Collect(RenderQueue&) }` registered per module; renderer iterates contributions. |
+| `Physics` -> Components (8), components -> Physics (95) | Allowed direction (module requires physics). Cut only Physics -> Components via `IPhysicsListener`. |
+| `Inventory/` -> Components (47) | Inventory components move into the `inventory` module (same module, internal edge). Edges from other areas into inventory go through `IAmmoSource`, `IItems`. |
+| `Net` -> Components (5) and `Components` -> Net (31: controllers, health) | Controllers use `INet::IsLocallyOwned(go)` from core's `NetOwnership.hpp` (a core interface with a "single player" default); `NetworkManager` calls modules through `INetReplicated` (see 3.8). |
+| `Scene` -> Components (373), mostly SceneSerializer + templates | `SceneTemplates.hpp` (shooter player, vehicle ...) splits per module into `<module>/Templates.hpp`, registered as GameObject menu entries via the manifest. |
+| Editor `main.cpp` (47k lines) names every component and window | Add Component menu, GameObject menu, Project Settings sections and windows are built from the registries; each module contributes an `EditorModule` (see 2.4). |
+| `Okay.hpp` umbrella | Stays for users; the check script (2.4) forbids including it from `engine/`. |
+
+### 2.4 Module anatomy, the manifest, and adding a module later
+Folder layout per module (new code goes here; existing code moves here module by module):
+```
+engine/modules/<name>/
+  module.okaymodule         # manifest (text, below)
+  include/okay/<Name>/...   # public headers (headers other modules may include)
+  src/...                   # sources (private)
+  register.cpp              # the only file the build links by name: void Register_<name>(ModuleContext&)
+  editor/                   # optional EditorModule: panels, inspectors, menu items
+  tests/                    # test_<name>_*.cpp, listed in the manifest
+  docs/<name>.md            # doc page required by the manifest
+```
+Manifest (`module.okaymodule`, key=value like `project.okayproj`, parsed by one engine class `ModuleManifest`):
+```
+name=weapons          title=Weapons          area=Gameplay        default=on
+requires=health_damage,physics3d             provides=IWeapon
+components=Weapon,WeaponAttachment,Projectile3D,MeleeAttacker
+records=weapon,weaponattachment,projectile3d          # scene records it owns
+script_api=fire,reload,ammo,...                       # OkayScript functions it registers
+vs_group=weapons                                      # visual-script palette group
+editor=WeaponInspector,WeaponsWindow
+assets=Assets/Modules/weapons/**                      # extra roots for export (PR #683 walk)
+tests=test_gameplay_weapons*.cpp    doc=docs/modules/weapons.md    size_kb_hint=180
+```
+`register.cpp` does everything the module contributes, in one place: serializer records, property tables, script
+API, VS nodes, validators, UI blockers, render contributions, templates, `NetReplicated` types. The generated file
+`modules_enabled.cpp` (CMake, from the enabled list) calls `Register_*` for exactly the enabled modules, in
+dependency order. That generated table replaces the central lists; no module is referenced anywhere else.
+
+**Check script** `scripts/check_modules.py` (runs in CI, fails the build, prints "module A includes B/x.hpp but B
+is not in A.requires"): reads each module's manifest, scans its files' `#include "okay/..."` lines, maps each include to the
+owning module (by folder or by `components=`/header lists), and checks: (1) includes only from `requires`
+(transitively resolved), core, or itself; (2) core includes no module; (3) no cycles; (4) every manifest key points
+at an existing file; (5) doc page exists; (6) no `#ifdef OKAY_MODULE_` inside module code (a module is compiled once
+and linked into many variants, see 2.5); (7) `Okay.hpp` is not included from `engine/`; (8) every `provides`
+interface is declared in the core-side `okay/Gameplay` or `okay/Modules` interface headers.
+
+**New module later:** copy `engine/modules/_template/` (a minimal module with a component, a record, a property
+table, one VS node, one script function, a test and a doc page, all marked TODO), fill the manifest, run
+`scripts/new_module.py <name>`, which also adds it to the module list the build reads. CI fails until the doc page
+and the test exist.
+
+### 2.5 Stripping code: honest options
+Facts that decide it (1.11): users have no compiler; the player is one prebuilt program; release is cross-compiled in
+CI; Web and Android are separate toolchains; the serializer/VM/properties currently reference every component, so a
+linker cannot drop anything today (dead-code removal only works once registration is data-driven).
+
+| Option | How | What it strips | Who compiles | Cost | Risk |
+|---|---|---|---|---|---|
+| (a) Per-module static libs (CMake OBJECT/STATIC) + generated `modules_enabled.cpp`; player links only enabled ones | the build target `okay_player(modules=...)` | everything inside modules: components, serializers, script bindings, VS nodes, validators | whoever has a toolchain: CI, developers, dedicated-server operators | Stage 0 + per-module conversion (the big work in 2.3) | Low, mechanical; only ordering of registration and hidden cross-includes. Gives nothing by itself to users without a compiler. |
+| (b) Each module a shared library / plugin, loaded by manifest; "strip" = not shipping the DLL | dlopen at start | per-DLL, exact | nobody at export time: copy files | XL: every component header is inline C++ with `std::` types, function-local statics (`HealthDeathHook()`, `ActionList::Vars()`, registries keyed by `std::type_index`) that duplicate per DLL, `dllexport` on ~260 classes, MinGW cross-DLL RTTI and exception rules; not allowed on Web, console, mobile stores | High: ABI and duplicate-singleton bugs, slower start. Rejected. |
+| (c) CI-built player variants for presets (for example 2D, 3D action, survival, full); the editor downloads the smallest variant containing the project's modules (same download path as `EnsurePlayer`) | CI matrix on (a) | exactly at preset granularity; extra modules present but unused | CI | S-M once (a) exists; CI links N variants (modules compile once, link many) | Medium: variant naming/versioning must match the editor; a project can get a superset, not exact. |
+| (d) Ship per-module static libs per platform + a bundled linker (no compiler), and link the exact player on Build Game | `lld` + the `.a`/`.lib` set + generated `modules_enabled.o` | exact set, no compiler needed | the editor, at export | M-L: ship ~tens of MB of libs and a linker per OS, must match the editor version, SDL2 import libs, plus Web/Android excluded | Medium: toolchain bundling per platform, link errors need clear messages. |
+
+**Recommendation:** (a) as the build system (it is the prerequisite for everything), (c) as the first distribution
+step for users (presets, fast, no toolchain), and (d) as a follow-up only if the owner wants exact per-project sets
+for desktop. Developers and the dedicated server get exact sets from (a): `cmake -DOKAY_MODULES=...` or
+`okay-build --modules ...`. Not planned: hosted per-project cloud builds (needs infrastructure and trust).
+Measured data to collect in Stage 0 before choosing between (c) and (d): size of each module in a link map, link
+time of the player, and archive size of the module libs. Supplement: `-ffunction-sections -fdata-sections
+--gc-sections` and LTO on the player once registration is data-driven (cheap, applies to every option).
+
+Key design rule that makes (c) and (d) cheap: a module's object files must not depend on which other modules are
+enabled (no `#ifdef` on module presence; absent contracts are found through registries and `Find<I>()` returning
+null). Then each module is compiled once per platform and only the final link differs.
+
+### 2.6 What is strippable at what granularity
+| Thing | Granularity | Mechanism |
+|---|---|---|
+| Components and their scene records | per module | `register.cpp` not linked, record unknown to the loader (scene reports "module disabled", see 2.7) |
+| Property tables and Inspector | per module | registered in `register.cpp` |
+| Script API (OkayScript) | per function group = module | `ScriptApiRegistry`; the VM reports "function needs module X" |
+| Visual-script nodes | per module group | `VsNodeRegistry` |
+| Editor panels / menus / Project Settings sections | per module | `EditorModule` list; the editor always contains all modules for authoring, but shows only enabled ones (the editor binary is not stripped) |
+| Network replicated types, RPC names | per module | `INetReplicated` registry |
+| Assets | per module | `assets=` roots (#683 walk) |
+| Renderer-internal effects (post effects, shadows, SSAO in `GLRenderer.cpp` 2.5k lines, D3D) | not separable in the first stages | later: split each backend into per-feature translation units behind `IRenderContribution`; until then they are core |
+| Core (2.1), renderer base, serializer framework, component model | no | - |
+| Editor binary | no (authoring needs everything) | only the exported player/server is stripped |
+
+### 2.7 Dependencies: enforcement and reporting
+- Build time: CMake reads `requires`; enabling `weapons` without `health_damage` fails configure with
+  `module 'weapons' requires 'health_damage' (needed for IDamageable); enable it or disable weapons`.
+- Editor: enabling a module turns on its transitive requires, listing them with the reason (`weapons needs
+  health_damage: Weapon deals damage through IDamageable`) and one Confirm; disabling lists what breaks (modules that
+  require it, scenes and prefabs that use its components, scripts and VS graphs that use its API/nodes).
+- Before export: the Problems panel and Build gate run `module.disabled_component_in_scene` (scene records
+  and prefabs), `module.disabled_script_api` (OkayScript uses a function from a disabled module, found by the same
+  scan the walk already does), `module.disabled_vs_node`. Export is blocked until fixed or the user confirms
+  "remove these components from the build" (they are dropped from the exported scene text, with a count in the
+  report). Enabling/disabling in the editor is reversible until export; the choice never edits scenes.
+- Export report (extends #683's `Report`): a "Modules" table: module, shipped yes/no, size contributed (from the
+  per-module size table generated at build time, see 2.5), and a line `Modules removed: 7, saved 3.1 MB (-27%) vs full
+  player`. Exact for options (a)/(d), the variant's size for (c) with the note "variant X contains: ...".
+
+### 2.8 CI and test time
+- `ctest` links `okay::engine` today. After Stage 0 the tests link a `okay::engine_all` interface that pulls every
+  module lib; behaviour and time are unchanged (same objects, same link).
+- New CI configurations: **core-only** (`OKAY_MODULES=core`, runs only core tests, a compile check for the
+  independence rule), **all-on** (today's job), and the **integration matrix** (section 8). Because module libs are
+  built once and shared, extra configurations add link time and the tests of that configuration, not recompiles
+  (ccache plus the OBJECT libs). Expected: all-on stays the same; core-only adds a few minutes of tests; the matrix
+  adds roughly one tiny-scene test per module pair. The per-module test lists also make a module's change run only its
+  tests plus those of modules that require it (a `ctest -L module:<name>` label added in Stage 0).
+
+## 3. Gameplay contracts (on top of the module system)
+
+Principles: contracts live in `engine/include/okay/Modules/` (interfaces only, in core), each module implements its
+own; a module depends on contracts, never on another module's classes; one `Find<I>(GameObject*)` per contract (self,
+then parents); one `GameplayEvents::Fire(go, "on_x", "VsEntry", args)` (generalising `InventoryEvents::Fire`) that
+reaches the script event, the visual-script entry, C++ listeners and, where flagged, the network. **Rule: every
+contract lists what it replaces, and that code is deleted in the same PR.** No forwarding fields. The only
+compatibility code allowed is the scene migration and the multiplayer wire messages (section 7).
+
+### 3.1 Health (module `health_damage`)
 ```cpp
-// engine/include/okay/Gameplay/IHealth.hpp
-class IHealth {
+class IHealth : public IDamageable {
 public:
-    virtual ~IHealth() = default;
-    virtual float Current() const = 0;           virtual float Max() const = 0;
-    virtual float Armor() const = 0;             virtual bool  IsDead() const = 0;
-    virtual bool  IsInvincible() const = 0;
-    // The one entry point. Returns what was actually applied (after armour, resistance, i-frames).
-    virtual DamageResult ApplyDamage(const DamageEvent&) = 0;
+    virtual float Current() const = 0;  virtual float Max() const = 0;  virtual float Armor() const = 0;
+    virtual bool  IsDead() const = 0;   virtual bool  IsInvincible() const = 0;
     virtual float Heal(float amount, GameObject* source = nullptr) = 0;
-    virtual void  Kill(const DamageEvent* cause = nullptr) = 0;
-    virtual void  Revive() = 0;
-    static IHealth* Find(GameObject*);           // self, then parents
+    virtual void  Kill(const DamageEvent* cause = nullptr) = 0;  virtual void Revive() = 0;
+    static IHealth* Find(GameObject*);
 };
 ```
-Reference component: `HealthStat` stays the class name and the `stat_health` record (so every scene, VS
-node, template and the `{health}` prefs keep working), implements `IHealth`, and gains: `armourPct`
-(optional percentage armour next to flat `armor`), `Resistances` (2.2), `deathEvent` fields unchanged.
-Fields stay as they are (`health`, `maxHealth`, `armor`, `regenPerSecond`...).
+Implemented by `HealthStat` (kept name, kept record `stat_health`, the one model). Adds `Resistances`, percent armour,
+events `on_damaged`, `on_healed`, `on_health_low`, `on_died`, `on_revived`.
+**Replaces and deletes in PR 2:** health fields and `Damage/Heal/Revive/IsDead` of `SurvivalStats`, `Stats`,
+`NPCController` (they read and write the sibling `HealthStat`); `DamageHealthOn`/`HealOn`/`DamageGameObject`;
+`NPCController::Damage`; `MeleeAttacker`'s `npc->Damage`; the three armour branches in `Equipment::ApplyBonuses`; the
+duplicate `{health}` prefs publishing (only `HealthStat` publishes); death signals collapse to one `on_died` event
+(`HealthDeathHook`, `died` broadcast, `on_death`, `npc_died` become listeners/aliases only in the migration of
+scripts: old script event names are renamed by the script migration, see 3.10). Old scenes: section 6.
 
-Absorbed:
-- `SurvivalStats`: its health block is replaced by a required sibling `HealthStat`; `SurvivalStats::Damage`
-  forwards to `IHealth::ApplyDamage` (type `Starvation`, `Drowning`, `Cold`, source null). Hunger/thirst/etc.
-  stay in `SurvivalStats`. `DamageHealthOn`/`HealOn` shrink to `IHealth::Find(go)->...`.
-- `Stats` (RPG): health fields removed in favour of a sibling `HealthStat`; its defense feeds
-  `Resistances` (flat reduction, min 1 kept as `minDamage = 1`); `on_death` is fired from the shared event.
-- `NPCController`: `health/maxHealth/Damage` become wrappers over a sibling `HealthStat` (auto-added at load);
-  provoke / flee-at-health / `npc_died` become listeners on Health events.
-- `MeleeAttacker`, `Projectile3D`, hitscan, VS nodes, `NetworkManager::ApplyHit`: all call
-  `IHealth::Find(target)->ApplyDamage(ev)`.
-
-Events (see 2.2 for the payload): `on_damaged(DamageEvent, DamageResult)`, `on_healed(amount)`,
-`on_health_low`, `on_died(DamageEvent)`, `on_revived`. Existing signals remain emitted by the same call:
-`Broadcast("died")`, `HealthDeathHook`, script `on_death`, `npc_died`. That is the compatibility layer; no
-listener has to change in the first PRs.
-
-### 2.2 Damage and resistances
-
+### 3.2 Damage and resistances
 ```cpp
 enum class DamageType : uint8_t { Generic, Bullet, Explosion, Melee, Fall, Fire, Cold, Poison, Starvation,
-                                  Drowning, Collision, Environment };   // plus project-defined names via DamageTypeId
-struct DamageEvent {
-    float       amount = 0;                 // raw, before mitigation
-    DamageType  type = DamageType::Generic;
-    GameObject* source = nullptr;           // who/what caused it (the shooter, the vehicle), may be null
-    GameObject* instigator = nullptr;       // the player behind it (driver of a vehicle), for kill credit
-    std::string weapon;                     // weapon id, used by NetValidator "hit/<weapon>" and kill feed
-    std::string zone;                       // HitZone name ("head", "left_leg") or empty
-    Vec3        point{};  Vec3 direction{}; // world hit point, travel direction (zero = unknown)
-    bool        hasPoint = false;
-    uint32_t    netTick = 0;                // set by the server path
-};
-struct DamageResult { float applied = 0; bool killed = false; bool blocked = false; };
-class IDamageable { public: virtual DamageResult ApplyDamage(const DamageEvent&) = 0; };  // IHealth extends it
+                                  Drowning, Collision, Environment };
+struct DamageEvent { float amount; DamageType type; GameObject* source; GameObject* instigator;
+                     std::string weapon, zone; Vec3 point, direction; bool hasPoint; uint32_t netTick; };
+struct DamageResult { float applied; bool killed, blocked; };
+class IDamageable { public: virtual DamageResult ApplyDamage(const DamageEvent&) = 0; };
 ```
-Resistances: `struct Resistances { float byType[kDamageTypeCount]; float flat; }` on `HealthStat` (data, no
-new component): multiplier per type, `0` = immune. Order, replacing the current order in `ApplyDamage`:
-zone multiplier -> type multiplier -> flat armor + equipArmor -> `resistance` -> `minDamage` -> i-frames/dodge.
-The current numbers are unchanged when zone is empty and all type multipliers are 1.
+Order: zone multiplier, type multiplier, flat armor + equipArmor, `resistance`, `minDamage`, i-frames/dodge. With empty zone
+and neutral type the numbers equal today's (a test proves it first). `HealthStat::Damage(float)` and
+`Damage(float, Vec3)` are removed; their callers (VS `DamageNode`, `NativeUIActions`, NoCode `DamageOnTouch`,
+afflictions, `NetworkManager::ApplyHit`) build a `DamageEvent`.
 
-The old `Damage(float)` and `Damage(float, Vec3)` overloads stay as inline wrappers (type `Generic`), so
-scripts, VS nodes and `NativeUIActions` compile and behave the same.
+### 3.3 HitZones
+`HitZones` component: named zones with multiplier and optional limb state, resolved from the nearest humanoid bone to
+`DamageEvent.point` (`humanoid::MapHumanoidBones`) or a named child collider. Not Ragdoll colliders (Ragdoll is a Verlet
+chain). First release multipliers; limb state later. Replaces nothing (new), module `health_damage`.
 
-### 2.3 HitZone (limb multipliers)
-
+### 3.4 Interactable (module `interaction`)
 ```cpp
-class HitZones : public Behaviour {            // optional, on a humanoid or any body
-    struct Zone { std::string name; int humanoidBone = -1; float multiplier = 1.0f;
-                  float limbHealth = 0; /*0 = no limb state*/ std::string statusOnZero; };
-    std::vector<Zone> zones;
-    const Zone* ZoneForPoint(const Vec3& world) const;   // nearest mapped bone to the hit point
-};
-```
-- Resolution is by nearest humanoid bone to `DamageEvent.point` (bones from `humanoid::MapHumanoidBones`),
-  not by colliders (see 1.9). Non-humanoid bodies use named child colliders instead: a `HitZones` zone can
-  list a child object name.
-- `HealthStat` asks `HitZones::ZoneForPoint` when `ev.zone` is empty and a point exists, so shooters only
-  have to send a point.
-- Limb state (broken leg = slower) emits `on_limb_disabled(zone)`; `MoveSpeed` (existing) reads a
-  `limbSpeedFactor` from it. First release ships multipliers only; limb state is a later PR.
-
-### 2.4 Interactable
-
-```cpp
-class IInteractable {
-public:
+class IInteractable { public:
     struct Context { GameObject* actor; bool hold; float heldSeconds; bool inspect; };
-    virtual bool  CanInteract(const Context&) const = 0;    // faction/item/lock checks
-    virtual std::string Prompt(const Context&) const = 0;   // localized through LocKeys like HoldPrompt
-    virtual void  Interact(const Context&) = 0;
-    virtual void  Inspect(const Context&) {}                 // optional "examine"
+    virtual bool CanInteract(const Context&) const = 0;
+    virtual std::string Prompt(const Context&) const = 0;     // localized
+    virtual void Interact(const Context&) = 0;  virtual void Inspect(const Context&) {}
 };
-class Interactable : public Behaviour {          // the reference component and the broker
-    float range = 2.5f;  float holdSeconds = 0;  std::string prompt, inspectText;
-    std::string action = "interact";                     // InputActions name, falls back to key 'e'
-    std::string requiredItem, requiredTag;               // who can interact
-    bool  oneShot = false, enabledInteract = true;
-    // Events: on_interact(actor), on_inspect(actor), on_hold_progress(actor, 0..1), on_focus(actor), on_blur(actor)
-};
+class Interactable : public Behaviour {   // range, holdSeconds, prompt, inspectText, action="interact" (override),
+    ...                                   // requiredItem, requiredTag, oneShot; events on_interact, on_inspect,
+};                                        // on_hold_progress, on_focus, on_blur
 ```
-- `InteractionFocus` (static, per scene, owned by the player's `InteractionSensor` component) picks one target
-  per actor per frame: nearest in range that `CanInteract`. It replaces `ItemPickup::InteractBlocked`,
-  `InventoryInteractable::Nearest` and the per-component range checks, and drives the prompt label that
-  `HoldPrompt` shows today (HoldPrompt becomes the view, keeping its name and `ExtraPrompt()` until PR 5).
-- Wraps/absorbs: `InventoryInteractable` (`ChestInventory`, `CraftingStation` implement `IInteractable`; their
-  `open` state and `on_chest_opened/closed` stay), `ItemPickup` (interact path), `DialogueRunner` (start path),
-  `Seat` (enter), `HoldableObject`, `LogicSource` button, door `LogicTarget`.
-- Door/lever without code: an `Interactable` next to a `LogicSource` of kind Button fires it (so I/O links
-  keep working).
-- Network: the actor's interact request is an RPC to the server (`interact/<netId>`), the server runs
-  `Interact`, state that changes (open, occupied) is a synced property (2.8). Prompt/focus are client-only.
+`InteractionSensor` (on the player) picks one target per frame and drives the prompt label; input comes from the
+`InputActions` action named by `Interactable.action` (default `"interact"`, section 6). 
+**Replaces and deletes in PR 3:** `InventoryInteractable` base, `InventoryInteractable::Nearest()`,
+`ItemPickup::interactKey/interactRange/InteractBlocked/BlockInteract/ClearInteractBlock`, `DialogueRunner::interactKey/
+interactRange/InRange/promptText` (prompt moves to the Interactable), `Seat::useRadius/prompt/playerInRange` and its
+`GetKeyDown('e')`, `HoldPrompt`'s own range scans (`HoldPrompt` becomes the view: label only), the per-chest `open`
+toggle logic (chest/craft implement `IInteractable`; `on_chest_opened/closed` stay as events), `HoldableObject` pick-up
+key, and the interact branches in `GameInput.cpp` (`ItemPickup`/`HoldPrompt` loops, replaced by `UiBlockers`).
+`LogicSource` buttons stay (they are the I/O link system); an `Interactable` next to one triggers it.
 
-### 2.5 Weapon
+### 3.5 Weapon (module `weapons`) with ammo link
+`WeaponDef` (id, fire mode Single/Burst/Auto, delivery Hitscan/Projectile/Melee, damage, range, fireRate, pellets,
+spread + per-shot spread + recovery, aim spread factor, recoil pitch/yaw/recovery, magazineSize, reload times,
+`ammoType`, damageType, projectile prefab/speed); `IWeapon { TryFire, TryReload, MagazineAmmo, ReserveAmmo, IsReloading,
+SetAiming }`; `Weapon` component; `WeaponAttachment` (on a `Sockets` child: spread/recoil/damage/magazine modifiers).
+Ammo: magazine count on the weapon (stored in `ItemInstanceData` when the weapon is an inventory item); reserve ammo
+counted from the owner's `Inventory` by `ammoType` through `IAmmoSource`; with no `Inventory`, a plain number on `Weapon`
+(decision kept: ammo in Inventory when one exists, else on Weapon).
+Fire pipeline, once: spread, ray or projectile, `DamageEvent` per hit (zone from `HitZones`), `IDamageable::ApplyDamage`.
+**Replaces and deletes in PR 4/5:** `TopDownShooterController` shooting, spread, pellets, magazine, `ammo`, reload, `on_fire/
+on_reload/on_reloaded/on_empty` plumbing and its private `ammo` int (it keeps movement, aiming, dash and calls
+`IWeapon`); `ThirdPersonShooterController`'s `on_fire` script hook and `fireRate`; `MeleeAttacker` (melee is
+`Delivery::Melee`); the `float` damage path in `Projectile3D` (takes `DamageEvent`). Scripts that implemented `on_fire`
+in the third-person shooter now use the weapon event; the script migration (3.10) rewrites the name.
 
-```cpp
-enum class FireMode { Single, Burst, Auto };   enum class Delivery { Hitscan, Projectile, Melee };
-struct WeaponDef {                              // data, lives in an .okayitems custom block or on the component
-    std::string id;  FireMode fire = FireMode::Single;  Delivery delivery = Delivery::Hitscan;
-    float damage = 20, range = 50, fireRate = 8;  int burstCount = 3, pellets = 1;
-    float spreadDeg = 1, spreadPerShot = 0.3f, spreadRecoverPerSec = 6, aimSpreadMul = 0.4f;
-    float recoilPitch = 1.2f, recoilYaw = 0.4f, recoilRecoverPerSec = 8;     // kick applied to look and camera
-    int   magazineSize = 30;  float reloadTime = 1.8f;  float tacticalReloadTime = 1.4f;
-    std::string ammoType;                     // ItemDefinition id; empty = infinite
-    DamageType damageType = DamageType::Bullet;
-    std::string projectilePrefab; float projectileSpeed = 60;
-};
-class IWeapon {
-public:
-    virtual bool TryFire(const AimRay&) = 0;  virtual bool TryReload() = 0;
-    virtual int  MagazineAmmo() const = 0;    virtual int ReserveAmmo() const = 0;  virtual bool IsReloading() const = 0;
-    virtual void SetAiming(bool) = 0;
-};
-class Weapon : public Behaviour, public IWeapon {   // on the weapon object (held in a socket) or on the player
-    WeaponDef def;  std::vector<std::string> attachments;   // Sockets child names, each an `WeaponAttachment`
-    // Events: on_fire, on_empty, on_reload_start, on_reloaded, on_hit(DamageEvent, DamageResult), on_recoil
-};
-```
-- Ammo link: the magazine count lives on the weapon (and in `ItemInstanceData` values when the weapon is an
-  inventory item, so it survives drop and save). Reserve ammo is counted from the owner's `Inventory` by
-  `ammoType` (`InventoryOps` count/remove); reload moves reserve -> magazine in one operation, so there is one
-  ammo number per source of truth. Without an `Inventory`, `reserve` is an int on `Weapon`.
-- Fire pipeline (one implementation): spread -> ray or projectile -> for each hit build `DamageEvent` (type, source =
-  weapon owner, weapon id, point, direction, zone from `HitZones`) -> `IDamageable::ApplyDamage`.
-  Multiplayer: client predicts effects, then `NetworkManager::ClaimHit` (extended with `zone` and `weapon`
-  already in the claim); the server computes damage from `WeaponDef`, never from the claim.
-- Absorbs: the shooting block of `TopDownShooterController` (fields `fireMode, projectile, pellets, spread,
-  range, magazineSize, ammo, reload*` map 1:1 onto `WeaponDef`), the empty `on_fire` hook of
-  `ThirdPersonShooterController` (it now just forwards the fire input to `IWeapon`), `Projectile3D` (kept, gets
-  `DamageEvent` instead of `float`), `MeleeAttacker` (becomes `Delivery::Melee` on `Weapon`; the class
-  remains as a thin preset until its removal), the pellet/spread math in the top-down controller.
-- Attachments: `WeaponAttachment` (optional component on a Sockets child) declares modifiers: spread/recoil
-  multipliers, magazine size delta, damage multiplier, sight zoom. `Weapon` recomputes effective stats when a
-  socket child changes. Needs `Sockets` (verified present).
-- Controllers keep ownership of input and camera (`FirstPersonController`, `ThirdPersonShooterController`,
-  `TopDownShooterController`); they call `IWeapon` and receive `on_recoil` to kick the camera. No controller
-  contains damage code after the port.
+### 3.6 Seat and vehicle seat (module `vehicles`)
+`Seat` gains `role {Sit, Driver, Passenger, Gunner}`, `vehicle`, `doorName`; `IVehicle { SetDriver, Seats, Health }` on
+`VehicleController`/2D. Enter/exit through `Interactable`; driver controls routed by `SetDriver`; passengers parented
+and can use a `Weapon` in a Gunner seat; vehicle door = child `Interactable` + door `LogicTarget`; `VehicleDamage` on the
+body's `IHealth` (collision impulse, smoke, wreck). **Replaces/deletes in PR 6:** the key check and range code in
+`Seat`/`HumanoidActions::RequestSit` path that duplicates the Interactable, and `VehicleController`'s direct player
+input read (driver input comes from `IVehicle::SetDriver`).
 
-### 2.6 Seat and vehicle seat
+### 3.7 Inventory link
+`IAmmoSource { Count, Take, Give }` on `Inventory`/`GridInventory`; weapon and armour data stay in `ItemDefinition.custom`
+first. `Equipment` applies armour to `HealthStat` only.
 
-```cpp
-enum class SeatRole { Sit, Driver, Passenger, Gunner };
-class Seat : public Behaviour {      // existing class, extended; existing fields stay
-    SeatRole role = SeatRole::Sit;    GameObject* vehicle = nullptr;  // null = a chair, today's behaviour
-    std::string doorName;            // an Interactable-driven door; seat is blocked while locked
-    bool exitFromInside = true;  bool exitEjectsAtSpeed = false;
-    // Events: on_seat_entered(actor), on_seat_exited(actor), on_vehicle_entered(actor, role)
-};
-class IVehicle {                     // implemented by VehicleController and VehicleController2D
-public:
-    virtual void  SetDriver(GameObject* actor) = 0;      // routes input to the vehicle, null = no driver
-    virtual std::vector<Seat*> Seats() = 0;
-    virtual IHealth* Health() = 0;                       // body health, null if none
-};
-```
-- `Seat` keeps its record `seat` with the same 11 fields; new fields are appended as optional trailing values.
-  A Seat with `vehicle == null` and `role == Sit` behaves exactly as today (chair/bench/ground clips).
-- Enter/exit go through `Interactable` (prompt "Enter"/"Sit"), so `Seat::playerInRange`/`useRadius`/`prompt`
-  become the Interactable's `range`/`prompt` (migrated on load).
-- Driver: `VehicleController` stops reading player input directly when it has an `IVehicle::SetDriver`
-  actor; the actor's controller is disabled while seated (as `Seat::Claim` already parks the body).
-- Passengers: parented to the seat anchor, no input, can use their `Weapon` if the seat allows (`Gunner`).
-- Doors: a vehicle door is a child with `Interactable` + a small `LogicTarget` Door preset (existing); a
-  locked door blocks `Seat::Claim`. Door open state is a synced property.
-- Vehicle damage: `HealthStat` on the vehicle body with `DamageType::Collision` from impact impulse (a
-  `VehicleDamage` module component: crash threshold, smoke/fire thresholds, wreck). Occupants take a fraction
-  through `IHealth` of each seat's occupant on explosion.
-- Multiplayer: seat occupancy and driver id are server-owned properties; a client requests enter/exit by RPC;
-  the driver's client has authority on the vehicle transform (`NetworkSync.authority` handed to the driver, via
-  `SetOwned`, with `clientClaimable` semantics unchanged for the anti-cheat).
+### 3.8 Network contract (multiplayer syncs all of it)
+`NetworkSync.properties`: list of `{component, path}` (PropertyRegistry paths) synced server-authoritatively on change
+(reliable `__prop/<netId>/<path>`). Default synced when an object has `NetworkSync`: `HealthStat.health/dead`,
+`Seat.occupied/driver`, `Weapon.magazine` (owner only), `Interactable` open state of doors/chests. Events flagged
+`replicate` fire on every peer from the server's message. Hit claims: `ClaimHit` carries target, weapon id, origin,
+direction, zone; the server computes damage from the `WeaponDef`. Clients never apply damage. Interact requests are
+RPCs `interact/<netId>` run on the server.
 
-### 2.7 Inventory link (what the contracts need, no new inventory model)
-- `IAmmoSource { int Count(ammoType); int Take(ammoType, n); int Give(ammoType, n); }` implemented by
-  `Inventory` and `GridInventory` through `InventoryOps`; `Weapon` and loot/pickup code use it only.
-- `ItemDefinition` gets no new typed fields in the first step: weapon and armour data stay in `custom`
-  (`weapon.id`, `ammo.type`...). A later PR can add a typed block if wanted.
-- `Equipment` armour application calls `HealthStat` only (after the health merge), replacing the three
-  `if (auto* ...)` branches in `Equipment::ApplyBonuses`.
+### 3.9 Module manifest
+Defined in 2.4 (replaces the earlier gameplay-only sketch). Gameplay modules are rows of the same table.
 
-### 2.8 Network contract
-A single opt-in list on `NetworkSync`: `std::vector<SyncedProperty> properties` where an entry is
-`{ componentType, propertyPath }` (path syntax of `PropertyRegistry`, e.g. `HealthStat.health`,
-`Seat.occupied`). Rules:
-- Server-authoritative by default for gameplay properties; `NetworkSync.authority` still decides the transform.
-- Sent on change, reliable, as `__prop/<netId>/<path>`; clients apply with a setter that does not re-fire
-  gameplay events except `on_*_replicated`.
-- `HealthStat` is on the list by default for objects that already have a `NetworkSync` (replaces the
-  special case in the `__dmg` handler at `NetworkManager.cpp:944`; `__dmg` keeps being sent so old clients work).
-- Hit events: `ClaimHit` unchanged on the wire for old clients; new clients add `zone`. The server ignores
-  unknown fields.
-- Rejected: replicating `DamageEvent` from clients. Clients never apply damage locally (as the existing
-  `ClaimHit` comment states).
+### 3.10 Scripting: one set of nodes and APIs per contract
+OkayScript and visual script are generated from the same contract description: each contract has a small
+`*.contract` data file (`health.contract`: functions `damage(amount, type?)`, `heal`, `health()`, `max_health()`,
+`is_dead()`, `kill()`; events `on_damaged`, `on_died`...). The module's `register.cpp` turns it into (1) OkayScript
+functions via `ScriptApiRegistry`, (2) visual-script nodes and events via `VsNodeRegistry` (group = module), (3) the
+docs table of the module doc page. So `damage(...)` and the "Damage" node are the same call, with the same argument
+names, and both appear only when the module is on. Existing node and function names stay as the public names
+(`GlGetHealth`..., `damage`, `heal`); nodes that took a bare float gain optional type/zone pins. Scripts that read old
+event names (`on_death`, `npc_died`, `died`, `on_fire` in the shooter) are rewritten by a project migration run by
+the editor on open (a text rewrite of `.okayscript` and `.okayvs`, listed in the log, reversible through the existing
+backup); wire aliases are not kept in the runtime.
 
-### 2.9 Module manifest
+## 4. Everything works together, easily
 
-```cpp
-// engine/include/okay/Gameplay/ModuleManifest.hpp  (data, no behaviour)
-struct ModuleManifest {
-    std::string name;                         // "weapons"
-    std::string title, description, docPage;  // docs/modules/weapons.md
-    std::vector<std::string> requires;        // module names: {"health"}
-    std::vector<std::string> provides;        // contracts: {"IWeapon"}
-    std::vector<std::string> components;      // C++ type keys (ComponentSerializerRegistry::TypeKey)
-    std::vector<std::string> sceneRecords;    // record names the serializer owns: {"weapon"}
-    std::vector<std::string> vsNodeGroups;    // visual-script node group ids shown only when enabled
-    std::vector<std::string> assetRoots;      // content the module needs shipped (fonts, default prefabs)
-    bool defaultOn = true;                    // new projects
-    bool coreContract = false;                // health/damage/interaction: cannot be removed
-};
-```
-- Registered by one `RegisterModule(ModuleManifest)` call per module (same pattern as
-  `ComponentSerializerRegistry::Register`). Registry lives in the engine so the player, editor and tools share it.
-- Each module has a manifest, a header folder, a doc page `docs/modules/<name>.md`, a test file, and an
-  editor panel entry (an optional inspector extension or window), all listed in the manifest.
-- Modules provided initially: `health` (core), `damage` (core), `interaction` (core), `weapons`, `seats`
-  (core, grows into vehicles), `vehicles`, `survival`, `inventory`, `npcs`, `dialogue_quests`, `building`.
-  Only the first four PRs touch code; the rest are manifests that point at existing components.
+### 4.1 Auto-wiring (no manual setup)
+Each component declares needs in its manifest-backed `ComponentInfo`: `needs` (hard), `suggests` (soft), with a
+default creator. The Inspector shows a banner "Needs: Health Stat (not on this object) [Add what this needs]". One
+click adds the missing pieces with defaults. Rules that run without clicking (at Add Component and at load):
+- `Weapon` on an object with a controller: links to the controller's aim ray and adds nothing unrelated. It looks
+  for an `Inventory` on the owner (reserve ammo) and falls back to its own counter.
+- Damage targets: any object with `IHealth` is hit. `Weapon` raises a Problems warning if no `IHealth` exists in
+  the scene (4.5).
+- `Seat` with a `vehicle` finds the `VehicleController` in its parents.
+- `Interactable` finds `InputActions` "interact"; if the project has no such action the project defaults are created.
+- `NPCController`/`BehaviorTreeRunner` auto-add `HealthStat` (they need `IHealth`), and perception reads weapon fire.
 
-## 3. Adding and removing modules per project
+### 4.2 Worked examples across areas (all through contracts, no wiring)
+1. **Weapon -> Health -> feedback:** `Weapon.TryFire` hits a crate with `HealthStat`; `DamageEvent{Bullet, zone, point,
+   direction}`; `on_damaged` is heard by `audio` (hit sound by DamageType), `particles` (impact at `point`),
+   `render3d_effects` (a `Decal` at `point` aligned to the normal), `ui_kit` (`UIDamageNumbers`), `survival`
+   (nothing). Each is a listener registered by its module on `on_damaged`; with a module off its listener does not exist.
+2. **NPC perception:** `Weapon` fires `on_fire` with the position; `ai_behavior`'s perception listens (hearing range)
+   and the behavior tree reacts; `NPCController` receives `on_damaged` from `HealthStat`, becomes hostile, flees by
+   `fleeHealthPct`, dies via `on_died`, `LootSource` drops items (interaction/inventory).
+3. **Ammo:** `Weapon.TryReload` asks `IAmmoSource` of the owner for `ammoType`; the inventory screen shows the same
+   count; picking up ammo (`ItemPickup` -> `Inventory`) raises reserve ammo without touching the weapon.
+4. **Vehicle:** pressing "interact" near a door focuses an `Interactable`; the Seat with role Driver claims the actor;
+   `IVehicle::SetDriver` gives that actor's input (`Move`, `Jump`=handbrake) to `VehicleController`; a crash applies
+   `DamageEvent{Collision}` to the vehicle's `IHealth`; occupants take explosion damage through their `IHealth`.
+5. **Multiplayer:** all of the above run on the server; clients see `HealthStat.health`, `Seat.occupied`, door state and
+   the weapon events through 3.8, and send only inputs, hit claims and interact RPCs.
+6. **Save:** `save_games` saves any component whose module registers a saver; weapons, health, inventories, seats are in
+   the same save with no extra wiring.
 
-### 3.1 Project data
-`project.okayproj` (`editor/ProjectState.hpp:304`, key=value lines) gets `modules=health,damage,weapons`.
-Rules: absent key = "all modules on" (every existing project keeps today's menus); the list is written only once
-the user opens the Modules page and presses Apply. `ParseProjectSettings` already ignores unknown keys, so an
-older editor opening a newer project loses nothing.
+### 4.3 Easy dependency handling (UX)
+Enabling a module enables its requires (list + reason, one Confirm). Disabling shows what breaks. Add Component shows
+`needs Health Stat` as a hint on each row and a one-click "Add with what it needs". Each module has a **Setup** button
+(Project Settings > Modules, and the module's menu) that creates a working example in the current scene (for Weapons: a
+player with the matching controller and `Weapon`, a target with `HealthStat`, ammo item in an `Inventory`, a HUD ammo
+text) from a per-module `setup` function listed in the manifest, undoable as one step.
 
-### 3.2 Project Settings > Modules page
-A new section in Edit > Project Settings (`editor/main.cpp:6195` opens it): one row per module with title,
-description, doc link, toggle, "requires" and "required by" lists. Toggling off a module that others require is
-blocked with the dependent names listed. Turning a module off never deletes scene data: components already in
-scenes stay and show as "module disabled" in the Inspector (read-only header, still serialized), and the
-Problems panel (`ProjectDiagnostics`) gets one rule `module.disabled_component_in_scene` listing them.
+### 4.4 One inspector layout and one naming scheme
+Same concept, same field name and unit across modules: `damage`, `range` (meters), `cooldown` (seconds, replaces
+`fireRate`/`attackInterval`/`respawnDelay` style names: `rate` stays as shots per second only in `WeaponDef`),
+`prompt`, `action` (the `InputActions` name, replaces per-component `key` chars), `radius`, `duration`, `enabledInteract`.
+Each module's inspector uses the same section order: Basics, Limits, Feedback (audio/fx), Events, Network. The
+`PropertyBuilder` gets `.Group("Basics")` and a style check test fails when a registered property in a gameplay
+module uses an alias of a reserved name (`key`, `fireRate`, `interactRange`...). Renames for old scene fields are in
+the migration (section 6).
 
-### 3.3 Add Component filtering
-The Add Component popup (`editor/main.cpp:39281`) hard-codes items. First step is data, not rewrite: every item
-passes through `ModuleRegistry::Allows(componentTypeKey)`; components with no manifest are always shown. The
-popup's category tabs hide empty categories. Recent list drops disabled entries. GameObject > templates
-(shooter player, vehicle) get the same check through the manifest's `provides`.
+### 4.5 Problems panel: mis-wired combinations
+New rules (in `ProjectDiagnostics`, each registered by its module): `weapon.no_health_target` (a Weapon and no
+`IHealth` in the scene), `weapon.no_ammo_source` (ammoType set, owner has no Inventory), `interactable.no_action`
+(action not defined in `InputActions`), `interactable.no_sensor` (no `InteractionSensor` on any player),
+`seat.no_vehicle_controller`, `npc.no_health`, `health.no_ui_listener` (info), `module.*` rules from 2.7.
 
-### 3.4 Visual-script nodes
-Nodes are hand-written structs and generated tables (`editor/generated/gplib_*.inc`). Each node group id in
-`vsNodeGroups` (for example `gp.combat`, `inventory`, `story`) maps to the palette categories; the palette,
-search and "Add node" popup skip groups of disabled modules. Loading a graph that uses a hidden node still works
-and shows the node with a "module disabled" badge (graphs must never fail to load because of a toggle). The
-node docs generator (`scripts/gen_vs_node_docs.py`) records the group so the docs page for a module lists its
-nodes. Verify on the first PR where the palette categories are really assembled (not located in this survey).
+### 4.6 Scripting parity
+See 3.10. The same registration feeds both; an integration test calls `damage` from OkayScript and the Damage node on
+the same object and compares results; a coverage test (like `test_vs_node_docs`) fails when a contract function
+has no node or no script function.
 
-### 3.5 Export stripping and PR #683
-Branch `claude/build-pipeline` (PR #683, not merged) adds `engine/include/okay/Core/BuildPipeline.hpp` with a
-dependency walk: `AssetRef{ref, referrer}` roots from the built scenes, `WalkAssets(roots, WalkSettings)`
-follows text assets, `ShippedAsset` carries a `reason`, `Report::AddExcluded(path, bytes, reason)` records what
-was left out, and `FindUnshipped` lists project files nothing referenced. Module manifests feed it at two
-points, both data-only so they do not conflict with the walk:
-1. Extra roots: `ModuleManifest.assetRoots` of enabled modules are added to the `AssetRef` list with referrer
-   `module:<name>` (so default prefabs/fonts that a module needs ship even if no scene mentions them).
-2. Exclusions: assets under `Assets/Modules/<name>/` of a disabled module are never roots, so the walk drops
-   them, and the report shows reason `module <name> disabled`.
-Code is not stripped per module in the first version: the player binary links every component (a disabled
-module's scene records still load). A second step could compile the player with module groups switched off in
-CMake; that is a size optimisation and out of this plan. Land #683 first; PR 8 below depends on it and must be
-rebased on it, never re-implement the walk.
+## 5. Choosing modules per project
 
-### 3.6 Docs and tests per module
-`docs/modules/<name>.md` is required by the manifest (a test fails when `docPage` does not exist). Module tests
-sit in `tests/test_<module>_*.cpp` and are listed in the manifest `tests` field once PR 8 adds it, so a module
-can be built and tested alone (CMake option per module is not part of this plan).
+### 5.1 New project flow
+Launcher/editor New Project dialog gets a second step "What do you want in this project?":
+- A checklist grouped by area: **Combat** (health and damage, weapons, hit zones), **Survival**, **Vehicles**,
+  **Characters and animation**, **Dialogue and quests**, **Inventory, crafting and building**, **AI**, **World and
+  rendering** (terrain, sky, particles, effects), **Audio**, **UI**, **Multiplayer** (networking, anti-cheat, online),
+  **Scripting** (OkayScript, visual script), **Tools** (modeling, cutscenes, localization).
+- Each row: name, one-line description, `requires` ("also needs: Health and damage"), and size cost ("+0.4 MB in the
+  game"), from the manifest `size_kb_hint` and the measured table.
+- Presets (2D platformer, 3D action, survival, shooter, vehicle game, story game, multiplayer) are buttons that
+  pre-tick the list; the user can change any tick. Ticking a row ticks its requires (shown), unticking a required one is
+  blocked with the reason.
+- Templates (the existing project templates such as "Third Person Shooter", "Main Menu", "Inventory",
+  `editor/main.cpp:17918`) carry `needs_modules`; choosing a template pre-ticks and locks those rows (can be unlocked
+  with a warning because the template would not run).
+- Stored in `project.okayproj` as `modules=health_damage,weapons,...` (`ProjectSettings` gains `modules`,
+  `ParseProjectSettings` ignores it in older editors). An existing project without the key = all modules on until the
+  user opens the page. Core modules are not listed.
 
-## 4. Migration plan
+### 5.2 Project Settings > Modules
+One row per module with toggle, doc link, requires/required-by, size, and "used by: N objects in M scenes, K scripts"
+(click to see the list). Turning off lists what uses it; the change is reversible until export and never edits
+scenes. Components of a disabled module stay in scenes (read-only "module disabled" header) and are dropped only
+from the export, with the count in the report. The Add Component popup and GameObject menus, VS palette and script
+function help hide disabled modules; a hidden VS node in a saved graph shows a "module disabled" badge and the graph
+still loads.
 
-Rules for every PR: it builds, passes the existing suite, adds its own tests, changes nothing for existing
-scenes unless stated, nothing hidden/off, no dead code (a contract lands together with its first consumer).
-Sizes: S under ~300 lines, M ~300-900, L above.
+### 5.3 Export (relation to #683)
+See 2.7. Manifest `assets=` globs feed `WalkAssets` as extra roots; assets under a disabled module's folder are not
+roots and appear under "excluded: module X disabled". `module.*` Problems rules join the Build gate. The size table
+comes from the build, not from guesses.
 
-| # | PR | Size | Contents |
-|---|---|---|---|
-| 1 | Health + Damage contracts | M | `Gameplay/IHealth.hpp`, `DamageEvent`, `DamageResult`, `Resistances`; `HealthStat` implements them, new `ApplyDamage(DamageEvent)` is the core and `Damage(float)` wraps it; `GameplayEvents::Fire`; `DamageGameObject`, `DamageHealthOn`, `HealOn`, VS `DamageNode/HealNode`, `NetworkManager::ApplyHit`, `NativeUIActions` call `IHealth::Find`. Serializer: `stat_health` gets trailing optional resistance fields; no version bump needed (older files lack the tail, already tolerated). |
-| 2 | Health merge: SurvivalStats, Stats, NPCController | M | Each stops owning health and uses a sibling `HealthStat` (auto-added on load when an old record has `health` values, values copied). Old records `survival`, `stats`, `npc` keep reading their health fields. Scene format version 3 -> 4 with a `SceneMigration::Step` that adds the `stat_health` line (needs engine for NPC/Survival so it is `needsEngine`, like the character-animator step). `Equipment::ApplyBonuses` shrinks to one branch. `MeleeAttacker` can now hit any health. |
-| 3 | Interactable contract + InteractionFocus | M | `Gameplay/Interactable.hpp`, `Interactable` component, `InteractionSensor` on the player (auto-added by player templates and by any controller that can interact), `HoldPrompt` becomes the view. Port `ChestInventory`, `CraftingStation`, `ItemPickup`, `DialogueRunner`. Old fields (`interactKey`, `interactRange`, `useRadius`) still read; they populate the Interactable at load. Adds hold-to-use and inspect with a test scene. |
-| 4 | Weapon contract + port TopDown shooter | L | `Weapon`, `WeaponDef`, `IWeapon`, `IAmmoSource` on `Inventory`; `TopDownShooterController` shooting block moves into `Weapon` (its fields become a read-only migration into `WeaponDef` at load; record `topdownshooter` keeps its fields). Net: `ClaimHit` carries the weapon id and zone. Includes a magazine in `ItemInstanceData`. |
-| 5 | Third-person and first-person use Weapon | M | `ThirdPersonShooterController` fires through `IWeapon` (works without a script now; `on_fire` still fires for old scripts). `FirstPersonController` gets the same weapon hook. Recoil and spread-per-shot ship here (they need a controller to kick). |
-| 6 | Seats become vehicle seats | L | `Seat.role/vehicle/doorName` (optional trailing fields of record `seat`), `IVehicle` on `VehicleController` and 2D, driver input routing, passengers, doors via `Interactable`. Network: occupancy and driver authority. Wheels visuals not included. |
-| 7 | Vehicle damage + limb damage | M + M | Two PRs. `VehicleDamage` (crash damage, smoke, wreck, occupant damage) on the `IHealth` of the body. Then `HitZones` (multipliers, limb state) with the zone sent through `ClaimHit`. |
-| 8 | Module manifest + Modules page + Add Component filter | M | `ModuleManifest`, registry, `modules=` key in `project.okayproj`, page, `Allows()` in the Add Component popup and palette, Problems rule, `docs/modules/*.md` for the modules that exist by then, manifest tests. Requires #683 merged for 3.5; if not merged, the export parts are left out and listed, not stubbed. |
-| 9 | Attachments | M | `WeaponAttachment` on `Sockets`, effective-stat recompute, docs and sample. Needs PR 4. |
-| 10 | Network property sync | M | `NetworkSync.properties`, `__prop` channel, `HealthStat` and `Seat.occupied` on it; keeps `__dmg`. Can run in parallel after PR 2. |
+## 6. Scene format v3 -> v4 and old-project migration
+- `kSceneFormatVersion` 3 -> 4 (`SceneSerializer.hpp:72`), `SceneMigration::Step{from=3, name="gameplay-contracts",
+  needsEngine=true}` (needs component classes, like the character-animator step). It runs on open and on
+  `--build-game`; old files are rewritten once, with a log and a backup copy (existing `Backup`).
+- Health: objects with `survival`, `stats` or `npc` records get a `stat_health` line holding their old health values
+  (max, armor, resistance, godMode, regen from SurvivalStats `regenWhenFed`), the old fields are dropped from those
+  records on write. `Stats.defense` becomes `HealthStat` flat armour with `minDamage=1`. `NPCController.fleeHealthPct` stays
+  on the NPC (behaviour, not health).
+- Interaction: `ItemPickup.interactKey/interactRange`, `DialogueRunner.interactKey/interactRange/promptText`,
+  `Seat.useRadius/prompt`, `ChestInventory`/`CraftingStation` key and range become an `interactable` record on the same object
+  (`range`, `prompt`, `action`); a non-default key char maps to a per-interactable override `key:<c>`; the default
+  `e` maps to action `interact`.
+- Weapons: `topdownshooter` shooting fields move to a `weapon` record (field for field); `thirdpersonshooter` gets a
+  default `weapon` (damage taken from the shooter's script `on_fire` is not inferable: a Problems warning says
+  "no damage set").
+- Seats: `seat` record keeps its fields (`useRadius`, `prompt` move to the interactable record); new fields trail.
+- Scripts and graphs: the project migration renames old event/function names (3.10) and replaces `GetKeyDown('e')`
+  based `interact/use` by the action (section below). Unknown renames are reported, not guessed.
+- Prefabs and variants use the same migrator. A scene with newer version than the build loads "what is understood"
+  with a warning (existing behaviour at `SceneSerializer.cpp:4072`).
+- Tests use checked-in fixtures saved by today's main: a scene with all four health components, chests, pickups,
+  dialogue, seats, shooters; migrate, load, compare health/range/prompt values; second migration is a no-op.
 
-Order rationale: 1 and 2 remove the four health models before anything else can build on them (`Weapon` and
-`HitZones` need one target type). 3 before 6, because enter/exit uses Interactable. 4 before 5, 9. 8 comes after
-the contracts exist so the manifests describe real components; it can be moved earlier if the owner wants the
-Modules page sooner (nothing else depends on it).
+### 6.1 Interact key
+Default is the action `Interact` (key E, pad X) that `InputActions.cpp:67` already defines, saved bindings under
+`input.interact` (`ApplySaved`). Changes: `Interactable.action` defaults to `"interact"` and can name any action
+(per-interactable override such as `"open_door"`); the Controls screen (needs `RemapModel` UI) lists it; hold-to-use
+uses `InputActions::Held`. Removed in PR 3/6: hardcoded `GetKeyDown('e')` in `HumanoidActions.cpp:2177` (Seat),
+`VisualScriptComponent.cpp:240-271` (`interact`/`use` queries and `OnInteract` now ask the focused Interactable /
+the action, `OnInteract` fires on `on_interact` of the focused target), every `char interactKey` field listed in 3.4, and
+FirstPersonController's "lean right is E" conflict is resolved by giving lean its own action (`LeanRight`). A project
+that rebinds `interact` to F changes all of them at once, with no per-component edit.
 
-### Tests each PR needs (new files named `tests/test_gameplay_*.cpp`)
-- 1: damage order table (armor/resistance/type/min/i-frames), result values, events fire once, old `Damage(float)`
-  gives the same health as before on a fixed matrix, VS node on `HealthStat`, `ApplyHit` result matches `__dmg`.
-- 2: load a scene saved by main (checked-in fixture with all four old components) -> same health values on the
-  `HealthStat`; save then load round trip; `Equipment` armour; NPC dies -> `npc_died`, `died`, `HealthDeathHook`
-  all fire once; QuestLog kill count unchanged; migration step test (v3 -> v4).
-- 3: one interactor chosen at a time, hold progress and cancel, prompt string through localization, old chest /
-  pickup / dialogue scenes behave as before, `InteractBlocked` replacement keeps "one press, one use".
-- 4: fire modes, ammo from `Inventory`, reload moves reserve to magazine, magazine survives drop and save,
-  top-down fixture scene fires identically (same pellet count, spread bounds), server hit validation test with a
-  fake `NetworkManager` mode.
-- 5: third-person player fires, damages and runs out of ammo with no script; recoil kick recovers to baseline.
-- 6: enter/exit/swap seats, driver routes input and releases it, locked door, occupant parents to vehicle and
-  leaves on destroy, chair seat scene from main unchanged, occupancy replicates.
-- 7: crash impulse thresholds, wreck state, headshot multiplier through the real raycast on a humanoid, limb
-  status slows `MoveSpeed`.
-- 8: manifest dependency resolution (cannot disable a required module), Add Component filter, project file
-  round trip with and without `modules=`, VS palette hides a group but a saved graph still loads, docPage exists.
-- 9, 10: modifiers stack and revert; property sync round trip and rejection of client writes.
+## 7. Multiplayer compatibility
+- Wire messages that must stay, with removal: `__dmg` (`<netId>|<health>|<damage>|<shooter>`) and the `__hit` claim
+  keep their current format for the release that ships PR 1 (N) and N+1; N+2 removes them in favour of
+  `__prop` (health) and the extended claim. New clients accept both. Old clients connecting to a new host get `__dmg` for
+  that period; after removal the lobby shows a version mismatch (the relay already carries
+  `kRelayProtocolVersion` with a min version, `RelayProtocol.hpp:40`).
+- `NetworkSync` fields (`netId`, `authority`, `owned`, `syncAnimation`, `clientClaimable`) unchanged; the new
+  `properties` list is optional.
+- Authority: server owns health, ammo validation (via `NetValidator "hit/<weapon>"`), seats, door state, interact
+  results; the owning client owns its transform; the driver's client gets the vehicle transform on entering a driver
+  seat. Clients never apply damage.
+- Disabled-module objects: a client and server built with different module sets refuse to join (module list hash in the
+  handshake with the names of the missing modules in the message), because replicated types would not exist.
 
-### Risks
-- `editor/main.cpp` is a hotspot (#683 changes 800 lines of it). Keep editor edits per PR small and put new UI in
-  new files under `editor/` (the Modules page and the Interactable inspector extension), as other panels do.
-- PR 2 changes what a scene writes (a `stat_health` line on objects that did not have one). Older editors read it
-  fine (a known record); old players ignore a newer version with a warning (`SceneSerializer.cpp:4072`). Do not
-  bump the version if the migration is not needed for correctness: decide when PR 2 is written (open question 3).
-- Behaviour drift in damage order: PR 1 must prove equality on the old matrix before adding new multipliers.
-- Third-party scripts that read `ThirdPersonShooterController` or call `npc.health` directly: keep the fields as
-  read-through properties for one release, with a Problems warning, then remove (no permanent duplicate).
-- `SurvivalStats` has the `{health}` / `healthMax` prefs publishing in `StatComponent`; two writers of the same key
-  must not exist after PR 2 (only `HealthStat` publishes).
-- Multiplayer: server must remain the only place applying damage; test with the existing net sim panel.
+## 8. Verification: integration matrix and CI
+- **Pair/triple matrix** (file `tests/integration/matrix.txt`, one line per combination, generated list checked by a test
+  so a new module must add its row): each combination builds a tiny scene with only those modules and asserts they
+  cooperate. Minimum set: weapons+health (damage lands, zone multiplier), weapons+inventory (reload uses reserve),
+  weapons+audio/particles/decal (hit feedback fires on `on_damaged`), weapons+ai_behavior (NPC hears the shot, turns
+  hostile), health+survival (starving damages), interaction+inventory (chest, pickup), interaction+dialogue,
+  vehicles+interaction+health (enter, drive, crash damage, exit), vehicles+networking (occupancy replicates),
+  networking+health+weapons (server-validated hit), save_games+all gameplay (round trip), scripting_okayscript vs
+  scripting_visual on each contract (same result), building+inventory (cost charged), ui_kit+inventory (drag/drop).
+- **Configurations in CI:** core-only (build, core tests, check_modules), all-on (today), each preset configuration
+  builds and runs its integration rows; the exported-player check (`tests/export/verify.sh`) runs with one module off
+  and verifies a scene using it fails the Problems gate, and with it on loads.
+- `check_modules.py` (2.4) runs on every PR.
+- Problems rules (4.5) are tested with a scene per rule.
 
-### What to verify on a real run (per PR)
-1. Open the existing sample scenes saved by main in each affected template: Top Down Shooter, Third Person Shooter,
-   Survival, NPC sample, inventory/chest sample. Play 2 minutes; health bars, death, respawn, pickup, chest, dialogue.
-2. Save and reopen in the editor; diff the scene text with `scripts`/SceneDiff: only intended lines changed.
-3. Host + one client with the net sim: shoot, take damage, die, respawn; seat enter/exit from both sides (PR 6).
-4. Build a game with the export check (`tests/export/verify.sh`) after PR 8, with one module off.
-5. Visual script: open a graph using Damage/Heal/Get Health on an NPC after PR 2 (it must work now).
+## 9. Migration plan (ordered PRs)
 
-## 5. Open questions for the owner
+This is a large effort: about 34 PRs in five stages. Every PR builds, passes the full existing suite, adds its tests,
+leaves nothing hidden or off, and contains no dead code (a registry lands with its first user; a contract lands with its
+first consumer and deletes the duplicate). Sizes: S < 300 lines changed, M 300-900, L 900-2500, XL > 2500 (mostly
+moves). Because many PRs are file moves, they are reviewed as "moved, not changed" with a golden-text round-trip test.
 
-1. Health merge: remove the duplicated health fields from `SurvivalStats`, `Stats` and `NPCController` in PR 2, or
-   keep them for a release as forwarding properties?
-   Recommended: forward for one release (script and VS compatibility), remove next release.
-2. Where does the player's ammo live: in the `Inventory` (as item stacks) or as a number on the weapon?
-   Recommended: Inventory when one exists, plain number on `Weapon` otherwise (as in 2.5). No new item model.
-3. Do we bump the scene format version for PR 2?
-   Recommended: yes, 3 -> 4 with a `needsEngine` migration step, because objects gain a `HealthStat` line; it keeps
-   the "newer file" warning meaningful for older players.
-4. Module removal: block only the menus (data stays) or also strip code from the player build?
-   Recommended: menus and assets only in this plan; compile-time stripping later, only if player size matters.
-5. Is the Modules page default "all on" for existing projects and "recommended set" for new ones?
-   Recommended: existing = all on (no change), new project asks for a preset (shooter, survival, vehicles, none).
-6. Should `Interactable` use `InputActions` ("interact") for its key, which needs a default binding seeded for new
-   projects?
-   Recommended: yes, with fallback to key `e` when the action is not defined, so nothing breaks before the input
-   defaults work lands.
+**Stage 0: build per module, no behaviour change**
+1. **Module build skeleton (M).** `engine/modules.cmake` with `okay_add_module(name SOURCES ... REQUIRES ...)`;
+   convert the single `add_library(okay_engine ...)` list into module groups in one file (core + one module per group
+   of 2.2, still compiled in all builds); `okay::engine` becomes an interface over all module libs; `ctest -L module:`
+   labels; no source moves, no code change. Test: whole suite identical; player and editor still link. Risk: link
+   order of static libs (circular references between areas, the edges in 2.3): use one library with OBJECT groups
+   until cycles are cut; verify the player size is unchanged within 1%.
+2. **Registries that already exist become the only path (M).** Introduce `ModuleContext` + the generated
+   `modules_enabled.cpp` calling `Register_<module>()` for each group (empty at first) from `Application` init; add the
+   manifest parser `ModuleManifest` and `scripts/check_modules.py` in report-only mode that lists every violating edge
+   (the "problem list" from 1.12) so later PRs show the list shrinking. Tests: manifest parse, check script on a fixture.
+3. **Link-size and module-size report (S).** Link-map script producing `module_sizes.json` for the player and editor;
+   shown by Build Game's report ("Modules" table with all `shipped`). Needed to pick (c) vs (d) with data.
+
+**Stage 1: cut the central registries (each PR leaves the engine building, all tests passing)**
+4. **Serializer registry completion, part A (L):** move the records of the leaf modules (`audio`, `particles`,
+   `splines`, `sky_weather`, `tilemap2d`, `ecs`) from the if/else chain to `ComponentSerializerRegistry`. Test: every
+   sample/fixture scene round-trips byte-identical.
+5. **Serializer part B (XL):** rendering/physics/animation/ik/cutscenes/ragdoll records.
+6. **Serializer part C (XL):** gameplay and UI-kit records (UI kit is 48 components: split in two PRs if > 2500 lines).
+7. **Property tables to modules (L)**, one PR per `BuiltinProperties*.cpp` file (3 PRs, M each).
+8. **ScriptApiRegistry (L):** OkayScript and `EngineApi.cpp` functions registered by modules; VM uses the registry;
+   tests: every documented function still resolves, unknown name reports the module.
+9. **VsNodeRegistry (L):** nodes register themselves; generated editor tables (`gplib_*.inc`) get a module column;
+   `test_vs_node_docs` still passes.
+10. **Validators, savers, localizable, tween targets, UI blockers registries (M each, 2 PRs).** `GameInput` stops including
+    features.
+11. **Render contributions (L):** `IRenderContribution`, decal/particle/water/terrain/LOD collect through it. Golden
+    image tests unchanged.
+12. **Net replication interface `INetReplicated` (M):** NetworkManager stops naming components.
+13. **Templates and editor menus from registries (L):** `SceneTemplates.hpp` split per module, Add Component built from
+    `ComponentTypeInfo.category` + `needs`, hierarchy menu from manifests (this removes the 39679-style hand lists).
+14. **check_modules.py becomes blocking (S)** once the list from PR 2 is empty for core; per-module requires filled in.
+
+**Stage 2: convert modules, leaves first (each PR moves one module's files into `engine/modules/<name>/`, writes its
+`module.okaymodule`, `register.cpp`, doc page and tests labels; behaviour unchanged)**
+15. `audio`, `particles`, `splines`, `sky_weather`, `tilemap2d`, `ecs` (M each; 3 PRs grouped).
+16. `physics2d`, `physics3d`, `render3d_effects`, `terrain_foliage`, `modeling`, `model_import` (M-L each).
+17. `animation`, `ik`, `cutscenes`, `ragdoll` (L, L, M, S).
+18. `ui_kit` (L), `character_controllers` (L), `ai_navigation`, `ai_behavior` (M each).
+19. `scripting_okayscript`, `scripting_visual` (L each: they depend on everything via registries, now clean).
+20. `networking`, `anticheat`, `relay_online` (L, M, M), `save_games` (M), `localization_tools` (S).
+21. Gameplay: `inventory`, `crafting`, `dialogue_quests`, `building`, `survival`, `rpg_stats`, `vehicles` current code
+    moved as is (M each). Contracts (stage 4) then change them in place.
+22. **Core-only build (M):** CMake option `OKAY_MODULES`, player target with a module list, `core-only` CI config
+    green, `module sizes` real (strip actually works at build level). This is the point where stripping exists for
+    developers and the dedicated server.
+
+**Stage 3: manifest, Modules page, picker, export**
+23. **Manifest enforcement + Modules page + Add Component/VS filter (L):** `modules=` in `project.okayproj`, Project
+    Settings > Modules with requires/required-by, "used by", reversible toggles, disabled-component headers; Problems
+    `module.*` rules. Depends on 22. Test: project file round trip with and without the key, filter, rule fixtures.
+24. **New Project picker (M):** step 2 of New Project (5.1), presets, template `needs_modules`, size column.
+25. **Export integration (M):** export report "Modules" table, extra roots from `assets=`, drop disabled components from
+    exported scenes; needs #683 merged (if not, the same PR set lists the missing part, no stub).
+26. **Distribution of stripped players, option (c) (M):** CI matrix of preset variants published beside the player,
+    `FindPlayer`/`EnsurePlayer` pick the smallest variant covering the modules; report line "variant X (contains ...)".
+    Optional follow-up PR 27: option (d) link-only export (L), decided after the PR 3 size data.
+
+**Stage 4: gameplay contracts on top (each deletes the duplicate it replaces)**
+28. **Health + Damage contracts (M)** (3.1, 3.2) including `Modules/` interface headers, `GameplayEvents`, and
+    all damage callers moved to `DamageEvent`; deletes `DamageGameObject/DamageHealthOn/HealOn`, `Damage(float)` forms.
+29. **Health merge + scene v3->v4 (M)** (3.1, 6): `SurvivalStats`, `Stats`, `NPCController` lose their health fields and
+    classes' health code; migration step with fixtures; Equipment simplified; script migration for death events.
+30. **Interactable + InteractionSensor + interact action (M)** (3.4, 6.1): deletes the per-component keys/ranges,
+    `InteractBlocked`, `Nearest()`, the `'e'` checks.
+31. **Weapon, top-down port + Inventory ammo (L)** (3.5): deletes the shooter's shooting/reload/ammo code and the
+    `MeleeAttacker` class; wire claim extended.
+32. **Third/first-person on Weapon + recoil + attachments (M + M).**
+33. **Vehicle seats, doors, vehicle damage (L + M)**, then **HitZones with limb state (M)**.
+34. **Auto-wire + Setup buttons + naming style test + Problems rules + scripting parity (M + M):** `needs/suggests`
+    infrastructure (can land as part of 28 for health and extend), per-module `setup` functions, naming test,
+    contract-file generator for scripts and nodes (3.10) with parity tests, **network property sync (M)**, and the
+    **integration matrix** (8): one matrix row ships with each PR above; this PR adds the harness and the CI configs
+    (core-only, presets) if not already in place (S-M).
+
+Counts: Stage 0: 3, Stage 1: 11, Stage 2: about 12 (groups), Stage 3: 4-5, Stage 4: about 9 (some PRs have two
+parts). Roughly 40 PRs in total. The first three (concrete):
+1. `build: module groups in engine CMake` (PR 1): adds `engine/modules.cmake`, groups the 258 sources, labels tests
+   `module:<name>`, keeps one linked result. Acceptance: all tests, same binary size within 1%.
+2. `build: module manifest parser + check_modules.py report` (PR 2): `ModuleManifest`, `ModuleContext`, generated
+   `modules_enabled.cpp`, report of the include edges from 1.12 (expected: about 25 violating edges, Scene->Components
+   first).
+3. `build: per-module size report` (PR 3): link-map script, `module_sizes.json`, a Modules table in the Build report,
+   decision data for 2.5.
+Stage 4 can start (28, 29) in parallel with Stage 1 because it touches different files (health/damage code), except
+the serializer part, which must be rebased on Stage 1 PRs 4-6.
+
+### Tests per PR (summary)
+Stage 0: unchanged suite plus manifest/check-script fixtures. Stage 1: golden-text round trip of all scenes under
+`tests/assets`/examples, registry lookups, node/function coverage, golden-image tests for rendering. Stage 2: module
+label runs, `check_modules` clean for the moved module, the core-only build compiles. Stage 3: project file,
+filters, Problems rules, export layout (`tests/export/verify.sh`), picker presets. Stage 4: per contract (damage order
+matrix equal to today's, interaction single-target and hold, weapon ammo/reload/spread bounds, seats, migration fixtures,
+network authority tests with the net sim), plus its matrix row.
+
+### Risks (honest)
+- Volume: SceneSerializer (9.7k lines) and OkayScriptVM (10.9k lines) conversions are the bulk; each must be byte-
+  and behaviour-identical. Mitigation: golden round trips, small PRs per module, no refactoring while moving.
+- `editor/main.cpp` (47k lines) is touched by menu/registry work and by #683; land #683 first, put new UI in new files.
+- Hidden cross-includes: the check script's first report will be longer than expected; budget for fixing edges in
+  stage 1 rather than hoping.
+- Static-library link order and duplicate registrations: tests that assert every registered name is unique.
+- Compile time: more targets, more headers parsed once per module; mitigate with ccache and combined-source builds only per module.
+- Variant matrix (option c) grows with modules; keep presets few (<= 8).
+- Scene v4 migration is one-way: backup and fixture tests; older players refuse or warn on v4.
+- Performance: registry lookups (script API, VS nodes) happen at load/first call, not per frame (verify in PR 8, 9).
+- Web/Android: only desktop and dedicated server are covered by (c)/(d); Web uses (a) CI variants.
+
+### What to verify on a real run
+1. After each Stage 1 and 2 PR: open every example scene and the project templates, play 2 minutes, save, diff scene
+   text (should be identical), compare player size and start time with the previous build.
+2. After PR 22: build a core-only player and run an empty scene; build all-on and run a shooter sample.
+3. After PR 23-26: create a project with the picker (3D action preset minus audio), export, check the report's saved
+   size, run the exe; open the same project and enable audio again, export again.
+4. After each Stage 4 PR: the sample scenes of that system in single player, and host + one client with the net sim.
+5. Scripting: run one OkayScript and one visual graph that damage, heal and interact on the same sample.
+
+## 10. Open questions for the owner (max 6)
+Decided by the owner and built in: no duplicate features and no forwarding fields (health merged and old
+fields/classes removed with the v3->v4 migration); code stripping, not only menus; a new-project module picker with
+presets as shortcuts; interact is the `interact` action, default E, rebindable. Kept at the recommended defaults:
+ammo lives in `Inventory` when one exists, otherwise on `Weapon`; scene format version 4 with a migration.
+
+1. Distribution of stripped players: start with CI-built preset variants (c) and decide on the link-only export (d)
+   after the size data from PR 3? Recommended: yes.
+2. Should the editor itself be strippable (a lighter editor without modeling, dialogue, behaviour-tree windows)?
+   Recommended: no, the editor always contains everything; only the exported game is stripped.
+3. Voice chat has no code today: reserve a `voice` module slot or leave it out until it exists? Recommended: leave out
+   of the table until code exists (the manifest format already supports adding it).
+4. Renderer-internal effects (post effects, shadows, SSAO) are not separable without splitting the GL/D3D backends:
+   do it as a later stage or never? Recommended: later, only if the size data shows a worthwhile saving.
+5. Module list in the join handshake: refuse to join on a mismatch (recommended), or allow with missing types ignored?
+6. Version for removing the `__dmg` wire compatibility: release N+2 (recommended), or keep until the next protocol
+   bump?

@@ -201,27 +201,54 @@ inline bool VsPaletteHiddenUntilTested(const char* type) {
 /// True when a Registry row is the same job as a hand-written node of the same title
 /// (an engine-API binding such as Animator.Roll next to Roll). It is not listed twice.
 inline bool VsPaletteHidesAsDuplicate(const VsDef& d) {
+    // Indexes over the registry, built once per registry size: the checks below used to walk the whole registry
+    // for every row, which made the first opening of the Add Node menu take most of a tenth of a second.
+    struct Index {
+        std::size_t n = (std::size_t)-1;
+        std::unordered_map<std::string, const VsDef*> firstByTitle;      // first row with this title
+        std::unordered_map<std::string, const VsDef*> firstApiByTitle;   // first engine-API row with this title
+        std::unordered_map<std::string, bool> handTitle;                 // a hand-written (no '.', not Fn.) row has this title
+        std::unordered_map<std::string, bool> handLower;                 // lower-cased type of each hand-written row (no '.')
+        std::unordered_map<std::string, bool> handTitleNoDot;            // title of each hand-written row
+    };
+    static Index ix;
+    if (ix.n != Registry().size()) {
+        ix = Index();
+        ix.n = Registry().size();
+        for (const auto& h : Registry()) {
+            const bool fn = std::strncmp(h.type, "Fn.", 3) == 0, dotted = std::strchr(h.type, '.') != nullptr;
+            if (h.title) {
+                ix.firstByTitle.emplace(h.title, &h);
+                if (!fn) ix.handTitle[h.title] = true;
+                if (okay::vs::VsApiFind(h.type)) ix.firstApiByTitle.emplace(h.title, &h);
+            }
+            if (!dotted) {
+                std::string lo; for (const char* c = h.type; *c; ++c) lo += (char)std::tolower((unsigned char)*c);
+                ix.handLower[lo] = true;
+                if (h.title) ix.handTitleNoDot[h.title] = true;
+            }
+        }
+    }
     // A text-script alias (play_sfx next to play_sound, vec2 next to vec3): one row per title.
     if (std::strncmp(d.type, "Fn.", 3) == 0) {
-        for (const auto& h : Registry()) {
-            if (&h == &d) break;
-            if (h.title && d.title && std::strcmp(h.title, d.title) == 0) return true;
-        }
-        for (const auto& h : Registry())
-            if (std::strncmp(h.type, "Fn.", 3) != 0 && h.title && d.title && std::strcmp(h.title, d.title) == 0) return true;
-        return false;
+        if (!d.title) return false;
+        const auto it = ix.firstByTitle.find(d.title);
+        if (it != ix.firstByTitle.end() && it->second != &d) return true;   // an earlier row has this title
+        return ix.handTitle.count(d.title) > 0;                              // or a hand-written one does
     }
     const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
     if (api) {
-        for (const auto& h : Registry()) {
-            if (std::strchr(h.type, '.') || &h == &d) continue;
-            if (VsApiDuplicatesHandNode(api->member.c_str(), h.type)) return true;
-            if (h.title && d.title && std::strcmp(h.title, d.title) == 0 && !std::strchr(h.type, '.')) return true;
-        }
+        // Same job as a hand-written node: its name, or Get/Set + its name (see VsApiDuplicatesHandNode), or its title.
+        std::string m; for (const char* c = api->member.c_str(); *c; ++c) m += (char)std::tolower((unsigned char)*c);
+        if (!m.empty() && (ix.handLower.count(m) || ix.handLower.count("get" + m) || ix.handLower.count("set" + m))) return true;
+        if (d.title && ix.handTitleNoDot.count(d.title)) return true;
         // Two overloads of one binding with the same title: the first one is the row.
-        for (const auto& h : Registry()) {
-            if (&h == &d) break;
-            if (h.title && d.title && std::strcmp(h.title, d.title) == 0 && okay::vs::VsApiFind(h.type)) return true;
+        if (d.title) {
+            const auto it = ix.firstApiByTitle.find(d.title);
+            if (it != ix.firstApiByTitle.end() && it->second != &d) {
+                // only an EARLIER row counts
+                for (const auto& h : Registry()) { if (&h == &d) break; if (&h == it->second) return true; }
+            }
         }
     }
     return false;

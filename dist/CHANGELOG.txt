@@ -8,6 +8,8 @@ v2.862.0
     wired, or choose "Search all" to open the full list for that pin.
   - Visual script: the Print node now has a Text input and an optional Value
     input, so it can print your own text, a value, or both ("Text: Value").
+  - Visual script: the Add Node menu opens faster the first time (the list is
+    built about three times quicker).
   - Visual script: one flow output can now be wired to several nodes. They run
     in the order they were connected. Alt+click a wire to remove just that wire.
 

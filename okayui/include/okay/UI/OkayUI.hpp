@@ -422,6 +422,11 @@ bool BeginMenu(const char* label);
 void EndMenu();
 /// An item in the currently-open menu; returns true the frame it is clicked.
 bool MenuItem(const char* label);
+/// MenuItem with right-aligned `shortcut` text (display only, dim; null for none), a mark when `selected`
+/// (a checked item) and `enabled` = false to grey it out and make it unclickable.
+bool MenuItem(const char* label, const char* shortcut, bool selected = false, bool enabled = true);
+/// A thin dividing line between groups of items inside a BeginMenu block.
+void MenuSeparator();
 
 /// A full-width selectable row (list entries). Drawn highlighted when `selected`;
 /// returns true the frame it is clicked.

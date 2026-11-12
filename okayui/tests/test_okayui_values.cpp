@@ -416,6 +416,45 @@ void TypedSingleTests() {
     CHECK(!cf && !ci && !csf && !csi);                              // no change is reported while nothing is happening
 }
 
+void MenuTests() {
+    Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
+    r.body = [&] {
+        UI::BeginMenuBar(); bar = UI::GetItemRect();
+        open = UI::BeginMenu("File");
+        if (open) {
+            if (UI::MenuItem("New", "Ctrl+N")) a = true;
+            if (UI::MenuItem("Save", "Ctrl+S", false, false)) b = true;      // disabled
+            if (UI::MenuItem("Auto", nullptr, true)) c = true;               // checked
+            UI::MenuSeparator();
+            if (UI::MenuItem("Quit")) d = true;
+            UI::EndMenu();
+        }
+        UI::EndMenuBar();
+    };
+    r.Frames(2);
+    CHECK(!open && bar.h > 0);
+    const float h = bar.h, rowY0 = bar.y + h;                         // the list starts under the bar, rows are one bar height
+    auto openMenu = [&] { r.Click(bar.x + 10, bar.y + h * 0.5f); r.Frame(); };
+    auto clickRow = [&](int row, float extra) { r.Click(bar.x + 30, rowY0 + (float)row * h + extra + h * 0.5f); r.Frame(); r.Frame(); };
+    openMenu(); CHECK(open);
+    clickRow(0, 0);  CHECK(a && !open);                               // a normal item with a shortcut works and closes the menu
+    openMenu(); CHECK(open);
+    clickRow(1, 0);  CHECK(!b && open);                               // a disabled item does nothing and keeps the menu open
+    clickRow(2, 0);  CHECK(c && !open);                               // a checked item still clicks
+    openMenu(); CHECK(open);
+    clickRow(3, 8.0f - h + h);                                        // below the 8 px separator: "Quit" is row 3 plus the separator's height
+    CHECK(d);
+    // the shortcut text is drawn (pixels in the row beyond the label) for an enabled item, dimmer for a disabled one
+    openMenu();
+    const auto& bmp = r.sim.Draw();
+    const unsigned panel = ThemeRgba(UI::Style().panel);
+    CHECK(CountNot(bmp, (int)(bar.x + 120), (int)rowY0 + 2, (int)(bar.x + 176), (int)(rowY0 + h) - 2, panel) > 0);
+    // null label and a missing BeginMenu are harmless
+    r.body = [&] { UI::MenuItem(nullptr); UI::MenuItem("x", nullptr); UI::MenuSeparator(); };
+    r.Frames(2);
+    CHECK(true);
+}
+
 }  // namespace
 
 int main() {
@@ -435,5 +474,6 @@ int main() {
     BeginComboTests();
     TypedNumberTests();
     TypedSingleTests();
+    MenuTests();
     TEST_MAIN_RESULT();
 }

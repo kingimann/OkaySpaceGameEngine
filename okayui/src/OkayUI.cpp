@@ -2770,23 +2770,44 @@ bool BeginMenu(const char* label) {
     return *open;
 }
 
-bool MenuItem(const char* label) {
-    if (!g_lay.active || !g_curMenu.active) return false;
+namespace {
+bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool enabled) {
+    if (!g_lay.active || !g_curMenu.active || !label) return false;
     const float h = rowH(), s = g_theme.textScale;
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
     g_curMenu.itemY += h;
     const int iid = hashLabel(label) ^ g_curMenu.menuId;
-    const bool ih = hitOverlay(x, y, w, h);
+    const bool ih = enabled && hitOverlay(x, y, w, h);
     if (ih) g_hot = iid;
     bool clicked = false;
     if (g_active == iid) {
         if (g_released) { if (ih) { clicked = true; *openState(g_curMenu.menuId, false) = false; } g_active = 0; }
     } else if (ih && g_pressed) g_active = iid;
+    const unsigned char* col = enabled ? g_theme.text : g_theme.textDim;
     g_toOverlay = true;
     quad(x, y, w, h, ih ? g_theme.bgHover : g_theme.panel);
-    drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (selected) quad(x + 3.0f, y + (h - 6.0f) * 0.5f, 6.0f, 6.0f, col);   // a small filled square marks a checked item
+    drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, col);
+    if (shortcut && shortcut[0]) {   // right-aligned, dim; skipped when it would run into the label
+        const float sw = labelW(shortcut), sx = x + w - sw - 10.0f;
+        if (sx > x + 10.0f + labelW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, g_theme.textDim);
+    }
     g_toOverlay = false;
     return clicked;
+}
+} // namespace
+
+bool MenuItem(const char* label) { return menuItemImpl(label, nullptr, false, true); }
+bool MenuItem(const char* label, const char* shortcut, bool selected, bool enabled) { return menuItemImpl(label, shortcut, selected, enabled); }
+
+void MenuSeparator() {
+    if (!g_lay.active || !g_curMenu.active) return;
+    const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY, h = 8.0f;
+    g_curMenu.itemY += h;
+    g_toOverlay = true;
+    quad(x, y, w, h, g_theme.panel);
+    quad(x + 6.0f, y + h * 0.5f, w - 12.0f, 1.0f, g_theme.border);
+    g_toOverlay = false;
 }
 
 void EndMenu() {

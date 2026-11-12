@@ -1164,6 +1164,27 @@ public:
         return produced;
     }
 
+    // Forgets the overlap with the previous packet: the next packet decoded
+    // starts a fresh run (used after a seek).
+    void Reset() { havePrev_ = false; prevN_ = 0; }
+
+    // The block size Decode would use for this packet, or 0 when Decode would
+    // produce nothing and leave its state alone (empty, not audio, bad mode).
+    int BlockSizeOf(const unsigned char* data, std::size_t size) const {
+        if (size == 0) return 0;
+        BitReader br(data, std::min<std::size_t>(size, 2));
+        if (br.Read(1) != 0) return 0;
+        const std::uint32_t mode = br.Read(Ilog(static_cast<std::uint32_t>(setup_.modes.size() - 1)));
+        if (br.eop || mode >= setup_.modes.size()) return 0;
+        const Mode& md = setup_.modes[mode];
+        if (md.blockflag) {
+            br.Read(1);
+            br.Read(1);
+            if (br.eop) return 0;
+        }
+        return id_.blocksize[md.blockflag];
+    }
+
     int Channels() const { return id_.channels; }
     int MaxFramesPerPacket() const { return id_.blocksize[1] / 4 * 2; }
 
@@ -1250,7 +1271,349 @@ StreamResult DecodeStream(const PacketList& pl, bool first, const VorbisOptions&
     return StreamResult::Ok;
 }
 
+// ---- incremental decoding: VorbisStream ---------------------------------------------------------
+
+// One Ogg page read from a source.
+struct PageBuf {
+    std::vector<unsigned char> buf;     // the whole page: header, lacing table, body
+    std::uint64_t off = 0;
+    std::uint32_t serial = 0, seq = 0;
+    std::int64_t granule = 0;
+    unsigned char flags = 0, nseg = 0;
+    std::size_t DataOff() const { return 27u + nseg; }
+    const unsigned char* Lacing() const { return buf.data() + 27; }
+    const unsigned char* Body() const { return buf.data() + 27u + nseg; }
+};
+
+// The next intact page at or after `pos` (same rules as ScanPages: capture
+// pattern, version 0, CRC; resynchronise on the next "OggS" after damage).
+bool ReadPage(AudioByteSource& src, std::uint64_t size, std::uint64_t& pos, std::uint64_t& budget, PageBuf& pg) {
+    while (pos + 27 <= size) {
+        unsigned char h[27];
+        if (src.Read(pos, h, 27) != 27) return false;
+        if (std::memcmp(h, "OggS", 4) == 0 && h[4] == 0) {
+            const unsigned nseg = h[26];
+            const std::size_t hdr = 27 + nseg;
+            if (pos + hdr <= size) {
+                pg.buf.resize(hdr);
+                std::memcpy(pg.buf.data(), h, 27);
+                bool ok = nseg == 0 || src.Read(pos + 27, pg.buf.data() + 27, nseg) == nseg;
+                std::size_t body = 0;
+                if (ok) for (unsigned i = 0; i < nseg; ++i) body += pg.buf[27 + i];
+                const std::size_t total = hdr + body;
+                if (ok && pos + total <= size) {
+                    if (total > budget) return false;
+                    budget -= total;
+                    pg.buf.resize(total);
+                    ok = body == 0 || src.Read(pos + hdr, pg.buf.data() + hdr, body) == body;
+                    if (ok && PageCrc(pg.buf.data(), total) == Le32(pg.buf.data() + 22)) {
+                        pg.off = pos;
+                        pg.flags = h[5];
+                        std::uint64_t g = 0;
+                        for (int i = 7; i >= 0; --i) g = (g << 8) | h[6 + i];
+                        pg.granule = static_cast<std::int64_t>(g);
+                        pg.serial = Le32(h + 14);
+                        pg.seq = Le32(h + 18);
+                        pg.nseg = static_cast<unsigned char>(nseg);
+                        pos += total;
+                        return true;
+                    }
+                }
+            }
+        }
+        ++pos;
+        unsigned char blk[4096];
+        const std::size_t n = src.Read(pos, blk, static_cast<std::size_t>(std::min<std::uint64_t>(sizeof(blk), size - pos)));
+        if (n == 0) return false;
+        const void* hit = std::memchr(blk, 'O', n);
+        pos += hit ? static_cast<std::uint64_t>(static_cast<const unsigned char*>(hit) - blk) : n;
+    }
+    return false;
+}
+
+// Packet reassembly across pages, page by page: the rules of CollectPackets
+// (a sequence gap or a missing continuation drops the packet it breaks).
+struct Assembler {
+    struct Pk { std::size_t off, len; std::uint64_t pageOff; bool atPageStart; };
+    static constexpr std::size_t kMaxArena = 16u << 20;
+    std::vector<unsigned char> arena;
+    std::vector<Pk> done;                 // packets completed by the last Feed
+    std::size_t partialStart = 0;
+    bool partial = false, haveSeq = false, started = false;
+    std::uint32_t lastSeq = 0;
+    std::uint64_t curPageOff = 0;
+    bool curAtStart = false;
+
+    void Reset() { arena.clear(); done.clear(); partialStart = 0; partial = haveSeq = started = false; lastSeq = 0; }
+
+    // Returns false when the page was ignored (a second first page); sets eos on the stream's last page.
+    bool Feed(const PageBuf& p, bool& eos) {
+        eos = false;
+        if (started && (p.flags & 2)) return false;
+        started = true;
+        // Drop what the last Compact left behind the completed packets: nothing to do, `done` is consumed.
+        const bool cont = (p.flags & 1) != 0;
+        if (haveSeq && p.seq != lastSeq + 1u && partial) { arena.resize(partialStart); partial = false; }
+        if (!cont && partial) { arena.resize(partialStart); partial = false; }
+        bool skipping = cont && !partial;
+        std::size_t pos = 0;
+        const unsigned char* body = p.Body();
+        for (unsigned s = 0; s < p.nseg; ++s) {
+            const unsigned l = p.Lacing()[s];
+            if (skipping) {
+                pos += l;
+                if (l < 255) skipping = false;
+                continue;
+            }
+            if (!partial) { partialStart = arena.size(); partial = true; curPageOff = p.off; curAtStart = (s == 0 && !cont); }
+            if (arena.size() + l > kMaxArena) { arena.resize(partialStart); partial = false; skipping = l == 255; pos += l; continue; }
+            arena.insert(arena.end(), body + pos, body + pos + l);
+            pos += l;
+            if (l < 255) {
+                done.push_back({partialStart, arena.size() - partialStart, curPageOff, curAtStart});
+                partial = false;
+            }
+        }
+        haveSeq = true;
+        lastSeq = p.seq;
+        if (p.flags & 4) eos = true;
+        return true;
+    }
+
+    // Throws away the completed packets, keeping the unfinished one.
+    void Compact() {
+        done.clear();
+        if (partial) {
+            arena.erase(arena.begin(), arena.begin() + static_cast<std::ptrdiff_t>(partialStart));
+            partialStart = 0;
+        } else {
+            arena.clear();
+        }
+    }
+};
+
 } // namespace
+
+struct VorbisStream::Impl {
+    static constexpr int kIndexEvery = 16;          // pages between seek index entries
+    struct Entry { std::uint64_t off; std::int64_t outPos; int skip; };
+
+    std::shared_ptr<AudioByteSource> src;
+    std::uint64_t size = 0, budget = 0;
+    bool open = false;
+    Ident id;
+    std::unique_ptr<StreamDecoder> dec;
+    std::uint32_t serial = 0;
+    std::int64_t total = 0;
+    std::vector<Entry> index;
+    std::size_t setupBytes = 0;
+
+    // playback
+    PageBuf pg;
+    Assembler as;
+    std::size_t qi = 0;
+    std::uint64_t pagePos = 0;
+    bool eosSeen = false;
+    int skipLeft = 0;
+    std::vector<float> pend;
+    std::size_t pendOff = 0;
+    std::int64_t produced = 0;     // absolute frame index of the next frame the decoder emits
+    std::int64_t pendBase = 0;
+    std::int64_t outPos = 0;
+
+    void ResetBudget() { budget = size * 2 + (1u << 20); }
+
+    void StartAt(const Entry& e) {
+        pagePos = e.off;
+        ResetBudget();
+        as.Reset();
+        qi = 0;
+        eosSeen = false;
+        skipLeft = e.skip;
+        dec->Reset();
+        pend.clear();
+        pendOff = 0;
+        produced = e.outPos;
+        pendBase = e.outPos;
+    }
+
+    // The next completed packet of the stream, reading pages as needed.
+    bool NextPacket(const unsigned char*& data, std::size_t& len) {
+        for (;;) {
+            while (qi < as.done.size()) {
+                const Assembler::Pk& k = as.done[qi++];
+                if (skipLeft > 0) { --skipLeft; continue; }
+                data = as.arena.data() + k.off;
+                len = k.len;
+                return true;
+            }
+            if (eosSeen) return false;
+            as.Compact();
+            qi = 0;
+            for (;;) {
+                if (!ReadPage(*src, size, pagePos, budget, pg)) return false;
+                if (pg.serial != serial) continue;
+                bool eos = false;
+                if (!as.Feed(pg, eos)) continue;
+                if (eos) eosSeen = true;
+                break;
+            }
+        }
+    }
+};
+
+VorbisStream::VorbisStream() : m(new Impl) {}
+VorbisStream::~VorbisStream() = default;
+bool VorbisStream::IsOpen() const { return m->open; }
+int VorbisStream::SampleRate() const { return m->open ? m->id.rate : 0; }
+int VorbisStream::Channels() const { return m->open ? m->id.channels : 0; }
+std::int64_t VorbisStream::TotalFrames() const { return m->open ? m->total : -1; }
+std::size_t VorbisStream::MemoryBytes() const {
+    const Impl& s = *m;
+    std::size_t decBytes = 0;
+    if (s.open) decBytes = (static_cast<std::size_t>(s.id.channels) * 4 + 12) * static_cast<std::size_t>(s.id.blocksize[1]) * sizeof(float);
+    return sizeof(Impl) + s.setupBytes + decBytes + s.pg.buf.capacity() + s.as.arena.capacity() +
+           s.pend.capacity() * sizeof(float) + s.index.capacity() * sizeof(Impl::Entry);
+}
+
+bool VorbisStream::Open(std::shared_ptr<AudioByteSource> source, std::string* error) {
+    Impl& s = *m;
+    s = Impl();
+    std::string err;
+    auto fail = [&](const char* msg) {
+        if (error) *error = err.empty() ? msg : err;
+        s.open = false;
+        return false;
+    };
+    try {
+        if (!source) return fail("not an Ogg file");
+        s.src = std::move(source);
+        s.size = s.src->Size();
+        if (s.size < 27 || s.size > 0xFFFFFFF0u) return fail("not an Ogg file");
+        s.ResetBudget();
+
+        // The first logical stream that begins with a Vorbis identification header.
+        std::uint64_t pos = 0;
+        bool found = false, anyPage = false;
+        while (ReadPage(*s.src, s.size, pos, s.budget, s.pg)) {
+            anyPage = true;
+            if ((s.pg.flags & 2) && s.pg.nseg > 0 && IsHeader(s.pg.Body(), s.pg.Lacing()[0], 1)) { found = true; break; }
+        }
+        if (!anyPage) return fail("not an Ogg file");
+        if (!found) return fail("no Ogg Vorbis stream found");
+        s.serial = s.pg.serial;
+        const std::uint64_t startOff = s.pg.off;
+
+        // One pass over the stream: headers, then the length and the seek index from the packets' block sizes.
+        Assembler as;
+        std::vector<unsigned char> hdr[3];
+        int pk = 0;
+        std::int64_t frames = 0, eosGranule = -1;
+        int prevN = 0;
+        bool sawEos = false, havePage = true;
+        int pagesSince = 0;
+        s.index.push_back({startOff, 0, 3});
+        std::string perr;
+        while (havePage) {
+            bool eos = false;
+            if (s.pg.serial == s.serial && as.Feed(s.pg, eos)) {
+                ++pagesSince;
+                for (const Assembler::Pk& k : as.done) {
+                    const unsigned char* d = as.arena.data() + k.off;
+                    if (pk < 3) {
+                        hdr[pk].assign(d, d + k.len);
+                        if (pk == 2) {
+                            if (!ParseIdent(hdr[0].data(), hdr[0].size(), s.id, perr)) { err = perr; return fail("bad headers"); }
+                            if (!IsHeader(hdr[1].data(), hdr[1].size(), 3)) return fail("missing Vorbis comment header");
+                            Setup setup;
+                            if (!ParseSetup(hdr[2].data(), hdr[2].size(), s.id, setup, perr)) { err = perr; return fail("bad headers"); }
+                            for (const Codebook& b : setup.books)
+                                s.setupBytes += b.fast.capacity() * 4 + b.slow.capacity() * sizeof(Codebook::Code) + b.mult.capacity() * 4 + sizeof(Codebook);
+                            s.setupBytes += 4096;
+                            s.dec.reset(new StreamDecoder(s.id, std::move(setup)));
+                        }
+                        ++pk;
+                        continue;
+                    }
+                    ++pk;
+                    const int n = s.dec->BlockSizeOf(d, k.len);
+                    if (n == 0) continue;
+                    const std::int64_t L = prevN ? prevN / 4 + n / 4 : 0;
+                    if (k.atPageStart && pagesSince >= Impl::kIndexEvery) {
+                        s.index.push_back({k.pageOff, frames + L, 0});
+                        pagesSince = 0;
+                    }
+                    frames += L;
+                    prevN = n;
+                }
+                as.Compact();
+                if (eos) { sawEos = true; eosGranule = s.pg.granule; break; }
+            }
+            havePage = ReadPage(*s.src, s.size, pos, s.budget, s.pg);
+        }
+        if (pk < 3 || !s.dec) { err = "Vorbis headers cut short"; return fail("bad headers"); }
+        if (frames <= 0) return fail("the Vorbis stream holds no audio");
+        s.total = (sawEos && eosGranule >= 0 && eosGranule < frames) ? eosGranule : frames;
+        if (s.total <= 0) return fail("the Vorbis stream holds no audio");
+        s.open = true;
+        s.outPos = 0;
+        s.StartAt(s.index[0]);
+        s.outPos = 0;
+    } catch (...) {
+        err = "out of memory while decoding";
+        return fail("out of memory while decoding");
+    }
+    return true;
+}
+
+bool VorbisStream::Seek(std::int64_t frame) {
+    Impl& s = *m;
+    if (!s.open) return false;
+    frame = std::max<std::int64_t>(0, std::min(frame, s.total));
+    std::size_t best = 0;
+    for (std::size_t i = 0; i < s.index.size(); ++i)
+        if (s.index[i].outPos <= frame) best = i; else break;
+    s.StartAt(s.index[best]);
+    s.outPos = frame;
+    return true;
+}
+
+std::size_t VorbisStream::Read(float* dst, std::size_t maxFrames) {
+    Impl& s = *m;
+    if (!s.open || !dst) return 0;
+    const std::size_t ch = static_cast<std::size_t>(s.id.channels);
+    std::size_t got = 0;
+    try {
+        while (got < maxFrames && s.outPos < s.total) {
+            if (s.pendOff >= s.pend.size() / ch) {
+                s.pend.clear();
+                s.pendOff = 0;
+                const unsigned char* d = nullptr;
+                std::size_t len = 0;
+                if (!s.NextPacket(d, len)) break;
+                const std::size_t n = s.dec->Decode(d, len, s.pend);
+                s.pendBase = s.produced;
+                s.produced += static_cast<std::int64_t>(n);
+                continue;
+            }
+            const std::int64_t have = static_cast<std::int64_t>(s.pend.size() / ch) - static_cast<std::int64_t>(s.pendOff);
+            const std::int64_t u = s.pendBase + static_cast<std::int64_t>(s.pendOff);
+            if (u < s.outPos) {
+                s.pendOff += static_cast<std::size_t>(std::min(have, s.outPos - u));
+                continue;
+            }
+            const std::size_t n = static_cast<std::size_t>(
+                std::min<std::int64_t>({have, static_cast<std::int64_t>(maxFrames - got), s.total - s.outPos}));
+            std::memcpy(dst + got * ch, s.pend.data() + s.pendOff * ch, n * ch * sizeof(float));
+            s.pendOff += n;
+            s.outPos += static_cast<std::int64_t>(n);
+            got += n;
+        }
+    } catch (...) {
+        s.outPos = s.total;     // out of memory: end the stream rather than throw
+    }
+    return got;
+}
 
 bool DecodeVorbis(const unsigned char* data, std::size_t size, VorbisAudio& out, std::string* error,
                   const VorbisOptions* options) {

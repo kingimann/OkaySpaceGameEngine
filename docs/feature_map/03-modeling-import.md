@@ -120,15 +120,16 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.6.6 Materials and textures - `Render/Gltf`, `Render/ModelImport` - albedo, normal, specular, AO, emissive; embedded images extracted to a sidecar file; packed metallic-roughness and emissive textures are not imported
   - 3.6.7 Blend shapes (morph targets) - `Components/BlendShapes` - sparse per-shape offsets, weight sliders, filter box, glTF targets and FBX channels, `weights.<n>` clip tracks, applied before skinning
   - 3.6.8 Import UI and extra animation files - `editor/main.cpp`, `editor/MainShared.hpp` - File > Import Model..., Project panel drop, Add animation files (Mixamo FBX, glTF; DAE/BVH are named in the dialog)
-- **Code:** `Render/ModelImport`, `Render/Gltf`, `Render/Mesh`, `Components/BlendShapes`, `editor/MainShared.hpp`, `editor/main.cpp`
-- **API:** `ImportModel`, `ImportModelScene`, `AnalyzeModel`, `ImportableExtensions`, `AssimpAvailable`, `LoadGLTF`, `AddAnimationsFromFile`, `BlendShapes`; script `blend_shape("Smile", 0.8)`, `blend_shape_get`
+  - 3.6.9 Own FBX reader (side by side, off by default) - `Render/FbxReader`, `Render/FbxScene`, `Render/ModelImport` - `okay::fbx`: our own binary 7.x and ASCII FBX reader with its own inflater; selected with `-DOKAY_OWN_FBX=ON`, env `OKAY_OWN_FBX=1` or `okay::fbx::SetOwnReaderEnabled`; ufbx stays the default; limits in `docs/own_fbx_reader.md`
+- **Code:** `Render/ModelImport`, `Render/Gltf`, `Render/Mesh`, `Render/FbxReader`, `Render/FbxScene`, `Components/BlendShapes`, `editor/MainShared.hpp`, `editor/main.cpp`, `scripts/gen_fbx_fixtures.py`
+- **API:** `ImportModel`, `ImportModelScene`, `AnalyzeModel`, `ImportableExtensions`, `AssimpAvailable`, `LoadGLTF`, `AddAnimationsFromFile`, `BlendShapes`, `okay::fbx::LoadFile`, `okay::fbx::OwnReaderEnabled`, `OKAY_OWN_FBX`; script `blend_shape("Smile", 0.8)`, `blend_shape_get`
 - **Editor:** File > Import Model..., Project panel (double-click, drag into viewport), Console import report, Blend Shapes inspector
-- **Docs:** `docs/modeling.md`, `docs/animation.md` (imported characters, blend shapes, Tips)
-- **Tests:** `gltf_import`, `gltf_cubicspline`, `model_import_rig`, `blend_shapes`, `obj_import`, `loaders_robust`
-- **Status:** Partial - glTF and OBJ are well tested; no ctest loads an FBX or an Assimp format (I grepped tests/), so those paths are unexercised by the suite
-- **Open:** possible doc bug: docs/animation.md Tips says FBX animations import via Assimp, but FBX is read by the built-in ufbx path; packed metallic-roughness and emissive textures not imported; BVH is named in the Add-animations dialog but no BVH reader found in engine/src (works only if the Assimp build reads it; unverified); sample Mixamo menu items download from GitHub with curl on first use
+- **Docs:** `docs/modeling.md`, `docs/animation.md` (imported characters, blend shapes, Tips), `docs/own_fbx_reader.md`
+- **Tests:** `gltf_import`, `gltf_cubicspline`, `model_import_rig`, `blend_shapes`, `obj_import`, `loaders_robust`, `fbx_reader`, `fbx_hostile`
+- **Status:** Partial - glTF and OBJ are well tested; FBX is exercised only by `fbx_reader` and `fbx_hostile` on small generated fixtures (both the ufbx path and our own reader, compared); no ctest loads an Assimp format, and no real-world FBX (Mixamo, Blender, Maya) is in the suite
+- **Open:** our own FBX reader is non-default and untested on real exporter files, see the NOT handled list in docs/own_fbx_reader.md; possible doc bug: docs/animation.md Tips says FBX animations import via Assimp, but FBX is read by the built-in ufbx path; packed metallic-roughness and emissive textures not imported; BVH is named in the Add-animations dialog but no BVH reader found in engine/src (works only if the Assimp build reads it; unverified); sample Mixamo menu items download from GitHub with curl on first use
 - **Related:** 3.7, 5.5, 5.2, 20.4, 2.2
-- **Words:** import, glTF, GLB, FBX, OBJ, DAE, Collada, Assimp, ufbx, skin, bones, weights, morph target, blend shape, shape key, Mixamo, import report, textures
+- **Words:** import, glTF, GLB, FBX, OBJ, DAE, Collada, Assimp, ufbx, skin, bones, weights, morph target, blend shape, shape key, Mixamo, import report, textures, own FBX reader, OKAY_OWN_FBX, okay::fbx
 - **Seen as:** imported model is white or has no textures; model faces the wrong way or is a tiny or huge size; character stays in a T-pose; faces dark; Console warns about missing bones or unweighted vertices; FBX will not import in a default build
 - **Ask me like:** "import FBX takes as separate clips"; "support the metallic-roughness texture from glTF"
 

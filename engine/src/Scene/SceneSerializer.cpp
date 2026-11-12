@@ -2816,13 +2816,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
             << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << " "
             << au->pitch << " " << au->pan << " " << (int)au->group << " " << (int)au->rolloff << " "
-            << au->lowPass << "\n";
+            << au->lowPass << " " << (au->stream ? 1 : 0) << "\n";
     }
     if (auto* mp = go->GetComponent<MusicPlayer>()) {
         out << "  music " << (mp->playOnStart ? 1 : 0) << " " << (mp->shuffle ? 1 : 0) << " "
             << (mp->loopPlaylist ? 1 : 0) << " " << mp->crossfade << " " << mp->volume << " " << mp->tracks.size();
         for (const auto& t : mp->tracks) out << " " << Quote(t);
-        out << "\n";
+        out << " " << (mp->stream ? 1 : 0) << "\n";
     }
     if (auto* anim = go->GetComponent<Animator>()) {
         out << "  animator " << anim->speed << " " << (anim->playing ? 1 : 0) << " "
@@ -6920,7 +6920,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             if (grp >= 0 && grp < (int)AudioGroup::Count) au->group = (AudioGroup)grp;
                             if (ro >= 0 && ro <= (int)AudioRolloff::Logarithmic) au->rolloff = (AudioRolloff)ro;
                             in >> std::ws;   // optional low-pass cutoff
-                            if (std::isdigit(in.peek())) in >> au->lowPass;
+                            if (std::isdigit(in.peek())) {
+                                in >> au->lowPass;
+                                in >> std::ws;   // optional stream flag
+                                if (std::isdigit(in.peek())) { int stv = 0; in >> stv; au->stream = stv != 0; }
+                            }
                         }
                     }
                 } else if (field == "music") {
@@ -6929,6 +6933,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> pos >> sh >> lp >> mp->crossfade >> mp->volume >> n;
                     mp->playOnStart = pos != 0; mp->shuffle = sh != 0; mp->loopPlaylist = lp != 0;
                     for (std::size_t t = 0; t < n && in; ++t) mp->tracks.push_back(ReadQuoted(in));
+                    in >> std::ws;   // optional stream flag (older files stream by default)
+                    if (std::isdigit(in.peek())) { int stv = 1; in >> stv; mp->stream = stv != 0; }
                 } else if (field == "animator") {
                     float speed = 1.0f; int playing = 1, loop = 1, tc = 0;
                     in >> speed >> playing >> loop;

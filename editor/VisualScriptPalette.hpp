@@ -157,7 +157,8 @@ inline void VsPinTooltip(const VsPinDoc* pin, const char* name, const char* type
         ImGui::TextWrapped("%s", pin->meaning.c_str());
         if (!pin->fallback.empty()) ImGui::TextDisabled("Default: %s", pin->fallback.c_str());
     }
-    ImGui::TextDisabled("Drag to wire. Alt+click breaks wires.");
+    ImGui::TextDisabled("Drag to wire. A flow output can have many wires (they run in the order made).");
+    ImGui::TextDisabled("Alt+click a pin breaks its wires; Alt+click a wire breaks just that one.");
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }

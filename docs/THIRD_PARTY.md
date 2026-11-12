@@ -5,15 +5,18 @@ services we build on, with their licences. The engine itself is MIT licensed (se
 
 ## Policy and goal
 
-The goal is for everything to be our own code, slowly, one piece at a time. Until a piece is replaced, an
-outside library is allowed only when writing our own is impossible or would be unsafe, and each one below
-says how replaceable it is. Prefer replacing a library with our own code over adding a new one.
+The goal is for everything to be our own code, and for every third-party library below to be **removed**, slowly,
+one piece at a time. Our replacements are not a permanent second option: each stays off until the owner declares it
+ready and bug free (real-file corpus, tests on Windows and Linux, soak or fuzz, no known bugs, owner approval), then
+the default flips in a release the owner approves, and the library code and its CMake option are deleted one release
+later. The per-library plan, state and blockers are in [own_code_roadmap.md](own_code_roadmap.md). Until a library is
+removed it is allowed only because the replacement is not ready, and a new library must not be added when writing our
+own is possible; add one only with the same removal plan.
 
-Order of replacement: the small, easy libraries first, then larger ones. The largest and riskiest are
-left for last and need their own plan: the platform layer (SDL2), the editor interface toolkit (Dear
-ImGui), and encryption (libsodium). For encryption, writing our own is a security risk, so that one needs
-an expert review plan before any work starts. Services run by other companies (Steamworks, Photon, our
-hosting) are not libraries and stay outside the goal unless we choose to self-host.
+Order: the small, easy libraries first (done), then model import (Assimp and ufbx), then the platform layer (SDL2),
+then the editor toolkit (Dear ImGui), and encryption (libsodium) last. For encryption, writing our own is a security
+risk, so it needs an outside review before it can be the default; see [crypto_review_package.md](crypto_review_package.md).
+Services run by other companies (Steamworks, Photon, our hosting) are not libraries and stay.
 
 ## Written by us (custom)
 
@@ -34,18 +37,25 @@ hosting) are not libraries and stay outside the goal unless we choose to self-ho
 | Platform helpers | `shared/FileDialog*`, `engine/src/Graphics/Font.cpp`, `engine/src/Core/ImageWrite.cpp` | Native file open/save dialogs (Windows, zenity or kdialog on Linux, osascript on macOS, built-in browser fallback), PNG writer, built-in 8x8 bitmap font |
 | Backend functions | `supabase/functions` | Our server-side functions for accounts and community features |
 
-## Libraries we build on
+## Libraries we build on (all planned for removal)
 
-| Library | Used for | Licence | How we get it |
-|---|---|---|---|
-| [SDL2](https://www.libsdl.org) | Windowing, input, audio device, OpenGL context | zlib | System package; `SDL2.dll` is bundled in Windows builds |
-| [Dear ImGui](https://github.com/ocornut/imgui) | Editor and launcher UI | MIT | Downloaded at configure time, pinned to one commit |
-| [Assimp](https://github.com/assimp/assimp) v5.4.3 | Importing many 3D model formats | BSD 3-clause | Downloaded at configure time (optional, `OKAY_USE_ASSIMP`). We are replacing it one format at a time: STL, PLY and OBJ readers are ours; a Collada (`.dae`) reader of ours exists side by side with it and is off by default (`OKAY_OWN_COLLADA`); the rest still need Assimp |
-| [ufbx](https://github.com/ufbx/ufbx) | FBX import | MIT or public domain | Vendored in `engine/third_party/ufbx` |
-| [DejaVu Sans](https://dejavu-fonts.github.io) | Default UI font | Free font licence (see `assets/fonts/DejaVuSans-LICENSE.txt`) | In `assets/fonts` |
-| [libsodium](https://libsodium.org) | Authenticated packet encryption | ISC | System package (optional, `OKAY_USE_SODIUM`) |
+| Library | Used for | Licence | How we get it | Replacement and state |
+|---|---|---|---|---|
+| [SDL2](https://www.libsdl.org) | Windowing, input, audio device, OpenGL context | zlib | System package; `SDL2.dll` is bundled in Windows builds; Emscripten port on the web | `okay::platform`: Linux/X11 done, player uses it; Win32 untested, macOS not written; editor and launcher still on SDL2 |
+| [Dear ImGui](https://github.com/ocornut/imgui) | Editor and launcher UI | MIT | Downloaded at configure time, pinned to one commit | `okayui`: headless harness and gap step 1 done; editor and launcher not ported |
+| [ImGuiColorTextEdit](https://github.com/BalazsJako/ImGuiColorTextEdit) | The script editor's code view | MIT | Vendored copy in `editor/vendor/TextEditor.*` | OkayUI code-editor widget; not started |
+| [Assimp](https://github.com/assimp/assimp) v5.4.3 | Importing 3D model formats beyond the built-in ones | BSD 3-clause | Downloaded at configure time (optional, `OKAY_USE_ASSIMP`; on in the Windows distribution) | glTF/GLB, OBJ+MTL, STL, PLY readers are ours; COLLADA reader ours, off; 3DS and BVH to write; the rarer formats are dropped at removal (list in the roadmap) |
+| [ufbx](https://github.com/ufbx/ufbx) | FBX import | MIT or public domain | Vendored in `engine/third_party/ufbx` | Own FBX reader behind `OKAY_OWN_FBX`, off; never run on a real file |
+| [libsodium](https://libsodium.org) | Authenticated packet encryption, session tickets, host identity | ISC | System package (optional, `OKAY_USE_SODIUM`); MinGW prebuilt in CI | `okay::crypto`, off, unreviewed; needs an outside review first |
+| TweetNaCl (public domain, ported to C++) | Ed25519 and SHA-512 when there is no libsodium (anti-cheat manifest, launcher) | Public domain | Inside `shared/AntiCheatCrypto.hpp` | Replace with `okay::crypto` after the same review |
+| curl (external program, not linked) | Downloads in the launcher and editor, HTTP calls on Linux and macOS | curl licence | Run as a program from the user's system | Built-in client on the platform's own TLS API; Windows already has one (WinHTTP) |
+| stb `stb_decompress` (public domain, one routine) | Reads the embedded Dear ImGui font arrays in `engine/src/Graphics/EmbeddedFont.cpp` | Public domain | Copied into that file | Goes when the fonts are re-encoded, with Dear ImGui |
 
-## Optional integrations (not bundled)
+Fonts are assets, not code, and stay with their licences: [DejaVu Sans](https://dejavu-fonts.github.io) (free font
+licence, see `assets/fonts/DejaVuSans-LICENSE.txt`), Roboto Medium (`shared/RobotoFont.h`) and JetBrains Mono
+(`shared/JetBrainsMonoFont.h`, SIL OFL 1.1).
+
+## Services we keep (optional integrations, not bundled)
 
 - **Steamworks SDK** (`OKAY_WITH_STEAM`): Valve's SDK is proprietary and is not in this repository. Without it, a no-op Steam service is used.
 - **Photon Realtime** (`OKAY_WITH_PHOTON`): needs the Photon C++ SDK. It is an extension point only; see [net_providers.md](net_providers.md).

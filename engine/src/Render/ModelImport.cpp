@@ -696,7 +696,13 @@ Mat4 UfbxToMat4(const ufbx_matrix& a) {
 }
 std::string UfbxStr(const ufbx_string& s) { return std::string(s.data, s.length); }
 
-ufbx_scene* LoadFbx(const std::string& path, std::string* err) {
+// Hardening: the ufbx path enforces the same numbers as okay::fbx::Limits (one source of truth).
+// The node hierarchy depth is capped inside ufbx itself (node_depth_limit; its default of 0 lets a
+// flat file declare an arbitrarily deep Model chain), and the node / animation counts are checked
+// right after loading, before anything is built from them. `limitHit` is set when the file was
+// refused for size or shape rather than because it could not be read.
+ufbx_scene* LoadFbx(const std::string& path, std::string* err, bool* limitHit = nullptr) {
+    const fbx::Limits lim;
     ufbx_load_opts opts{};
     opts.target_axes = ufbx_axes_right_handed_y_up;
     opts.target_unit_meters = 1.0f;
@@ -707,9 +713,30 @@ ufbx_scene* LoadFbx(const std::string& path, std::string* err) {
     opts.generate_missing_normals = true;
     opts.ignore_missing_external_files = true;
     opts.evaluate_skinning = false;
+    opts.node_depth_limit = (uint32_t)lim.maxNodeDepth;
+    if (limitHit) *limitHit = false;
     ufbx_error e{};
     ufbx_scene* sc = ufbx_load_file(path.c_str(), &opts, &e);
-    if (!sc && err) { char buf[512]; ufbx_format_error(buf, sizeof(buf), &e); *err = buf; }
+    if (!sc) {
+        if (err) { char buf[512]; ufbx_format_error(buf, sizeof(buf), &e); *err = buf; }
+        if (limitHit && (e.type == UFBX_ERROR_NODE_DEPTH_LIMIT || e.type == UFBX_ERROR_MEMORY_LIMIT || e.type == UFBX_ERROR_ALLOCATION_LIMIT)) *limitHit = true;
+        return nullptr;
+    }
+    std::string why;
+    if (sc->nodes.count > lim.maxNodes) why = "too many nodes";
+    else if (sc->anim_stacks.count > lim.maxAnimStacks) why = "too many animation stacks";
+    else if (sc->anim_layers.count > lim.maxAnimLayers) why = "too many animation layers";
+    else if (sc->anim_curves.count > lim.maxAnimCurves) why = "too many animation curves";
+    else {
+        std::size_t keys = 0;
+        for (const ufbx_anim_curve* c : sc->anim_curves) { keys += c->keyframes.count; if (keys > lim.maxAnimKeys) { why = "too many animation keys"; break; } }
+    }
+    if (!why.empty()) {
+        ufbx_free_scene(sc);
+        if (err) *err = "FBX rejected: " + why;
+        if (limitHit) *limitHit = true;
+        return nullptr;
+    }
     return sc;
 }
 
@@ -949,10 +976,13 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
     return merged;
 }
 
-static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err) {
+// `rejected` is set when the file was refused for going past a size/shape limit (fbx::Limits): the
+// caller must then fail the import instead of falling back to another reader that would take the
+// same hostile file.
+static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
     if (fbx::OwnReaderEnabled())
         if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) return r;
-    ufbx_scene* sc = LoadFbx(path, err);
+    ufbx_scene* sc = LoadFbx(path, err, rejected);
     if (!sc) { if (ok) *ok = false; return nullptr; }
 
     GameObject* root = scene.CreateGameObject(BaseName(path));
@@ -961,21 +991,26 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     int texSerial = 0;
 
     // Hierarchy: one GameObject per FBX node (names made unique: clips and
-    // skins refer to nodes by name).
-    std::function<void(const ufbx_node*, Transform*)> build = [&](const ufbx_node* n, Transform* parent) {
-        std::string nm = UfbxStr(n->name);
-        if (nm.empty()) nm = n->mesh ? "mesh" : "node";
-        if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
-        GameObject* g = scene.CreateGameObject(nm);
-        goOf[n->typed_id] = g;
-        const ufbx_transform& t = n->local_transform;
-        g->transform->localPosition = Vec3{(float)t.translation.x, (float)t.translation.y, (float)t.translation.z};
-        g->transform->localRotation = Quat{(float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z, (float)t.rotation.w};
-        g->transform->localScale    = Vec3{(float)t.scale.x, (float)t.scale.y, (float)t.scale.z};
-        g->transform->SetParent(parent, false);
-        for (const ufbx_node* c : n->children) build(c, g->transform);
-    };
-    for (const ufbx_node* c : sc->root_node->children) build(c, root->transform);
+    // skins refer to nodes by name). Iterative (explicit stack, depth-first in child order),
+    // so the depth of the file never becomes call depth.
+    {
+        std::vector<std::pair<const ufbx_node*, Transform*>> todo;
+        for (std::size_t i = sc->root_node->children.count; i-- > 0;) todo.push_back({sc->root_node->children.data[i], root->transform});
+        while (!todo.empty()) {
+            const ufbx_node* n = todo.back().first; Transform* parent = todo.back().second; todo.pop_back();
+            std::string nm = UfbxStr(n->name);
+            if (nm.empty()) nm = n->mesh ? "mesh" : "node";
+            if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
+            GameObject* g = scene.CreateGameObject(nm);
+            goOf[n->typed_id] = g;
+            const ufbx_transform& t = n->local_transform;
+            g->transform->localPosition = Vec3{(float)t.translation.x, (float)t.translation.y, (float)t.translation.z};
+            g->transform->localRotation = Quat{(float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z, (float)t.rotation.w};
+            g->transform->localScale    = Vec3{(float)t.scale.x, (float)t.scale.y, (float)t.scale.z};
+            g->transform->SetParent(parent, false);
+            for (std::size_t i = n->children.count; i-- > 0;) todo.push_back({n->children.data[i], g->transform});
+        }
+    }
 
     // Meshes (after the hierarchy, so skins can find every bone).
     for (const ufbx_node* node : sc->nodes) {
@@ -1044,13 +1079,40 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     }
     if (sc->anim_stacks.count > 0) {
         auto* ma = root->AddComponent<ModelAnimator>();
+        // Whole-file bake budget (a hostile file can point any number of stacks at the same curves):
+        // baked keys over all stacks, and each bake may not allocate more than what is left.
+        const std::size_t bakeKeyBudget = fbx::Limits().maxTotalBakedSamples;
+        const std::size_t kBakedKeyBytes = 40;   // sizeof(ufbx_baked_quat), the largest baked key
+        std::size_t bakedKeys = 0;
         for (const ufbx_anim_stack* st : sc->anim_stacks) {
             ufbx_bake_opts bo{};
             bo.trim_start_time = true;
             bo.resample_rate = 30.0;
+            bo.result_allocator.memory_limit = std::max<std::size_t>(1, (bakeKeyBudget - bakedKeys) * kBakedKeyBytes);   // 0 would mean unlimited
             ufbx_error be{};
             ufbx_baked_anim* bake = ufbx_bake_anim(sc, st->anim, &bo, &be);
-            if (!bake) continue;
+            if (!bake) {
+                if (be.type == UFBX_ERROR_MEMORY_LIMIT || be.type == UFBX_ERROR_ALLOCATION_LIMIT) {
+                    if (err) *err = "FBX rejected: animation bake budget exceeded";
+                    if (rejected) *rejected = true;
+                    ufbx_free_scene(sc);
+                    scene.Destroy(root);
+                    if (ok) *ok = false;
+                    return nullptr;
+                }
+                continue;
+            }
+            for (const ufbx_baked_node& bn : bake->nodes) bakedKeys += bn.translation_keys.count + bn.rotation_keys.count + bn.scale_keys.count;
+            for (const ufbx_baked_element& be3 : bake->elements) for (const ufbx_baked_prop& bp : be3.props) bakedKeys += bp.keys.count;
+            if (bakedKeys > bakeKeyBudget) {
+                ufbx_free_baked_anim(bake);
+                if (err) *err = "FBX rejected: animation bake budget exceeded";
+                if (rejected) *rejected = true;
+                ufbx_free_scene(sc);
+                scene.Destroy(root);
+                if (ok) *ok = false;
+                return nullptr;
+            }
             ModelAnimator::Clip clip;
             std::string cn = UfbxStr(st->name);
             { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
@@ -1446,8 +1508,13 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
     // FBX: built in (ufbx), full hierarchy + skins + animations. Assimp (when
     // compiled in) is the fallback for files ufbx can't read.
     if (EndsWith(p, ".fbx")) {
-        std::string ferr;
-        if (GameObject* r = ImportFbxSceneGraph(scene, path, ok, &ferr)) return r;
+        std::string ferr; bool rejected = false;
+        if (GameObject* r = ImportFbxSceneGraph(scene, path, ok, &ferr, &rejected)) return r;
+        if (rejected) {   // past a size/shape limit: fail the import (no fallback reader gets the hostile file)
+            Log::Error("model import '", path, "': ", ferr);
+            if (ok) *ok = false;
+            return nullptr;
+        }
     }
     // Non-glTF (OBJ / STL / PLY / Assimp formats): read through the seam, as a node
     // hierarchy with skins + animations where the format has them (FBX rigs etc.).

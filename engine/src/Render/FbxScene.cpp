@@ -751,6 +751,20 @@ struct Builder {
     std::vector<Curve> curveStore;
 
     bool Animation() {
+        // Budgets first: every count below is checked before anything proportional to it is allocated.
+        {
+            std::size_t stacks = 0, layers = 0, curves = 0, curveNodes = 0;
+            for (const Obj& o : objs) {
+                if (o.cls == "AnimationStack") ++stacks;
+                else if (o.cls == "AnimationLayer") ++layers;
+                else if (o.cls == "AnimationCurve") ++curves;
+                else if (o.cls == "AnimationCurveNode") ++curveNodes;
+            }
+            if (stacks > opt.limits.maxAnimStacks) return Fail("too many animation stacks");
+            if (layers > opt.limits.maxAnimLayers) return Fail("too many animation layers");
+            if (curves > opt.limits.maxAnimCurves || curveNodes > opt.limits.maxAnimCurves) return Fail("too many animation curves");
+        }
+        std::size_t totalKeys = 0, totalBaked = 0;
         // curves
         std::unordered_map<Id, int> curveOf;
         for (const Obj& o : objs) {
@@ -761,8 +775,18 @@ struct Builder {
             if (!kv) kv = ArrayOf(*o.e, "KeyValueDouble");
             if (!kt || !kv) continue;
             const std::size_t n = std::min(kt->size(), kv->size());
+            if (n > opt.limits.maxAnimKeys - totalKeys) return Fail("too many animation keys");
+            totalKeys += n;
             const std::vector<double>* fl = ArrayOf(*o.e, "KeyAttrFlags");
             const std::vector<double>* da = ArrayOf(*o.e, "KeyAttrDataFloat");
+            std::vector<double> daBits;
+            if (da && !doc.binary && doc.version >= 7200) {
+                // ASCII files from 7.2 on print this array as integers: the 32-bit patterns of the floats (slopes,
+                // and packed weights/velocities). Binary files carry real floats; see the same rule in ufbx.
+                daBits.reserve(da->size());
+                for (double d : *da) { const std::uint32_t u = (d > -4.3e9 && d < 4.3e9) ? (std::uint32_t)(std::int64_t)d : 0u; float f; std::memcpy(&f, &u, 4); daBits.push_back((double)f); }
+                da = &daBits;
+            }
             const std::vector<double>* rc = ArrayOf(*o.e, "KeyAttrRefCount");
             std::vector<std::size_t> seg(n, 0);
             if (rc) { std::size_t s = 0, left = rc->empty() ? n : (std::size_t)std::max(0.0, (*rc)[0]); for (std::size_t i = 0; i < n; ++i) { while (left == 0 && s + 1 < rc->size()) { ++s; left = (std::size_t)std::max(0.0, (*rc)[s]); } seg[i] = s; if (left) --left; } }
@@ -842,6 +866,13 @@ struct Builder {
             const double dur = t1 - t0;
             std::size_t samples = (std::size_t)std::max(1.0, std::ceil(dur * opt.bakeRate));
             if (samples + 1 > opt.limits.maxBakedSamples) samples = opt.limits.maxBakedSamples - 1;
+            {   // whole-file budget: this clip costs (sample count) x (curve nodes it evaluates)
+                std::size_t entries = blendCns.size();
+                for (const auto& kv : perNode) entries += kv.second.size();
+                const std::size_t ts = dur > 0 ? samples + 1 : 1;
+                if (entries && ts > (opt.limits.maxTotalBakedSamples - totalBaked) / entries) return Fail("animation bake budget exceeded");
+                totalBaked += ts * entries;
+            }
             clip.duration = dur;
             std::vector<double> times;
             for (std::size_t k = 0; k <= samples; ++k) times.push_back(dur > 0 ? dur * (double)k / (double)samples : 0.0);

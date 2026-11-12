@@ -537,7 +537,7 @@ const TipRow kTips[] = {
     {"Rigidbody3D.continuousCollision", "Catch fast objects so they do not pass through thin walls."},
     {"BoxCollider2D.size", "Width and height of the box."},
     {"BoxCollider3D.size", "Width, height and depth of the box."},
-    {"MeshCollider3D.size", "Size of the collision shape."},
+    {"MeshCollider3D.size", "Fallback box size, used only when there is no mesh with triangles. Otherwise the exact triangles collide."},
     {"CircleCollider2D.radius", "How big the circle is."},
     {"SphereCollider3D.radius", "How big the sphere is."},
     {"CapsuleCollider2D.size", "Width and height of the capsule."},
@@ -641,25 +641,39 @@ std::vector<PrefabChange> PrefabChangesOf(GameObject& root, std::string* error) 
         ch.added = r.kind == PrefabRecordDiff::Kind::Added;
         ch.removed = r.kind == PrefabRecordDiff::Kind::Removed;
         ch.description = r.Describe();
+        ch.objectName = r.objectName;
+        ch.fields = r.fields;
+        ch.wholeRecordOnly = r.wholeRecordOnly;
         GameObject* g = (r.object >= 0 && r.object < (int)live.size()) ? live[(std::size_t)r.object] : nullptr;
-        if (g && (anyRemoved || g->name != r.objectName)) {   // positions can drift when objects were lost: trust the name
+        // Positions drift when objects were lost, so then trust the name. Without lost objects the position is exact, also for
+        // an object (or the instance root) that was renamed.
+        if (g && anyRemoved && r.object != 0 && g->name != r.objectName) {
             GameObject* byName = nullptr;
             for (GameObject* l : live) if (l->name == r.objectName) { byName = l; break; }
-            if (byName || g->name != r.objectName) g = byName;
+            g = byName;
         }
-        if (!g && !anyRemoved) g = nullptr;
         ch.object = g;
         out.push_back(std::move(ch));
     }
     return out;
 }
 
-bool IsChanged(const std::vector<PrefabChange>& changes, const GameObject& go, const Component& c) {
+const PrefabChange* FindChange(const std::vector<PrefabChange>& changes, const GameObject& go, const Component& c) {
     const std::string rec = RecordNameOf(c);
-    if (rec.empty()) return false;
+    if (rec.empty()) return nullptr;
+    // The n-th component of this record type on the object is the n-th occurrence of the record.
+    int occurrence = 0;
+    for (const auto& up : go.Components()) {
+        if (up.get() == &c) break;
+        if (up && RecordNameOf(*up) == rec) ++occurrence;
+    }
     for (const PrefabChange& ch : changes)
-        if (ch.object == &go && ch.record == rec) return true;
-    return false;
+        if (ch.object == &go && ch.record == rec && ch.occurrence == occurrence) return &ch;
+    return nullptr;
+}
+
+bool IsChanged(const std::vector<PrefabChange>& changes, const GameObject& go, const Component& c) {
+    return FindChange(changes, go, c) != nullptr;
 }
 
 } // namespace oked

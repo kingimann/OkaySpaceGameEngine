@@ -7,6 +7,7 @@
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/Platformer25DController.hpp"
 #include "okay/Components/Projectile3D.hpp"
@@ -68,6 +69,16 @@ bool NavMeshBaker::IsMovingThing(const GameObject* go) {
     return false;
 }
 
+int NavMeshBaker::AreaFor(const GameObject* go) {
+    bool self = true;
+    for (const GameObject* g = go; g; g = (g->transform && g->transform->Parent()) ? g->transform->Parent()->gameObject : nullptr) {
+        if (const NavMeshModifier* m = g->GetComponent<NavMeshModifier>())
+            if (m->enabled && (self || m->applyToChildren)) return std::clamp(m->area, 0, kNavAreaCount - 1);
+        self = false;
+    }
+    return NavArea::Walkable;
+}
+
 void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, std::uint32_t layerMask) {
     out.boxes.clear(); out.spheres.clear(); out.capsules.clear(); out.terrains.clear();
     for (const auto& up : scene.Objects()) {
@@ -75,6 +86,7 @@ void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, 
         if (!go || !go->active || !go->transform) continue;
         if (((layerMask >> (go->layer & 31)) & 1u) == 0) continue;
         if (IsMovingThing(go)) continue;
+        const int area = AreaFor(go);
         if (auto* rb = go->GetComponent<Rigidbody3D>())
             if (rb->bodyType == Rigidbody3D::BodyType::Dynamic && !includeDynamic) continue;
         for (const auto& comp : go->Components()) {
@@ -84,18 +96,18 @@ void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, 
                 case Collider3D::Shape::Box:
                 case Collider3D::Shape::Mesh: {
                     auto* b = static_cast<BoxCollider3D*>(c);
-                    out.boxes.push_back({b->WorldCenter(), b->HalfExtents(), go->transform->Rotation()});
+                    out.boxes.push_back({b->WorldCenter(), b->HalfExtents(), go->transform->Rotation(), area});
                     break;
                 }
                 case Collider3D::Shape::Sphere: {
                     auto* s = static_cast<SphereCollider3D*>(c);
-                    out.spheres.push_back({s->WorldCenter(), s->WorldRadius()});
+                    out.spheres.push_back({s->WorldCenter(), s->WorldRadius(), area});
                     break;
                 }
                 case Collider3D::Shape::Capsule:
                 case Collider3D::Shape::Cylinder: {
                     auto* cp = static_cast<CapsuleCollider3D*>(c);
-                    NavBakeInput::Capsule k; cp->Segment(k.a, k.b); k.radius = cp->WorldRadius();
+                    NavBakeInput::Capsule k; cp->Segment(k.a, k.b); k.radius = cp->WorldRadius(); k.area = area;
                     out.capsules.push_back(k);
                     break;
                 }
@@ -108,7 +120,7 @@ void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, 
         NavBakeInput::Heightfield h;
         h.l2w = t->gameObject->transform->LocalToWorldMatrix();
         h.w2l = h.l2w.Inverse();
-        h.size = t->size; h.dim = t->Dim(); h.heights = t->heights;
+        h.size = t->size; h.dim = t->Dim(); h.heights = t->heights; h.area = AreaFor(t->gameObject);
         if ((int)h.heights.size() < h.dim * h.dim) h.heights.resize((std::size_t)h.dim * h.dim, 0.0f);
         float lo = 0.0f, hi = 0.0f; t->HeightRange(lo, hi);
         const float half = t->size * 0.5f;
@@ -127,7 +139,7 @@ void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, 
 
 namespace {
 
-struct Span { float y0, y1, ny; int next; };   // a solid interval of a column, with its top's normal
+struct Span { float y0, y1, ny; int next; int area; };   // a solid interval of a column, with its top's normal
 
 struct Heightfield {
     int nx = 0, nz = 0;
@@ -137,14 +149,15 @@ struct Heightfield {
     std::vector<Span> spans;
     float CenterX(int ix) const { return originX + ((float)ix + 0.5f) * cs; }
     float CenterZ(int iz) const { return originZ + ((float)iz + 0.5f) * cs; }
-    void AddSpan(int col, float y0, float y1, float ny) {
+    void AddSpan(int col, float y0, float y1, float ny, int area) {
         if (!(y1 >= y0)) return;
         // Merge with every overlapping span of the column (the top's normal follows the highest top).
         int prev = -1, cur = head[(std::size_t)col];
         while (cur >= 0 && spans[(std::size_t)cur].y0 <= y1 + 1e-4f) {
             Span& s = spans[(std::size_t)cur];
             if (s.y1 >= y0 - 1e-4f) {   // overlap / touch: absorb into the new interval, unlink
-                if (s.y1 > y1) { y1 = s.y1; ny = s.ny; }
+                if (s.y1 > y1) { const bool tie = s.y1 - y1 < 1e-4f; y1 = s.y1; ny = s.ny; area = tie ? std::max(area, s.area) : s.area; }
+                else if (y1 - s.y1 < 1e-4f) area = std::max(area, s.area);   // level tops: the higher area index wins
                 if (s.y0 < y0) y0 = s.y0;
                 const int nxt = s.next;
                 if (prev >= 0) spans[(std::size_t)prev].next = nxt; else head[(std::size_t)col] = nxt;
@@ -153,7 +166,7 @@ struct Heightfield {
             }
             prev = cur; cur = s.next;
         }
-        Span n{y0, y1, ny, cur};
+        Span n{y0, y1, ny, cur, area};
         spans.push_back(n);
         const int id = (int)spans.size() - 1;
         if (prev >= 0) spans[(std::size_t)prev].next = id; else head[(std::size_t)col] = id;
@@ -204,6 +217,7 @@ bool LineBox(const NavBakeInput::Box& b, const Quat& inv, float x, float z, floa
 struct Cell {
     float y = 0.0f, ny = 1.0f, ceil = 1e30f;
     bool  walk = false;
+    int   area = 0;
     int   con[4] = {-1, -1, -1, -1};   // neighbour cell per direction (+x, -x, +z, -z) or -1
     int   rect = -1;
     int   dist = 0;
@@ -212,7 +226,7 @@ struct Cell {
 constexpr int kDX[4] = {1, -1, 0, 0};
 constexpr int kDZ[4] = {0, 0, 1, -1};
 
-struct CellRect { int ix0, iz0, w, h; std::vector<int> cells; /* row-major, h rows of w */ 
+struct CellRect { int ix0, iz0, w, h; int area = 0; std::vector<int> cells; /* row-major, h rows of w */ 
     int at(int r, int c) const { return cells[(std::size_t)r * w + c]; } };
 
 } // namespace
@@ -279,7 +293,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
         for (int iz = z0; iz <= z1; ++iz)
             for (int ix = x0; ix <= x1; ++ix) {
                 float y0, y1, ny;
-                if (LineBox(b, inv, hf.CenterX(ix), hf.CenterZ(iz), y0, y1, ny)) hf.AddSpan(iz * hf.nx + ix, y0, y1, ny);
+                if (LineBox(b, inv, hf.CenterX(ix), hf.CenterZ(iz), y0, y1, ny)) hf.AddSpan(iz * hf.nx + ix, y0, y1, ny, b.area);
             }
         tick();
     }
@@ -293,7 +307,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
                 const float d2 = dx * dx + dz * dz;
                 if (d2 >= s.radius * s.radius) continue;
                 const float h = std::sqrt(s.radius * s.radius - d2);
-                hf.AddSpan(iz * hf.nx + ix, s.center.y - h, s.center.y + h, h / std::max(s.radius, 1e-6f));
+                hf.AddSpan(iz * hf.nx + ix, s.center.y - h, s.center.y + h, h / std::max(s.radius, 1e-6f), s.area);
             }
         tick();
     }
@@ -313,7 +327,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
                     const float dx = x - e->x, dz = z - e->z, d2 = dx * dx + dz * dz;
                     if (d2 >= c.radius * c.radius) continue;
                     const float h = std::sqrt(c.radius * c.radius - d2);
-                    hf.AddSpan(col, e->y - h, e->y + h, h / std::max(c.radius, 1e-6f));
+                    hf.AddSpan(col, e->y - h, e->y + h, h / std::max(c.radius, 1e-6f), c.area);
                 }
                 if (len <= 1e-6f) continue;
                 // The cylinder part: points (x, y, z) within `radius` of the segment's line,
@@ -337,7 +351,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
                 if (lo > hi) continue;
                 const float sTop = std::clamp(s0 + hi * u.y, 0.0f, len);
                 const Vec3 closest = c.a + u * sTop;
-                hf.AddSpan(col, lo, hi, std::clamp((hi - closest.y) / std::max(c.radius, 1e-6f), -1.0f, 1.0f));
+                hf.AddSpan(col, lo, hi, std::clamp((hi - closest.y) / std::max(c.radius, 1e-6f), -1.0f, 1.0f), c.area);
             }
         tick();
     }
@@ -352,7 +366,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
                 const float h = t.Sample(lp.x, lp.z);
                 const float yw = t.l2w.MultiplyPoint({lp.x, h, lp.z}).y;
                 const Vec3 n = t.l2w.MultiplyVector(t.Normal(lp.x, lp.z)).Normalized();
-                hf.AddSpan(iz * hf.nx + ix, yw - 1000.0f, yw, n.y);
+                hf.AddSpan(iz * hf.nx + ix, yw - 1000.0f, yw, n.y, t.area);
             }
         tick();
     }
@@ -371,8 +385,8 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
             const float ceil = sp.next >= 0 ? hf.spans[(std::size_t)sp.next].y0 : 1e30f;
             if (ceil - sp.y1 < S.agentHeight - 1e-4f) continue;
             if (sp.y1 < bmin.y - 1e-4f || sp.y1 > bmax.y + 1e-4f) continue;
-            Cell c; c.y = sp.y1; c.ny = sp.ny; c.ceil = ceil;
-            c.walk = sp.ny >= minSlopeNy;
+            Cell c; c.y = sp.y1; c.ny = sp.ny; c.ceil = ceil; c.area = sp.area;
+            c.walk = sp.ny >= minSlopeNy && sp.area != NavArea::NotWalkable;
             cells.push_back(c);
         }
     }
@@ -465,7 +479,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
         col.clear();
         for (int row = 0; row < r.h; ++row) {
             const int k = cells[(std::size_t)r.at(row, r.w - 1)].con[0];
-            if (!free(k)) return false;
+            if (!free(k) || cells[(std::size_t)k].area != r.area) return false;
             if (row > 0 && cells[(std::size_t)col[(std::size_t)row - 1]].con[2] != k) return false;
             col.push_back(k);
         }
@@ -483,7 +497,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
         row.clear();
         for (int c = 0; c < r.w; ++c) {
             const int k = cells[(std::size_t)r.at(r.h - 1, c)].con[2];
-            if (!free(k)) return false;
+            if (!free(k) || cells[(std::size_t)k].area != r.area) return false;
             if (c > 0 && cells[(std::size_t)row[(std::size_t)c - 1]].con[0] != k) return false;
             row.push_back(k);
         }
@@ -518,7 +532,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
             const std::size_t col = (std::size_t)iz * hf.nx + ix;
             for (int k = colStart[col]; k < colStart[col + 1]; ++k) {
                 if (!free(k)) continue;
-                CellRect seed; seed.ix0 = ix; seed.iz0 = iz; seed.w = 1; seed.h = 1; seed.cells = {k};
+                CellRect seed; seed.ix0 = ix; seed.iz0 = iz; seed.w = 1; seed.h = 1; seed.cells = {k}; seed.area = cells[(std::size_t)k].area;
                 CellRect a = grow(seed, true), b = grow(seed, false);
                 CellRect& best = (a.w * a.h >= b.w * b.h) ? a : b;
                 const int id = (int)rects.size();
@@ -566,6 +580,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
         const float x0 = hf.originX + (float)bx0 * cs, x1 = hf.originX + (float)bx1 * cs;
         const float z0 = hf.originZ + (float)bz0 * cs, z1 = hf.originZ + (float)bz1 * cs;
         NavMesh::Poly& poly = out.polys[i];
+        poly.area = r.area;
         poly.v[0] = vertex(bx0, bz0, p.At(x0, z0));
         poly.v[1] = vertex(bx1, bz0, p.At(x1, z0));
         poly.v[2] = vertex(bx1, bz1, p.At(x1, z1));

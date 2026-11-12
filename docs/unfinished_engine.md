@@ -23,7 +23,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| "Mesh Collider 3D" is only the mesh's bounding box | `engine/include/okay/Physics/Collider3D.hpp:157-163` (`class MeshCollider3D : public BoxCollider3D`) | The name promises per-triangle or convex collision. Anything non-box-shaped (arches, bowls, rooms, terrain meshes) blocks as a solid box. Character cannot enter a hollow building model | High | Large |
+| Mesh Collider 3D is static-only and raises no collision callbacks | `engine/include/okay/Physics/Collider3D.hpp` (`MeshCollider3D`), `engine/src/Physics/Physics3D.cpp` (mesh pass in `Step`) | Exact per-triangle collision (BVH, rays, overlaps, casts, `ResolveSphere`, rigidbody contact, trigger overlap) now works against concave, hollow and holed meshes. Still open: a mesh collider cannot be a dynamic body (no convex-hull shape or concave-vs-concave contact in the solver; a dynamic Rigidbody3D on the same object is refused with a warning and an Inspector message); bodies landing on a solid mesh get no `OnCollisionEnter3D/Stay/Exit`; the navmesh bake treats it as its bounding box | Medium | Medium |
 | 3D hinge joint has no angle limits | `engine/include/okay/Components/Joint3D.hpp:22` (modes Distance, Spring, Pin, Hinge; no limit fields). 2D has them via `Math/JointLimit.hpp` | Doors and flaps swing a full circle; the 3D joint headers still say "no hinge" in comments | Medium | Small |
 | No 2D box or capsule casts, no 2D explosion force | `Physics/Physics2D.hpp` queries; `AddExplosionForce` only in `Rigidbody3D.hpp:111` | 2D games cannot sweep a box or capsule, or blast bodies away, without writing it in script | Medium | Small |
 | Bodies must be un-parented; no step-rate setting in the editor | `Rigidbody3D.hpp` header comment; feature map 6.4 | A rigidbody under a moving parent is wrong; no UI for the fixed step | Low | Medium |
@@ -63,7 +63,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| No off-mesh links, area costs or obstacle carving | no matches in `engine/src/AI`, `AI/NavMesh*.hpp`, `Components/NavMeshAgent.hpp` | NPCs cannot jump gaps, climb ladders, or avoid mud or water. Moving obstacles do not cut the mesh | High | Large |
+| Moving obstacles do not cut the mesh (no obstacle carving) | `Components/NavMeshObstacle.hpp` | Agents dodge a moving obstacle locally but the path search does not route around it, so a closed door or a parked cart can wedge a path. (Resolved: off-mesh links and area types with costs and per-agent masks, see `docs/navigation.md`.) | Medium | Medium |
 | NavMesh polygons are axis-aligned rectangles, one agent radius per bake, one surface per scene | feature map 9.1 | Angled walls become staircases; two NPC sizes need two scenes | Medium | Large |
 | 2D grid pathfinder: no weights, smoothing or moving obstacles | `AI/Pathfinding.hpp` | 2D games get jagged unweighted paths | Low | Medium |
 | Behavior tree cannot run another tree; no breakpoints | `AI/BehaviorTree.hpp:100-110` (no sub-tree node type) | Large trees cannot be modular | Medium | Medium |
@@ -164,12 +164,12 @@ High: 8. Medium: 58. Low: 26. Total rows: 92.
 2. **SSAO missing on Direct3D 11** (sec 1). Windows is the main target and D3D11 is its default; a lighting switch that does nothing there is the most visible renderer gap.
 3. **Editor Play lacks the extended keys and extra pads** (sec 5). A few lines copying `AppendSdlExtendedKeys` and `pads.Feed` fix games that behave differently in Play and in a build.
 4. **(Resolved) Lua and C# backends removed** (sec 10). The optional third-party backends were dropped; old scenes naming them load and report "language not supported".
-5. **Mesh Collider 3D is a box** (sec 2). Users believe they get model collision; start with a convex hull, then triangle meshes for static objects.
+5. **Mesh Collider 3D** (sec 2). Exact triangle collision for static geometry is done; the remaining gap is a convex-hull shape so a mesh can be a dynamic body, and collision callbacks for bodies landing on it.
 6. **Save framework has no no-code route** (sec 13). The engine work is done; a Save/Load slot component and a window make it usable without scripts.
 7. **Direct3D 12 has no post-processing** (sec 1). Either bring it to parity or label it "preview" in Build Settings and keep it off by default.
 8. ~~**Audio is mono and fully decoded** (sec 4).~~ Done: clips keep stereo, long music streams from disk in a fixed small amount of memory (AudioSource "Stream", Music Player), see `docs/audio.md`. The other audio gaps stay in section 4.
 9. **(Resolved) Undo uses full snapshots** (sec 13). The editor now records scene deltas on `UndoStack` (named steps, merged drags, GUID-exact delete restore, history kept across Play, no recording during Play). What is left is a narrower Medium row in sec 13: per-object commands, and the unrun GUI paths.
-10. **Navigation: off-mesh links and area costs** (sec 6). Biggest AI limit; NPCs cannot use gaps, ladders or avoid hazards.
+10. ~~**Navigation: off-mesh links and area costs** (sec 6).~~ Done: Nav Mesh Modifier areas with per-area costs and agent masks, and Nav Mesh Links (jump, drop, ladder) that agents plan through and cross, see `docs/navigation.md`. Obstacle carving stays open in section 6.
 11. **Cast shadows from spot and point lights on D3D12 and software** (sec 1) or a visible warning in the Light Inspector (small).
 12. **Visual script export turns Wait or Delay into comments** (sec 10). Emit working `after(t, fn)` code and add one export-vs-runtime test.
 13. **Joint3D hinge limits** (sec 2). Small change with big effect on doors and levers; reuse `Math/JointLimit.hpp`.

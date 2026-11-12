@@ -32,7 +32,7 @@ bool Partitions(const BatchPlan& plan, int n) {
     return true;
 }
 
-float Volume(const Mesh& m) {
+float MeshVolume(const Mesh& m) {
     double v = 0;
     for (int t = 0; t < m.TriangleCount(); ++t) {
         const Vec3& p = m.vertices[m.triangles[t * 3]];
@@ -278,9 +278,9 @@ int main() {
                 part2.triangles.push_back(r.mesh.triangles[(24 + t) * 3 + c]);
             }
         part0.vertices = part1.vertices = part2.vertices = r.mesh.vertices;
-        CHECK_NEAR(Volume(part0), 1.0, 1e-4);
-        CHECK_NEAR(Volume(part1), 8.0, 1e-3);
-        CHECK_NEAR(Volume(part2), 1.0, 1e-4);                                         // the mirror's flipped winding keeps it positive
+        CHECK_NEAR(MeshVolume(part0), 1.0, 1e-4);
+        CHECK_NEAR(MeshVolume(part1), 8.0, 1e-3);
+        CHECK_NEAR(MeshVolume(part2), 1.0, 1e-4);                                         // the mirror's flipped winding keeps it positive
         for (int i : r.mesh.triangles) CHECK(i >= 0 && i < 24);
         CHECK(!r.mesh.HasUVs() && !r.mesh.HasNormals() && !r.mesh.HasFaceColors());
         CHECK(r.mesh.name == "Merged");

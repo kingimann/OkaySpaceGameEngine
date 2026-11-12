@@ -23,7 +23,7 @@ hosting) are not libraries and stay outside the goal unless we choose to self-ho
 | Rendering | `engine/src/Render`, `engine/include/okay/Render` | Our own software renderer plus OpenGL, Direct3D 11 and Direct3D 12 backends, camera stack, lighting, post-processing |
 | Physics | `engine/` | 2D and 3D physics, joints, ragdolls, queries, fixed-step simulation |
 | Animation and IK | `engine/src/Animation` | Animators, state machines, humanoid rig mapping, root motion, foot, hand and full-body IK |
-| Audio | `engine/src/Audio` | Mixer, groups, music player, one-shots (decoders for formats are third party, below) |
+| Audio | `engine/src/Audio` | Mixer, groups, music player, one-shots, and our own MP3 and Ogg Vorbis decoders |
 | In-game UI | `engine/` UI, `okayui/` | Canvas, widgets, themes, layout, scrolling, rich text, UI Gallery |
 | Scripting | `engine/src/Scripting`, `engine/src/VisualScript` | OkayScript language and VM, the visual-script graph engine and every node |
 | Networking | `engine/src/Net`, `relay/` | UDP transport, server authority, rooms, matchmaking, anti-cheat, dedicated server, relay |
@@ -31,6 +31,7 @@ hosting) are not libraries and stay outside the goal unless we choose to self-ho
 | Launcher | `launcher/` | Self-updating launcher, Versions page, projects, chat, friends, servers |
 | Player | `player/` | The runtime that runs exported games |
 | Tools and scripts | `tools/`, `scripts/`, `shared/` | Generators, release and publish scripts, shared headers (project upgrade, dev log) |
+| Platform helpers | `shared/FileDialog*`, `engine/src/Graphics/Font.cpp`, `engine/src/Core/ImageWrite.cpp` | Native file open/save dialogs (Windows, zenity or kdialog on Linux, osascript on macOS, built-in browser fallback), PNG writer, built-in 8x8 bitmap font |
 | Backend functions | `supabase/functions` | Our server-side functions for accounts and community features |
 
 ## Libraries we build on
@@ -41,14 +42,8 @@ hosting) are not libraries and stay outside the goal unless we choose to self-ho
 | [Dear ImGui](https://github.com/ocornut/imgui) | Editor and launcher UI | MIT | Downloaded at configure time, pinned to one commit |
 | [Assimp](https://github.com/assimp/assimp) v5.4.3 | Importing many 3D model formats | BSD 3-clause | Downloaded at configure time (optional, `OKAY_USE_ASSIMP`) |
 | [ufbx](https://github.com/ufbx/ufbx) | FBX import | MIT or public domain | Vendored in `engine/third_party/ufbx` |
-| [stb_image, stb_image_write, stb_truetype, stb_vorbis](https://github.com/nothings/stb) | PNG/JPG load and save, TrueType fonts, Ogg Vorbis decoding | Public domain or MIT | Vendored in `engine/third_party/stb` |
-| [dr_mp3](https://github.com/mackron/dr_libs) | MP3 decoding | Public domain or MIT-0 | Vendored in `engine/third_party/dr_libs` |
-| [tinyfiledialogs](https://sourceforge.net/projects/tinyfiledialogs/) | Native file open and save dialogs | zlib | Vendored in `engine/third_party/tinyfd` |
-| font8x8 | Built-in 8x8 pixel font | Public domain | Vendored in `engine/third_party/font8x8` |
 | [DejaVu Sans](https://dejavu-fonts.github.io) | Default UI font | Free font licence (see `assets/fonts/DejaVuSans-LICENSE.txt`) | In `assets/fonts` |
 | [libsodium](https://libsodium.org) | Authenticated packet encryption | ISC | System package (optional, `OKAY_USE_SODIUM`) |
-| [Lua](https://www.lua.org) | Lua scripting backend | MIT | System package (optional, `OKAY_WITH_LUA`, off by default) |
-| Mono | C# scripting backend | MIT | System package (optional) |
 
 ## Optional integrations (not bundled)
 

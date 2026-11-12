@@ -368,7 +368,7 @@ static void TestRegistryBasics() {
         "PlayerController", "PlayerView", "FirstPersonController", "ThirdPersonController", "CharacterController2D", "CharacterController3D",
         "TopDownController", "TopDownController2D", "FreeRoamController", "ClickToMoveController", "ThirdPersonShooterController",
         "TopDownShooterController", "Platformer25DController", "VehicleController", "VehicleController2D", "Projectile3D", "Spawner",
-        "MusicPlayer", "NavMeshAgent", "NavMeshObstacle", "NavMeshSurface", "NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar",
+        "MusicPlayer", "NavMeshAgent", "NavMeshLink", "NavMeshModifier", "NavMeshObstacle", "NavMeshSurface", "NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar",
         "NetworkPlayerSpawner", "UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown",
         "Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone",
         "Flashlight", "Joint2D", "Joint3D", "DayNightCycle", "Water", "Crosshair", "UIRadialProgress", "UIRating", "UIScrollView",
@@ -1505,7 +1505,7 @@ static void TestNavNetUiRegistrations() {
     RUN_SUITE("navigation, networking and UI widgets");
     RegisterBuiltinProperties();
     auto find = [](const char* n) { return PropertyRegistry::FindByName(n); };
-    for (const char* name : {"NavMeshAgent", "NavMeshObstacle", "NavMeshSurface"}) CHECK(find(name) && find(name)->category == "Navigation");
+    for (const char* name : {"NavMeshAgent", "NavMeshLink", "NavMeshModifier", "NavMeshObstacle", "NavMeshSurface"}) CHECK(find(name) && find(name)->category == "Navigation");
     for (const char* name : {"NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar", "NetworkPlayerSpawner"}) CHECK(find(name) && find(name)->category == "Networking");
     for (const char* name : {"UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown"})
         CHECK(find(name) && find(name)->category == "UI");

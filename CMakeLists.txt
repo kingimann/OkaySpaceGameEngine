@@ -26,6 +26,7 @@ option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
+option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
 option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" OFF)
 # The UI toolkit the launcher and editor use for the screens that have an OkayUI port. Dear ImGui stays the default until

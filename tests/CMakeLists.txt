@@ -774,6 +774,12 @@ target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
+# Prefab mode (EditorState): open a prefab on its own, edit, save, go back; nested levels, per-level undo, instance refresh, Play refused.
+add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_prefab_mode PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_prefab_mode PRIVATE okay::engine)
+add_test(NAME prefab_mode COMMAND test_prefab_mode)
+
 # The editor's prefab actions (editor/PrefabEdit; ImGui-free): override detection, per-field and per-component Revert / Apply, Apply updating the
 # other instances, nested prefabs and variants, objects added to or lost from an instance, Create Variant, and undo / redo that moves the prefab files too.
 add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
@@ -1642,11 +1648,19 @@ add_executable(test_anticheat_backend test_anticheat_backend.cpp)
 target_link_libraries(test_anticheat_backend PRIVATE okay::engine)
 target_include_directories(test_anticheat_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
+# User reports (docs/sql/reports.sql): requests, honest outcomes, the moderator list...
+add_executable(test_user_reports test_user_reports.cpp)
+target_link_libraries(test_user_reports PRIVATE okay::engine)
+target_include_directories(test_user_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME user_reports COMMAND test_user_reports)
 # ...and docs/sql/anticheat.sql on a LOCAL Postgres (skipped unless
 # OKAY_SQL_TEST_PGHOST names one; see the script).
 if(UNIX)
     add_test(NAME anticheat_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_anticheat_sql.sh)
     set_tests_properties(anticheat_sql PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME reports_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reports_sql.sh)
+    set_tests_properties(reports_sql PROPERTIES SKIP_RETURN_CODE 77)
+
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
     # docs/sql/member_moderation.sql (kick / ban / roles) on a LOCAL Postgres, same opt-in as above.
@@ -1913,6 +1927,12 @@ add_test(NAME save_framework COMMAND test_save_framework)
 add_executable(test_save_scene test_save_scene.cpp)
 target_link_libraries(test_save_scene PRIVATE okay::engine)
 add_test(NAME save_scene COMMAND test_save_scene)
+
+# Save framework without code: Saveable in the scene file, GameSaves, autosave, script / visual-script /
+# Action List routes, the Save Slots screen.
+add_executable(test_save_nocode test_save_nocode.cpp)
+target_link_libraries(test_save_nocode PRIVATE okay::engine)
+add_test(NAME save_nocode COMMAND test_save_nocode)
 
 # Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
 add_executable(test_script_batch1 test_script_batch1.cpp)
@@ -2351,6 +2371,77 @@ add_executable(test_file_dialog test_file_dialog.cpp ${PROJECT_SOURCE_DIR}/share
 target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
+
+# okay::crypto (our own, UNREVIEWED crypto primitives; docs/crypto.md): RFC known-answer vectors,
+# tamper tests, edge cases. tests/crypto_rfc_vectors.hpp is extracted from the RFC text.
+add_executable(test_crypto test_crypto.cpp)
+target_link_libraries(test_crypto PRIVATE okay::engine)
+add_test(NAME crypto COMMAND test_crypto)
+
+# Fuzz target. Default: a built-in mutator drives it for a few hundred iterations (a quick
+# smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more).
+# -DOKAY_CRYPTO_LIBFUZZER=ON (clang) builds the real libFuzzer binary `fuzz_crypto` instead.
+option(OKAY_CRYPTO_LIBFUZZER "Build the okay::crypto libFuzzer target (clang -fsanitize=fuzzer)" OFF)
+if(OKAY_CRYPTO_LIBFUZZER)
+    add_executable(fuzz_crypto fuzz_crypto.cpp)
+    target_link_libraries(fuzz_crypto PRIVATE okay::engine)
+    target_compile_definitions(fuzz_crypto PRIVATE OKAY_CRYPTO_LIBFUZZER)
+    target_compile_options(fuzz_crypto PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
+    target_link_options(fuzz_crypto PRIVATE -fsanitize=fuzzer,address,undefined)
+else()
+    add_executable(fuzz_crypto_smoke fuzz_crypto.cpp)
+    target_link_libraries(fuzz_crypto_smoke PRIVATE okay::engine)
+    add_test(NAME crypto_fuzz_smoke COMMAND fuzz_crypto_smoke 300)
+endif()
+
+# Cross-checks against other implementations (both directions, thousands of random cases).
+# 1) libsodium, in process (only when it is installed; independent of OKAY_USE_SODIUM / OKAY_OWN_CRYPTO).
+find_package(PkgConfig QUIET)
+set(_okay_xc_sodium FALSE)
+if(PkgConfig_FOUND AND NOT CMAKE_CROSSCOMPILING)   # (a cross build would find the HOST's libsodium)
+    pkg_check_modules(OKAY_XC_SODIUM QUIET libsodium)
+    if(OKAY_XC_SODIUM_FOUND)
+        set(_okay_xc_sodium TRUE)
+    endif()
+endif()
+if(_okay_xc_sodium)
+    add_executable(test_crypto_sodium_xcheck test_crypto_sodium_xcheck.cpp)
+    target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::engine ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(test_crypto_sodium_xcheck SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    add_test(NAME crypto_sodium_xcheck COMMAND test_crypto_sodium_xcheck)
+endif()
+# 2) Python `cryptography` (OpenSSL) and hashlib, through a line-protocol front end to our code.
+add_executable(crypto_xcheck_tool crypto_xcheck_tool.cpp)
+target_link_libraries(crypto_xcheck_tool PRIVATE okay::engine)
+set(_okay_xc_python "")
+foreach(_py IN ITEMS python3 /usr/bin/python3 python)
+    if(NOT _okay_xc_python)
+        execute_process(COMMAND ${_py} -c "from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey"
+                        RESULT_VARIABLE _rc OUTPUT_QUIET ERROR_QUIET)
+        if(_rc EQUAL 0)
+            set(_okay_xc_python ${_py})
+        endif()
+    endif()
+endforeach()
+if(_okay_xc_python)
+    add_test(NAME crypto_python_xcheck
+             COMMAND ${_okay_xc_python} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/crypto_xcheck.py $<TARGET_FILE:crypto_xcheck_tool> 1500)
+else()
+    message(STATUS "OkaySpace tests: python 'cryptography' not found; crypto_python_xcheck skipped")
+endif()
+
+# The existing SecureChannel test, compiled once per backend IN THE SAME BUILD (tests/test_net_crypto_*.cpp
+# rename the class so the two copies never meet at link time). With -DOKAY_OWN_CRYPTO=ON the engine's
+# own net code (net_*, net_auth, dedicated_server, ...) runs on okay::crypto as well.
+add_executable(test_net_crypto_own test_net_crypto_own.cpp)
+target_link_libraries(test_net_crypto_own PRIVATE okay::engine)
+add_test(NAME net_crypto_own COMMAND test_net_crypto_own)
+if(_okay_xc_sodium)
+    add_executable(test_net_crypto_sodium test_net_crypto_sodium.cpp)
+    target_link_libraries(test_net_crypto_sodium PRIVATE okay::engine ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(test_net_crypto_sodium SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    add_test(NAME net_crypto_sodium COMMAND test_net_crypto_sodium)
+endif()
 
 # Our own model readers (OBJ+MTL, STL, PLY) + the import seam: fixtures in tests/data/models,
 # malformed input, a fuzz sweep, the backend switch, and (with OKAY_USE_ASSIMP) both backends compared.

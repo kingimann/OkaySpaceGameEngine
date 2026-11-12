@@ -167,5 +167,6 @@ whole file and check it (use them for one slot, not a long list of big saves).
   `save_play_text`, `save_date`, `save_ago`.
 
 Not changed: `SaveGame` and the save framework (`docs/save_framework.md`) are still two
-formats; a game picks one per slot name. There is no scene-file record for the framework's
-`Saveable` and `CheckpointTrigger` components yet.
+formats; a game picks one per slot name. The framework's `Saveable` component now has a scene-file
+record (`saveable`), and there is a no-code way to use it: see "Saving without code" in
+`docs/save_framework.md`. `CheckpointTrigger` still has no scene-file record.

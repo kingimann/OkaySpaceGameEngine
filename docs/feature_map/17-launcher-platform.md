@@ -181,11 +181,12 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.9.3 Ban banner - `launcher/main.cpp` (L13440) - shows a site ban and its end date
   - 17.9.4 Roles and audit SQL - `docs/sql/admin.sql` - roles, `site_bans`, `admin_log`, `is_admin`; run after `social.sql`
   - 17.9.5 Sub-pages owned elsewhere - Admin > Anti-cheat (39.6) and Admin > Official game (17.14)
-- **Code:** `Platform/Admin`, `docs/sql/admin.sql`
+  - 17.9.6 User reports - `shared/UserReports.hpp`, `docs/sql/reports.sql`, `launcher/main.cpp` (`OpenReport`, `DrawReportPopup`, `DrawReportsAdmin`) - players report a player, DM, group message, forum post or comment, listing or community server (fixed reasons plus a note); moderators review under Admin > Reports (open, resolved, dismissed). "Report sent" only after the server accepted it; clear messages for signed out, table missing, duplicate and rate limit. Owner must run `reports.sql`; "Report cheating" stays separate (39.6)
+- **Code:** `Platform/Admin`, `docs/sql/admin.sql`, `shared/UserReports.hpp`, `docs/sql/reports.sql`
 - **API:** `okay::Admin`, `AdminUser`, `AdminBan`
 - **Editor:** none
 - **Docs:** `docs/supabase-backend.md`
-- **Tests:** none for `Admin`; the anti-cheat parts of `admin.sql` are exercised by `anticheat_sql`
+- **Tests:** none for `Admin`; the anti-cheat parts of `admin.sql` are exercised by `anticheat_sql`; user reports by `user_reports` (requests, outcomes) and `reports_sql` (RLS on a local Postgres)
 - **Status:** Works - shipping page; untested client
 - **Open:** create test servers without a game (old map)
 - **Related:** 39.6, 17.14, 17.5, 17.6

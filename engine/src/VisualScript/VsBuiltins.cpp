@@ -354,7 +354,7 @@ std::string CoverageTableMarkdown() {
         {"Terrain", "terrain properties", "Get/Set Property on a terrain component. No separate terrain builtin."},
         {"Splines", "Spline.*, SplineFollower.*", "Engine API Spline / SplineFollower / LineRenderer"},
         {"Networking", "net_* builtins", "Every Fn.net_* builtin in the list below"},
-        {"Saves", "SaveGame.*", "Engine API SaveGame, Save Checkpoint, Load Checkpoint"},
+        {"Saves", "SaveGame.*, game_save / game_load / game_continue ...", "Engine API SaveGame, Save Checkpoint, Load Checkpoint, Fn.game_* save-slot nodes (Saveable component marks what is stored)"},
         {"Scenes and prefabs", "instantiate, load_scene", "Fn.instantiate, Fn.load_scene, Spawn Projectile, Run Another Graph"},
         {"Time", "Time.*, time", "Engine API Time, Fn.time, Delta Time"},
         {"Tweens and timers", "tween builtins, Every, Delay", "Fn.tween_* builtins, Tween Position, Every, Delay, Count Down"},

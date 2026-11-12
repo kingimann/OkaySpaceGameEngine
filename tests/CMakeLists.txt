@@ -587,6 +587,10 @@ add_executable(test_net_rooms test_net_rooms.cpp)
 target_link_libraries(test_net_rooms PRIVATE okay::engine)
 add_test(NAME net_rooms COMMAND test_net_rooms)
 
+add_executable(test_foliage test_foliage.cpp)
+target_link_libraries(test_foliage PRIVATE okay::engine)
+add_test(NAME foliage COMMAND test_foliage)
+
 add_executable(test_terrain test_terrain.cpp)
 target_link_libraries(test_terrain PRIVATE okay::engine)
 add_test(NAME terrain COMMAND test_terrain)

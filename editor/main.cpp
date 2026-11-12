@@ -20,6 +20,7 @@
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
+#include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
@@ -1369,6 +1370,7 @@ SDL_Texture* RenderCameraStackView(const Scene& scene, int w, int h, int slot, c
 // exactly SDL_PIXELFORMAT_ABGR8888 byte order on little-endian. Returns nullptr
 // if the image can't be loaded.
 SDL_Texture* GetThumb(const std::string& path) {
+    if (!path.empty() && path[0] == '@') return nullptr;   // a picture made in memory (a terrain's baked layers): no file to read
     static std::unordered_map<std::string, SDL_Texture*> cache;
     auto it = cache.find(path);
     if (it != cache.end()) return it->second;
@@ -3150,6 +3152,7 @@ float g_uiResizeRaw[4] = {0, 0, 0, 0};   // left, top, right, bottom
 Vec2  g_uiDragRaw{0, 0};
 bool  g_gizmoLocal = false; // gizmo axes in the object's local space
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
+bool& TerrainSculptRef() { return g_terrainSculpt; }   // LevelTools.cpp: its brushes and the sculpt brush take turns
 float g_terrainRadius = 6.0f;
 float g_terrainStrength = 4.0f;
 int   g_terrainBrush = 0;      // 0 Raise/Lower, 1 Smooth, 2 Flatten, 3 Set Height, 4 Noise, 5 Erode
@@ -6523,6 +6526,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             created = true;
         }
         if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
+        LevelCreateMenuItems(ed, created);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         if (ImGui::MenuItem("Create Tilemap")) {
             GameObject* go = ed.CreateEmpty("Tilemap");
@@ -26651,7 +26655,7 @@ static void DrawUVEditor(EditorState& ed) {
     dl->PushClipRect(p0, p1, true);
     dl->AddRectFilled(p0, p1, IM_COL32(26, 28, 34, 255));
     const ImVec2 q0 = toScreen({0, 0}), q1 = toScreen({1, 1});
-    SDL_Texture* tex = mr->texture.empty() ? nullptr : GetThumb(mr->texture);
+    SDL_Texture* tex = (mr->texture.empty() || mr->texture[0] == '@') ? nullptr : GetThumb(mr->texture);   // '@...' is a picture made in memory (a terrain's baked layers): there is no file to show
     if (tex) dl->AddImage((ImTextureID)tex, q0, q1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 170));
     else {   // checker in the 0-1 square
         const int n = 8;
@@ -29401,57 +29405,8 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Rock Slope##terr");
             }
 
-            SectionHeader("Scatter props (trees, rocks, bushes)");
-            const char* props[] = {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock",
-                                   "Mushroom", "Cactus", "Crystal"};
-            const int kScatterProps = 9;
-            if (g_scatterProp >= kScatterProps) g_scatterProp = 0;
-            ImGui::SetNextItemWidth(160);
-            ImGui::Combo("Prop##scat", &g_scatterProp, props, kScatterProps);
-            ImGui::SliderInt("Count##scat", &g_scatterCount, 1, 500);
-            ImGui::DragFloatRange2("Scale##scat", &g_scatterMinScale, &g_scatterMaxScale, 0.02f, 0.1f, 6.0f, "%.2f");
-            ImGui::SliderFloat("Max Slope##scat", &g_scatterMaxSlope, 0.0f, 1.0f);
-            ImGui::DragFloatRange2("Height Band##scat", &g_scatterMinH, &g_scatterMaxH, 0.2f, -100.0f, 100.0f, "%.1f");
-            if (ImGui::Button("Scatter##scat")) {
-                Random rng((unsigned)(ImGui::GetTime() * 1000.0) + 7u);
-                float half = tr->size * 0.5f, e = tr->CellSize();
-                int placed = 0;
-                for (int i = 0; i < g_scatterCount; ++i) {
-                    float lx = rng.Range(-half, half), lz = rng.Range(-half, half);
-                    float h = tr->SampleHeight(lx, lz);
-                    if (h < g_scatterMinH || h > g_scatterMaxH) continue;
-                    float hx = tr->SampleHeight(lx + e, lz) - tr->SampleHeight(lx - e, lz);
-                    float hz = tr->SampleHeight(lx, lz + e) - tr->SampleHeight(lx, lz - e);
-                    Vec3 n = Vec3{-hx, 2.0f * e, -hz}.Normalized();
-                    if (1.0f - n.y > g_scatterMaxSlope) continue;       // too steep
-                    GameObject* o = ed.scene().CreateGameObject(std::string("Scatter_") + props[g_scatterProp]);
-                    auto* smr = o->AddComponent<MeshRenderer>();
-                    // A distinct procedural variant per instance so nature props
-                    // (tree/pine/rock/bush) don't read as identical clones; other
-                    // props ignore the seed and use their canonical mesh.
-                    int variant = Mesh::NameHasVariants(props[g_scatterProp]) ? (placed + 1) : 0;
-                    smr->meshVariant = variant;
-                    smr->mesh = Mesh::FromNameSeeded(props[g_scatterProp], variant);
-                    o->transform->SetParent(tr->gameObject->transform, false);
-                    o->transform->localPosition = {lx, h, lz};
-                    float sc = rng.Range(g_scatterMinScale, g_scatterMaxScale);
-                    o->transform->localScale = {sc, sc, sc};
-                    o->transform->localRotation = Quat::Euler({0.0f, rng.Range(0.0f, 360.0f), 0.0f});
-                    ++placed;
-                }
-                ConsoleLog("Scattered " + std::to_string(placed) + " " + props[g_scatterProp] + "(s)");
-                ed.dirty = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Clear Scattered##scat")) {
-                std::vector<GameObject*> kill;
-                for (const auto& o : ed.scene().Objects())
-                    if (o->name.rfind("Scatter_", 0) == 0) kill.push_back(o.get());
-                if (!kill.empty()) ed.PushUndo();
-                for (GameObject* k : kill) { ed.Deselect(k); ed.scene().Destroy(k); }  // drop selection so it can't dangle
-                ConsoleLog("Cleared " + std::to_string(kill.size()) + " scattered prop(s)");
-                ed.dirty = true;
-            }
+            oked::DrawTerrainLayersUI(ed, *tr);
+            oked::DrawTerrainScatterUI(ed, *tr);
 
             if (ImGui::SmallButton("Remove##terr")) toRemove = tr;
         }
@@ -38987,6 +38942,7 @@ void DrawInspector(EditorState& ed) {
     DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
+    DrawLevelInspector(ed, go, curComp, toRemove, &CompHeader);        // Foliage, Decal Projector, Cable
     oked::DrawFallbackInspector(ed, go, curComp, toRemove, fbCursorY, &CompHeader);   // anything still undrawn: from the property registry
     if (multiEdit.active && oked::PropagateComponentEdit(ed.MultiSelection(), go, *curComp, multiEdit) > 0) ed.dirty = true;
     } // end component-order loop
@@ -39161,6 +39117,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
             SplineAddComponentItems(ed, go, item, true);   // Line / Trail Renderer, Spline Mesh
+            LevelAddComponentItems(ed, go, item);          // Foliage, Decal Projector, Cable
           } EndCat(o); }
 
         { bool o = BeginCat("Animation");
@@ -40353,7 +40310,7 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
                      Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
             Vec3 eye = ed.camTarget + dir * ed.camDist;
             view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
-            proj = Mat4::Perspective(g_editorFov, cs.x / cs.y, g_editorNear, 2000.0f);
+            proj = LevelEditorProjection(g_editorFov, cs.x / cs.y, g_editorNear, 2000.0f, ed.camDist);
             right = Vec3::Cross((ed.camTarget - eye).Normalized(), Vec3::Up).Normalized();
         }
         UIWorld().right = right;
@@ -41413,7 +41370,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
              Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
     Vec3 eye = ed.camTarget + dir * ed.camDist;
     Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
-    Mat4 proj = Mat4::Perspective(g_editorFov, canvasSize.x / canvasSize.y, g_editorNear, 2000.0f);
+    Mat4 proj = LevelEditorProjection(g_editorFov, canvasSize.x / canvasSize.y, g_editorNear, 2000.0f, ed.camDist);
     // Where the 3D image is drawn within the panel. The Game view honors the main
     // camera's normalized viewport rect for split-screen /
     // mini-map / picture-in-picture; the Scene view always fills the panel.
@@ -42165,6 +42122,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && g_showGizmos)
         DrawSplineOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
                           hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
+    // Level tools: foliage / terrain-layer brushes, the measuring tool, the decal box, the orthographic label.
+    if (!gameView) {
+        HandleLevelKeys(ed, hovered);
+        DrawLevelOverlay(ed, dl, vp, center, canvasSize, hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
+    }
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {
         for (const SkelDraw& d : g_skelDraw) {
@@ -42515,7 +42477,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // ---- Terrain sculpt brush: drag on the terrain to raise it (Shift lowers).
     //      Unprojects the cursor to a world ray and intersects the terrain's
     //      ground plane, then raises heights within the brush radius. ----
-    if (ed.selected() && g_terrainSculpt && hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    if (ed.selected() && g_terrainSculpt && hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !LevelBrushActive(ed)) {
         if (auto* terr = ed.selected()->GetComponent<Terrain>()) {
             float ndcx = 2.0f * (io.MousePos.x - canvasPos.x) / canvasSize.x - 1.0f;
             float ndcy = 1.0f - 2.0f * (io.MousePos.y - canvasPos.y) / canvasSize.y;
@@ -42526,10 +42488,16 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             Vec3 b{pf.x / pf.w, pf.y / pf.w, pf.z / pf.w};
             Vec3 rdir = (b - a).Normalized();
             Vec3 op = ed.selected()->transform->Position();
-            if (Mathf::Abs(rdir.y) > 1e-5f) {
+            // The brush lands where the cursor meets the terrain's surface (a hill, not the flat plane
+            // at the object's height); the plane is the fallback when the ray misses the terrain.
+            Vec3 hit{0, 0, 0};
+            bool haveHit = terr->Raycast(a, rdir, 8000.0f, hit);
+            if (!haveHit && Mathf::Abs(rdir.y) > 1e-5f) {
                 float t = (op.y - a.y) / rdir.y;
-                if (t > 0.0f) {
-                    Vec3 hit = a + rdir * t;
+                if (t > 0.0f) { hit = a + rdir * t; haveHit = true; }
+            }
+            if (haveHit) {
+                {
                     float lx = hit.x - op.x, lz = hit.z - op.z;
                     float dt = io.DeltaTime, sign = io.KeyShift ? -1.0f : 1.0f;
                     switch (g_terrainBrush) {
@@ -44068,6 +44036,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         }
         if (!camSel && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("Select a Camera in a 3D view first");
+        if (!uiPanel && ed.view3D) DrawLevelViewMenu(ed);
         ImGui::Separator();
         ImGui::TextDisabled("Controls");
         if (uiOnly) {
@@ -46950,6 +46919,7 @@ int main(int argc, char** argv) {
                     if (auto* pm = up->GetComponent<okay::PauseMenu>()) pauseMenus.push_back(pm);
                 }
             SplineEditTick(ed, pdt);   // spline meshes / instancers follow edits, trails preview
+            LevelEditTick(ed, pdt);    // foliage chunks, cables and decals follow their data
             // Live built-in animation preview: sample the chosen built-in each
             // frame and pose the character — blocky body, custom-rigged mesh, or
             // (through the HumanoidRetarget) a swapped imported model — right in
@@ -47555,6 +47525,7 @@ int main(int argc, char** argv) {
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
+            LevelDevHooks(ed);        // OKAY_UI_LEVEL / LEVELTOOL / LEVELVIEW / LEVELSEL
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {

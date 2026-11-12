@@ -55,6 +55,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [save_framework.md](save_framework.md): saveable objects, checkpoints, quick save and autosave slots, slot headers, migrations, sync hooks, load menus.
 - [day_night_cycle.md](day_night_cycle.md): the day and night cycle.
 - [splines.md](splines.md): splines, followers, lines and trails.
+- [level_tools.md](level_tools.md): foliage brush, terrain texture layers, decal projector, cable, measuring tool, orthographic views.
 
 ## Look, models and sound
 - [rendering.md](rendering.md): post-processing, sky, fog and weather.

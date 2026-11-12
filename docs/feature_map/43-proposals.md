@@ -114,18 +114,18 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Paint or stamp many prefab instances into a level (props, trees, lamps) with random rotation, scale and spacing.
 - **Parts:**
   - 44.2.1 Drop from Project - `editor/main.cpp` - drag a prefab into the scene to place one copy
-  - 44.2.2 Terrain scatter - `editor/main.cpp` - one-shot scatter of built-in props over a terrain (see 29.2)
+  - 44.2.2 Terrain scatter and foliage brush - `editor/LevelTools.*`, `Components/Foliage` - scatter built-in props over a terrain, or paint, erase and rescale a mesh, prefab or built-in prop on a terrain or any surface (see 29.2)
   - 44.2.3 Spline instancer - `Components/SplineMesh` - copies of an object or prefab along a curve
   - 44.2.4 Plugin example - `editor/main.cpp` - the New Plugin templates include a "scatter copies of the selected object" script
-- **Code:** `editor/main.cpp`, `Components/SplineMesh`
-- **API:** `SplineInstancer`
-- **Editor:** Project panel drag and drop, Terrain scatter, Plugins > New Plugin
-- **Docs:** `docs/splines.md`, `docs/editor-plugins.md`
-- **Tests:** `splines`
-- **Status:** Basic - one copy at a time, or terrain-only scatter; no brush.
-- **Exists today:** The four pieces above; nothing paints prefabs over arbitrary surfaces.
+- **Code:** `editor/main.cpp`, `editor/LevelTools.*`, `Components/Foliage`, `Components/SplineMesh`
+- **API:** `SplineInstancer`, `Foliage`
+- **Editor:** Project panel drag and drop, Terrain scatter, Foliage Inspector brush, Plugins > New Plugin
+- **Docs:** `docs/splines.md`, `docs/editor-plugins.md`, `docs/level_tools.md`
+- **Tests:** `splines`, `foliage`
+- **Status:** Works for one plant kind per layer - the foliage brush paints a prefab, mesh file or built-in prop over a terrain or any surface with density, slope and height limits.
+- **Exists today:** The four pieces above. A layer holds one kind; a mix needs several layers.
 - **Suggested priority:** Medium - shared with the foliage brush in 29.2; build one tool for both.
-- **Open:** first step: a Prefab Brush tool: pick a prefab list, brush radius, density, random rotation and scale, align to surface normal, click and drag to paint, Shift to erase; each stroke is one undo group.
+- **Open:** a weighted list of several prefabs in one brush, and colliders for painted copies.
 - **Related:** 29.2, 21.1, 15.3, 22.1
 - **Words:** prefab brush, paint objects, scatter, stamp, place many, props, random rotation, align to surface
 - **Seen as:** placing 100 rocks one by one; copies all face the same way
@@ -135,16 +135,17 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Rulers, size labels and reference figures so a designer can judge distances, jump heights and room sizes.
 - **Parts:**
   - 44.3.1 Stats panel - `editor/main.cpp` - object and triangle counts only
+  - 44.3.3 Measure tool - `editor/LevelTools.*` - View options > Measure tool (or M): click two points on the surfaces in the 3D view and read the distance, the distance across the ground and the height difference
   - 44.3.2 Controller numbers - `Components/PlayerController` - `jumpForce` and speeds exist as fields but no jump arc or reach is drawn as a guide
-- **Code:** `editor/main.cpp`, `Components/PlayerController`
-- **API:** none
-- **Editor:** none
-- **Docs:** -
-- **Tests:** none
-- **Status:** Planned - no measuring tool, no scale reference and no metrics overlay were found.
-- **Exists today:** Only counts and the world axes toggle (`g_showWorldAxes`).
+- **Code:** `editor/main.cpp`, `editor/LevelTools.*`, `Components/PlayerController`
+- **API:** `RaycastSurfaces`
+- **Editor:** Scene view > View options > Measure tool
+- **Docs:** `docs/level_tools.md`
+- **Tests:** `foliage` (the surface ray cast it uses)
+- **Status:** Basic - the measure tool works in the real editor; no scale reference figure and no metrics overlay.
+- **Exists today:** The measure tool, counts and the world axes toggle (`g_showWorldAxes`).
 - **Suggested priority:** Low - useful but small.
-- **Open:** first step: a Measure tool (click two points, show distance and slope) and a reference-figure toggle showing a 1.8 m person and the player's jump arc.
+- **Open:** first step: a reference-figure toggle showing a 1.8 m person and the player's jump arc.
 - **Related:** 4.1, 4.2, 15.3, 44.1
 - **Words:** measure tool, ruler, scale reference, jump arc, level metrics, distance label, player height reference
 - **Seen as:** cannot tell if a gap is jumpable; rooms feel too big or small

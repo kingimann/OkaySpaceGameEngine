@@ -111,6 +111,9 @@ add_library(okay_engine
     src/Components/UIDraggable.cpp
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
+    src/Components/Foliage.cpp
+    src/Components/Cable.cpp
+    src/Components/Decal.cpp
     src/Components/VoxelTerrain.cpp
     src/Components/Character.cpp
     src/Components/ModelAnimatorPose.cpp
@@ -191,6 +194,7 @@ add_library(okay_engine
     src/Modeling/UVUnwrap.cpp
     src/Components/LODGroup.cpp
     src/Render/Visibility.cpp
+    src/Render/SurfaceRaycast.cpp
     src/Optimize/MeshSimplify.cpp
     src/Optimize/LodGroup.cpp
     src/Optimize/OcclusionBuffer.cpp

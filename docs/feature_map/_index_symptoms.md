@@ -668,6 +668,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | my script does something odd and I can only add prints | [55.1](43-proposals.md#551-breakpoints-and-stepping-for-text-scripts) Breakpoints and stepping for text scripts |
 | NaN positions after a pause | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | need a browser to read the manual | [57.3](43-proposals.md#573-docs-inside-the-editor) Docs inside the editor |
+| need a dirt patch on a wall | [29.4](20-35-planned.md#294-decals-and-cables) Decals and cables |
 | need a DLL for a platform service | [24.1](20-35-planned.md#241-c-plugins) C++ plugins |
 | need a high score table that works on and off Steam | [49.2](43-proposals.md#492-leaderboards) Leaderboards |
 | need a squishy character or slime | [52.2](43-proposals.md#522-soft-bodies) Soft bodies |
@@ -1186,6 +1187,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | wind does not move particles | [2.4](02-rendering-world.md#24-sky-fog-and-weather) Sky, fog and weather |
 | window size ignored in the built game | [25.2](20-35-planned.md#252-project-settings) Project settings |
 | Windows-only black view or driver crash | [38.3](38-render-backends.md#383-direct3d-11-backend) Direct3D 11 backend |
+| wires between poles are straight lines | [29.4](20-35-planned.md#294-decals-and-cables) Decals and cables |
 | world-to-screen is off | [4.10](04-characters-cameras.md#410-camera-component-shake-and-zoom) Camera component, shake and zoom |
 | worry that a build sends data without asking | [48.3](43-proposals.md#483-consent-and-privacy) Consent and privacy |
 | wrists twist like a candy wrapper | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |

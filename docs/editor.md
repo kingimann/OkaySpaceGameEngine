@@ -535,6 +535,10 @@ unchanged.
 
 - **View axis gizmo** (Scene view, top-right): the X/Y/Z tips track the camera
   orientation; **click a tip** to snap the view to look along that axis.
+- **Orthographic views and measuring** (Scene view, View options ...): Perspective or Orthographic, the Top, Bottom,
+  Front, Back, Right and Left views (numpad 7, 1, 3; Ctrl for the opposite), and a Measure tool (M) that reads the
+  distance between two clicked points. See [level_tools.md](level_tools.md), which also covers the foliage brush,
+  terrain texture layers, the decal projector and the cable.
 - **Game view Stats**: toggle in the Game toolbar (the arrow beside it picks what
   to show). While the game runs it overlays the Play loop's own numbers, the same
   text as the player's F3 panel: FPS, average / min / max / p99 frame time, the 1%

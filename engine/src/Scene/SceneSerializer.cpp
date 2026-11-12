@@ -138,6 +138,9 @@
 #include "okay/Components/UIDocument.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/Foliage.hpp"
+#include "okay/Components/Cable.hpp"
+#include "okay/Components/Decal.hpp"
 #include "okay/Components/TerrainDigger.hpp"
 #include "okay/Components/WorldStreamer.hpp"
 #include "okay/Components/Destructible.hpp"
@@ -820,7 +823,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
     if (auto* mr = go->GetComponent<MeshRenderer>();
-        mr && !go->GetComponent<Terrain>() && !go->GetComponent<Character>()) {
+        mr && !go->GetComponent<Terrain>() && !go->GetComponent<Character>() && !go->GetComponent<Decal>()) {   // a decal's mesh is cut from the scene again on load
         out << "  mesh " << Quote(mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
@@ -8948,7 +8951,7 @@ GameObject* SceneSerializer::InstantiateFromText(Scene& scene, const std::string
 std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) {
     std::vector<std::string> out;
     auto add = [&](const std::string& p) {
-        if (p.empty()) return;
+        if (p.empty() || p[0] == '@') return;   // '@name' is a picture made in memory (a terrain's baked layers): no file to ship
         for (const auto& e : out) if (e == p) return; // unique
         out.push_back(p);
     };
@@ -8957,7 +8960,9 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         for (auto* au : go->GetComponents<AudioSource>())  add(au->clipPath);   // every source: a music bed and an effect can share an object
         if (auto* mp = go->GetComponent<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
         if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
-        if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); }
+        if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); for (const auto& l : tr->layers) add(l.texture); }
+        for (auto* fo : go->GetComponents<Foliage>())       { add(fo->meshPath); add(fo->prefabPath); }
+        for (auto* de : go->GetComponents<Decal>())         add(de->texture);
         for (auto* ps : go->GetComponents<ParticleSystem>()) add(ps->texture);
         for (auto* sw : go->GetComponents<Spawner>())       add(sw->prefabPath);   // the prefab a spawner makes ships with the scene
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
@@ -9136,6 +9141,135 @@ void RegisterBuiltinComponentSerializers() {
         k.b("mesh", o->useMesh);
     };
     ComponentSerializerRegistry::Register(std::move(occ));
+    // Terrain texture layers: the layer list and the painted weights (run-length text). Written after the
+    // `terrain` record so the Terrain exists when this is read.
+    ComponentSerializerRegistry::Entry tl;
+    tl.name = "terrainlayers";
+    tl.write = [](const GameObject& go, std::ostream& out) {
+        auto* t = go.GetComponent<Terrain>();
+        if (!t || t->layers.empty()) return;
+        out << "  terrainlayers";
+        KvOut k{out};
+        k("n", (int)t->layers.size())("res", t->splatResolution);
+        for (std::size_t i = 0; i < t->layers.size(); ++i) {
+            const std::string p = "l" + std::to_string(i);
+            const TerrainLayer& l = t->layers[i];
+            k.str((p + "n").c_str(), l.name).str((p + "t").c_str(), l.texture).col((p + "c").c_str(), l.tint)((p + "s").c_str(), l.tiling);
+        }
+        k.str("w", t->EncodeSplat());
+        out << "\n";
+    };
+    tl.read = [](GameObject& go, std::istream& in) {
+        KvIn k(in);
+        auto* t = go.GetComponent<Terrain>();
+        if (!t) return;
+        int n = 0;
+        k.i("n", n); k.i("res", t->splatResolution);
+        t->splatResolution = std::min(4096, std::max(64, t->splatResolution));
+        n = std::min(n, Terrain::kMaxLayers);
+        t->layers.clear();
+        for (int i = 0; i < n; ++i) {
+            const std::string p = "l" + std::to_string(i);
+            TerrainLayer l;
+            k.str((p + "n").c_str(), l.name); k.str((p + "t").c_str(), l.texture);
+            k.col((p + "c").c_str(), l.tint); k.f((p + "s").c_str(), l.tiling);
+            t->layers.push_back(l);
+        }
+        t->ResetSplatPublic();
+        std::string w;
+        k.str("w", w);
+        if (!w.empty()) t->DecodeSplat(w);   // a damaged string keeps the base-only weights
+        t->Apply();
+    };
+    ComponentSerializerRegistry::Register(std::move(tl));
+
+    ComponentSerializerRegistry::Entry fol;
+    fol.name = "foliage";
+    fol.write = [](const GameObject& go, std::ostream& out) {
+        auto* f = go.GetComponent<Foliage>();
+        if (!f) return;
+        out << "  foliage";
+        KvOut k{out};
+        k.str("mesh", f->mesh).str("path", f->meshPath).str("prefab", f->prefabPath).col("t", f->tint)("var", f->variants)
+         ("r", f->radius)("dens", f->density)("smin", f->minScale)("smax", f->maxScale)("slope", f->maxSlope)
+         ("hmin", f->minHeight)("hmax", f->maxHeight).b("yaw", f->randomYaw)("align", f->alignToSurface)
+         ("gap", f->spacing)("seed", f->seed)("tris", f->maxTriangles)("chunk", f->chunkSize).b("shadow", f->castShadows);
+        std::string s;
+        char buf[160];
+        for (const auto& i : f->instances) {
+            std::snprintf(buf, sizeof(buf), "%.2f,%.2f,%.2f,%.0f,%.2f,%d,%.3f,%.3f;", i.position.x, i.position.y, i.position.z,
+                          i.yaw, i.scale, i.variant, i.leanX, i.leanZ);
+            s += buf;
+        }
+        k.str("inst", s);
+        out << "\n";
+    };
+    fol.read = [](GameObject& go, std::istream& in) {
+        auto* f = go.AddComponent<Foliage>();
+        KvIn k(in);
+        k.str("mesh", f->mesh); k.str("path", f->meshPath); k.str("prefab", f->prefabPath); k.col("t", f->tint);
+        k.i("var", f->variants); k.f("r", f->radius); k.f("dens", f->density); k.f("smin", f->minScale); k.f("smax", f->maxScale);
+        k.f("slope", f->maxSlope); k.f("hmin", f->minHeight); k.f("hmax", f->maxHeight); k.b("yaw", f->randomYaw);
+        k.f("align", f->alignToSurface); k.f("gap", f->spacing); k.u("seed", f->seed); k.i("tris", f->maxTriangles);
+        k.f("chunk", f->chunkSize); k.b("shadow", f->castShadows);
+        std::string s;
+        k.str("inst", s);
+        const char* c = s.c_str();
+        while (*c) {
+            FoliageInstance i;
+            char* e = nullptr;
+            i.position.x = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.position.y = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.position.z = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.yaw = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.scale = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.variant = (int)std::strtol(c, &e, 10); if (*e != ',') break; c = e + 1;
+            i.leanX = std::strtof(c, &e); if (*e != ',') break; c = e + 1;
+            i.leanZ = std::strtof(c, &e); if (*e != ';') break; c = e + 1;
+            if (i.variant < 0) i.variant = 0;
+            f->instances.push_back(i);
+            if (f->instances.size() > 2000000) break;
+        }
+    };
+    ComponentSerializerRegistry::Register(std::move(fol));
+    ComponentSerializerRegistry::Entry cab;
+    cab.name = "cable";
+    cab.write = [](const GameObject& go, std::ostream& out) {
+        auto* c = go.GetComponent<Cable>();
+        if (!c) return;
+        out << "  cable";
+        KvOut{out}.str("from", c->startObject).str("to", c->endObject)("sx", c->startOffset.x)("sy", c->startOffset.y)
+            ("sz", c->startOffset.z)("ex", c->endOffset.x)("ey", c->endOffset.y)("ez", c->endOffset.z)("sag", c->sag)
+            ("seg", c->segments)("w", c->width).col("c", c->color);
+        out << "\n";
+    };
+    cab.read = [](GameObject& go, std::istream& in) {
+        auto* c = go.AddComponent<Cable>();
+        KvIn k(in);
+        k.str("from", c->startObject); k.str("to", c->endObject);
+        k.f("sx", c->startOffset.x); k.f("sy", c->startOffset.y); k.f("sz", c->startOffset.z);
+        k.f("ex", c->endOffset.x); k.f("ey", c->endOffset.y); k.f("ez", c->endOffset.z);
+        k.f("sag", c->sag); k.i("seg", c->segments); k.f("w", c->width); k.col("c", c->color);
+    };
+    ComponentSerializerRegistry::Register(std::move(cab));
+
+    ComponentSerializerRegistry::Entry dec;
+    dec.name = "decal";
+    dec.write = [](const GameObject& go, std::ostream& out) {
+        auto* d = go.GetComponent<Decal>();
+        if (!d) return;
+        out << "  decal";
+        KvOut{out}.str("tex", d->texture).col("t", d->tint)("x", d->size.x)("y", d->size.y)("z", d->size.z)
+            ("angle", d->maxAngle)("lift", d->lift);
+        out << "\n";
+    };
+    dec.read = [](GameObject& go, std::istream& in) {
+        auto* d = go.AddComponent<Decal>();
+        KvIn k(in);
+        k.str("tex", d->texture); k.col("t", d->tint); k.f("x", d->size.x); k.f("y", d->size.y); k.f("z", d->size.z);
+        k.f("angle", d->maxAngle); k.f("lift", d->lift);
+    };
+    ComponentSerializerRegistry::Register(std::move(dec));
 }
 } // namespace detail
 

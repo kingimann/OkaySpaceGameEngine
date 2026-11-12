@@ -84,26 +84,85 @@ void AudioMixer::PanGains(float pan, float& left, float& right) {
 
 namespace {
 
-// Linear interpolation at a fractional sample position.
-inline float SampleAt(const std::vector<float>& s, double pos) {
+// The two channels of a clip at a fractional frame position, linearly interpolated
+// (a mono clip gives the same value on both).
+inline void FrameAt(const AudioClip& c, double pos, std::size_t frames, float& l, float& r) {
     const std::size_t i = static_cast<std::size_t>(pos);
-    if (i + 1 >= s.size()) return s[i < s.size() ? i : s.size() - 1];
-    const float t = static_cast<float>(pos - static_cast<double>(i));
-    return s[i] + (s[i + 1] - s[i]) * t;
+    const std::size_t ia = i < frames ? i : frames - 1;
+    const std::size_t ib = i + 1 < frames ? i + 1 : ia;
+    const float t = i + 1 >= frames ? 0.0f : static_cast<float>(pos - static_cast<double>(i));
+    const float* s = c.samples.data();
+    if (c.channels >= 2) {
+        l = s[2 * ia] + (s[2 * ib] - s[2 * ia]) * t;
+        r = s[2 * ia + 1] + (s[2 * ib + 1] - s[2 * ia + 1]) * t;
+    } else {
+        l = r = s[ia] + (s[ib] - s[ia]) * t;
+    }
 }
 
-// Adds one voice into the mono buffer `out`. Returns false when the voice ran
-// out (and does not loop).
+// Adds one in-memory voice into the L/R buffers with `gain`. Returns false when
+// the voice ran out (and does not loop).
 bool MixVoice(const AudioClip& clip, double& pos, bool loop, float step, float gain,
-              float* out, int frames) {
-    const auto& s = clip.samples;
-    const double len = static_cast<double>(s.size());
+              float* L, float* R, int frames) {
+    const std::size_t n = clip.FrameCount();
+    const double len = static_cast<double>(n);
     for (int i = 0; i < frames; ++i) {
         if (pos >= len) {
             if (!loop) return false;
             pos = std::fmod(pos, len);
         }
-        out[i] += SampleAt(s, pos) * gain;
+        float l, r;
+        FrameAt(clip, pos, n, l, r);
+        L[i] += l * gain;
+        R[i] += r * gain;
+        pos += step;
+    }
+    return true;
+}
+
+// Adds a streaming voice. `pos` counts frames on the stream's own timeline
+// (it keeps counting through loops). The stream is pumped first (the decode
+// step), and again when a buffer reads further than the ring held; if the data
+// still isn't there the rest of the buffer is silence and the playhead waits
+// (an underrun), so a slow disk drops out instead of skipping or crashing.
+// Returns false when a non-looping stream has played to its end.
+bool MixStream(AudioStream& st, double& pos, bool loop, float step, float* L, float* R, int frames) {
+    st.loop = loop;
+    st.Release(static_cast<std::uint64_t>(pos));
+    st.Pump();
+    const bool stereo = st.Channels() >= 2;
+    int refills = 0;
+    float a[2] = {0, 0}, b[2] = {0, 0};
+    for (int i = 0; i < frames; ++i) {
+        const std::uint64_t i0 = static_cast<std::uint64_t>(pos);
+        const bool endKnown = st.Ended();
+        if (!st.Has(i0 + 1) && !endKnown && refills < 8) {
+            st.Release(i0);
+            st.Pump();
+            ++refills;
+        }
+        if (!st.Has(i0)) {
+            if (st.Ended()) return false;
+            st.NoteUnderrun();
+            return true;            // silence for the rest of this buffer, playhead stays
+        }
+        if (!st.Has(i0 + 1) && !st.Ended()) {
+            // The next frame (for interpolation) is not decoded yet: wait for it rather than
+            // hold the value, so the join between chunks is exact.
+            st.NoteUnderrun();
+            return true;
+        }
+        st.Frame(i0, a);
+        if (!st.Frame(i0 + 1, b)) { b[0] = a[0]; b[1] = a[1]; }
+        const float t = static_cast<float>(pos - static_cast<double>(i0));
+        if (stereo) {
+            L[i] += a[0] + (b[0] - a[0]) * t;
+            R[i] += a[1] + (b[1] - a[1]) * t;
+        } else {
+            const float v = a[0] + (b[0] - a[0]) * t;
+            L[i] += v;
+            R[i] += v;
+        }
         pos += step;
     }
     return true;
@@ -138,7 +197,7 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
         duckGain = duckGain < duckTarget ? std::min(duckTarget, duckGain + stepD) : std::max(duckTarget, duckGain - stepD);
     }
 
-    std::vector<float> mono(static_cast<std::size_t>(frames));
+    std::vector<float> bufL(static_cast<std::size_t>(frames)), bufR(static_cast<std::size_t>(frames));
     int mixed = 0;
     for (AudioSource* src : sources) {
         if (!Sounding(*src, src->m_playing, !src->m_shots.empty())) continue;
@@ -158,26 +217,35 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
         PanGains(pan, gl, gr);
         const float pitch = src->pitch > 0.01f ? src->pitch : 0.01f;
 
-        std::fill(mono.begin(), mono.end(), 0.0f);
+        std::fill(bufL.begin(), bufL.end(), 0.0f);
+        std::fill(bufR.begin(), bufR.end(), 0.0f);
         bool any = false;
         if (src->m_playing) {
             const AudioClip& c = src->clip;
-            if (c.samples.empty()) {
-                src->m_playing = false;
-            } else {
+            if (!c.samples.empty()) {
                 any = true;
                 const float step = pitch * (c.sampleRate > 0 ? (float)c.sampleRate / outRate : 1.0f);
-                if (!MixVoice(c, src->m_pos, src->loop, step, 1.0f, mono.data(), frames)) {
+                if (!MixVoice(c, src->m_pos, src->loop, step, 1.0f, bufL.data(), bufR.data(), frames)) {
                     src->m_playing = false;
                     src->m_pos = 0.0;
                 }
+            } else if (src->m_stream) {
+                any = true;
+                AudioStream& st = *src->m_stream;
+                const float step = pitch * (st.SampleRate() > 0 ? (float)st.SampleRate() / outRate : 1.0f);
+                if (!MixStream(st, src->m_pos, src->loop, step, bufL.data(), bufR.data(), frames)) {
+                    src->m_playing = false;
+                    src->m_pos = 0.0;
+                }
+            } else {
+                src->m_playing = false;
             }
         }
         for (std::size_t k = 0; k < src->m_shots.size();) {
             auto& sh = src->m_shots[k];
             any = true;
             const float step = pitch * (sh.clip->sampleRate > 0 ? (float)sh.clip->sampleRate / outRate : 1.0f);
-            if (!MixVoice(*sh.clip, sh.pos, false, step, sh.volume, mono.data(), frames))
+            if (!MixVoice(*sh.clip, sh.pos, false, step, sh.volume, bufL.data(), bufR.data(), frames))
                 src->m_shots.erase(src->m_shots.begin() + static_cast<std::ptrdiff_t>(k));
             else
                 ++k;
@@ -185,13 +253,23 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
         if (!any) continue;
         ++mixed;
 
-        // Muffle: a one-pole low-pass at the source's cutoff.
+        // A 3D source is a point in space: whatever channels it has are averaged to one
+        // before it is placed by distance and direction. (2D stereo keeps left and right,
+        // and `pan` is a balance between them.)
+        if (src->spatial)
+            for (int i = 0; i < frames; ++i) bufL[i] = bufR[i] = 0.5f * (bufL[i] + bufR[i]);
+
+        // Muffle: a one-pole low-pass at the source's cutoff, per channel.
         if (src->lowPass < AudioSource::kLowPassOff) {
             const float fc = std::max(10.0f, src->lowPass);
             const float a = 1.0f - std::exp(-2.0f * Mathf::PI * fc / (float)outRate);
-            float y = src->m_lowPassState;
-            for (int i = 0; i < frames; ++i) { y += a * (mono[i] - y); mono[i] = y; }
+            float y = src->m_lowPassState, yr = src->m_lowPassStateR;
+            for (int i = 0; i < frames; ++i) {
+                y += a * (bufL[i] - y); bufL[i] = y;
+                yr += a * (bufR[i] - yr); bufR[i] = yr;
+            }
             src->m_lowPassState = y;
+            src->m_lowPassStateR = yr;
         }
 
         // Fade and duck change smoothly sample by sample, never in a step.
@@ -205,8 +283,8 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
             }
             float g = vol * src->m_fade;
             if (ducked) g *= duckFrom + (duckGain - duckFrom) * ((float)i / (float)frames);
-            out[2 * i]     += mono[i] * g * gl;
-            out[2 * i + 1] += mono[i] * g * gr;
+            out[2 * i]     += bufL[i] * g * gl;
+            out[2 * i + 1] += bufR[i] * g * gr;
         }
         if (src->m_fadeStop && src->m_fade <= 0.0f) src->Stop();
     }

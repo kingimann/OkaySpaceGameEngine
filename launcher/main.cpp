@@ -41,14 +41,9 @@
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — `code` in chat
 #include "FileDialog.hpp"       // native file picker (chat attachments), or the built-in browser
 
-// stb_image for optional per-game cover art. STATIC keeps its symbols file-local
-// (the launcher doesn't link the engine, so there's no clash, but this is tidy).
-#define STB_IMAGE_STATIC
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_PNG
-#define STBI_ONLY_JPEG
-#define STBI_ONLY_GIF        // animated GIFs in chat (stbi_load_gif_from_memory)
-#include "stb_image.h"
+// Our own image decoder (engine/src/Core/ImageDecode*.cpp, compiled straight into the
+// launcher: it doesn't link the engine) for cover art, avatars, chat images and emoji.
+#include "okay/Core/ImageDecode.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -57,6 +52,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -84,9 +80,11 @@
 #  include <csignal>
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait until this process exits, then relaunch once
+#include "UpdaterCore.hpp"   // updater rules: checksum required, stage then swap, reasons (tests/test_launcher_versions.cpp)
 #include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/launcher_versions.md)
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
+#include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
 
 #if defined(_WIN32)
 // Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
@@ -726,37 +724,28 @@ bool DownloadProgress(const std::string& url, const fs::path& out) {
     return SDL_AtomicGet(&d.ok) == 1;
 }
 
-bool g_upChecksumFailed = false;   // the last download did not match versions.json (worker thread only)
-// `check`: the size and SHA-256 versions.json lists for this file (null = the index has none, as before it existed). A file that
-// does not match is never swapped in: the live file stays as it is.
-bool ReplaceFile(const std::string& url, const fs::path& dest, bool inUse,
-                 bool progress = false, const okayversions::FileInfo* check = nullptr) {
-    fs::path tmp = dest; tmp += ".new";
-    bool got = progress ? DownloadProgress(url, tmp) : Download(url, tmp);
-    std::error_code ec;
-    if (!got) { fs::remove(tmp, ec); return false; }   // no empty .new left behind
-    if (check && (check->size != 0 || !check->sha256.empty())) {
-        const std::string why = okayversions::VerifyFile(tmp, check->size, check->sha256);
-        if (!why.empty()) {
-            okay::restart::AppendLog(dest.parent_path() / "okay_update.log",
-                                     "checksum failed for " + okay::restart::Utf8(dest) + ": " + why);
-            fs::remove(tmp, ec);
-            g_upChecksumFailed = true;
-            return false;
-        }
-    }
-    fs::path old = dest; old += ".old";
-    // Move the live file aside first and put it back if the staged file can't
-    // take its place. Deleting it first left no program when the install failed.
-    const okay::restart::SwapResult sw =
-        okay::restart::SwapFile(dest, tmp, old, 100000, /*keepBackup=*/inUse);
-    if (!sw.ok) {
-        okay::restart::AppendLog(dest.parent_path() / "okay_update.log",
-                                 "replace failed for " + okay::restart::Utf8(dest) + ": " + sw.error);
-        if (fs::exists(tmp, ec)) fs::remove(tmp, ec);
-        return false;
-    }
-    return true;
+std::string g_upFailReason;   // why the last update did not install, in plain words (worker thread only; "" = no failure)
+void UpFail(const std::string& reason) {
+    if (g_upFailReason.empty()) g_upFailReason = reason;   // the first failure is the cause
+    okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "update failed: " + reason);
+}
+// Download `url` to `dest`.new and check it against versions.json (the rules are in UpdaterCore.hpp: no checksum = refuse).
+// The live file is not touched here; CommitFile swaps it in once every file has been staged.
+bool StageFile(const std::string& name, const std::string& url, const fs::path& dest, bool progress,
+               const okayversions::FileInfo* check) {
+    const okayupdater::Outcome o = okayupdater::Stage(name, url, dest, check,
+        [&](const std::string& u, const fs::path& to, std::string& err) {
+            const bool got = progress ? DownloadProgress(u, to) : Download(u, to);
+            if (!got) err = "the server could not be reached or the file was not found";
+            return got;
+        });
+    if (!o.ok) UpFail(o.reason);
+    return o.ok;
+}
+bool CommitFile(const std::string& name, const fs::path& dest, bool inUse) {
+    const okayupdater::Outcome o = okayupdater::Commit(name, dest, 100000, /*keepBackup=*/inUse);
+    if (!o.ok) UpFail(o.reason);
+    return o.ok;
 }
 
 // Fetch the latest GitHub release's notes and stash the first few bullet
@@ -934,7 +923,7 @@ int RunUpdateCheck(void*) {
     SetState(Up_Checking);
     SetUpMsg("Checking for updates...");
     FetchReleaseNews();   // refresh the What's-new card while we're online anyway
-    g_upChecksumFailed = false;
+    g_upFailReason.clear();
     std::string base; bool fromSupabase = false;
     const UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase);   // by channel (Latest unless the person chose LTS)
     const std::string latest = target.version;
@@ -983,10 +972,11 @@ int RunUpdateCheck(void*) {
 
     SetState(Up_Downloading);
     bool ok = true;
+    bool launcherOk = false;
     // Three download steps: engine, player, launcher.
     const int kSteps = 3;
-    // versions.json lists the size and SHA-256 of every file: what is downloaded is checked against it before it replaces anything.
-    // No index (offline, or an older server) just means no check, as before.
+    // versions.json lists the size and SHA-256 of every file and the update REQUIRES them: no index, no entry for this version or a
+    // file without a checksum is a refusal with a reason (never "skip the check"). See launcher/UpdaterCore.hpp.
     const okayversions::Index vindex = okayversions::LoadIndex(VersionSources(), FetchTextFile);
     const okayversions::Entry* ventry = vindex.ok ? vindex.Find(latest) : nullptr;
     auto checkFor = [&](const char* name) -> const okayversions::FileInfo* {
@@ -994,6 +984,13 @@ int RunUpdateCheck(void*) {
         const auto it = ventry->files.find(name);
         return it == ventry->files.end() ? nullptr : &it->second;
     };
+    if (const std::string why = okayupdater::IndexProblem(vindex, ventry, latest); !why.empty()) {
+        UpFail(why);
+        SetUpMsg(why);
+        SetUpStep("Update refused: no checksums", 0, kSteps);
+        SetState(Up_Failed);
+        return 0;
+    }
     // Keep the editor this update replaces, so projects made with it can still be opened (Versions page). Never blocks the update.
     std::string keepNote;
     bool keptNow = false;
@@ -1005,6 +1002,9 @@ int RunUpdateCheck(void*) {
         if (!kr.ok() && kr.outcome != okayversions::Outcome::Skipped) okay::restart::AppendLog(dir / "okay_update.log", kr.message);
         if (kr.outcome == okayversions::Outcome::Skipped || kr.outcome == okayversions::Outcome::Failed) keepNote = kr.message;
     }
+    // Stage and verify every file first; only when all of them are good is anything replaced.
+    struct Item { std::string name; fs::path dest; bool inUse; };
+    std::vector<Item> items;
     {
         // Write each exe back to wherever it currently lives (e.g. Tools/), so an
         // update preserves the organized layout instead of scattering exes to the
@@ -1016,25 +1016,43 @@ int RunUpdateCheck(void*) {
         if (!repair || FindExe({"OkayEngine.exe"}).empty()) {
             SetUpMsg("Downloading engine v" + latest + "...");
             SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
-            ok = ReplaceFile(base + "OkayEngine.exe",
-                             destOf("OkayEngine.exe"), false, /*progress=*/true, checkFor("OkayEngine.exe")) && ok;
+            const fs::path d = destOf("OkayEngine.exe");
+            if (StageFile("OkayEngine.exe", base + "OkayEngine.exe", d, true, checkFor("OkayEngine.exe"))) items.push_back({"OkayEngine.exe", d, false});
+            else ok = false;
         }
-        if (!repair || FindExe({"OkaySpacePlayer.exe"}).empty()) {
+        if (ok && (!repair || FindExe({"OkaySpacePlayer.exe"}).empty())) {
             SetUpMsg("Downloading player runtime v" + latest + "...");
             SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
-            ok = ReplaceFile(base + "OkaySpacePlayer.exe",
-                             destOf("OkaySpacePlayer.exe"), false, /*progress=*/true, checkFor("OkaySpacePlayer.exe")) && ok;
+            const fs::path d = destOf("OkaySpacePlayer.exe");
+            if (StageFile("OkaySpacePlayer.exe", base + "OkaySpacePlayer.exe", d, true, checkFor("OkaySpacePlayer.exe"))) items.push_back({"OkaySpacePlayer.exe", d, false});
+            else ok = false;
         }
     }
     // Only self-update the launcher on a genuine version bump.
-    bool launcherOk = false;
-    if (newer) {
+    if (ok && newer) {
         SetUpMsg("Updating launcher...");
         SetUpStep("Updating launcher (OkaySpace)", 2, kSteps);
         fs::path selfExe = okay::restart::CurrentExecutable();
         if (selfExe.empty() && !g_selfPath.empty()) selfExe = fs::path(g_selfPath);
-        launcherOk = !selfExe.empty() &&
-            ReplaceFile(base + "OkaySpace.exe", selfExe, true, /*progress=*/true, checkFor("OkaySpace.exe"));
+        if (selfExe.empty()) {
+            UpFail("Could not find the launcher's own file to update. Nothing was installed and your current version is unchanged.");
+            ok = false;
+        } else if (StageFile("OkaySpace.exe", base + "OkaySpace.exe", selfExe, true, checkFor("OkaySpace.exe"))) {
+            items.push_back({"OkaySpace.exe", selfExe, true});
+        } else ok = false;
+    }
+    if (!ok) {
+        for (const Item& it : items) okayupdater::Discard(it.dest);   // nothing was replaced: the install is as it was
+    } else {
+        SetUpMsg("Installing...");
+        for (const Item& it : items) {
+            if (!CommitFile(it.name, it.dest, it.inUse)) {
+                ok = false;
+                for (const Item& rest : items) okayupdater::Discard(rest.dest);   // (a failed swap already put its old file back)
+                break;
+            }
+            if (it.name == "OkaySpace.exe") launcherOk = true;
+        }
     }
 
     if (ok) {
@@ -1057,9 +1075,9 @@ int RunUpdateCheck(void*) {
         SetState(Up_Updated);
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
-        SetUpMsg(g_upChecksumFailed ? "A downloaded file did not match its checksum, so nothing was installed. Try again later."
-                                    : "Download failed — check your internet connection.");
-        SetUpStep(g_upChecksumFailed ? "A download did not match its checksum" : "Download failed — check your connection and retry", 0, kSteps);
+        const std::string why = g_upFailReason.empty() ? std::string("The update did not install for an unknown reason. Your current version is unchanged.") : g_upFailReason;
+        SetUpMsg("Update failed. " + why);
+        SetUpStep("Update failed: nothing was changed", 0, kSteps);
         SetState(Up_Failed);
     }
     return 0;
@@ -1733,6 +1751,10 @@ bool g_dmFriendsOnly = false;     // messages from non-friends go to "Message re
 int  g_callsFrom = 1;             // 0 everyone, 1 friends, 2 nobody
 bool g_readReceipts = true;       // send read receipts / "in the chat" (off = you don't see theirs either)
 bool g_typingIndicator = true;    // tell people when I'm typing
+// What the server said about docs/sql/chat_receipts.sql (0 unknown, 1 works, 2 tables missing).
+// Written by the chat poller; the Settings rows swap the toggle for a note when 2.
+static volatile int g_typingSupport = 0, g_readSupport = 0;
+static const char* ReceiptsMissingNote() { return okay::Messages::ReceiptsSetupNote(); }
 bool g_sharePlaytime = true;      // sync my playtime to my public profile
 bool g_followersSeeActivity = true;   // people who follow me see my activity feed (profiles.followers_see_activity)
 std::set<std::string> g_friendUids;   // accepted friends (filled when a friends list loads)
@@ -3131,9 +3153,20 @@ static void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a,
     TemplateGlyph(d, title, ImVec2(a.x + (b.x - a.x - s) * 0.5f, a.y + (b.y - a.y - s) * 0.36f), s, IM_COL32(248, 250, 255, 235));
 }
 
+// Decodes an image file to a malloc'd RGBA8 buffer (free with std::free); nullptr on failure.
+static unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h) {
+    okay::DecodedImage img;
+    if (!okay::DecodeImageFile(path, img) || img.rgba.empty()) return nullptr;
+    unsigned char* px = static_cast<unsigned char*>(std::malloc(img.rgba.size()));
+    if (!px) return nullptr;
+    std::memcpy(px, img.rgba.data(), img.rgba.size());
+    *w = img.width; *h = img.height;
+    return px;
+}
+
 // ---- Optional per-game cover art -----------------------------------------
 // A game can ship a cover image next to its .okayscene (cover.png/.jpg, or
-// <stem>.png/.jpg). We load it once via stb_image, upload an SDL texture, and
+// <stem>.png/.jpg). We load it once via okay::DecodeImage, upload an SDL texture, and
 // cache it by game path. nullptr (cached) means "no cover — draw the initial".
 std::map<std::string, SDL_Texture*> g_coverCaches[2];
 #define g_coverCache g_coverCaches[g_rslot]
@@ -3151,13 +3184,13 @@ SDL_Texture* GameCover(const std::string& gamePath) {
         for (const char* n : names) cands.push_back(dir / n);
         for (const auto& c : cands) {
             if (!fs::exists(c, ec)) continue;
-            int w = 0, h = 0, ch = 0;
-            unsigned char* px = stbi_load(c.string().c_str(), &w, &h, &ch, 4);
+            int w = 0, h = 0;
+            unsigned char* px = LoadRgbaFile(c.string(), &w, &h);
             if (!px) continue;
             SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
                 px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
             if (surf) { tex = SDL_CreateTextureFromSurface(g_renderer, surf); SDL_FreeSurface(surf); }
-            stbi_image_free(px);
+            std::free(px);
             break;
         }
     }
@@ -3177,7 +3210,7 @@ void DrawGameIcon(const std::string& gamePath, const std::string& name, float si
 }
 
 // ---- Profile-picture (avatar) textures, loaded from a public URL ----------
-// Downloaded once to a per-URL cache file, decoded via stb_image, cached as an
+// Downloaded once to a per-URL cache file, decoded via okay::DecodeImage, cached as an
 // SDL texture. nullptr (cached) means "no avatar — draw the initial".
 std::map<std::string, SDL_Texture*> g_avatarCaches[2];
 #define g_avatarCache g_avatarCaches[g_rslot]
@@ -3217,12 +3250,12 @@ SDL_Texture* AvatarTexture(const std::string& url) {
     if (fs::exists(cache, ec)) {
         // Already downloaded: decode + upload here (fast), then cache the texture.
         SDL_Texture* tex = nullptr;
-        int w = 0, h = 0, ch = 0;
-        unsigned char* px = stbi_load(cache.string().c_str(), &w, &h, &ch, 4);
+        int w = 0, h = 0;
+        unsigned char* px = LoadRgbaFile(cache.string(), &w, &h);
         if (px) {
             SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
             if (s) { tex = SDL_CreateTextureFromSurface(g_renderer, s); SDL_FreeSurface(s); }
-            stbi_image_free(px);
+            std::free(px);
         }
         if (tex) { g_avatarCache[url] = tex; return tex; }
     }
@@ -3365,7 +3398,7 @@ static std::map<std::string, std::pair<int, int>> g_emojiParsedCells;
 
 static int EmojiParseWorker(void*) {
     std::vector<EmojiInfo> list; std::map<std::string, std::pair<int, int>> cells;
-    unsigned char* px = nullptr; int w = 0, h = 0, ch = 0;
+    unsigned char* px = nullptr; int w = 0, h = 0;
     try {
         std::ifstream f(MediaCachePath(kEmojiJsonUrl, ".json"), std::ios::binary);
         std::stringstream ss; ss << f.rdbuf();
@@ -3414,7 +3447,7 @@ static int EmojiParseWorker(void*) {
         std::stable_sort(list.begin(), list.end(), [](const EmojiInfo& a, const EmojiInfo& b) {
             return a.cat != b.cat ? a.cat < b.cat : a.sort < b.sort;
         });
-        px = stbi_load(MediaCachePath(kEmojiSheetUrl, ".png").string().c_str(), &w, &h, &ch, 4);
+        px = LoadRgbaFile(MediaCachePath(kEmojiSheetUrl, ".png").string(), &w, &h);
     } catch (...) {}
     SDL_LockMutex(g_emojiMutex);
     g_emojiParsedList.swap(list); g_emojiParsedCells.swap(cells);
@@ -3516,9 +3549,11 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
         if (st > 0) {
             std::ifstream f(p, std::ios::binary);
             std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            int* delays = nullptr; int fw = 0, fh = 0, frames = 0, comp = 0;
-            unsigned char* px = data.empty() ? nullptr :
-                stbi_load_gif_from_memory((const stbi_uc*)data.data(), (int)data.size(), &delays, &fw, &fh, &frames, &comp, 4);
+            okay::DecodedAnimation anim;
+            if (!data.empty()) okay::DecodeGifFrames((const std::uint8_t*)data.data(), data.size(), anim);
+            const unsigned char* px = anim.frames.empty() ? nullptr : anim.frames.data();
+            const int* delays = anim.delaysMs.empty() ? nullptr : anim.delaysMs.data();
+            const int fw = anim.width, fh = anim.height, frames = anim.FrameCount();
             if (px && fw > 0 && fh > 0 && frames > 0) {
                 // Keep memory sane: skip frames on huge GIFs (merging their delays).
                 const long long budget = 24LL * 1000 * 1000;   // pixels across all frames
@@ -3530,7 +3565,7 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
                     if (d < 20) d = 100;   // browsers treat 0-10ms frames as 100ms
                     acc += d;
                     if (i % step != 0 && i != frames - 1) continue;
-                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(px + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
+                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(const_cast<unsigned char*>(px) + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
                     if (!sf) continue;
                     SDL_Texture* tx = SDL_CreateTextureFromSurface(g_renderer, sf);
                     SDL_FreeSurface(sf);
@@ -3540,8 +3575,6 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
                 }
                 a.w = fw; a.h = fh; a.ok = !a.frames.empty();
             }
-            if (px) stbi_image_free(px);
-            if (delays) stbi_image_free(delays);
         }
         it = g_animImages.find(url);
     }
@@ -6422,6 +6455,206 @@ static void RenderChatAny(const std::string& body, float width, bool mine) {
     RenderChatBody(body, width);
 }
 
+// ---- Member moderation (servers and group chats): kick / ban / unban / admin role ----
+// One set of helpers for both members lists (shared/MemberModeration.hpp holds the
+// rules and request building; docs/sql/member_moderation.sql enforces them). Calls run
+// off-thread; the outcome comes back as a toast that says what the server answered.
+namespace mm = okay::modmember;
+struct ModJob { int kind = 0; mm::Scope scope = mm::Scope::Server; long cid = 0; mm::Request req; std::string what; };   // kind 0 action, 1 banned list
+struct ModResult { int kind = 0; mm::Scope scope = mm::Scope::Server; long cid = 0; mm::Outcome out; std::vector<mm::BanEntry> bans; };
+struct ModBanList {
+    long cid = 0; bool loaded = false, inflight = false; Uint32 nextAt = 0;
+    std::vector<mm::BanEntry> list; std::string problem;   // problem: why the list could not load ("" = fine)
+};
+static SDL_mutex* g_modMu = nullptr;
+static std::vector<ModResult> g_modDone;          // (guarded)
+static ModBanList g_modBans[2];                   // by scope; main thread only
+static int ModIdx(mm::Scope s) { return s == mm::Scope::Server ? 0 : 1; }
+static int ModWorker(void* p) {
+    std::unique_ptr<ModJob> j(static_cast<ModJob*>(p));
+    ModResult r; r.kind = j->kind; r.scope = j->scope; r.cid = j->cid;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        auto api = [&](const std::string& path, const std::string& method, const std::string& body) { return a.Api(path, method, body); };
+        if (j->kind == 0) r.out = mm::Execute(api, j->req, j->what);
+        else {
+            auto resp = a.Api(j->req.path, "GET");
+            r.out = mm::MapResponse(resp.ok, resp.reached, resp.status, resp.body, "List");
+            if (r.out.ok()) {
+                r.bans = mm::ParseBans(resp.body, (long)std::time(nullptr));
+                std::string ids; for (const auto& b : r.bans) { if (!ids.empty()) ids += ","; ids += b.uid; }
+                if (!ids.empty()) {
+                    auto p2 = a.Api("/rest/v1/profiles?select=id,username,display_name&id=in.(" + ids + ")", "GET");
+                    if (p2.ok) for (const auto& o : okay::Servers::SplitObjects(p2.body)) {
+                        const std::string id = okay::Servers::Field(o, "id");
+                        for (auto& b : r.bans) if (b.uid == id) {
+                            b.name = okay::Servers::Field(o, "display_name");
+                            if (b.name.empty()) b.name = okay::Servers::Field(o, "username");
+                        }
+                    }
+                }
+            }
+        }
+    } catch (...) { r.out.status = mm::Status::Offline; r.out.message = "Couldn't reach the server. Nothing was changed."; }
+    if (g_modMu) { SDL_LockMutex(g_modMu); g_modDone.push_back(std::move(r)); SDL_UnlockMutex(g_modMu); }
+    return 0;
+}
+static void ModStart(ModJob* j) {
+    if (!g_modMu) g_modMu = SDL_CreateMutex();
+    if (SDL_Thread* t = SDL_CreateThread(ModWorker, "okay-modmember", j)) SDL_DetachThread(t);
+    else delete j;
+}
+static void ModAction(mm::Scope sc, long cid, const mm::Request& req, const std::string& what) {
+    if (!req.valid()) { Toast("That request isn't valid.", 2); return; }
+    auto* j = new ModJob; j->kind = 0; j->scope = sc; j->cid = cid; j->req = req; j->what = what;
+    ModStart(j);
+}
+static void ModFetchBans(mm::Scope sc, long cid) {
+    ModBanList& b = g_modBans[ModIdx(sc)];
+    if (b.inflight) return;
+    b.inflight = true; b.nextAt = SDL_GetTicks() + 20000;
+    auto* j = new ModJob; j->kind = 1; j->scope = sc; j->cid = cid; j->req = mm::BansListRequest(sc, cid);
+    ModStart(j);
+}
+// Main thread, once per frame per screen: toast finished actions, store fetched lists.
+// Returns true when a member change went through (the caller refreshes its members).
+static bool ModDrain(mm::Scope sc) {
+    std::vector<ModResult> mine;
+    if (g_modMu) {
+        SDL_LockMutex(g_modMu);
+        for (auto it = g_modDone.begin(); it != g_modDone.end();) {
+            if (it->scope == sc) { mine.push_back(std::move(*it)); it = g_modDone.erase(it); } else ++it;
+        }
+        SDL_UnlockMutex(g_modMu);
+    }
+    bool changed = false;
+    for (auto& r : mine) {
+        ModBanList& b = g_modBans[ModIdx(sc)];
+        if (r.kind == 1) {
+            b.inflight = false;
+            if (r.cid != b.cid) continue;   // another server / group was opened meanwhile
+            b.loaded = r.out.ok(); b.problem = r.out.ok() ? std::string() : r.out.message;
+            if (r.out.ok()) b.list = std::move(r.bans);
+        } else {
+            Toast(r.out.message, r.out.ok() ? 1 : 2);
+            if (r.out.ok()) { changed = true; b.nextAt = 0; }   // refetch the banned list now
+        }
+    }
+    return changed;
+}
+// Banned list follows the open server / group: reset when it changes.
+static ModBanList& ModBansFor(mm::Scope sc, long cid) {
+    ModBanList& b = g_modBans[ModIdx(sc)];
+    if (b.cid != cid) { b = ModBanList(); b.cid = cid; }
+    return b;
+}
+
+struct ModDialogState {
+    bool openReq = false; int action = 0;   // 0 remove, 1 ban
+    mm::Scope scope = mm::Scope::Server; long cid = 0; std::string uid, name;
+    char reason[320] = ""; int dur = 1;     // index into mm::Durations() (default: 1 day)
+};
+static ModDialogState g_modDlg;
+
+static bool ModHasActions(mm::Role actor, mm::Role target, bool isSelf) {
+    return mm::CanModerate(actor, target, isSelf) || mm::CanSetRole(actor, target, isSelf);
+}
+// The menu body for one member. Call inside a BeginPopup; every item shown works.
+static void ModMenuItems(mm::Scope sc, long cid, mm::Role actor, const std::string& uid, const std::string& name, mm::Role target, bool isSelf) {
+    const char* noun = mm::ScopeNoun(sc);
+    if (mm::CanSetRole(actor, target, isSelf)) {
+        const bool toAdmin = target != mm::Role::Admin;
+        if (ImGui::MenuItem(toAdmin ? "Make admin" : "Remove admin"))
+            ModAction(sc, cid, mm::SetRoleRequest(sc, cid, uid, toAdmin ? mm::Role::Admin : mm::Role::Member),
+                      toAdmin ? name + " is now an admin" : name + " is no longer an admin");
+    }
+    if (mm::CanModerate(actor, target, isSelf)) {
+        if (ImGui::MenuItem((std::string("Remove from ") + noun).c_str())) {
+            g_modDlg = ModDialogState(); g_modDlg.openReq = true; g_modDlg.action = 0; g_modDlg.scope = sc; g_modDlg.cid = cid; g_modDlg.uid = uid; g_modDlg.name = name;
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+        if (ImGui::MenuItem("Ban\xE2\x80\xA6")) {
+            g_modDlg = ModDialogState(); g_modDlg.openReq = true; g_modDlg.action = 1; g_modDlg.scope = sc; g_modDlg.cid = cid; g_modDlg.uid = uid; g_modDlg.name = name;
+        }
+        ImGui::PopStyleColor();
+    }
+}
+// The "..." button at the right end of a member row; opens the menu. Returns the menu id state.
+static void ModRowButton(const char* popupId, ImVec2 topLeft, float size, bool hasActions) {
+    if (!hasActions) return;
+    ImGui::SetCursorScreenPos(topLeft);
+    const bool clicked = ImGui::InvisibleButton("##modmore", ImVec2(size, size));
+    const bool hov = ImGui::IsItemHovered();
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    if (hov) { d->AddRectFilled(topLeft, ImVec2(topLeft.x + size, topLeft.y + size), IM_COL32(255, 255, 255, 26), 6.0f); ImGui::SetTooltip("Manage member"); ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
+    const ImU32 c = ImGui::GetColorU32(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+    for (int i = -1; i <= 1; ++i) d->AddCircleFilled(ImVec2(topLeft.x + size * 0.5f + i * 5.0f, topLeft.y + size * 0.5f), 1.7f, c, 8);
+    if (clicked) ImGui::OpenPopup(popupId);
+}
+// Call once per screen at a fixed spot in the ID stack (not inside a member row).
+static void ModDialog() {
+    ModDialogState& D = g_modDlg;
+    if (D.openReq) { ImGui::OpenPopup("Member moderation##mm"); D.openReq = false; }
+    ImGui::SetNextWindowSizeConstraints(ImVec2(340, 0), ImVec2(460, 400));
+    if (!ImGui::BeginPopupModal("Member moderation##mm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const char* noun = mm::ScopeNoun(D.scope);
+    const std::string nm = D.name.empty() ? std::string("this member") : D.name;
+    if (D.action == 0) {
+        ImGui::TextWrapped("Remove %s from this %s?", nm.c_str(), noun);
+        ImGui::TextDisabled("They can join again with an invite. To stop that, ban them instead.");
+    } else {
+        ImGui::TextWrapped("Ban %s from this %s?", nm.c_str(), noun);
+        ImGui::TextDisabled("They are removed now and can't rejoin, read or post until the ban ends or is lifted.");
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##modreason", "Reason (optional, shown to them)", D.reason, 300);
+        const auto& durs = mm::Durations();
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::BeginCombo("##moddur", durs[(std::size_t)std::max(0, std::min(D.dur, (int)durs.size() - 1))].label)) {
+            for (int i = 0; i < (int)durs.size(); ++i) if (ImGui::Selectable(durs[(std::size_t)i].label, i == D.dur)) D.dur = i;
+            ImGui::EndCombo();
+        }
+    }
+    ImGui::Spacing();
+    if (ImGui::Button(D.action == 0 ? "Remove" : "Ban", ImVec2(120, 0))) {
+        if (D.action == 0) ModAction(D.scope, D.cid, mm::KickRequest(D.scope, D.cid, D.uid), "Removed " + nm);
+        else ModAction(D.scope, D.cid, mm::BanRequest(D.scope, D.cid, D.uid, D.reason, mm::Durations()[(std::size_t)std::max(0, std::min(D.dur, (int)mm::Durations().size() - 1))].seconds), "Banned " + nm);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+// "Banned" list for owners and admins, with Unban. Fetches itself (and says plainly when it can't).
+static void ModDrawBanned(mm::Scope sc, long cid, mm::Role actor) {
+    if (!mm::CanSeeBans(actor) || cid <= 0) return;
+    ModBanList& b = ModBansFor(sc, cid);
+    if (!b.inflight && SDL_GetTicks() >= b.nextAt) ModFetchBans(sc, cid);
+    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::SetWindowFontScale(0.80f);
+    ImGui::TextDisabled("  BANNED  \xE2\x80\x94  %d", (int)b.list.size());
+    ImGui::SetWindowFontScale(1.0f);
+    if (!b.problem.empty()) { ImGui::PushTextWrapPos(0); ImGui::TextColored(ImVec4(0.96f, 0.6f, 0.45f, 1), "%s", b.problem.c_str()); ImGui::PopTextWrapPos(); return; }
+    if (!b.loaded) { ImGui::TextDisabled("Loading\xE2\x80\xA6"); return; }
+    if (b.list.empty()) { ImGui::TextDisabled("Nobody is banned."); return; }
+    for (const auto& e : b.list) {
+        ImGui::PushID(e.uid.c_str());
+        const std::string nm = e.name.empty() ? std::string("(unknown)") : e.name;
+        ImGui::TextUnformatted(nm.c_str());
+        std::string sub = e.reason.empty() ? std::string("No reason given") : e.reason;
+        if (e.until == 0) sub += "  \xC2\xB7  permanent";
+        else { const long left = std::max(0L, e.until - (long)std::time(nullptr));
+               sub += "  \xC2\xB7  ends in " + (left < 3600 ? std::to_string(std::max(1L, left / 60)) + "m"
+                                                 : left < 86400 ? std::to_string(left / 3600) + "h" : std::to_string(left / 86400) + "d"); }
+        ImGui::SameLine(ImGui::GetContentRegionMax().x - 56);
+        if (ImGui::SmallButton("Unban")) ModAction(sc, cid, mm::UnbanRequest(sc, cid, e.uid), "Unbanned " + nm);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260);
+        ImGui::TextDisabled("%s", sub.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopID();
+    }
+}
+
 // Render the open group conversation (header + members menu + multi-sender
 // thread + composer). Actions run on the main thread (same as DM sends); the
 // background poller publishes glog/greacts. Kept a free function to keep the
@@ -6537,7 +6770,7 @@ static void DrawGroupConversation(
                 std::string nm = f->display.empty() ? f->username : f->display;
                 if (ImGui::MenuItem((nm + "##gaddm" + f->id).c_str())) {
                     if (dm.AddGroupMember(gid, f->id)) { Toast("Added " + nm + " to the group", 1); g_chatForceLog = true; }
-                    else Toast("Only the group owner can add members", 2);
+                    else Toast("Couldn't add " + nm + ": only the group owner can add members, and banned people can't be added until unbanned", 2);
                 }
                 ++n;
             }
@@ -6584,6 +6817,15 @@ static void DrawGroupConversation(
     }
     if (g_chatSelGroup == 0) return;   // left the group this frame
 
+    // My role here (owner / admin / member) decides which moderation controls the members list shows.
+    // Real groups only: the demo data has no server to answer.
+    std::string gMyUid; for (const auto& mi : members) if (isMe(mi)) gMyUid = mi.uid;
+    auto gRoleOf = [&](const okay::Messages::GroupMemberInfo& mi) {
+        return (gp && !gp->owner.empty() && gp->owner == mi.uid) ? mm::Role::Owner : mm::ParseRole(mi.role); };
+    mm::Role gActor = mm::Role::None;
+    if (!demo && !gMyUid.empty()) for (const auto& mi : members) if (mi.uid == gMyUid) gActor = gRoleOf(mi);
+    if (ModDrain(mm::Scope::Group)) g_chatForceLog = true;   // a kick / ban / role change went through: reload the members
+
     // Members list: who's in the group, online / last seen, the owner.
     if (openMembers) { ImGui::OpenPopup("##gmemberspop"); openMembers = false; }
     ImGui::SetNextWindowSizeConstraints(ImVec2(280, 0), ImVec2(380, 420));
@@ -6612,11 +6854,20 @@ static void DrawGroupConversation(
             md->AddText(ImVec2(rp.x + 38, rp.y + 2), ImGui::GetColorU32(ImGuiCol_Text), nm.c_str());
             std::string st = onlineOf(*mi) ? "Online" : mi->lastSeen > 978307200 ? "Last seen " + RelTime(mi->lastSeen) : "Offline";
             if (gp && gp->owner == mi->uid) st += "  \xC2\xB7  owner";
+            else if (gRoleOf(*mi) == mm::Role::Admin) st += "  \xC2\xB7  admin";
             md->AddText(ImVec2(rp.x + 38, rp.y + 18), ImGui::GetColorU32(ImGuiCol_TextDisabled), st.c_str());
+            {   // Manage: Make / remove admin, Remove, Ban (only what my role allows on this person)
+                const bool selfRow = !gMyUid.empty() && mi->uid == gMyUid;
+                const mm::Role tr = gRoleOf(*mi);
+                ModRowButton("##gmmenu", ImVec2(rp.x + 300 - 26, rp.y + 6), 22.0f, ModHasActions(gActor, tr, selfRow));
+                if (ImGui::BeginPopup("##gmmenu")) { ModMenuItems(mm::Scope::Group, gid, gActor, mi->uid, mi->name, tr, selfRow); ImGui::EndPopup(); }
+            }
             ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + 36));
             ImGui::Dummy(ImVec2(0, 0));
             ImGui::PopID();
         }
+        if (!members.empty()) ModDrawBanned(mm::Scope::Group, gid, gActor);
+        ModDialog();
         ImGui::EndPopup();
     }
     // Starred messages in this group: click to jump.
@@ -14928,7 +15179,7 @@ static int ChatPollWorker(void*) {
         // Only an open, focused conversation counts as read / "in the chat".
         const bool viewing = SDL_GetTicks() - g_chatViewMs < 1500;
         if (gid != lastGid) { lastGid = gid; nextGLog = 0; nextGMem = 0; }   // group switched → poll now
-        if (g_chatForceLog) { g_chatForceLog = false; nextLog = 0; nextConv = 0; nextGLog = 0; nextGroups = 0; nextPins = 0; }  // a user action wants a fresh view
+        if (g_chatForceLog) { g_chatForceLog = false; nextLog = 0; nextConv = 0; nextGLog = 0; nextGroups = 0; nextPins = 0; nextGMem = 0; }  // a user action wants a fresh view
         try {
             if (now >= nextConv) {
                 auto c = dm.Conversations();
@@ -15017,6 +15268,7 @@ static int ChatPollWorker(void*) {
                     }
                     nextTyping = now + 2500;
                 }
+                g_typingSupport = (int)dm.TypingSupport(); g_readSupport = (int)dm.ReadMarksSupport();
             }
         } catch (...) { /* transient — retry next tick */ }
         SDL_Delay(250);
@@ -16656,13 +16908,13 @@ int main(int argc, char** argv) {
     // platform's show-vs-present ordering.
     // Load the user's custom splash logo (if any) so the first frame can show it.
     if (!g_splashLogo.empty()) {
-        int lw = 0, lh = 0, lch = 0;
-        if (unsigned char* px = stbi_load(g_splashLogo.c_str(), &lw, &lh, &lch, 4)) {
+        int lw = 0, lh = 0;
+        if (unsigned char* px = LoadRgbaFile(g_splashLogo, &lw, &lh)) {
             if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, lw, lh, 32, lw * 4, SDL_PIXELFORMAT_ABGR8888)) {
                 g_splashLogoTex = SDL_CreateTextureFromSurface(renderer, s);
                 SDL_FreeSurface(s);
             }
-            stbi_image_free(px);
+            std::free(px);
         }
     }
     // Build the splash style from the user's loading-screen preferences.
@@ -16757,10 +17009,16 @@ int main(int argc, char** argv) {
     // would otherwise knock the launcher offline — only an http(s) URL counts.
     if (serverUrl.rfind("http", 0) != 0) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
     if (apiKey.empty())                  apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
+    // Where the emailed reset link should land (docs/password-reset.md). Empty = none set up.
+    std::string resetUrl = fromEnvOrFile("OKAY_PASSWORD_RESET_URL", "password_reset_url.txt");
+#ifdef OKAY_DEFAULT_PASSWORD_RESET_URL
+    if (resetUrl.rfind("http", 0) != 0) resetUrl = OKAY_DEFAULT_PASSWORD_RESET_URL;
+#endif
     // Held by pointer so the Settings tab can rebuild it live when the server
     // config changes.
     fs::path acctCfgDir = acct::DefaultConfigDir(fs::path(g_exeDir));
     auto accountPtr = std::make_unique<acct::AccountService>(acctCfgDir, serverUrl, apiKey);
+    accountPtr->SetResetRedirect(resetUrl);
     g_presenceAccount = accountPtr.get();   // RecordPlayed broadcasts playing-presence through this
     // If we resumed a saved session against an online server, make sure it's
     // still valid (the token may have been revoked/expired); this signs the
@@ -20543,8 +20801,9 @@ int main(int argc, char** argv) {
                         if (ToggleSwitch("##shp", &g_sharePresence)) SavePrefs();
                     });
                     acDivider();
-                    acRow("Read receipts", "Blue ticks and \"in the chat\".", 40.0f, 22.0f, [&](float) {
-                        if (ToggleSwitch("##rr", &g_readReceipts)) SavePrefs();
+                    acRow("Read receipts", g_readSupport == 2 ? ReceiptsMissingNote() : "Blue ticks and \"in the chat\".",
+                          g_readSupport == 2 ? 0.0f : 40.0f, 22.0f, [&](float) {
+                        if (g_readSupport != 2 && ToggleSwitch("##rr", &g_readReceipts)) SavePrefs();
                     });
                     acDivider();
                     acRow("Show my playtime", "Hours per game on your public profile.", 40.0f, 22.0f, [&](float) {
@@ -20718,8 +20977,17 @@ int main(int argc, char** argv) {
                     if (ImGui::SmallButton("Forgot password?")) {
                         acct::Result r = account.RequestPasswordReset(acctUser);
                         acctMessageError = !r.ok;
-                        acctMessage = r.ok ? "Password reset email sent — check your inbox."
-                                           : r.error;
+                        if (!r.ok) acctMessage = r.error;
+                        else if (account.HasResetRedirect())
+                            acctMessage = "Password reset email sent. Open the link in it to choose a new password.";
+                        else {
+                            // Truth: with no landing page the link opens the server's default Site URL.
+                            acctMessage = "Reset email sent, but no reset page is set up for this build, so its link "
+                                          "opens the server's default web address instead of a password form. "
+                                          "The owner must host the page and set OKAY_PASSWORD_RESET_URL "
+                                          "(docs/password-reset.md).";
+                            acctMessageError = true;
+                        }
                     }
                 }
 
@@ -21020,12 +21288,16 @@ int main(int argc, char** argv) {
                         if (ToggleSwitch("##sharepres", &g_sharePresence)) SavePrefs();
                     });
                     rowDivider();
-                    settingRow("Read receipts", "Blue ticks and \"in the chat\". Turn off and you won't see other people's either.", 40.0f, 22.0f, [&](float) {
-                        if (ToggleSwitch("##readrc", &g_readReceipts)) SavePrefs();
+                    settingRow("Read receipts", g_readSupport == 2 ? ReceiptsMissingNote()
+                                   : "Blue ticks and \"in the chat\". Turn off and you won't see other people's either.",
+                               g_readSupport == 2 ? 0.0f : 40.0f, 22.0f, [&](float) {
+                        if (g_readSupport != 2 && ToggleSwitch("##readrc", &g_readReceipts)) SavePrefs();
                     });
                     rowDivider();
-                    settingRow("Typing indicator", "Let people see when you're typing to them.", 40.0f, 22.0f, [&](float) {
-                        if (ToggleSwitch("##typing", &g_typingIndicator)) SavePrefs();
+                    settingRow("Typing indicator", g_typingSupport == 2 ? ReceiptsMissingNote()
+                                   : "Let people see when you're typing to them.",
+                               g_typingSupport == 2 ? 0.0f : 40.0f, 22.0f, [&](float) {
+                        if (g_typingSupport != 2 && ToggleSwitch("##typing", &g_typingIndicator)) SavePrefs();
                     });
                     rowDivider();
                     settingRow("Show my playtime", "Hours per game and in the editor on your public profile.", 40.0f, 22.0f, [&](float) {
@@ -23129,6 +23401,13 @@ int main(int argc, char** argv) {
                 bool svIAmOwner = false;
                 for (const auto& s : svList) if (s.id == svSel && !s.owner.empty() && s.owner == svMyUid) svIAmOwner = true;
                 const std::string svMe = kSvDemo ? std::string("kingimann") : account.CurrentSession().username;
+                // My role in the open server (owner > admin > member) decides the moderation controls; none in the demo.
+                std::string svOwnerUid; for (const auto& s : svList) if (s.id == svSel) svOwnerUid = s.owner;
+                auto svRoleOf = [&](const okay::ServerMember& m) {
+                    return (!svOwnerUid.empty() && m.uid == svOwnerUid) ? mm::Role::Owner : mm::ParseRole(m.role); };
+                mm::Role svActor = svIAmOwner ? mm::Role::Owner : mm::Role::None;
+                if (!kSvDemo && !svMyUid.empty() && !svIAmOwner) for (const auto& m : svMembers) if (m.uid == svMyUid) svActor = svRoleOf(m);
+                if (ModDrain(mm::Scope::Server)) g_srvForce = true;   // a kick / ban / role change went through: reload members
 
                 const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
                 const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -23946,7 +24225,10 @@ int main(int argc, char** argv) {
                             if (ImGui::InvisibleButton("##memrow", ImVec2(rw, 40)))   // open their public profile
                                 OpenPublicProfile(m.uid, m.uid.empty() ? nm : std::string(), nm, m.avatar);
                             if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                            ImGui::PopID();
+                            const bool memSelf = !svMyUid.empty() && m.uid == svMyUid;
+                            const mm::Role memRole = svRoleOf(m);
+                            const bool memActs = !kSvDemo && !m.uid.empty() && ModHasActions(svActor, memRole, memSelf);
+                            if (memActs && ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##memmenu");
                             if (ImGui::IsMouseHoveringRect(mp, ImVec2(mp.x + rw, mp.y + 40)))
                                 d->AddRectFilled(mp, ImVec2(mp.x + rw, mp.y + 40), IM_COL32(255, 255, 255, 10), 8.0f);
                             ImGui::SetCursorScreenPos(ImVec2(mp.x + 4, mp.y + 5));
@@ -23970,6 +24252,13 @@ int main(int argc, char** argv) {
                                 DrawStar(d, ImVec2(nx, sy), 5.5f, IM_COL32(250, 200, 70, 255));
                                 if (ImGui::IsMouseHoveringRect(ImVec2(nx - 6, mp.y + 14), ImVec2(nx + 6, mp.y + 26))) ImGui::SetTooltip("Server owner");
                             }
+                            if (m.role == "admin") {   // admin tag after the name
+                                float nx = tx + std::min(ImGui::CalcTextSize(nm.c_str()).x, rw - 66) + 8;
+                                d->AddText(ImVec2(nx, nameY), IM_COL32(120, 170, 255, 255), "admin");
+                            }
+                            ModRowButton("##memmenu", ImVec2(mp.x + rw - 26, mp.y + 9), 22.0f, memActs);
+                            if (memActs && ImGui::BeginPopup("##memmenu")) { ModMenuItems(mm::Scope::Server, svSel, svActor, m.uid, nm, memRole, memSelf); ImGui::EndPopup(); }
+                            ImGui::PopID();
                             ImGui::SetCursorScreenPos(ImVec2(mp.x, mp.y + 42));
                             ImGui::Dummy(ImVec2(0, 0));
                         };
@@ -23983,6 +24272,8 @@ int main(int argc, char** argv) {
                         int offN = (int)svMembers.size() - onlineN;
                         if (offN > 0) { ImGui::Dummy(ImVec2(0, 6)); label("OFFLINE", offN); for (const auto& m : svMembers) if (!m.online) drawMember(m); }
                         if (svMembers.empty()) ImGui::TextDisabled("Loading members\xE2\x80\xA6");
+                        else if (!kSvDemo) ModDrawBanned(mm::Scope::Server, svSel, svActor);
+                        ModDialog();
                         }   // members
                         ImGui::EndChild();
                         ImGui::PopStyleVar();

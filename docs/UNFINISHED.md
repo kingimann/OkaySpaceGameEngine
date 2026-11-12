@@ -10,14 +10,14 @@ The feature map currently has **124** rows that are Partial or Planned.
 
 - [Engine-wide audit](unfinished_engine.md): 92 findings across 14 subsystems (9 High, 57 Medium, 26 Low), each with the file and line, what is missing, impact and size, and a top 15 to tackle first. The High items: accessibility settings that nothing reads, SSAO missing on Direct3D 11, no post-processing on Direct3D 12, the editor's Play differing from a built game on keys and gamepads, a mesh collider that is only a bounding box, navigation without off-mesh links or area costs, audio that is mono and fully decoded, editor undo that uses full-scene snapshots, and a save framework with no editor UI.
 
-- [Launcher audit](unfinished_launcher.md): 38 findings in six areas (8 High, 16 Medium, 14 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, server owners cannot kick, ban or promote, and updates are not signed.
+- [Launcher audit](unfinished_launcher.md): 38 findings in six areas (6 High open, 2 more High done in code and waiting on the owner to run SQL; 15 Medium, 15 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, and updates are not signed (kick, ban and admin roles for servers and group chats are now built; the owner applies `docs/sql/member_moderation.sql`).
 
 ## Hidden, removed or limited today
 
 | What | State | What is missing |
 |---|---|---|
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
-| Import settings sRGB, Compress, audio options | Removed from the UI | The renderers do no colour-space handling, no compressed GPU path exists, audio is always mono and never streamed |
+| Import settings sRGB, Compress, audio options | Removed from the UI | The renderers do no colour-space handling, no compressed GPU path exists, audio import options (stream, mono, quality) are not read by the loader (clips keep their channels and long music is streamed per source instead) |
 | Models already in a scene on import-settings Apply | Limited | Stored meshes are not re-imported; the setting applies the next time the model is added |
 | Ten visual-script nodes: `Fn.net_join_link`, `Fn.net_pin_host`, `Fn.pf_*` (delete, leaderboard_top, load, login, login_password, register, save, set_stat) | Hidden from the palette (`kHiddenUntilTested`) | No test covers them; they need a network or PlayFab service |
 | 15 online nodes with only indirect coverage (net host/join/relay/queue/browser) | Visible | Never run as nodes in a test; the calls under them are covered by network suites |

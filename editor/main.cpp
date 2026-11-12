@@ -652,6 +652,7 @@ int main(int argc, char** argv) {
 #include "AnimatorPreview.hpp"          // inspector / graph live preview (not the Animation window's)
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
+#include "EditorLayoutMath.hpp"   // overlay anchoring, label placement, density, toolbar plan, maximize, view prefs (tested)
 #include "okay/Scripting/OkayScriptVM.hpp"   // editor plugins
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
@@ -2170,7 +2171,7 @@ bool g_showGrid = true;          // draw the XZ ground grid in the Scene view
 bool g_sceneSkybox = true;       // draw the sky gradient in the Scene view (Game view always uses the camera)
 bool g_wireframeAll = false;     // debug: draw every mesh as wireframe (Scene view)
 bool g_showWorldAxes = false;    // debug: draw the world X/Y/Z axes at the origin
-bool g_showCamHud = true;        // debug: on-screen readout of Scene camera zoom/angle/position
+okay::edlayout::ViewPrefs g_view;   // the Scene view overlay / label / toolbar / density settings (persisted; see EditorLayoutMath.hpp)
 float g_editorFov = 60.0f;       // Scene-view camera vertical FOV (degrees) — matches
                                  // default 60deg so models aren't magnified.
 float g_editorNear = 0.3f;       // Scene-view camera near clip. Adjustable
@@ -2188,6 +2189,7 @@ bool g_resetLayout = false;      // request a dock-layout rebuild next frame
 int  g_layoutRequest = -1;       // a built-in layout preset to build next frame (okay::edtabs::Preset)
 std::string g_layoutPendingIni;  // a saved layout's ini text, loaded before the next NewFrame()
 std::string g_layoutName;        // the layout last applied this session (Layout dropdown label)
+bool g_layoutSettled = false;    // the start-up layout decision (restore the last arrangement, or build the Default) has been made
 int  g_sideTabs = 0;             // vertical side tabs: 0 off, 1 down the left edge, 2 down the right (persisted)
 ImGuiID g_dockspaceId = 0;       // the main dockspace (so panels can dock into it)
 ImGuiID g_sceneDockId = 0;        // the Scene dock node (the demo opens the graph here)
@@ -2458,7 +2460,7 @@ void LoadSettings() {
         else if (k == "sceneskybox") g_sceneSkybox = (v != 0);
         else if (k == "wireframeall") g_wireframeAll = (v != 0);
         else if (k == "showworldaxes") g_showWorldAxes = (v != 0);
-        else if (k == "showcamhud") g_showCamHud = (v != 0);
+        else if (g_view.Apply(k, v)) {}   // camera overlay, stats line, names, toolbar labels, density
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
         else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
         else if (k == "theme") g_theme = (v < 0 ? 0 : (v > 2 ? 2 : v));
@@ -2502,6 +2504,7 @@ void LoadSettings() {
     // bug that forced them off in v2.623 is fixed. g_multiWindow stays true.
 }
 void SaveSettings() {
+    if (g_layoutSettled) g_view.layoutPreset = okay::edtabs::PresetFromName(g_layoutName);   // -1 = a saved / custom arrangement
     std::ostringstream f;
     f << "settingsver 3\n"
       << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
@@ -2518,7 +2521,7 @@ void SaveSettings() {
       << "sceneskybox " << (g_sceneSkybox ? 1 : 0) << "\n"
       << "wireframeall " << (g_wireframeAll ? 1 : 0) << "\n"
       << "showworldaxes " << (g_showWorldAxes ? 1 : 0) << "\n"
-      << "showcamhud " << (g_showCamHud ? 1 : 0) << "\n"
+      << g_view.Write()
       << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n"
       << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n"
       << "theme " << g_theme << "\n"
@@ -3532,6 +3535,7 @@ int   g_colliderDragAxis = -1;        // 0=X 1=Y 2=Z, -1 = none held
 int   g_colliderDragSign = 1;         // which face (+1 or -1 along the axis)
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
+bool  g_axisGizmoHot = false; // the mouse is on a tip of the view-axis gizmo (a click there snaps the view, it must not also pick)
 
 // Tag a merged subtree (root + all descendants) with the source scene name, so the
 // Hierarchy can show where each combined scene begins and ends.
@@ -4630,6 +4634,10 @@ void ApplyTheme() {
     s.TabMinWidthBase    = 92.0f;
     s.TabMinWidthShrink  = 120.0f;   // squeezed dock tabs still show the icon + a few letters
     if (g_theme == 0) s.TabRounding = 6.0f;
+    // Density (Appearance > Density): Compact trims the vertical padding of every panel; Comfortable is the metrics above.
+    if (g_view.density == (int)okay::edlayout::Density::Compact) {
+        s.FramePadding.y *= 0.6f; s.ItemSpacing.y *= 0.7f; s.CellPadding.y *= 0.7f; s.WindowPadding.y *= 0.75f;
+    }
     // Apply the global UI scale LAST so every metric above is scaled together.
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
@@ -4942,6 +4950,8 @@ static void PumpFocusQueue() {
 // ---- Layouts: built-in presets + the user's saved ones -------------------------
 static std::vector<okay::edtabs::SavedLayout> g_userLayouts;
 static bool g_openSaveLayout = false;      // open the "Save Layout" dialog next frame
+static okay::edlayout::MaximizeState g_max;   // Shift+Space: the Scene fills the editor; this holds the layout to come back to
+static bool g_maxToggle = false;              // toggle it next frame (menu item, Restore button, Shift+Space)
 static void LoadUserLayouts() {
     std::ifstream f("okay_layouts.txt", std::ios::binary);
     if (!f) return;
@@ -4966,7 +4976,13 @@ static void SaveCurrentLayoutAs(const std::string& name) {
     g_layoutName = l.name;
     ConsoleLog((replaced ? "Updated layout \"" : "Saved layout \"") + l.name + "\"");
 }
+static void LeaveMaximizeState() {   // another layout was picked: forget the maximized one without restoring it
+    if (!g_max.on) return;
+    g_max = okay::edlayout::MaximizeState{};
+    ImGui::GetIO().IniFilename = "imgui.ini";
+}
 static void ApplyUserLayout(const okay::edtabs::SavedLayout& l) {
+    LeaveMaximizeState();
     int n = 0; const DockPanelDef* defs = DockPanels(n);
     for (int i = 0; i < n; ++i)
         if (defs[i].open) *defs[i].open = std::find(l.open.begin(), l.open.end(), defs[i].label) != l.open.end();
@@ -4974,6 +4990,7 @@ static void ApplyUserLayout(const okay::edtabs::SavedLayout& l) {
     else g_layoutPendingIni = l.ini;
     g_layoutName = l.name;
     ConsoleLog("Layout: " + l.name);
+    SaveSettings();
 }
 // A saved layout is ImGui ini text. Docking rebuilds its nodes from it, so it's
 // loaded between frames (just before NewFrame), never in the middle of one.
@@ -5099,6 +5116,7 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderFinish(dockId);
     g_layoutName = okay::edtabs::PresetName(preset);
     g_focusQueueFrame = ImGui::GetFrameCount() + 3;
+    if (g_layoutSettled) SaveSettings();   // the Layout dropdown's name survives a restart
 }
 
 // The Layout menu: presets, saved layouts, save / delete, side tabs. Shared by
@@ -5139,6 +5157,8 @@ static void DrawLayoutMenuItems() {
         ImGui::EndMenu();
     }
     ImGui::Separator();
+    if (ImGui::MenuItem("Maximize Viewport", "Shift+Space", g_max.on)) g_maxToggle = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Scene fills the editor; press again to bring the other panels back.");
     if (ImGui::BeginMenu("Side Tabs")) {
         static const char* kSide[3] = {"Off", "Left Edge", "Right Edge"};
         for (int i = 0; i < 3; ++i)
@@ -5278,6 +5298,25 @@ static void DrawPanelTabMenu() {
                 if (&defs[i] != self && defs[i].open && dockedHere(defs[i])) *defs[i].open = false;
     }
     if (ImGui::MenuItem("Float (undock)")) ImGui::DockContextQueueUndockWindow(&g, w);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make this panel its own window. Drag it by its title bar to move it, to the edge of another\npanel to dock it again, or outside the editor to put it on another screen.");
+    {   // Collapse: shrink a docked group to its tab strip so it stops taking room; Expand brings its size back.
+        ImGuiDockNode* node = w->DockNode;
+        ImGuiDockNode* par = node->ParentNode;
+        if (par && !node->IsCentralNode()) {
+            static std::map<ImGuiID, float> s_beforeCollapse;   // node -> its size along the split before it was collapsed
+            const int ax = (int)par->SplitAxis;
+            const float stripH = ImGui::GetFrameHeight() * 1.6f;
+            const bool isCollapsed = node->Size[ax] <= stripH + 6.0f;
+            if (ImGui::MenuItem(isCollapsed ? "Expand Group" : "Collapse Group")) {
+                if (!isCollapsed) { s_beforeCollapse[node->ID] = node->Size[ax]; node->SizeRef[ax] = stripH; node->WantLockSizeOnce = false; }
+                else {
+                    auto it = s_beforeCollapse.find(node->ID);
+                    node->SizeRef[ax] = it != s_beforeCollapse.end() ? it->second : 280.0f * g_uiScale;
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shrink this tab group down to its tab strip (the other panels take the room).\nThe layout is saved like any resize.");
+        }
+    }
     ImGui::Separator();
     if (g_sideTabs != 0 && nodeId == g_sideTabsNode) {
         if (ImGui::MenuItem("Side Tabs Off")) { g_sideTabs = 0; g_sideAnchor.clear(); SaveSettings(); }
@@ -6295,6 +6334,13 @@ void DrawMenuAndToolbar(EditorState& ed) {
                     { g_uiScale = p.s; ApplyTheme(); SaveSettings(); }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Density")) {
+            for (int d = 0; d < 2; ++d)
+                if (ImGui::MenuItem(okay::edlayout::DensityName(d), nullptr, g_view.density == d)) { g_view.density = d; ApplyTheme(); SaveSettings(); }
+            ImGui::Separator();
+            ImGui::TextDisabled("Row spacing and field height in the Inspector and every panel.");
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("Theme")) {
             if (ImGui::MenuItem("Slate", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); SaveSettings(); }
             if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); SaveSettings(); }
@@ -7087,8 +7133,46 @@ void DrawDockSpace(EditorState& ed) {
 
     ImGuiID dockId = ImGui::GetID("OkayDockSpace");
     g_dockspaceId = dockId;   // remembered so panels can dock/undock themselves
+    if (first && !g_resetLayout && g_layoutRequest < 0) {
+        // The arrangement you left is remembered (Dear ImGui's imgui.ini holds the dock tree): start from it when it is
+        // there, with a real split in it; otherwise build the Default layout below. Reset Layout always rebuilds.
+        const ImGuiDockNode* saved = ImGui::DockBuilderGetNode(dockId);
+        if (saved && saved->IsSplitNode()) {
+            first = false;
+            g_layoutName = g_view.layoutPreset >= 0 ? std::string(okay::edtabs::PresetName(g_view.layoutPreset)) : std::string();
+        }
+    }
+    g_layoutSettled = true;
+    if (g_maxToggle) {   // Shift+Space / View > Maximize viewport
+        g_maxToggle = false;
+        int n = 0; const DockPanelDef* defs = DockPanels(n);
+        if (!g_max.on) {
+            size_t sz = 0; const char* ini = ImGui::SaveIniSettingsToMemory(&sz);
+            std::vector<std::string> openNow;
+            for (int i = 0; i < n; ++i) if (defs[i].open && *defs[i].open) openNow.push_back(defs[i].label);
+            okay::edlayout::EnterMaximize(g_max, std::string(ini ? ini : "", ini ? sz : 0), openNow, g_layoutName);
+            for (int i = 0; i < n; ++i) if (defs[i].open) *defs[i].open = false;
+            ImGui::GetIO().IniFilename = nullptr;   // a maximized layout is never what the next launch should open with
+            ImGui::DockBuilderRemoveNode(dockId);
+            ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockId, vp->WorkSize);
+            ImGui::DockBuilderDockWindow("Scene", dockId);
+            ImGui::DockBuilderFinish(dockId);
+            g_layoutName = "Maximized";
+            ConsoleLog("Viewport maximized (Shift+Space to restore the panels)");
+        } else {
+            std::string ini, name; std::vector<std::string> open;
+            okay::edlayout::LeaveMaximize(g_max, ini, open, name);
+            for (int i = 0; i < n; ++i) if (defs[i].open) *defs[i].open = std::find(open.begin(), open.end(), defs[i].label) != open.end();
+            g_layoutPendingIni = ini;
+            g_layoutName = name;
+            ImGui::GetIO().IniFilename = "imgui.ini";
+            ConsoleLog("Panels restored");
+        }
+    }
     if (first || g_resetLayout || g_layoutRequest >= 0) {
         // A layout preset (Layout menu), Reset Layout, or the start-up default.
+        LeaveMaximizeState();
         const bool asked = !first;
         const int preset = (!g_resetLayout && g_layoutRequest >= 0) ? g_layoutRequest : (int)okay::edtabs::Preset::Default;
         if (g_resetLayout || (asked && preset == (int)okay::edtabs::Preset::Default)) {
@@ -11166,7 +11250,7 @@ void DrawMaterialEditor(EditorState& ed) {
         ImGui::EndDragDropTarget();
     }
     ImGui::SameLine(0, 4);
-    if (ImGui::Button("...##mattexbrowse")) {
+    if (oked::TipButton("Browse...", "...##mattexbrowse")) {
         Material* matp = &mat;
         okay::filedialog::OpenOne("Choose a texture image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
                                   [matp](const std::string& p) { matp->texture = p; });
@@ -11702,7 +11786,7 @@ void DrawSceneSettings(EditorState& ed) {
         if (ImGui::Checkbox("Gizmos (selection / camera / lights)", &g_showGizmos)) SaveSettings();
         if (ImGui::Checkbox("Wireframe (all meshes)", &g_wireframeAll)) SaveSettings();
         if (ImGui::Checkbox("World axes (origin)", &g_showWorldAxes)) SaveSettings();
-        if (ImGui::Checkbox("Camera HUD (zoom / angle / pos)", &g_showCamHud)) SaveSettings();
+        if (ImGui::Checkbox("Camera overlay (zoom / angle / pos)", &g_view.camHud)) SaveSettings();
         if (ImGui::SliderFloat("Scene camera FOV", &g_editorFov, 20.0f, 110.0f, "%.0f deg")) SaveSettings();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Vertical field of view for the editor Scene camera.\nLower = flatter / more zoomed (less perspective\ndistortion); higher = wider / more stretched at edges.");
@@ -11854,6 +11938,7 @@ void DrawShortcutsWindow() {
         {"X",             "Local / world gizmo space"},
         {"F",             "Frame (focus) the selection"},
         {"Shift+I",       "Isolate selection (Esc exits)"},
+        {"Shift+Space",   "Maximize the Scene view / bring the panels back"},
         {"Ctrl+Alt+1..3", "Save camera bookmark"},
         {"Ctrl+1..3",     "Recall camera bookmark"},
         {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
@@ -16787,6 +16872,8 @@ void HandleShortcuts(EditorState& ed) {
     }
     // F focuses (frames) the selection in the view.
     if (!animKeys && !ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) FocusSelected(ed);
+    // Shift+Space maximizes the Scene view (the other panels hide); again brings them back.
+    if (!ctrl && ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Space, false)) g_maxToggle = true;
     // Shift+I toggles Isolate mode on the selection.
     if (!ctrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_I, false)) {
         g_isolate = g_isolate ? nullptr : ed.selected();
@@ -16835,7 +16922,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SetNextItemWidth(320);
         ImGui::InputText("##sspath", g_ssPathBuf, sizeof(g_ssPathBuf));
         ImGui::SameLine(0, 4);
-        if (ImGui::Button("...##ssbrowse")) {
+        if (oked::TipButton("Browse...", "...##ssbrowse")) {
             PickOpenInto("Sprite sheet", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.jpeg", "*.bmp"}), g_ssPathBuf, sizeof(g_ssPathBuf));
         }
         ImGui::SetNextItemWidth(120); ImGui::InputInt("Columns", &g_ssCols);
@@ -16994,7 +17081,7 @@ void DrawFileDialogs(EditorState& ed) {
         bool openGo = ImGui::InputText("##openpath", g_pathBuf, sizeof(g_pathBuf),
                                        ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0, 4);
-        if (ImGui::Button("...##openbrowse")) {
+        if (oked::TipButton("Browse...", "...##openbrowse")) {
             PickOpenInto("Open scene", "", okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}), g_pathBuf, sizeof(g_pathBuf));
         }
         if (ImGui::Button("Open", ImVec2(120, 0)) || openGo) {
@@ -17013,7 +17100,7 @@ void DrawFileDialogs(EditorState& ed) {
         bool saveGo = ImGui::InputText("##savepath", g_pathBuf, sizeof(g_pathBuf),
                                        ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0, 4);
-        if (ImGui::Button("...##savebrowse")) {
+        if (oked::TipButton("Browse...", "...##savebrowse")) {
             const std::string def = g_pathBuf[0] ? g_pathBuf : "scene.okayscene";
             PickSaveInto("Save scene as", def, okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}), g_pathBuf, sizeof(g_pathBuf));
         }
@@ -17035,7 +17122,7 @@ void DrawFileDialogs(EditorState& ed) {
         bool prefabGo = ImGui::InputText("##prefabpath", g_prefabBuf, sizeof(g_prefabBuf),
                                          ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0, 4);
-        if (ImGui::Button("...##prefabbrowse")) {
+        if (oked::TipButton("Browse...", "...##prefabbrowse")) {
             PickOpenInto("Instantiate prefab", "", okay::filedialog::Filters("OkaySpace prefab", {"*.okayprefab"}), g_prefabBuf, sizeof(g_prefabBuf));
         }
         if (ImGui::Button("Instantiate", ImVec2(120, 0)) || prefabGo) {
@@ -17363,7 +17450,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Application identifier, e.g. com.studio.game.");
                 ImGui::SetNextItemWidth(388); ImGui::InputText("##bdir", g_buildDirBuf, sizeof(g_buildDirBuf));
                 ImGui::SameLine(0, 4);
-                if (ImGui::Button("...##bdir")) {   // native folder picker
+                if (oked::TipButton("Browse...", "...##bdir")) {   // native folder picker
                     PickFolderInto("Choose the build output folder", g_buildDirBuf, g_buildDirBuf, sizeof(g_buildDirBuf));
                 }
                 ImGui::SameLine(0, 6); ImGui::TextUnformatted("Output folder");
@@ -18524,7 +18611,7 @@ void DrawProjectSettings(EditorState& ed) {
             ImGui::InputTextWithHint("##pssplashlogo", "Logo image (PNG) — blank = built-in cube",
                                      g_project.splashLogo, sizeof(g_project.splashLogo));
             ImGui::SameLine();
-            if (ImGui::Button("...##pssplash")) {
+            if (oked::TipButton("Browse...", "...##pssplash")) {
                 PickOpenInto("Choose the splash logo", "", pngFilt, g_project.splashLogo, sizeof(g_project.splashLogo));
             }
             ImGui::SameLine();
@@ -22825,7 +22912,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
             if (ImGui::SmallButton(lbl)) seek(clip.events[i].time);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump the playhead there");
             ImGui::SameLine();
-            if (ImGui::SmallButton("x")) edel = i;
+            if (oked::TipSmallButton("Remove", "x")) edel = i;
             ImGui::PopID();
         }
         if (edel >= 0) { PushAnimDraftUndo(ed, key, d); clip.events.erase(clip.events.begin() + edel); ed.dirty = true; }
@@ -23387,7 +23474,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             std::snprintf(lbl, sizeof(lbl), "%.2fs  %s", cur.events[i].time, cur.events[i].name.c_str());
             if (ImGui::Button(lbl)) { t = cur.events[i].time; run = false; }   // jump the playhead
             ImGui::SameLine();
-            if (ImGui::SmallButton("x")) evDel = i;
+            if (oked::TipSmallButton("Remove", "x")) evDel = i;
             ImGui::PopID();
         }
         if (evDel >= 0) { ed.PushUndo(); cur.events.erase(cur.events.begin() + evDel); ed.dirty = true; }
@@ -24649,7 +24736,7 @@ static bool ClipPicker(const char* id, std::string& value, okay::Scene* scene) {
     ImGui::SetNextItemWidth(120);
     if (ImGui::InputTextWithHint("##clip", "clip name", buf, sizeof(buf))) { value = buf; changed = true; }
     ImGui::SameLine(0.0f, 2.0f);
-    if (ImGui::ArrowButton("##clipp", ImGuiDir_Down)) ImGui::OpenPopup("##cliplist");
+    if (oked::TipArrowButton("Choose a clip", "##clipp", ImGuiDir_Down)) ImGui::OpenPopup("##cliplist");
     if (ImGui::BeginPopup("##cliplist")) {
         std::vector<std::string> clips; CollectAnimClips(scene, clips);
         for (const auto& c : clips) if (ImGui::Selectable(c.c_str(), c == value)) { value = c; changed = true; }
@@ -24714,7 +24801,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
                 ImGui::PushID((int)(vi + 5000));
                 auto& vd = al->variables[vi];
                 char nb[64]; std::strncpy(nb, vd.name.c_str(), sizeof(nb)-1); nb[sizeof(nb)-1]='\0';
-                if (ImGui::SmallButton("x")) delVar = (int)vi;
+                if (oked::TipSmallButton("Remove", "x")) delVar = (int)vi;
                 ImGui::SameLine(); ImGui::SetNextItemWidth(120);
                 if (ImGui::InputTextWithHint("##vn","name",nb,sizeof(nb))) { vd.name=nb; ed.dirty=true; }
                 ImGui::SameLine(); ImGui::SetNextItemWidth(96);
@@ -26097,6 +26184,7 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
 // Text the next CompHeader shows when its bar is hovered (a function pointer
 // takes CompHeader elsewhere, so this is not a parameter).
 static const char* sCompHeaderTip = nullptr;
+static float g_inspSectionGap = 0.0f;   // space above a component header inside the Inspector (density; 0 elsewhere)
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
     const char* managed = sManagedFor == comp ? sManagedNote : nullptr;   // set by the Inspector loop for components the Character Model manages
@@ -26131,6 +26219,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     auto it = sCompOpen.find(okey);
     bool want = it == sCompOpen.end() ? managed == nullptr : it->second;   // managed ones start folded
     if (sCompForceOpen != -1) want = sCompForceOpen == 1;   // Expand/Collapse All
+    if (g_inspSectionGap > 0.0f) ImGui::Dummy(ImVec2(0, g_inspSectionGap));   // air between components
     ImGui::SetNextItemOpen(want, ImGuiCond_Always);
     if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
     bool open = ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_AllowOverlap);
@@ -27390,7 +27479,7 @@ void DrawModeling(EditorState& ed) {
             ImGui::SetNextItemWidth(150);
             ImGui::DragFloat2("##pp", &s_profile[i].x, 0.01f, -10.0f, 10.0f, "%.2f");
             ImGui::SameLine();
-            if (ImGui::SmallButton("X##pp") && s_profile.size() > 2) removeAt = i;
+            if (oked::TipSmallButton("Remove", "X##pp") && s_profile.size() > 2) removeAt = i;
             ImGui::PopID();
         }
         if (removeAt >= 0) s_profile.erase(s_profile.begin() + removeAt);
@@ -28104,10 +28193,20 @@ void DrawModeling(EditorState& ed) {
 
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
-    // Roomier spacing for the Inspector specifically (it was too compact).
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(10, 10));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(8, 8));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
+    // Row spacing, field height and the value / label split come from the density setting (Appearance > Density)
+    // and the panel's width (EditorLayoutMath.hpp): readable at the 440 px narrow width, consistent row heights.
+    {
+        const auto im = okay::edlayout::ComputeInspectorMetrics((okay::edlayout::Density)g_view.density, g_uiScale,
+                                                                ImGui::GetTextLineHeight(), ImGui::GetContentRegionAvail().x);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(im.itemSpacing.x, im.itemSpacing.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,     ImVec2(im.framePadding.x, im.framePadding.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(im.innerSpacing.x, im.innerSpacing.y));
+        g_inspSectionGap = im.sectionGap;
+        if (!im.stacked) {   // the value column's width (the label goes right of it); Begin() set the 65% default
+            ImGuiWindow* iw = ImGui::GetCurrentWindow();
+            iw->DC.ItemWidthDefault = im.valueWidth; iw->DC.ItemWidth = im.valueWidth;
+        }
+    }
     oked::DrawPlayModeNote(ed);   // "Changes made here are not saved" while playing
 
     // Lock (pin) the inspector to the current object so it stays put while you
@@ -28138,7 +28237,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Separator();
             if (oked::projectpanel::HasImportSettings(*g_pb, s_seenAsset)) { if (oked::projectpanel::DrawImportSettings(*g_pb, s_seenAsset)) ProjectForgetThumb(s_seenAsset); }
             else ImGui::TextDisabled("This file has no import settings.");
-            ImGui::PopStyleVar(3);
+            ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
             ImGui::End();
             return;
         }
@@ -28152,7 +28251,7 @@ void DrawInspector(EditorState& ed) {
     if (!go) {
         EmptyState("\xE2\x97\x88", "Nothing selected",
                    "Select an object in the Hierarchy or Scene to edit it.");
-        ImGui::PopStyleVar(3);
+        ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
         ImGui::End();
         return;
     }
@@ -28355,7 +28454,7 @@ void DrawInspector(EditorState& ed) {
     oked::DrawPrefabHeader(ed, go);
     oked::DrawPrefabChanges(ed, go);
     if (oked::RunPrefabRequests(ed)) {   // a revert rebuilt the instance: this object is gone
-        ImGui::PopStyleVar(3); ImGui::End();
+        ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f; ImGui::End();
         return;
     }
     oked::BeginInspectorFrame();
@@ -29063,7 +29162,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("##meshtex");
             if (AcceptAssetPathField(mr->texture)) ed.dirty = true;   // drop from Project
             ImGui::SameLine(0, 4);
-            if (ImGui::Button("...##meshtexbrowse")) {
+            if (oked::TipButton("Browse...", "...##meshtexbrowse")) {
                 EditorState* edp = &ed; auto* mrp = mr;
                 okay::filedialog::OpenOne("Choose a texture image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
                                           [edp, mrp](const std::string& p) { mrp->texture = p; edp->dirty = true; });
@@ -30070,7 +30169,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("loop##asm", &st.loop)) ed.dirty = true;
                 oked::FieldTip("loop##asm");
                 ImGui::SameLine();
-                if (ImGui::SmallButton("x##asmst")) delState = si;
+                if (oked::TipSmallButton("Remove", "x##asmst")) delState = si;
                 // On a Character: watch the state's clip in the Scene view, or open
                 // a copy of it in the Animation tab (Apply there makes it this body's).
                 const std::string shown = body ? shownClip(st) : std::string();
@@ -30134,7 +30233,7 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::DragFloat("##trblend", &tr.blend, 0.01f, 0.0f, 2.0f, "%.2fs")) ed.dirty = true;
                     oked::FieldTip("##trblend");
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("x##tr")) delTr = ti;
+                    if (oked::TipSmallButton("Remove", "x##tr")) delTr = ti;
                     ImGui::PopID();
                 }
                 if (delTr >= 0) { ed.PushUndo(); st.transitions.erase(st.transitions.begin() + delTr); ed.dirty = true; }
@@ -31345,7 +31444,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat2("##pt", p, 0.05f)) { ec->points[i] = {p[0], p[1]}; ed.dirty = true; }
                 oked::FieldTip("##pt");
                 ImGui::SameLine();
-                if (ImGui::SmallButton("x") && ec->points.size() > 2) { ec->points.erase(ec->points.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                if (oked::TipSmallButton("Remove", "x") && ec->points.size() > 2) { ec->points.erase(ec->points.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                 ImGui::PopID();
             }
             if (ImGui::SmallButton("+ Point##ec2")) {
@@ -31373,7 +31472,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat2("##v", p, 0.05f)) { pc->points[i] = {p[0], p[1]}; ed.dirty = true; }
                 oked::FieldTip("##v");
                 ImGui::SameLine();
-                if (ImGui::SmallButton("x") && pc->points.size() > 3) { pc->points.erase(pc->points.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                if (oked::TipSmallButton("Remove", "x") && pc->points.size() > 3) { pc->points.erase(pc->points.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                 ImGui::PopID();
             }
             if (ImGui::SmallButton("+ Vertex##pc2")) {
@@ -31687,7 +31786,7 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Share of its turn this bone takes (the last bone finishes the look).");
                 } else ImGui::TextDisabled("rest");
                 ImGui::SameLine();
-                if (ImGui::SmallButton("x")) {
+                if (oked::TipSmallButton("Remove", "x")) {
                     l->chainNames.erase(l->chainNames.begin() + i);
                     if (i < l->boneWeights.size()) l->boneWeights.erase(l->boneWeights.begin() + i);
                     ed.dirty = true; ImGui::PopID(); break;
@@ -31951,7 +32050,7 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::InputText("##cb", nb, sizeof(nb))) { ci->boneNames[i] = nb; ed.dirty = true; }
                     oked::FieldTip("##cb");
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("x")) { ci->boneNames.erase(ci->boneNames.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                    if (oked::TipSmallButton("Remove", "x")) { ci->boneNames.erase(ci->boneNames.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                     ImGui::PopID();
                 }
                 if (ImGui::SmallButton("+ Bone##cik")) { ci->boneNames.push_back(""); ed.dirty = true; }
@@ -32834,7 +32933,7 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::InputTextWithHint("##name", "name", nb, sizeof(nb))) { it.name = nb; ed.dirty = true; }
                     oked::FieldTip("##name");
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("x")) del = (int)i;
+                    if (oked::TipSmallButton("Remove", "x")) del = (int)i;
                     ImGui::Text("Prefab"); ImGui::SameLine(120);
                     if (AssetSlot("bmdpf", it.prefab, "Prefab", {".okayprefab"})) ed.dirty = true;
                     ImGui::Text("Icon"); ImGui::SameLine(120);
@@ -33402,7 +33501,7 @@ void DrawInspector(EditorState& ed) {
                         if (ImGui::ColorEdit4("##rc", rv, ImGuiColorEditFlags_NoInputs)) { ui->rarities[i].color = {rv[0], rv[1], rv[2], rv[3]}; ed.dirty = true; }
                         oked::FieldTip("##rc");
                         ImGui::SameLine();
-                        if (ImGui::SmallButton("x")) { ui->rarities.erase(ui->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                        if (oked::TipSmallButton("Remove", "x")) { ui->rarities.erase(ui->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                         ImGui::PopID();
                     }
                     if (ImGui::SmallButton("+ Add rarity##iu")) { ui->rarities.push_back({}); ed.dirty = true; }
@@ -33468,7 +33567,7 @@ void DrawInspector(EditorState& ed) {
                     oked::FieldTip("kg##w");
                     ImGui::Unindent(110);
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("x")) { gi->items.erase(gi->items.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                    if (oked::TipSmallButton("Remove", "x")) { gi->items.erase(gi->items.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                     ImGui::PopID();
                     if (moved) { gi->Validate(); ed.dirty = true; break; }   // indices may have changed
                 }
@@ -33590,7 +33689,7 @@ void DrawInspector(EditorState& ed) {
                         if (ImGui::ColorEdit4("##rc", rv, ImGuiColorEditFlags_NoInputs)) { gu->rarities[i].color = {rv[0], rv[1], rv[2], rv[3]}; ed.dirty = true; }
                         oked::FieldTip("##rc");
                         ImGui::SameLine();
-                        if (ImGui::SmallButton("x")) { gu->rarities.erase(gu->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                        if (oked::TipSmallButton("Remove", "x")) { gu->rarities.erase(gu->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                         ImGui::PopID();
                     }
                     if (ImGui::SmallButton("+ Add rarity##gu")) { gu->rarities.push_back({}); ed.dirty = true; }
@@ -33654,7 +33753,7 @@ void DrawInspector(EditorState& ed) {
                         if (ImGui::DragInt("##ic", &rec.inputs[j].count, 0.1f, 1, 999)) ed.dirty = true;
                         oked::FieldTip("##ic");
                         ImGui::SameLine();
-                        if (ImGui::SmallButton("x")) { rec.inputs.erase(rec.inputs.begin() + j); ed.dirty = true; ImGui::PopID(); break; }
+                        if (oked::TipSmallButton("Remove", "x")) { rec.inputs.erase(rec.inputs.begin() + j); ed.dirty = true; ImGui::PopID(); break; }
                         ImGui::PopID();
                     }
                     if (ImGui::SmallButton("+ ingredient")) { rec.inputs.push_back({}); ed.dirty = true; }
@@ -34581,7 +34680,7 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::DragInt("##ingc", &in.count, 0.1f, 1, 999)) ed.dirty = true;
                     oked::FieldTip("##ingc");
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("x##rmi")) rmIng = j;
+                    if (oked::TipSmallButton("Remove", "x##rmi")) rmIng = j;
                     ImGui::Unindent(16.0f);
                     ImGui::PopID();
                 }
@@ -36079,7 +36178,7 @@ void DrawInspector(EditorState& ed) {
             if (AcceptAssetPathField(a->clipPath)) ed.dirty = true;   // drop from Project
             ImGui::SameLine(0, 4);
             // Browse for an audio file and load it now so Play previews it in-editor.
-            if (ImGui::Button("...##audiobrowse")) {
+            if (oked::TipButton("Browse...", "...##audiobrowse")) {
                 EditorState* edp = &ed; auto* ap = a;
                 okay::filedialog::OpenOne("Choose an audio file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3)", {"*.wav", "*.ogg", "*.mp3"}), [edp, ap](const std::string& p) {
                     ap->clipPath = p; edp->dirty = true;
@@ -36132,7 +36231,7 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("##track");
                 if (AcceptAssetPathField(mp->tracks[i])) ed.dirty = true;   // drop from Project
                 ImGui::SameLine(0, 4);
-                if (ImGui::SmallButton("...")) {
+                if (oked::TipSmallButton("Browse...", "...")) {
                     EditorState* edp = &ed; auto* mpp = mp; const std::size_t ti = (std::size_t)i;
                     okay::filedialog::OpenOne("Choose a music file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3)", {"*.wav", "*.ogg", "*.mp3"}), [edp, mpp, ti](const std::string& f) {
                         if (ti < mpp->tracks.size()) { mpp->tracks[ti] = f; edp->dirty = true; }
@@ -36925,7 +37024,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::InputText("##nmpf", pf, sizeof(pf))) { nm->spawnablePrefabs[i] = pf; ed.dirty = true; }
                 oked::FieldTip("##nmpf");
                 ImGui::SameLine();
-                if (ImGui::SmallButton("X##nmpf")) removePf = i;
+                if (oked::TipSmallButton("Remove", "X##nmpf")) removePf = i;
                 ImGui::PopID();
             }
             if (removePf >= 0) { nm->spawnablePrefabs.erase(nm->spawnablePrefabs.begin() + removePf); ed.dirty = true; }
@@ -38129,7 +38228,7 @@ void DrawInspector(EditorState& ed) {
                         if (ImGui::DragFloat2("##shp", pv, 0.25f)) { sh.points[p] = {pv[0], pv[1]}; ed.dirty = true; }
                         oked::FieldTip("##shp");
                         ImGui::SameLine();
-                        if (ImGui::SmallButton("x")) pdel = (int)p;
+                        if (oked::TipSmallButton("Remove", "x")) pdel = (int)p;
                         ImGui::PopID();
                     }
                     if (pdel >= 0) { sh.points.erase(sh.points.begin() + pdel); ed.dirty = true; }
@@ -41119,16 +41218,27 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
 // The selected object's name, drawn in the Scene view. Drag it onto a
 // visual-script slot (the Hierarchy rows do the same).
 static okay::GameObject*& SceneRefDrag() { static okay::GameObject* g = nullptr; return g; }
-static void SceneObjectDragChip(okay::GameObject* go, ImVec2 screen) {
+static ImVec2 SceneObjectChipSize(const okay::GameObject* go) {
+    const char* nm = go->name.empty() ? "Object" : go->name.c_str();
+    const ImVec2 ts = ImGui::CalcTextSize(nm);
+    return ImVec2(ts.x + 16.0f, ts.y + 6.0f);
+}
+// `topLeft` is where the chip goes (the Scene view's label placement picks it so it clears the gizmo and the other
+// names); `alpha` fades it when the view is crowded. A thin light outline keeps it readable on a bright sky.
+static void SceneObjectDragChipAt(okay::GameObject* go, ImVec2 topLeft, float alpha) {
     if (!go) return;
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) SceneRefDrag() = nullptr;
     const char* nm = go->name.empty() ? "Object" : go->name.c_str();
-    ImVec2 ts = ImGui::CalcTextSize(nm);
-    ImGui::SetCursorScreenPos(ImVec2(screen.x - ts.x * 0.5f - 8.0f, screen.y - ts.y - 26.0f));
+    const ImVec2 sz = SceneObjectChipSize(go);
+    ImGui::SetCursorScreenPos(topLeft);
     ImGui::PushID(go);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.40f));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.28f, 0.42f, 0.94f));
-    ImGui::Button(nm, ImVec2(ts.x + 16.0f, ts.y + 6.0f));
-    ImGui::PopStyleColor();
+    ImGui::Button(nm, sz);
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
     if (ImGui::IsItemActive()) SceneRefDrag() = go;
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload("GO_PTR", &go, sizeof(go));
@@ -41137,6 +41247,12 @@ static void SceneObjectDragChip(okay::GameObject* go, ImVec2 screen) {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag onto a visual-script object slot");
     ImGui::PopID();
+}
+// The 2D view: the chip sits above the object, as it always did.
+static void SceneObjectDragChip(okay::GameObject* go, ImVec2 screen) {
+    if (!go) return;
+    const ImVec2 sz = SceneObjectChipSize(go);
+    SceneObjectDragChipAt(go, ImVec2(screen.x - sz.x * 0.5f, screen.y - sz.y - 22.0f), 1.0f);
 }
 
 void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
@@ -41520,6 +41636,65 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_dragRawValid = false;
 }
 
+// ---- Scene view overlays: stats line, camera readout, name labels -------------------------------
+// The placement maths is in EditorLayoutMath.hpp (tested); this is the drawing side.
+namespace {
+using okay::edlayout::Rc;
+using okay::edlayout::Pt;
+// Text that stays readable on any background: a 1px dark outline round it, drawn at `alpha`.
+void DrawOutlinedText(ImDrawList* dl, ImVec2 pos, ImU32 col, const char* text, float alpha = 1.0f, float scale = 1.0f) {
+    const ImU32 shadow = IM_COL32(8, 10, 14, (int)(235.0f * alpha));
+    ImU32 c = col;
+    c = (c & 0x00FFFFFFu) | ((ImU32)((float)((c >> 24) & 0xFF) * alpha) << 24);
+    ImFont* f = ImGui::GetFont();
+    const float fs = ImGui::GetFontSize() * scale;
+    static const float kOff[8][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
+    for (auto& o : kOff) dl->AddText(f, fs, ImVec2(pos.x + o[0], pos.y + o[1]), shadow, text);
+    dl->AddText(f, fs, pos, c, text);
+}
+// Where the Object / Edit mode pills sit (top centre of the view, while a mesh is selected); empty otherwise.
+Rc ModePillsRect(const EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize) {
+    if (!ed.selected() || !ed.selected()->GetComponent<MeshRenderer>()) return Rc{};
+    static const char* kLabels[5] = {"Object", "Edit", "Vertex", "Edge", "Face"};
+    const int n = (g_meshEdit && g_meshEditObj == ed.selected()) ? 5 : 2;
+    float total = n > 2 ? 10.0f : 0.0f;
+    for (int i = 0; i < n; ++i) total += ImGui::CalcTextSize(kLabels[i]).x + 18.0f + 4.0f;
+    return okay::edlayout::MakeRc(canvasPos.x + (canvasSize.x - total) * 0.5f - 2.0f, canvasPos.y + 6.0f, total + 4.0f, ImGui::GetTextLineHeight() + 12.0f);
+}
+// "Cube | 3D | 5 objects | 25 FPS": the line at the top left of the Scene view. In a narrow view it gives up the
+// selected name, then the object count, rather than run under the mode pills.
+Rc SceneStatsLineRect(ImVec2 canvasPos, const std::string& text);
+std::string SceneStatsLineText(const EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize) {
+    char buf[200];
+    const char* mode = ed.view3D ? "3D" : "2D";
+    const Rc pills = ModePillsRect(ed, canvasPos, canvasSize);
+    const Rc canvasRc{canvasPos.x, canvasPos.y, canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y};
+    std::string best;
+    for (int v = 0; v < 3; ++v) {
+        if (v == 0) std::snprintf(buf, sizeof(buf), "%s  |  %d objects  |  %.0f FPS%s%s", mode, (int)ed.scene().Objects().size(), ImGui::GetIO().Framerate,
+                                  ed.selected() ? "  |  " : "", ed.selected() ? ed.selected()->name.c_str() : "");
+        else if (v == 1) std::snprintf(buf, sizeof(buf), "%s  |  %d objects  |  %.0f FPS", mode, (int)ed.scene().Objects().size(), ImGui::GetIO().Framerate);
+        else std::snprintf(buf, sizeof(buf), "%.0f FPS", ImGui::GetIO().Framerate);
+        best = buf;
+        const Rc r = SceneStatsLineRect(canvasPos, best);
+        if (r.x1 <= canvasRc.x1 && !okay::edlayout::Overlaps(r, pills)) break;
+    }
+    return best;
+}
+// Where that line sits (the camera readout and the labels keep clear of it).
+Rc SceneStatsLineRect(ImVec2 canvasPos, const std::string& text) {
+    const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
+    return okay::edlayout::MakeRc(canvasPos.x + 4.0f, canvasPos.y + 3.0f, ts.x + 12.0f, ts.y + 6.0f);
+}
+// A name that wants a spot near a point of the Scene view; placed together once per frame.
+struct SceneLabel { ImVec2 anchor; std::string text; ImU32 col; float keepOut; int priority; bool selected; ImVec2 size{0, 0}; };
+// The camera inset's footprint (bottom right, with its caption), for things that must not cover it.
+Rc CameraPreviewRect(ImVec2 canvasSize, ImVec2 canvasEnd) {
+    const float pw = Mathf::Clamp(canvasSize.x * 0.28f, 140.0f, 320.0f), ph = pw * 9.0f / 16.0f;
+    return okay::edlayout::MakeRc(canvasEnd.x - pw - 10, canvasEnd.y - ph - 28, pw, ph + 28);
+}
+} // namespace
+
 void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
     if (!gameView) g_sceneViewHovered = hovered;
@@ -41596,6 +41771,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         return ImVec2(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
                       center.y - (c.y / c.w) * canvasSize.y * 0.5f);
     };
+    std::vector<SceneLabel> sceneLabels;   // names collected while drawing, placed together near the end (no overlaps)
+    struct { bool valid = false; ImVec2 pos{0, 0}; float alpha = 1.0f; } chipPlan;   // where the selected object's draggable name chip goes
     // Draw a line from two CLIP-SPACE endpoints, clipped to the near plane. The
     // mesh renderer near-clips its triangles, but gizmo lines used to just DROP any
     // endpoint at/behind the camera (w <= eps) — so the selection box / grid lost
@@ -41779,11 +41956,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         };
         // A small name label under an icon.
         auto iconLabel = [&](ImVec2 s, const char* nm, ImU32 col) {
-            ImVec2 ts = ImGui::CalcTextSize(nm);
-            ImVec2 tp(s.x - ts.x * 0.5f, s.y + 12.0f);
-            dl->AddRectFilled(ImVec2(tp.x - 2, tp.y - 1), ImVec2(tp.x + ts.x + 2, tp.y + ts.y + 1),
-                              IM_COL32(0, 0, 0, 120), 2.0f);
-            dl->AddText(tp, col, nm);
+            if (!g_view.showNames) return;
+            sceneLabels.push_back({s, nm, col, 14.0f, 10, false});   // drawn by the placement pass below
         };
 
         // ---- Skeletons: every bone of a skinned rig, drawn parent -> child as a
@@ -42056,7 +42230,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(c[i], c[(i + 1) % 4], col);
                 }
                 ImVec2 sp;   // billboard icon + name at the camera's position
-                if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); iconLabel(sp, up->name.c_str(), col); }
+                if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); if (up.get() != ed.selected()) iconLabel(sp, up->name.c_str(), col); }   // the selected one has its name chip
             }
 
             if (auto* lod = up->GetComponent<LODGroup>(); lod && up.get() == ed.selected() && !lod->useScreenSize) {
@@ -42111,7 +42285,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(tip, tip - f * 0.3f - u * 0.15f, col);
                 }
                 ImVec2 sp;   // billboard icon + name at the light's position
-                if (project(p, sp)) { lightIcon(sp, col, (int)lt->type, up.get() == ed.selected()); iconLabel(sp, up->name.c_str(), col); }
+                if (project(p, sp)) { lightIcon(sp, col, (int)lt->type, up.get() == ed.selected()); if (up.get() != ed.selected()) iconLabel(sp, up->name.c_str(), col); }
             }
 
             // 3D collider wireframes.
@@ -42396,10 +42570,26 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
-    // Camera HUD (Scene view debug): on-screen readout of the orbit camera so a
-    // screenshot tells you the exact zoom / angle / position you're looking from.
-    // Editor-only; never drawn in the Game view or a build.
-    if (!gameView && g_showCamHud) {
+    // Camera overlay (Scene view): the orbit camera's zoom / angle / position, so a screenshot says exactly where
+    // you were looking from. Optional (Scene view menu), collapsible, semi-transparent, anchored to a corner and
+    // stepped clear of the stats line, the camera inset and the isolation banner. Editor-only.
+    Rc hudRect{}; bool hudDrawn = false;
+    std::vector<Rc> hudAvoid;
+    if (!gameView) {
+        if (g_view.statsLine) hudAvoid.push_back(SceneStatsLineRect(canvasPos, SceneStatsLineText(ed, canvasPos, canvasSize)));
+        if (canvasSize.x > 160.0f && canvasSize.y > 120.0f)   // the view-axis gizmo in the top-right corner (drawn after this, in DrawViewport)
+            hudAvoid.push_back(okay::edlayout::MakeRc(canvasEnd.x - 94.0f, canvasPos.y + 2.0f, 92.0f, 92.0f));
+        if (ed.selected()) if (auto* pc = ed.selected()->GetComponent<Camera>(); pc && pc->projection == Camera::Projection::Perspective)
+            hudAvoid.push_back(CameraPreviewRect(canvasSize, canvasEnd));
+        { const Rc pr = ModePillsRect(ed, canvasPos, canvasSize); if (pr.Area() > 0.0f) hudAvoid.push_back(pr); }   // the Object / Edit mode pills, top centre
+        if (g_isolate) {
+            char ib[128];
+            std::snprintf(ib, sizeof(ib), "Isolating: %s   (Esc, Shift+I or the Isolate button to exit)", g_isolate->name.c_str());
+            const ImVec2 its = ImGui::CalcTextSize(ib);
+            hudAvoid.push_back(okay::edlayout::MakeRc((canvasPos.x + canvasEnd.x - its.x) * 0.5f - 10, canvasPos.y + 4, its.x + 20, its.y + 8));
+        }
+    }
+    if (!gameView && g_view.camHud) {
         char l1[64], l2[64], l3[80], l4[80], l5[48];
         std::snprintf(l1, sizeof(l1), "Zoom (dist): %.1f", ed.camDist);
         std::snprintf(l2, sizeof(l2), "Yaw: %.0f%s  Pitch: %.0f%s",
@@ -42409,13 +42599,93 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                       ed.camTarget.x, ed.camTarget.y, ed.camTarget.z);
         std::snprintf(l5, sizeof(l5), "FOV: %.0f%s", g_editorFov, "\xc2\xb0");
         const char* lines[5] = {l1, l2, l3, l4, l5};
-        float lh = ImGui::GetTextLineHeight();
-        ImVec2 box0(canvasPos.x + 8, canvasPos.y + 8);
-        ImVec2 box1(box0.x + 188, box0.y + lh * 5 + 12);
-        dl->AddRectFilled(box0, box1, IM_COL32(0, 0, 0, 140), 4.0f);
-        for (int i = 0; i < 5; ++i)
-            dl->AddText(ImVec2(box0.x + 8, box0.y + 6 + lh * i),
-                        IM_COL32(120, 230, 150, 255), lines[i]);
+        const bool collapsed = g_view.camHudCollapsed;
+        char title[64];
+        if (collapsed) std::snprintf(title, sizeof(title), "Camera  dist %.1f", ed.camDist);
+        else std::snprintf(title, sizeof(title), "Camera");
+        const float lh = ImGui::GetTextLineHeight();
+        const float headH = lh + 8.0f;
+        float tw = ImGui::CalcTextSize(title).x + lh * 1.6f;
+        if (!collapsed) for (const char* l : lines) tw = std::max(tw, ImGui::CalcTextSize(l).x + 16.0f);
+        const Pt size{std::max(tw + 8.0f, 120.0f), collapsed ? headH : headH + lh * 5 + 12.0f};
+        const auto pl = okay::edlayout::PlaceOverlay(Rc{canvasPos.x, canvasPos.y, canvasEnd.x, canvasEnd.y}, size,
+                                                     (okay::edlayout::Corner)g_view.camHudCorner, 8.0f, hudAvoid);
+        if (pl.visible) {
+            hudRect = pl.rect; hudDrawn = true;
+            const int bgA = (int)(2.3f * g_view.camHudOpacityPct);   // 20..100 % -> a see-through panel
+            const ImVec2 a(pl.rect.x0, pl.rect.y0), b(pl.rect.x1, pl.rect.y1);
+            dl->AddRectFilled(a, b, IM_COL32(12, 14, 20, bgA), 5.0f);
+            dl->AddRect(a, b, IM_COL32(120, 230, 150, 70), 5.0f);
+            const ImVec2 hmax(b.x, a.y + headH);
+            const bool overHead = hovered && ImGui::IsMouseHoveringRect(a, hmax);
+            if (overHead) dl->AddRectFilled(a, hmax, IM_COL32(255, 255, 255, 24), 5.0f);
+            {   // fold arrow: down = open, right = collapsed
+                const float r = lh * 0.28f; const ImVec2 c(a.x + 10.0f, a.y + headH * 0.5f);
+                const ImU32 ac = IM_COL32(120, 230, 150, 255);
+                if (collapsed) dl->AddTriangleFilled(ImVec2(c.x - r * 0.6f, c.y - r), ImVec2(c.x - r * 0.6f, c.y + r), ImVec2(c.x + r, c.y), ac);
+                else dl->AddTriangleFilled(ImVec2(c.x - r, c.y - r * 0.6f), ImVec2(c.x + r, c.y - r * 0.6f), ImVec2(c.x, c.y + r), ac);
+            }
+            DrawOutlinedText(dl, ImVec2(a.x + 10.0f + lh * 0.7f, a.y + 4.0f), IM_COL32(150, 240, 175, 255), title);
+            if (!collapsed)
+                for (int i = 0; i < 5; ++i)
+                    DrawOutlinedText(dl, ImVec2(a.x + 10.0f, a.y + headH + 2.0f + lh * i), IM_COL32(120, 230, 150, 255), lines[i]);
+            if (overHead) {
+                ImGui::SetTooltip(collapsed ? "Camera overlay: click to expand" : "Camera overlay: click to collapse\n(corner, opacity and on / off: the ... menu above the view)");
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { g_view.camHudCollapsed = !collapsed; g_uiHandled = true; SaveSettings(); }
+            }
+        }
+    }
+
+    // Names near objects: the selected object's draggable name chip, then camera and light names. Each takes a spot
+    // clear of the gizmo handles, the stats line, the camera overlay and the other names; a crowded view fades the
+    // camera and light names. (Off with "Object names": the Hierarchy rows still drag an object into a script slot.)
+    if (!gameView && g_view.showNames) {
+        int selReq = -1;
+        if (GameObject* sel = ed.selected(); sel && sel->transform) {
+            const Vec3 P = sel->transform->Position();
+            ImVec2 sp;
+            if (toScreen(vp * Vec4{P, 1}, sp)) {
+                // Handles reach about camDist * 0.18 in world units: measure that on screen.
+                float gz = g_showGizmos ? 0.0f : 6.0f;
+                if (g_showGizmos) {
+                    const float L = ed.camDist * 0.18f;
+                    for (const Vec3& ax : {Vec3{1, 0, 0}, Vec3{0, 1, 0}, Vec3{0, 0, 1}}) {
+                        ImVec2 q;
+                        if (toScreen(vp * Vec4{P + ax * L, 1}, q)) gz = std::max(gz, std::sqrt((q.x - sp.x) * (q.x - sp.x) + (q.y - sp.y) * (q.y - sp.y)));
+                    }
+                    gz = Mathf::Clamp(gz, 24.0f, 150.0f) + 6.0f;
+                }
+                selReq = (int)sceneLabels.size();
+                SceneLabel sl{sp, "", 0, gz, 100, true};
+                sl.size = SceneObjectChipSize(sel);
+                sceneLabels.push_back(sl);
+            }
+        }
+        if (!sceneLabels.empty()) {
+            std::vector<okay::edlayout::LabelReq> reqs;
+            for (const SceneLabel& l : sceneLabels) {
+                const ImVec2 ts = l.selected ? l.size : ImGui::CalcTextSize(l.text.c_str());
+                okay::edlayout::LabelReq q; q.anchor = {l.anchor.x, l.anchor.y}; q.size = {ts.x, ts.y};
+                q.keepOut = l.keepOut; q.priority = l.priority; reqs.push_back(q);
+            }
+            std::vector<Rc> obstacles = hudAvoid;
+            if (hudDrawn) obstacles.push_back(hudRect);
+            const Rc canvasRc{canvasPos.x, canvasPos.y, canvasEnd.x, canvasEnd.y};
+            const auto placed = okay::edlayout::PlaceLabels(reqs, canvasRc, obstacles);
+            const float fade = okay::edlayout::CrowdFade((int)sceneLabels.size(), canvasSize.x * canvasSize.y);
+            for (std::size_t i = 0; i < sceneLabels.size(); ++i) {
+                const SceneLabel& l = sceneLabels[i]; const auto& pl = placed[i];
+                if (!pl.visible) continue;
+                if (l.anchor.x < canvasPos.x || l.anchor.x > canvasEnd.x || l.anchor.y < canvasPos.y || l.anchor.y > canvasEnd.y) continue;
+                const float a = pl.alpha * (l.selected ? 1.0f : fade);
+                if (pl.leader) dl->AddLine(l.anchor, ImVec2((pl.rect.x0 + pl.rect.x1) * 0.5f, (pl.rect.y0 + pl.rect.y1) * 0.5f),
+                                           IM_COL32(255, 255, 255, (int)(110 * a)), 1.0f);
+                if ((int)i == selReq) { chipPlan.valid = true; chipPlan.pos = ImVec2(pl.rect.x0 + 2.0f, pl.rect.y0 + 2.0f); chipPlan.alpha = std::max(0.55f, a); continue; }
+                const ImVec2 tp(pl.rect.x0 + 2.0f, pl.rect.y0 + 2.0f);
+                dl->AddRectFilled(ImVec2(pl.rect.x0, pl.rect.y0), ImVec2(pl.rect.x1, pl.rect.y1), IM_COL32(12, 14, 20, (int)(120 * a)), 3.0f);
+                DrawOutlinedText(dl, tp, l.col, l.text.c_str(), a, pl.scale);
+            }
+        }
     }
 
     // In-world UI projector for this (perspective) view, matching the view*projection
@@ -43932,7 +44202,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ed.PushUndo();
         g_wpPlace->waypoints.push_back(at);
         ed.dirty = true;
-    } else if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && !s_vSnapDragging && !vHeld &&
+    } else if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && !s_vSnapDragging && !vHeld && !g_axisGizmoHot &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = g_hoverBone;   // a bone under the cursor wins over the mesh around it
         float bestDepth = hit ? -1.0f : 1e30f;
@@ -43976,11 +44246,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
         ed.Select(hit);   // hit may be null -> clicking empty space deselects (matches 2D)
     }
-    if (!gameView && ed.selected() && ed.selected()->transform) {
-        ImVec2 sp;
-        if (toScreen(vp * Vec4{ed.selected()->transform->Position(), 1}, sp))
-            SceneObjectDragChip(ed.selected(), sp);
-    }
+    if (!gameView && chipPlan.valid && ed.selected() && ed.selected()->transform)
+        SceneObjectDragChipAt(ed.selected(), chipPlan.pos, chipPlan.alpha);   // placed by the label pass above
 }
 
 // ---- Shared game / UI screen resolution ------------------------------------
@@ -44128,31 +44395,100 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         ImGui::SameLine(0, vst.ItemSpacing.x * 1.5f);
     };
     toolGap();
-    // Transform tools as a tight segmented group (W/E/R), plus Local/Global (X).
+    // The tools, planned as one row: [Move Rotate Scale IK] | [Space Snap] | [Frame]. Each has a tooltip (name +
+    // shortcut) always; "Toolbar labels" (the ... menu) adds the name beside the icon. A narrow view first drops
+    // the labels, then moves the last tools into the ... menu, so nothing is ever cut off or unreachable.
+    struct ToolEntry { const char* id; TbIcon icon; const char* label; std::string tip; bool active; int group; bool textBtn; };
+    const bool ikOn = g_ikPose;
+    std::vector<ToolEntry> tools = {
+        {"##tmove",  TbIcon::Move,   "Move",   "Move (W)",   g_tool == Tool::Move,   0, false},
+        {"##trot",   TbIcon::Rotate, "Rotate", "Rotate (E)", g_tool == Tool::Rotate, 0, false},
+        {"##tscale", TbIcon::Scale,  "Scale",  "Scale (R)",  g_tool == Tool::Scale,  0, false},
+        {"IK##tikpose", TbIcon::Move, "IK", ikOn ? "IK posing on: moving a hand, foot or any bone bends the two bones\nabove it to reach (elbow / knee), instead of pulling the bone loose."
+                                                : "IK posing: drag a hand or foot and the arm / leg bends to follow.", ikOn, 0, true},
+        {"##tspace", g_gizmoLocal ? TbIcon::Local : TbIcon::Global, g_gizmoLocal ? "Local" : "Global",
+         g_gizmoLocal ? "Handles: Local (object axes). Click or X for Global" : "Handles: Global (world axes). Click or X for Local", false, 1, false},
+        {"##tsnap",  TbIcon::Snap,   "Snap",   "Snap to increments (or hold Ctrl while dragging)", g_snap, 1, false},
+        {"##tframe", TbIcon::Frame,  "Frame",  "Frame selected (F)", false, 2, false},
+    };
+    auto frameSelected = [&] {
+        if (!ed.selected()) return;
+        if (uiOnly && g_lastUICanvas.x > 1.0f && g_lastUICanvas.y > 1.0f) {
+            // UI view: zoom + center the canvas on the widget (uses last frame's canvas size).
+            Vec2 fo, fsz;
+            if (GetUIScreenRect(ed.selected(), g_lastUICanvas.x, g_lastUICanvas.y, fo, fsz) &&
+                fsz.x > 1.0f && fsz.y > 1.0f) {
+                float zx = (g_lastUICanvas.x * 0.7f) / fsz.x, zy = (g_lastUICanvas.y * 0.7f) / fsz.y;
+                g_uiEditZoom = Mathf::Clamp(Mathf::Min(zx, zy), 0.25f, 4.0f);
+                Vec2 wc{fo.x + fsz.x * 0.5f, fo.y + fsz.y * 0.5f};
+                Vec2 cc{g_lastUICanvas.x * 0.5f, g_lastUICanvas.y * 0.5f};
+                g_uiEditPan = ImVec2((cc.x - wc.x) * g_uiEditZoom, (cc.y - wc.y) * g_uiEditZoom);
+            }
+        } else {
+            Vec3 p = ed.selected()->transform->Position();
+            ed.camTarget = p;
+            ed.cameraPos = {p.x, p.y};
+        }
+    };
+    auto runTool = [&](int k) {
+        switch (k) {
+            case 0: g_tool = Tool::Move; break;
+            case 1: g_tool = Tool::Rotate; break;
+            case 2: g_tool = Tool::Scale; break;
+            case 3: g_ikPose = !g_ikPose; if (g_ikPose) g_tool = Tool::Move; break;
+            case 4: g_gizmoLocal = !g_gizmoLocal; break;
+            case 5: g_snap = !g_snap; break;
+            case 6: frameSelected(); break;
+        }
+    };
+    const float tbH = ImGui::GetFrameHeight();
+    const float tbPad = vst.FramePadding.x;
+    std::vector<okay::edlayout::ToolbarItem> planIn;
+    for (const ToolEntry& te : tools) {
+        okay::edlayout::ToolbarItem ti;
+        if (te.textBtn) ti.iconW = ti.labelW = ImGui::CalcTextSize(te.label).x + tbPad * 2.0f;
+        else { ti.iconW = tbH; ti.labelW = tbH + ImGui::CalcTextSize(te.label).x + tbPad * 1.4f; }
+        ti.group = te.group;
+        planIn.push_back(ti);
+    }
+    planIn[5].iconW += 1.0f + tbH * 0.55f; planIn[5].labelW += 1.0f + tbH * 0.55f;   // Snap carries its arrow
+    float tbReserve = tbH + vst.ItemSpacing.x * 2.0f;   // the ... button
+    if (g_isolate && !uiPanel) tbReserve += ImGui::CalcTextSize(("Isolated: " + g_isolate->name + "  x").c_str()).x + vst.FramePadding.x * 2.0f + vst.ItemSpacing.x;
+    else if (uiPanel) tbReserve += ImGui::CalcTextSize("UI Editing").x + vst.ItemSpacing.x;
+    if (g_max.on && !uiPanel) tbReserve += ImGui::CalcTextSize("Restore panels").x + vst.FramePadding.x * 2.0f + vst.ItemSpacing.x;
+    const float tbAvail = ImGui::GetWindowContentRegionMax().x - ImGui::GetCursorPosX();
+    const okay::edlayout::ToolbarPlan tbPlan = okay::edlayout::PlanToolbar(planIn, tbAvail, g_view.toolbarLabels, 2.0f, vst.ItemSpacing.x * 3.0f + 1.0f, tbReserve);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, vst.ItemSpacing.y));
-    if (IconButton("##tmove",   TbIcon::Move,   "Move (W)",   g_tool == Tool::Move))   g_tool = Tool::Move;
-    ImGui::SameLine();
-    if (IconButton("##trot",    TbIcon::Rotate, "Rotate (E)", g_tool == Tool::Rotate)) g_tool = Tool::Rotate;
-    ImGui::SameLine();
-    if (IconButton("##tscale",  TbIcon::Scale,  "Scale (R)",  g_tool == Tool::Scale))  g_tool = Tool::Scale;
+    bool tbFirst = true;
+    for (std::size_t k = 0; k < tools.size(); ++k) {
+        if (!tbPlan.shown[k]) continue;
+        const ToolEntry& te = tools[k];
+        if (!tbFirst) {
+            if (tbPlan.dividerBefore[k]) { ImGui::PopStyleVar(); toolGap(); ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, vst.ItemSpacing.y)); }
+            else ImGui::SameLine();
+        }
+        tbFirst = false;
+        bool hit;
+        if (te.textBtn) {
+            ImGui::PopStyleVar();   // the IK toggle keeps the normal spacing round it
+            hit = AccentToggleButton(te.id, te.active, ImVec2(0, ImGui::GetFrameHeight()));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", te.tip.c_str());
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, vst.ItemSpacing.y));
+        } else if ((int)k < tbPlan.labelCount) {
+            hit = IconLabelButton(te.id, te.icon, te.label, te.tip.c_str(), te.active);
+        } else {
+            hit = IconButton(te.id, te.icon, te.tip.c_str(), te.active);
+        }
+        if (hit) runTool((int)k);
+        if (k == 5) {   // Snap: the little arrow holds the increments
+            ImGui::SameLine(0, 1);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, vst.FramePadding.y));
+            if (ImGui::ArrowButton("##snapsettings", ImGuiDir_Down)) ImGui::OpenPopup("##snapsettingspop");
+            ImGui::PopStyleVar();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap settings");
+        }
+    }
     ImGui::PopStyleVar();
-    ImGui::SameLine();
-    if (AccentToggleButton("IK##tikpose", g_ikPose, ImVec2(0, ImGui::GetFrameHeight()))) { g_ikPose = !g_ikPose; if (g_ikPose) g_tool = Tool::Move; }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip(g_ikPose ? "IK posing on: moving a hand, foot or any bone bends the two bones\nabove it to reach (elbow / knee), instead of pulling the bone loose."
-                                                           : "IK posing: drag a hand or foot and the arm / leg bends to follow.");
-    ImGui::SameLine();
-    if (IconButton("##tspace", g_gizmoLocal ? TbIcon::Local : TbIcon::Global,
-                   g_gizmoLocal ? "Handles: Local (object axes). Click or X for Global"
-                                : "Handles: Global (world axes). Click or X for Local"))
-        g_gizmoLocal = !g_gizmoLocal;
-    // Snap: the magnet toggles it; the little arrow holds the increments.
-    ImGui::SameLine();
-    if (IconButton("##tsnap", TbIcon::Snap, "Snap to increments (or hold Ctrl while dragging)", g_snap)) g_snap = !g_snap;
-    ImGui::SameLine(0, 1);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, vst.FramePadding.y));
-    if (ImGui::ArrowButton("##snapsettings", ImGuiDir_Down)) ImGui::OpenPopup("##snapsettingspop");
-    ImGui::PopStyleVar();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap settings");
     if (ImGui::BeginPopup("##snapsettingspop")) {
         ImGui::TextDisabled("SNAP INCREMENTS");
         ImGui::Separator();
@@ -44171,25 +44507,6 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         ImGui::DragFloat("Guide snap (px)", &g_uiSnapDist, 0.5f, 1.0f, 40.0f, "%.0f");
         ImGui::EndPopup();
     }
-    ImGui::SameLine();
-    if (IconButton("##tframe", TbIcon::Frame, "Frame selected (F)") && ed.selected()) {
-        if (uiOnly && g_lastUICanvas.x > 1.0f && g_lastUICanvas.y > 1.0f) {
-            // UI view: zoom + center the canvas on the widget (uses last frame's canvas size).
-            Vec2 fo, fsz;
-            if (GetUIScreenRect(ed.selected(), g_lastUICanvas.x, g_lastUICanvas.y, fo, fsz) &&
-                fsz.x > 1.0f && fsz.y > 1.0f) {
-                float zx = (g_lastUICanvas.x * 0.7f) / fsz.x, zy = (g_lastUICanvas.y * 0.7f) / fsz.y;
-                g_uiEditZoom = Mathf::Clamp(Mathf::Min(zx, zy), 0.25f, 4.0f);
-                Vec2 wc{fo.x + fsz.x * 0.5f, fo.y + fsz.y * 0.5f};
-                Vec2 cc{g_lastUICanvas.x * 0.5f, g_lastUICanvas.y * 0.5f};
-                g_uiEditPan = ImVec2((cc.x - wc.x) * g_uiEditZoom, (cc.y - wc.y) * g_uiEditZoom);
-            }
-        } else {
-            Vec3 p = ed.selected()->transform->Position();
-            ed.camTarget = p;
-            ed.cameraPos = {p.x, p.y};
-        }
-    }
     // Right side: an "isolated" chip while isolation is on, then the view menu.
     {
         float moreW = ImGui::GetFrameHeight();
@@ -44202,6 +44519,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             chip = "UI Editing";
             chipW = ImGui::CalcTextSize(chip.c_str()).x + vst.ItemSpacing.x;
         }
+        if (g_max.on && !uiPanel) chipW += ImGui::CalcTextSize("Restore panels").x + vst.FramePadding.x * 2.0f + vst.ItemSpacing.x;   // the maximize chip
         float rightW = moreW + chipW;
         float curX = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + vst.ItemSpacing.x;
         float wantX = ImGui::GetWindowContentRegionMax().x - rightW;
@@ -44215,10 +44533,24 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "%s", chip.c_str());
             ImGui::SameLine();
         }
-        if (IconButton("##viewmore", TbIcon::More, "View options", !uiPanel && g_uiOnlyMode))
+        if (g_max.on && !uiPanel) {
+            if (AccentToggleButton("Restore panels##maxrestore", true)) g_maxToggle = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Scene fills the editor. Click (or Shift+Space) to bring the other panels back.");
+            ImGui::SameLine();
+        }
+        if (IconButton("##viewmore", TbIcon::More, "View options: overlays, names, toolbar labels, maximize", !uiPanel && g_uiOnlyMode))
             ImGui::OpenPopup("##viewopts");
     }
     if (ImGui::BeginPopup("##viewopts")) {
+        if (tbPlan.overflowed > 0) {   // tools that did not fit the row
+            ImGui::TextDisabled("Tools");
+            for (std::size_t k = 0; k < tools.size(); ++k) {
+                if (tbPlan.shown[k]) continue;
+                if (ImGui::MenuItem(tools[k].label, nullptr, tools[k].active)) runTool((int)k);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tools[k].tip.c_str());
+            }
+            ImGui::Separator();
+        }
         if (!uiPanel) {
             if (ImGui::MenuItem("UI only view", nullptr, g_uiOnlyMode)) g_uiOnlyMode = !g_uiOnlyMode;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the UI on a flat screen canvas with the scene hidden.\nTip: View > UI Editor opens this as its own tab.");
@@ -44228,6 +44560,31 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 g_isolate = g_isolate ? nullptr : ed.selected();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show ONLY the selected object and its children in the Scene view.\nView-only: the Game view and Play mode are unaffected.");
         }
+        if (!uiPanel) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Overlays");
+            if (ImGui::MenuItem("Stats line (objects, FPS)", nullptr, g_view.statsLine)) { g_view.statsLine = !g_view.statsLine; SaveSettings(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The \"3D | 5 objects | 25 FPS | name\" line at the top left of the view.");
+            if (ImGui::MenuItem("Camera overlay", nullptr, g_view.camHud)) { g_view.camHud = !g_view.camHud; SaveSettings(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom, angle, eye, target and FOV of the Scene camera, in a see-through panel.\nClick its title in the view to fold it.");
+            if (ImGui::BeginMenu("Camera overlay corner", g_view.camHud)) {
+                for (int c = 0; c < okay::edlayout::kCornerCount; ++c)
+                    if (ImGui::MenuItem(okay::edlayout::CornerName(c), nullptr, g_view.camHudCorner == c)) { g_view.camHudCorner = c; SaveSettings(); }
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Collapse camera overlay", nullptr, g_view.camHudCollapsed, g_view.camHud)) { g_view.camHudCollapsed = !g_view.camHudCollapsed; SaveSettings(); }
+            ImGui::BeginDisabled(!g_view.camHud);
+            ImGui::SetNextItemWidth(130.0f * g_uiScale);
+            if (ImGui::SliderInt("Opacity##camhud", &g_view.camHudOpacityPct, 20, 100, "%d%%")) SaveSettings();
+            ImGui::EndDisabled();
+            if (ImGui::MenuItem("Object names", nullptr, g_view.showNames)) { g_view.showNames = !g_view.showNames; SaveSettings(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Names beside the selected object, cameras and lights. They keep clear of the gizmo, the\nother names and the overlays, and fade when the view is crowded.");
+        }
+        if (ImGui::MenuItem("Toolbar labels", nullptr, g_view.toolbarLabels)) { g_view.toolbarLabels = !g_view.toolbarLabels; SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the tool names beside the toolbar icons. Narrow views drop back to icons.");
+        if (ImGui::MenuItem("Maximize viewport", "Shift+Space", g_max.on)) g_maxToggle = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Scene fills the editor; press again to bring the other panels back.");
+        ImGui::Separator();
         bool camSel = ed.view3D && ed.selected() && ed.selected()->GetComponent<Camera>();
         // Align With View: snap the selected Camera to the editor eye.
         if (ImGui::MenuItem("Align camera to view", nullptr, false, camSel)) {
@@ -44282,7 +44639,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         if (ImGui::Button(zl, ImVec2(ImGui::GetFrameHeight() * 2.0f, 0))) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0, 0); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to reset zoom & pan to 1:1 (Ctrl+Wheel zooms)");
         ImGui::SameLine();
-        if (ImGui::Button("+##uizp", ImVec2(ImGui::GetFrameHeight(), 0))) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom + 0.1f, 0.25f, 4.0f);
+        if (oked::TipButton("Zoom in", "+##uizp", ImVec2(ImGui::GetFrameHeight(), 0))) g_uiEditZoom = Mathf::Clamp(g_uiEditZoom + 0.1f, 0.25f, 4.0f);
         ImGui::PopStyleVar();
         ImGui::SameLine();
         // The screen the UI is laid out against = the SAME resolution the Game view
@@ -44441,7 +44798,10 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
     // ---- View-axis gizmo (top-right corner, 3D view): shows the camera
     // orientation; CLICK an axis tip to snap to that view.
-    if (ed.view3D && canvasSize.x > 160.0f && canvasSize.y > 120.0f) {
+    // Drawn after the scene (a call below), so the 3D image does not cover it.
+    auto drawAxisGizmo = [&]() {
+    g_axisGizmoHot = false;
+    if (!(uiPanel || g_uiOnlyMode) && ed.view3D && canvasSize.x > 160.0f && canvasSize.y > 120.0f) {
         float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
         Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
                  Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
@@ -44470,6 +44830,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             adl->AddLine(c, tip, col, 2.0f);
             float dx = mp.x - tip.x, dy = mp.y - tip.y;
             bool hot = (dx * dx + dy * dy) < 64.0f && ImGui::IsWindowHovered();
+            if (hot) g_axisGizmoHot = true;
             adl->AddCircleFilled(tip, hot ? 7.0f : 5.0f, col);
             if (ax.lbl[0]) adl->AddText(ImVec2(tip.x - 3.5f, tip.y - 7.0f), IM_COL32(255, 255, 255, 230), ax.lbl);
             if (hot && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
@@ -44479,6 +44840,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                                        ax.a.x != 0 ? "X" : ax.a.y != 0 ? "Y" : "Z");
         }
     }
+    };
     if (canvasSize.x < 50) canvasSize.x = 50;
     if (canvasSize.y < 50) canvasSize.y = 50;
     ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
@@ -44743,15 +45105,16 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     }
     okay::UIResolutionScale() = 1.0f;   // never leak the UI-Only preview scale past this view
 
-    // Corner overlay (view mode, object count, live FPS, selection).
+    drawAxisGizmo();
+    // Corner overlay (view mode, object count, live FPS, selection): optional (Scene view menu), on a see-through
+    // pill so it reads on bright skies. The camera overlay and the name labels keep clear of it.
     OKAY_BREADCRUMB(uiPanel ? "UItab:corner" : "Scene:corner");
-    char overlay[160];
-    std::snprintf(overlay, sizeof(overlay), "%s  |  %d objects  |  %.0f FPS%s%s",
-                  ed.view3D ? "3D" : "2D", (int)ed.scene().Objects().size(),
-                  ImGui::GetIO().Framerate,
-                  ed.selected() ? "  |  " : "",
-                  ed.selected() ? ed.selected()->name.c_str() : "");
-    dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(200, 200, 210, 255), overlay);
+    if (g_view.statsLine) {
+        const std::string overlay = SceneStatsLineText(ed, canvasPos, canvasSize);
+        const Rc r = SceneStatsLineRect(canvasPos, overlay);
+        dl->AddRectFilled(ImVec2(r.x0, r.y0), ImVec2(r.x1, r.y1), IM_COL32(12, 14, 20, 110), 4.0f);
+        DrawOutlinedText(dl, ImVec2(r.x0 + 6.0f, r.y0 + 3.0f), IM_COL32(215, 218, 228, 255), overlay.c_str());
+    }
 
     OKAY_BREADCRUMB(uiPanel ? "UItab:end" : "Scene:end");
     ImGui::End();
@@ -45095,7 +45458,7 @@ static void DrawItemDatabase(EditorState& ed) {
                 ImGui::SetNextItemWidth(120); text("##k", d->custom[i].first, nullptr);
                 ImGui::SameLine(); ImGui::SetNextItemWidth(160); text("##v", d->custom[i].second, nullptr);
                 ImGui::SameLine();
-                if (ImGui::SmallButton("x")) { d->custom.erase(d->custom.begin() + i); ch = true; ImGui::PopID(); break; }
+                if (oked::TipSmallButton("Remove", "x")) { d->custom.erase(d->custom.begin() + i); ch = true; ImGui::PopID(); break; }
                 ImGui::PopID();
             }
             if (ImGui::SmallButton("+ Field")) { d->custom.push_back({"key", "value"}); ch = true; }

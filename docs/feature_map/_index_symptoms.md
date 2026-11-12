@@ -210,6 +210,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a reused bullet keeps its old speed or state | [1.13](01-core-scene.md#113-object-pooling) Object pooling |
 | a rig's skeleton spikes during a walk | [19.3](19-docs-tests-health.md#193-qa-workflow-rig-sweep-test) QA workflow, rig sweep test |
 | a road has gaps | [2.11](02-rendering-world.md#211-splines-and-spline-tools) Splines and spline tools |
+| a room needs its own background sound | [11.12](11-gameplay-systems.md#1112-volumes-and-zones) Volumes and zones |
 | a rope or pendulum stretches or explodes | [6.3](06-physics.md#63-joints) Joints |
 | a run is cancelled by a newer push | [18.3](18-build-export-release.md#183-ci-jobs) CI jobs |
 | a save file edit is not kept | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |
@@ -405,7 +406,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | cannot repeat a good world | [29.3](20-35-planned.md#293-procedural-generation) Procedural generation |
 | cannot see a local variable | [55.2](43-proposals.md#552-watch-and-call-stack) Watch and call stack |
 | cannot see where my raycast goes or what my AI targets | [54.1](43-proposals.md#541-debug-draw-api) Debug draw API |
-| cannot see where my triggers are | [44.4](43-proposals.md#444-volumes-and-zones) Volumes and zones |
+| cannot see where my zones are | [11.12](11-gameplay-systems.md#1112-volumes-and-zones) Volumes and zones |
 | cannot set a normal map in the material | [26.2](20-35-planned.md#262-material-editor) Material editor |
 | cannot show a kill from another angle | [46.2](43-proposals.md#462-state-replay-and-killcam) State replay and killcam |
 | cannot sign in | [37.9](37-platform-windowing.md#379-online-service-clients-shared-with-area-17) Online service clients (shared with area 17) |
@@ -501,7 +502,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | events fire twice or never | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
 | every object using the shared file changes at once | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | every tree in the forest looks the same | [3.10](03-modeling-import.md#310-add-library-and-procedural-props) Add library and procedural props |
-| every zone type is set up differently | [44.4](43-proposals.md#444-volumes-and-zones) Volumes and zones |
 | everything the same volume | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | F-keys or Alt cannot be bound | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
 | faces dark | [3.6](03-modeling-import.md#36-model-import) Model import |
@@ -523,6 +523,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | focus jumps to a surprising widget | [32.1](20-35-planned.md#321-controller-navigation) Controller navigation |
 | focus lost after a popup closes | [32.1](20-35-planned.md#321-controller-navigation) Controller navigation |
 | focus ring stays on a hidden widget | [12.12](12-ingame-ui.md#1212-ui-input-focus-and-navigation) UI input, focus and navigation |
+| fog should change in a cave | [11.12](11-gameplay-systems.md#1112-volumes-and-zones) Volumes and zones |
 | forged syncvar" or "rpc rejected" in the log | [16.6](16-networking.md#166-anti-cheat-server-side) Anti-cheat (server side) |
 | forged syncvar", "rpc rejected", "hit rejected" in the log | [39.1](39-security-anticheat.md#391-server-authority-checks-and-gameplay-validation) Server authority checks and gameplay validation |
 | Format changes code | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
@@ -672,7 +673,10 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | need a browser to read the manual | [57.3](43-proposals.md#573-docs-inside-the-editor) Docs inside the editor |
 | need a DLL for a platform service | [24.1](20-35-planned.md#241-c-plugins) C++ plugins |
 | need a high score table that works on and off Steam | [49.2](43-proposals.md#492-leaderboards) Leaderboards |
+| need a navigation area that costs more | [44.4](43-proposals.md#444-volumes-and-zones) Volumes and zones |
+| need a reverb zone for a cave | [44.4](43-proposals.md#444-volumes-and-zones) Volumes and zones |
 | need a squishy character or slime | [52.2](43-proposals.md#522-soft-bodies) Soft bodies |
+| need a wind tunnel or a fan | [11.12](11-gameplay-systems.md#1112-volumes-and-zones) Volumes and zones |
 | need to add temporary cubes to debug | [54.1](43-proposals.md#541-debug-draw-api) Debug draw API |
 | need to click an enemy in the Game view to see its health | [34.2](20-35-planned.md#342-live-object-inspector) Live object inspector |
 | need to record a trailer | [50.3](43-proposals.md#503-video-recording) Video recording |
@@ -680,6 +684,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | new project is empty or missing the controller I expected | [25.1](20-35-planned.md#251-templates) Templates |
 | no autosave for a scene I never saved | [22.2](20-35-planned.md#222-autosave) Autosave |
 | no captions for sounds | [32.2](20-35-planned.md#322-subtitles) Subtitles |
+| no checkpoint between rooms | [11.12](11-gameplay-systems.md#1112-volumes-and-zones) Volumes and zones |
 | no clouds or bloom in the browser | [38.7](38-render-backends.md#387-web-webgl-path) Web (WebGL) path |
 | no console output on Windows (use `--log`) | [42.6](42-examples-samples.md#426-standalone-player-runtime) Standalone player runtime |
 | no emoji colour | [17.4](17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji |
@@ -1041,6 +1046,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the player cannot crouch or go prone | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
 | the player clips into a wall corner | [6.8](06-physics.md#68-forces-explosions-and-body-push-out) Forces, explosions and body push-out |
 | the player dives when it should slide | [11.7](11-gameplay-systems.md#117-combat-actions-melee-dodge-dive) Combat actions: melee, dodge, dive |
+| the player falls into lava and stays dead | [11.12](11-gameplay-systems.md#1112-volumes-and-zones) Volumes and zones |
 | the player falls through the tilemap | [2.6](02-rendering-world.md#26-terrain-and-water) Terrain and water |
 | the player floats, slides or jumps badly | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | the player has no foot IK or Animator until set up by hand | [5.13](05-animation-ik.md#513-player-animation-setup) Player animation setup |

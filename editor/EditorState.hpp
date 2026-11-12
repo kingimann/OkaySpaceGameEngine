@@ -300,6 +300,10 @@ public:
     /// Write the open prefab to its file. Objects outside the prefab's root are not part of it; `warning`
     /// says so when there are some. Marks the level saved. False (file untouched, `error` says why) on failure.
     bool SavePrefab(std::string* error = nullptr, std::string* warning = nullptr);
+    /// True when the open prefab's file is not what Open / the last Save / Revert read or wrote (changed or removed
+    /// by something else). Save then refuses once, saying so; saving again overwrites the file with your version.
+    bool PrefabChangedOnDisk() const;
+    static std::uint64_t PrefabDiskPrint(const std::string& path);
     /// Throw the open level's edits away and read the file again (one undo step; the level counts as saved).
     bool RevertPrefab(std::string* error = nullptr);
     /// Leave the open prefab and go back one level. `save` writes it first (leaving is cancelled if that
@@ -435,7 +439,7 @@ private:
         std::vector<std::unique_ptr<ICommand>> extras;   // already-applied edits of editor-side state that belong to the same step
     } m_pending;
     // Prefab mode: the documents put aside under the open one (see OpenPrefab).
-    struct PrefabSession { std::string path; std::string rootGuid; std::vector<std::string> saved; };   ///< what the open document is (path "" = the scene) and the prefab files saved in it or in levels opened from it
+    struct PrefabSession { std::string path; std::string rootGuid; std::vector<std::string> saved; std::uint64_t disk = 0; bool overwriteArmed = false; };   ///< what the open document is (path "" = the scene) and the prefab files saved in it or in levels opened from it
     struct Level {
         std::string text, path, name;     // the scene text, file and name of the document put aside
         PrefabSession ses;                // what it is (a scene, or a prefab at some depth)

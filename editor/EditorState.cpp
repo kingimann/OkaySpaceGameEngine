@@ -1377,7 +1377,7 @@ bool EditorState::OpenPrefab(const std::string& pathIn, std::string* error) {
     m_stack->SetMaxCommands(kMaxUndo);
     m_stack->SetMergeWindow(1.0f);
     m_levels.push_back(std::move(lv));
-    m_ses = PrefabSession{path, guid, {}};
+    m_ses = PrefabSession{path, guid, {}, PrefabDiskPrint(path), false};
     m_scene.SetName(StemOf(path));
     autoCamera = nullptr;
     m_pending = Pending{};
@@ -1402,17 +1402,32 @@ bool EditorState::OpenPrefabOf(GameObject* go, std::string* error) {
     return OpenPrefab(r->prefabSource, error);
 }
 
+std::uint64_t EditorState::PrefabDiskPrint(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return 0;
+    std::string t((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return Fingerprint(t) | 1;   // never 0: 0 means "no file"
+}
+
+bool EditorState::PrefabChangedOnDisk() const { return !m_levels.empty() && PrefabDiskPrint(m_ses.path) != m_ses.disk; }
+
 bool EditorState::SavePrefab(std::string* error, std::string* warning) {
     auto fail = [&](const std::string& m) { if (error) *error = m; return false; };
     if (m_levels.empty()) return fail("No prefab is open.");
     GameObject* root = PrefabRootObject();
     if (!root) return fail("The prefab's root object was deleted, so there is nothing to save. Undo the delete, or go Back and discard.");
+    if (PrefabChangedOnDisk() && !m_ses.overwriteArmed) {   // never replace someone else's change without saying so
+        m_ses.overwriteArmed = true;
+        return fail(fs::path(m_ses.path).filename().string() + " was changed outside the editor since you opened it, so saving would replace that change. Nothing was written. Save again to overwrite the file with your version, or Revert to load the file as it is now.");
+    }
     int outside = 0;
     for (const auto& up : m_scene.Objects())
         if (!up->transient && !up->IsDestroyed() && up.get() != root && !up->transform->Parent()) ++outside;
     std::string err;
     if (!PrefabTools::SavePrefab(*root, m_ses.path, &err)) return fail("Couldn't save " + fs::path(m_ses.path).filename().string() + ": " + err);
     if (std::find(m_ses.saved.begin(), m_ses.saved.end(), m_ses.path) == m_ses.saved.end()) m_ses.saved.push_back(m_ses.path);
+    m_ses.disk = PrefabDiskPrint(m_ses.path);
+    m_ses.overwriteArmed = false;
     MarkClean();
     if (warning && outside)
         *warning = std::to_string(outside) + (outside == 1 ? " object sits" : " objects sit") + " outside the prefab's root and was not saved. Drag it under the root to include it.";
@@ -1432,6 +1447,8 @@ bool EditorState::RevertPrefab(std::string* error) {
     m_scene.SetName(StemOf(m_ses.path));
     Select(PrefabRootObject());
     SyncHistory();                                  // records "Revert Prefab" (nothing when there was nothing to revert)
+    m_ses.disk = PrefabDiskPrint(m_ses.path);       // the file as it is now is what was read
+    m_ses.overwriteArmed = false;
     m_savedPrint = Fingerprint(m_known);            // what is on screen is the file
     m_stack->MarkSaved();
     dirty = false;
@@ -1519,6 +1536,8 @@ bool EditorState::SaveAllPrefabLevels(std::string* error, int fromDepth) {
     for (int i = (int)m_levels.size() - 1; i >= std::max(fromDepth, 0); --i) {   // innermost first
         Level& lv = m_levels[(std::size_t)i];
         if (!lv.unsaved) continue;
+        if (!lv.ses.path.empty() && PrefabDiskPrint(lv.ses.path) != lv.ses.disk)
+            return fail(fs::path(lv.ses.path).filename().string() + " was changed outside the editor, so it was not overwritten. Go back to it and Save (twice to overwrite) or Revert.");
         Scene tmp("level");
         tmp.runScripts = false;
         if (!SceneSerializer::Deserialize(tmp, lv.text)) return fail("Couldn't read the put-aside " + (lv.ses.path.empty() ? std::string("scene") : StemOf(lv.ses.path)) + " to save it.");
@@ -1531,6 +1550,7 @@ bool EditorState::SaveAllPrefabLevels(std::string* error, int fromDepth) {
             if (!root) return fail("The root of " + StemOf(lv.ses.path) + " was deleted; nothing to save.");
             if (!PrefabTools::SavePrefab(*root, lv.ses.path, &err)) return fail("Couldn't save " + fs::path(lv.ses.path).filename().string() + ": " + err);
             if (std::find(lv.ses.saved.begin(), lv.ses.saved.end(), lv.ses.path) == lv.ses.saved.end()) lv.ses.saved.push_back(lv.ses.path);
+            lv.ses.disk = PrefabDiskPrint(lv.ses.path);
         }
         lv.savedPrint = Fingerprint(lv.text);
         lv.unsaved = false;

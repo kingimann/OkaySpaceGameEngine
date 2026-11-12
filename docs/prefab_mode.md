@@ -70,7 +70,12 @@ while one is open adds an instance of it inside the open prefab (a nested prefab
   prefab; the Console warns with the count when you save. Drag them under the root.
 - **No crash-recovery copy** of a prefab being edited: the recovery autosave covers scenes. Save is
   explicit.
-- A prefab file changed outside the editor while it is open is overwritten by Save; there is no merge.
+- **A prefab file changed (or removed) outside the editor while it is open is never replaced silently.** The
+  editor remembers what the file held when it was opened, saved or reverted. If it differs at Save, the first
+  Save writes nothing and says so (Console and a message box); your edits stay open. Press Save again to
+  overwrite the file with your version, or Revert to load the file as it is now. Save Project and the leave
+  prompt behave the same, and a prefab level put aside is refused (not overwritten) until you go back to it.
+  There is no merge of the two versions.
 - A scene without a file yet cannot be saved from inside a prefab (Save Project says so); go Back and save it.
 
 ## For code

@@ -383,6 +383,28 @@ void TestSaveAllAndLeavingTheSession() {
     ed.Stop();
 }
 
+void TestChangedOutside() {
+    RUN_SUITE("prefab mode: a file changed outside the editor is never replaced silently");
+    TempDir d; Files f = MakeFiles(d);
+    EditorState ed; MakeScene(ed, f);
+    std::string err;
+    CHECK(ed.OpenPrefab(f.enemy, &err));
+    CHECK(!ed.PrefabChangedOnDisk());
+    AddHat(ed); ed.CommitUndo();
+    const std::string theirs = ReadAll(f.enemy) + "# edited elsewhere\n";
+    { std::ofstream o(f.enemy, std::ios::binary); o << theirs; }
+    CHECK(ed.PrefabChangedOnDisk());
+    CHECK(!ed.SavePrefab(&err) && Has(err, "changed outside the editor"));
+    CHECK(ReadAll(f.enemy) == theirs && ed.HasUnsavedChanges());     // nothing written, edits kept
+    CHECK(ed.SavePrefab(&err));                                        // asked again: overwrites
+    CHECK(ReadAll(f.enemy) != theirs && Has(ReadAll(f.enemy), "Hat") && !ed.PrefabChangedOnDisk());
+    // Revert takes the file as it is now
+    AddHat(ed, "Cap"); ed.CommitUndo();
+    { const std::string cur = ReadAll(f.enemy); std::ofstream o(f.enemy, std::ios::binary); o << cur << "\n\n"; }
+    CHECK(ed.RevertPrefab(&err) && !ed.PrefabChangedOnDisk() && Count(ed, "Cap") == 0);
+    CHECK(ed.ClosePrefab(false, &err));
+}
+
 void TestRefreshKeepsPlace() {
     RUN_SUITE("prefab instances: a rebuilt top-level instance keeps its place");
     TempDir d; Files f = MakeFiles(d);
@@ -410,6 +432,7 @@ int main() {
     TestSaveFailureAndDeletedRoot();
     TestNested();
     TestSaveAllAndLeavingTheSession();
+    TestChangedOutside();
     TestRefreshKeepsPlace();
     TEST_MAIN_RESULT();
 }

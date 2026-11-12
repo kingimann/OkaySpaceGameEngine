@@ -59,6 +59,7 @@
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/SurvivalZone.hpp"
+#include "okay/Components/Volume.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
@@ -78,6 +79,8 @@
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshLink.hpp"
+#include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -648,7 +651,7 @@ bool AllowsMultiple(const Component* c) {
            dynamic_cast<const Joint2D*>(c) || dynamic_cast<const Joint3D*>(c) ||          // one joint per neighbour
            dynamic_cast<const Spawner*>(c) || dynamic_cast<const Light*>(c) || dynamic_cast<const ParticleSystem*>(c) ||
            dynamic_cast<const TriggerZone*>(c) || dynamic_cast<const UIAnimation*>(c) ||
-           dynamic_cast<const SequencePlayer*>(c) || dynamic_cast<const QuestTrigger*>(c);
+           dynamic_cast<const SequencePlayer*>(c) || dynamic_cast<const QuestTrigger*>(c) || dynamic_cast<const Volume*>(c);
 }
 
 // `compoff` records for every component that is switched off (per-component flags
@@ -3503,6 +3506,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("bcx", ns->boundsCenter.x)("bcy", ns->boundsCenter.y)("bcz", ns->boundsCenter.z)
          ("bsx", ns->boundsSize.x)("bsy", ns->boundsSize.y)("bsz", ns->boundsSize.z)
          .b("dyn", ns->includeDynamic)("layers", ns->layerMask).b("bakeplay", ns->bakeBeforePlay);
+        for (int a = 0; a < kNavAreaCount; ++a) {   // only what differs from the defaults
+            if (ns->areaCost[a] != NavAreaDefaultCost(a)) k(("ac" + std::to_string(a)).c_str(), ns->areaCost[a]);
+            if (!ns->areaName[a].empty()) k.str(("an" + std::to_string(a)).c_str(), ns->areaName[a]);
+        }
         out << "\n";
     }
     if (auto* na = go->GetComponent<NavMeshAgent>()) {
@@ -3511,7 +3518,22 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         k("radius", na->radius)("height", na->height)("speed", na->speed)("accel", na->acceleration)
          ("angular", na->angularSpeed)("stop", na->stoppingDistance).b("repath", na->autoRepath)
          ("repathT", na->repathInterval)("prio", na->avoidancePriority)("avoid", na->avoidanceRange)
-         .b("brake", na->autoBraking).b("face", na->faceMovement).b("anim", na->driveAnimation)("base", na->baseOffset);
+         .b("brake", na->autoBraking).b("face", na->faceMovement).b("anim", na->driveAnimation)("base", na->baseOffset)
+         ("mask", na->areaMask);
+        out << "\n";
+    }
+    if (auto* nm = go->GetComponent<NavMeshModifier>()) {
+        out << "  navmod";
+        KvOut k{out};
+        k("area", nm->area).b("kids", nm->applyToChildren);
+        out << "\n";
+    }
+    if (auto* nl = go->GetComponent<NavMeshLink>()) {
+        out << "  navlink";
+        KvOut k{out};
+        k("type", (int)nl->type)("sx", nl->startPoint.x)("sy", nl->startPoint.y)("sz", nl->startPoint.z)
+         ("ex", nl->endPoint.x)("ey", nl->endPoint.y)("ez", nl->endPoint.z).b("both", nl->bidirectional)
+         ("cost", nl->cost)("area", nl->area)("speed", nl->speed)("arc", nl->arcHeight);
         out << "\n";
     }
     if (auto* no = go->GetComponent<NavMeshObstacle>()) {
@@ -8362,6 +8384,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("bcx", ns->boundsCenter.x); k.f("bcy", ns->boundsCenter.y); k.f("bcz", ns->boundsCenter.z);
                     k.f("bsx", ns->boundsSize.x); k.f("bsy", ns->boundsSize.y); k.f("bsz", ns->boundsSize.z);
                     k.b("dyn", ns->includeDynamic); k.u("layers", ns->layerMask); k.b("bakeplay", ns->bakeBeforePlay);
+                    for (int a = 0; a < kNavAreaCount; ++a) {
+                        k.f(("ac" + std::to_string(a)).c_str(), ns->areaCost[a]);
+                        k.str(("an" + std::to_string(a)).c_str(), ns->areaName[a]);
+                    }
                     ns->sceneDir = g_loadingSceneDir;   // the .okaynav is looked for next to the scene too
                 } else if (field == "navagent") {
                     auto* na = go->AddComponent<NavMeshAgent>();
@@ -8370,7 +8396,21 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("accel", na->acceleration); k.f("angular", na->angularSpeed); k.f("stop", na->stoppingDistance);
                     k.b("repath", na->autoRepath); k.f("repathT", na->repathInterval); k.i("prio", na->avoidancePriority);
                     k.f("avoid", na->avoidanceRange); k.b("brake", na->autoBraking); k.b("face", na->faceMovement);
-                    k.b("anim", na->driveAnimation); k.f("base", na->baseOffset);
+                    k.b("anim", na->driveAnimation); k.f("base", na->baseOffset); k.u("mask", na->areaMask);
+                } else if (field == "navmod") {
+                    auto* nm = go->AddComponent<NavMeshModifier>();
+                    KvIn k(in);
+                    k.i("area", nm->area); k.b("kids", nm->applyToChildren);
+                    nm->area = std::clamp(nm->area, 0, kNavAreaCount - 1);
+                } else if (field == "navlink") {
+                    auto* nl = go->AddComponent<NavMeshLink>();
+                    KvIn k(in);
+                    int ty = 0; k.i("type", ty); nl->type = (NavMeshLink::Type)std::clamp(ty, 0, 2);
+                    k.f("sx", nl->startPoint.x); k.f("sy", nl->startPoint.y); k.f("sz", nl->startPoint.z);
+                    k.f("ex", nl->endPoint.x); k.f("ey", nl->endPoint.y); k.f("ez", nl->endPoint.z);
+                    k.b("both", nl->bidirectional); k.f("cost", nl->cost); k.i("area", nl->area);
+                    k.f("speed", nl->speed); k.f("arc", nl->arcHeight);
+                    nl->area = std::clamp(nl->area, 0, kNavAreaCount - 1);
                 } else if (field == "navobstacle") {
                     auto* no = go->AddComponent<NavMeshObstacle>();
                     KvIn k(in);
@@ -9149,6 +9189,43 @@ void RegisterBuiltinComponentSerializers() {
             lg->RebuildFromRatios(mr->DisplayMesh());
     };
     ComponentSerializerRegistry::Register(std::move(lod));
+
+    ComponentSerializerRegistry::Entry vol;
+    vol.name = "volume";
+    vol.write = [](const GameObject& go, std::ostream& out) {
+        for (const Volume* v : go.GetComponents<Volume>()) {
+            if (!v) continue;
+            out << "  volume";
+            KvOut k{out};
+            k("kind", (int)v->kind)("shape", (int)v->shape)
+             ("sx", v->size.x)("sy", v->size.y)("sz", v->size.z)
+             ("ox", v->offset.x)("oy", v->offset.y)("oz", v->offset.z)
+             .str("tag", v->activatorTag).str("event", v->eventName)
+             ("kact", v->killAction)("kdmg", v->killDamage)
+             ("fshape", v->forceShape)("fx", v->forceDirection.x)("fy", v->forceDirection.y)("fz", v->forceDirection.z)
+             .b("flocal", v->forceLocal)("fstr", v->forceStrength)
+             .col("fog", v->fogColor)("fstart", v->fogStart)("fend", v->fogEnd)("vig", v->vignette)("blend", v->blend)
+             ("fade", v->fadeTime);
+            out << "\n";
+        }
+    };
+    vol.read = [](GameObject& go, std::istream& in) {
+        auto* v = go.AddComponent<Volume>();
+        KvIn k(in);
+        int kind = 0, shape = 0;
+        k.i("kind", kind); k.i("shape", shape);
+        v->kind = (Volume::Kind)std::clamp(kind, 0, Volume::kKindCount - 1);
+        v->shape = (VolumeShape)std::clamp(shape, 0, kVolumeShapeCount - 1);
+        k.f("sx", v->size.x); k.f("sy", v->size.y); k.f("sz", v->size.z);
+        k.f("ox", v->offset.x); k.f("oy", v->offset.y); k.f("oz", v->offset.z);
+        k.str("tag", v->activatorTag); k.str("event", v->eventName);
+        k.i("kact", v->killAction); k.f("kdmg", v->killDamage);
+        k.i("fshape", v->forceShape); k.f("fx", v->forceDirection.x); k.f("fy", v->forceDirection.y); k.f("fz", v->forceDirection.z);
+        k.b("flocal", v->forceLocal); k.f("fstr", v->forceStrength);
+        k.col("fog", v->fogColor); k.f("fstart", v->fogStart); k.f("fend", v->fogEnd); k.f("vig", v->vignette); k.f("blend", v->blend);
+        k.f("fade", v->fadeTime);
+    };
+    ComponentSerializerRegistry::Register(std::move(vol));
 
     ComponentSerializerRegistry::Entry occ;
     occ.name = "occluder";

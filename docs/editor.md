@@ -817,13 +817,28 @@ step, a press that changes nothing is none, and a field that already made its ow
   Project panel use the same `ASSET_PATH` payload as before. The registry field also checks the kind (an `image`
   field takes pictures only). Object fields take a drag from the Hierarchy (`GO_PTR`), have a searchable picker and a
   clear button.
-- Prefab: the banner stays. Under it, **Changed from the prefab** lists every record that differs (what changed, with
-  old and new value) with **Revert** and **Apply** per change, and **Revert All** / **Apply All** for the instance
-  root. A component header turns blue when its component is changed. Objects inside an instance say which prefab they
-  belong to. (Uses `PrefabTools::Diff`, `RevertOverride`, `ApplyToSource`.)
+- Prefab: see "Prefab instances in the Inspector and Hierarchy" below (header, per-property marks, Create Variant).
 - **Save as Prefab** in the Inspector header now saves into the project's `Assets` folder (it used to write into the
   editor's working folder).
 
+
+### Prefab instances in the Inspector and Hierarchy
+
+Everything below is wired to `PrefabTools` (nothing is a second prefab system); the full list is in
+[prefab_system.md](prefab_system.md#in-the-editor).
+- **Header.** An object in a prefab instance shows **Prefab: <name>** with **Open**, **Select Asset**, **Revert All**,
+  **Apply All**, **Create Variant**, **Update All** and **Unpack** (an object inside the instance also has **Select Instance
+  Root**). Revert All and Apply All are off, with a tooltip, when nothing differs.
+- **Per property.** A property that differs from the prefab has a blue bar at the left of its row; right-click it for
+  **Revert Property** / **Apply Property to Prefab**. The component's `...` menu has **Revert Component to Prefab** /
+  **Apply Component to Prefab**.
+- **Changed from the prefab** lists components, fields (old -> new), components added or lost, and child objects added or
+  lost, each with Revert and Apply.
+- **Apply** writes the prefab file and updates the other instances in the scene that did not change the same thing.
+  Every action is one undo step that moves the prefab file back and forth with the scene.
+- **Hierarchy.** Blue mark: instance root; violet: instance of a variant; square in a square: a prefab nested in
+  another; orange dot: differs from its prefab. Row menu > **Prefab**. Project panel: **Create Variant** on a prefab.
+- Tests: `prefab_editor` (`tests/test_prefab_editor.cpp`).
 
 ### Inspector and Hierarchy, finishing pass
 
@@ -833,7 +848,7 @@ step, a press that changes nothing is none, and a field that already made its ow
 - **Tooltips on the fields.** Hover any field of the commonly used components (Transform, Rigidbody 2D/3D, colliders,
   Light, Camera, Audio Source, Sprite and Mesh Renderer) for a short plain explanation. Every property of those
   components has one (tested in `tests/test_inspector_model.cpp`).
-- **Revert keeps the place.** Reverting a top-level prefab instance (Revert, Revert All, or the banner's Revert) no
+- **Revert keeps the place.** Reverting a top-level prefab instance (Revert, Revert All) no
   longer moves it to the end of the Hierarchy list.
 - **Wider Inspector.** The default layout (and Reset Layout) gives the Inspector about 40% of the width beside the
   Scene view, so rows are not cramped. Layouts you saved are not changed.

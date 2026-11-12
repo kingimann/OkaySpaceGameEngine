@@ -99,7 +99,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "meshseams", "meshshade", "meshshadows", "meshuv", "meshvar", "minimap", "minimapblip",
     "mod", "modelanim", "modelanimair", "modelanimblend", "modelanimcubic", "modelanimdir", "modelanimdrive",
     "modelanimevents", "modelanimlegs", "modelanimroot", "modelanimsmooth", "modelanimstance", "modelanimstride", "modstack",
-    "mover", "music", "navagent", "navobstacle", "navsurface", "netinventory", "netobject",
+    "mover", "music", "navagent", "navlink", "navmod", "navobstacle", "navsurface", "netinventory", "netobject",
     "netprefab", "netsync", "nettransform", "netvalidator", "network", "normalmap", "npc",
     "npcstance", "npcwp", "npspawner", "objholding", "outline", "override", "p25ctrl",
     "parent", "particles", "particlesfx", "particleswind", "pausemenu", "pcfirst", "pcfirstfeel",

@@ -122,6 +122,9 @@ add_library(okay_engine
     src/Components/UIDraggable.cpp
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
+    src/Components/Foliage.cpp
+    src/Components/Cable.cpp
+    src/Components/Decal.cpp
     src/Components/VoxelTerrain.cpp
     src/Components/Character.cpp
     src/Components/ModelAnimatorPose.cpp
@@ -207,6 +210,7 @@ add_library(okay_engine
     src/Modeling/UVUnwrap.cpp
     src/Components/LODGroup.cpp
     src/Render/Visibility.cpp
+    src/Render/SurfaceRaycast.cpp
     src/Optimize/MeshSimplify.cpp
     src/Optimize/LodGroup.cpp
     src/Optimize/OcclusionBuffer.cpp
@@ -442,6 +446,12 @@ if(OKAY_USE_ASSIMP)
     target_sources(okay_engine PRIVATE src/Render/ModelImportAssimp.cpp)   # the only file that includes Assimp
     message(STATUS "OkaySpace: Assimp model import ENABLED (DAE/STL/PLY/3DS/Blend/X/3MF/AMF/X3D/MD2/MD3/MD5/MDL/SMD/MS3D/LWO/DXF/OFF/AC/B3D/BVH/PMX/...)")
 endif()
+
+# The platform seam (windows / events / GL context / timers / clipboard / audio device /
+# gamepad): see cmake/OkayPlatform.cmake. Everything that used SDL for those goes through it.
+include(${CMAKE_SOURCE_DIR}/cmake/OkayPlatform.cmake)
+okay_add_platform_library()
+target_link_libraries(okay_engine PUBLIC okay_platform)
 
 # Our own STL / PLY readers are always built. With Assimp also on, this picks which one
 # a format uses by default (docs/model_import.md); SetImportBackend() changes it at run time.

@@ -3,6 +3,7 @@
 #include "VersionsUI.hpp"
 
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 
 #include <algorithm>
 #include <atomic>
@@ -185,7 +186,7 @@ void RefreshInstalled(const Host& h) {
     for (const Installed& i : st.installed) st.installedVersions.push_back(i.version);
     st.usage = DiskUsage(h.launcherDir);
     st.installedDirty = false;
-    st.installedAt = SDL_GetTicks();
+    st.installedAt = okay::platform::TicksMs32();
 }
 
 void ResolveHighlight() {
@@ -718,9 +719,9 @@ bool InstallRunning() { return S().job != nullptr; }
 
 const std::vector<std::string>& InstalledVersionsCached(const fs::path& launcherDir) {
     State& st = S();
-    if (st.installedDirty || SDL_GetTicks() - st.installedAt > 2500) {
+    if (st.installedDirty || okay::platform::TicksMs32() - st.installedAt > 2500) {
         st.installedVersions = okayver::InstalledVersions(launcherDir);
-        st.installedAt = SDL_GetTicks();
+        st.installedAt = okay::platform::TicksMs32();
         // (the full list with sizes is refreshed by the page itself)
     }
     return st.installedVersions;
@@ -735,7 +736,7 @@ void Tick(const Host& h) {
         st.index = std::move(st.indexJob->result);
         st.indexJob.reset();
         st.haveIndex = true;
-        st.indexAt = SDL_GetTicks();
+        st.indexAt = okay::platform::TicksMs32();
         if (st.index.ok && !st.index.lts.empty()) {
             Settings& set = GlobalSettings();
             const std::string line = okayver::LineOf(st.index.lts);
@@ -770,7 +771,7 @@ void Tick(const Host& h) {
 void DrawPage(const Host& h) {
     State& st = S();
     if (!st.haveIndex && !st.indexJob) StartIndex(h);
-    if (st.installedDirty || SDL_GetTicks() - st.installedAt > 10000) RefreshInstalled(h);
+    if (st.installedDirty || okay::platform::TicksMs32() - st.installedAt > 10000) RefreshInstalled(h);
     DrawRequestBanner(h);
     DrawThisVersion(h);
     DrawChannel(h);

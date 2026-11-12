@@ -9,7 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
-#include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
+#include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "FpHandsWindow.hpp"
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
 #include "TimelineWindow.hpp"          // the Timeline window (cutscene sequences)
@@ -20,6 +20,7 @@
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
+#include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
@@ -644,6 +645,7 @@ int main(int argc, char** argv) {
 // `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
@@ -1242,12 +1244,12 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // the software rasterizer. A self-heal counter disables the GPU path after
     // repeated failures so the viewport is never stuck.
     const std::uint32_t* px = nullptr;
-    Uint64 g_renderT0 = SDL_GetPerformanceCounter();   // GPU/software render time (read-back is synchronous)
+    Uint64 g_renderT0 = okay::platform::PerfCounter();   // GPU/software render time (read-back is synchronous)
     // After repeated GPU failures, rest on the software renderer briefly and then
     // RETRY — previously one bad spell disabled the GPU for the whole session,
     // silently leaving big scenes to the CPU rasterizer at 1 FPS.
     static Uint32 s_gpuRetryAt = 0;
-    if (g_gpuRender && SDL_GetTicks() >= s_gpuRetryAt) {
+    if (g_gpuRender && okay::platform::TicksMs32() >= s_gpuRetryAt) {
 #if defined(_WIN32)
         // Zero-copy: render straight into the SDL texture the panel shows.
         // (The small Animation preview, slot 3, keeps the read-back path: it renders
@@ -1259,8 +1261,8 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                     SDL_RenderFlush(g_sdlRenderer);   // SDL's queued draws go first
                     if (g_d3dRenderer->RenderToTexture(scene, vp, eye, rw, rh, 4, 0.0f, 0.0f, 0.0f, 0.0f, dst, ignore)) {
                         okay::SceneOcclusionDepth().valid = false;
-                        Uint64 r1 = SDL_GetPerformanceCounter();
-                        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)SDL_GetPerformanceFrequency() * 1000.0);
+                        Uint64 r1 = okay::platform::PerfCounter();
+                        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)okay::platform::PerfFrequency() * 1000.0);
                         return t;
                     }
                 }
@@ -1295,7 +1297,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         if (!px) {
             if (++s_gpuFails >= 3) {
                 s_gpuFails = 0;
-                s_gpuRetryAt = SDL_GetTicks() + 5000;   // rest 5s on software, then retry
+                s_gpuRetryAt = okay::platform::TicksMs32() + 5000;   // rest 5s on software, then retry
                 ConsoleLog("GPU renderer failing; using the software renderer briefly, will retry.", 1);
             }
         } else s_gpuFails = 0;
@@ -1321,8 +1323,8 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     }
     if (!px) return nullptr;   // every renderer failed — don't feed SDL a null buffer
     {   // Record the (synchronous) render time as the profiler's GPU proxy.
-        Uint64 r1 = SDL_GetPerformanceCounter();
-        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)SDL_GetPerformanceFrequency() * 1000.0);
+        Uint64 r1 = okay::platform::PerfCounter();
+        okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)okay::platform::PerfFrequency() * 1000.0);
     }
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh || g_view3DIsTarget[slot]) {
         if (g_view3DTex[slot]) DestroyViewTexture(slot);
@@ -1406,6 +1408,7 @@ SDL_Texture* RenderCameraStackView(const Scene& scene, int w, int h, int slot, c
 // exactly SDL_PIXELFORMAT_ABGR8888 byte order on little-endian. Returns nullptr
 // if the image can't be loaded.
 SDL_Texture* GetThumb(const std::string& path) {
+    if (!path.empty() && path[0] == '@') return nullptr;   // a picture made in memory (a terrain's baked layers): no file to read
     static std::unordered_map<std::string, SDL_Texture*> cache;
     auto it = cache.find(path);
     if (it != cache.end()) return it->second;
@@ -2406,7 +2409,7 @@ float  g_docAutosaveSec = 30.0f;     // seconds between recovery copies (graphs,
 bool   g_autosaveToFile = false;     // also overwrite the real file (off unless chosen)
 double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI)
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
-Uint64 g_lastSavedAt = 0;        // SDL_GetTicks64() of the last successful scene save (0 = none this session)
+Uint64 g_lastSavedAt = 0;        // okay::platform::TicksMs() of the last successful scene save (0 = none this session)
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
 std::vector<std::string> g_recent; // recently opened/saved scene paths
 std::string g_clipboard;         // serialized GameObject for copy/paste
@@ -3176,6 +3179,7 @@ float g_uiResizeRaw[4] = {0, 0, 0, 0};   // left, top, right, bottom
 Vec2  g_uiDragRaw{0, 0};
 bool  g_gizmoLocal = false; // gizmo axes in the object's local space
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
+bool& TerrainSculptRef() { return g_terrainSculpt; }   // LevelTools.cpp: its brushes and the sculpt brush take turns
 float g_terrainRadius = 6.0f;
 float g_terrainStrength = 4.0f;
 int   g_terrainBrush = 0;      // 0 Raise/Lower, 1 Smooth, 2 Flatten, 3 Set Height, 4 Noise, 5 Erode
@@ -3562,7 +3566,7 @@ ImVec2 g_uiMarqueeA{0, 0}, g_uiMarqueeB{0, 0};   // absolute screen corners of t
 int   g_spriteHandle = -1;   // 0..7 sprite resize handle being dragged in the 2D view
 
 // First connected game controller (opened in main); fed into Input during Play.
-SDL_GameController* g_pad = nullptr;
+std::unique_ptr<okay::platform::Gamepad> g_pad;
 // Top-left of the canvas the running game is previewed in (Game view if shown,
 // otherwise the Scene viewport). Mouse input is fed relative to this so UI
 // buttons hit-test correctly while playing.
@@ -6107,7 +6111,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::SliderFloat("Interval (s)", &g_docAutosaveSec, 5.0f, 300.0f, "%.0f")) SaveSettings();
             if (g_autosaveStamp > 0.0)
                 ImGui::TextDisabled("Last autosave: %.0fs ago",
-                                    SDL_GetTicks64() / 1000.0 - g_autosaveStamp);
+                                    okay::platform::TicksMs() / 1000.0 - g_autosaveStamp);
             ImGui::TextDisabled("Unsaved graphs, scripts and the scene go to the");
             ImGui::TextDisabled("recovery folder. Real files stay as you saved them.");
             ImGui::TextDisabled("A leftover <scene>.autosave is still offered on open");
@@ -6551,6 +6555,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             created = true;
         }
         if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
+        LevelCreateMenuItems(ed, created);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         oked::DrawVolumeGameObjectMenu(ed, created);
         if (ImGui::MenuItem("Create Tilemap")) {
@@ -6971,7 +6976,7 @@ void DrawStatusBar(EditorState& ed) {
         ImGui::SameLine(0, 4);
         ImGui::TextColored(amber, "unsaved");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene has unsaved changes (Ctrl+S to save)");
-    } else if (!ed.isPlaying() && g_lastSaveError.empty() && g_lastSavedAt && SDL_GetTicks64() - g_lastSavedAt < 5000) {
+    } else if (!ed.isPlaying() && g_lastSaveError.empty() && g_lastSavedAt && okay::platform::TicksMs() - g_lastSavedAt < 5000) {
         // A short confirmation after a save (it fades after five seconds; the Console keeps the record).
         ImGui::SameLine(0, 12);
         const ImVec4 ok(0.45f, 0.82f, 0.56f, 1.0f);
@@ -8386,7 +8391,7 @@ static void DrawAssetManager(EditorState& ed) {
     static char s_search[96] = "";
     static int s_cat = -1;          // -1 = all
     static bool s_grid = false;
-    if (SDL_GetTicks() >= s_nextScan) { s_items = ScanDownloadedAssets(); s_nextScan = SDL_GetTicks() + 3000; }
+    if (okay::platform::TicksMs32() >= s_nextScan) { s_items = ScanDownloadedAssets(); s_nextScan = okay::platform::TicksMs32() + 3000; }
     const ImGuiStyle& st = ImGui::GetStyle();
     const float fh = ImGui::GetFrameHeight();
 
@@ -8866,7 +8871,7 @@ static void SetPluginEnabled(EditorPlugin& p, bool on) {
 static void TickPlugins(EditorState& ed) {
     EnsurePluginPrefs();
     static Uint32 nextScan = 0;
-    if (g_pluginsProject != ed.projectDir() || SDL_GetTicks() >= nextScan) { ScanPlugins(ed); nextScan = SDL_GetTicks() + 1000; }
+    if (g_pluginsProject != ed.projectDir() || okay::platform::TicksMs32() >= nextScan) { ScanPlugins(ed); nextScan = okay::platform::TicksMs32() + 1000; }
     g_pluginEd = &ed;
     static GameObject* lastSel = nullptr;
     const bool selChanged = ed.selected() != lastSel;
@@ -9397,7 +9402,7 @@ void DrawProject(EditorState& ed) {
     }
     g_projectSelected = selected;
     if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
-    pb.Poll(SDL_GetTicks());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
+    pb.Poll(okay::platform::TicksMs32());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
@@ -9695,7 +9700,7 @@ void DrawProject(EditorState& ed) {
     auto mkMaterial = [&]{
         askCreate("New material", "How a surface looks.", "New Material", ".okaymat", "material", [](const std::string& d, const std::string& n) {
             std::error_code te;
-            fs::path tmp = fs::temp_directory_path(te) / ("okay_newmat_" + std::to_string(SDL_GetTicks()) + ".okaymat");
+            fs::path tmp = fs::temp_directory_path(te) / ("okay_newmat_" + std::to_string(okay::platform::TicksMs32()) + ".okaymat");
             std::string text;
             if (Material{}.SaveToFile(tmp.string())) text = extide::ReadFile(tmp.string());
             fs::remove(tmp, te);
@@ -17989,7 +17994,7 @@ static NewProjectForm g_npForm;
 
 static const okayproj::Plan& NewProjectPlan(NewProjectForm& f, bool force = false) {
     const std::string key = std::string(f.name) + "\n" + f.loc;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (force || key != f.lastKey || now - f.planAt > 1500) {   // looks at the disk, so not every frame
         f.plan = okayproj::PlanProject(f.loc, f.name);
         f.lastKey = key; f.planAt = now;
@@ -18282,7 +18287,7 @@ void DrawNewProjectPopup(EditorState& ed) {
     }
     NoteProjectCreated(r.root);   // made in this session: never asked about
     AddRecent(r.scene);
-    g_lastSavedAt = SDL_GetTicks64();
+    g_lastSavedAt = okay::platform::TicksMs();
     ConsoleLog("Created project \"" + plan.folder + "\" at " + r.root);
 }
 
@@ -22928,7 +22933,7 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go,
     static GameObject* s_lastGo = nullptr;
     static Vec3 s_lastEye; static float s_lastW = 0.0f; static Uint32 s_lastAt = 0;
     const bool reuse = poseUnchanged && s_lastGo == go && s_lastW == w && g_view3DTex[3] &&
-                       (s_lastEye - eye).Magnitude() < 1e-5f && SDL_GetTicks() - s_lastAt < 500;
+                       (s_lastEye - eye).Magnitude() < 1e-5f && okay::platform::TicksMs32() - s_lastAt < 500;
     SDL_Texture* tex = nullptr;
     if (reuse) tex = g_view3DTex[3];
     else {
@@ -22944,7 +22949,7 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go,
         tex = Render3DTexture(ed.scene(), proj * view, eye, (int)w, (int)h, /*slot=*/3);
         for (GameObject* g : hidden) g->active = true;
         if (restore) restore();
-        s_lastGo = go; s_lastEye = eye; s_lastW = w; s_lastAt = SDL_GetTicks();
+        s_lastGo = go; s_lastEye = eye; s_lastW = w; s_lastAt = okay::platform::TicksMs32();
     }
     if (tex) {
         {   // a soft backdrop so the transparent clear never reads as a black hole
@@ -26750,7 +26755,7 @@ static void DrawUVEditor(EditorState& ed) {
     dl->PushClipRect(p0, p1, true);
     dl->AddRectFilled(p0, p1, IM_COL32(26, 28, 34, 255));
     const ImVec2 q0 = toScreen({0, 0}), q1 = toScreen({1, 1});
-    SDL_Texture* tex = mr->texture.empty() ? nullptr : GetThumb(mr->texture);
+    SDL_Texture* tex = (mr->texture.empty() || mr->texture[0] == '@') ? nullptr : GetThumb(mr->texture);   // '@...' is a picture made in memory (a terrain's baked layers): there is no file to show
     if (tex) dl->AddImage((ImTextureID)tex, q0, q1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 170));
     else {   // checker in the 0-1 square
         const int n = 8;
@@ -29402,57 +29407,8 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Rock Slope##terr");
             }
 
-            SectionHeader("Scatter props (trees, rocks, bushes)");
-            const char* props[] = {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock",
-                                   "Mushroom", "Cactus", "Crystal"};
-            const int kScatterProps = 9;
-            if (g_scatterProp >= kScatterProps) g_scatterProp = 0;
-            ImGui::SetNextItemWidth(160);
-            ImGui::Combo("Prop##scat", &g_scatterProp, props, kScatterProps);
-            ImGui::SliderInt("Count##scat", &g_scatterCount, 1, 500);
-            ImGui::DragFloatRange2("Scale##scat", &g_scatterMinScale, &g_scatterMaxScale, 0.02f, 0.1f, 6.0f, "%.2f");
-            ImGui::SliderFloat("Max Slope##scat", &g_scatterMaxSlope, 0.0f, 1.0f);
-            ImGui::DragFloatRange2("Height Band##scat", &g_scatterMinH, &g_scatterMaxH, 0.2f, -100.0f, 100.0f, "%.1f");
-            if (ImGui::Button("Scatter##scat")) {
-                Random rng((unsigned)(ImGui::GetTime() * 1000.0) + 7u);
-                float half = tr->size * 0.5f, e = tr->CellSize();
-                int placed = 0;
-                for (int i = 0; i < g_scatterCount; ++i) {
-                    float lx = rng.Range(-half, half), lz = rng.Range(-half, half);
-                    float h = tr->SampleHeight(lx, lz);
-                    if (h < g_scatterMinH || h > g_scatterMaxH) continue;
-                    float hx = tr->SampleHeight(lx + e, lz) - tr->SampleHeight(lx - e, lz);
-                    float hz = tr->SampleHeight(lx, lz + e) - tr->SampleHeight(lx, lz - e);
-                    Vec3 n = Vec3{-hx, 2.0f * e, -hz}.Normalized();
-                    if (1.0f - n.y > g_scatterMaxSlope) continue;       // too steep
-                    GameObject* o = ed.scene().CreateGameObject(std::string("Scatter_") + props[g_scatterProp]);
-                    auto* smr = o->AddComponent<MeshRenderer>();
-                    // A distinct procedural variant per instance so nature props
-                    // (tree/pine/rock/bush) don't read as identical clones; other
-                    // props ignore the seed and use their canonical mesh.
-                    int variant = Mesh::NameHasVariants(props[g_scatterProp]) ? (placed + 1) : 0;
-                    smr->meshVariant = variant;
-                    smr->mesh = Mesh::FromNameSeeded(props[g_scatterProp], variant);
-                    o->transform->SetParent(tr->gameObject->transform, false);
-                    o->transform->localPosition = {lx, h, lz};
-                    float sc = rng.Range(g_scatterMinScale, g_scatterMaxScale);
-                    o->transform->localScale = {sc, sc, sc};
-                    o->transform->localRotation = Quat::Euler({0.0f, rng.Range(0.0f, 360.0f), 0.0f});
-                    ++placed;
-                }
-                ConsoleLog("Scattered " + std::to_string(placed) + " " + props[g_scatterProp] + "(s)");
-                ed.dirty = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Clear Scattered##scat")) {
-                std::vector<GameObject*> kill;
-                for (const auto& o : ed.scene().Objects())
-                    if (o->name.rfind("Scatter_", 0) == 0) kill.push_back(o.get());
-                if (!kill.empty()) ed.PushUndo();
-                for (GameObject* k : kill) { ed.Deselect(k); ed.scene().Destroy(k); }  // drop selection so it can't dangle
-                ConsoleLog("Cleared " + std::to_string(kill.size()) + " scattered prop(s)");
-                ed.dirty = true;
-            }
+            oked::DrawTerrainLayersUI(ed, *tr);
+            oked::DrawTerrainScatterUI(ed, *tr);
 
             if (ImGui::SmallButton("Remove##terr")) toRemove = tr;
         }
@@ -39167,6 +39123,7 @@ void DrawInspector(EditorState& ed) {
     DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
+    DrawLevelInspector(ed, go, curComp, toRemove, &CompHeader);        // Foliage, Decal Projector, Cable
     oked::DrawVolumeInspector(ed, go, curComp, toRemove, &CompHeader);  // Volume (checkpoint, kill, force, atmosphere, ambience)
     oked::DrawFallbackInspector(ed, go, curComp, toRemove, fbCursorY, &CompHeader);   // anything still undrawn: from the property registry
     if (multiEdit.active && oked::PropagateComponentEdit(ed.MultiSelection(), go, *curComp, multiEdit) > 0) ed.dirty = true;
@@ -39348,6 +39305,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
             SplineAddComponentItems(ed, go, item, true);   // Line / Trail Renderer, Spline Mesh
+            LevelAddComponentItems(ed, go, item);          // Foliage, Decal Projector, Cable
           } EndCat(o); }
 
         { bool o = BeginCat("Animation");
@@ -40541,7 +40499,7 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
                      Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
             Vec3 eye = ed.camTarget + dir * ed.camDist;
             view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
-            proj = Mat4::Perspective(g_editorFov, cs.x / cs.y, g_editorNear, 2000.0f);
+            proj = LevelEditorProjection(g_editorFov, cs.x / cs.y, g_editorNear, 2000.0f, ed.camDist);
             right = Vec3::Cross((ed.camTarget - eye).Normalized(), Vec3::Up).Normalized();
         }
         UIWorld().right = right;
@@ -41601,7 +41559,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
              Mathf::Cos(pitchR) * Mathf::Cos(yawR)};
     Vec3 eye = ed.camTarget + dir * ed.camDist;
     Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
-    Mat4 proj = Mat4::Perspective(g_editorFov, canvasSize.x / canvasSize.y, g_editorNear, 2000.0f);
+    Mat4 proj = LevelEditorProjection(g_editorFov, canvasSize.x / canvasSize.y, g_editorNear, 2000.0f, ed.camDist);
     // Where the 3D image is drawn within the panel. The Game view honors the main
     // camera's normalized viewport rect for split-screen /
     // mini-map / picture-in-picture; the Scene view always fills the panel.
@@ -42353,6 +42311,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && g_showGizmos)
         DrawSplineOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
                           hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
+    // Level tools: foliage / terrain-layer brushes, the measuring tool, the decal box, the orthographic label.
+    if (!gameView) {
+        HandleLevelKeys(ed, hovered);
+        DrawLevelOverlay(ed, dl, vp, center, canvasSize, hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
+    }
     // Volumes: every region as a translucent shape, the selected one's resize handles, and the draw-by-drag tool.
     if (!gameView && ed.view3D) {
         if (oked::DrawVolumeOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
@@ -42720,7 +42683,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // ---- Terrain sculpt brush: drag on the terrain to raise it (Shift lowers).
     //      Unprojects the cursor to a world ray and intersects the terrain's
     //      ground plane, then raises heights within the brush radius. ----
-    if (ed.selected() && g_terrainSculpt && hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    if (ed.selected() && g_terrainSculpt && hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !LevelBrushActive(ed)) {
         if (auto* terr = ed.selected()->GetComponent<Terrain>()) {
             float ndcx = 2.0f * (io.MousePos.x - canvasPos.x) / canvasSize.x - 1.0f;
             float ndcy = 1.0f - 2.0f * (io.MousePos.y - canvasPos.y) / canvasSize.y;
@@ -42731,10 +42694,16 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             Vec3 b{pf.x / pf.w, pf.y / pf.w, pf.z / pf.w};
             Vec3 rdir = (b - a).Normalized();
             Vec3 op = ed.selected()->transform->Position();
-            if (Mathf::Abs(rdir.y) > 1e-5f) {
+            // The brush lands where the cursor meets the terrain's surface (a hill, not the flat plane
+            // at the object's height); the plane is the fallback when the ray misses the terrain.
+            Vec3 hit{0, 0, 0};
+            bool haveHit = terr->Raycast(a, rdir, 8000.0f, hit);
+            if (!haveHit && Mathf::Abs(rdir.y) > 1e-5f) {
                 float t = (op.y - a.y) / rdir.y;
-                if (t > 0.0f) {
-                    Vec3 hit = a + rdir * t;
+                if (t > 0.0f) { hit = a + rdir * t; haveHit = true; }
+            }
+            if (haveHit) {
+                {
                     float lx = hit.x - op.x, lz = hit.z - op.z;
                     float dt = io.DeltaTime, sign = io.KeyShift ? -1.0f : 1.0f;
                     switch (g_terrainBrush) {
@@ -44273,6 +44242,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         }
         if (!camSel && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("Select a Camera in a 3D view first");
+        if (!uiPanel && ed.view3D) DrawLevelViewMenu(ed);
         ImGui::Separator();
         ImGui::TextDisabled("Controls");
         if (uiOnly) {
@@ -45806,7 +45776,7 @@ static bool SaveSceneTo(EditorState& ed, std::string p) {
         return false;
     }
     g_lastSaveError.clear();
-    g_lastSavedAt = SDL_GetTicks64();
+    g_lastSavedAt = okay::platform::TicksMs();
     ConsoleLog("Saved scene: " + p);
     StampProjectAfterSave(ed.projectDir());   // project.okayproj says which version last saved the project
     AddRecent(p); ed.Achievement("FIRST_SAVE");
@@ -46232,7 +46202,7 @@ static bool SaveEverything(EditorState& ed) { return SaveProject(ed, false); }
 // never while a field is being typed in. `force` skips the wait (leaving, quitting).
 static void SyncProjectFiles(EditorState& ed, bool force = false) {
     static Uint32 last = 0;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (!force && (now - last < 1000 || ImGui::IsAnyItemActive())) return;
     last = now;
     if (ed.projectDir().empty()) return;   // no project: nothing of ours to keep up to date
@@ -46584,7 +46554,7 @@ static std::string LauncherIpcPath(const char* file) {
 }
 static void PollLauncherRequest(EditorState& ed, bool& running) {
     static Uint32 last = 0;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (now - last < 400) return;
     last = now;
     namespace fs = std::filesystem;
@@ -46748,16 +46718,18 @@ int main(int argc, char** argv) {
 
     // Open the first connected game controller (optional) so the playable
     // templates can be driven with a gamepad inside the editor's Play mode.
-    for (int i = 0; i < SDL_NumJoysticks(); ++i)
-        if (SDL_IsGameController(i)) { g_pad = SDL_GameControllerOpen(i); if (g_pad) break; }
+    if (okay::platform::Backend* pb = okay::platform::Default())
+        for (int i = 0, n = pb->GamepadDeviceCount(); i < n; ++i)
+            if (pb->IsGamepad(i)) { g_pad = pb->OpenGamepad(i); if (g_pad) break; }
 
     // Open a stereo float audio device (queue mode); audio is optional. Take
     // whatever rate and channel count the device gives us.
-    SDL_AudioSpec want{}, have{};
-    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2; want.samples = 1024;
-    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have,
-        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
-    if (audioDev) { AudioMixer::sampleRate = have.freq; SDL_PauseAudioDevice(audioDev, 0); }
+    okay::platform::AudioSpec want, have;
+    want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
+    want.allowChange = true;
+    std::unique_ptr<okay::platform::AudioDevice> audioDev;
+    if (okay::platform::Backend* pb = okay::platform::Default()) audioDev = pb->OpenAudio(want, false, nullptr, &have);
+    if (audioDev) { AudioMixer::sampleRate = have.freq; audioDev->Pause(false); }
 
     // Create the window HIDDEN so the OS never composites a black, uninitialized
     // rectangle during the window + renderer setup. We paint the first splash
@@ -47152,7 +47124,7 @@ int main(int argc, char** argv) {
 
     bool running = true;
     std::string lastTitle;
-    Uint64 last = SDL_GetPerformanceCounter();
+    Uint64 last = okay::platform::PerfCounter();
     DocRecovery().SetInterval(g_docAutosaveSec);
     DocRecovery().SetEnabled(true);
     DocRecovery().SetProvider([&](std::string& payload, std::string& label) {
@@ -47186,7 +47158,7 @@ int main(int argc, char** argv) {
     });
     if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
     while (running) {
-        Uint64 g_frameT0 = SDL_GetPerformanceCounter();
+        Uint64 g_frameT0 = okay::platform::PerfCounter();
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
         okay::Prof().enabled = g_showProfiler || kPerfDump;   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
@@ -47241,11 +47213,10 @@ int main(int argc, char** argv) {
             if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
                 ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
-            if (e.type == SDL_CONTROLLERDEVICEADDED && !g_pad) g_pad = SDL_GameControllerOpen(e.cdevice.which);
-            if (e.type == SDL_CONTROLLERDEVICEREMOVED && g_pad &&
-                e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(g_pad))) {
-                SDL_GameControllerClose(g_pad); g_pad = nullptr;
-            }
+            if (e.type == SDL_CONTROLLERDEVICEADDED && !g_pad)
+                if (okay::platform::Backend* pb = okay::platform::Default()) g_pad = pb->OpenGamepad(e.cdevice.which);
+            if (e.type == SDL_CONTROLLERDEVICEREMOVED && g_pad && e.cdevice.which == g_pad->InstanceId())
+                g_pad.reset();
             if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
                 ResetViewTextures(e.type == SDL_RENDER_DEVICE_RESET);
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
@@ -47295,8 +47266,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        Uint64 now = SDL_GetPerformanceCounter();
-        float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
+        Uint64 now = okay::platform::PerfCounter();
+        float dt = (float)((now - last) / (double)okay::platform::PerfFrequency());
         last = now;
 
         // Edit-mode particle preview: simulate
@@ -47316,6 +47287,7 @@ int main(int argc, char** argv) {
                     if (auto* pm = up->GetComponent<okay::PauseMenu>()) pauseMenus.push_back(pm);
                 }
             SplineEditTick(ed, pdt);   // spline meshes / instancers follow edits, trails preview
+            LevelEditTick(ed, pdt);    // foliage chunks, cables and decals follow their data
             // Live built-in animation preview: sample the chosen built-in each
             // frame and pose the character — blocky body, custom-rigged mesh, or
             // (through the HumanoidRetarget) a swapped imported model — right in
@@ -47433,7 +47405,7 @@ int main(int argc, char** argv) {
             if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
             if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
-            FeedSdlGamepad(g_pad, down);
+            okay::FeedPad(g_pad.get(), down);
             Input::FeedKeys(down);
 
             // A modal inventory/crafting/chest releases capture so you can click it.
@@ -47716,7 +47688,7 @@ int main(int argc, char** argv) {
         DocRecovery().SetInterval(g_docAutosaveSec);
         DocRecovery().SetEnabled(g_autosave);
         if (g_autosave && DocRecovery().Tick(dt)) {
-            g_autosaveStamp = SDL_GetTicks64() / 1000.0;
+            g_autosaveStamp = okay::platform::TicksMs() / 1000.0;
             if (g_autosaveToFile) {
                 okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
                 for (okay::ScriptComponent* t : g_scriptTabs) {
@@ -47737,7 +47709,7 @@ int main(int argc, char** argv) {
             if (ed.isPlaying()) {
                 const int ch = have.channels >= 2 ? 2 : 1;
                 const int target = have.freq / 14;
-                const int queued = (int)(SDL_GetQueuedAudioSize(audioDev) / (sizeof(float) * ch));
+                const int queued = (int)(audioDev->QueuedBytes() / (sizeof(float) * ch));
                 const int n = std::min(target - queued, 8192);
                 if (n > 0) {
                     // Listener = the scene's main camera (for 3D/spatial sources).
@@ -47748,10 +47720,10 @@ int main(int argc, char** argv) {
                     std::vector<float> st((size_t)n * 2);
                     AudioMixer::RenderStereo(ed.scene(), st.data(), n);
                     if (ch == 1) for (int i = 0; i < n; ++i) st[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
-                    SDL_QueueAudio(audioDev, st.data(), (Uint32)((size_t)n * ch * sizeof(float)));
+                    audioDev->Queue(st.data(), (uint32_t)((size_t)n * ch * sizeof(float)));
                 }
             } else {
-                SDL_ClearQueuedAudio(audioDev);
+                audioDev->ClearQueued();
             }
         }
 
@@ -47923,6 +47895,7 @@ int main(int argc, char** argv) {
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
+            LevelDevHooks(ed);        // OKAY_UI_LEVEL / LEVELTOOL / LEVELVIEW / LEVELSEL
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {
@@ -48633,8 +48606,8 @@ int main(int argc, char** argv) {
         }
 
         {   // Close out the profiler frame (total wall time incl. present).
-            Uint64 f1 = SDL_GetPerformanceCounter();
-            double frameMs = (double)(f1 - g_frameT0) / (double)SDL_GetPerformanceFrequency() * 1000.0;
+            Uint64 f1 = okay::platform::PerfCounter();
+            double frameMs = (double)(f1 - g_frameT0) / (double)okay::platform::PerfFrequency() * 1000.0;
             okay::Prof().EndFrame(frameMs);
             if (kPerfDump) {   // every ~2 s: average ms per section (inclusive), biggest first
                 static std::map<std::string, double> acc; static double accFrame = 0; static int n = 0;
@@ -48678,8 +48651,8 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
     if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
 #endif
-    if (g_pad) SDL_GameControllerClose(g_pad);
-    if (audioDev) SDL_CloseAudioDevice(audioDev);
+    g_pad.reset();
+    audioDev.reset();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

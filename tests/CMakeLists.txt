@@ -597,6 +597,10 @@ add_executable(test_net_rooms test_net_rooms.cpp)
 target_link_libraries(test_net_rooms PRIVATE okay::engine)
 add_test(NAME net_rooms COMMAND test_net_rooms)
 
+add_executable(test_foliage test_foliage.cpp)
+target_link_libraries(test_foliage PRIVATE okay::engine)
+add_test(NAME foliage COMMAND test_foliage)
+
 add_executable(test_terrain test_terrain.cpp)
 target_link_libraries(test_terrain PRIVATE okay::engine)
 add_test(NAME terrain COMMAND test_terrain)
@@ -2367,6 +2371,34 @@ target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
 
+# okay::platform (engine/include/okay/Platform): the seam over SDL2 and our own backends.
+# platform: registry, timers, audio devices, controllers on each compiled-in backend (no
+# display needed; SDL's dummy audio driver, ALSA's null device) + the own evdev mapping.
+# platform_window_*: windows, GL clear colour, keyboard / mouse / text / clipboard on a real
+# X server (Xvfb) with xdotool injecting the input. They skip (exit 77) without Xvfb / xdotool.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_platform test_platform.cpp)
+    target_link_libraries(test_platform PRIVATE okay::platform)
+    target_include_directories(test_platform PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_platform PRIVATE SDL2::SDL2)   # the Key / SDL scancode numbering check
+    endif()
+    add_test(NAME platform COMMAND test_platform)
+
+    add_executable(test_platform_window test_platform_window.cpp)
+    target_link_libraries(test_platform_window PRIVATE okay::platform)
+    target_include_directories(test_platform_window PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_window_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_window> ${_okay_pb})
+        set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endforeach()
+endif()
+
+# The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
+add_executable(test_platform_gamepad test_platform_gamepad.cpp)
+target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
+add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
 # okay::crypto (our own, UNREVIEWED crypto primitives; docs/crypto.md): RFC known-answer vectors,
 # tamper tests, edge cases. tests/crypto_rfc_vectors.hpp is extracted from the RFC text.
 add_executable(test_crypto test_crypto.cpp)

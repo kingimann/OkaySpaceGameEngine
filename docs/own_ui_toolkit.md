@@ -276,7 +276,7 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 | 7 | Value widgets (drag, slider, input number) | 1,610 | PARTIAL (step 2) | `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt`, `InputInt`, and now `DragFloat2/3/4`, `DragInt2/3/4` and `DragFloatRange2` (several drag cells in one row sharing a label; each cell scrubs alone, clamps, range cells never cross). Missing: `DragIntRange2`, format strings, typing into the single-value `DragFloat`/`SliderFloat` (the multi-cell ones can, step 10), a drag-speed modifier key | M |
 | 8 | Window, child, scroll | 1,074 | PARTIAL | `Begin`/`End`, `BeginChild`, resize grip, pin, `SetNextWindow*` as arguments. Missing: window flags (auto-resize 72, no scrollbar 47, no title bar, no background and others), z-order and click to front, `SetNextWindowSizeConstraints`, window queries (`IsWindowFocused` 38, `IsWindowHovered` 39), `GetScrollY`/`SetScrollY`, `SetScrollHereY` | M |
 | 9 | Popups | 1,038 | PARTIAL | `OpenPopup`, `BeginPopup`, `BeginPopupContextItem`, `CloseCurrentPopup`. Missing: `BeginPopupModal` (85) with dimming, `BeginPopupContextWindow`, `IsPopupOpen` (41) | M |
-| 10 | Menus | 957 | PARTIAL | menu bar, `BeginMenu`, `MenuItem(label)`. Missing: nested sub-menus, shortcut text, checked and enabled state, `Shortcut` | M |
+| 10 | Menus | 957 | PARTIAL | menu bar, `BeginMenu`, `MenuItem(label)`. shortcut text, checked and enabled state, `MenuSeparator` (step 11). Missing: nested sub-menus, `Shortcut` handling (the text is display only) | M |
 | 11 | Mouse, keys, IO | 901 | PARTIAL | mouse position, buttons, wheel, text, 9 key edges, and now `IsMouseDown/Clicked/Released`, `GetMousePos`, `GetMouseDelta`. Missing: Ctrl and Alt, key down, about 30 more keys, middle button, double click, drag deltas, mouse cursor shapes (92) | M |
 | 12 | IDs | 792 | HAVE | `PushID`, `PopID`. Missing: `GetID` (11), `GetStateStorage` | S |
 | 13 | Combo and selectable | 618 | PARTIAL | `Combo(items)`, `Selectable`, `ListBox`. `BeginCombo`/`EndCombo` (step 9). Missing: selectable size and flags | S |
@@ -403,3 +403,11 @@ Tested (91 checks in `test_okayui_values.cpp`): typed value, clamp, Escape, non-
 Not done: the single-value `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt` do not take Ctrl+click yet; a double click; the host sets `ctrl`.
 
 Step 10b: the single-value `DragFloat`, `DragInt`, `SliderFloat` and `SliderInt` take Ctrl+click typing too (same rules; `SliderInt` rounds). 99 checks in `test_okayui_values.cpp`; other suites unchanged. Still not done: the host does not set `Input::ctrl` yet.
+
+### 4.15 Gap-closing step 11: menu items (family 10)
+
+Built: `MenuItem(label, shortcut, selected, enabled)` (right-aligned dim shortcut text, shown only when it fits; a small filled square for a checked item; a disabled item is dim, ignores clicks and keeps the menu open) and `MenuSeparator()`. 957 menu call sites in the editor.
+
+Tested (109 checks in `test_okayui_values.cpp`): a normal item with a shortcut clicks and closes the menu, a disabled item does nothing, a checked item still clicks, the item below a separator, the shortcut pixels are drawn, null labels and calls outside a menu are harmless. Fuzz draws random items, shortcuts, states and separators; behaviour 149, golden 15, drawlist 184, soft 18 unchanged.
+
+Not done: nested sub-menus, acting on the shortcut keys (the text is for display), keyboard navigation of menus.

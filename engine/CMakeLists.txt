@@ -152,6 +152,8 @@ add_library(okay_engine
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
     src/Core/ImageWrite.cpp
+    src/Core/ImageDecode.cpp
+    src/Core/ImageDecodeJpeg.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
@@ -210,8 +212,8 @@ target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# Vendored single-header libraries (stb_image), used only by
-# the Image translation unit. Kept PRIVATE so it doesn't leak to consumers.
+# Vendored third-party libraries (stb_truetype, stb_vorbis, ufbx, dr_libs). Image decoding is
+# our own (Core/ImageDecode*.cpp). Kept PRIVATE so they don't leak to consumers.
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx

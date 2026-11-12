@@ -1,5 +1,6 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Components/LogicLinks.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -1154,6 +1155,12 @@ void ActionList::Update(float dt) {
         }
         // Events with a payload: the receiver reads `event_value` (number) and
         // `event_text` (text), set just before the message fires.
+        // fire_output name [value]: raise a named output on this object's Logic Source, so
+        // its I/O links (target, input, delay, once) run. The value replaces each link's parameter.
+        else if (op == "fire_output") {
+            if (gameObject) for (LogicSource* ls : gameObject->GetComponents<LogicSource>())
+                ls->FireOutput(Str(it, 0), it.args.size() > 1 ? Str(it, 1) : std::string());
+        }
         else if (op == "send_value") {
             Vars()["event_value"] = Num(it, 1); StrVars()["event_text"].clear();
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));

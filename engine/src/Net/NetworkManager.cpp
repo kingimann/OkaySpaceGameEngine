@@ -278,10 +278,15 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     m_relay = true;
     m_relayWelcomed = false;
     m_relayCode = code;
-    m_relaySlot = 0;
     m_relayHostKey = 0;
     std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayHelloTimer = 0.0f;
+    m_relayWait = 0.0f;
+    m_relayBadWelcomes = 0;
+    {   // The welcome must echo this back (see RelayProtocol.hpp, version 4).
+        std::random_device rd;
+        do { m_relayNonce = (static_cast<std::uint64_t>(rd()) << 32) | rd(); } while (m_relayNonce == 0);
+    }
     m_relayError.clear();
     m_kicked = false; m_kickReason.clear();
     if (asHost) {
@@ -311,7 +316,18 @@ bool NetworkManager::JoinViaRelay(const std::string& relayHost, std::uint16_t re
 // Announce ourselves to the relay on connect and ~once a second after, so it can
 // pair us and so the NAT mapping the relay talks back through stays open.
 void NetworkManager::RelayKeepAlive(float dt) {
-    if (!m_relay) return;
+    if (!m_relay || m_relayLost) return;
+    // A relay that never answers (dead, wrong port, or no host for a client's code)
+    // ends the attempt with an error instead of leaving the player waiting forever.
+    if (!m_relayWelcomed && relayTimeoutSeconds > 0.0f && (m_relayWait += dt) >= relayTimeoutSeconds) {
+        m_relayError = m_relayBadWelcomes > 0
+            ? "the relay's welcome could not be verified (an older relay? see allowUnverifiedRelay)"
+            : "the relay never answered (it is unreachable, or no host is registered for session code '" +
+              m_relayCode + "')";
+        OKAY_WARN("net: ", m_relayError);
+        m_relayLost = true;
+        return;
+    }
     m_relayHelloTimer -= dt;
     if (m_relayHelloTimer > 0.0f) return;
     m_relayHelloTimer = 1.0f;
@@ -322,6 +338,8 @@ void NetworkManager::RelayKeepAlive(float dt) {
     h.Write(static_cast<std::uint32_t>(m_relayHostKey));          // 0 until the relay gives one
     h.Write(static_cast<std::uint32_t>(m_relayHostKey >> 32));
     for (std::uint8_t b : m_relayCookie) h.Write(b);             // zero until the relay sends one
+    h.Write(static_cast<std::uint32_t>(m_relayNonce));           // version 4: the welcome echoes it
+    h.Write(static_cast<std::uint32_t>(m_relayNonce >> 32));
     while (h.Size() < net::kRelayHelloMinBytes) h.Write(std::uint8_t(0));
     m_socket.SendTo(m_relayEp, h.Data(), h.Size());
 }
@@ -339,8 +357,8 @@ void NetworkManager::Stop() {
     }
     m_relay = false;
     m_relayWelcomed = false;
-    m_relaySlot = 0;
     m_relayHostKey = 0;
+    m_relayNonce = 0;
     std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayCode.clear();
     m_relayEp = net::Endpoint{};
@@ -1440,7 +1458,11 @@ void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data,
 // quietly handles RelayWelcome control frames, looping until it has an actual
 // application payload to return (or nothing is pending).
 int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoint& from) {
+    // Control frames and stray datagrams are consumed without returning, so a flood of
+    // them is only drained a bounded amount per call; the rest waits for the next.
+    int consumed = 0;
     for (;;) {
+        if (m_relay && consumed++ >= kMaxRelayFramesPerCall) return 0;
         int n = net::TakeDatagram(m_socket, buffer, capacity, from);
         if (n <= 0 || !m_relay) return n;
         if (!(from == m_relayEp)) continue;          // only the relay should reach us
@@ -1449,15 +1471,34 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
         if (tag == net::RelayWelcome) {
             net::Packet p(b, static_cast<std::size_t>(n));
             p.ReadU8();
-            std::uint32_t yourSlot = p.ReadU32();
+            p.ReadU32();   // our slot: the relay routes by it, we never need it
             std::uint32_t hostSlot = p.ReadU32();
             if (!p.Ok()) continue;
             // Version 2 relays add [u8 version][u64 host key]; the key comes
             // only to the host, which sends it back in every hello so only it
-            // can host this code (from this address or a new one).
+            // can host this code (from this address or a new one). Version 4
+            // adds the u64 nonce our hello carried.
             p.ReadU8();
             const std::uint32_t keyLo = p.ReadU32(), keyHi = p.ReadU32();
-            if (p.Ok() && m_mode == Mode::Server && (keyLo | keyHi))
+            const bool haveKey = p.Ok();
+            bool haveNonce = false;
+            std::uint64_t echoed = 0;
+            if (haveKey && p.Remaining() >= 8) {
+                const std::uint32_t nLo = p.ReadU32(), nHi = p.ReadU32();
+                echoed = (static_cast<std::uint64_t>(nHi) << 32) | nLo;
+                haveNonce = true;
+            }
+            // Anyone can forge a UDP source address, so a welcome counts only if it
+            // proves the sender saw our hello: it echoes our nonce. A wrong echo is
+            // never accepted; a missing one only from an older relay when allowed.
+            if ((haveNonce && echoed != m_relayNonce) || (!haveNonce && !allowUnverifiedRelay)) {
+                ++m_relayBadWelcomes;
+                continue;
+            }
+            // A host needs the key fields: without them it would hello with key 0
+            // and be refused as if the code were taken.
+            if (m_mode == Mode::Server && !haveKey) continue;
+            if (m_mode == Mode::Server && (keyLo | keyHi))
                 m_relayHostKey = (static_cast<std::uint64_t>(keyHi) << 32) | keyLo;
             if (m_mode == Mode::Client) {
                 // The host we were paired with is the only server we talk to.
@@ -1472,7 +1513,6 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
                 if (hostSlot == 0) continue;   // no host yet
                 m_serverEp = SlotEndpoint(hostSlot);
             }
-            m_relaySlot = yourSlot;
             m_relayWelcomed = true;
             continue;
         }
@@ -1495,11 +1535,15 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
             const std::uint8_t why = p.ReadU8();
             const std::uint8_t relayVersion = p.ReadU8();
             if (!p.Ok()) continue;
-            m_relayError = why == net::RelayRefusedHosted
-                ? "session code '" + m_relayCode + "' is already hosted"
-                : "the relay needs protocol version " + std::to_string(relayVersion) +
-                  " (this game speaks " + std::to_string(net::kRelayProtocolVersion) + ")";
-            OKAY_WARN("net: relay refused us: ", m_relayError);
+            if (why == net::RelayRefusedHosted)
+                m_relayError = "session code '" + m_relayCode + "' is already hosted";
+            else if (why == net::RelayRefusedVersion)
+                m_relayError = "the relay needs protocol version " + std::to_string(relayVersion) +
+                               " (this game speaks " + std::to_string(net::kRelayProtocolVersion) + ")";
+            else
+                m_relayError = "the relay refused us for an unknown reason (code " +
+                               std::to_string(why) + ")";
+            OKAY_WARN("net: relay: ", m_relayError);
             m_relayLost = true;
             return 0;
         }

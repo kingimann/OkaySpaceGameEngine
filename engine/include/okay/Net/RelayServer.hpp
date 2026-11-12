@@ -121,6 +121,7 @@ private:
         std::string   code;
         bool          host = false;     // announced the host role (the session's host is Session::hostSlot)
         std::uint8_t  version = 1;      // relay protocol version it spoke
+        std::uint64_t nonce = 0;        // the welcome-echo nonce its first hello carried (0: none)
         bool          hub = false;      // announced RelayHub: its session is never key-protected
         float         idle = 0.0f;
         float         packets = 0.0f;   // forwarding allowance (token buckets)

@@ -1779,6 +1779,16 @@ add_executable(test_relay_security test_relay_security.cpp)
 target_link_libraries(test_relay_security PRIVATE okay::engine)
 add_test(NAME relay_security COMMAND test_relay_security)
 
+# The relay client trusts nothing on its socket: welcome timeout, nonce echo, refusal codes
+add_executable(test_net_relay_hardening test_net_relay_hardening.cpp)
+target_link_libraries(test_net_relay_hardening PRIVATE okay::engine)
+add_test(NAME net_relay_hardening COMMAND test_net_relay_hardening)
+
+# The packet wire format is little-endian on every host: pinned byte for byte
+add_executable(test_net_packet_layout test_net_packet_layout.cpp)
+target_link_libraries(test_net_packet_layout PRIVATE okay::engine)
+add_test(NAME net_packet_layout COMMAND test_net_packet_layout)
+
 # Script file APIs stay inside the game's folders (no absolute paths, no "..")
 add_executable(test_script_paths test_script_paths.cpp)
 target_link_libraries(test_script_paths PRIVATE okay::engine)

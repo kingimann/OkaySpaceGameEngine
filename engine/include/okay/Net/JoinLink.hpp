@@ -91,12 +91,19 @@ struct JoinLink {
         return o;
     }
     static std::string Dec(const std::string& s) {
+        auto hexv = [](char c) {
+            return c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                 : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+        };
         std::string o;
         for (std::size_t i = 0; i < s.size(); ++i) {
-            if (s[i] == '%' && i + 2 < s.size()) {
-                const char h[3] = {s[i + 1], s[i + 2], 0};
-                o += (char)std::strtol(h, nullptr, 16); i += 2;
-            } else if (s[i] == '+') o += ' ';
+            // "%XX" is one byte; a '%' that isn't followed by two hex digits (cut off, or
+            // not hex) stays a literal '%', never a made-up byte. '+' is a space, and
+            // Enc writes a literal '+' as %2B, so every string round-trips.
+            const int hi = (s[i] == '%' && i + 2 < s.size()) ? hexv(s[i + 1]) : -1;
+            const int lo = hi >= 0 ? hexv(s[i + 2]) : -1;
+            if (hi >= 0 && lo >= 0) { o += static_cast<char>(hi * 16 + lo); i += 2; }
+            else if (s[i] == '+') o += ' ';
             else o += s[i];
         }
         return o;

@@ -255,6 +255,14 @@ public:
     /// falls back to plaintext; a host without it refuses to start (no quietly
     /// unencrypted server). Default off.
     bool encryption = false;
+    /// Relay sessions: seconds to wait for the relay's welcome before giving up
+    /// with RelayError() set ("the relay never answered"). 0 waits forever.
+    float relayTimeoutSeconds = 15.0f;
+    /// Relay sessions: a welcome must echo the nonce this peer sent, so one forged
+    /// by someone who can't see our traffic is ignored. Relays older than protocol
+    /// version 4 can't echo it; set this on the peer that has to use one anyway, accepting
+    /// that a forged welcome then can't be told from theirs. Default off.
+    bool allowUnverifiedRelay = false;
     /// True once an encrypted session is established (client: with the server;
     /// server: reported per-peer via PeerEncrypted). Handy for a HUD lock icon.
     bool Encrypted() const;
@@ -838,7 +846,10 @@ private:
     bool m_relayWelcomed = false;     // relay has assigned our slot / wired the host
     net::Endpoint m_relayEp{};        // the relay's real address
     std::string m_relayCode;          // shared session code
-    std::uint32_t m_relaySlot = 0;    // our slot (set on welcome)
+    std::uint64_t m_relayNonce = 0;   // random per attempt; a welcome must echo it (version 4)
+    float m_relayWait = 0.0f;         // seconds spent without a welcome
+    int   m_relayBadWelcomes = 0;     // welcomes dropped for a missing or wrong nonce
+    static constexpr int kMaxRelayFramesPerCall = 64;   // relay datagrams consumed per ReceiveFrom
     std::uint64_t m_relayHostKey = 0; // host: the relay's key for our code (0 until welcomed)
     std::uint8_t m_relayCookie[16] = {}; // the relay's cookie for our address, echoed in hellos (v3)
     bool m_relayLost = false;         // the relay ended our session this tick (Stop() follows)

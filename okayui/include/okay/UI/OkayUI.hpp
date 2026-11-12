@@ -181,8 +181,14 @@ struct DrawData {
     const void*          atlasTexture = nullptr;
     const unsigned char* atlasRgba    = nullptr;
     int                  atlasW = 0, atlasH = 0;
+    /// Shapes (quads, triangles, glyphs) that did not fit the batch this frame and are missing from the picture.
+    /// The batch holds 262,144 vertices and 393,216 indices, each for the main and the overlay layer. Zero in
+    /// any normal UI. When it is not zero OkayUI also writes a message to stderr (the first few frames).
+    int                  dropped = 0;
 };
 DrawData GetDrawData();
+/// The same count as DrawData::dropped, for the frame being built or the last one finished.
+int DroppedGeometry();
 
 /// Finalize the frame's interaction state WITHOUT drawing — for custom backends that
 /// submit GetDrawData() themselves instead of calling EndFrame(SDL_Renderer*).

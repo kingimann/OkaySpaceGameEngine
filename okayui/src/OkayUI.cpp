@@ -18,8 +18,11 @@ namespace {
 // Fixed-capacity geometry batch. Text is drawn as one small quad per lit font
 // pixel, so size generously for several labelled buttons per frame; on overflow we
 // silently drop further geometry rather than grow/allocate.
-constexpr int kMaxVerts = 20000;
-constexpr int kMaxIdx   = 30000;
+constexpr int kMaxVerts = 262144;   // per batch (main and overlay): about 5 MB of vertices each
+constexpr int kMaxIdx   = 393216;
+// Geometry that did not fit is counted, not hidden: DrawData::dropped, DroppedGeometry() and a message on stderr.
+int g_dropped = 0;
+inline void noteDrop() { ++g_dropped; }
 SDL_Vertex g_verts[kMaxVerts];
 int        g_nv = 0;
 int        g_idx[kMaxIdx];
@@ -366,7 +369,7 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;   // overflow: drop silently
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }   // batch full: counted and reported
     const SDL_Color sc = toColor(c);
     const int base = nv;
     SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
@@ -386,7 +389,7 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
 void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
              float u0, float v0, float u1, float v1, const unsigned char tint[4]) {
     setTexture(tex);
-    if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { setTexture(g_defTex); return; }
+    if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { noteDrop(); setTexture(g_defTex); return; }
     const SDL_Color sc = toColor(tint);
     const int base = g_nv;
     SDL_Vertex v; v.color = sc;
@@ -406,7 +409,7 @@ void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
     const SDL_Color sc = toColor(c);
     const int base = nv;
     SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
@@ -428,7 +431,7 @@ void gradQuad(float x, float y, float w, float h,
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
     const int base = nv;
     SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
     SDL_Vertex v; v.tex_coord = uv;
@@ -492,7 +495,7 @@ void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsig
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) return;
+    if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) { noteDrop(); return; }
     const SDL_Color sc = toColor(c);
     const int base = nv;
     SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
@@ -570,6 +573,7 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
     for (const char* p = str; *p;) {
         const okay::TtfFont::Glyph* g = f->GlyphFor(fontatlas::NextCodepoint(&p));
         if (!g) continue;
+        if (g->x1 > g->x0 && g->y1 > g->y0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
         if (g->x1 > g->x0 && g->y1 > g->y0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
             const float x0 = pen + g->xoff * k, y0 = base + g->yoff * k;
             const float x1 = x0 + (g->x1 - g->x0) * k, y1 = y0 + (g->y1 - g->y0) * k;
@@ -609,6 +613,7 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
             const unsigned cp = fontatlas::NextCodepoint(&p);
             const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
             if (!g) continue;
+            if (g->x1 > g->x0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
             if (g->x1 > g->x0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
                 const float x0 = pen + g->x0 * k, y0 = base + g->y0 * k, x1 = pen + g->x1 * k, y1 = base + g->y1 * k;
                 const int b0 = nv;
@@ -750,7 +755,7 @@ void BeginFrame(const Input& in) {
     g_lay.active = false;            // widgets called outside Begin/End no-op
     g_lay.pendingSameLine = false;
     ++g_frame;
-    g_nv = 0; g_ni = 0;
+    g_nv = 0; g_ni = 0; g_dropped = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
     g_inMenuBar = false; g_curMenu.active = false;
     g_idSeed = 0; g_idTop = 0;        // reset the ID stack each frame
@@ -1044,6 +1049,23 @@ int printableUtf8Len(const char* p) {
     if (cp >= 0xD800u && cp <= 0xDFFFu) return 0;
     return n;
 }
+// If the string ends in an incomplete UTF-8 sequence (a lead byte whose continuation bytes were cut off),
+// cut that sequence off.
+void trimPartialChar(char* b) {
+    const int len = cstrlen(b);
+    int j = len - 1;
+    while (j >= 0 && len - j < 4 && ((unsigned char)b[j] & 0xC0) == 0x80) --j;   // back over continuation bytes
+    if (j < 0) return;
+    const unsigned char c = (unsigned char)b[j];
+    const int need = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+    if (need > len - j) b[j] = '\0';
+}
+// Move `i` back to the start of the character it points into (a stale index after the text changed).
+inline int snapToChar(const char* b, int len, int i) {
+    if (i > len) i = len;
+    while (i > 0 && i < len && ((unsigned char)b[i] & 0xC0) == 0x80) --i;
+    return i;
+}
 inline int prevChar(const char* b, int i) { if (i > 0) --i; while (i > 0 && ((unsigned char)b[i] & 0xC0) == 0x80) --i; return i; }
 inline int nextChar(const char* b, int len, int i) { if (i < len) ++i; while (i < len && ((unsigned char)b[i] & 0xC0) == 0x80) ++i; return i; }
 // Width in pixels of buf[from, to).
@@ -1075,13 +1097,20 @@ void eraseBytes(char* b, int& len, int from, int to) {
 
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags) {
     if (!buf || cap < 1) return false;
-    buf[cap - 1] = '\0';   // never trust the caller's buffer to be terminated
+    if (buf[cap - 1] != '\0') {   // never trust the caller's buffer to be terminated
+        buf[cap - 1] = '\0';
+        trimPartialChar(buf);      // and cutting it must not leave half a character
+    }
     int len = cstrlen(buf);
     const bool readOnly = (flags & InputText_ReadOnly) != 0;
     TextSlot* ts = textSlot(id);
-    if (ts->caret > len) ts->caret = len;
-    if (ts->anchor > len) ts->anchor = len;
-    if (ts->first > len) ts->first = len;
+    // The caret, selection anchor and first shown character are byte offsets kept between frames. Keep them
+    // on character boundaries: the text may have changed under them (the caller edits the buffer, or an edit
+    // below `first` replaced characters there), and an offset inside a character would let Delete or a click
+    // split it.
+    ts->caret = snapToChar(buf, len, ts->caret);
+    ts->anchor = snapToChar(buf, len, ts->anchor);
+    ts->first = snapToChar(buf, len, ts->first);
 
     const float s = g_theme.textScale, th = fH() * s, b = g_theme.borderPx;
     const float pad = g_look ? 9.0f : 6.0f;
@@ -1154,6 +1183,8 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     // Scroll horizontally so the caret stays visible: drop leading characters until the text
     // between the first shown character and the caret fits (whole UTF-8 characters only).
     const float innerW = w - 2.0f * pad;
+    ts->caret = snapToChar(buf, len, ts->caret); ts->anchor = snapToChar(buf, len, ts->anchor);
+    ts->first = snapToChar(buf, len, ts->first);   // an edit below `first` can leave it inside a new character
     if (ts->first > ts->caret) ts->first = ts->caret;
     while (ts->first < ts->caret && textWidth(buf, ts->first, ts->caret) > innerW - 2.0f) ts->first = nextChar(buf, len, ts->first);
     const float ty = y + (h - th) * 0.5f;
@@ -1188,9 +1219,10 @@ void mergeOverlay() {
     // Whole triangles only: when the batch is full, a triangle that references a vertex that
     // did not fit (or does not fit in the index buffer) is dropped, so the index buffer always
     // stays valid and a multiple of three.
+    if (g_ni + g_oni > kMaxIdx || g_nv + g_onv > kMaxVerts) noteDrop();
     for (int j = 0; j + 3 <= g_oni && g_ni + 3 <= kMaxIdx; j += 3) {
         while (sp < g_novSpans && g_ovSpans[sp].startIdx <= j) setTexture(g_ovSpans[sp++].tex);
-        if (g_ovIdx[j] >= fit || g_ovIdx[j + 1] >= fit || g_ovIdx[j + 2] >= fit) continue;
+        if (g_ovIdx[j] >= fit || g_ovIdx[j + 1] >= fit || g_ovIdx[j + 2] >= fit) { noteDrop(); continue; }
         g_idx[g_ni++] = base + g_ovIdx[j]; g_idx[g_ni++] = base + g_ovIdx[j + 1]; g_idx[g_ni++] = base + g_ovIdx[j + 2];
     }
     g_onv = 0; g_oni = 0; g_novSpans = 0;
@@ -1209,6 +1241,14 @@ void finalizeFrame() {
     }
     if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; }
     mergeOverlay();
+    // Fail loudly: a full batch means shapes are missing from the picture. Say so on stderr (the first few
+    // frames only, so a permanently too-big UI does not flood the log) and in DrawData::dropped.
+    static int reports = 0;
+    if (g_dropped > 0 && reports < 5) {
+        ++reports;
+        std::fprintf(stderr, "OkayUI: the draw batch is full (%d vertices, %d indices): %d shape(s) were dropped this frame\n",
+                     kMaxVerts, kMaxIdx, g_dropped);
+    }
 }
 } // namespace
 
@@ -1241,12 +1281,15 @@ int buildCmds() {
 }
 } // namespace
 
+int DroppedGeometry() { return g_dropped; }
+
 DrawData GetDrawData() {
     DrawData d;
     d.vertices = g_verts; d.vertexCount = g_nv;
     d.indices = g_idx;    d.indexCount = g_ni;
     d.vertexStride = (int)sizeof(DrawVertex);
     d.cmds = g_cmds; d.cmdCount = buildCmds();
+    d.dropped = g_dropped;
     if (g_ttf && g_ttf->ok) {
         d.atlasTexture = (const void*)kAtlasTex; d.atlasRgba = g_ttf->rgba; d.atlasW = g_ttf->w; d.atlasH = g_ttf->h;
     }
@@ -3316,7 +3359,7 @@ void ResetState() {
     g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_resizeNext = false;
     g_ovCurN = g_ovPrevN = 0;
-    g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false;
+    g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
 }
 
 } // namespace OkayUI

@@ -244,7 +244,41 @@ void HostileInputTests() {
     // radius and segment counts are bounded
     Reset();
     sim.Frame([&] { dl.AddCircleFilled({50, 50}, 1e6f, kRed, 1000000); dl.AddCircle({50, 50}, 1e6f, kRed, -5, 3.0f); dl.PathArcTo({50, 50}, 30.0f, 0, 6.0f, 100000); dl.PathStroke(kRed); });
-    CHECK(UI::GetDrawData().vertexCount < 20000);
+    CHECK(UI::GetDrawData().vertexCount < 262144);
+}
+
+void LargeDrawListTests() {
+    const UI::DrawList& dl = UI::GetWindowDrawList();
+    // 12,500 separate 2x2 squares = 50,000 vertices: far past the old 20,000 limit, all of it drawn
+    Sim sim(600, 190);
+    Reset();
+    sim.Frame([&] {
+        for (int i = 0; i < 12500; ++i) { const float x = (float)(i % 200) * 3.0f, y = (float)(i / 200) * 3.0f; dl.AddRectFilled({x, y}, {x + 2, y + 2}, kRed); }
+    });
+    UI::DrawData d = UI::GetDrawData();
+    CHECK(d.vertexCount == 50000 && d.indexCount == 75000 && d.dropped == 0 && UI::DroppedGeometry() == 0);
+    const Bitmap b = sim.Draw(0, 0, 0);
+    CHECK(Count(b, kPixRed) == 12500 * 4 && Lit(b) == 12500 * 4);
+    CHECK(PixelAt(b, 0, 0) == kPixRed && PixelAt(b, 2, 0) == kBlack && PixelAt(b, 298, 187) == kPixRed);   // the first and the last square
+    // the same on the foreground list, together with a full main batch: neither layer loses anything
+    Reset();
+    sim.Frame([&] {
+        for (int i = 0; i < 12500; ++i) { const float x = (float)(i % 200) * 3.0f, y = (float)(i / 200) * 3.0f; dl.AddRectFilled({x, y}, {x + 2, y + 2}, kRed); }
+        for (int i = 0; i < 12500; ++i) { const float x = (float)(i % 200) * 3.0f + 1.0f, y = (float)(i / 200) * 3.0f + 1.0f; UI::GetForegroundDrawList().AddRectFilled({x, y}, {x + 1, y + 1}, kGreen); }
+    });
+    d = UI::GetDrawData();
+    CHECK(d.vertexCount == 100000 && d.dropped == 0);
+    const Bitmap b2 = sim.Draw(0, 0, 0);
+    CHECK(Count(b2, kPixGreen) == 12500 && Count(b2, kPixRed) == 12500 * 3);
+    // past the real limit nothing crashes, the data stays valid and the loss is reported, not hidden
+    Reset();
+    sim.Frame([&] { for (int i = 0; i < 70000; ++i) { const float x = (float)(i % 200) * 3.0f, y = (float)(i / 200 % 60) * 3.0f; dl.AddRectFilled({x, y}, {x + 2, y + 2}, kRed); } });
+    d = UI::GetDrawData();
+    CHECK(d.vertexCount <= 262144 && d.vertexCount >= 262140 && d.dropped == 70000 - d.vertexCount / 4 && UI::DroppedGeometry() == d.dropped);
+    sim.Draw(0, 0, 0);
+    Reset();
+    sim.Frame([] {});
+    CHECK(UI::GetDrawData().dropped == 0);                                   // the count is per frame
 }
 
 // One window "W" with `body`; a Rig like the behaviour test's.
@@ -574,6 +608,7 @@ int main() {
     TextAndClipTests();
     ForegroundTests();
     HostileInputTests();
+    LargeDrawListTests();
     MeasureTests();
     CursorTests();
     ChildAvailTests();

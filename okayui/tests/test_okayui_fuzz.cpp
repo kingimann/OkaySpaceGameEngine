@@ -261,16 +261,16 @@ int main() {
         UI::EndFrameData();
     }
 
-    // ---- a frame too big for the fixed batch: geometry is dropped, the draw list stays valid ---
+    // ---- a frame too big for the batch: geometry is dropped, the draw list stays valid ---
     {
         Reset();
         Sim sim(700, 500);
         sim.Move(60, 60);
-        int worst = 0;
+        int worst = 0; bool sawDrop = false;
         for (int f = 0; f < 3; ++f) {
             sim.Frame([&] {
                 if (UI::Begin("big", 0, 0, 600, 400)) {
-                    for (int i = 0; i < 900; ++i) { UI::Text("WWWWWWWWWWWWWWWW"); if (i == 0) UI::Tooltip("overlay while the main batch overflows"); }
+                    for (int i = 0; i < 14000; ++i) { UI::Text("WWWWWWWWWWWWWWWW"); if (i == 0) UI::Tooltip("overlay while the main batch overflows"); }
                     UI::Button("last"); UI::Tooltip("tip");
                 }
                 UI::End();
@@ -278,9 +278,11 @@ int main() {
             const UI::DrawData d = UI::GetDrawData();
             CHECK(DataSane(d));
             worst = std::max(worst, d.vertexCount);
+            if (d.dropped > 0 && UI::DroppedGeometry() == d.dropped) sawDrop = true;
             sim.Draw();
         }
-        CHECK(worst >= 19000);       // the batch really was full
+        CHECK(worst >= 262000);      // the batch really was full
+        CHECK(sawDrop);              // and it said so
     }
 
     // ---- text editing against a reference model ----------------------------------------------

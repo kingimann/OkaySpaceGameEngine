@@ -500,6 +500,71 @@ void MiscTests() {
 
 } // namespace
 
+// Regression: the text field never leaves broken UTF-8 in the caller's buffer. Found by the fuzz test (seed 4):
+// the first shown character was a stale byte offset, and an edit below it put it inside a new multi-byte character,
+// so a click and a Delete cut that character in half.
+void Utf8BufferTests() {
+    {   // selection from the left of the scrolled-off part, replaced by multi-byte text, then click and Delete
+        Rig r; char text[64] = "0123456789abcdefghijklm"; UI::Rect rc;
+        r.body = [&] { UI::SetNextItemWidth(280); UI::InputText("", text, (int)sizeof(text)); rc = UI::GetItemRect(); };
+        r.Frames(2);
+        r.Click(rc.x + 20, rc.y + 8);
+        r.Tap(Key_Home);
+        for (int i = 0; i < 6; ++i) r.Tap(Key_Right);
+        r.sim.shift = true; r.Tap(Key_End); r.sim.shift = false;       // selection 6..23, the view scrolled so the first shown character is 7
+        r.sim.Type("\xE1\xBC\x9F\xE1\xAA\xB5"); r.Frame();
+        CHECK(!std::strcmp(text, "012345\xE1\xBC\x9F\xE1\xAA\xB5"));
+        r.Click(rc.x + 8, rc.y + 8);                                    // places the caret at the first shown character
+        r.Tap(Key_Delete);
+        CHECK(Utf8Valid(text) && !std::strcmp(text, "012345\xE1\xAA\xB5"));   // exactly one whole character went
+        r.Tap(Key_Backspace);
+        CHECK(Utf8Valid(text) && !std::strcmp(text, "01234\xE1\xAA\xB5"));
+    }
+    {   // the caller rewrites the buffer between frames: stale caret and view offsets land on character boundaries
+        Rig r; char text[32] = "abcdefghijklmnopqrstuvwx"; UI::Rect rc;
+        r.body = [&] { UI::SetNextItemWidth(200); UI::InputText("", text, (int)sizeof(text)); rc = UI::GetItemRect(); };
+        r.Frames(2);
+        r.Click(rc.x + 20, rc.y + 8); r.Tap(Key_End);
+        std::strcpy(text, "\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC\xE2\x82\xAC");
+        r.Frame();
+        r.Tap(Key_Backspace);
+        CHECK(Utf8Valid(text));
+        r.Tap(Key_Left); r.Tap(Key_Delete);
+        CHECK(Utf8Valid(text));
+    }
+    {   // a buffer that fills its whole capacity: the terminator is forced, and the cut must not leave half a character
+        Rig r; char text[8] = {'a', 'b', 'c', (char)0xE2, (char)0x82, (char)0xAC, (char)0xE2, (char)0x82};   // no NUL: "abc", euro, then two bytes of a second euro
+        r.body = [&] { UI::InputText("", text, (int)sizeof(text)); };
+        r.Frame();
+        CHECK(!std::strcmp(text, "abc\xE2\x82\xAC") && Utf8Valid(text));
+        char one[4] = {(char)0xF0, (char)0x9F, (char)0x98, (char)0x80};                                  // a 4-byte character that does not fit in 3 bytes + NUL
+        r.body = [&] { UI::InputText("", one, (int)sizeof(one)); };
+        r.Frame();
+        CHECK(one[0] == '\0');
+        char two[4] = {'a', (char)0xC3, (char)0xA9, 'z'};                                                // "a", e-acute, then 'z' overwritten by the NUL: complete, kept
+        r.body = [&] { UI::InputText("", two, (int)sizeof(two)); };
+        r.Frame();
+        CHECK(!std::strcmp(two, "a\xC3\xA9"));
+    }
+    {   // typed or pasted text that does not fit is dropped whole, never cut: cap 6 holds 5 bytes
+        Rig r; char text[6] = "abcd"; UI::Rect rc;
+        r.body = [&] { UI::InputText("", text, (int)sizeof(text)); rc = UI::GetItemRect(); };
+        r.Frames(2); r.Click(rc.x + 20, rc.y + 8); r.Tap(Key_End);
+        r.sim.Type("\xE2\x82\xAC"); r.Frame();                                                         // 3 bytes: 4 + 3 > 5
+        CHECK(!std::strcmp(text, "abcd"));
+        r.sim.Type("\xC3\xA9"); r.Frame();                                                              // 2 bytes: 4 + 2 > 5
+        CHECK(!std::strcmp(text, "abcd"));
+        r.sim.Type("\xE2\x82\xACx"); r.Frame();                                                        // the euro is dropped, the 'x' fits
+        CHECK(!std::strcmp(text, "abcdx") && Utf8Valid(text));
+        // junk: a lead byte followed by a non-continuation byte is never inserted, the byte after it is kept
+        char t2[16] = ""; UI::Rect r2;
+        Rig q; q.body = [&] { UI::InputText("", t2, (int)sizeof(t2)); r2 = UI::GetItemRect(); };
+        q.Frames(2); q.Click(r2.x + 20, r2.y + 8);
+        q.sim.Type(std::string("\xE1", 1) + "e" + "\xE1\x8C" + "z" + "\xC3" + "\xF0\x9F" + "q"); q.Frame();
+        CHECK(Utf8Valid(t2) && !std::strcmp(t2, "ezq"));
+    }
+}
+
 int main() {
     RUN_SUITE("okayui behaviour");
     ButtonTests();
@@ -513,5 +578,6 @@ int main() {
     WindowTests();
     ResizeTests();
     MiscTests();
+    Utf8BufferTests();
     TEST_MAIN_RESULT();
 }

@@ -2877,6 +2877,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Override data layer (21.4.1)
 - Overrides (21.4)
 - Own body and head hiding (4.7.2)
+- Own Collada reader (side by side, off by default) (3.6.11)
 - own FBX reader (3.6)
 - Own FBX reader (side by side, off by default) (3.6.10)
 - Own STL and PLY readers, import seam (3.6.9)

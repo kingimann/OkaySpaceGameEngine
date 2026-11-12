@@ -187,6 +187,7 @@ add_library(okay_engine
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
     src/Render/ModelReaders.cpp
+    src/Render/ColladaReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -425,6 +426,14 @@ endif()
 if(OKAY_PREFER_OWN_READERS)
     target_compile_definitions(okay_engine PRIVATE OKAY_PREFER_OWN_READERS_DEFAULT)
     message(STATUS "OkaySpace: model import prefers the built-in STL/PLY readers over Assimp")
+endif()
+
+# Our own Collada (.dae) reader sits next to Assimp's. Default OFF: Assimp stays the .dae reader when the build
+# has it, and a build without Assimp reads no .dae at all until the reader is switched on, with
+# -DOKAY_OWN_COLLADA=ON, the OKAY_OWN_COLLADA=1 environment variable, or SetImportBackend(".dae", Own).
+if(OKAY_OWN_COLLADA)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_COLLADA_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .dae with the built-in Collada reader first")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

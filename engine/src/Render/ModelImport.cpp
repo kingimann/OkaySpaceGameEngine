@@ -2,6 +2,8 @@
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Core/Log.hpp"
+#include <cstdlib>
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -63,7 +65,8 @@ bool AssimpAvailable() {
 
 std::string ImportableExtensions() {
     // Built in: OBJ, glTF, FBX (ufbx) and our own STL / PLY readers, plus everything
-    // the Assimp build can read.
+    // the Assimp build can read. .dae is added when our own Collada reader is switched on
+    // (it is off by default, so this part is worked out per call, not cached).
     static const std::string list = [] {
         std::string out = ".obj .gltf .glb .fbx .stl .ply";
 #ifdef OKAY_HAVE_ASSIMP
@@ -77,6 +80,8 @@ std::string ImportableExtensions() {
 #endif
         return out;
     }();
+    if ((" " + list + " ").find(" .dae ") == std::string::npos && EffectiveImportBackend(".dae") == ImportBackend::Own)
+        return list + " .dae";
     return list;
 }
 
@@ -370,15 +375,29 @@ constexpr bool kPreferOwnDefault = true;
 constexpr bool kPreferOwnDefault = false;
 #endif
 
-// 0 = .obj, 1 = .stl, 2 = .ply; -1 = no own reader.
+#ifdef OKAY_OWN_COLLADA_DEFAULT
+constexpr bool kOwnColladaDefault = true;
+#else
+constexpr bool kOwnColladaDefault = false;
+#endif
+
+// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
     const std::string e = Lower(ext);
     if (e == ".obj") return 0;
     if (e == ".stl") return 1;
     if (e == ".ply") return 2;
+    if (e == ".dae") return 3;
     return -1;
 }
-std::atomic<int> g_backendChoice[3] = {{0}, {0}, {0}};   // ImportBackend per own-reader format
+std::atomic<int> g_backendChoice[4] = {{0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
+
+// Our Collada reader is opt-in: run-time SetImportBackend, else OKAY_OWN_COLLADA=0/1, else the CMake option.
+bool OwnColladaOptedIn() {
+    bool v = kOwnColladaDefault;
+    if (const char* e = std::getenv("OKAY_OWN_COLLADA")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
+    return v;
+}
 
 std::string ExtensionOf(const std::string& path) {
     std::size_t sl = path.find_last_of("/\\"), dot = path.find_last_of('.');
@@ -414,13 +433,17 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
     // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
     // build has it (as before our readers existed), unless CMake asked for ours first.
+    if (s == 3) {   // Collada: off by default; Assimp reads it when the build has it
+        if (OwnColladaOptedIn()) return ImportBackend::Own;
+        return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
+    }
     if (s == 0 || kPreferOwnDefault || !AssimpAvailable()) return ImportBackend::Own;
     return ImportBackend::Assimp;
 }
 
 bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
     out = ImportedModel{};
-    (void)flatten;   // only the Assimp backend has a use for it
+    // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
     const std::string ext = ExtensionOf(path);
     ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
     if (use == ImportBackend::Assimp) {
@@ -435,8 +458,12 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         const int s = OwnSlot(ext);
         if (s < 0) { if (err) *err = "no built-in reader for this format"; return false; }
         std::string e1;
-        bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : ReadPlyFile(path, out, &e1);
-        if (good) return true;
+        bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
+                                                                                                         : ReadColladaFile(path, out, &e1, flatten);
+        if (good) {
+            for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
+            return true;
+        }
         // Our reader said no. With the default choice, give Assimp a go when the build has it.
         if (which == ImportBackend::Default && AssimpAvailable()) {
 #ifdef OKAY_HAVE_ASSIMP
@@ -447,7 +474,9 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         if (err) *err = e1;
         return false;
     }
-    if (err) *err = "no reader for this format in this build";
+    if (err) *err = ExtensionOf(path) == ".dae"
+        ? "no Collada reader enabled: our own reader is off by default (set OKAY_OWN_COLLADA=1, build with -DOKAY_OWN_COLLADA=ON, or call SetImportBackend(\".dae\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON"
+        : "no reader for this format in this build";
     return false;
 }
 

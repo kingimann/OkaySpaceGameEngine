@@ -1,5 +1,5 @@
-// Malformed input and a deterministic fuzz sweep for our own model readers (OBJ+MTL, STL, PLY).
-// This file needs only the readers (okay/Render/ModelData.hpp, engine/src/Render/ModelReaders.cpp),
+// Malformed input and a deterministic fuzz sweep for our own model readers (OBJ+MTL, STL, PLY, COLLADA).
+// This file needs only the readers (okay/Render/ModelData.hpp, engine/src/Render/ModelReaders.cpp, ColladaReader.cpp),
 // so it can also be built on its own with -fsanitize=address,undefined; under ctest it runs on the
 // engine library. Fixtures: tests/data/models.
 #include "test_framework.hpp"
@@ -37,6 +37,24 @@ static bool Sane(const ImportedModel& m) {
     return true;
 }
 
+// Skins and animation of a Collada result are consistent: parallel arrays, joint indices in range,
+// parents before children, finite keys.
+static bool SaneRig(const ImportedModel& m) {
+    for (std::size_t i = 0; i < m.nodes.size(); ++i) if (m.nodes[i].parent >= (int)i) return false;
+    for (const ImportedPart& p : m.parts) {
+        if (!m.nodes.empty() && (p.node < 0 || p.node >= (int)m.nodes.size())) return false;
+        if (p.material >= (int)m.materials.size()) return false;
+        if (p.bones.empty()) continue;
+        if (p.jointIdx.size() != p.mesh.vertices.size() || p.jointWt.size() != p.mesh.vertices.size()) return false;
+        for (std::size_t v = 0; v < p.jointIdx.size(); ++v)
+            for (int k = 0; k < 4; ++k)
+                if (p.jointIdx[v][k] < 0 || p.jointIdx[v][k] >= (int)p.bones.size() || !std::isfinite(p.jointWt[v][k])) return false;
+    }
+    for (const ImportedClip& c : m.clips) for (const ImportedChannel& ch : c.channels)
+        for (const ImportedKeyQ& k : ch.rotation) if (!std::isfinite(k.time) || !std::isfinite(k.value.w)) return false;
+    return true;
+}
+
 // Deterministic pseudo-random bytes for the fuzz sweep.
 struct FuzzRng {
     std::uint64_t s;
@@ -64,6 +82,7 @@ static void FuzzOne(const std::string& bytes, int& ran, int& accepted) {
     if (ReadObjBuffer(bytes, "", m, &err)) { ++accepted; CHECK(Sane(m)); }
     if (ReadStlBuffer(bytes, m, &err))     { ++accepted; CHECK(Sane(m)); }
     if (ReadPlyBuffer(bytes, m, &err))     { ++accepted; CHECK(Sane(m)); }
+    if (ReadColladaBuffer(bytes, "", m, &err)) { ++accepted; CHECK(Sane(m)); CHECK(SaneRig(m)); }
 }
 
 int main() {
@@ -121,6 +140,48 @@ int main() {
         CHECK(!ReadPlyBuffer(le.substr(0, le.size() - 5), m, &err));                              // truncated binary
         std::string hdr = "ply\nformat ascii 1.0\n"; for (int i = 0; i < 5000; ++i) hdr += "comment x\n";
         CHECK(!ReadPlyBuffer(hdr + "end_header\n", m, &err));                                     // header flood
+        // COLLADA
+        CHECK(!ReadColladaBuffer("", "", m, &err));
+        CHECK(!ReadColladaBuffer("<COLLADA>", "", m, &err));                                      // unclosed
+        CHECK(!ReadColladaBuffer("<COLLADA></COLLADB>", "", m, &err));                            // mismatched end tag
+        CHECK(!ReadColladaBuffer("<a/><b/>", "", m, &err));                                       // two roots
+        CHECK(!ReadColladaBuffer("<svg/>", "", m, &err));                                         // not COLLADA
+        CHECK(!ReadColladaBuffer("<COLLADA a=b/>", "", m, &err));                                 // unquoted attribute
+        CHECK(!ReadColladaBuffer("<COLLADA><!-- never closed </COLLADA>", "", m, &err));
+        CHECK(!ReadColladaBuffer("<COLLADA><library_visual_scenes><visual_scene id='s'/></library_visual_scenes></COLLADA>", "", m, &err));   // no mesh
+        {
+            std::string deep = "<COLLADA>"; for (int i = 0; i < 400; ++i) deep += "<n>"; 
+            CHECK(!ReadColladaBuffer(deep, "", m, &err));                                         // nesting bomb
+        }
+        std::string dae = Slurp(kDir + "two_materials.dae");
+        auto swap = [&](const char* a, const char* b) { std::string t = dae; std::size_t at = t.find(a); if (at == std::string::npos) { CHECK(false); return std::string("MISSING"); } t.replace(at, std::strlen(a), b); return t; };
+        CHECK(ReadColladaBuffer(dae, "", m, &err));                                               // the unmodified fixture is fine
+        CHECK(!ReadColladaBuffer(swap("<p>0 0 0  1 0 1  2 0 2</p>", "<p>0 0 0  1 0 1  9 0 2</p>"), "", m, &err));     // position index out of range
+        CHECK(!ReadColladaBuffer(swap("<p>0 0 0  1 0 1  2 0 2</p>", "<p>0 0 0  1 0 1  2 7 2</p>"), "", m, &err));     // normal index out of range
+        CHECK(!ReadColladaBuffer(swap("<p>0 0 0  1 0 1  2 0 2</p>", "<p>0 0 0  1 0 1  2 0 -4</p>"), "", m, &err));    // negative uv index
+        CHECK(!ReadColladaBuffer(swap("<vcount>4</vcount>", "<vcount>40</vcount>"), "", m, &err));                      // vcount past p
+        CHECK(!ReadColladaBuffer(swap("<vcount>4</vcount>", "<vcount>-4</vcount>"), "", m, &err));
+        CHECK(!ReadColladaBuffer(swap("0 0 0  1 0 0  1 1 0  0 1 0", "0 0 0  1 0 0  1 1 nan  0 1 0"), "", m, &err));    // NaN position
+        CHECK(!ReadColladaBuffer(swap("0 0 0  1 0 0  1 1 0  0 1 0", "0 0 0  1 0 0  1 1 zz  0 1 0"), "", m, &err));     // not a number
+        CHECK(!ReadColladaBuffer(swap("<input semantic=\"VERTEX\" source=\"#plate-vtx\" offset=\"0\"/>\n          <input semantic=\"NORMAL\" source=\"#plate-nrm\" offset=\"1\"/>\n          <input semantic=\"TEXCOORD\" source=\"#plate-uv\" offset=\"2\" set=\"0\"/>\n          <p>0 0 0", "<p>0 0 0"), "", m, &err));   // no inputs
+        CHECK(!ReadColladaBuffer(swap("source=\"#plate-vtx\" offset=\"0\"", "source=\"#nope\" offset=\"0\""), "", m, &err));   // VERTEX names nothing
+        // A skin whose tables disagree is dropped with a note, the mesh stays.
+        {
+            std::string sk = Slurp(kDir + "skinned_strip.dae");
+            std::size_t at = sk.find("<vcount>1 2 2 1</vcount>");
+            CHECK(at != std::string::npos);
+            sk.replace(at, std::strlen("<vcount>1 2 2 1</vcount>"), "<vcount>1 2 2 9</vcount>");
+            ImportedModel r; std::string e;
+            CHECK(ReadColladaBuffer(sk, "", r, &e));
+            CHECK(!r.parts.empty() && r.parts[0].bones.empty());
+            bool said = false; for (const std::string& n : r.notes) if (n.find("malformed") != std::string::npos) said = true;
+            CHECK(said);
+        }
+        // Instancing loop: a node that instances itself must stop, not recurse for ever.
+        CHECK(!ReadColladaBuffer("<COLLADA><library_nodes><node id='a'><instance_node url='#a'/></node></library_nodes>"
+                                 "<library_visual_scenes><visual_scene id='s'><node id='b'><instance_node url='#a'/></node></visual_scene></library_visual_scenes></COLLADA>", "", m, &err));
+        // Entity bomb: entities are never expanded recursively, so this is just text.
+        CHECK(!ReadColladaBuffer("<!DOCTYPE c [<!ENTITY a \"&b;&b;\"><!ENTITY b \"&c;&c;\">]><COLLADA>&a;</COLLADA>", "", m, &err));   // parses, but has no scene
         // Each failure leaves the result empty and says why.
         CHECK(m.parts.empty());
         CHECK(!ReadPlyBuffer("ply\n", m, &err) && !err.empty());
@@ -130,7 +191,8 @@ int main() {
     {
         std::vector<std::string> seeds;
         for (const char* f : {"cube.obj", "cube.mtl", "plain.obj", "cube_ascii.stl", "cube_binary.stl", "two_solids.stl",
-                              "cube_ascii.ply", "cube_le.ply", "cube_be.ply", "tetra_plain.ply"})
+                              "cube_ascii.ply", "cube_le.ply", "cube_be.ply", "tetra_plain.ply",
+                              "two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "unsupported.dae"})
             seeds.push_back(Slurp(kDir + f));
         int ran = 0, accepted = 0;
         for (const std::string& s : seeds) {

@@ -46,7 +46,7 @@ target_include_directories(okay-player PRIVATE ${SDL2_INCLUDE_DIRS} ${CMAKE_SOUR
 # OkayUI in the runtime: games can render the immediate-mode toolkit (and the F1
 # "Test UI" overlay proves it works in a real game). Linked when available.
 if(TARGET okay_ui)
-    target_link_libraries(okay-player PRIVATE okay_ui)
+    target_link_libraries(okay-player PRIVATE okay_ui okay_ui_soft)   # okay_ui_soft: the software 2D painter of the own platform backend
     target_include_directories(okay-player PRIVATE ${CMAKE_SOURCE_DIR}/shared)
     target_compile_definitions(okay-player PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()

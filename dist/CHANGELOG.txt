@@ -1,5 +1,60 @@
 OkaySpace Game Engine — Changelog
 
+v2.861.2
+  Editor
+  - Visual script: the Add Node menu is much lighter while it is open. It now
+    draws only the rows you can see and keeps the results, topic counts and
+    search matches until something changes, so scrolling, hovering and idle
+    time in the menu cost almost nothing.
+
+v2.861.1
+  Editor
+  - Visual script: the Add Node menu no longer lowers the frame rate when it
+    opens or while you type in its search box. The node list is built once and
+    reused instead of being rebuilt on every frame.
+
+v2.861.0
+  Editor
+  - Prefabs: an override header shows what an instance changes, with revert and
+    apply per property or for all (#666). Open on a prefab enters prefab mode,
+    with its own scene view, a leave prompt for unsaved edits and undo (#676).
+    Prefab variants are changed by their overrides or by opening their base
+    prefab; they are not opened directly.
+  - Level design: foliage painting (paint, erase, rescale; slope, height and
+    spacing limits; merged into chunks for speed), up to four painted terrain
+    texture layers, decal projector, cable between two objects, true
+    orthographic Top/Front/Side views, and a measuring tool (#677). Volumes
+    and logic zones: checkpoint, kill, force, atmosphere and ambience regions
+    drawn in the scene view; an ambience region fades in the Audio Source on
+    its object while the camera is inside (#675). I/O links on logic objects:
+    when a named output fires, any object's input is triggered, with a delay
+    and a once option (#672). Navigation areas, costs and off-mesh links
+    (#661). Mesh Collider 3D uses the real triangles for static objects (#663).
+  - Project panel rebuilt on the asset database (#673). Undo records named
+    scene steps that survive Play (#662).
+  - Scene view and layout: the camera readout is an optional overlay that no
+    longer overlaps the stats line; toolbar tooltips and an icon-plus-label
+    mode, with overflow moved into the "..." menu on narrow views; Compact and
+    Comfortable inspector density; object and camera/light names avoid each
+    other and the gizmo; Shift+Space maximizes the Scene view; panel groups
+    collapse and expand; the last layout is restored at start (#682).
+  Game features
+  - The player's Settings screen has Text size, Colour filter, High contrast,
+    Reduce motion and Reduce flashing, and the engine and UI components honour
+    them (#657).
+  - Save games without code: a Saveable component, Save Settings, Save / Load /
+    Delete / Continue as nodes, actions and script functions, and a Save Slots
+    screen (#664).
+  Launcher
+  - "Download my data" and "Delete my account" in Account > Sign-in & security;
+    deleting needs your password and removes or anonymises your rows (#651;
+    needs the delete-account function deployed, see docs/account_data.md; until
+    then the launcher says deletion is not set up).
+  - Report a message, post, item or profile; reports are reviewed by staff
+    (#652, needs docs/sql/reports.sql, applied to the live project).
+  Fonts
+  - TrueType fonts are rasterised by our own code (#655).
+
 v2.860.0
   Audio
   - Clips keep their stereo channels and long music streams from disk in a

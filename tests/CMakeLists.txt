@@ -2415,6 +2415,17 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     endforeach()
 endif()
 
+# The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what
+# the X server holds. Own code, not ready, off by default; the test only checks it.
+if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_platform_painter_window test_platform_painter_window.cpp)
+    target_link_libraries(test_platform_painter_window PRIVATE okay_ui_soft)
+    target_include_directories(test_platform_painter_window PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_painter_window
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_painter_window>)
+    set_tests_properties(platform_painter_window PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+endif()
+
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)

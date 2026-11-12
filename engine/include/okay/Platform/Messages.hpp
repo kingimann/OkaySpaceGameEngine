@@ -5,6 +5,7 @@
 // just "messages where that friend is sender or recipient" — and whichever side
 // isn't the friend is me, so we never need our own uuid.
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Privacy.hpp"
 #include <string>
 #include <vector>
 #include <map>
@@ -42,8 +43,13 @@ public:
         std::string j = "{\"recipient\":" + JStr(friendUid) + ",\"body\":" + JStr(body);
         if (replyTo > 0) j += ",\"reply_to\":" + std::to_string(replyTo);
         j += "}";
-        return acct_.Api("/rest/v1/messages", "POST", j).ok;
+        auto r = acct_.Api("/rest/v1/messages", "POST", j);
+        // Why it failed, in words (a server privacy rule, or no connection); empty
+        // when the cause is unknown or it worked. See docs/sql/blocks.sql.
+        lastSendError_ = r.ok ? std::string() : privacy::FailureText(r, "");
+        return r.ok;
     }
+    const std::string& LastSendError() const { return lastSendError_; }
 
     // Delete one of my own sent messages (RLS blocks deleting others').
     bool Delete(long messageId) {
@@ -322,7 +328,7 @@ public:
             st.viewingAt = ParseIso(Field(o[0], "updated_at"));
         }
         if (withLastSeen) {
-            auto p = acct_.Api("/rest/v1/profiles?select=last_seen&id=eq." + peerUid, "GET");
+            auto p = privacy::ProfilesGet(acct_, "select=last_seen&id=eq." + peerUid);
             if (p.ok) { auto po = SplitObjects(p.body); if (!po.empty()) st.lastSeen = ParseIso(Field(po[0], "last_seen")); }
         }
         return st;
@@ -415,23 +421,27 @@ public:
     // Everyone in a group with their name, avatar, how far they've read
     // (last_read: drives "Seen by") and when they were last online. Two
     // round-trips: the member rows, then their profiles.
-    struct GroupMemberInfo { std::string uid, username, name, avatar; long lastRead = 0; long lastSeen = 0; };
+    struct GroupMemberInfo { std::string uid, username, name, avatar, role; long lastRead = 0; long lastSeen = 0; };   // role: owner/admin/member ("" before member_moderation.sql)
     std::vector<GroupMemberInfo> GroupMembersInfo(long convoId) {
         std::vector<GroupMemberInfo> out;
         if (!acct_.IsLoggedIn() || convoId <= 0) return out;
+        // `role` exists only after docs/sql/member_moderation.sql; fall back without it.
         auto r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
-                           "&select=member,last_read", "GET");
+                           "&select=member,last_read,role", "GET");
+        if (!r.ok) r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
+                                 "&select=member,last_read", "GET");
         if (!r.ok) return out;
         std::string ids;
         for (const auto& o : SplitObjects(r.body)) {
             GroupMemberInfo m; m.uid = Field(o, "member"); m.lastRead = std::atol(Field(o, "last_read").c_str());
+            m.role = Field(o, "role");
             if (m.uid.empty()) continue;
             if (!ids.empty()) ids += ",";
             ids += m.uid;
             out.push_back(m);
         }
         if (ids.empty()) return out;
-        auto p = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen&id=in.(" + ids + ")", "GET");
+        auto p = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen&id=in.(" + ids + ")");
         if (p.ok)
             for (const auto& o : SplitObjects(p.body)) {
                 const std::string id = Field(o, "id");
@@ -769,6 +779,7 @@ public:
 
 private:
     okay::account::AccountService& acct_;
+    std::string lastSendError_;
     Support typingState_ = Support::Unknown, messageReads_ = Support::Unknown;
     static void NoteTable(Support& s, const okay::account::ApiResponse& r) {
         if (r.ok) s = Support::Yes;

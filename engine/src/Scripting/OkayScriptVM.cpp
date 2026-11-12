@@ -9030,6 +9030,16 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
 
+        // fire_output("OnOpened", param): raise a named output on this object's Logic Source,
+        // running its I/O links. Returns how many links were delivered or queued.
+        b["fire_output"] = [this](std::vector<Value>& a) -> Value {
+            int n = 0;
+            if (!a.empty() && rt.host && rt.host->gameObject)
+                for (LogicSource* ls : rt.host->gameObject->GetComponents<LogicSource>())
+                    n += ls->FireOutput(a[0].AsString(), a.size() > 1 ? a[1].AsString() : std::string());
+            return Value{(float)n};
+        };
+
         // --- Custom events + object variables shared with visual-script graphs ---
         // send_event("Target", "Hit", value): runs the target's On Custom Event "Hit"
         // graph nodes and its scripts' OnEvent_Hit(value). "" / "self" = this object.

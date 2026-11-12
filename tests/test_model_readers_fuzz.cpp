@@ -1,5 +1,5 @@
-// Malformed input and a deterministic fuzz sweep for our own model readers (OBJ+MTL, STL, PLY, COLLADA).
-// This file needs only the readers (okay/Render/ModelData.hpp, engine/src/Render/ModelReaders.cpp, ColladaReader.cpp),
+// Malformed input and a deterministic fuzz sweep for our own model readers (OBJ+MTL, STL, PLY, COLLADA, 3DS).
+// This file needs only the readers (okay/Render/ModelData.hpp, engine/src/Render/ModelReaders.cpp, ColladaReader.cpp, ThreeDsReader.cpp),
 // so it can also be built on its own with -fsanitize=address,undefined; under ctest it runs on the
 // engine library. Fixtures: tests/data/models.
 #include "test_framework.hpp"
@@ -76,6 +76,30 @@ static std::string Mutate(const std::string& src, FuzzRng& r) {
     return s;
 }
 
+// Binary-chunk aware mutation for 3DS: besides the byte-level kinds, overwrite a 4-byte value
+// (a chunk length or a count) with an awkward number, or a 2-byte value (an id or a count).
+static std::string Mutate3ds(const std::string& src, FuzzRng& r) {
+    std::string s = src;
+    if (s.size() < 8) return s;
+    const int kind = (int)(r.Next() % 4);
+    if (kind == 0) {
+        static const std::uint32_t odd[] = {0u, 1u, 5u, 6u, 7u, 0xFFFFu, 0x10000u, 0x7FFFFFFFu, 0xFFFFFFFFu};
+        std::uint32_t v = odd[r.Next() % 9];
+        if (r.Next() % 3 == 0) v = (std::uint32_t)(s.size() + (r.Next() % 5)) - 2;
+        const std::size_t at = 2 + r.Next() % (s.size() - 5);
+        for (int i = 0; i < 4; ++i) s[at + (std::size_t)i] = (char)(v >> (8 * i));
+        return s;
+    }
+    if (kind == 1) {
+        static const std::uint32_t odd[] = {0u, 1u, 2u, 3u, 0xFFFFu, 0x8000u};
+        const std::uint32_t v = odd[r.Next() % 6];
+        const std::size_t at = r.Next() % (s.size() - 1);
+        s[at] = (char)v; s[at + 1] = (char)(v >> 8);
+        return s;
+    }
+    return Mutate(src, r);
+}
+
 static void FuzzOne(const std::string& bytes, int& ran, int& accepted) {
     ImportedModel m; std::string err;
     ++ran;
@@ -83,6 +107,8 @@ static void FuzzOne(const std::string& bytes, int& ran, int& accepted) {
     if (ReadStlBuffer(bytes, m, &err))     { ++accepted; CHECK(Sane(m)); }
     if (ReadPlyBuffer(bytes, m, &err))     { ++accepted; CHECK(Sane(m)); }
     if (ReadColladaBuffer(bytes, "", m, &err)) { ++accepted; CHECK(Sane(m)); CHECK(SaneRig(m)); }
+    if (Read3dsBuffer(bytes, "", m, &err)) { ++accepted; CHECK(Sane(m)); CHECK(SaneRig(m)); }
+    if (Read3dsBuffer(bytes, "", m, &err, true)) { ++accepted; CHECK(Sane(m)); CHECK(m.nodes.size() == 1); }
 }
 
 int main() {
@@ -140,6 +166,19 @@ int main() {
         CHECK(!ReadPlyBuffer(le.substr(0, le.size() - 5), m, &err));                              // truncated binary
         std::string hdr = "ply\nformat ascii 1.0\n"; for (int i = 0; i < 5000; ++i) hdr += "comment x\n";
         CHECK(!ReadPlyBuffer(hdr + "end_header\n", m, &err));                                     // header flood
+        // 3DS (the chunk-level cases are in test_threeds_reader)
+        CHECK(!Read3dsBuffer("", "", m, &err));
+        CHECK(!Read3dsBuffer("MM", "", m, &err));
+        CHECK(!Read3dsBuffer(std::string(64, '\xFF'), "", m, &err));
+        CHECK(!Read3dsBuffer(std::string(64, '\0'), "", m, &err));
+        CHECK(!Read3dsFile(kDir + "does_not_exist.3ds", m, &err));
+        {
+            std::string t = Slurp(kDir + "one_triangle.3ds");
+            CHECK(Read3dsBuffer(t, "", m, &err));
+            CHECK(!Read3dsBuffer(t.substr(0, t.size() - 1), "", m, &err));
+            std::string bad = t; bad[2] = bad[3] = bad[4] = bad[5] = (char)0xFF;
+            CHECK(!Read3dsBuffer(bad, "", m, &err));
+        }
         // COLLADA
         CHECK(!ReadColladaBuffer("", "", m, &err));
         CHECK(!ReadColladaBuffer("<COLLADA>", "", m, &err));                                      // unclosed
@@ -207,7 +246,8 @@ int main() {
         std::vector<std::string> seeds;
         for (const char* f : {"cube.obj", "cube.mtl", "plain.obj", "cube_ascii.stl", "cube_binary.stl", "two_solids.stl",
                               "cube_ascii.ply", "cube_le.ply", "cube_be.ply", "tetra_plain.ply",
-                              "two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "unsupported.dae", "component_anim.dae"})
+                              "two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "unsupported.dae", "component_anim.dae",
+                              "one_triangle.3ds", "two_materials.3ds", "transformed.3ds", "smoothing.3ds", "unsupported.3ds"})
             seeds.push_back(Slurp(kDir + f));
         int ran = 0, accepted = 0;
         for (const std::string& s : seeds) {
@@ -221,6 +261,25 @@ int main() {
         // Pure noise, and long runs of one byte.
         for (int i = 0; i < 300; ++i) { std::string n((std::size_t)(r.Next() % 400), 0); for (char& c : n) c = (char)r.Next(); FuzzOne(n, ran, accepted); }
         for (int c : std::initializer_list<int>{0, 0xFF, 'v', 'f', ' ', '\n', '-', '9'}) FuzzOne(std::string(4096, (char)c), ran, accepted);
+        // 3DS: its own sweep over every .3ds fixture, with chunk-length and count mutations (20000 by default).
+        {
+            std::vector<std::string> tds;
+            for (const std::string& s : seeds) if (s.size() > 6 && (unsigned char)s[0] == 0x4D && (unsigned char)s[1] == 0x4D) tds.push_back(s);
+            CHECK(tds.size() == 5);
+            FuzzRng r3{0xD1B54A32D192ED03ull};
+            int n3 = 20000;
+            if (const char* e = std::getenv("OKAY_FUZZ_ITERS_3DS")) n3 = std::atoi(e);
+            int acc3 = 0;
+            for (int i = 0; i < n3; ++i) {
+                std::string in = Mutate3ds(tds[(std::size_t)(r3.Next() % tds.size())], r3);
+                if (r3.Next() % 4 == 0) in = Mutate3ds(in, r3);   // two edits
+                ImportedModel m3; std::string e3;
+                ++ran;
+                if (Read3dsBuffer(in, "", m3, &e3)) { ++acc3; ++accepted; CHECK(Sane(m3)); CHECK(SaneRig(m3)); }
+                else CHECK(m3.parts.empty() && !e3.empty());
+            }
+            std::printf("  3DS fuzz: %d mutated inputs, %d accepted\n", n3, acc3);
+        }
         std::printf("  fuzz: %d inputs, %d accepted\n", ran, accepted);
         CHECK(ran > 8000);
         CHECK(accepted > 0);

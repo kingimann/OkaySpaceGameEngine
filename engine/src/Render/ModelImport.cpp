@@ -80,9 +80,11 @@ std::string ImportableExtensions() {
 #endif
         return out;
     }();
-    if ((" " + list + " ").find(" .dae ") == std::string::npos && EffectiveImportBackend(".dae") == ImportBackend::Own)
-        return list + " .dae";
-    return list;
+    std::string result = list;
+    for (const char* e : {".dae", ".3ds"})
+        if ((" " + result + " ").find(std::string(" ") + e + " ") == std::string::npos && EffectiveImportBackend(e) == ImportBackend::Own)
+            result += std::string(" ") + e;
+    return result;
 }
 
 static std::string Lower(std::string s) {
@@ -381,21 +383,35 @@ constexpr bool kOwnColladaDefault = true;
 constexpr bool kOwnColladaDefault = false;
 #endif
 
-// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae; -1 = no own reader.
+#ifdef OKAY_OWN_3DS_DEFAULT
+constexpr bool kOwn3dsDefault = true;
+#else
+constexpr bool kOwn3dsDefault = false;
+#endif
+
+// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
     const std::string e = Lower(ext);
     if (e == ".obj") return 0;
     if (e == ".stl") return 1;
     if (e == ".ply") return 2;
     if (e == ".dae") return 3;
+    if (e == ".3ds") return 4;
     return -1;
 }
-std::atomic<int> g_backendChoice[4] = {{0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
+std::atomic<int> g_backendChoice[5] = {{0}, {0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
 
 // Our Collada reader is opt-in: run-time SetImportBackend, else OKAY_OWN_COLLADA=0/1, else the CMake option.
 bool OwnColladaOptedIn() {
     bool v = kOwnColladaDefault;
     if (const char* e = std::getenv("OKAY_OWN_COLLADA")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
+    return v;
+}
+
+// Our 3DS reader is opt-in the same way: run-time SetImportBackend, else OKAY_OWN_3DS=0/1, else the CMake option.
+bool Own3dsOptedIn() {
+    bool v = kOwn3dsDefault;
+    if (const char* e = std::getenv("OKAY_OWN_3DS")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
 }
 
@@ -437,6 +453,10 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
         if (OwnColladaOptedIn()) return ImportBackend::Own;
         return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
     }
+    if (s == 4) {   // 3DS: off by default; Assimp reads it when the build has it
+        if (Own3dsOptedIn()) return ImportBackend::Own;
+        return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
+    }
     if (s == 0 || kPreferOwnDefault || !AssimpAvailable()) return ImportBackend::Own;
     return ImportBackend::Assimp;
 }
@@ -459,7 +479,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         if (s < 0) { if (err) *err = "no built-in reader for this format"; return false; }
         std::string e1;
         bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
-                                                                                                         : ReadColladaFile(path, out, &e1, flatten);
+                                                                                                         : s == 3 ? ReadColladaFile(path, out, &e1, flatten)
+                                                                                                                  : Read3dsFile(path, out, &e1, flatten);
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;
@@ -476,6 +497,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
     }
     if (err) *err = ExtensionOf(path) == ".dae"
         ? "no Collada reader enabled: our own reader is off by default (set OKAY_OWN_COLLADA=1, build with -DOKAY_OWN_COLLADA=ON, or call SetImportBackend(\".dae\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON"
+        : ExtensionOf(path) == ".3ds"
+        ? "no 3DS reader enabled: our own reader is off by default (set OKAY_OWN_3DS=1, build with -DOKAY_OWN_3DS=ON, or call SetImportBackend(\".3ds\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON"
         : "no reader for this format in this build";
     return false;
 }

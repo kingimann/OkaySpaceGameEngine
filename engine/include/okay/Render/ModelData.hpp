@@ -137,16 +137,27 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// cameras, lights ...) is reported in `out.notes`. `baseDir` ends with a slash or is empty.
 bool ReadColladaBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 
+/// Autodesk 3DS (.3ds). Reads objects (vertices, faces, UVs, per-face material, smoothing groups, the
+/// object's local-axes matrix 0x4160) and materials (diffuse colour, shininess, transparency, diffuse /
+/// specular / bump texture files with UV scale and offset baked into the UVs). One part per object and
+/// material; one node per object under a root that carries the master scale and the Z-up to Y-up rotation.
+/// Smooth normals follow the smoothing groups (group 0 is flat), or are generated per position when the
+/// file has none. UV v is flipped like the other bottom-up formats. `flatten` bakes every transform and
+/// returns one root node. Keyframes, lights, cameras and every chunk not read go to `out.notes`.
+/// Our reader is not ready: it only runs when asked for (see HasOwnReader). `baseDir` ends with a slash or is empty.
+bool Read3dsBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+bool Read3dsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply .dae have one
+    Own,       ///< our reader; only .obj .stl .ply .dae .3ds have one
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 
@@ -154,7 +165,8 @@ enum class ImportBackend {
 /// Collada (.dae) is the odd one out: its reader is off by default (docs/model_import.md);
 /// it runs when SetImportBackend(".dae", Own), the environment variable OKAY_OWN_COLLADA=1
 /// or the CMake option OKAY_OWN_COLLADA says so (run-time choice beats the variable, which
-/// beats CMake; OKAY_OWN_COLLADA=0 forces it off).
+/// beats CMake; OKAY_OWN_COLLADA=0 forces it off). The 3DS (.3ds) reader is off by default in the
+/// same way (SetImportBackend(".3ds", Own), OKAY_OWN_3DS=1 / =0, CMake OKAY_OWN_3DS).
 bool HasOwnReader(const std::string& ext);
 /// Choose the backend for one extension (".stl"), or for every format with
 /// an own reader when `ext` is "*". Returns false for an extension without an own

@@ -2501,6 +2501,16 @@ add_executable(test_collada_reader test_collada_reader.cpp)
 target_link_libraries(test_collada_reader PRIVATE okay::engine)
 target_compile_definitions(test_collada_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME collada_reader COMMAND test_collada_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# Our own 3DS reader (side by side with Assimp, off by default, not ready): fixtures, chunk-level malformed input,
+# truncation at every length, the opt-in switch, and (with OKAY_USE_ASSIMP) both backends compared.
+add_executable(test_threeds_reader test_threeds_reader.cpp)
+target_link_libraries(test_threeds_reader PRIVATE okay::engine)
+target_compile_definitions(test_threeds_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(OKAY_OWN_3DS)
+    target_compile_definitions(test_threeds_reader PRIVATE OKAY_OWN_3DS_ON)
+endif()
+add_test(NAME threeds_reader COMMAND test_threeds_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(threeds_reader PROPERTIES TIMEOUT 300)
 
 add_executable(test_model_readers_fuzz test_model_readers_fuzz.cpp)
 target_link_libraries(test_model_readers_fuzz PRIVATE okay::engine)

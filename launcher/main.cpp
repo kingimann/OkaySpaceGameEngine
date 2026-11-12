@@ -23,6 +23,7 @@
 #include "okay/Platform/Friends.hpp"
 #include "okay/Platform/Workshop.hpp"
 #include "okay/Platform/Messages.hpp"
+#include "okay/Platform/BlockList.hpp"
 #include "okay/Platform/Forums.hpp"
 #include "okay/Platform/Admin.hpp"
 #include "okay/Platform/Servers.hpp"
@@ -41,14 +42,9 @@
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — `code` in chat
 #include "FileDialog.hpp"       // native file picker (chat attachments), or the built-in browser
 
-// stb_image for optional per-game cover art. STATIC keeps its symbols file-local
-// (the launcher doesn't link the engine, so there's no clash, but this is tidy).
-#define STB_IMAGE_STATIC
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_PNG
-#define STBI_ONLY_JPEG
-#define STBI_ONLY_GIF        // animated GIFs in chat (stbi_load_gif_from_memory)
-#include "stb_image.h"
+// Our own image decoder (engine/src/Core/ImageDecode*.cpp, compiled straight into the
+// launcher: it doesn't link the engine) for cover art, avatars, chat images and emoji.
+#include "okay/Core/ImageDecode.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -57,6 +53,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -1751,8 +1748,11 @@ std::string g_voiceInDev, g_voiceOutDev;               // audio devices by name 
 float g_voiceInGain = 1.0f, g_voiceOutVol = 1.0f;      // mic volume / call volume (persisted)
 // Privacy (persisted). Enforced by this client: who can reach me, and what
 // others see about me.
-bool g_dmFriendsOnly = false;     // messages from non-friends go to "Message requests"
+int  g_dmFrom = 0;               // 0 everyone, 1 friends, 2 nobody: non-friends go to "Message requests"; the server enforces it too (docs/sql/blocks.sql)
 int  g_callsFrom = 1;             // 0 everyone, 1 friends, 2 nobody
+int  g_profileVis = 0;            // who sees my bio / status / favorite game / location: 0 everyone, 1 friends, 2 nobody (server-enforced)
+int  g_onlineVis = 0;             // who sees when I'm online / what I'm playing: 0 everyone, 1 friends, 2 nobody (server-enforced)
+int  g_friendReqs = 0;            // who can send me friend requests: 0 everyone, 2 nobody (server-enforced)
 bool g_readReceipts = true;       // send read receipts / "in the chat" (off = you don't see theirs either)
 bool g_typingIndicator = true;    // tell people when I'm typing
 // What the server said about docs/sql/chat_receipts.sql (0 unknown, 1 works, 2 tables missing).
@@ -1761,6 +1761,9 @@ static volatile int g_typingSupport = 0, g_readSupport = 0;
 static const char* ReceiptsMissingNote() { return okay::Messages::ReceiptsSetupNote(); }
 bool g_sharePlaytime = true;      // sync my playtime to my public profile
 bool g_followersSeeActivity = true;   // people who follow me see my activity feed (profiles.followers_see_activity)
+// Server-side block list state (docs/sql/blocks.sql); the sync code is near g_pollCfgDir.
+std::vector<okay::privacy::PendingOp> g_blockPending;   // block/unblock changes the server has not confirmed yet (persisted)
+std::string g_blocksSyncedFor;    // username the local block list was last synced for; "" = old PC-only list, uploaded once at sign-in (persisted)
 std::set<std::string> g_friendUids;   // accepted friends (filled when a friends list loads)
 std::map<std::string, std::string> g_blockedNames;   // uid -> name, for the Blocked list (persisted)  // last window size (persisted) — roomier first-launch default
 const char* kThemeNames[] = {"Slate", "Midnight", "Light"};
@@ -2516,7 +2519,7 @@ void EmojiPicker(const char* id, char* buf, std::size_t cap) {
 ImFont* g_fontMono = nullptr;   // JetBrains Mono for `code` (loaded in main)
 // Merge the system's emoji font into the font just added, so emoji typed into
 // text boxes draw as emoji rather than "?" (message bodies use Twemoji images).
-// stb_truetype renders their outlines in one colour. Missing font = no-op.
+// Dear ImGui's own font rasterizer draws their outlines in one colour. Missing font = no-op.
 static void MergeEmojiFallback(float size) {
     static const char* kPaths[] = {
 #if defined(_WIN32)
@@ -3157,9 +3160,20 @@ static void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a,
     TemplateGlyph(d, title, ImVec2(a.x + (b.x - a.x - s) * 0.5f, a.y + (b.y - a.y - s) * 0.36f), s, IM_COL32(248, 250, 255, 235));
 }
 
+// Decodes an image file to a malloc'd RGBA8 buffer (free with std::free); nullptr on failure.
+static unsigned char* LoadRgbaFile(const std::string& path, int* w, int* h) {
+    okay::DecodedImage img;
+    if (!okay::DecodeImageFile(path, img) || img.rgba.empty()) return nullptr;
+    unsigned char* px = static_cast<unsigned char*>(std::malloc(img.rgba.size()));
+    if (!px) return nullptr;
+    std::memcpy(px, img.rgba.data(), img.rgba.size());
+    *w = img.width; *h = img.height;
+    return px;
+}
+
 // ---- Optional per-game cover art -----------------------------------------
 // A game can ship a cover image next to its .okayscene (cover.png/.jpg, or
-// <stem>.png/.jpg). We load it once via stb_image, upload an SDL texture, and
+// <stem>.png/.jpg). We load it once via okay::DecodeImage, upload an SDL texture, and
 // cache it by game path. nullptr (cached) means "no cover — draw the initial".
 std::map<std::string, SDL_Texture*> g_coverCaches[2];
 #define g_coverCache g_coverCaches[g_rslot]
@@ -3177,13 +3191,13 @@ SDL_Texture* GameCover(const std::string& gamePath) {
         for (const char* n : names) cands.push_back(dir / n);
         for (const auto& c : cands) {
             if (!fs::exists(c, ec)) continue;
-            int w = 0, h = 0, ch = 0;
-            unsigned char* px = stbi_load(c.string().c_str(), &w, &h, &ch, 4);
+            int w = 0, h = 0;
+            unsigned char* px = LoadRgbaFile(c.string(), &w, &h);
             if (!px) continue;
             SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
                 px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
             if (surf) { tex = SDL_CreateTextureFromSurface(g_renderer, surf); SDL_FreeSurface(surf); }
-            stbi_image_free(px);
+            std::free(px);
             break;
         }
     }
@@ -3203,7 +3217,7 @@ void DrawGameIcon(const std::string& gamePath, const std::string& name, float si
 }
 
 // ---- Profile-picture (avatar) textures, loaded from a public URL ----------
-// Downloaded once to a per-URL cache file, decoded via stb_image, cached as an
+// Downloaded once to a per-URL cache file, decoded via okay::DecodeImage, cached as an
 // SDL texture. nullptr (cached) means "no avatar — draw the initial".
 std::map<std::string, SDL_Texture*> g_avatarCaches[2];
 #define g_avatarCache g_avatarCaches[g_rslot]
@@ -3243,12 +3257,12 @@ SDL_Texture* AvatarTexture(const std::string& url) {
     if (fs::exists(cache, ec)) {
         // Already downloaded: decode + upload here (fast), then cache the texture.
         SDL_Texture* tex = nullptr;
-        int w = 0, h = 0, ch = 0;
-        unsigned char* px = stbi_load(cache.string().c_str(), &w, &h, &ch, 4);
+        int w = 0, h = 0;
+        unsigned char* px = LoadRgbaFile(cache.string(), &w, &h);
         if (px) {
             SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
             if (s) { tex = SDL_CreateTextureFromSurface(g_renderer, s); SDL_FreeSurface(s); }
-            stbi_image_free(px);
+            std::free(px);
         }
         if (tex) { g_avatarCache[url] = tex; return tex; }
     }
@@ -3391,7 +3405,7 @@ static std::map<std::string, std::pair<int, int>> g_emojiParsedCells;
 
 static int EmojiParseWorker(void*) {
     std::vector<EmojiInfo> list; std::map<std::string, std::pair<int, int>> cells;
-    unsigned char* px = nullptr; int w = 0, h = 0, ch = 0;
+    unsigned char* px = nullptr; int w = 0, h = 0;
     try {
         std::ifstream f(MediaCachePath(kEmojiJsonUrl, ".json"), std::ios::binary);
         std::stringstream ss; ss << f.rdbuf();
@@ -3440,7 +3454,7 @@ static int EmojiParseWorker(void*) {
         std::stable_sort(list.begin(), list.end(), [](const EmojiInfo& a, const EmojiInfo& b) {
             return a.cat != b.cat ? a.cat < b.cat : a.sort < b.sort;
         });
-        px = stbi_load(MediaCachePath(kEmojiSheetUrl, ".png").string().c_str(), &w, &h, &ch, 4);
+        px = LoadRgbaFile(MediaCachePath(kEmojiSheetUrl, ".png").string(), &w, &h);
     } catch (...) {}
     SDL_LockMutex(g_emojiMutex);
     g_emojiParsedList.swap(list); g_emojiParsedCells.swap(cells);
@@ -3542,9 +3556,11 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
         if (st > 0) {
             std::ifstream f(p, std::ios::binary);
             std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            int* delays = nullptr; int fw = 0, fh = 0, frames = 0, comp = 0;
-            unsigned char* px = data.empty() ? nullptr :
-                stbi_load_gif_from_memory((const stbi_uc*)data.data(), (int)data.size(), &delays, &fw, &fh, &frames, &comp, 4);
+            okay::DecodedAnimation anim;
+            if (!data.empty()) okay::DecodeGifFrames((const std::uint8_t*)data.data(), data.size(), anim);
+            const unsigned char* px = anim.frames.empty() ? nullptr : anim.frames.data();
+            const int* delays = anim.delaysMs.empty() ? nullptr : anim.delaysMs.data();
+            const int fw = anim.width, fh = anim.height, frames = anim.FrameCount();
             if (px && fw > 0 && fh > 0 && frames > 0) {
                 // Keep memory sane: skip frames on huge GIFs (merging their delays).
                 const long long budget = 24LL * 1000 * 1000;   // pixels across all frames
@@ -3556,7 +3572,7 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
                     if (d < 20) d = 100;   // browsers treat 0-10ms frames as 100ms
                     acc += d;
                     if (i % step != 0 && i != frames - 1) continue;
-                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(px + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
+                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(const_cast<unsigned char*>(px) + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
                     if (!sf) continue;
                     SDL_Texture* tx = SDL_CreateTextureFromSurface(g_renderer, sf);
                     SDL_FreeSurface(sf);
@@ -3566,8 +3582,6 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
                 }
                 a.w = fw; a.h = fh; a.ok = !a.frames.empty();
             }
-            if (px) stbi_image_free(px);
-            if (delays) stbi_image_free(delays);
         }
         it = g_animImages.find(url);
     }
@@ -4374,7 +4388,13 @@ void LoadPrefs() {
         else if (k == "voice_out") g_voiceOutDev = v;
         else if (k == "voice_in_gain") { try { g_voiceInGain = std::clamp(std::stof(v), 0.0f, 4.0f); } catch (...) {} }
         else if (k == "voice_out_vol") { try { g_voiceOutVol = std::clamp(std::stof(v), 0.0f, 2.0f); } catch (...) {} }
-        else if (k == "dm_friends_only") g_dmFriendsOnly = (v == "1");
+        else if (k == "dm_friends_only") { if (v == "1" && g_dmFrom == 0) g_dmFrom = 1; }   // older launcher.cfg
+        else if (k == "dm_from") g_dmFrom = std::clamp(std::atoi(v.c_str()), 0, 2);
+        else if (k == "profile_vis") g_profileVis = std::clamp(std::atoi(v.c_str()), 0, 2);
+        else if (k == "online_vis") g_onlineVis = std::clamp(std::atoi(v.c_str()), 0, 2);
+        else if (k == "friend_reqs") g_friendReqs = std::clamp(std::atoi(v.c_str()), 0, 2) == 2 ? 2 : 0;
+        else if (k == "blocks_synced_for") g_blocksSyncedFor = v;
+        else if (k == "block_pending") { okay::privacy::PendingOp o; if (okay::privacy::DecodeOp(v, o)) g_blockPending.push_back(o); }
         else if (k == "calls_from") g_callsFrom = std::clamp(std::atoi(v.c_str()), 0, 2);
         else if (k == "read_receipts") g_readReceipts = (v != "0");
         else if (k == "typing_indicator") g_typingIndicator = (v != "0");
@@ -4437,7 +4457,10 @@ void SavePrefs() {
     f << "voice_relay=" << g_voiceRelay << "\nvoice_gate=" << g_voiceGate << "\n";
     f << "voice_in=" << g_voiceInDev << "\nvoice_out=" << g_voiceOutDev << "\n";
     f << "voice_in_gain=" << g_voiceInGain << "\nvoice_out_vol=" << g_voiceOutVol << "\n";
-    f << "dm_friends_only=" << (g_dmFriendsOnly ? 1 : 0) << "\ncalls_from=" << g_callsFrom << "\n";
+    f << "dm_from=" << g_dmFrom << "\ncalls_from=" << g_callsFrom << "\n";
+    f << "profile_vis=" << g_profileVis << "\nonline_vis=" << g_onlineVis << "\nfriend_reqs=" << g_friendReqs << "\n";
+    if (!g_blocksSyncedFor.empty()) f << "blocks_synced_for=" << g_blocksSyncedFor << "\n";
+    for (const auto& o : g_blockPending) f << "block_pending=" << okay::privacy::EncodeOp(o) << "\n";
     f << "read_receipts=" << (g_readReceipts ? 1 : 0) << "\ntyping_indicator=" << (g_typingIndicator ? 1 : 0) << "\n";
     f << "share_playtime=" << (g_sharePlaytime ? 1 : 0) << "\n";
     f << "followers_activity=" << (g_followersSeeActivity ? 1 : 0) << "\n";
@@ -5254,6 +5277,183 @@ static void DrawVoiceMicButton(const char* id, ImVec2 size, ImVec4 col, const st
 // here under a mutex; the window renders what's cached and never blocks. User
 // actions (send/edit/react/typing-out) stay on the main thread.
 static std::string g_pollCfgDir, g_pollUrl, g_pollKey;   // account config for worker threads (set once at startup)
+
+// ---- Server-side blocks and privacy settings (docs/sql/blocks.sql) ------------
+// The local list (g_blockedUsers, launcher.cfg) is a cache. Block / unblock apply
+// at once on this PC, are queued in g_blockPending and sent to the blocks table by
+// a worker; once the server answers, its list (plus any still-unsent changes) is
+// the truth. Signed out, offline, or SQL not run: the change stays on this PC and
+// the Blocked card says so. The first time an account signs in, an old PC-only list
+// is uploaded once. All of this state is touched on the UI thread only; the worker
+// hands its result over under g_blkMutex.
+static int  g_blocksSupport = 0;          // 0 unknown, 1 the server has the table, 2 SQL not run
+static std::string g_blocksNote;          // last problem, shown under the Blocked list
+static volatile bool g_blkWant = false, g_blkBusy = false, g_blkUserAction = false;
+static SDL_mutex* g_blkMutex = nullptr;
+struct BlkJob { std::string user; std::vector<okay::privacy::PendingOp> ops; bool userAction = false; };
+struct BlkResult {
+    bool ready = false, fetched = false, userAction = false, offline = false;
+    int support = 0;
+    std::string user, message;
+    std::vector<okay::privacy::PendingOp> done;
+    std::set<std::string> server;
+    std::map<std::string, std::string> names;
+};
+static BlkResult g_blkRes;
+static int BlocksWorker(void* p) {
+    std::unique_ptr<BlkJob> j(static_cast<BlkJob*>(p));
+    BlkResult res; res.user = j->user; res.userAction = j->userAction;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::BlockList bl(a);
+        bool stop = false;
+        for (const auto& o : j->ops) {
+            if (stop) break;
+            const auto r = o.block ? bl.Block(o.uid, o.name) : bl.Unblock(o.uid);
+            if (r.ok) { res.done.push_back(o); continue; }
+            res.message = r.message;
+            if (r.offline) { res.offline = true; stop = true; }
+            else if (r.missing) { res.support = 2; stop = true; }
+            else res.done.push_back(o);   // refused for good (not a network problem): drop it so it is not retried forever
+        }
+        if (!stop) {
+            const auto r = bl.Fetch(res.server, res.names);
+            if (r.ok) { res.fetched = true; res.support = 1; }
+            else { res.message = r.message; if (r.missing) res.support = 2; else if (r.offline) res.offline = true; }
+        }
+    } catch (...) { res.message = "Could not reach the server."; res.offline = true; }
+    SDL_LockMutex(g_blkMutex); g_blkRes = std::move(res); g_blkRes.ready = true; SDL_UnlockMutex(g_blkMutex);
+    g_blkBusy = false;
+    return 0;
+}
+// Block or unblock someone: effective on this PC immediately, then synced.
+static void SetBlocked(const std::string& uid, const std::string& name, bool block) {
+    if (uid.empty()) return;
+    if (block) { g_blockedUsers.insert(uid); if (!name.empty()) g_blockedNames[uid] = name; }
+    else { g_blockedUsers.erase(uid); g_blockedNames.erase(uid); }
+    okay::privacy::QueueOp(g_blockPending, uid, name, block);
+    g_blkWant = true; g_blkUserAction = true;
+    SavePrefs();
+}
+// Call every frame. Drains the worker result and starts a sync when one is due:
+// at sign-in, after a change, every minute while changes are unsent, else every 10.
+static void PumpBlocks(okay::account::AccountService& account) {
+    if (!g_blkMutex) g_blkMutex = SDL_CreateMutex();
+    BlkResult res; bool have = false;
+    SDL_LockMutex(g_blkMutex);
+    if (g_blkRes.ready) { res = std::move(g_blkRes); g_blkRes = BlkResult(); have = true; }
+    SDL_UnlockMutex(g_blkMutex);
+    const std::string user = account.IsLoggedIn() ? account.CurrentSession().username : std::string();
+    if (have && res.user == user) {
+        for (const auto& d : res.done)
+            g_blockPending.erase(std::remove_if(g_blockPending.begin(), g_blockPending.end(),
+                [&](const okay::privacy::PendingOp& o) { return o == d; }), g_blockPending.end());
+        if (res.support == 2) g_blocksSupport = 2; else if (res.support == 1) g_blocksSupport = 1;
+        if (res.fetched) {
+            g_blockedUsers = okay::privacy::ApplyPending(res.server, g_blockPending);
+            for (const auto& uid : g_blockedUsers) {
+                auto it = res.names.find(uid);
+                if (it != res.names.end() && !it->second.empty()) g_blockedNames[uid] = it->second;
+            }
+            for (auto it = g_blockedNames.begin(); it != g_blockedNames.end();)
+                it = g_blockedUsers.count(it->first) ? std::next(it) : g_blockedNames.erase(it);
+            g_blocksSyncedFor = res.user;
+            g_blocksNote.clear();
+        } else if (!res.message.empty()) g_blocksNote = res.message;
+        if (res.userAction) {
+            if (res.fetched && g_blockPending.empty()) Toast("Saved to your account", 1);
+            else if (res.support == 2) Toast("Saved on this PC only: the server has no block list yet (docs/sql/blocks.sql).", 2);
+            else Toast("Saved on this PC. Will sync to your account when the server is reachable.", 0);
+        }
+        SavePrefs();
+    }
+    static std::string lastUser; static Uint32 next = 0;
+    if (user.empty() || !account.IsOnline() || g_pollCfgDir.empty()) {
+        lastUser.clear();
+        return;
+    }
+    if (user != lastUser) {
+        lastUser = user; g_blkWant = true;
+        if (okay::privacy::ClassifyLocalList(g_blocksSyncedFor, user) == okay::privacy::LocalListAction::DiscardOtherAccount) {
+            g_blockedUsers.clear(); g_blockedNames.clear(); g_blockPending.clear(); g_blocksSyncedFor = user; SavePrefs();   // that list was another account's
+        }
+    }
+    const Uint32 now = SDL_GetTicks();
+    if (g_blkBusy || (!g_blkWant && now < next)) return;
+    g_blkWant = false;
+    next = now + (g_blockPending.empty() ? 600000u : 60000u);
+    auto* job = new BlkJob;
+    job->user = user; job->userAction = g_blkUserAction; g_blkUserAction = false;
+    job->ops = g_blockPending;
+    if (g_blocksSyncedFor.empty())   // the old PC-only list: upload it once
+        for (const auto& uid : g_blockedUsers) {
+            bool queued = false; for (const auto& o : job->ops) if (o.uid == uid) queued = true;
+            if (!queued) { auto it = g_blockedNames.find(uid); job->ops.push_back({uid, it != g_blockedNames.end() ? it->second : std::string(), true}); }
+        }
+    g_blkBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(BlocksWorker, "okay-blocks", job)) SDL_DetachThread(t);
+    else { g_blkBusy = false; delete job; }
+}
+
+// Privacy settings (who can message / see me): the local values are a cache of the
+// privacy_settings row. At sign-in the server's row wins (or, if there is none, the
+// local values are saved as the first row); afterwards every change is pushed.
+static int  g_privSupport = 0;            // 0 unknown, 1 saved on the server, 2 SQL not run
+static std::string g_privNote;            // last problem, shown under the settings
+static volatile bool g_privDirty = false, g_privBusy = false;
+struct PrivResult { bool ready = false, fetched = false, saved = false, offline = false; int support = 0; std::string user, message; okay::privacy::Settings s; };
+static PrivResult g_privRes; static SDL_mutex* g_privMutex = nullptr;
+struct PrivJob { std::string user; okay::privacy::Settings local; bool save = false; };
+static okay::privacy::Settings CurrentPrivacy() { return {g_dmFrom, g_profileVis, g_onlineVis, g_friendReqs, g_callsFrom}; }
+static void MarkPrivacyChanged() { g_privDirty = true; SavePrefs(); }
+static int PrivacyWorker(void* p) {
+    std::unique_ptr<PrivJob> j(static_cast<PrivJob*>(p));
+    PrivResult res; res.user = j->user;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okay::BlockList bl(a);
+        okay::BlockList::Outcome r;
+        if (!j->save) {
+            bool found = false; okay::privacy::Settings s = j->local;
+            r = bl.FetchSettings(s, found);
+            if (r.ok && found) { res.fetched = true; res.s = s; }
+            else if (r.ok) { r = bl.SaveSettings(j->local); res.saved = r.ok; }   // first time: the local values become the row
+        } else { r = bl.SaveSettings(j->local); res.saved = r.ok; }
+        res.support = r.ok ? 1 : r.missing ? 2 : 0; res.offline = r.offline;
+        if (!r.ok) res.message = r.message;
+    } catch (...) { res.offline = true; res.message = "Could not reach the server."; }
+    SDL_LockMutex(g_privMutex); g_privRes = std::move(res); g_privRes.ready = true; SDL_UnlockMutex(g_privMutex);
+    g_privBusy = false;
+    return 0;
+}
+static void PumpPrivacy(okay::account::AccountService& account) {
+    if (!g_privMutex) g_privMutex = SDL_CreateMutex();
+    PrivResult res; bool have = false;
+    SDL_LockMutex(g_privMutex);
+    if (g_privRes.ready) { res = std::move(g_privRes); g_privRes = PrivResult(); have = true; }
+    SDL_UnlockMutex(g_privMutex);
+    const std::string user = account.IsLoggedIn() ? account.CurrentSession().username : std::string();
+    static std::string syncedUser; static Uint32 retryAt = 0;
+    if (have && res.user == user) {
+        if (res.support) g_privSupport = res.support;
+        if (res.fetched && !g_privDirty) {   // (a change made meanwhile is newer than the fetched row)
+            g_dmFrom = res.s.dmFrom; g_profileVis = res.s.profileVis; g_onlineVis = res.s.onlineVis;
+            g_friendReqs = res.s.friendRequests; g_callsFrom = res.s.callsFrom;
+            SavePrefs();
+        }
+        if (res.fetched || res.saved) { g_privNote.clear(); syncedUser = user; }
+        else if (res.support == 2) { g_privNote = okay::privacy::SetupNote(); syncedUser = user; g_privDirty = false; }
+        else { g_privNote = res.message; retryAt = SDL_GetTicks() + 30000; if (!res.fetched) g_privDirty = true; }
+    }
+    if (user.empty() || !account.IsOnline() || g_pollCfgDir.empty()) { syncedUser.clear(); return; }
+    if (g_privBusy || SDL_GetTicks() < retryAt) return;
+    const bool initial = syncedUser != user;
+    if (!initial && !g_privDirty) return;
+    auto* job = new PrivJob; job->user = user; job->local = CurrentPrivacy(); job->save = !initial || g_privDirty;   // a change made before the first sync wins over the server row
+    g_privDirty = false; retryAt = 0; g_privBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(PrivacyWorker, "okay-privacy", job)) SDL_DetachThread(t);
+    else { g_privBusy = false; g_privDirty = true; delete job; }
+}
 static SDL_mutex*  g_chatMutex = nullptr;
 static SDL_Thread* g_chatThread = nullptr;
 static volatile bool g_chatPollRun = true;
@@ -5267,6 +5467,7 @@ static volatile bool g_chatForceLog = false;   // a send/edit/react asks for an 
 struct OutMsg {
     long localId = 0; std::string toUid; long toGroup = 0; long toChannel = 0; std::string body; long replyTo = 0;
     int state = 0;            // 0 queued/sending, 1 sent (waiting for the log), -1 failed
+    std::string err;          // why it failed, when the server said (e.g. a privacy rule: "This person does not accept messages from you.")
     long when = 0; Uint32 sentAt = 0;
 };
 static SDL_mutex* g_outMutex = nullptr;
@@ -6006,7 +6207,8 @@ static int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, 
         const float bubbleMax = std::min(avW * 0.72f, 460.0f);
         const float bodyW = MeasureChatBodyWidth(o.body, bubbleMax - padX * 2);
         const char* status = o.state == -1 ? "Not sent" : o.state == 1 ? "Sent" : "Sending";
-        const float statW = ImGui::CalcTextSize(status).x + (o.state == -1 ? 120.0f : 20.0f);
+        float statW = ImGui::CalcTextSize(status).x + (o.state == -1 ? 120.0f : 20.0f);
+        if (o.state == -1 && !o.err.empty()) statW = std::max(statW, std::min(bubbleMax - padX * 2, ImGui::CalcTextSize(o.err.c_str()).x * 0.55f + 16.0f));
         const float useW = std::max(std::max(bodyW + 2.0f, statW) + padX * 2, 46.0f);
         ImGui::Dummy(ImVec2(0, 2));
         ImGui::SetCursorPosX(baseX + std::max(0.0f, avW - useW - 8.0f));
@@ -6036,6 +6238,11 @@ static int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, 
                 SDL_LockMutex(g_outMutex);
                 g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& x) { return x.localId == o.localId; }), g_outbox.end());
                 SDL_UnlockMutex(g_outMutex);
+            }
+            if (!o.err.empty()) {   // the server said why (e.g. "This person does not accept messages from you.")
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.78f, 1.0f), "%s", o.err.c_str());
+                ImGui::PopTextWrapPos();
             }
         } else {
             const float tw = ImGui::CalcTextSize(status).x;
@@ -8410,7 +8617,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         static bool showRequests = false;   // privacy: non-friends' chats wait under "Message requests"
         int requestN = 0;
         for (const auto& c : convs) {
-            if (g_dmFriendsOnly && !friends.empty() && !fById.count(c.uid) && c.uid != selUid) {
+            if (g_dmFrom >= 1 && !friends.empty() && !fById.count(c.uid) && c.uid != selUid) {
                 ++requestN;
                 if (!showRequests) continue;
             }
@@ -9028,8 +9235,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
                 if (ImGui::MenuItem("Report cheating\xE2\x80\xA6")) { g_acReportUid = selUid; g_acReportName = selName; g_acReportOpen = true; }
                 if (ImGui::MenuItem(selBlocked ? "Unblock" : "Block")) {
-                    if (selBlocked) g_blockedUsers.erase(selUid); else { g_blockedUsers.insert(selUid); g_blockedNames[selUid] = selName; }
-                    SavePrefs();
+                    SetBlocked(selUid, selName, !selBlocked);
                 }
                 ImGui::PopStyleColor();
                 ImGui::EndPopup();
@@ -9715,7 +9921,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::Dummy(ImVec2(0, 10));
                 ImGui::TextDisabled("You blocked %s, so you can't message them.", selName.c_str());
                 ImGui::SameLine();
-                if (ImGui::SmallButton("Unblock")) { g_blockedUsers.erase(selUid); SavePrefs(); }
+                if (ImGui::SmallButton("Unblock")) SetBlocked(selUid, selName, false);
             } else {
             // ---- Composer: reply/edit banner, emoji, growing input, send -------
             // Esc clears a pending reply/edit; Up-arrow on an empty box edits your
@@ -14963,7 +15169,7 @@ static int ChatUploadWorker(void*) {
             bool ok = job.toChannel > 0 ? okay::Servers(a).Post(job.toChannel, body)
                     : job.toGroup > 0 ? dm.SendGroup(job.toGroup, body) : dm.Send(job.toUid, body);
             if (ok && job.toChannel > 0) g_srvForce = true;   // pull it into the channel right away
-            if (!ok) err = "Uploaded, but sending the message failed.";
+            if (!ok) err = !dm.LastSendError().empty() ? dm.LastSendError() : std::string("Uploaded, but sending the message failed.");
         } else if (err.empty()) err = "Upload failed.";
     } catch (...) { err = "Upload failed."; }
     if (job.voiceSecs >= 0) { std::error_code ec; fs::remove(fs::path(job.path), ec); }   // temp recording
@@ -15100,15 +15306,18 @@ static int OutboxWorker(void*) {
         for (auto& o : g_outbox) if (o.state == 0) { job = o; have = true; break; }
         if (!have) { g_outWorkerRunning = false; SDL_UnlockMutex(g_outMutex); break; }
         SDL_UnlockMutex(g_outMutex);
-        bool ok = false;
+        bool ok = false; std::string why;
         try {
             if (!acct) acct = std::make_unique<okay::account::AccountService>(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
             okay::Messages dm(*acct);
             if (job.toChannel > 0) ok = okay::Servers(*acct).Post(job.toChannel, job.body);
-            else ok = job.toGroup > 0 ? dm.SendGroup(job.toGroup, job.body, job.replyTo) : dm.Send(job.toUid, job.body, job.replyTo);
+            else {
+                ok = job.toGroup > 0 ? dm.SendGroup(job.toGroup, job.body, job.replyTo) : dm.Send(job.toUid, job.body, job.replyTo);
+                if (!ok && job.toGroup <= 0) why = dm.LastSendError();
+            }
         } catch (...) {}
         SDL_LockMutex(g_outMutex);
-        for (auto& o : g_outbox) if (o.localId == job.localId) { o.state = ok ? 1 : -1; o.sentAt = SDL_GetTicks(); }
+        for (auto& o : g_outbox) if (o.localId == job.localId) { o.state = ok ? 1 : -1; o.err = ok ? std::string() : why; o.sentAt = SDL_GetTicks(); }
         SDL_UnlockMutex(g_outMutex);
         if (ok) { if (job.toChannel > 0) g_srvForce = true; else g_chatForceLog = true; }   // pull the real message in right away
     }
@@ -16901,13 +17110,13 @@ int main(int argc, char** argv) {
     // platform's show-vs-present ordering.
     // Load the user's custom splash logo (if any) so the first frame can show it.
     if (!g_splashLogo.empty()) {
-        int lw = 0, lh = 0, lch = 0;
-        if (unsigned char* px = stbi_load(g_splashLogo.c_str(), &lw, &lh, &lch, 4)) {
+        int lw = 0, lh = 0;
+        if (unsigned char* px = LoadRgbaFile(g_splashLogo, &lw, &lh)) {
             if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, lw, lh, 32, lw * 4, SDL_PIXELFORMAT_ABGR8888)) {
                 g_splashLogoTex = SDL_CreateTextureFromSurface(renderer, s);
                 SDL_FreeSurface(s);
             }
-            stbi_image_free(px);
+            std::free(px);
         }
     }
     // Build the splash style from the user's loading-screen preferences.
@@ -17951,6 +18160,8 @@ int main(int argc, char** argv) {
             focusSearch = true;
         g_lastTab = tab == 11 ? 0 : tab;   // persisted on exit (and every SavePrefs)
         PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
+        PumpBlocks(account);
+        PumpPrivacy(account);
         PumpAcMyBans(account.IsLoggedIn() && account.IsOnline());
         PumpTokenRefresh(account);
         if (tab == 11 && g_myRank == 0) tab = 0;   // lost the role
@@ -20807,10 +21018,9 @@ int main(int argc, char** argv) {
                         if (ToggleSwitch("##fsa", &g_followersSeeActivity)) { SavePrefs(); if (!acDemo) PushFollowersSeeActivity(); }
                     });
                     acDivider();
-                    acRow("Direct messages", "Who can message you.", 180.0f, ImGui::GetFrameHeight(), [&](float w) {
-                        int dm = g_dmFriendsOnly ? 1 : 0;
+                    acRow("Direct messages", g_privSupport == 2 ? "Who can message you. Only this PC enforces it until the server owner runs docs/sql/blocks.sql." : "Who can message you. The server enforces it.", 180.0f, ImGui::GetFrameHeight(), [&](float w) {
                         ImGui::SetNextItemWidth(w);
-                        if (ImGui::Combo("##dmf", &dm, "Everyone\0Friends only\0")) { g_dmFriendsOnly = dm == 1; SavePrefs(); }
+                        if (ImGui::Combo("##dmf", &g_dmFrom, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
                     });
                     ImGui::Dummy(ImVec2(0, 8));
                     if (ImGui::Button("All privacy & safety settings  \xE2\x86\x92", ImVec2(0, 32))) { tab = 4; g_setCatJump = 7; }
@@ -21251,16 +21461,32 @@ int main(int argc, char** argv) {
                     cardEnd();
                 } else if (setCat == 7) {   // ---- Privacy & Safety ----
                     cardBegin("##sc_reach", "WHO CAN REACH ME");
-                    settingRow("Direct messages", "Friends only puts chats from everyone else under \"Message requests\" instead of your list.", 180.0f, ImGui::GetFrameHeight(), [&](float) {
-                        int dm = g_dmFriendsOnly ? 1 : 0;
+                    const bool privMissing = g_privSupport == 2;
+                    settingRow("Direct messages", privMissing
+                                   ? "Only this PC hides other people's chats (under \"Message requests\"). The server does not enforce it yet: the server owner must run docs/sql/blocks.sql."
+                                   : "The server refuses messages from anyone this excludes. Old chats from non-friends move to \"Message requests\".",
+                               180.0f, ImGui::GetFrameHeight(), [&](float) {
                         ImGui::SetNextItemWidth(180);
-                        if (ImGui::Combo("##dmfrom", &dm, "Everyone\0Friends only\0")) { g_dmFriendsOnly = dm == 1; SavePrefs(); }
+                        if (ImGui::Combo("##dmfrom", &g_dmFrom, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
                     });
                     rowDivider();
-                    settingRow("Voice calls", "Who can ring you. Calls from anyone else are ignored.", 180.0f, ImGui::GetFrameHeight(), [&](float) {
+                    settingRow("Voice calls", privMissing ? "Only this PC ignores calls from others. The server does not enforce it yet (docs/sql/blocks.sql)."
+                                                          : "Who can ring you. The server refuses calls from anyone this excludes.",
+                               180.0f, ImGui::GetFrameHeight(), [&](float) {
                         ImGui::SetNextItemWidth(180);
-                        if (ImGui::Combo("##callfrom", &g_callsFrom, "Everyone\0Friends only\0Nobody\0")) SavePrefs();
+                        if (ImGui::Combo("##callfrom", &g_callsFrom, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
                     });
+                    rowDivider();
+                    settingRow("Friend requests", privMissing ? okay::privacy::SetupNote() : "Who can send you a friend request. The server refuses the rest.",
+                               privMissing ? 0.0f : 180.0f, ImGui::GetFrameHeight(), [&](float) {
+                        if (privMissing) return;
+                        int fr = g_friendReqs == 2 ? 1 : 0;
+                        ImGui::SetNextItemWidth(180);
+                        if (ImGui::Combo("##frreq", &fr, "Everyone\0Nobody\0")) { g_friendReqs = fr == 1 ? 2 : 0; MarkPrivacyChanged(); }
+                    });
+                    if (!g_privNote.empty() && !privMissing) ImGui::TextColored(ImVec4(0.95f, 0.62f, 0.40f, 1), "Not saved to your account yet: %s", g_privNote.c_str());
+                    else if (g_privSupport == 1) ImGui::TextDisabled("Saved to your account.");
+                    else if (!account.IsLoggedIn()) ImGui::TextDisabled("Sign in to keep these on your account. Until then they only apply on this PC.");
                     cardEnd();
 
                     cardBegin("##sc_seen", "WHAT OTHERS SEE");
@@ -21279,6 +21505,22 @@ int main(int argc, char** argv) {
                     }
                     settingRow("Share what I'm playing", "Friends see the game you're in on their Friends list and activity feed.", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##sharepres", &g_sharePresence)) SavePrefs();
+                    });
+                    rowDivider();
+                    settingRow("Who sees when I'm online", g_privSupport == 2 ? okay::privacy::SetupNote()
+                                   : "The server hides your online time and the game you're in from everyone this excludes. Blocked people never see it.",
+                               g_privSupport == 2 ? 0.0f : 180.0f, ImGui::GetFrameHeight(), [&](float) {
+                        if (g_privSupport == 2) return;
+                        ImGui::SetNextItemWidth(180);
+                        if (ImGui::Combo("##onlinevis", &g_onlineVis, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
+                    });
+                    rowDivider();
+                    settingRow("Who sees my profile details", g_privSupport == 2 ? okay::privacy::SetupNote()
+                                   : "Bio, status, favorite game and location. Your name and picture stay public. Blocked people never see them.",
+                               g_privSupport == 2 ? 0.0f : 180.0f, ImGui::GetFrameHeight(), [&](float) {
+                        if (g_privSupport == 2) return;
+                        ImGui::SetNextItemWidth(180);
+                        if (ImGui::Combo("##profilevis", &g_profileVis, "Everyone\0Friends only\0Nobody\0")) MarkPrivacyChanged();
                     });
                     rowDivider();
                     settingRow("Read receipts", g_readSupport == 2 ? ReceiptsMissingNote()
@@ -21307,6 +21549,16 @@ int main(int argc, char** argv) {
                     cardEnd();
 
                     cardBegin("##sc_blocked", "BLOCKED");
+                    if (g_blocksSupport == 2)
+                        ImGui::TextColored(ImVec4(0.95f, 0.62f, 0.40f, 1), "Blocking only hides people on this PC: the server has no block list yet. The server owner must run docs/sql/blocks.sql.");
+                    else if (!account.IsLoggedIn())
+                        ImGui::TextDisabled("Signed out: blocks only apply on this PC. They are saved to your account the next time you sign in.");
+                    else if (!g_blocksNote.empty())
+                        ImGui::TextColored(ImVec4(0.95f, 0.62f, 0.40f, 1), "%s", g_blocksNote.c_str());
+                    if (!g_blockPending.empty() && g_blocksSupport != 2)
+                        ImGui::TextDisabled("%d change%s not saved to your account yet (will retry).", (int)g_blockPending.size(), g_blockPending.size() == 1 ? "" : "s");
+                    else if (g_blocksSupport == 1 && g_blocksNote.empty())
+                        ImGui::TextDisabled("Saved to your account. The server stops blocked people from messaging you, calling you, sending friend requests or seeing when you're online.");
                     if (g_blockedUsers.empty()) ImGui::TextDisabled("You haven't blocked anyone. Block someone from a chat's menu.");
                     std::string unblock;
                     for (const auto& uid : g_blockedUsers) {
@@ -21321,7 +21573,7 @@ int main(int argc, char** argv) {
                         if (ImGui::Button("Unblock", ImVec2(90, 0))) unblock = uid;
                         ImGui::PopID();
                     }
-                    if (!unblock.empty()) { g_blockedUsers.erase(unblock); g_blockedNames.erase(unblock); SavePrefs(); Toast("Unblocked", 1); }
+                    if (!unblock.empty()) SetBlocked(unblock, std::string(), false);
                     cardEnd();
                 } else if (setCat == 8) {   // ---- Voice & Audio ----
                     static okay::voice::MicTest micTest;
@@ -22625,7 +22877,12 @@ int main(int argc, char** argv) {
                             fOk = std::string("Friend request sent to ") + addBuf + ".";
                             Toast(fOk, 1);
                             addBuf[0] = '\0'; fErr.clear(); fNextRefresh = 0;
-                        } else { fErr = "Hmm, no player with that username or code. Check the spelling?"; fOk.clear(); }
+                        } else {
+                            // A server rule (blocked, friend requests off) is not "no such player".
+                            fErr = okay::privacy::IsRuleText(e1) ? e1 : okay::privacy::IsRuleText(e2) ? e2
+                                 : "Hmm, no player with that username or code. Check the spelling?";
+                            fOk.clear();
+                        }
                     }
                     if (!fErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.50f, 1), "%s", fErr.c_str());
                     if (!fOk.empty())  ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "%s", fOk.c_str());

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
@@ -2257,6 +2258,68 @@ bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
     char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *v);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    return changed;
+}
+
+namespace {
+// One row of `n` (1..4) drag cells side by side that share one label (the vector fields of an inspector:
+// Position, Rotation, Scale). Every cell has its own id (the label's id plus the cell number), scrubs like
+// DragFloat / DragInt, and the label is drawn once to the right of the last cell. `range` keeps cell 0 <= cell 1.
+bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float minV, float maxV, bool range) {
+    if (!g_lay.active || (!fv && !iv) || n < 1 || n > 4) return false;
+    const int base = hashLabel(label);
+    const float h = rowH(), s = g_theme.textScale;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    const float gap = 4.0f;
+    float ctrlW = w - lw; if (ctrlW < 32.0f * (float)n) ctrlW = 32.0f * (float)n;
+    const float cw = (ctrlW - gap * (float)(n - 1)) / (float)n;
+    bool changed = false;
+    for (int i = 0; i < n; ++i) {
+        const float cx = x + (float)i * (cw + gap);
+        const int id = base + (i + 1) * 7919;
+        const bool inside = hit(cx, y, cw, h);
+        float delta; dragBox(id, cx, y, cw, h, inside, delta);
+        if (delta != 0.0f && std::isfinite(delta) && std::isfinite(speed)) {
+            if (fv) {
+                float nv = fv[i] + delta * speed;
+                if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+                if (range && n == 2) { if (i == 0 && nv > fv[1]) nv = fv[1]; if (i == 1 && nv < fv[0]) nv = fv[0]; }
+                if (std::isfinite(nv) && nv != fv[i]) { fv[i] = nv; changed = true; }
+            } else {
+                g_dragAccum += delta * speed;
+                const int step = (int)g_dragAccum;
+                if (step != 0) {
+                    g_dragAccum -= (float)step;
+                    int nv = iv[i] + step;
+                    if (minV < maxV) { const int lo = (int)minV, hi = (int)maxV; nv = nv < lo ? lo : (nv > hi ? hi : nv); }
+                    if (range && n == 2) { if (i == 0 && nv > iv[1]) nv = iv[1]; if (i == 1 && nv < iv[0]) nv = iv[0]; }
+                    if (nv != iv[i]) { iv[i] = nv; changed = true; }
+                }
+            }
+        }
+        char buf[32];
+        if (fv) std::snprintf(buf, sizeof(buf), cw < 64.0f ? "%.1f" : "%.3f", (double)fv[i]);
+        else std::snprintf(buf, sizeof(buf), "%d", iv[i]);
+        drawText(cx + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
+    }
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    return changed;
+}
+} // namespace
+
+bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV) { return dragCells(label, v, nullptr, 2, speed, minV, maxV, false); }
+bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV) { return dragCells(label, v, nullptr, 3, speed, minV, maxV, false); }
+bool DragFloat4(const char* label, float v[4], float speed, float minV, float maxV) { return dragCells(label, v, nullptr, 4, speed, minV, maxV, false); }
+bool DragInt2(const char* label, int v[2], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 2, speed, (float)minV, (float)maxV, false); }
+bool DragInt3(const char* label, int v[3], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 3, speed, (float)minV, (float)maxV, false); }
+bool DragInt4(const char* label, int v[4], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 4, speed, (float)minV, (float)maxV, false); }
+bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float minV, float maxV) {
+    if (!lo || !hi) return false;
+    float pair[2] = {*lo, *hi};
+    const bool changed = dragCells(label, pair, nullptr, 2, speed, minV, maxV, true);
+    if (changed) { *lo = pair[0]; *hi = pair[1]; }
     return changed;
 }
 

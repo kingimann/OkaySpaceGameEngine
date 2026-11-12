@@ -333,6 +333,17 @@ void Tooltip(const char* text);
 bool DragFloat(const char* label, float* v, float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
 /// Drag-to-scrub an int (same idea). minV < maxV clamps. Returns true on change.
 bool DragInt(const char* label, int* v, float speed = 0.25f, int minV = 0, int maxV = 0);
+/// Two, three or four drag cells in one row that share one label (an inspector's Position / Rotation / Scale
+/// fields). Each cell scrubs like DragFloat; minV < maxV clamps every cell. True on any frame a cell changed.
+bool DragFloat2(const char* label, float v[2], float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
+bool DragFloat3(const char* label, float v[3], float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
+bool DragFloat4(const char* label, float v[4], float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
+/// The integer versions (same rules as DragInt for speed and clamping).
+bool DragInt2(const char* label, int v[2], float speed = 0.25f, int minV = 0, int maxV = 0);
+bool DragInt3(const char* label, int v[3], float speed = 0.25f, int minV = 0, int maxV = 0);
+bool DragInt4(const char* label, int v[4], float speed = 0.25f, int minV = 0, int maxV = 0);
+/// A low and a high value in one row: the low cell never goes above the high one and the high never below the low.
+bool DragFloatRange2(const char* label, float* lo, float* hi, float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
 
 /// An RGB color editor: a swatch plus three 0..1 channel sliders on one row.
 /// Edits rgb[0..2] in place; returns true on any frame a channel changed.

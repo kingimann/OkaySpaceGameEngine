@@ -1,0 +1,31 @@
+# Roadmap: replacing the big libraries with our own code
+
+Goal: everything custom, slowly, except services we support on purpose (Steamworks, Photon). The big libraries are replaced in two stages so nothing breaks:
+
+1. **Seam.** Put a thin interface of our own between the engine and the library, so no other code calls the library directly.
+2. **Own backend, side by side.** Write our own implementation behind the seam, selectable by a CMake option and a test switch. The library stays the default until ours passes the same tests on every platform CI covers. Then ours becomes the default, and the library is removed one release later.
+
+A step ships only when it is finished and tested. Nothing here is started yet unless it says so.
+
+| Library | Seam | Our backend, in order | Status |
+|---|---|---|---|
+| Assimp (optional) | `ImportModelData` and `ImportedModel` (all Assimp code in one file) | glTF/GLB, OBJ and MTL, STL and PLY readers are ours; Collada, 3DS, Blender and about fifteen other formats still need Assimp | Seam and first readers done (in review) |
+| ufbx | same | Our own binary and ASCII FBX reader exists behind `OKAY_OWN_FBX` (off); not promoted, because it was only tested on fixtures our own script wrote, not on real Mixamo or Blender files | Side by side, merged, off by default |
+| SDL2 | `okay::platform` (timers, audio devices, controllers, windows, events, GL context, clipboard) | Own Linux/X11 backend tested under Xvfb; Win32 compiles but is untested; macOS not written; the editor, launcher and player windows still call SDL directly (they need our own 2D painter and an own ImGui platform backend first) | Seam and Linux backend done (in review) |
+| Dear ImGui | `okayui` (our existing own toolkit) is the replacement | Give OkayUI a headless software renderer and golden/input test harness first (in progress), then close the gaps the ImGui usage audit lists (docking, tables, tabs, plots, fonts, GPU backends), then port editor and launcher panels one at a time | Started |
+| libsodium | `okay::crypto` wrapper (`NetCrypto.hpp`) | Side by side: ChaCha20-Poly1305, BLAKE2b, X25519, Ed25519, checked against the published RFC and libsodium test vectors, constant-time by construction, fuzzed. It is not the default, and nothing switches over, until an outside expert has reviewed it | Primitives done, unreviewed, off by default (in review) |
+| Steamworks, Photon | `okay::net` and Steam service interfaces (exist) | Not replaced. These are services our users want to publish on and connect through, so we keep supporting them as optional integrations, and keep improving the interfaces. Our own relay and matchmaking sit next to them as an option, not instead | Supported |
+
+Rules:
+- Each backend gets tests against reference data, plus fuzzing for anything that parses files.
+- Each step is one PR with an honest NOT DONE list.
+- Order inside the list: Assimp and ufbx, then SDL2, then ImGui, then libsodium.
+- "Hard" does not mean "never". It means our version starts out side by side and non-default, and becomes the default only after it has earned it: matching tests, fuzzing, and for crypto an outside review. The library stays until then.
+
+## Small libraries (done or in review)
+
+| Library | Status |
+|---|---|
+| tinyfiledialogs, stb_image_write, font8x8, dr_mp3, stb_vorbis, stb_image, stb_truetype, Lua, Mono | Replaced or removed, merged |
+
+Update this page and `docs/THIRD_PARTY.md` whenever one of these merges.

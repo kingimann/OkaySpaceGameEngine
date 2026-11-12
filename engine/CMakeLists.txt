@@ -154,6 +154,8 @@ add_library(okay_engine
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
     src/Core/ImageWrite.cpp
+    src/Core/ImageDecode.cpp
+    src/Core/ImageDecodeJpeg.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
@@ -204,16 +206,25 @@ add_library(okay_engine
     src/Testing/SceneValidator.cpp
     src/Testing/Regression.cpp
     src/Testing/GoldenImage.cpp
+    src/Render/FbxReader.cpp
+    src/Render/FbxScene.cpp
     third_party/ufbx/ufbx.c
 )
+
+# Our own FBX reader (okay::fbx) sits next to ufbx. OKAY_OWN_FBX=ON makes it the default reader
+# for this build; it can still be switched at run time with the OKAY_OWN_FBX environment variable
+# ("1"/"0") or okay::fbx::SetOwnReaderEnabled(). Default OFF: ufbx stays the default.
+if(OKAY_OWN_FBX)
+    set_source_files_properties(src/Render/FbxScene.cpp PROPERTIES COMPILE_DEFINITIONS OKAY_OWN_FBX_DEFAULT=1)
+endif()
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
 target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# Vendored single-header libraries (stb_image), used only by
-# the Image translation unit. Kept PRIVATE so it doesn't leak to consumers.
+# Vendored third-party libraries (stb_truetype, stb_vorbis, ufbx, dr_libs). Image decoding is
+# our own (Core/ImageDecode*.cpp). Kept PRIVATE so they don't leak to consumers.
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx

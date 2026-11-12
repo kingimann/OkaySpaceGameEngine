@@ -177,17 +177,17 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.9.1 Bitmap font - `Graphics/Font` - `Font8x8` built-in hand-drawn 8x8 monochrome ASCII glyphs (printable 32-126), `Pixel`, `MeasureWidth`
   - 2.9.2 TrueType fonts - `Graphics/TtfFont` - stb_truetype atlas, any glyph baked on first use, atlas grows, `Generation()` tells hosts to re-upload
   - 2.9.3 Built-in UI font - `Graphics/EmbeddedFont` - the launcher's Roboto font compiled in as base85
-  - 2.9.4 Images - `Graphics/Image` - RGBA8 buffer, load PNG, JPG, BMP, TGA and more through stb_image, save PNG through our own encoder (`Core/ImageWrite`), get/set pixel, fill
+  - 2.9.4 Images - `Graphics/Image`, `Core/ImageDecode` - RGBA8 buffer, load PNG (every colour type and depth, Adam7, tRNS), JPG (baseline and progressive, any chroma subsampling, restart markers), BMP, TGA, GIF (first frame, or every frame with `DecodeGifFrames`), HDR and PSD through our own decoder (`Core/ImageDecode`, no third-party code; also the launcher's cover art, avatars and chat images), save PNG through our own encoder (`Core/ImageWrite`), get/set pixel, fill
   - 2.9.5 Text component - `Components/TextRenderer` - world or screen-space text, pixel size, alignment, wrap, auto size, shadow, outline, gradient, typewriter reveal, localized text
-- **Code:** `Graphics/Font`, `Graphics/TtfFont`, `Graphics/EmbeddedFont`, `Graphics/Image`, `Components/TextRenderer`
-- **API:** `Font8x8`, `TtfFont`, `Image::Load`, `Image::Save`, `TextRenderer`, `TextRenderer::text`, `TextRenderer::screenSpace`
+- **Code:** `Graphics/Font`, `Graphics/TtfFont`, `Graphics/EmbeddedFont`, `Graphics/Image`, `Core/ImageDecode`, `Components/TextRenderer`
+- **API:** `Font8x8`, `TtfFont`, `Image::Load`, `Image::Save`, `DecodeImage`, `DecodeGifFrames`, `GetImageInfo`, `Inflate`, `TextRenderer`, `TextRenderer::text`, `TextRenderer::screenSpace`
 - **Editor:** Text Renderer inspector section; Lighting panel "UI Font" (editor/main.cpp); thumbnails in the Project panel
 - **Docs:** `docs/localization.md` (Fonts section)
-- **Tests:** `text`, `ttf`, `image`, `loaders_robust`
+- **Tests:** `text`, `ttf`, `image`, `image_decoder`, `loaders_robust`
 - **Status:** Works - read the headers; the `ttf` test skips its assertions when no system font exists, so CI proves less than a dev box
-- **Open:** right-to-left scripts draw unshaped and left to right (docs/localization.md); the pixel font is ASCII only; no signed-distance-field text; `loaders_robust` also guards an image header claiming gigapixels
+- **Open:** right-to-left scripts draw unshaped and left to right (docs/localization.md); the pixel font is ASCII only; no signed-distance-field text; `loaders_robust` also guards an image header claiming gigapixels; the decoder refuses CMYK/YCCK, arithmetic-coded and 12-bit JPEGs, RLE BMPs and PNM/PIC files, and fails on truncated data instead of showing the part it got; JPEG pixels match libjpeg to within 3 levels, not bit for bit
 - **Related:** 1.8, 12.2, 2.2, 1.12
-- **Words:** font, TTF, TtfFont, Font8x8, bitmap font, Image, PNG, texture load, TextRenderer, text, glyph atlas, Roboto, fonts
+- **Words:** font, TTF, TtfFont, Font8x8, bitmap font, Image, PNG, JPEG, progressive JPEG, GIF decode, image decoder, inflate, texture load, TextRenderer, text, glyph atlas, Roboto, fonts
 - **Seen as:** letters show as boxes; text is blurry at some sizes; a huge image crashes the load; text sits in the wrong corner
 - **Ask me like:** "Use a pixel font for the score and Roboto for the menu"; "Why does Japanese text fall back to another font?"
 

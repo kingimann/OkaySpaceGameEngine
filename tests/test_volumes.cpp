@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <vector>
+#include "okay/Audio/AudioMixer.hpp"
 
 using namespace okay;
 using namespace okay::testing;
@@ -324,17 +326,46 @@ int main() {
         a->loop = true;
         s.Start();
         Run(s, 3);
+        std::vector<float> buf(2 * 4410);                                   // 0.1 s of stereo per pull
+        auto pull = [&](int pulls, int* lastVoices) {
+            float peak = 0.0f;
+            for (int i = 0; i < pulls; ++i) {
+                const int n = AudioMixer::RenderStereo(s, buf.data(), 4410);
+                if (lastVoices) *lastVoices = n;
+                for (float f : buf) peak = std::max(peak, std::fabs(f));
+            }
+            return peak;
+        };
+        int voices = -1;
+        pull(2, &voices);
+        CHECK(voices == 0);                                                 // the camera is outside: the mixer has nothing to play
         CHECK(!a->IsPlaying());
         cam->transform->SetPosition({0, 0, 0});
         Run(s, 2);
         CHECK(a->IsPlaying());
-        CHECK(a->IsFading());                                               // rising toward full volume
         CHECK_NEAR(v->ViewerWeight(), 1.0f, 1e-6f);
-        a->FadeTo(1.0f, 0.0f);                                              // (the mixer would have finished the fade-in by now)
+        const float early = pull(1, &voices);                               // the real mixer now pulls the source
+        CHECK(voices == 1);
+        pull(30, &voices);                                                  // 3 s: the 2 s fade-in is done
+        CHECK(voices == 1);
+        const float full = pull(1, nullptr);
+        CHECK(full > 0.05f);
+        CHECK(early < full);                                                // it faded in, not a hard start
+        CHECK_NEAR(a->FadeLevel(), 1.0f, 1e-4f);
         cam->transform->SetPosition({100, 0, 0});
         Run(s, 2);
-        CHECK(a->IsFading());                                               // falling, then it stops
         CHECK_NEAR(v->ViewerWeight(), 0.0f, 1e-6f);
+        pull(1, &voices);
+        CHECK(voices == 1);                                                 // still fading out
+        pull(30, &voices);                                                  // 3 s: faded and stopped
+        CHECK(voices == 0);
+        CHECK(!a->IsPlaying());
+        CHECK(pull(1, nullptr) == 0.0f);
+        // Back in: it starts again.
+        cam->transform->SetPosition({0, 0, 0});
+        Run(s, 2);
+        pull(1, &voices);
+        CHECK(voices == 1);
         // No Audio Source: nothing to play, and it does not crash.
         Volume* bare = MakeVolume(s, "Bare", Volume::Kind::Ambience, {0, 0, 0}, {4, 4, 4});
         (void)bare;

@@ -475,7 +475,12 @@ void DrawVolumeInspector(EditorState& ed, GameObject* go, Component* comp, Compo
             }
         }
         if (ed.isPlaying()) {
-            if (k == Volume::Kind::Atmosphere || k == Volume::Kind::Ambience) ImGui::TextDisabled("Play: camera weight %.2f", c->ViewerWeight());
+            if (k == Volume::Kind::Ambience) {
+                const auto* src = go->GetComponent<AudioSource>();
+                ImGui::TextDisabled("Play: camera weight %.2f   sound %s, level %.2f", c->ViewerWeight(),
+                                    src && src->IsPlaying() ? "playing" : "stopped", src ? src->FadeLevel() : 0.0f);
+            }
+            else if (k == Volume::Kind::Atmosphere) ImGui::TextDisabled("Play: camera weight %.2f", c->ViewerWeight());
             else ImGui::TextDisabled("Play: %d inside", c->Occupants());
         }
         if (ImGui::SmallButton("Remove##vol")) toRemove = c;

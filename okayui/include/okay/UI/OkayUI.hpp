@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 struct SDL_Renderer;
 struct SDL_Texture;
+namespace okay { class TtfFont; }
 
 namespace OkayUI {
 
@@ -187,12 +188,18 @@ struct DrawData {
     int                  dropped = 0;
 };
 DrawData GetDrawData();
+/// The TrueType font whose glyph atlas a DrawCmd::texture stands for (a fallback font for characters the launcher
+/// look's own font lacks), or null when `texture` is not one. A custom backend uploads that font's atlas itself.
+okay::TtfFont* FallbackFontOf(const void* texture);
 /// The same count as DrawData::dropped, for the frame being built or the last one finished.
 int DroppedGeometry();
 
 /// Finalize the frame's interaction state WITHOUT drawing — for custom backends that
 /// submit GetDrawData() themselves instead of calling EndFrame(SDL_Renderer*).
 void EndFrameData();
+/// The same, for a backend that knows its output size: also builds the toast messages (Toast()), which
+/// EndFrame(SDL_Renderer*) builds with the renderer's size and EndFrameData() cannot.
+void EndFrameData(int outputWidth, int outputHeight);
 
 // ---------------------------------------------------------------------------
 // Auto-layout (ImGui-style). Everything above takes explicit coordinates; the API

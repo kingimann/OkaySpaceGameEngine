@@ -1297,6 +1297,11 @@ DrawData GetDrawData() {
     return d;
 }
 
+okay::TtfFont* FallbackFontOf(const void* texture) {
+    for (int i = 0; i < g_nfb; ++i) if (texture == (const void*)g_fbFonts[i]) return g_fbFonts[i];
+    return nullptr;
+}
+
 void EndFrameData() { finalizeFrame(); }
 
 // The real texture behind a span's texture (kAtlasTex -> this renderer's atlas).
@@ -1352,6 +1357,11 @@ void drawToasts(float screenW, float screenH) {
         y -= gap;
     }
     g_toOverlay = false;
+}
+
+void EndFrameData(int outputWidth, int outputHeight) {
+    if (g_ntoasts && outputWidth > 0 && outputHeight > 0) drawToasts((float)outputWidth, (float)outputHeight);
+    finalizeFrame();
 }
 
 void EndFrame(SDL_Renderer* r) {

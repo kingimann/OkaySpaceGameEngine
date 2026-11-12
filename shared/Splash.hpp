@@ -14,7 +14,9 @@
 #endif
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/Painter.hpp"    // the splash is drawn through the platform painter
 #include <cmath>
+#include <memory>
 
 namespace okay {
 
@@ -25,7 +27,7 @@ struct SplashStyle {
     float ar = 0.235f, ag = 0.475f, ab = 0.800f;   // accent colour (0..1)
     SDL_Color bgTop{24, 24, 27, 255};              // backdrop gradient (top)
     SDL_Color bgBottom{13, 13, 15, 255};           //                  (bottom)
-    SDL_Texture* logo = nullptr;                   // custom logo; replaces the cube when set
+    okay::ui2d::Tex logo = nullptr;                // custom logo (a texture of the painter the splash is drawn on); replaces the cube when set
     float logoScale = 1.0f;                        // relative size of the custom logo
     bool  showCube = true;                         // draw the built-in cube (ignored if logo set)
     bool  showProgress = true;                     // draw the sweeping progress bar
@@ -37,9 +39,9 @@ struct SplashStyle {
 //     built-in isometric cube) floating over a contact shadow, and
 //   - a rounded indeterminate progress bar sweeping in the accent colour.
 // Call every frame to animate, or once for a static frame.
-inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& style) {
+inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const SplashStyle& style) {
     if (!r || w <= 0 || h <= 0) return;
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
     auto U8 = [](float v) { return (Uint8)((v < 0 ? 0 : (v > 1 ? 1 : v)) * 255.0f + 0.5f); };
     const float tms = (float)okay::platform::TicksMs32();
     const float ar = style.ar, ag = style.ag, ab = style.ab;
@@ -51,7 +53,7 @@ inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& s
             {{0.0f, 0.0f}, tcol, {0, 0}}, {{(float)w, 0.0f}, tcol, {0, 0}},
             {{(float)w, (float)h}, bcol, {0, 0}}, {{0.0f, (float)h}, bcol, {0, 0}} };
         int bi[6] = {0, 1, 2, 0, 2, 3};
-        SDL_RenderGeometry(r, nullptr, bg, 4, bi, 6);
+        r->Geometry(nullptr, (const ui2d::Vertex*)bg, 4, bi, 6);
     }
 
     const float cx = w * 0.5f;
@@ -73,7 +75,7 @@ inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& s
         }
         int idx[N * 3];
         for (int i = 0; i < N; ++i) { idx[i*3] = 0; idx[i*3+1] = i+1; idx[i*3+2] = i+2; }
-        SDL_RenderGeometry(r, nullptr, fan, N + 2, idx, N * 3);
+        r->Geometry(nullptr, (const ui2d::Vertex*)fan, N + 2, idx, N * 3);
     };
     // Flat (solid) disc — used for the rounded bar caps.
     auto disc = [&](float gx, float gy, float rad, float cr, float cg, float cb, float a) {
@@ -88,7 +90,7 @@ inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& s
         }
         int idx[N * 3];
         for (int i = 0; i < N; ++i) { idx[i*3] = 0; idx[i*3+1] = i+1; idx[i*3+2] = i+2; }
-        SDL_RenderGeometry(r, nullptr, fan, N + 2, idx, N * 3);
+        r->Geometry(nullptr, (const ui2d::Vertex*)fan, N + 2, idx, N * 3);
     };
 
     const float pulse = 0.5f + 0.5f * std::sin(tms * 0.0016f);
@@ -102,13 +104,13 @@ inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& s
     if (style.logo) {
         // ---- Custom logo image (replaces the cube) -----------------------
         int tw = 0, th = 0;
-        SDL_QueryTexture(style.logo, nullptr, nullptr, &tw, &th);
+        r->QueryTexture(style.logo, &tw, &th);
         if (tw > 0 && th > 0) {
             float maxDim = 120.0f * (style.logoScale > 0.05f ? style.logoScale : 1.0f);
             float scale = maxDim / (float)(tw > th ? tw : th);
             float dw = tw * scale, dh = th * scale;
             SDL_FRect dst{cx - dw * 0.5f, ccy - dh * 0.5f, dw, dh};
-            SDL_RenderCopyF(r, style.logo, nullptr, &dst);
+            r->CopyF(style.logo, nullptr, (const ui2d::FRect*)&dst);
         }
     } else if (style.showCube) {
         // ---- Isometric cube logo mark ------------------------------------
@@ -121,16 +123,15 @@ inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& s
         auto quad = [&](SDL_FPoint a, SDL_FPoint b, SDL_FPoint c2, SDL_FPoint d, SDL_Color col) {
             SDL_Vertex v[4] = { {a, col, {0, 0}}, {b, col, {0, 0}}, {c2, col, {0, 0}}, {d, col, {0, 0}} };
             int idx[6] = {0, 1, 2, 0, 2, 3};
-            SDL_RenderGeometry(r, nullptr, v, 4, idx, 6);
+            r->Geometry(nullptr, (const ui2d::Vertex*)v, 4, idx, 6);
         };
         quad(top, right, mid, left, shade(1.00f));   // top face (brightest)
         quad(left, mid, mb, lb,     shade(0.52f));   // left face
         quad(mid, right, rb, mb,    shade(0.76f));   // right face
         // Bright rim light along the two top edges.
-        SDL_SetRenderDrawColor(r, U8(ar + (1 - ar) * 0.6f), U8(ag + (1 - ag) * 0.6f),
-                               U8(ab + (1 - ab) * 0.6f), 230);
-        SDL_RenderDrawLineF(r, top.x, top.y, left.x, left.y);
-        SDL_RenderDrawLineF(r, top.x, top.y, right.x, right.y);
+        r->SetDrawColor(U8(ar + (1 - ar) * 0.6f), U8(ag + (1 - ag) * 0.6f), U8(ab + (1 - ab) * 0.6f), 230);
+        r->DrawLineF(top.x, top.y, left.x, left.y);
+        r->DrawLineF(top.x, top.y, right.x, right.y);
     }
 
     // ---- Rounded indeterminate progress bar ------------------------------
@@ -138,9 +139,9 @@ inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& s
     const float bw = 210.0f, bx = cx - bw * 0.5f, by = cy + 118.0f, bh = 5.0f, brad = bh * 0.5f;
     auto bar = [&](float x0, float x1, float cr, float cg, float cb, float a) {
         if (x1 <= x0) return;
-        SDL_SetRenderDrawColor(r, U8(cr), U8(cg), U8(cb), U8(a));
+        r->SetDrawColor(U8(cr), U8(cg), U8(cb), U8(a));
         SDL_FRect rc{x0, by, x1 - x0, bh};
-        SDL_RenderFillRectF(r, &rc);
+        r->FillRectF((const ui2d::FRect*)&rc);
         disc(x0, by + brad, brad, cr, cg, cb, a);   // rounded caps
         disc(x1, by + brad, brad, cr, cg, cb, a);
     };
@@ -153,7 +154,15 @@ inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& s
     bar(x0, x1, ar, ag, ab, 1.0f);                   // accent sweep
     }
 
-    SDL_RenderPresent(r);
+    r->Present();
+}
+
+// The same on a bare SDL_Renderer (the editor's and the launcher's): the sdl2 painter over it, so the calls
+// are the SDL calls. `style.logo` is then an SDL_Texture*.
+inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& style) {
+    if (!r) return;
+    std::unique_ptr<okay::platform::Painter> p = okay::platform::WrapSdl2Renderer(r);
+    if (p) DrawSplashStyled(p.get(), w, h, style);
 }
 
 // Backward-compatible helper: draw the splash with just an accent colour.

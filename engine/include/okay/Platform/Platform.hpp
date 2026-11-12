@@ -133,6 +133,8 @@ class Window {
 public:
     virtual ~Window() = default;
     virtual uint32_t Id() const = 0;
+    /// Which backend made this window.
+    virtual BackendKind Kind() const { return BackendKind::Own; }
     /// SDL_Window* (sdl2), X11 Window id (own, Linux) or HWND (own, Windows).
     virtual void* NativeHandle() const = 0;
     virtual void GetSize(int& w, int& h) const = 0;
@@ -154,6 +156,11 @@ public:
     virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
+    /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
+    /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
+    /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer
+    /// and GL windows through GL), or the server refused.
+    virtual bool PresentPixels(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
 
     /// Create the GL context for this window (WindowDesc::opengl) and make it current.
     virtual bool CreateGLContext(const GLAttributes& attrs) = 0;

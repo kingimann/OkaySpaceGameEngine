@@ -4,6 +4,7 @@
 #include "OkayUITestKit.hpp"
 
 #include <cmath>
+#include <cstring>
 #include <limits>
 
 using namespace okayuitest;
@@ -165,6 +166,37 @@ void SmallWidgetTests() {
     CHECK(rb.y > ra2.y);                                            // NewLine after SameLine starts a new row
 }
 
+void HintAndFocusTests() {
+    Rig r; char text[32] = ""; UI::Rect rc; const char* hint = "Search..."; bool focusHere = false; bool ch = false;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(300);
+        if (focusHere) UI::SetKeyboardFocusHere();
+        ch = UI::InputTextWithHint("", hint, text, (int)sizeof text);
+        rc = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    const unsigned field = ThemeRgba(UI::Style().field);
+    auto inner = [&](const char* h) {   // text pixels in the field, away from its border
+        hint = h; r.Frame();
+        const auto& bmp = r.sim.Draw();
+        return CountNot(bmp, (int)rc.x + 8, (int)rc.y + 4, (int)(rc.x + rc.w) - 8, (int)(rc.y + rc.h) - 4, field);
+    };
+    CHECK(inner("Search...") > 0);                                  // the empty field shows the placeholder
+    CHECK(inner(nullptr) == 0);                                     // without one it is plain
+    CHECK(text[0] == '\0' && !ch);                                  // a hint never writes into the buffer
+    // SetKeyboardFocusHere: typing reaches the field without a click
+    focusHere = true; r.Frame(); focusHere = false;
+    r.sim.Type("hi"); r.Frame();
+    CHECK(!std::strcmp(text, "hi") && ch);
+    // once there is text the placeholder is gone: the pixels are the same with and without a hint
+    const int withHint = inner("Search..."), without = inner(nullptr);
+    CHECK(withHint == without && withHint > 0);
+    // a null hint and a null buffer are refused
+    r.body = [&] { UI::InputTextWithHint("a", nullptr, text, (int)sizeof text); UI::InputTextWithHint("b", "x", nullptr, 8); UI::SetKeyboardFocusHere(); };
+    r.Frames(3);
+    CHECK(true);
+}
+
 }  // namespace
 
 int main() {
@@ -176,5 +208,6 @@ int main() {
     SliderAndInputTests();
     InputFloatHostileTests();
     SmallWidgetTests();
+    HintAndFocusTests();
     TEST_MAIN_RESULT();
 }

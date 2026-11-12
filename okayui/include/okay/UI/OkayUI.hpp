@@ -311,6 +311,10 @@ void Image(SDL_Texture* tex, float w, float h,
 /// A clickable image button (`id` for identity). Returns true the frame it's clicked.
 bool ImageButton(const char* id, SDL_Texture* tex, float w, float h);
 bool InputText(const char* label, char* buf, int cap, unsigned flags = 0);
+/// InputText that shows `hint` in a dim colour while the field is empty (a placeholder such as "Search...").
+bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags = 0);
+/// The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
+void SetKeyboardFocusHere();
 /// An integer field with [-]/[+] stepper buttons that change *value by `step`.
 /// Returns true on any frame the value changed.
 bool InputInt(const char* label, int* value, int step = 1);

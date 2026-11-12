@@ -119,7 +119,7 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
         const std::string lbl = r.Label();
         if (r.Chance(10)) UI::SameLine(r.Chance(50) ? r.Nasty() : -1.0f);
         if (r.Chance(8)) UI::SetNextItemWidth(r.Nasty());
-        switch (r.Int(58)) {
+        switch (r.Int(60)) {
             case 0: UI::Button(lbl.c_str()); break;
             case 1: UI::SmallButton(lbl.c_str()); break;
             case 2: UI::Checkbox(lbl.c_str(), &bools[r.Int(4)]); break;
@@ -178,6 +178,8 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 55: UI::ArrowButton(lbl.c_str(), r.NastyInt(10) - 3); UI::NewLine(); break;
             case 56: UI::ColorButton(lbl.c_str(), floats, r.Nasty()); break;
             case 57: UI::ColorEdit4(lbl.c_str(), floats); break;
+            case 58: UI::InputTextWithHint(lbl.c_str(), r.Chance(20) ? nullptr : "hint", strs[r.Int(3)], r.Chance(10) ? r.Int(4) : 64, (unsigned)r.Int(8)); break;
+            case 59: UI::SetKeyboardFocusHere(); break;
             default: UI::ColorEdit3(lbl.c_str(), &floats[r.Int(2)]); break;   // reads 3 floats: the array has 4 entries, index <= 1 stays in range
         }
         if (r.Chance(20)) { UI::IsItemHovered(); UI::GetItemRect(); UI::WantsTextInput(); }

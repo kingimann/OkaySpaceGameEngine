@@ -122,6 +122,8 @@ PopupSlot* popupSlot(int id, bool create) {
 int      g_openPopupThisFrame = 0;   // popup id requested to open this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
+const char* g_hintText = nullptr;   // placeholder for the next text field (InputTextWithHint)
+bool  g_focusNextField = false;     // SetKeyboardFocusHere: the next text field takes the keyboard
 bool  g_focusClaimed = false;    // a widget took the click this frame (keep focus)
 unsigned g_frame = 0;            // frame counter (drives the text caret blink)
 float    g_dragAccum = 0.0f;     // sub-unit accumulator for DragInt while dragging
@@ -1120,6 +1122,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
     const bool wasFocused = (g_focus == id);
+    if (g_focusNextField) { g_focusNextField = false; g_focus = id; g_focusClaimed = true; ts->caret = ts->anchor = len; }
     if (inside && g_pressed) {
         g_focus = id; g_focusClaimed = true; g_active = id;
         ts->caret = ts->anchor = indexAtX(buf, len, ts->first, tx, g_in.mouseX);
@@ -1201,6 +1204,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
         }
     }
     drawText(tx, ty, buf + ts->first, s, g_theme.text);
+    if (len == 0 && g_hintText && g_hintText[0]) drawText(tx, ty, g_hintText, s, g_theme.textDim);   // the placeholder, while the field is empty
     // Blinking caret (steady when Theme::caretBlink is off, which tests use).
     if (focused && (!g_theme.caretBlink || (g_frame / 30u) % 2u == 0u)) {
         const float cx = tx + textWidth(buf, ts->first, ts->caret);
@@ -2322,6 +2326,15 @@ bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float
     if (changed) { *lo = pair[0]; *hi = pair[1]; }
     return changed;
 }
+
+bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags) {
+    g_hintText = hint;
+    const bool ch = InputText(label, buf, cap, flags);
+    g_hintText = nullptr;
+    return ch;
+}
+
+void SetKeyboardFocusHere() { if (g_lay.active) g_focusNextField = true; }
 
 namespace {
 // `n` (2..4) slider cells in one row that share a label (see dragCells).

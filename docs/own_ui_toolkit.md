@@ -280,7 +280,7 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 | 11 | Mouse, keys, IO | 901 | PARTIAL | mouse position, buttons, wheel, text, 9 key edges, and now `IsMouseDown/Clicked/Released`, `GetMousePos`, `GetMouseDelta`. Missing: Ctrl and Alt, key down, about 30 more keys, middle button, double click, drag deltas, mouse cursor shapes (92) | M |
 | 12 | IDs | 792 | HAVE | `PushID`, `PopID`. Missing: `GetID` (11), `GetStateStorage` | S |
 | 13 | Combo and selectable | 618 | PARTIAL | `Combo(items)`, `Selectable`, `ListBox`. Missing: `BeginCombo`/`EndCombo` (86) with custom content, selectable size and flags | S |
-| 14 | Text input | 545 | PARTIAL | single line with caret, selection, UTF-8. Missing: `InputTextWithHint` (207), multi-line (25), password, `SetKeyboardFocusHere` (54), callbacks | M |
+| 14 | Text input | 545 | PARTIAL | single line with caret, selection, UTF-8. `InputTextWithHint` and `SetKeyboardFocusHere` (step 4). Missing: multi-line (25), password, callbacks | M |
 | 15 | Disabled blocks | 369 | HAVE (this step) | `BeginDisabled`/`EndDisabled`/`IsDisabled` | done |
 | 16 | Tables | 233 | PARTIAL | `BeginTable` with headers, weights, drag-resizable columns, `Columns`. Missing: sorting, scroll and frozen rows, row background, `TableSetColumnIndex` (29), flags | M |
 | 17 | Tree nodes | 201 | PARTIAL | `TreeNode`, `CollapsingHeader`. Missing: `TreeNodeEx` flags (28: leaf, selected, open on arrow), `SetNextItemOpen` (14), `IsItemToggledOpen` | S |
@@ -345,3 +345,11 @@ Built: `SliderFloat2/3/4` (cells in one row, one label), `InputFloat` (the float
 Tested in `okayui/tests/test_okayui_values.cpp` (37 checks in total, headless) and drawn with hostile numbers by the fuzz test.
 
 Not done: typing into a number field (`InputFloat` has steppers only, like `InputInt`), `BeginGroup`/`EndGroup`, `ColorPicker4`, `SliderInt2/3`, arrow buttons with a drawn triangle (they use the font glyphs `<`, `>`, `^`, `v`).
+
+### 4.8 Gap-closing step 4: placeholder text and keyboard focus (family 14)
+
+Built: `InputTextWithHint` (a dim placeholder while the field is empty; it never touches the buffer) and `SetKeyboardFocusHere` (the next text field takes the keyboard, caret at the end). 207 and 54 call sites in the editor and launcher.
+
+Tested (`test_okayui_values.cpp`, 43 checks in total): the placeholder is drawn only while empty (pixel count in the field), typing after `SetKeyboardFocusHere` reaches the field with no click, a null hint and a null buffer are refused; the fuzz test draws both with hostile buffers.
+
+Not done: multi-line text, password fields, text callbacks, the hint while the field is focused and empty is shown (same as Dear ImGui) but with no separate colour setting.

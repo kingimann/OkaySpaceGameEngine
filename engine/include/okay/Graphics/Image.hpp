@@ -7,7 +7,7 @@
 namespace okay {
 
 /// CPU-side image: a tightly packed RGBA8 pixel buffer. Loads common formats
-/// (PNG, JPG, BMP, TGA, ...) via stb_image and can save PNG. The editor and the
+/// (PNG, JPG, BMP, TGA, GIF, HDR, PSD) through our own decoder (Core/ImageDecode) and can save PNG. The editor and the
 /// player turn these into GPU textures for sprites; tests use them headlessly.
 class Image {
 public:

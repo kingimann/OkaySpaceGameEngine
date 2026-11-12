@@ -50,7 +50,7 @@ Topo Analyze(const Mesh& m) {
     return t;
 }
 
-float Volume(const Mesh& m) {
+float MeshVolume(const Mesh& m) {
     double v = 0;
     for (int t = 0; t < m.TriangleCount(); ++t) {
         const Vec3& p = m.vertices[m.triangles[t * 3]];
@@ -170,7 +170,7 @@ int main() {
         CHECK(t0.ClosedManifold());
         CHECK(t0.Euler() == 2);
         const float area0 = MeshSurfaceArea(sphere);
-        const float vol0 = Volume(sphere);
+        const float vol0 = MeshVolume(sphere);
         CHECK(vol0 > 0.4f);
 
         const float maxHaus[3] = {0.03f, 0.05f, 0.09f};
@@ -188,7 +188,7 @@ int main() {
             CHECK(r.trianglesAfter >= static_cast<int>(768 * ratio * 0.9f));     // and it does not overshoot far below
             CHECK(r.collapses > 0);
             CHECK(std::fabs(MeshSurfaceArea(r.mesh) - area0) / area0 < 0.05f);   // area within 5 %
-            CHECK(Volume(r.mesh) > 0.8f * vol0);                                  // outward winding kept, volume close
+            CHECK(MeshVolume(r.mesh) > 0.8f * vol0);                                  // outward winding kept, volume close
             const float haus = OneSidedDistance(sphere, r.mesh);
             CHECK(haus < maxHaus[k]);                                             // geometric deviation
             CHECK(haus <= 2.0f * r.error + 0.005f);                               // the reported error is the right order
@@ -266,7 +266,7 @@ int main() {
         const Topo t0 = Analyze(cube);
         CHECK(t0.ClosedManifold());
         CHECK(t0.Euler() == 2);
-        CHECK_NEAR(Volume(cube), 1.0, 1e-4);
+        CHECK_NEAR(MeshVolume(cube), 1.0, 1e-4);
         int expect[3] = {216, 108, 43};
         int k = 0;
         for (float ratio : {0.5f, 0.25f, 0.1f}) {
@@ -276,7 +276,7 @@ int main() {
             CHECK(t.Euler() == 2);
             CHECK(r.trianglesAfter <= expect[k]);
             CHECK_NEAR(MeshSurfaceArea(r.mesh), 6.0, 0.01);                        // area unchanged
-            CHECK_NEAR(Volume(r.mesh), 1.0, 0.01);
+            CHECK_NEAR(MeshVolume(r.mesh), 1.0, 0.01);
             Vec3 lo, hi;
             BoundsOf(r.mesh, lo, hi);
             CHECK_NEAR(lo.x, -0.5, 1e-4); CHECK_NEAR(hi.x, 0.5, 1e-4);              // corners kept

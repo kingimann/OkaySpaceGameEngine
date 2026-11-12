@@ -904,6 +904,41 @@ int main(int argc, char** argv) {
         SDL_DestroyRenderer(lr); SDL_FreeSurface(ls);
     }
 
+    // ---- The backend-neutral draw list (GetDrawData): commands cover the index buffer in order, with
+    // the clip rectangle of a scrolling child and the launcher atlas, and match what EndFrame draws ----
+    {
+        for (int look = 0; look < 2; ++look) {
+            OkayUI::UseLauncherLook(look != 0);
+            OkayUI::Input in;
+            OkayUI::BeginFrame(in);
+            if (OkayUI::Begin("dl", 5, 5, 200, 150)) {
+                OkayUI::Text("x");
+                if (OkayUI::BeginChild("kid", 0, 60)) { for (int i = 0; i < 6; ++i) OkayUI::Text("row"); OkayUI::EndChild(); }
+            }
+            OkayUI::End();
+            OkayUI::EndFrameData();
+            const OkayUI::DrawData d = OkayUI::GetDrawData();
+            CHECK(d.vertexCount > 0 && d.indexCount > 0 && d.indexCount % 3 == 0);
+            CHECK(d.vertexStride == (int)sizeof(OkayUI::DrawVertex));
+            CHECK(d.cmdCount >= 2 && d.cmds != nullptr);
+            int next = 0; bool sawClip = false, sawFlat = false, sawAtlas = false;
+            for (int i = 0; i < d.cmdCount; ++i) {
+                const OkayUI::DrawCmd& c = d.cmds[i];
+                CHECK(c.idxOffset == next && c.idxCount > 0 && c.idxCount % 3 == 0);
+                next = c.idxOffset + c.idxCount;
+                if (c.clipOn) { sawClip = true; CHECK(c.clipW > 0 && c.clipH > 0); }
+                if (!c.texture) sawFlat = true;
+                if (c.texture && c.texture == d.atlasTexture) sawAtlas = true;
+            }
+            CHECK(next == d.indexCount);                 // every index belongs to exactly one command
+            CHECK(sawClip);                              // the child is clipped
+            for (int i = 0; i < d.indexCount; ++i) CHECK(d.indices[i] >= 0 && d.indices[i] < d.vertexCount);
+            if (look == 0) { CHECK(sawFlat && !sawAtlas && d.atlasRgba == nullptr); }
+            else if (d.atlasRgba) { CHECK(sawAtlas && d.atlasW > 0 && d.atlasH > 0); }
+        }
+        OkayUI::UseLauncherLook(false);
+    }
+
     SDL_DestroyRenderer(r);
     SDL_FreeSurface(surf);
     std::printf(g_fail == 0 ? "okayui: all checks passed\n" : "okayui: %d FAILED\n", g_fail);

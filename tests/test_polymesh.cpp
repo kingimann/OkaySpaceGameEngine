@@ -22,7 +22,7 @@ static float Area(const Mesh& m) {
     return a;
 }
 // Signed volume: positive when the faces wind outward.
-static float Volume(const Mesh& m) {
+static float MeshVolume(const Mesh& m) {
     float v = 0;
     for (int t = 0; t < m.TriangleCount(); ++t) {
         const Vec3& p = m.vertices[m.triangles[t * 3]];
@@ -49,8 +49,8 @@ int main() {
         CHECK(back.TriangleCount() == 12 && back.vertices.size() == 8);
         CHECK(back.Topology().Closed());
         CHECK(std::fabs(Area(back) - 6.0f) < 1e-4f);
-        CHECK(std::fabs(Volume(back) - Volume(cube)) < 1e-4f);   // same winding as the original
-        CHECK(Volume(back) > 0.0f);
+        CHECK(std::fabs(MeshVolume(back) - MeshVolume(cube)) < 1e-4f);   // same winding as the original
+        CHECK(MeshVolume(back) > 0.0f);
         // Each face is a real square: normal is a unit axis.
         for (int f = 0; f < 6; ++f) {
             Vec3 n = p.FaceNormal(f);

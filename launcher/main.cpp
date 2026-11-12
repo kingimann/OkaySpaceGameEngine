@@ -19,6 +19,7 @@
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
 #include "okay/Platform/Workshop.hpp"
@@ -12296,6 +12297,86 @@ static int MarketListWorker(void*) {
 // worker and the tab applies the results when they arrive. g_acReady stays set
 // so each of the three consumers can pick up its piece on a later frame.
 static SDL_mutex* g_acMutex = nullptr;
+// ---- Account > Your data: "Download my data" and "Delete my account" ----------
+// Both run on a worker thread (several network calls). The worker builds its own
+// AccountService from the saved session, like the chat pollers. Export reads only
+// rows the signed-in user may read; delete calls the delete-account Edge Function,
+// which identifies the user from the bearer token. Logic + messages live in
+// okay/Platform/Account/AccountData.hpp (unit-tested); docs/account_data.md.
+struct AcctDataJob {
+    int  kind = 0;                 // 1 export, 2 delete
+    bool running = false, ready = false, ok = false, signOut = false, signOutDone = false, notDeployed = false;
+    std::size_t done = 0, total = 0;
+    std::string step, message, savedPath, username, password;
+};
+static AcctDataJob g_acctDataJob;
+static SDL_mutex*  g_acctDataMutex = nullptr;
+
+static AcctDataJob AcctJobSnapshot() {
+    if (!g_acctDataMutex) return {};
+    SDL_LockMutex(g_acctDataMutex); AcctDataJob c = g_acctDataJob; c.password.clear(); SDL_UnlockMutex(g_acctDataMutex);
+    return c;
+}
+static void AcctJobFinish(bool ok, const std::string& msg, const std::string& path = {}, bool signOut = false, bool notDeployed = false) {
+    SDL_LockMutex(g_acctDataMutex);
+    g_acctDataJob.running = false; g_acctDataJob.ready = true; g_acctDataJob.ok = ok; g_acctDataJob.message = msg;
+    g_acctDataJob.savedPath = path; g_acctDataJob.signOut = signOut; g_acctDataJob.notDeployed = notDeployed; g_acctDataJob.password.clear();
+    SDL_UnlockMutex(g_acctDataMutex);
+}
+static int AcctExportWorker(void*) {
+    okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+    SDL_LockMutex(g_acctDataMutex); const std::string user = g_acctDataJob.username; SDL_UnlockMutex(g_acctDataMutex);
+    namespace ad = okay::account::data;
+    ad::ExportResult r = ad::BuildExport(a.UserId(), user, std::time(nullptr),
+        [&](const std::string& path) { return a.Api(path); },
+        [&](std::size_t d, std::size_t t, const std::string& key) {
+            SDL_LockMutex(g_acctDataMutex); g_acctDataJob.done = d; g_acctDataJob.total = t; g_acctDataJob.step = key; SDL_UnlockMutex(g_acctDataMutex);
+        });
+    if (!r.ok) { AcctJobFinish(false, r.error.empty() ? "Export failed." : r.error); return 0; }
+    std::error_code ec;
+    fs::path dir = fs::path(g_exeDir) / "exports";
+    fs::create_directories(dir, ec);
+    fs::path file = dir / ("okayspace-data-" + ad::IsoUtc(std::time(nullptr)) + ".json");
+    std::string fn = file.filename().string();
+    for (char& c : fn) if (c == ':') c = '-';
+    file = dir / fn;
+    {
+        std::ofstream f(file, std::ios::binary);
+        f << r.json;
+        if (!f) { AcctJobFinish(false, "Couldn't write " + file.string() + " (is the folder writable?)."); return 0; }
+    }
+    std::string msg = "Saved " + std::to_string(r.rows) + " rows from " + std::to_string(r.sections) + " sections to " + file.string() + ".";
+    if (r.notSetUp) msg += " " + std::to_string(r.notSetUp) + " sections are not set up on this server.";
+    if (!r.complete) msg += " INCOMPLETE: " + std::to_string(r.failed) + " section(s) could not be read; they are listed in the file under failed_sections.";
+    AcctJobFinish(r.complete, msg, file.string());
+    return 0;
+}
+static int AcctDeleteWorker(void*) {
+    okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+    SDL_LockMutex(g_acctDataMutex); const std::string user = g_acctDataJob.username, pw = g_acctDataJob.password; g_acctDataJob.password.clear(); SDL_UnlockMutex(g_acctDataMutex);
+    namespace ad = okay::account::data;
+    ad::DeleteRequest q = ad::BuildDeleteRequest(user, pw);
+    okay::account::ApiResponse r = a.Api(q.path, q.method, q.body);
+    ad::DeleteOutcome o = ad::MapDeleteResponse(r);
+    if (o.ok) a.Logout();   // the account is gone: drop the saved session
+    AcctJobFinish(o.ok, o.message, {}, o.signOut, o.notDeployed);
+    return 0;
+}
+// Start a job unless one is running. kind 1 = export, 2 = delete.
+static bool AcctStartJob(int kind, const std::string& username, const std::string& password = {}) {
+    if (!g_acctDataMutex) g_acctDataMutex = SDL_CreateMutex();
+    SDL_LockMutex(g_acctDataMutex);
+    if (g_acctDataJob.running) { SDL_UnlockMutex(g_acctDataMutex); return false; }
+    g_acctDataJob = AcctDataJob{};
+    g_acctDataJob.kind = kind; g_acctDataJob.running = true; g_acctDataJob.username = username; g_acctDataJob.password = password;
+    g_acctDataJob.step = kind == 1 ? "starting" : "contacting the server";
+    SDL_UnlockMutex(g_acctDataMutex);
+    SDL_Thread* t = SDL_CreateThread(kind == 1 ? AcctExportWorker : AcctDeleteWorker, "okay-acctdata", nullptr);
+    if (t) { SDL_DetachThread(t); return true; }
+    AcctJobFinish(false, "Couldn't start a background task.");
+    return false;
+}
+
 static volatile bool g_acStarted = false;
 static bool g_acReady = false;                 // (guarded)
 static okay::Friend g_acProfile;               // (guarded)
@@ -17286,6 +17367,8 @@ int main(int argc, char** argv) {
     std::string acctMessage;             // last error/status, shown under the form
     bool acctMessageError = true;
     bool acctBusy = false;
+    char adDelUser[64] = {0}, adDelPass[128] = {0};   // delete-account confirmation fields
+    bool adDelAck = false;
 
     char playFilter[128] = {0};   // Play-tab search box
     char marketFilter[128] = {0}; // Marketplace search box
@@ -20988,6 +21071,81 @@ int main(int argc, char** argv) {
                         }
                     });
                     acCardEnd();
+                    if (account.GetProvider() == acct::Provider::Supabase || acDemo) {
+                        acCard("##ac_data", "YOUR DATA");
+                        const AcctDataJob adj = AcctJobSnapshot();
+                        acRow("Download my data", "One JSON file with your profile, friends, messages you sent, forum posts, marketplace listings, achievements and more. Only what your own account can read. Saved in the launcher's exports folder.", 190.0f, 32.0f, [&](float w) {
+                            ImGui::BeginDisabled(acDemo || adj.running);
+                            if (ImGui::Button("Download my data", ImVec2(w, 32))) AcctStartJob(1, myUser);
+                            ImGui::EndDisabled();
+                        });
+                        if (adj.kind == 1 && adj.running) {
+                            ImGui::ProgressBar(adj.total ? (float)adj.done / (float)adj.total : 0.0f, ImVec2(-1, 6), "");
+                            ImGui::TextDisabled("Reading %s (%zu of %zu)...", adj.step.c_str(), adj.done, adj.total);
+                        } else if (adj.kind == 1 && adj.ready) {
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextColored(adj.ok ? ImVec4(0.55f, 0.9f, 0.6f, 1) : ImVec4(1, 0.55f, 0.55f, 1), "%s", adj.message.c_str());
+                            ImGui::PopTextWrapPos();
+                            if (!adj.savedPath.empty() && ImGui::SmallButton("Open exports folder")) OpenExternal(fs::path(adj.savedPath).parent_path().string());
+                        }
+                        acDivider();
+                        acRow("Delete my account", "Permanently deletes your account and data. This cannot be undone.", 190.0f, 32.0f, [&](float w) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.18f, 0.18f, 1));
+                            ImGui::BeginDisabled(acDemo || adj.running);
+                            if (ImGui::Button("Delete my account...", ImVec2(w, 32))) { adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false; ImGui::OpenPopup("Delete my account##ad"); }
+                            ImGui::EndDisabled();
+                            ImGui::PopStyleColor();
+                        });
+                        if (adj.kind == 2 && adj.running) {
+                            ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(-1, 6), "");
+                            ImGui::TextDisabled("Deleting on the server. This can take a minute. Keep the launcher open.");
+                        } else if (adj.kind == 2 && adj.ready && !adj.ok) {
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextColored(ImVec4(1, 0.55f, 0.55f, 1), "%s", adj.message.c_str());
+                            ImGui::PopTextWrapPos();
+                        }
+                        ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_Appearing);
+                        if (ImGui::BeginPopupModal("Delete my account##ad", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                            ImGui::PushTextWrapPos(430.0f);
+                            ImGui::TextColored(ImVec4(1, 0.6f, 0.6f, 1), "This permanently deletes your account.");
+                            ImGui::TextUnformatted("Deleted for good: your profile, friends, follows, every message you sent or received, forum threads and posts (replies by others to your threads go with them), marketplace listings and reviews, achievements, cloud saves, leaderboard entries, files you uploaded, your anti-cheat reports and appeals, and the sign-in itself.");
+                            ImGui::TextUnformatted("Servers and group chats YOU own are deleted for everyone in them.");
+                            ImGui::TextUnformatted("Kept without your name: moderation log entries and machine-level ban records.");
+                            ImGui::TextDisabled("Tip: use Download my data first.");
+                            ImGui::PopTextWrapPos();
+                            ImGui::Dummy(ImVec2(0, 6));
+                            ImGui::Text("Type your username (%s) to confirm:", myUser.c_str());
+                            ImGui::SetNextItemWidth(420);
+                            ImGui::InputText("##deluser", adDelUser, sizeof(adDelUser));
+                            ImGui::SetNextItemWidth(420);
+                            ImGui::InputTextWithHint("##delpass", "Your password", adDelPass, sizeof(adDelPass), ImGuiInputTextFlags_Password);
+                            ImGui::Checkbox("I understand this cannot be undone", &adDelAck);
+                            const bool can = acct::data::DeleteConfirmed(adDelUser, myUser, adDelPass, adDelAck) && !adj.running;
+                            ImGui::Dummy(ImVec2(0, 4));
+                            ImGui::BeginDisabled(!can);
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.18f, 0.18f, 1));
+                            if (ImGui::Button("Delete everything", ImVec2(200, 32)) && can) {
+                                AcctStartJob(2, myUser, adDelPass);
+                                adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false;
+                                ImGui::CloseCurrentPopup();
+                            }
+                            ImGui::PopStyleColor();
+                            ImGui::EndDisabled();
+                            ImGui::SameLine(0, 8);
+                            if (ImGui::Button("Cancel", ImVec2(120, 32))) { adDelUser[0] = adDelPass[0] = '\0'; adDelAck = false; ImGui::CloseCurrentPopup(); }
+                            ImGui::EndPopup();
+                        }
+                        // The account is gone: sign out here once, like the Sign out button.
+                        if (adj.kind == 2 && adj.ready && adj.signOut && !adj.signOutDone) {
+                            SDL_LockMutex(g_acctDataMutex); g_acctDataJob.signOutDone = true; SDL_UnlockMutex(g_acctDataMutex);
+                            account.Logout();
+                            acctUser[0] = acctPass[0] = '\0';
+                            acctProfileLoaded = false; g_acStarted = false; g_acReady = false; codeFetched = false;
+                            acctMessageError = false; acctMessage = adj.message;
+                            Toast("Account deleted", 1);
+                        }
+                        acCardEnd();
+                    }
                 } else if (acSec == 2) {   // ---------------- Privacy ----------------
                     acCard("##ac_priv", "PRIVACY");
                     acRow("Online status", "Invisible looks offline to everyone, and you can still chat.", 180.0f, ImGui::GetFrameHeight(), [&](float w) {

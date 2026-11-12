@@ -25,7 +25,16 @@ Every number below is quoted from the code, the tests or the docs in this reposi
 
 The engine's Crypto sources total 1,232 lines (`engine/src/Crypto/`), plus the 177-line header.
 
-Also in scope, because it is a second, older Ed25519 and SHA-512 in the tree: `shared/AntiCheatCrypto.hpp` (496 lines), a C++ port of public-domain TweetNaCl used when there is no libsodium and by the launcher, which does not link the engine. It adds the checks libsodium 1.0.18 makes (S < L, R not small-order, public key canonical and not small-order); a test pins the identity-key forgery plain TweetNaCl would accept. It is claimed to match libsodium only on those checks, not on every malformed input. We intend to replace it with `okay::crypto` (roadmap), so a reviewer may prefer to review that one only briefly.
+### Also formally in scope: the other crypto code in the tree
+
+These are not `okay::crypto`, but they are security-relevant code we wrote or ported and they are on the removal list too, so the review covers them.
+
+| File | Lines | What | Why it is in scope |
+|---|---|---|---|
+| `shared/AntiCheatCrypto.hpp` | 496 | C++ port of public-domain TweetNaCl: Ed25519 and SHA-512, used when there is no libsodium and by the launcher, which does not link the engine. Adds the checks libsodium 1.0.18 makes (S < L, R not small-order, public key canonical and not small-order); a test (`tests/test_anticheat_integrity.cpp`) pins the identity-key forgery plain TweetNaCl would accept. Claimed to match libsodium only on those checks, not on every malformed input | A second Ed25519 and SHA-512 that signs and verifies the integrity manifest and the join key message. To be replaced by `okay::crypto` after this review |
+| `shared/AntiCheatChecks.hpp`, function `okayac::detail::HmacSha256` (lines 175 to 192 of 411) | 18 (file: 411) | HMAC-SHA256 written by hand (key padding, ipad and opad, wipes its key buffer), also used for the clock-challenge tag (`ClockTag`) | Used by the relay for its address cookie (`RelayServer::MakeCookie`, `engine/src/Net/RelayServer.cpp`; a cookie is the HMAC of address, port and minute under a random relay secret, compared in `CookieValid` with a XOR-accumulate loop) and by the anti-cheat clock challenge |
+| `engine/include/okay/Platform/Account/AccountService.hpp`, class `okay::account::detail::Sha256` (lines 52 to 137 of that header) | about 86 (class) | A third SHA-256 in the tree, "public domain, compact", which `HmacSha256` above is built on; it also hashes local-backend passwords | The relay cookie and the anti-cheat clock tag rest on it, so it is part of the HMAC's review. It should be replaced by `okay::crypto::Sha256` |
+| `shared/OfficialGame.hpp`, `FileSha256` (around line 446) | n/a | SHA-256 of files for the official game's updater and the manifest | Review whether it too goes onto `okay::crypto::Sha256` |
 
 ### Primitives
 
@@ -61,7 +70,7 @@ What the engine uses this for, and what an attacker is assumed able to do. This 
 | Tamper tests | every bit of the tag and ciphertext, and the AAD, nonce and key flipped must fail | same | pass |
 | Ed25519 strictness | malleability (S >= L), small-order R and key, non-canonical key encodings | same | pass |
 | libsodium cross-check | random cases per primitive, both directions (ours seals and theirs opens, theirs seals and ours opens), accept/reject agreement on malformed Ed25519 inputs and small-order X25519 points | `tests/test_crypto_sodium_xcheck.cpp` (241 lines), ctest `crypto_sodium_xcheck`; built only when libsodium is found | `OKAY_CRYPTO_XCHECK_N` cases per primitive, **default 3000**; the Ed25519 ones are one tenth of it (300), because each costs milliseconds. The test prints the libsodium version and the count it ran |
-| Python cross-check | the same against Python `cryptography` (OpenSSL) and `hashlib`, both directions, inputs sizes biased to block edges, fixed seed unless `OKAY_CRYPTO_SEED` is set. OpenSSL has no XChaCha20, so XChaCha is checked against libsodium instead, and here through a construction of the HChaCha20 subkey | `tests/scripts/crypto_xcheck.py` (134 lines) driving `tests/crypto_xcheck_tool.cpp` (99 lines), ctest `crypto_python_xcheck`; skipped when the module is missing | ctest runs it with **1500** cases per primitive |
+| Python cross-check | the same against an independent cryptography library and a standard hash library (through Python), both directions, inputs sizes biased to block edges, fixed seed unless `OKAY_CRYPTO_SEED` is set. that library has no XChaCha20, so XChaCha is checked against libsodium instead, and here through a construction of the HChaCha20 subkey | `tests/scripts/crypto_xcheck.py` (134 lines) driving `tests/crypto_xcheck_tool.cpp` (99 lines), ctest `crypto_python_xcheck`; skipped when the module is missing | ctest runs it with **1500** cases per primitive |
 | Fuzz | decryption of arbitrary bytes never succeeds unless it is a valid seal and never writes plaintext on failure; Ed25519 verify of arbitrary signature, key and message never crashes and never accepts garbage and agrees with itself; hashes and MACs streamed at any split equal one-shot; X25519 and Kx accept any 32 bytes | `tests/fuzz_crypto.cpp` (156 lines); ctest `crypto_fuzz_smoke` runs **300** iterations of the built-in mutator; `-DOKAY_CRYPTO_LIBFUZZER=ON` (clang) builds the real libFuzzer binary with ASan and UBSan | the smoke test is small; `docs/crypto.md` suggests `fuzz_crypto_smoke 100000` under ASan/UBSan for more. We have no recorded long libFuzzer run to quote |
 | Whole net layer on both backends | `test_net_crypto.cpp` (85 lines) compiled once per backend in one build (`net_crypto_own`, `net_crypto_sodium`); the `net*` family, `anticheat*` and `dedicated_server` run under whichever backend the build has; interoperability both directions | `scripts/test_crypto_backends.sh` | pass on Linux/GCC |
 | Memory | `MemZero` uses volatile stores plus a compiler barrier; `Open` zeroes its output when the tag fails; intermediate secrets (otk, subkey, scalar, hash buffers, points) are zeroed after use | `Util.cpp`, `Aead.cpp`, `Ed25519.cpp`, `X25519.cpp` | by reading; not tested by inspecting memory |
@@ -97,7 +106,7 @@ Please mark each item pass, fail or not assessed, with a pointer.
 
 ## 6. Build and run
 
-Requires CMake, Ninja (the script uses it), a C++17 compiler. libsodium (`libsodium-dev`) is needed for the libsodium side and for the cross-check; Python 3 with the `cryptography` module is optional for the Python cross-check.
+Requires CMake, Ninja (the script uses it), a C++17 compiler. libsodium (`libsodium-dev`) is needed for the libsodium side and for the cross-check; Python 3 with an independent cryptography module (see `tests/scripts/crypto_xcheck.py` for the exact import) is optional for the Python cross-check.
 
 ```
 # Both backends, then the whole encryption-related test set on each:
@@ -121,15 +130,24 @@ cmake -S . -B build-fuzz -DCMAKE_CXX_COMPILER=clang++ -DOKAY_CRYPTO_LIBFUZZER=ON
 
 Test names: `crypto`, `crypto_sodium_xcheck`, `crypto_python_xcheck`, `crypto_fuzz_smoke`, `net_crypto`, `net_crypto_own`, `net_crypto_sodium`, plus the `net*` and `anticheat*` families. Switch on our code in an application build with `-DOKAY_OWN_CRYPTO=ON` (then libsodium is not linked at all). Binary paths above may differ with the generator; ctest names are stable.
 
-## 7. Questions we want answered
+## 7. Known issues we want fixed or decided
+
+These are findings we already know about. They are not open questions to the reviewer about whether a problem exists; we want each one fixed, or a decision recorded that it is acceptable, before sign-off.
+
+1. **`SecureChannel` never zeroes its key material.** `engine/include/okay/Net/SecureChannel.hpp` holds the ephemeral secret key and both session keys in plain members (`m_sk`, `m_rx`, `m_tx`, and `m_pk`), the class has no destructor, and nothing calls `MemZero` (or `sodium_memzero`) on them. The same is true under the libsodium backend. Fix or decide: add a destructor and a wipe of the secret key after the keys are derived, and make sure copies of the channel (the `m_nextSecure` to `m_secure` handover in `NetworkManager`) are wiped too.
+2. **Plaintext join fallback (`m_legacyJoin`).** `NetworkManager` can fall back to an unsealed plaintext join: after `kSealedJoinTries = 4` unanswered sealed hellos the client sends the plaintext Join (unless a host key is pinned, which refuses to join without encryption). A network attacker who drops the first four hellos may be able to push a client that has not pinned a host key onto the plaintext path. Fix or decide: which cases must refuse instead of falling back, and whether the fallback stays at all.
+3. **Three SHA-256 implementations and two Ed25519 implementations in the tree** (`okay::crypto`, the account `Sha256` under the HMAC, and the TweetNaCl port; `okay::crypto` and the port for Ed25519). Fix or decide: move the HMAC, the relay cookie, the clock tag and the manifest signing onto `okay::crypto` and delete the others, once the review accepts `okay::crypto`.
+4. **`Seal` is `const` with mutable counters** (`m_txSeq`, `m_rxMax`, `m_window`): decide whether it is safe to call from more than one thread, and document it.
+
+## 8. Questions we want answered
 
 1. Is the code constant time as compiled? What measurement would you accept, on which compilers, flags and CPUs, and what is the minimum matrix before we could ship (GCC and MinGW on x86-64 for Windows and Linux builds; Clang for macOS; WebAssembly)?
 2. Is the 16-limb, 16-bit, `int64_t` field arithmetic with arithmetic right shifts acceptable on every compiler we support, and is the `ReduceL` bit-by-bit scalar reduction constant time and correct?
 3. Is a random 24-byte XChaCha nonce per message under a per-direction key acceptable for our traffic, or do you want a counter nonce?
 4. Is the Ed25519 verification (strict, byte comparison of the re-encoded point, no cofactor, S < L, small-order rejection, canonical key) the right strictness for session tickets, host pinning and the integrity manifest? Any case where accepting libsodium's exact behaviour matters more than being strict?
-5. `SecureChannel` keeps session keys unwiped, and `Seal` is `const` with a mutable sequence counter: change anything?
+5. Beyond known issues 1 and 4: anything else about how `SecureChannel` holds keys and counters you would change?
 6. The relay MAC uses `okayac::detail::HmacSha256` from `shared/AntiCheatChecks.hpp`, which is separate code from `okay::crypto::Sha256`. Should it move onto the reviewed primitives, and is that HMAC itself sound?
-7. The plaintext join fallback (`m_legacyJoin`) and the sealed-join retry count (`kSealedJoinTries = 4`): is there a downgrade we have missed?
+7. Beyond known issue 2: is there another downgrade path we have missed?
 8. What should we add before we ask you to sign off: more fuzz time, a third implementation to compare against, known-answer tests from another suite, formal methods on the field arithmetic?
 9. What would you want in CI to keep it safe afterwards (sanitizers, a libFuzzer job, a timing check)?
 10. Anything you would rather we did not implement ourselves at all, and instead kept using from a maintained library?

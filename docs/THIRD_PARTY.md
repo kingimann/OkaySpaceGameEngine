@@ -51,9 +51,19 @@ Services run by other companies (Steamworks, Photon, our hosting) are not librar
 | curl (external program, not linked) | Downloads in the launcher and editor, HTTP calls on Linux and macOS | curl licence | Run as a program from the user's system | Built-in client on the platform's own TLS API; Windows already has one (WinHTTP) |
 | stb `stb_decompress` (public domain, one routine) | Reads the embedded Dear ImGui font arrays in `engine/src/Graphics/EmbeddedFont.cpp` | Public domain | Copied into that file | Goes when the fonts are re-encoded, with Dear ImGui |
 
-Fonts are assets, not code, and stay with their licences: [DejaVu Sans](https://dejavu-fonts.github.io) (free font
-licence, see `assets/fonts/DejaVuSans-LICENSE.txt`), Roboto Medium (`shared/RobotoFont.h`) and JetBrains Mono
-(`shared/JetBrainsMonoFont.h`, SIL OFL 1.1).
+Fonts are assets, not code, and stay with their licences:
+
+| Font | Where | Licence as the repository states it |
+|---|---|---|
+| [DejaVu Sans](https://dejavu-fonts.github.io) | `assets/fonts/DejaVuSans.ttf` | Free font licence; the text is in `assets/fonts/DejaVuSans-LICENSE.txt` |
+| JetBrains Mono (Regular) | `shared/JetBrainsMonoFont.h`, embedded for the script editor | The file header says: "(c) 2020 The JetBrains Mono Project Authors. SIL Open Font License 1.1." (source link in that header: github.com/JetBrains/JetBrainsMono). **The repository has no copy of the OFL text or the copyright file for it.** |
+| Roboto Medium | `shared/RobotoFont.h`, embedded for the launcher | **The repository states no licence for it.** The only provenance is the file's first comment line, which says it was exported with Dear ImGui's `binary_to_compressed_c` from a `Roboto-Medium.ttf` in a Dear ImGui checkout (`misc/fonts`). No licence file, no copyright line. |
+
+**To resolve (we do not guess a licence):** (1) find out the licence Roboto Medium was obtained under from its upstream
+source, add that licence text next to it (for example `assets/fonts/Roboto-LICENSE.txt`) and a header line in
+`shared/RobotoFont.h`; (2) add the OFL 1.1 text and the JetBrains Mono copyright notice next to the JetBrains Mono
+file, as the OFL requires the notice to travel with the font; (3) check that the Windows installer and the release
+archives carry these notices. Until then the licence status of the two embedded fonts is unconfirmed.
 
 ## Services we keep (optional integrations, not bundled)
 
@@ -64,6 +74,6 @@ licence, see `assets/fonts/DejaVuSans-LICENSE.txt`), Roboto Medium (`shared/Robo
 
 - **Build and test:** CMake, GCC, MinGW-w64 (Windows cross-compile), Emscripten (WebGL), GitHub Actions.
 - **Hosting:** GitHub Releases (the permanent archive of every version) and Supabase (update bucket, accounts and community backend).
-- **Sample models:** none are downloaded or bundled. The old Mixamo sample entries were removed.
+- **Sample models:** none are downloaded or bundled. The old sample-model entries were removed.
 
 If you add a library, add it to this page with its licence and how it is obtained.

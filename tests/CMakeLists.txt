@@ -797,6 +797,12 @@ target_link_libraries(test_project_save PRIVATE okay::engine)
 add_test(NAME project_save COMMAND test_project_save)
 
 # The project's own state (project.okayproj, build settings, profiles, tags, layers): every field set, written, read back; old files load.
+# The build pipeline's pure logic (okay/Core/BuildPipeline.hpp): layout planner, data-folder lookup, dependency walk,
+# build manifest, report, zip, and the Build Settings text. The end-to-end export check is tests/export/verify_layout.sh.
+add_executable(test_build_pipeline test_build_pipeline.cpp)
+target_link_libraries(test_build_pipeline PRIVATE okay::engine)
+add_test(NAME build_pipeline COMMAND test_build_pipeline)
+
 add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)

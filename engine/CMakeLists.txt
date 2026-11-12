@@ -169,6 +169,7 @@ add_library(okay_engine
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
     src/Core/ImageWrite.cpp
+    src/Core/BuildPipeline.cpp
     src/Core/ImageDecode.cpp
     src/Core/ImageDecodeJpeg.cpp
     src/Graphics/Image.cpp

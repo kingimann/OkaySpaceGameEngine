@@ -274,6 +274,11 @@ add_executable(test_build_mode test_build_mode.cpp)
 target_link_libraries(test_build_mode PRIVATE okay::engine)
 add_test(NAME build_mode COMMAND test_build_mode)
 
+# Generalised I/O links on a Logic Source: named outputs, inputs, delay, once, save/load, prefab overrides
+add_executable(test_io_links test_io_links.cpp)
+target_link_libraries(test_io_links PRIVATE okay::engine)
+add_test(NAME io_links COMMAND test_io_links)
+
 add_executable(test_loading_screen test_loading_screen.cpp)
 target_link_libraries(test_loading_screen PRIVATE okay::engine)
 add_test(NAME loading_screen COMMAND test_loading_screen)
@@ -797,6 +802,12 @@ add_executable(test_project_panel test_project_panel.cpp ${PROJECT_SOURCE_DIR}/e
 target_include_directories(test_project_panel PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_panel PRIVATE okay::engine)
 add_test(NAME project_panel COMMAND test_project_panel)
+
+# The Project panel on the asset database and the thumbnail cache: listing / search / filters / used-by / info from the database, incremental refresh (5,000 assets timed), thumbnails by GUID + hash (hit, miss, invalidate, disk, frame budget), rename / move / delete keep GUIDs and badge broken references.
+add_executable(test_project_panel_db test_project_panel_db.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_project_panel_db PRIVATE okay::engine)
+add_test(NAME project_panel_db COMMAND test_project_panel_db)
 
 # Import settings that really change behaviour: texture Filter / Wrap / Mipmaps (software sampler + sidecar read by the OpenGL path), model Normals / Smoothing angle / Import animations.
 add_executable(test_import_settings_real test_import_settings_real.cpp)
@@ -1916,6 +1927,7 @@ add_test(NAME assetmanager COMMAND test_assetmanager)
 # Asset database: GUID metas, move detection, dependency graph, import settings, thumbnails, search
 add_executable(test_asset_database test_asset_database.cpp)
 target_link_libraries(test_asset_database PRIVATE okay::engine)
+target_compile_definitions(test_asset_database PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME asset_database COMMAND test_asset_database)
 
 # Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
@@ -2341,6 +2353,18 @@ target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
 
+# Our own model readers (OBJ+MTL, STL, PLY) + the import seam: fixtures in tests/data/models,
+# malformed input, a fuzz sweep, the backend switch, and (with OKAY_USE_ASSIMP) both backends compared.
+add_executable(test_model_readers test_model_readers.cpp)
+target_link_libraries(test_model_readers PRIVATE okay::engine)
+target_compile_definitions(test_model_readers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME model_readers COMMAND test_model_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(model_readers PROPERTIES TIMEOUT 300)
+add_executable(test_model_readers_fuzz test_model_readers_fuzz.cpp)
+target_link_libraries(test_model_readers_fuzz PRIVATE okay::engine)
+target_compile_definitions(test_model_readers_fuzz PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME model_readers_fuzz COMMAND test_model_readers_fuzz WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(model_readers_fuzz PROPERTIES TIMEOUT 300)
 # "Download my data" / "Delete my account": client request building, confirmation
 # gating, export assembly, error mapping (engine/include/okay/Platform/Account/AccountData.hpp).
 add_executable(test_account_data test_account_data.cpp)

@@ -140,56 +140,57 @@ int main() {
         WriteFile(td.at("alpha/deep/hero.okaymat"), "m");
         WriteFile(td.at("alpha/hero.png"), "ccccc");
         WriteFile(td.at("scene.okayscene"), "s");
-        WriteFile(td.at("tex2.png.okaymeta"), "meta");
+        WriteFile(td.at("tex2.png.okaymeta"), "okaymeta 1\nguid 0123456789abcdef0123456789abcdef\ntype texture\n");
         WriteFile(td.at(".hidden.png"), "h");
         WriteFile(td.at("junk.tmp"), "t");
         WriteFile(td.at(".git/config"), "g");
 
+        Browser b(td.assets());
         ListOptions o;
-        auto top = ListFolder(td.assets(), o);
+        auto top = b.List(td.assets(), o);
         std::vector<std::string> names;
         for (auto& e : top) names.push_back(e.name);
         CHECK((names == std::vector<std::string>{"alpha", "Zed", "scene.okayscene", "tex2.png", "tex10.png"}));   // folders first, natural order, hidden skipped
         CHECK(top[0].isDir && top[0].ext.empty() && !top[2].isDir && top[2].ext == ".okayscene" && top[3].size == 2);
 
         o.filter = Filter::Images;
-        top = ListFolder(td.assets(), o);
+        top = b.List(td.assets(), o);
         CHECK(top.size() == 4 && top[0].isDir && top[1].isDir);           // browsing keeps folders next to the filter
         o.recursive = true;
-        top = ListFolder(td.assets(), o);
+        top = b.List(td.assets(), o);
         names.clear(); for (auto& e : top) names.push_back(e.name);
         CHECK((names == std::vector<std::string>{"hero.png", "tex2.png", "tex10.png"}));   // searching: files only, below folders too
 
         o = ListOptions();
         o.text = "HERO";
-        top = ListFolder(td.assets(), o);
+        top = b.List(td.assets(), o);
         CHECK(top.size() == 2);                                           // the png and the material, below the folder
         o.text = "hero t:material";
-        top = ListFolder(td.assets(), o);
+        top = b.List(td.assets(), o);
         CHECK(top.size() == 1 && top[0].name == "hero.okaymat");
         o.text = "ext:png";
-        top = ListFolder(td.assets(), o);
+        top = b.List(td.assets(), o);
         CHECK(top.size() == 3);
         o.text = "t:folder";
-        top = ListFolder(td.assets(), o);
+        top = b.List(td.assets(), o);
         CHECK(top.size() == 3 && top[0].isDir);                           // alpha, deep, Zed
         o.text = "zzz";
-        CHECK(ListFolder(td.assets(), o).empty());
+        CHECK(b.List(td.assets(), o).empty());
         o.text = "t:bogus";
-        CHECK(ListFolder(td.assets(), o).empty());                        // an unknown type word is just text
+        CHECK(b.List(td.assets(), o).empty());                        // an unknown type word is just text
 
         ListOptions s; s.sort = SortKey::Size; s.descending = true;
-        top = ListFolder(td.assets(), s);
+        top = b.List(td.assets(), s);
         CHECK(top[0].isDir && top[1].isDir && top[2].name == "tex10.png");
         s.descending = false;
-        top = ListFolder(td.assets(), s);
+        top = b.List(td.assets(), s);
         CHECK(top[2].name == "scene.okayscene" && top.back().name == "tex10.png");
         s.sort = SortKey::Type; s.descending = false;
-        top = ListFolder(td.assets(), s);
+        top = b.List(td.assets(), s);
         CHECK(top[2].ext == ".okayscene");
         ListOptions lim; lim.recursive = true; lim.limit = 3;
-        CHECK(ListFolder(td.assets(), lim).size() == 3);
-        CHECK(ListFolder(td.at("missing"), ListOptions()).empty());
+        CHECK(b.List(td.assets(), lim).size() == 3);
+        CHECK(b.List(td.at("missing"), ListOptions()).empty());
         auto q = ParseQuery("Hero ext:PNG t:audio");
         CHECK(q.words.size() == 1 && q.words[0] == "hero" && q.ext == ".png" && q.filter == Filter::Audio);
         CHECK(IsHiddenName(".x") && IsHiddenName("a.okaymeta") && IsHiddenName("s.okayscene.autosave") && !IsHiddenName("a.png"));
@@ -472,6 +473,7 @@ int main() {
         okay::Guid k1, k2; std::uint64_t h1 = 0, h2 = 0;
         b.ThumbKey(p.td.at("Scenes/Hero.png"), k1, h1);
         WriteFile(p.td.at("Scenes/Hero.png"), "different, longer picture data");
+        CHECK(b.Reimport(p.td.at("Scenes/Hero.png")));                              // (the panel's poll does this on its own)
         b.ThumbKey(p.td.at("Scenes/Hero.png"), k2, h2);
         CHECK(k1 == k2 && h1 != h2 && !k1.IsNull());                               // same picture slot, new content
     }

@@ -42,6 +42,14 @@ public:
     Image Render(const std::string& absolutePath, std::string* error) override;
 };
 
+/// wav ogg mp3: the whole clip drawn as a min/max waveform (decoded through AudioClip::Load). A file over 64 MB is
+/// not decoded just for a picture; it keeps the placeholder.
+class WaveformThumbnailGenerator final : public ThumbnailGenerator {
+public:
+    bool Handles(const std::string& extension) const override;
+    Image Render(const std::string& absolutePath, std::string* error) override;
+};
+
 class ThumbnailCache {
 public:
     struct Options {
@@ -51,6 +59,7 @@ public:
         std::size_t maxBytes = 64u << 20;
         std::string tag = "1";                 ///< bump to invalidate every disk entry (generator changed)
         bool imageGenerator = true;            ///< register ImageThumbnailGenerator
+        bool audioGenerator = true;            ///< register WaveformThumbnailGenerator
     };
     struct Stats {
         std::size_t memoryHits = 0, diskHits = 0, generated = 0, placeholders = 0, failures = 0, evictions = 0, diskWrites = 0;

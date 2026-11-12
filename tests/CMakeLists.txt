@@ -241,6 +241,13 @@ add_executable(test_ttf test_ttf.cpp)
 target_link_libraries(test_ttf PRIVATE okay::engine)
 add_test(NAME ttf COMMAND test_ttf)
 
+# Our own TrueType reader / rasterizer: synthetic fonts, DejaVu references, fuzzed files.
+add_executable(test_ttf_rasterizer test_ttf_rasterizer.cpp)
+target_link_libraries(test_ttf_rasterizer PRIVATE okay::engine)
+target_compile_definitions(test_ttf_rasterizer PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ttf_rasterizer COMMAND test_ttf_rasterizer)
+set_tests_properties(ttf_rasterizer PROPERTIES TIMEOUT 120)
+
 add_executable(test_block_builder test_block_builder.cpp)
 target_link_libraries(test_block_builder PRIVATE okay::engine)
 add_test(NAME block_builder COMMAND test_block_builder)
@@ -750,6 +757,12 @@ add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DI
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
+
+# The editor's undo (EditorState + SceneUndo.hpp on okay::UndoStack): every kind of edit does / undoes / redoes to the same scene text, merging, delete restores GUIDs, limits, new scene / Play, saved tracking.
+add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_undo PRIVATE okay::engine)
+add_test(NAME editor_undo COMMAND test_editor_undo)
 
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
 add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
@@ -1549,6 +1562,11 @@ add_executable(test_chat_json test_chat_json.cpp)
 target_compile_features(test_chat_json PRIVATE cxx_std_17)
 target_include_directories(test_chat_json PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME chat_json COMMAND test_chat_json)
+# Server-side blocks + privacy: rule parsing, missing-table detection, settings, pending changes.
+add_executable(test_blocks_privacy test_blocks_privacy.cpp)
+target_compile_features(test_blocks_privacy PRIVATE cxx_std_17)
+target_include_directories(test_blocks_privacy PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME blocks_privacy COMMAND test_blocks_privacy)
 # Kick / ban / unban / promote logic for servers and group chats (shared/MemberModeration.hpp): permissions, requests, error mapping.
 add_executable(test_member_moderation test_member_moderation.cpp)
 target_compile_features(test_member_moderation PRIVATE cxx_std_17)
@@ -1597,6 +1615,8 @@ add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
 if(UNIX)
     add_test(NAME anticheat_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_anticheat_sql.sh)
     set_tests_properties(anticheat_sql PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
+    set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
     # docs/sql/member_moderation.sql (kick / ban / roles) on a LOCAL Postgres, same opt-in as above.
     add_test(NAME member_moderation_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_member_moderation_sql.sh)
     set_tests_properties(member_moderation_sql PROPERTIES SKIP_RETURN_CODE 77)

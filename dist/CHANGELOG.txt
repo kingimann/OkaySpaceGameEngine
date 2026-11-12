@@ -36,15 +36,12 @@ v2.861.0
   Fonts and models
   - TrueType fonts are rasterised by our own code (#655). OBJ, MTL, STL and PLY
     models are read by our own readers; Assimp stays for other formats (#660).
-  Own code, side by side and OFF by default (nothing changes unless you turn it on)
-  - okay::crypto, our own cryptography, checked against the published test
-    vectors and against libsodium; libsodium stays the default until an outside
-    review (#656).
-  - okay::platform, our own windows, events, input and audio layer. SDL2 stays
-    the default; the player now runs through the layer on SDL2 (#654, #681).
-  - OkayUI: headless test harness with golden images, a draw list, cursor and
-    item queries and disabled blocks (#659, #678). Dear ImGui stays the UI.
-  - A COLLADA (.dae) reader, enabled with OKAY_OWN_COLLADA (#679).
+  Under construction (not ready, switched off, not for use; nothing changes in your games)
+  - Our own replacements for third-party code are being built next to the
+    originals: cryptography, windows and input, UI toolkit, COLLADA reading
+    (#656, #654, #681, #659, #678, #679). They stay off, with no setting to
+    turn them on, until they are ready and bug free. The libraries you use
+    today are unchanged.
 
 v2.860.0
   Audio

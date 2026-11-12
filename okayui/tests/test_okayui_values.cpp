@@ -311,6 +311,45 @@ void TreeTests() {
     CHECK(leafOpen && !leafToggled);                                 // clicking a leaf never toggles it
 }
 
+void BeginComboTests() {
+    Rig r; int sel = 0; bool open = false; UI::Rect rbox, r1, r2;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(220);
+        open = UI::BeginCombo("", sel == 0 ? "none" : sel == 1 ? "one" : "two");
+        rbox = UI::GetItemRect(); UI::PopID();
+        if (open) {
+            if (UI::Selectable("one", sel == 1)) { sel = 1; UI::CloseCurrentPopup(); }
+            r1 = UI::GetItemRect();
+            if (UI::Selectable("two", sel == 2)) { sel = 2; UI::CloseCurrentPopup(); }
+            r2 = UI::GetItemRect();
+            UI::EndCombo();
+        }
+    };
+    r.Frames(2);
+    CHECK(!open && sel == 0);                                       // closed until clicked
+    r.MoveTo(CenterX(rbox), CenterY(rbox)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(open);                                                    // a click opens the list
+    CHECK(rbox.w > 100 && rbox.h > 10);                             // GetItemRect right after BeginCombo is the box, open or not
+    CHECK(r1.y >= rbox.y + rbox.h - 1 && r2.y > r1.y);              // the rows sit under the box, in order
+    r.MoveTo(CenterX(r2), CenterY(r2)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+   
+    CHECK(sel == 2 && !open);                                       // picking a row sets it and closes the list
+    // clicking the box twice opens and then closes it
+    r.MoveTo(CenterX(rbox), CenterY(rbox)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(open);
+    r.MoveTo(CenterX(rbox), CenterY(rbox)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(!open);
+    // a click outside the list closes it, without changing the value
+    r.MoveTo(CenterX(rbox), CenterY(rbox)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(open);
+    r.MoveTo(380, 380); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(!open && sel == 2);
+    // a null preview is drawn as nothing
+    r.body = [&] { if (UI::BeginCombo("x", nullptr)) UI::EndCombo(); };
+    r.Frames(3);
+    CHECK(true);
+}
+
 }  // namespace
 
 int main() {
@@ -327,5 +366,6 @@ int main() {
     ItemQueryTests();
     GroupTests();
     TreeTests();
+    BeginComboTests();
     TEST_MAIN_RESULT();
 }

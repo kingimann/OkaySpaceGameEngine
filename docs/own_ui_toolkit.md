@@ -279,7 +279,7 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 | 10 | Menus | 957 | PARTIAL | menu bar, `BeginMenu`, `MenuItem(label)`. Missing: nested sub-menus, shortcut text, checked and enabled state, `Shortcut` | M |
 | 11 | Mouse, keys, IO | 901 | PARTIAL | mouse position, buttons, wheel, text, 9 key edges, and now `IsMouseDown/Clicked/Released`, `GetMousePos`, `GetMouseDelta`. Missing: Ctrl and Alt, key down, about 30 more keys, middle button, double click, drag deltas, mouse cursor shapes (92) | M |
 | 12 | IDs | 792 | HAVE | `PushID`, `PopID`. Missing: `GetID` (11), `GetStateStorage` | S |
-| 13 | Combo and selectable | 618 | PARTIAL | `Combo(items)`, `Selectable`, `ListBox`. Missing: `BeginCombo`/`EndCombo` (86) with custom content, selectable size and flags | S |
+| 13 | Combo and selectable | 618 | PARTIAL | `Combo(items)`, `Selectable`, `ListBox`. `BeginCombo`/`EndCombo` (step 9). Missing: selectable size and flags | S |
 | 14 | Text input | 545 | PARTIAL | single line with caret, selection, UTF-8. `InputTextWithHint` and `SetKeyboardFocusHere` (step 4). Missing: multi-line (25), password, callbacks | M |
 | 15 | Disabled blocks | 369 | HAVE (this step) | `BeginDisabled`/`EndDisabled`/`IsDisabled` | done |
 | 16 | Tables | 233 | PARTIAL | `BeginTable` with headers, weights, drag-resizable columns, `Columns`. Missing: sorting, scroll and frozen rows, row background, `TableSetColumnIndex` (29), flags | M |
@@ -383,3 +383,11 @@ Built: `TreeNodeEx(label, flags)` with `TreeNode_DefaultOpen`, `TreeNode_Leaf` (
 Tested (70 checks in `test_okayui_values.cpp`): default closed, default open, a leaf returns true, a click opens and then closes, the toggle is reported, a forced open and close, a leaf click never toggles. Fuzz draws random flags and forced states; behaviour 149, golden 15, drawlist 184, soft 18 unchanged.
 
 Not done: open on arrow only, bullet nodes, full-width selection flag.
+
+### 4.13 Gap-closing step 9: combo with custom content (family 13)
+
+Built: `BeginCombo(label, preview)` / `EndCombo()`. The box shows `preview`; while open, whatever is drawn between the two (usually `Selectable` rows that call `CloseCurrentPopup`) fills a popup under the box, as wide as the box (popups can now have a width: `PopupSlot::w`, 0 keeps the old 160 px). Clicking the box again, or outside the list, closes it; `GetItemRect` right after `BeginCombo` is the box. A null preview draws nothing. 86 call sites.
+
+Tested (80 checks in `test_okayui_values.cpp`): closed until clicked, opens on click, rows sit under the box in order, picking a row sets the value and closes, the box toggles, a click outside closes without changing the value. Fuzz draws random content in a combo; behaviour 149, golden 15, drawlist 184, soft 18 unchanged. A test mistake (reading the item rect from inside the open popup) found that `GetItemRect` was returning the popup's rect, which is why it now returns the box.
+
+Not done: selectable size and flags, keyboard navigation of the list, a height limit with scrolling.

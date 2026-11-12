@@ -111,7 +111,7 @@ bool  g_rPressed  = false;       // right button went down this frame
 
 // Popup/context-menu registry. Each open popup remembers where it opened and its
 // measured height (so the background can be drawn before the content next frame).
-struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; };
+struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; };   // w <= 0: the default width
 PopupSlot g_popups[8];
 PopupSlot* popupSlot(int id, bool create) {
     for (PopupSlot& p : g_popups) if (p.used && p.id == id) return &p;
@@ -2742,7 +2742,7 @@ bool Selectable(const char* label, bool selected) {
 
 void OpenPopup(const char* id) {
     PopupSlot* p = popupSlot(hashLabel(id), true);
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; g_openPopupThisFrame = p->id; }
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = p->id; }
 }
 
 void CloseCurrentPopup() {
@@ -2754,7 +2754,7 @@ void CloseCurrentPopup() {
 static bool beginPopupBody(int id) {
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) return false;
-    const float w = 160.0f, pad = 6.0f;
+    const float w = p->w > 0.0f ? p->w : 160.0f, pad = 6.0f;
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     float px = p->x, py = p->y;
     // Frame (overlay so it sits above everything). Height is last frame's content.
@@ -2792,13 +2792,52 @@ void EndPopup() {
 
 bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
 
+namespace { int g_comboCloseId = 0; }   // a press on an open combo's box: the release closes it instead of reopening it
+
+// A combo whose list is whatever the caller draws: the box shows `preview`; while it is open the content between
+// BeginCombo and EndCombo (usually Selectable rows) fills a popup under the box, as wide as the box.
+bool BeginCombo(const char* label, const char* preview) {
+    if (!g_lay.active) return false;
+    const int id = hashLabel(label);
+    const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
+    PopupSlot* ps = popupSlot(id ^ 0x77ca, true);
+    const bool insideBox = hitOverlay(x, y, boxW, h) && inClip();
+    g_lastId = id; if (insideBox) g_hot = id;
+    if (g_active == id) {
+        if (g_released) {
+            if (insideBox && ps) {
+                if (g_comboCloseId == id) ps->open = false;
+                else if (!ps->open) { ps->open = true; ps->x = x; ps->y = y + h; ps->w = boxW; g_openPopupThisFrame = ps->id; }
+            }
+            g_comboCloseId = 0; g_active = 0;
+        }
+    } else if (insideBox && g_pressed) { g_active = id; g_comboCloseId = (ps && ps->open) ? id : 0; }
+    quad(x, y, boxW, h, g_theme.border);
+    if (boxW > 2 * b && h > 2 * b) quad(x + b, y + b, boxW - 2 * b, h - 2 * b, insideBox ? g_theme.bgHover : g_theme.bg);
+    drawText(x + 6.0f, y + (h - textH()) * 0.5f, preview ? preview : "", s, g_theme.text);
+    const bool open = ps && ps->open;
+    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, g_theme.textDim);
+    else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, open ? "-" : "+", s, g_theme.text);
+    if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (!ps) return false;
+    const bool shown = beginPopupBody(ps->id);
+    if (shown) { g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = boxW; g_lay.prevH = h; }   // GetItemRect right after BeginCombo is the box
+    return shown;
+}
+
+void EndCombo() { EndPopup(); }
+
 bool BeginPopupContextItem(const char* id) {
     const int pid = hashLabel(id);
     // Right-click on the last-issued widget opens the popup at the cursor.
     if (g_lay.active && g_rPressed && !g_in.blocked &&
         pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
         PopupSlot* p = popupSlot(pid, true);
-        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; g_openPopupThisFrame = pid; }
+        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
     }
     return beginPopupBody(pid);
 }

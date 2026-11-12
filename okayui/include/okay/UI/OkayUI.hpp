@@ -337,6 +337,12 @@ bool CollapsingHeader(const char* label);
 /// on top of later widgets (overlay pass). Returns true the frame the selection
 /// changed. `items` and `current` required.
 bool Combo(const char* label, const char* const* items, int count, int* current);
+/// A combo whose list is whatever you draw: the box shows `preview`; while it is open, the widgets between
+/// BeginCombo and EndCombo (usually Selectable rows, each calling CloseCurrentPopup when chosen) fill a popup under
+/// the box, as wide as the box. Call EndCombo only when BeginCombo returned true. Clicking the box again, or
+/// anywhere outside the list, closes it.
+bool BeginCombo(const char* label, const char* preview);
+void EndCombo();
 
 /// If the most recently issued widget is hovered, show a tooltip box at the cursor.
 /// Call right after the widget you want to annotate.

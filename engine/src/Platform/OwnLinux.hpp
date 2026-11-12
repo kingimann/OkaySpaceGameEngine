@@ -29,6 +29,9 @@ public:
     virtual bool SetRelativeMouse(bool on) = 0;
     virtual void ShowCursor(bool show) = 0;
     virtual void WarpMouse(Window* w, int x, int y) = 0;
+    virtual uint32_t RelativeMouseState(int* dx, int* dy) = 0;
+    virtual Key KeyForChar(char c) = 0;
+    virtual bool IsCursorShown() = 0;
     virtual bool SetClipboardText(const std::string& t) = 0;
     virtual std::string GetClipboardText() = 0;
     /// Test hook: the window's current pixels as RGBA8 (XGetImage), top row first.

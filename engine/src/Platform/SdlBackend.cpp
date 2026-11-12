@@ -50,6 +50,19 @@ public:
     void Restore() override { SDL_RestoreWindow(m_win); }
     void SetFullscreen(bool on) override { SDL_SetWindowFullscreen(m_win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0); }
     bool IsFocused() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_INPUT_FOCUS) != 0; }
+    bool IsFullscreen() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_FULLSCREEN) != 0; }
+    bool SetIcon(const uint8_t* rgba, int w, int h) override {
+        if (!rgba || w <= 0 || h <= 0) return false;
+        SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom((void*)rgba, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
+        if (!surf) return false;
+        SDL_SetWindowIcon(m_win, surf);
+        SDL_FreeSurface(surf);
+        return true;
+    }
+    int RefreshRateHz() const override {
+        SDL_DisplayMode dm;
+        return (SDL_GetWindowDisplayMode(m_win, &dm) == 0 && dm.refresh_rate > 0) ? dm.refresh_rate : 0;
+    }
 
     bool CreateGLContext(const GLAttributes& a) override {
         DestroyGLContext();
@@ -122,6 +135,7 @@ public:
         if (f.video) want |= SDL_INIT_VIDEO;
         if (f.audio) want |= SDL_INIT_AUDIO;
         if (f.gamepad) want |= SDL_INIT_GAMECONTROLLER;
+        SDL_SetMainReady();   // the apps have their own main(); SDL must not insist on SDL_main
         const Uint32 missing = want & ~SDL_WasInit(0);
         if (missing && SDL_InitSubSystem(missing) != 0) return false;
         m_started |= missing;
@@ -152,6 +166,8 @@ public:
         fl |= d.hidden ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
         if (d.borderless) fl |= SDL_WINDOW_BORDERLESS;
         if (d.highDpi) fl |= SDL_WINDOW_ALLOW_HIGHDPI;
+        if (d.fullscreen) fl |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+        else if (d.maximized && d.resizable) fl |= SDL_WINDOW_MAXIMIZED;
         SDL_Window* w = SDL_CreateWindow(d.title.c_str(),
             d.x == kCentered ? (int)SDL_WINDOWPOS_CENTERED : d.x,
             d.y == kCentered ? (int)SDL_WINDOWPOS_CENTERED : d.y, d.width, d.height, fl);
@@ -179,6 +195,46 @@ public:
     uint32_t MouseState(int* x, int* y) override { return SDL_GetMouseState(x, y); }
     bool SetRelativeMouse(bool on) override { return SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0; }
     void ShowCursor(bool s) override { SDL_ShowCursor(s ? SDL_ENABLE : SDL_DISABLE); }
+    bool IsCursorShown() override { return SDL_ShowCursor(SDL_QUERY) != SDL_DISABLE; }
+    uint32_t RelativeMouseState(int* dx, int* dy) override { return SDL_GetRelativeMouseState(dx, dy); }
+    bool SupportsRelativeMouseState() override { return true; }
+    uint32_t ModState() override { return ModsFromSdl((Uint16)SDL_GetModState()); }
+    Key KeyForChar(char c) override { return (Key)SDL_GetScancodeFromKey((SDL_Keycode)(unsigned char)c); }
+    bool SetPerMonitorDpiAware() override {
+#ifdef SDL_HINT_WINDOWS_DPI_AWARENESS   // SDL >= 2.24
+        return SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2") == SDL_TRUE;
+#else
+        return false;
+#endif
+    }
+    bool ShowErrorBox(const std::string& title, const std::string& text, Window* parent) override {
+        return SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), text.c_str(),
+                                        parent ? (SDL_Window*)parent->NativeHandle() : nullptr) == 0;
+    }
+    std::string BasePath() override {
+        char* b = SDL_GetBasePath();
+        std::string r = b ? b : "";
+        if (b) SDL_free(b);
+        return r;
+    }
+    std::string PrefPath(const std::string& org, const std::string& app) override {
+        char* p = SDL_GetPrefPath(org.c_str(), app.c_str());
+        std::string r = p ? p : "";
+        if (p) SDL_free(p);
+        return r;
+    }
+    std::vector<std::string> PreferredLocales() override {
+        std::vector<std::string> out;
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+        if (SDL_Locale* locs = SDL_GetPreferredLocales()) {
+            for (const SDL_Locale* l = locs; l->language; ++l)
+                out.push_back(l->country ? std::string(l->language) + "-" + l->country : std::string(l->language));
+            SDL_free(locs);
+        }
+#endif
+        return out;
+    }
+    void Log(const std::string& line) override { SDL_Log("%s", line.c_str()); }
     void WarpMouse(Window* w, int x, int y) override {
         SDL_WarpMouseInWindow(w ? (SDL_Window*)w->NativeHandle() : nullptr, x, y);
     }
@@ -192,7 +248,7 @@ public:
     }
 
     std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& w, bool capture, const char* name, AudioSpec* got) override {
-        if (!(SDL_WasInit(0) & SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return nullptr;
+        if (!(SDL_WasInit(0) & SDL_INIT_AUDIO)) { if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return nullptr; m_started |= SDL_INIT_AUDIO; }
         SDL_AudioSpec want{}, have{};
         want.freq = w.freq; want.format = ToSdlFormat(w.format); want.channels = (Uint8)w.channels;
         want.samples = (Uint16)w.frames; want.callback = (SDL_AudioCallback)w.callback; want.userdata = w.user;
@@ -205,7 +261,7 @@ public:
         return std::unique_ptr<AudioDevice>(new SdlAudioDevice(id, s));
     }
     int AudioDeviceCount(bool capture) override {
-        if (!(SDL_WasInit(0) & SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return 0;
+        if (!(SDL_WasInit(0) & SDL_INIT_AUDIO)) { if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) return 0; m_started |= SDL_INIT_AUDIO; }
         const int n = SDL_GetNumAudioDevices(capture ? 1 : 0);
         return n < 0 ? 0 : n;
     }
@@ -215,7 +271,7 @@ public:
     }
 
     int GamepadDeviceCount() override {
-        if (!(SDL_WasInit(0) & SDL_INIT_GAMECONTROLLER) && SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) return 0;
+        if (!(SDL_WasInit(0) & SDL_INIT_GAMECONTROLLER)) { if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) return 0; m_started |= SDL_INIT_GAMECONTROLLER; }
         const int n = SDL_NumJoysticks();
         return n < 0 ? 0 : n;
     }
@@ -257,8 +313,12 @@ private:
         case SDL_MOUSEWHEEL:
             r.type = EventType::MouseWheel; r.windowId = e.wheel.windowID;
             r.wheelX = (float)e.wheel.x; r.wheelY = (float)e.wheel.y;
-            if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { r.wheelX = -r.wheelX; r.wheelY = -r.wheelY; }
+            if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { r.wheelX = -r.wheelX; r.wheelY = -r.wheelY; r.wheelFlipped = true; }
             return true;
+        case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP:
+            r.type = e.type == SDL_FINGERDOWN ? EventType::FingerDown
+                   : e.type == SDL_FINGERMOTION ? EventType::FingerMotion : EventType::FingerUp;
+            r.fingerId = (long long)e.tfinger.fingerId; r.fx = e.tfinger.x; r.fy = e.tfinger.y; return true;
         case SDL_DROPFILE:
             r.type = EventType::DropFile; r.text = e.drop.file ? e.drop.file : "";
             if (e.drop.file) SDL_free(e.drop.file);

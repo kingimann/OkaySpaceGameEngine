@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace okay::platform {
 
@@ -85,6 +86,7 @@ enum class EventType {
     DropFile,          // text = the path
     GamepadAdded,      // deviceId = device index to pass to Backend::OpenGamepad
     GamepadRemoved,    // deviceId = Gamepad::InstanceId()
+    FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 only; own never fires them
 };
 
 struct Event {
@@ -96,7 +98,10 @@ struct Event {
     bool repeat = false;
     int x = 0, y = 0, dx = 0, dy = 0;
     int button = 0, clicks = 0;
-    float wheelX = 0.0f, wheelY = 0.0f;
+    float wheelX = 0.0f, wheelY = 0.0f;   // up = +y whatever the OS "natural scrolling" setting is
+    bool wheelFlipped = false;            // the OS reports natural scrolling: the raw (OS-preference) wheel is -wheelX/-wheelY
+    long long fingerId = 0;
+    float fx = 0.0f, fy = 0.0f;
     int width = 0, height = 0;
     int deviceId = 0;
     std::string text;
@@ -114,6 +119,8 @@ struct WindowDesc {
     bool hidden = false;
     bool borderless = false;
     bool highDpi = false;
+    bool fullscreen = false;  // desktop fullscreen from the start (no mode switch)
+    bool maximized = false;   // start maximised (needs resizable; ignored with fullscreen)
 };
 
 struct GLAttributes {
@@ -141,6 +148,12 @@ public:
     virtual void Restore() = 0;
     virtual void SetFullscreen(bool on) = 0;
     virtual bool IsFocused() const = 0;
+    /// True while in desktop fullscreen (set by WindowDesc::fullscreen or SetFullscreen).
+    virtual bool IsFullscreen() const { return false; }
+    /// Window / task-bar icon from tightly packed RGBA8 pixels. False = not supported here.
+    virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
+    /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
+    virtual int RefreshRateHz() const { return 0; }
 
     /// Create the GL context for this window (WindowDesc::opengl) and make it current.
     virtual bool CreateGLContext(const GLAttributes& attrs) = 0;
@@ -239,6 +252,41 @@ public:
     virtual bool SetRelativeMouse(bool on) = 0;
     virtual void ShowCursor(bool show) = 0;
     virtual void WarpMouse(Window* w, int x, int y) = 0;
+    /// Whether the cursor is visible (what ShowCursor last asked for; starts true).
+    virtual bool IsCursorShown() { return true; }
+    /// Mouse motion since the last call, and the button mask (MouseMask bits). Not
+    /// supported by a backend that returns false from SupportsRelativeMouseState().
+    virtual uint32_t RelativeMouseState(int* dx, int* dy) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }
+    virtual bool SupportsRelativeMouseState() { return false; }
+    /// Modifier keys held right now (Mod bits).
+    virtual uint32_t ModState() {
+        uint32_t m = 0;
+        if (IsKeyDown(Key::LShift) || IsKeyDown(Key::RShift)) m |= ModShift;
+        if (IsKeyDown(Key::LCtrl) || IsKeyDown(Key::RCtrl)) m |= ModCtrl;
+        if (IsKeyDown(Key::LAlt) || IsKeyDown(Key::RAlt)) m |= ModAlt;
+        if (IsKeyDown(Key::LGui) || IsKeyDown(Key::RGui)) m |= ModGui;
+        return m;
+    }
+    /// The physical key that types `c` ('a'..'z', '0'..'9', ' ') on the CURRENT keyboard
+    /// layout, so a game's WASD follows an AZERTY layout. Key::Unknown when none.
+    /// The base version assumes a US layout.
+    virtual Key KeyForChar(char c);
+
+    // Process-level helpers the apps used to take from SDL directly.
+    /// Per-monitor DPI awareness on Windows (a hint, call before the first window). False = nothing to do here.
+    virtual bool SetPerMonitorDpiAware() { return false; }
+    /// A modal error box (title, text), parented to `parent` when given. False = no
+    /// message box available (the text is written to the log instead).
+    virtual bool ShowErrorBox(const std::string& title, const std::string& text, Window* parent = nullptr);
+    /// Directory of the running executable with a trailing separator ("" if unknown).
+    virtual std::string BasePath();
+    /// A per-user writable folder for `org` / `app` (created if missing), with a trailing
+    /// separator; "" when none can be made. (Linux: $XDG_DATA_HOME or ~/.local/share.)
+    virtual std::string PrefPath(const std::string& org, const std::string& app);
+    /// The user's preferred languages, most preferred first, as "en", "en-US", "de-DE".
+    virtual std::vector<std::string> PreferredLocales();
+    /// One line to the application log (stderr / debug console), "INFO: " prefixed.
+    virtual void Log(const std::string& line);
 
     // Clipboard (UTF-8 text).
     virtual bool SetClipboardText(const std::string& text) = 0;
@@ -265,5 +313,7 @@ inline uint32_t TicksMs32() { return (uint32_t)TicksMs(); }
 uint64_t PerfCounter();
 uint64_t PerfFrequency();
 void DelayMs(uint32_t ms);
+/// Log one line through the default backend (stderr when there is none).
+void Log(const std::string& line);
 
 } // namespace okay::platform

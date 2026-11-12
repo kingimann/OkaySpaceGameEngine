@@ -19,7 +19,9 @@ jobs:
     # the same engine) into one cold compile; a warm run only recompiles what changed.
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_BASEDIR: ${{ github.workspace }}
+      # No CCACHE_BASEDIR: it makes ccache hand the compiler relative source paths, so __FILE__ is relative
+      # and tests that find files next to their source (test_project_state) fail. All three builds use the same
+      # source tree, so their cache keys already match without it.
       CCACHE_COMPRESS: "1"
       CCACHE_MAXSIZE: 2G
     steps:

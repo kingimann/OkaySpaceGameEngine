@@ -4,6 +4,9 @@
 #include <Okay.hpp>
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
+#include "okay/Core/Undo.hpp"
+#include "SceneUndo.hpp"
+#include <memory>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -205,22 +208,55 @@ public:
     /// Unlock a Steam achievement (no-op if Steam is unavailable).
     void Achievement(const std::string& id);
 
-    // ---- Undo / Redo (snapshot based) ---------------------------------
-    /// Capture the current scene as an undo checkpoint (call before a change).
-    void PushUndo();
-    /// Push `before` (scene text taken earlier with SceneSerializer::Serialize) as the undo step. For an
-    /// edit that only turns out to have changed something once it is over (see EditUndo.hpp).
-    void PushUndoText(std::string before);
+    // ---- Undo / Redo (okay::UndoStack of SceneDeltaCommands, see SceneUndo.hpp) ------------------
+    // Every editor action that changes the scene calls PushUndo() BEFORE it changes anything (the old
+    // contract, so existing call sites are unchanged). The step is closed lazily, at the next boundary: the
+    // next PushUndo, Undo / Redo, a Save, or CommitUndo() (the editor calls that between frames once the
+    // mouse is up). Closing compares the scene text with the text at the previous boundary and records only
+    // the part that differs, named after what changed ("Delete Cube", "Move Cube", "Scene Settings"). So a
+    // drag, however many frames it lasts, is one step; PushUndo before a change that did not happen records
+    // nothing; and a change nobody announced is caught at the next boundary as its own step, so the
+    // history never drifts from the scene.
+    // Play mode: nothing is recorded and Undo / Redo are unavailable while it runs (the running game is
+    // thrown away on Stop). The history made before Play is untouched and works again after Stop.
+    // A new, opened or recovered scene starts an empty history (a different document).
+    /// An edit is about to change the scene. `name` labels the step ("" = worked out from the change).
+    void PushUndo(const std::string& name = "");
+    /// Same, and `alsoUndo` (an edit of something that is not in the scene text, such as an animation
+    /// draft; already applied or about to be) joins the step: one Undo reverts both, the step exists even when
+    /// the scene itself does not change.
+    void PushUndo(const std::string& name, std::unique_ptr<ICommand> alsoUndo);
+    /// Record an edit that is already done: `before` is the scene text taken before it (see EditUndo.hpp).
+    /// Steps with the same non-zero `mergeKey` that follow each other within a second (the same field
+    /// nudged again) and touch the same place become one step.
+    void PushUndoText(std::string before, const std::string& name = "", std::uint64_t mergeKey = 0);
     /// Goes up on every PushUndo, PushUndoText, Undo and Redo: an unchanged value means "nothing touched the undo stack".
     std::uint64_t UndoSerial() const { return m_undoSerial; }
+    /// Close the open step now (a no-op when none is open). The editor calls it between frames while no
+    /// mouse button is down, so the Edit menu shows the real name of the last action.
+    void CommitUndo();
+    /// Also record changes nobody announced with PushUndo (a window without undo calls, a script). Costs one
+    /// scene serialisation, so the editor calls it only when the Edit menu opens; Undo, Redo and Save do it themselves.
+    void CaptureUnannouncedEdits() { SyncHistory(); }
     bool Undo();
     bool Redo();
-    /// Load a scene snapshot, keeping the same objects selected afterwards.
+    /// Load a scene text, keeping the same objects selected (by GUID) afterwards.
     void RestoreKeepingSelection(const std::string& snapshot);
-    bool CanUndo() const { return !m_undo.empty(); }
-    bool CanRedo() const { return !m_redo.empty(); }
-    int  UndoDepth() const { return (int)m_undo.size(); }   ///< steps available behind
-    int  RedoDepth() const { return (int)m_redo.size(); }   ///< steps available ahead
+    bool CanUndo() const { return !m_playing && (m_pending.open || m_stack->CanUndo()); }
+    bool CanRedo() const { return !m_playing && !m_pending.open && m_stack->CanRedo(); }
+    int  UndoDepth() const { return (int)m_stack->UndoCount() + (m_pending.open ? 1 : 0); }   ///< steps available behind
+    int  RedoDepth() const { return m_pending.open ? 0 : (int)m_stack->RedoCount(); }          ///< steps available ahead
+    /// What Undo / Redo would do ("Delete Cube"); empty when nothing can be undone / redone.
+    std::string UndoName() const { return !CanUndo() ? std::string() : m_pending.open ? (m_pending.name.empty() ? std::string("Edit") : m_pending.name) : m_stack->NextUndoName(); }
+    std::string RedoName() const { return CanRedo() ? m_stack->NextRedoName() : std::string(); }
+    /// Step names, newest first (what Undo would undo first).
+    std::vector<std::string> UndoNames(std::size_t max = 0) const;
+    std::vector<std::string> RedoNames(std::size_t max = 0) const;
+    /// The history itself (limits, memory, listeners, dirty tracking); edit through the methods above.
+    UndoStack& undoStack() { return *m_stack; }
+    const UndoStack& undoStack() const { return *m_stack; }
+    /// Why the last Undo / Redo failed ("" when it did not).
+    const std::string& UndoError() const { return m_stack->LastError(); }
 
     // ---- Play mode -----------------------------------------------------
     bool isPlaying() const { return m_playing; }
@@ -328,14 +364,29 @@ private:
 
     GameLoop m_loop;   // the Play loop (set up in the constructor)
 
-    std::vector<std::string> m_undo, m_redo;
+    // Undo: the history, the scene text at the last boundary, and the step that is open (see PushUndo).
+    std::unique_ptr<UndoStack> m_stack = std::make_unique<UndoStack>();
+    std::shared_ptr<SceneAccess> m_access;
+    std::string m_known;
+    struct Pending {
+        bool open = false;
+        std::string name;
+        SelectionRef sel;
+        std::vector<std::unique_ptr<ICommand>> extras;   // already-applied edits of editor-side state that belong to the same step
+    } m_pending;
+    SelectionRef CaptureSelection() const;
+    bool ApplySceneText(const std::string& text, const SelectionRef& sel);
+    bool SyncHistory();
+    void RecordStep(const std::string& before, const std::string& after, const std::string& name,
+                    const SelectionRef& selBefore, std::uint64_t key);
+    void StartDocument();   // a new / opened scene: empty history, this text is the baseline and counts as saved
     std::uint64_t m_savedPrint = 0;       // fingerprint of the scene text at the last save / load / new
     std::uint64_t m_playPrint = 0;        // fingerprint of the edit scene Play() put aside
     bool m_dirtyAtPlay = false;           // `dirty` when Play started (Play-time edits are thrown away)
     static std::uint64_t Fingerprint(const std::string& sceneText);
     bool m_suppressUndo = false;
     std::uint64_t m_undoSerial = 0;
-    static constexpr std::size_t kMaxUndo = 100;
+    static constexpr std::size_t kMaxUndo = 100;   // steps kept
 };
 
 } // namespace okay::editor

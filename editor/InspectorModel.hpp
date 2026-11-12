@@ -154,9 +154,14 @@ struct PrefabChange {
     int prefabObject = 0;                 ///< PrefabTools index to revert / apply with
     std::string description;              ///< "position.x: 0 -> 4"
     bool added = false, removed = false;
+    std::string objectName;               ///< the prefab's name for the object (for lists)
+    std::vector<okay::PrefabFieldDiff> fields;   ///< per-field differences (changed records only)
+    bool wholeRecordOnly = false;         ///< the two lines differ in shape: only the whole record can be applied / reverted
 };
 /// All records the instance whose root is `root` has changed. Empty if it is not an instance or the file is missing.
 std::vector<PrefabChange> PrefabChangesOf(okay::GameObject& root, std::string* error = nullptr);
+/// The change that covers component `c` of `go`, or null.
+const PrefabChange* FindChange(const std::vector<PrefabChange>& changes, const okay::GameObject& go, const okay::Component& c);
 /// True when `c` (a component of `go`) is changed in the instance compared with its prefab.
 bool IsChanged(const std::vector<PrefabChange>& changes, const okay::GameObject& go, const okay::Component& c);
 /// The scene-file record name for a component ("light"), or "" when unknown.

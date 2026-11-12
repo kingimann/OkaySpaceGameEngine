@@ -47,8 +47,8 @@ such files to `PrefabTools` themselves; plain prefab files work as described on 
 - Objects added under an instance that are not in the prefab are not carried over by
   `ReapplyPrefab`.
 - An override naming an object the prefab no longer has is dropped, with a warning.
-- Nothing in the editor calls these yet; the editor's own Apply / Revert / Reload are
-  unchanged. Per-field apply and revert for records live in `PrefabTools`.
+- The editor shows overrides per property and applies or reverts them through `PrefabTools`
+  (see "In the editor" in [prefab_system.md](prefab_system.md)).
 
 ## Object ids
 

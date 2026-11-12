@@ -251,6 +251,7 @@ int main() {
         const int objects = (int)sc.Objects().size();
 
         ed.Select(a);
+        ed.CaptureUnannouncedEdits();   // the objects above were made without PushUndo: they are a step of their own
         const int depth = ed.UndoDepth();
         GameObject* d = ed.DuplicateSelected();
         CHECK(d && d != a);
@@ -318,6 +319,7 @@ int main() {
         cb->transform->SetParent(pb->transform, false);
         ed4.Select(ca);
         ed4.ToggleSelect(cb);
+        ed4.CaptureUnannouncedEdits();   // the objects above were made without PushUndo: a step of their own
         const int depth4 = ed4.UndoDepth();
         const int n4 = (int)s4.Objects().size();
         GameObject* last = ed4.DuplicateSelected();

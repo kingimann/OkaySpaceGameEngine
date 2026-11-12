@@ -275,7 +275,9 @@ jobs:
   # (the same kind of single-instance lock the launcher uses), exits, and the
   # helper must start the new process once. The install path is
   # "Program Files (x86)" and the new process must still see --launcher plus
-  # an argument that itself contains spaces and parentheses.
+  # an argument that itself contains spaces and parentheses. The same job runs
+  # the verified restart (a new file that is the wrong version or cannot start is
+  # rolled back and the previous program is started) and the self-update rules.
   windows-restart:
     name: Windows updater restart
     runs-on: windows-latest
@@ -291,10 +293,11 @@ jobs:
           -DOKAY_BUILD_PLAYER=OFF -DOKAY_USE_SODIUM=OFF
 
       - name: Build the restart test
-        run: cmake --build build --config Release --target test_app_restart --parallel
+        run: cmake --build build --config Release --target test_app_restart test_self_update --parallel
 
-      - name: Run the restart test
-        run: ctest --test-dir build -C Release -R "^app_restart$" --output-on-failure
+      - name: Run the restart and self-update tests
+        # app_restart also drives the verified restart with real processes: self-check, rollback to the previous launcher file, state file.
+        run: ctest --test-dir build -C Release -R "^(app_restart|self_update)$" --output-on-failure
 
   web-build:
     name: WebGL build (Emscripten)

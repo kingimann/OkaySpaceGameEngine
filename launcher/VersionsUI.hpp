@@ -31,7 +31,6 @@ struct Host {
     std::function<void()> startUpdate;           ///< the launcher's own update (the sidebar's "Install now")
     std::function<void()> channelChanged;        ///< the channel was switched: look for updates again
     okayversions::FetchTextFn fetchText;         ///< a small text file ("" url or unreachable: false)
-    std::function<std::uint64_t(const std::string& url)> headSize;   ///< the size the server reports (0 = unknown)
 };
 
 /// `--versions <version>` (or the editor's "Open launcher"): the page is shown and that version highlighted. "" = just the page.

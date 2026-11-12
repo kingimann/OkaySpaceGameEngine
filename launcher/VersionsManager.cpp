@@ -398,7 +398,7 @@ InstallPlan PlanInstall(const Index& index, const std::string& versionIn, const 
         const auto it = e->files.find(f.indexName);
         const bool listed = it != e->files.end();
         if (listed) { f.size = it->second.size; f.sha256 = it->second.sha256; }
-        f.verified = listed && !f.sha256.empty();
+        f.verified = listed && f.sha256.size() == 64;
         if (a == Asset::Sdl && !listed) {                       // not in the index: the launcher's own copy (same SDL 2.x)
             std::error_code ec;
             if (!localSdl.empty() && fs::is_regular_file(localSdl, ec)) {
@@ -418,21 +418,13 @@ InstallPlan PlanInstall(const Index& index, const std::string& versionIn, const 
         if (e->inBucket && !base.empty()) add(base + ExpandTemplate(index.bucketPath, p.version, f.indexName));
         if (!index.archive.empty()) add(ExpandTemplate(index.archive, p.version, f.indexName));
         if (f.urls.empty()) return fail("There is nowhere to download v" + p.version + " from.");
-        if (!f.verified) p.needsConfirmation = true;
+        if (!f.verified)   // REQUIRED: a download with no SHA-256 in the index is refused here, before anything is fetched
+            return fail(f.indexName + " has no checksum in the version list" + (index.fallback ? " (versions.json could not be read from the release server)" : e == &synth ? " (v" + p.version + " is not in versions.json yet)" : "") +
+                        ", so v" + p.version + " cannot be checked and was not installed. Updates are never installed without a checksum.");
         p.files.push_back(f);
     }
     p.ok = true;
     return p;
-}
-
-bool FillUnknownSizes(InstallPlan& plan, const std::function<std::uint64_t(const std::string& url)>& headSize) {
-    bool allKnown = true;
-    for (PlanFile& f : plan.files) {
-        if (f.size == 0 && f.localCopy.empty() && headSize)
-            for (const std::string& u : f.urls) { f.size = headSize(u); if (f.size > 0 && f.size <= kMaxFileBytes) break; f.size = 0; }
-        if (f.size == 0 && !f.verified) allKnown = false;
-    }
-    return allKnown;
 }
 
 // ---- installing ------------------------------------------------------------------------------------------------------------
@@ -443,7 +435,6 @@ const char* OutcomeName(Outcome o) {
         case Outcome::AlreadyInstalled: return "AlreadyInstalled";
         case Outcome::Removed: return "Removed";
         case Outcome::Cancelled: return "Cancelled";
-        case Outcome::NeedsConfirmation: return "NeedsConfirmation";
         case Outcome::NotEnoughSpace: return "NotEnoughSpace";
         case Outcome::Failed: return "Failed";
         case Outcome::Refused: return "Refused";
@@ -476,11 +467,10 @@ Result Install(const fs::path& launcherDir, const InstallPlan& plan, const Insta
         for (const PlanFile& f : plan.files)
             if (!IsSafeFileName(f.indexName) || !IsSafeFileName(f.diskName)) return done(Outcome::Failed, "The version list names a file that is not allowed.");
         if (okayver::IsInstalled(launcherDir, v)) { r.path = VersionsRoot(launcherDir) / v; return done(Outcome::AlreadyInstalled, "v" + v + " is already installed."); }
-        if (plan.needsConfirmation && !opt.confirmedUnverified)
-            return done(Outcome::NeedsConfirmation, "v" + v + " has no checksum to check it against. It can be installed once you agree.");
         for (const PlanFile& f : plan.files) {
-            if (!f.verified && f.size == 0)
-                return done(Outcome::Refused, f.indexName + " has no checksum and the server did not say how big it is, so it can't be checked and was not downloaded.");
+            // Defence in depth: PlanInstall never plans a downloaded file without a checksum, but a plan is a plain struct.
+            if (f.localCopy.empty() && (!f.verified || f.sha256.size() != 64 || f.size == 0))
+                return done(Outcome::Refused, f.indexName + " has no checksum in the version list, so it can't be checked and nothing was downloaded. Updates are never installed unchecked.");
             if (f.localCopy.empty() && !io.download) return done(Outcome::Failed, "Downloading is not available.");
         }
         const std::uint64_t need = plan.totalBytes();
@@ -537,12 +527,9 @@ Result Install(const fs::path& launcherDir, const InstallPlan& plan, const Insta
                     if (dr.status != DownloadStatus::Ok) { lastError = "Couldn't download " + f.indexName + ": " + (dr.error.empty() ? std::string("the download failed") : dr.error); continue; }
                     if (cancelled()) return done(Outcome::Cancelled, "Cancelled. Nothing was installed.");
                     if (Hook(io, "verify:" + f.indexName)) { lastError = "it could not be checked"; continue; }
-                    std::string why = VerifyFile(tmp, f.size, f.verified ? f.sha256 : std::string());
-                    if (why.empty() && !f.verified) {            // no checksum: the size matched what the server said, and the person agreed
-                        if (!opt.confirmedUnverified) why = "it has no checksum and was not confirmed";
-                    }
+                    std::string why = VerifyFile(tmp, f.size, f.sha256);
                     if (!why.empty()) {
-                        lastError = verifyError = f.verified && why == "its checksum does not match"
+                        lastError = verifyError = why == "its checksum does not match"
                                         ? f.indexName + " did not match its checksum, so it was not installed. The download may be damaged: try again."
                                         : f.indexName + ": " + why + ".";
                         continue;

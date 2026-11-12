@@ -14,6 +14,8 @@
 // settings, or any path other than the staged file, the install target, and
 // that target's backup.
 
+#include "SelfUpdate.hpp"
+
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -235,6 +237,13 @@ struct Request {
     std::uint64_t minBytes = 0;
     int timeoutMs = 120000;
     bool keepBackup = true;
+    // Verified restart (docs/updater.md). With `expectVersion` set the helper first runs `<executable> --okay-selfcheck <version>`; when the
+    // new file cannot start or is another version it puts `replaceBackup` back over `rollbackTarget`, records the failure in `stateFile`
+    // and starts the previous program instead. After a normal launch it waits up to `confirmMs` for the new program to clear the state file.
+    std::string expectVersion;
+    fs::path rollbackTarget;
+    fs::path stateFile;
+    int confirmMs = 20000;
 };
 
 struct SwapResult {
@@ -315,6 +324,10 @@ inline bool WriteRequest(const Request& req, fs::path& outPath, std::string& err
     field("replace_target", Utf8(req.replaceTarget));
     field("replace_source", Utf8(req.replaceSource));
     field("replace_backup", Utf8(req.replaceBackup));
+    field("expect_version", req.expectVersion);
+    field("rollback_target", Utf8(req.rollbackTarget));
+    field("state_file", Utf8(req.stateFile));
+    field("confirm_ms", std::to_string(req.confirmMs));
     for (const auto& a : req.arguments) field("arg", a);
     o.flush();
     if (!o) { error = "couldn't finish the restart request"; fs::remove(outPath, ec); return false; }
@@ -343,6 +356,10 @@ inline bool LoadRequest(const fs::path& path, Request& req, std::string& error) 
         else if (key == "replace_target") req.replaceTarget = FromUtf8(value);
         else if (key == "replace_source") req.replaceSource = FromUtf8(value);
         else if (key == "replace_backup") req.replaceBackup = FromUtf8(value);
+        else if (key == "expect_version") req.expectVersion = value;
+        else if (key == "rollback_target") req.rollbackTarget = FromUtf8(value);
+        else if (key == "state_file") req.stateFile = FromUtf8(value);
+        else if (key == "confirm_ms") req.confirmMs = std::atoi(value.c_str());
         else if (key == "arg") req.arguments.push_back(value);
     }
     if (req.executable.empty() && req.replaceTarget.empty()) {
@@ -557,6 +574,8 @@ inline bool LaunchOnce(const Request& req, std::string& error) {
 }
 #endif
 
+inline int RunAndWait(const std::vector<std::string>& args);
+
 inline int RunHelper(const Request& req) {
     auto log = [&](const std::string& m) { AppendLog(req.logFile, m); };
     log("helper started; waiting for process " + std::to_string(req.waitForPid));
@@ -581,6 +600,32 @@ inline int RunHelper(const Request& req) {
         log("no program to launch");
         return 1;
     }
+    if (!req.expectVersion.empty()) {
+        // The new program must start and be the published version BEFORE it is started for real.
+        const int rc = RunAndWait({Utf8(req.executable), okay::selfupdate::kSelfCheckFlag, req.expectVersion});
+        const std::string problem = okay::selfupdate::SelfCheckProblem(rc, req.expectVersion);
+        if (!problem.empty()) {
+            log("self-check of the new program failed: " + problem);
+            const fs::path target = req.rollbackTarget.empty() ? req.executable : req.rollbackTarget;
+            const okay::selfupdate::RollbackResult rb = okay::selfupdate::RollBack(target, req.replaceBackup);
+            log(rb.ok ? "rolled back: " + rb.message : "rollback failed: " + rb.message);
+            if (!req.stateFile.empty()) {
+                okay::selfupdate::State st = okay::selfupdate::Read(req.stateFile);
+                if (st.phase == okay::selfupdate::Phase::None) { st.to = req.expectVersion; st.attempts = 1; }
+                st.phase = okay::selfupdate::Phase::Failed;
+                st.notified = 0;
+                st.reason = okay::selfupdate::CleanText("The new version did not pass its start-up check: " + problem + "." +
+                    (rb.ok ? std::string(" The previous version was put back.") : " The previous version could not be put back: " + rb.message));
+                std::string werr;
+                if (!okay::selfupdate::Write(req.stateFile, st, werr)) log("couldn't record the failure: " + werr);
+            }
+            if (!rb.ok) return 1;   // the previous file is not in place: starting whatever is there would be a guess
+            if (!LaunchOnce(req, err)) { log("launch of the previous program failed: " + err); return 1; }
+            log("launched the previous program " + Utf8(req.executable) + " once");
+            return 1;
+        }
+        log("self-check passed: the new program is v" + req.expectVersion);
+    }
     // Launch the path we were given. When a swap was requested that path is
     // the install target, which now holds the staged file.
     if (!LaunchOnce(req, err)) {
@@ -590,6 +635,16 @@ inline int RunHelper(const Request& req) {
         return 1;
     }
     log("launched " + Utf8(req.executable) + " once");
+    if (!req.expectVersion.empty() && !req.stateFile.empty()) {
+        // The new program clears the "swapped" state when it starts and finds itself at the expected version.
+        const auto start = std::chrono::steady_clock::now();
+        for (;;) {
+            if (okay::selfupdate::Read(req.stateFile).phase != okay::selfupdate::Phase::Swapped) { log("the new program confirmed the update"); break; }
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+            if (ms >= req.confirmMs) { log("the new program did not confirm within " + std::to_string(req.confirmMs / 1000) + " s (it may just be slow to start)"); break; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
     return 0;
 }
 

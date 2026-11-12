@@ -1,6 +1,6 @@
 # 19. Docs, tests & code health
 
-The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 406 test files and 414 `add_test` lines in one
+The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 407 test files and 415 `add_test` lines in one
 `tests/CMakeLists.txt`), the developer and QA working loop, and the housekeeping that keeps the repository healthy (file sizes,
 stray files, warnings, sanitizers). 19.1 holds the index of every docs file; 19.2 explains how the tests are organised and how to
 run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs pages: #571 (core wave 4), #572 (undo, recovery, play-tests, save framework), #574, #575 and #578, the loop and time passes #579, #581 and #585 (`docs/loop_and_time.md`), the scene graph wave #586 and the timers and tweens wave #587 are all merged. Nothing else is moving here.
@@ -54,6 +54,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | `docs/ecs.md` | ECS iteration under mutation, command buffer, delta snapshots in NetWorld | 1.9 |
 | `docs/editor-plugins.md` | editor plugins written in OkayScript | 15.8 |
 | `docs/editor.md` | the editor, its panels and Build Game | 15 |
+| `docs/editor_undo.md` | the editor's scene undo on `UndoStack`, audit of which edits are covered | 15.9, 22.1 |
 | `docs/engine_api.md` | generated engine API reference (do not edit by hand) | 13.6 |
 | `docs/game_ui.md` | game UI drawn in the launcher's look | 12.7 |
 | `docs/ik.md` | inverse kinematics: feet, hands, look-at, full body | 5.6 |

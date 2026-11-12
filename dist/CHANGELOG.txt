@@ -1,5 +1,37 @@
 OkaySpace Game Engine — Changelog
 
+v2.860.0
+  Audio
+  - Clips keep their stereo channels and long music streams from disk in a
+    small fixed amount of memory (AudioSource "Stream", Music Player). Ogg
+    streaming runs on our own decoder (#665).
+  - Ogg Vorbis and MP3 files are decoded by our own decoders, checked against
+    reference decodes of many encoder settings; damaged files are skipped, not
+    crashed on (#644, #642).
+  Images, fonts and dialogs
+  - PNG, JPEG, BMP, TGA, GIF, HDR and PSD loading, PNG saving, the built-in 8x8 font and the file
+    open/save dialogs now use our own code (#649, #639, #641, #640).
+  Scripting
+  - The optional Lua and C# (Mono) script backends are removed; OkayScript and
+    Visual Script are the supported ways to script (#643).
+  Launcher
+  - Kick, ban, unban and admin role for community servers and group chats.
+    Run docs/sql/member_moderation.sql on your Supabase project first; it also
+    closes a hole that let anyone join a server as admin (#668).
+  - Blocking and privacy are enforced by the server, not just the PC: nobody can
+    DM, call or friend-request someone who blocked them, and the DM, friend
+    request and online-status settings are applied by the database. Needs
+    docs/sql/blocks.sql (applied to the live project with this release) (#667).
+  - Password-reset page and an honest message when no reset page is set up
+    (#647). Typing indicators and read receipts say "Not set up on the server
+    yet" until docs/sql/chat_receipts.sql is run (#646).
+  - The updater refuses to install any file without a SHA-256 in the versions
+    index, verifies everything before replacing anything, and shows why when an
+    update fails (#650).
+  Models
+  - okay::fbx, our own FBX reader, is built next to the existing reader and is
+    off by default (#658).
+
 v2.859.0
   Visual Script
   - The Add Node panel has topics, Basic/Intermediate/Advanced levels, a Starter

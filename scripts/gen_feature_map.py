@@ -138,7 +138,8 @@ def build(root):
 
     hdr = open(os.path.join(root, 'docs', 'feature_map', '_header.md'), encoding='utf-8').read().rstrip('\n')
     ftr = open(os.path.join(root, 'docs', 'feature_map', '_footer.md'), encoding='utf-8').read().strip('\n')
-    hdr = hdr.replace('{{STATS}}', f'{len(areas)} areas, {nsub} sub-areas and {nparts} numbered parts')
+    # No counts here: a count changes with every pull request and made this file conflict on every merge.
+    hdr = hdr.replace('{{STATS}}', 'every area, sub-area and numbered part')
     out = [hdr, '', '## Areas', '', '| # | Area | Sub-areas |', '|---|---|---|']
     for a in areas:
         subs = ', '.join(f"[{s['id']}](feature_map/{a['page']}#{slug(s['id'] + ' ' + s['title'])}) {esc(s['title'])}"
@@ -197,7 +198,10 @@ def build(root):
         letters.setdefault(letter, []).append(
             f"{term} ({', '.join(sorted(sids, key=lambda x: tuple(int(y) for y in x.split('.'))))})")
     for letter in sorted(letters, key=lambda c: (c == '#', c)):
-        az.append(f"**{letter}** " + ' · '.join(letters[letter]))
+        # One entry per line so two pull requests that add different words merge cleanly.
+        az.append(f"**{letter}**")
+        az.append('')
+        az += [f"- {e}" for e in letters[letter]]
         az.append('')
     out += ['---', '', ftr, '']
     return {'docs/FEATURE_MAP.md': '\n'.join(out),

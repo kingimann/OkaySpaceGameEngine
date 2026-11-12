@@ -145,8 +145,8 @@ std::uint32_t RelayServer::NewSlot() {
 std::uint64_t RelayServer::NewHostKey() {
     std::uint64_t k = 0;
     while (k == 0) {
-#ifdef OKAY_HAVE_SODIUM
-        if (SecureChannel::Init()) { randombytes_buf(&k, sizeof k); continue; }
+#ifdef OKAY_NET_CRYPTO
+        if (SecureChannel::Init()) { netcrypto::Random(&k, sizeof k); continue; }
 #endif
         std::random_device rd;
         k = (static_cast<std::uint64_t>(rd()) << 32) ^ rd();

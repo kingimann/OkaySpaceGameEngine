@@ -144,6 +144,7 @@ textures and URLs are built in and always found.
 | `scene.no_active_camera` | warning | cameras exist but none is enabled and active |
 | `name.duplicate` | warning | siblings share a name, so `Find("X")` reaches only the first |
 | `component.duplicate_singleton` | warning | two `EventSystem`, `DayNightCycle`, `CinemachineBrain`, `PauseMenu` or `SteamManager` |
+| `io.link_broken` | warning | a Logic Source I/O link with no output name, no input, or a target that no object has |
 | `script.missing_file` | error, or warning if the scene carries a copy of the source | a Script or Visual Script file path that does not exist |
 | `script.empty` | warning | a script with neither source nor file |
 | `script.compile` | error | the script text (or the referenced file) does not compile |

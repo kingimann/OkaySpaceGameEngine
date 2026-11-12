@@ -258,6 +258,66 @@ public:
     /// Why the last Undo / Redo failed ("" when it did not).
     const std::string& UndoError() const { return m_stack->LastError(); }
 
+    // ---- Prefab mode (see docs/prefab_mode.md) ---------------------------------------------------
+    // Open a .okayprefab in isolation: its contents become the scene being edited, the scene you were in
+    // is put aside (text, selection, camera, undo history, unsaved mark) and comes back, as it was, on
+    // ClosePrefab. Opening a prefab while one is open (a nested instance, or any other prefab) stacks
+    // another level: Scene > Enemy > Weapon. Each level has its own undo history and unsaved mark.
+    // Save writes the prefab file (PrefabTools::SavePrefab: nested instances stay linked); closing a level
+    // whose prefab was saved rebuilds the instances of it in the level below (PrefabTools::Reapply), as one
+    // undo step there. Play is refused while any prefab is open. Variants are not opened (see the doc).
+    struct PrefabCrumb {
+        std::string label;       ///< scene name, or the prefab file's name without its extension
+        std::string path;        ///< "" for the scene, else the prefab file
+        bool unsaved = false;    ///< this level has unsaved changes
+    };
+    bool InPrefabMode() const { return !m_levels.empty(); }
+    /// 0 = editing the scene, 1 = a prefab, 2 = a prefab opened from that prefab, ...
+    int PrefabDepth() const { return (int)m_levels.size(); }
+    /// The prefab file being edited ("" outside prefab mode).
+    const std::string& PrefabPath() const { return m_ses.path; }
+    /// The prefab's root object (null outside prefab mode, or if it was deleted: Save then refuses).
+    GameObject* PrefabRootObject() const;
+    /// Scene > Prefab > Nested, outermost first; the last one is what is open now.
+    std::vector<PrefabCrumb> PrefabCrumbs() const;
+    /// Why Play is unavailable ("" when it is available). Play() itself does nothing while this is non-empty.
+    std::string PlayBlockedReason() const;
+    /// True when a level other than the open one has unsaved changes (the scene you left, or an outer prefab).
+    bool PrefabOuterUnsaved() const;
+    /// True when any level from `depth` up to the open one has unsaved changes.
+    bool PrefabUnsavedFrom(int depth);
+    /// What the last ClosePrefab did to the instances ("Updated 3 instances of Enemy"), "" if nothing.
+    const std::string& PrefabNote() const { return m_prefabNote; }
+    /// Can this file be opened? False, with the reason, for a missing file, a variant, a prefab that is
+    /// already open further out, or a file that does not load.
+    bool CanOpenPrefab(const std::string& path, std::string* why = nullptr) const;
+    /// Open `path` (all or nothing: on failure nothing changes and `error` says why). Selects the root and
+    /// centres the view on it.
+    bool OpenPrefab(const std::string& path, std::string* error = nullptr);
+    /// Open the prefab `go` is an instance of (its nearest instance root's file; also works on a nested
+    /// instance inside the prefab being edited).
+    bool OpenPrefabOf(GameObject* go, std::string* error = nullptr);
+    /// Write the open prefab to its file. Objects outside the prefab's root are not part of it; `warning`
+    /// says so when there are some. Marks the level saved. False (file untouched, `error` says why) on failure.
+    bool SavePrefab(std::string* error = nullptr, std::string* warning = nullptr);
+    /// Throw the open level's edits away and read the file again (one undo step; the level counts as saved).
+    bool RevertPrefab(std::string* error = nullptr);
+    /// Leave the open prefab and go back one level. `save` writes it first (leaving is cancelled if that
+    /// fails); without it, unsaved changes of this level are discarded. A prefab saved earlier in the
+    /// session still updates its instances below. False outside prefab mode.
+    bool ClosePrefab(bool save, std::string* error = nullptr);
+    /// Go back to `depth` (0 = the scene) one level at a time. Stops, with `error`, at the first failure.
+    bool ClosePrefabTo(int depth, bool save, std::string* error = nullptr);
+    /// Write every level that has unsaved changes (the open prefab, outer prefabs, and the scene you left
+    /// to its file; `fromDepth`: only levels at that depth or deeper, 0 = all). False, `error` names the first failure; levels already written stay written.
+    bool SaveAllPrefabLevels(std::string* error = nullptr, int fromDepth = 0);
+    /// Rebuild every instance of `path` (and instances that contain it as a nested prefab) in the open
+    /// scene from the file, keeping what each one overrides; one undo step. Returns how many instances were
+    /// rebuilt. ClosePrefab calls this (for every prefab saved since); it is public so a tool can refresh
+    /// after writing a prefab itself. Overrides are read from what the instances store: OpenPrefab records
+    /// them (as an undo step, "Record Prefab Overrides") before it puts the scene aside.
+    int RefreshPrefabInstances(const std::string& path, std::string* report = nullptr);
+
     // ---- Play mode -----------------------------------------------------
     bool isPlaying() const { return m_playing; }
     /// Snapshot the scene, then begin running its lifecycle.
@@ -374,6 +434,27 @@ private:
         SelectionRef sel;
         std::vector<std::unique_ptr<ICommand>> extras;   // already-applied edits of editor-side state that belong to the same step
     } m_pending;
+    // Prefab mode: the documents put aside under the open one (see OpenPrefab).
+    struct PrefabSession { std::string path; std::string rootGuid; std::vector<std::string> saved; };   ///< what the open document is (path "" = the scene) and the prefab files saved in it or in levels opened from it
+    struct Level {
+        std::string text, path, name;     // the scene text, file and name of the document put aside
+        PrefabSession ses;                // what it is (a scene, or a prefab at some depth)
+        SelectionRef sel;
+        Vec2 cameraPos; float cameraZoom = 18.0f; bool view3D = false;
+        float camYaw = 35.0f, camPitch = 22.0f, camDist = 14.0f; Vec3 camTarget = Vec3::Zero;
+        std::unique_ptr<UndoStack> stack;
+        std::string known;
+        std::uint64_t savedPrint = 0;
+        bool unsaved = false;
+    };
+    std::vector<Level> m_levels;          // empty = editing the scene; back() is the document right below the open one
+    PrefabSession m_ses;                  // the open document, when m_levels is not empty
+    std::string m_prefabNote;
+    bool BuildPrefabText(const std::string& path, std::string& text, std::string& rootGuid, std::string* error) const;
+    void SelectByRef(const SelectionRef& sel);
+    void CaptureInstanceOverrides();
+    int RefreshInstancesOf(const std::vector<std::string>& paths, std::string* report);
+    static std::string StemOf(const std::string& path);
     SelectionRef CaptureSelection() const;
     bool ApplySceneText(const std::string& text, const SelectionRef& sel);
     bool SyncHistory();

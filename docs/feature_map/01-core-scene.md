@@ -145,12 +145,13 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.6.6 Nested prefabs - `Scene/PrefabTools` - (#578) a prefab file may hold `nestedprefab "<file>"` objects with override, remove and unset lines and added objects; cycle detection, depth limit 16, a damaged nested file skips only that part; `SavePrefab` writes the structure back (21.2)
   - 1.6.7 Prefab variants - `Scene/PrefabTools` - (#578) a file with `variant "<base>"` stores only differences; a variant of a variant works; `SaveVariant(instance, path)` (21.3)
   - 1.6.8 Per-field overrides and unpack - `Scene/PrefabTools` - (#578) `Diff`, `RevertOverride`, `RevertAll`, `ApplyToSource`, `ApplyAllToSource`, `Unpack`, `ValidateAsset`, `ValidateInstance` (21.4)
+  - 1.6.10 Prefab mode - `editor/EditorState` - open a prefab on its own and edit, save, revert and nest it, then go Back and every instance is rebuilt with `PrefabTools::Reapply` (21.1.5); `Reapply` keeps a top-level instance's place in the scene's list
   - 1.6.9 Prefab text cache - `Scene/SceneSerializer` - (#575) the decoded text of the last 32 prefab files is kept so repeated spawns skip the file read; `SceneSerializer::ClearPrefabCache()`
 - **Code:** `Scene/SceneTemplates`, `Scene/UITemplates`, `Scene/UIStyles`, `Scene/UILayoutTools`, `Scene/EnsureCamera`, `Scene/SceneSerializer`, `Scene/PrefabTools`
 - **API:** `SceneSerializer::InstantiateFromFile`, `SceneSerializer::ReapplyPrefab`, `GameObject::prefabOverrides`, `Templates::*`, `UITemplates::AddHUD`, `EnsureSceneCamera`, `PrefabTools::Diff`, `PrefabTools::SavePrefab`, `PrefabTools::SaveVariant`, `PrefabTools::Unpack`
 - **Editor:** GameObject > Create menu, Hierarchy prefab Apply/Revert/Reload (editor/main.cpp); no override UI yet
-- **Docs:** `docs/prefabs.md`, `docs/prefab_system.md`, `docs/making_a_game.md`
-- **Tests:** `instantiate`, `templates`, `scene_cameras`, `scene_defaults`, `prefab_nested`, `prefab_variants`, `prefab_apply_revert`
+- **Docs:** `docs/prefabs.md`, `docs/prefab_system.md`, `docs/prefab_mode.md`, `docs/making_a_game.md`
+- **Tests:** `instantiate`, `templates`, `scene_cameras`, `scene_defaults`, `prefab_nested`, `prefab_variants`, `prefab_apply_revert`, `prefab_mode`
 - **Status:** Partial - prefab files, override data, nested prefabs and variants work as library code (tests; `InstantiateFromFile` routes nested files to `PrefabTools`, read `SceneSerializer.cpp`); the editor calls neither the override API nor `PrefabTools` (docs/prefab_system.md: "nothing in the editor calls it yet")
 - **Open:** prefab overrides in the editor (apply, revert, per-field, prefab mode, variant creation, nested roots in the Hierarchy); the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones; objects added under an instance are not carried over by `ReapplyPrefab`
 - **Related:** 1.5, 12.7, 15.2, 21

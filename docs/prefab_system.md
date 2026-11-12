@@ -2,7 +2,8 @@
 
 This page covers `PrefabTools` (`okay/Scene/PrefabTools.hpp`), which builds on the
 prefab instances and overrides described in [prefabs.md](prefabs.md). Everything here is
-data and API; nothing in the editor calls it yet.
+data and API. The editor uses it in the Inspector's "Changed from the prefab" list (per-record
+revert and apply) and in prefab mode (open a prefab on its own and save it: [prefab_mode.md](prefab_mode.md)).
 
 ```cpp
 #include <Okay.hpp>

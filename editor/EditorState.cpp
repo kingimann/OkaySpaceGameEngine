@@ -13,6 +13,9 @@
 #include "okay/Scene/ClearSpawn.hpp"
 #include "okay/Core/FrameOverlay.hpp"
 #include "okay/Core/TimerDebug.hpp"
+#include "okay/Scene/PrefabTools.hpp"
+#include <map>
+#include <set>
 #include <filesystem>
 #include <fstream>
 #include "../shared/ProjectCreate.hpp"
@@ -250,6 +253,7 @@ std::vector<std::string> EditorState::RedoNames(std::size_t max) const {
 
 // A new, opened or created scene is a new document: its own empty history, this text is the baseline.
 void EditorState::StartDocument() {
+    if (!m_levels.empty()) { m_levels.clear(); m_ses = PrefabSession{}; }   // a new document replaces a prefab session (the editor asks first)
     m_stack->Clear();
     m_pending = Pending{};
     m_known = SceneSerializer::Serialize(m_scene);
@@ -848,6 +852,18 @@ std::uint64_t EditorState::Fingerprint(const std::string& text) {
 
 bool EditorState::RewriteAssetPaths(const std::function<std::string(const std::string&)>& rewrite) {
     if (m_playing || !rewrite) return false;
+    // Prefab mode: the scene and prefabs put aside hold asset paths too. Their histories end here for the same
+    // reason the open one does; a level without unsaved changes still has none afterwards.
+    for (Level& lv : m_levels) {
+        const std::string t = rewrite(lv.text);
+        if (t != lv.text) {
+            lv.text = t; lv.known = t;
+            lv.stack->Clear();
+            if (lv.unsaved) lv.stack->MarkDirty(); else { lv.savedPrint = Fingerprint(t); lv.stack->MarkSaved(); }
+        }
+        if (!lv.ses.path.empty()) lv.ses.path = rewrite(lv.ses.path);
+    }
+    if (!m_ses.path.empty()) m_ses.path = rewrite(m_ses.path);
     const bool wasClean = !HasUnsavedChanges();
     SyncHistory();
     const std::string now = SceneSerializer::Serialize(m_scene);
@@ -887,6 +903,10 @@ bool EditorState::Save(const std::string& path, std::string* error) {
         if (error) *error = "Stop Play first: saving now would save the running game, not your scene.";
         return false;
     }
+    if (!m_levels.empty()) {
+        if (error) *error = "A prefab is open: use Save Prefab, or leave prefab mode first (the scene is saved from there).";
+        return false;
+    }
     SaveEditedMeshAssets();
     if (!SceneSerializer::SaveToFile(m_scene, path, error)) return false;
     m_path = path;
@@ -913,6 +933,10 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     if (beforeLoad) {   // the project version gate: nothing is read, let alone changed, for a project nobody has answered for
         std::string why;
         if (!beforeLoad(path, &why)) { if (error) *error = why.empty() ? "This project can't be opened yet." : why; return false; }
+    }
+    if (!m_levels.empty()) {
+        if (error) *error = "A prefab is open. Leave prefab mode (Back) before opening another scene.";
+        return false;
     }
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (m_playing) Stop();
@@ -947,6 +971,7 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
     namespace fs = std::filesystem;
     NewProjectResult r;
     if (m_playing) { r.error = "Stop Play first."; return r; }
+    if (!m_levels.empty()) { r.error = "A prefab is open. Leave prefab mode (Back) first."; return r; }
     if (finishFrozenTick) finishFrozenTick();
     okayproj::Made made;
     std::string err;
@@ -1001,7 +1026,7 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
 }
 
 void EditorState::Play() {
-    if (m_playing) return;
+    if (m_playing || !m_levels.empty()) return;   // a prefab is open: there is no game to run (PlayBlockedReason says why)
     SyncHistory();   // close the open undo step: what Play changes is thrown away and never recorded
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
     m_playPrint = Fingerprint(m_snapshot);            // what "unsaved changes" means while the game runs
@@ -1151,6 +1176,367 @@ std::vector<std::string> EditorState::TimerLines(std::size_t maxChars) {
         for (std::string& l : lines)
             if (l.size() > maxChars) { l.resize(maxChars - 3); l += "..."; }
     return lines;
+}
+
+
+// ======================================================================================================
+// Prefab mode
+// ======================================================================================================
+namespace {
+
+namespace fs = std::filesystem;
+
+bool SameFile(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    std::error_code ec;
+    if (fs::equivalent(a, b, ec) && !ec) return true;
+    ec.clear();
+    return fs::weakly_canonical(a, ec).generic_string() == fs::weakly_canonical(b, ec).generic_string();
+}
+
+// A variant file (`variant "<base>"`): opened, edited and saved as a plain prefab it would lose its link to the base.
+bool IsVariantFile(const std::string& path) {
+    std::ifstream f(path);
+    std::string line;
+    while (std::getline(f, line)) {
+        std::size_t i = line.find_first_not_of(" \t");
+        if (i != std::string::npos && line.compare(i, 7, "variant") == 0 && (i + 7 == line.size() || line[i + 7] == ' ')) return true;
+    }
+    return false;
+}
+
+// Does the prefab `source` hold `target` (itself, a nested prefab, a nested prefab of a nested prefab ...)?
+bool Reaches(const std::string& source, const std::string& target, std::map<std::string, bool>& cache) {
+    auto it = cache.find(source);
+    if (it != cache.end()) return it->second;
+    bool r = SameFile(source, target);
+    if (!r) {
+        const okay::PrefabReport rep = okay::PrefabTools::ValidateAsset(source);
+        for (const std::string& f : rep.files) if (SameFile(f, target)) { r = true; break; }
+    }
+    return cache[source] = r;
+}
+
+// The outermost instance roots of the scene whose prefab is one of `paths` or holds one (`all`: every instance).
+std::vector<okay::GameObject*> InstancesReaching(okay::Scene& scene, const std::vector<std::string>& paths, bool all = false) {
+    std::map<std::string, bool> cache;
+    std::vector<okay::GameObject*> cands;
+    std::set<const okay::GameObject*> set;
+    for (const auto& up : scene.Objects()) {
+        okay::GameObject* g = up.get();
+        if (!g || g->transient || g->IsDestroyed() || g->prefabSource.empty()) continue;
+        bool hit = all;
+        for (const std::string& p : paths) if (!hit && Reaches(g->prefabSource, p, cache)) hit = true;
+        if (hit) { cands.push_back(g); set.insert(g); }
+    }
+    std::vector<okay::GameObject*> out;
+    for (okay::GameObject* g : cands) {   // an instance inside another one is rebuilt with it
+        bool inner = false;
+        for (okay::Transform* t = g->transform->Parent(); t; t = t->Parent()) if (set.count(t->gameObject)) { inner = true; break; }
+        if (!inner) out.push_back(g);
+    }
+    return out;
+}
+
+} // namespace
+
+std::string EditorState::StemOf(const std::string& path) { return fs::path(path).stem().string(); }
+
+GameObject* EditorState::PrefabRootObject() const {
+    if (m_levels.empty() || m_ses.rootGuid.empty()) return nullptr;
+    GameObject* g = m_scene.FindByGuid(m_ses.rootGuid);
+    return g && !g->IsDestroyed() ? g : nullptr;
+}
+
+std::vector<EditorState::PrefabCrumb> EditorState::PrefabCrumbs() const {
+    std::vector<PrefabCrumb> v;
+    for (const Level& lv : m_levels) {
+        PrefabCrumb c;
+        c.path = lv.ses.path;
+        c.label = lv.ses.path.empty() ? (lv.path.empty() ? lv.name : StemOf(lv.path)) : StemOf(lv.ses.path);
+        c.unsaved = lv.unsaved;
+        v.push_back(std::move(c));
+    }
+    if (!m_levels.empty()) {
+        PrefabCrumb c;
+        c.path = m_ses.path;
+        c.label = StemOf(m_ses.path);
+        c.unsaved = dirty;
+        v.push_back(std::move(c));
+    }
+    return v;
+}
+
+std::string EditorState::PlayBlockedReason() const {
+    if (m_levels.empty()) return "";
+    return "Play is off while a prefab is open. Go Back to the scene to play it.";
+}
+
+bool EditorState::PrefabOuterUnsaved() const {
+    for (const Level& lv : m_levels) if (lv.unsaved) return true;
+    return false;
+}
+
+bool EditorState::PrefabUnsavedFrom(int depth) {
+    if (m_levels.empty()) return false;
+    for (int i = std::max(depth, 0); i < (int)m_levels.size(); ++i) if (m_levels[(std::size_t)i].unsaved) return true;
+    return depth <= (int)m_levels.size() && HasUnsavedChanges();
+}
+
+// The text of a prefab's editing document: the file instantiated alone, its root made plain (the root IS the
+// prefab, not an instance of it). Nested prefabs stay linked instances.
+bool EditorState::BuildPrefabText(const std::string& path, std::string& text, std::string& rootGuid, std::string* error) const {
+    Scene tmp("prefab");
+    tmp.runScripts = false;
+    std::string err;
+    GameObject* root = PrefabTools::Instantiate(tmp, path, {}, &err);
+    if (!root) { if (error) *error = err.empty() ? "the file did not load" : err; return false; }
+    root->prefabSource.clear();
+    root->prefabOverrides.clear();
+    rootGuid = root->Guid();
+    text = SceneSerializer::Serialize(tmp);
+    return true;
+}
+
+bool EditorState::CanOpenPrefab(const std::string& path, std::string* why) const {
+    auto no = [&](const std::string& m) { if (why) *why = m; return false; };
+    if (m_playing) return no("Stop Play first.");
+    std::error_code ec;
+    if (path.empty() || !fs::is_regular_file(path, ec)) return no("The prefab file doesn't exist: " + path);
+    if (fs::path(path).extension() != ".okayprefab") return no(fs::path(path).filename().string() + " is not a prefab (.okayprefab).");
+    if (IsVariantFile(path)) return no(fs::path(path).filename().string() + " is a variant. Variants keep a link to their base prefab, so they are changed by their overrides (Inspector) or by opening the base prefab.");
+    if (!m_levels.empty()) {
+        if (SameFile(path, m_ses.path)) return no(fs::path(path).filename().string() + " is the prefab you are editing.");
+        for (const Level& lv : m_levels)
+            if (!lv.ses.path.empty() && SameFile(path, lv.ses.path)) return no(fs::path(path).filename().string() + " is already open further out (see the bar at the top of the Scene view).");
+    }
+    std::string text, guid, err;
+    if (!BuildPrefabText(path, text, guid, &err)) return no("Couldn't open " + fs::path(path).filename().string() + ": " + err);
+    return true;
+}
+
+void EditorState::SelectByRef(const SelectionRef& want) {
+    Select(nullptr);
+    GameObject* prim = nullptr;
+    for (const auto& up : m_scene.Objects()) {
+        if (up->transient || up->IsDestroyed()) continue;
+        const std::string& g = up->Guid();
+        if (std::find(want.guids.begin(), want.guids.end(), g) == want.guids.end()) continue;
+        if (m_multi.empty()) Select(up.get()); else ToggleSelect(up.get());
+        if (g == want.primary) prim = up.get();
+    }
+    if (prim) m_selected = prim;
+}
+
+// Before this document is put aside, make the stored overrides of its instances exact: they are compared with the
+// files while the files still say what the instances were made from. Rebuilding an instance later (after a prefab
+// was saved) keeps what it changed. Recorded as an undo step so the document's history stays valid.
+void EditorState::CaptureInstanceOverrides() {
+    SyncHistory();
+    const std::vector<GameObject*> inst = InstancesReaching(m_scene, {}, /*all=*/true);
+    if (inst.empty()) return;
+    const std::string before = SceneSerializer::Serialize(m_scene);
+    const bool wasClean = !(dirty || Fingerprint(before) != m_savedPrint);
+    for (GameObject* g : inst) PrefabTools::CaptureOverrides(*g);
+    const std::string after = SceneSerializer::Serialize(m_scene);
+    if (after == before) return;
+    RecordStep(before, after, "Record Prefab Overrides", CaptureSelection(), 0);
+    m_known = after;
+    if (wasClean) MarkClean(); else dirty = true;
+}
+
+bool EditorState::OpenPrefab(const std::string& pathIn, std::string* error) {
+    const std::string path = pathIn;   // a copy: the caller may hand us an object's own string (OpenPrefabOf), and the objects are rebuilt below
+    std::string why;
+    if (!CanOpenPrefab(path, &why)) { if (error) *error = why; return false; }
+    std::string text, guid, err;
+    if (!BuildPrefabText(path, text, guid, &err)) { if (error) *error = err; return false; }
+    if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
+    CaptureInstanceOverrides();
+    SyncHistory();
+    // Put the open document aside. The prefab text is applied first: if it fails the scene is as it was.
+    Level lv;
+    lv.text = SceneSerializer::Serialize(m_scene);
+    lv.path = m_path;
+    lv.name = m_scene.Name();
+    lv.ses = m_ses;
+    lv.sel = CaptureSelection();
+    lv.cameraPos = cameraPos; lv.cameraZoom = cameraZoom; lv.view3D = view3D;
+    lv.camYaw = camYaw; lv.camPitch = camPitch; lv.camDist = camDist; lv.camTarget = camTarget;
+    lv.known = m_known;
+    lv.savedPrint = m_savedPrint;
+    lv.unsaved = dirty || Fingerprint(lv.text) != m_savedPrint;
+    StopNetwork();
+    if (!SceneSerializer::Deserialize(m_scene, text)) {
+        if (error) *error = "Couldn't open " + fs::path(path).filename().string() + ": the prefab did not load into the editor.";
+        return false;
+    }
+    ++m_undoSerial;   // a widget session that was open across this swap (the menu item that opened the prefab) must not record it as an edit
+    lv.stack = std::move(m_stack);
+    m_stack = std::make_unique<UndoStack>();
+    m_stack->SetMaxCommands(kMaxUndo);
+    m_stack->SetMergeWindow(1.0f);
+    m_levels.push_back(std::move(lv));
+    m_ses = PrefabSession{path, guid, {}};
+    m_scene.SetName(StemOf(path));
+    autoCamera = nullptr;
+    m_pending = Pending{};
+    m_known = SceneSerializer::Serialize(m_scene);
+    m_savedPrint = Fingerprint(m_known);
+    m_stack->MarkSaved();
+    dirty = false;
+    m_prefabNote.clear();
+    GameObject* root = PrefabRootObject();
+    Select(root);
+    if (root) {   // look at it: centre the view on the prefab
+        const Vec3 p = root->transform->Position();
+        camTarget = p;
+        cameraPos = Vec2{p.x, p.y};
+    }
+    return true;
+}
+
+bool EditorState::OpenPrefabOf(GameObject* go, std::string* error) {
+    GameObject* r = go ? PrefabTools::NearestPrefabRoot(*go) : nullptr;
+    if (!r) { if (error) *error = "That object is not a prefab instance."; return false; }
+    return OpenPrefab(r->prefabSource, error);
+}
+
+bool EditorState::SavePrefab(std::string* error, std::string* warning) {
+    auto fail = [&](const std::string& m) { if (error) *error = m; return false; };
+    if (m_levels.empty()) return fail("No prefab is open.");
+    GameObject* root = PrefabRootObject();
+    if (!root) return fail("The prefab's root object was deleted, so there is nothing to save. Undo the delete, or go Back and discard.");
+    int outside = 0;
+    for (const auto& up : m_scene.Objects())
+        if (!up->transient && !up->IsDestroyed() && up.get() != root && !up->transform->Parent()) ++outside;
+    std::string err;
+    if (!PrefabTools::SavePrefab(*root, m_ses.path, &err)) return fail("Couldn't save " + fs::path(m_ses.path).filename().string() + ": " + err);
+    if (std::find(m_ses.saved.begin(), m_ses.saved.end(), m_ses.path) == m_ses.saved.end()) m_ses.saved.push_back(m_ses.path);
+    MarkClean();
+    if (warning && outside)
+        *warning = std::to_string(outside) + (outside == 1 ? " object sits" : " objects sit") + " outside the prefab's root and was not saved. Drag it under the root to include it.";
+    return true;
+}
+
+bool EditorState::RevertPrefab(std::string* error) {
+    auto fail = [&](const std::string& m) { if (error) *error = m; return false; };
+    if (m_levels.empty()) return fail("No prefab is open.");
+    std::string text, guid, err;
+    if (!BuildPrefabText(m_ses.path, text, guid, &err)) return fail("Couldn't read " + fs::path(m_ses.path).filename().string() + ": " + err);
+    if (finishFrozenTick) finishFrozenTick();
+    PushUndo("Revert Prefab");   // closes the step before it; the reload below is one step of its own
+    StopNetwork();
+    if (!SceneSerializer::Deserialize(m_scene, text)) return fail("The file did not load.");
+    if (GameObject* nr = m_scene.FindByGuid(guid)) nr->SetGuid(m_ses.rootGuid);   // the root keeps its id, so Undo of the revert finds it again
+    m_scene.SetName(StemOf(m_ses.path));
+    Select(PrefabRootObject());
+    SyncHistory();                                  // records "Revert Prefab" (nothing when there was nothing to revert)
+    m_savedPrint = Fingerprint(m_known);            // what is on screen is the file
+    m_stack->MarkSaved();
+    dirty = false;
+    return true;
+}
+
+bool EditorState::ClosePrefab(bool save, std::string* error) {
+    auto fail = [&](const std::string& m) { if (error) *error = m; return false; };
+    if (m_levels.empty()) return fail("No prefab is open.");
+    SyncHistory();
+    if (save && !SavePrefab(error)) return false;
+    const std::vector<std::string> saved = m_ses.saved;   // what was written here, and in the levels opened from here
+    if (finishFrozenTick) finishFrozenTick();
+    StopNetwork();
+    if (!SceneSerializer::Deserialize(m_scene, m_levels.back().text)) return fail("Couldn't go back to " + (m_levels.back().ses.path.empty() ? std::string("the scene") : StemOf(m_levels.back().ses.path)) + ".");
+    Level lv = std::move(m_levels.back());
+    m_levels.pop_back();
+    ++m_undoSerial;
+    m_stack = std::move(lv.stack);
+    m_pending = Pending{};
+    m_known = SceneSerializer::Serialize(m_scene);
+    m_savedPrint = lv.savedPrint;
+    dirty = lv.unsaved;
+    m_path = lv.path;
+    m_scene.SetName(lv.name);
+    m_ses = lv.ses;
+    for (const std::string& p : saved) if (std::find(m_ses.saved.begin(), m_ses.saved.end(), p) == m_ses.saved.end()) m_ses.saved.push_back(p);   // the levels further out still owe an update
+    cameraPos = lv.cameraPos; cameraZoom = lv.cameraZoom; view3D = lv.view3D;
+    camYaw = lv.camYaw; camPitch = lv.camPitch; camDist = lv.camDist; camTarget = lv.camTarget;
+    autoCamera = nullptr;
+    SelectByRef(lv.sel);
+    m_prefabNote.clear();
+    if (!saved.empty()) RefreshInstancesOf(saved, &m_prefabNote);
+    return true;
+}
+
+bool EditorState::ClosePrefabTo(int depth, bool save, std::string* error) {
+    if (depth < 0) depth = 0;
+    if (depth > (int)m_levels.size()) { if (error) *error = "That level is not open."; return false; }
+    while ((int)m_levels.size() > depth)
+        if (!ClosePrefab(save, error)) return false;
+    return true;
+}
+
+int EditorState::RefreshPrefabInstances(const std::string& path, std::string* report) {
+    return RefreshInstancesOf({path}, report);
+}
+
+int EditorState::RefreshInstancesOf(const std::vector<std::string>& paths, std::string* report) {
+    SyncHistory();
+    const std::vector<GameObject*> inst = InstancesReaching(m_scene, paths);
+    if (inst.empty()) { if (report) report->clear(); return 0; }
+    const std::string before = SceneSerializer::Serialize(m_scene);
+    const SelectionRef sel = CaptureSelection();
+    int rebuilt = 0, failed = 0;
+    std::string firstError;
+    std::vector<std::string> warnings;
+    for (GameObject* g : inst) {
+        std::string err;
+        if (PrefabTools::Reapply(m_scene, *g, &err, &warnings)) ++rebuilt;   // keeps the name, parent, place and ids
+        else { ++failed; if (firstError.empty()) firstError = err; }
+    }
+    m_scene.FlushDestroyed();   // the old instances are gone now, so the text below does not hold two
+    const std::string after = SceneSerializer::Serialize(m_scene);
+    if (after != before) {
+        RecordStep(before, after, "Update Prefab Instances", sel, 0);
+        m_known = after;
+        dirty = true;
+    }
+    SelectByRef(sel);
+    if (report) {
+        std::string names;
+        for (const std::string& p : paths) names += (names.empty() ? "" : ", ") + StemOf(p);
+        *report = "Updated " + std::to_string(rebuilt) + (rebuilt == 1 ? " instance" : " instances") + " of " + names;
+        if (failed) *report += "; " + std::to_string(failed) + " could not be rebuilt (" + firstError + ")";
+        else if (!warnings.empty()) *report += " (" + warnings.front() + (warnings.size() > 1 ? ", +" + std::to_string(warnings.size() - 1) + " more" : std::string()) + ")";
+    }
+    return rebuilt;
+}
+
+bool EditorState::SaveAllPrefabLevels(std::string* error, int fromDepth) {
+    auto fail = [&](const std::string& m) { if (error) *error = m; return false; };
+    if (m_levels.empty()) return true;
+    if (HasUnsavedChanges()) { if (!SavePrefab(error)) return false; }
+    for (int i = (int)m_levels.size() - 1; i >= std::max(fromDepth, 0); --i) {   // innermost first
+        Level& lv = m_levels[(std::size_t)i];
+        if (!lv.unsaved) continue;
+        Scene tmp("level");
+        tmp.runScripts = false;
+        if (!SceneSerializer::Deserialize(tmp, lv.text)) return fail("Couldn't read the put-aside " + (lv.ses.path.empty() ? std::string("scene") : StemOf(lv.ses.path)) + " to save it.");
+        std::string err;
+        if (lv.ses.path.empty()) {
+            if (lv.path.empty()) return fail("The scene has no file yet. Go Back to the scene and use Save Scene As.");
+            if (!SceneSerializer::SaveToFile(tmp, lv.path, &err)) return fail("Couldn't save " + fs::path(lv.path).filename().string() + ": " + err);
+        } else {
+            GameObject* root = tmp.FindByGuid(lv.ses.rootGuid);
+            if (!root) return fail("The root of " + StemOf(lv.ses.path) + " was deleted; nothing to save.");
+            if (!PrefabTools::SavePrefab(*root, lv.ses.path, &err)) return fail("Couldn't save " + fs::path(lv.ses.path).filename().string() + ": " + err);
+            if (std::find(lv.ses.saved.begin(), lv.ses.saved.end(), lv.ses.path) == lv.ses.saved.end()) lv.ses.saved.push_back(lv.ses.path);
+        }
+        lv.savedPrint = Fingerprint(lv.text);
+        lv.unsaved = false;
+        lv.stack->MarkSaved();
+    }
+    return true;
 }
 
 } // namespace okay::editor

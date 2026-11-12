@@ -145,18 +145,18 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 21.1.2 Editor save and place - `editor/main.cpp` - Save As Prefab (Hierarchy menu and Inspector button), drag an object into the Project panel, drop a prefab into the scene, UI prefabs from the UI tools
   - 21.1.3 Spawning and pooling - `Scene/ObjectPool` - `spawn("prefab", x, y)` in scripts, `net_spawn` for replicated spawns, `ObjectPool` reuses spawned objects
   - 21.1.4 Starter templates - `Scene/SceneTemplates`, `Scene/UITemplates` - built-in object and UI templates the editor can create (different from prefab files)
+  - 21.1.5 Prefab mode - `editor/EditorState` (`OpenPrefab`, `SavePrefab`, `RevertPrefab`, `ClosePrefab`), `editor/main.cpp` bar - double-click a prefab in the Project panel, or Open Prefab in the Hierarchy menu or the Inspector's Prefab box: the prefab opens alone with a Scene > Prefab > Nested bar, Back, Save, Revert; nested prefabs drill in; each level has its own undo history and unsaved mark; saving then going Back rebuilds every instance in the scene keeping its overrides; Play is off meanwhile
 - **Code:** `Scene/SceneSerializer`, `Scene/ObjectPool`, `Scene/SceneTemplates`, `Scene/UITemplates`, `editor/main.cpp`
 - **API:** `SceneSerializer::InstantiateFromFile`, `SaveObjectToFile`, `GameObject::prefabSource`, `ObjectPool`, script `spawn`, `spawn3`, `net_spawn`
-- **Editor:** Hierarchy right-click > Save As Prefab, Project panel (drag in and out), Inspector prefab banner
-- **Docs:** `docs/prefabs.md`, `docs/scene_serializer.md`, `docs/scene_management.md`
-- **Tests:** `instantiate`, `scene_ids_prefabs`, `scene_load_pool`, `templates`, `ui_templates`
+- **Editor:** Hierarchy right-click > Save As Prefab and Open Prefab, Project panel (drag in and out, double-click or right-click > Open Prefab, Place in Scene), Inspector prefab banner (Open), the prefab mode bar above the Scene view
+- **Docs:** `docs/prefabs.md`, `docs/prefab_mode.md`, `docs/scene_serializer.md`, `docs/scene_management.md`
+- **Tests:** `instantiate`, `scene_ids_prefabs`, `scene_load_pool`, `templates`, `ui_templates`, `prefab_mode`
 - **Status:** Works - save, place and spawn are in daily use and covered by tests.
 - **Exists today:** Everything in the Parts list on main. #575 added a cache of the last 32 decoded prefab files (`SceneSerializer::ClearPrefabCache` drops it) so repeated spawns skip the file read; #578's `PrefabTools` is reached through `InstantiateFromFile` for nested and variant files.
 - **Work packages:**
-  1. S - Prefab "Open in Prefab Mode" button that isolates the prefab in a scratch scene, edits, saves. Depends on: 21.4 package 1.
-  2. S - Prefab asset thumbnail already exists; add "Used in N scenes" via `UsedBy`. Depends on: 20.2.
-  3. M - Spawn presets (a prefab list on a Spawner that validates files at load). Depends on: 33.2.
-- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots"; editor's Apply overwrites the whole file from one instance.
+  1. S - Prefab asset thumbnail already exists; add "Used in N scenes" via `UsedBy`. Depends on: 20.2.
+  2. M - Spawn presets (a prefab list on a Spawner that validates files at load). Depends on: 33.2.
+- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots"; editor's Apply overwrites the whole file from one instance; prefab mode does not open variants, saves only the prefab's root tree and keeps no crash-recovery copy of a prefab being edited (`docs/prefab_mode.md`).
 - **Related:** 1.6, 15.1, 15.4, 11.6, 21.2, 21.4
 - **Words:** prefab, okayprefab, instantiate, spawn, template, Save As Prefab, prefab instance, ObjectPool, prefabSource
 - **Seen as:** I changed the prefab but my placed copies did not change; dragging an object into Project does not create what I expected; spawned bullets stutter (pooling)

@@ -13,7 +13,7 @@ namespace okay {
 /// .ttf/.otf files can draw real text alongside the built-in 8x8 bitmap font.
 ///
 /// On load the printable ASCII range (32..126) is baked into a single RGBA Image
-/// (white with per-pixel coverage in alpha) via stb_truetype; any other character
+/// (white with per-pixel coverage in alpha) with our own rasterizer (Graphics/TtfRaster); any other character
 /// (accented letters, Cyrillic, CJK...) is baked into the same atlas the first time
 /// it is asked for, and the atlas grows when it fills. Hosts either blit the atlas
 /// on the CPU (the software/player text path) or upload it as a GPU texture and
@@ -85,7 +85,7 @@ public:
     float Ascent(float pixelHeight) const { return m_ascent * ScaleFor(pixelHeight); }
 
 private:
-    struct Info;   // stb_truetype's font info over m_bytes
+    struct Info;   // the parsed font (ttf::Face) over m_bytes
     bool  Bake(const unsigned char* bytes, std::size_t size, float bakeHeightPx, const std::string& name);
     bool  Place(int w, int h, int& x, int& y) const;
     bool  m_valid = false;

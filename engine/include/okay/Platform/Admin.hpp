@@ -7,6 +7,7 @@
 // failures / empty lists.
 // ---------------------------------------------------------------------------
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Privacy.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -69,7 +70,7 @@ public:
         std::string path = "/rest/v1/profiles?select=id,username,display_name,avatar_url,verified,last_seen,created_at&limit=" + std::to_string(limit);
         if (!q.empty()) path += "&or=(username.ilike.*" + Url(q) + "*,display_name.ilike.*" + Url(q) + "*)&order=username.asc";
         else path += "&order=created_at.desc";
-        auto r = acct_.Api(path, "GET");
+        auto r = privacy::ProfilesGet(acct_, path.substr(std::string("/rest/v1/profiles?").size()));
         std::vector<AdminUser> out;
         if (!r.ok) return out;
         for (const auto& o : SplitObjects(r.body)) {

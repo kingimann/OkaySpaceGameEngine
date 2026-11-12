@@ -207,7 +207,7 @@ Recent additions (v2.12–2.14):
   **Bring to Front / Send to Back** reorder a widget among its siblings). The
   editor preview uses the exact same order as the built game.
 - **Sprite textures** — set a Sprite Renderer's *Texture* to a PNG/JPG/BMP path
-  (loaded via `okay::Image`/stb_image). The built game draws the image, tinted by
+  (loaded via `okay::Image`, which uses our own decoder). The built game draws the image, tinted by
   the sprite color; the editor viewport still shows the colored quad. Keep the
   image next to the built `.exe` (relative paths resolve there).
 - **Mesh Renderer (3D)** — pick a built-in primitive (Cube, Pyramid, Quad,

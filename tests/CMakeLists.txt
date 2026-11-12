@@ -798,6 +798,12 @@ target_include_directories(test_project_panel PRIVATE ${PROJECT_SOURCE_DIR}/edit
 target_link_libraries(test_project_panel PRIVATE okay::engine)
 add_test(NAME project_panel COMMAND test_project_panel)
 
+# The Project panel on the asset database and the thumbnail cache: listing / search / filters / used-by / info from the database, incremental refresh (5,000 assets timed), thumbnails by GUID + hash (hit, miss, invalidate, disk, frame budget), rename / move / delete keep GUIDs and badge broken references.
+add_executable(test_project_panel_db test_project_panel_db.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_project_panel_db PRIVATE okay::engine)
+add_test(NAME project_panel_db COMMAND test_project_panel_db)
+
 # Import settings that really change behaviour: texture Filter / Wrap / Mipmaps (software sampler + sidecar read by the OpenGL path), model Normals / Smoothing angle / Import animations.
 add_executable(test_import_settings_real test_import_settings_real.cpp)
 target_link_libraries(test_import_settings_real PRIVATE okay::engine)
@@ -1910,6 +1916,7 @@ add_test(NAME assetmanager COMMAND test_assetmanager)
 # Asset database: GUID metas, move detection, dependency graph, import settings, thumbnails, search
 add_executable(test_asset_database test_asset_database.cpp)
 target_link_libraries(test_asset_database PRIVATE okay::engine)
+target_compile_definitions(test_asset_database PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME asset_database COMMAND test_asset_database)
 
 # Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate

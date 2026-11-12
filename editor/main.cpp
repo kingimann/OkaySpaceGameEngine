@@ -40,6 +40,8 @@
 #include "okay/Render/ModelImport.hpp"        // AutoMapLocomotion / slot suggestions
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"   // Saveable: pick registry properties to save
+#include "okay/Core/GameSaves.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include "okay/Core/DisplaySettings.hpp"
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
@@ -5766,6 +5768,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Main Menu",            &okay::UITemplates::AddMainMenu);
         add("Pause Menu",           &okay::UITemplates::AddPauseMenu);
         add("Settings",             &okay::UITemplates::AddSettings);
+        add("Save Slots",           &okay::UITemplates::AddSaveSlots);
         add("Confirm Dialog",       &okay::UITemplates::AddConfirmDialog);
         add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
         if (ImGui::BeginMenu("Loading Screens")) {
@@ -12225,6 +12228,9 @@ void DrawScriptDocs() {
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
         fapi("seq_prepend(s, id) / seq_join_callback(s, \"fn\")", "play before everything / call when the last tween starts");
         fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
+        fapi("game_save(slot[, label]) / game_load(slot) / game_continue()", "save slots for Saveable objects (docs/save_framework.md); load happens next frame");
+        fapi("game_delete_slot(slot) / game_slot_exists(slot) / game_can_continue()", "manage and ask about save slots");
+        fapi("game_slot_text(slot) / game_slot_age(slot) / game_slot_label(slot) / game_autosave()", "when a slot was saved (UTC text, seconds ago), its label, autosave ring");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
         ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce,\nor a curve as text: \"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\".");
     }
@@ -20208,6 +20214,15 @@ static const ActionOpInfo kInstrOps[] = {
     {"add_prefs",   "Add To Saved Value", "key amount",           "Add to a stored (saved) value.",                          "Save"},
     {"get_prefs",   "Grab A Value",       "intoVar  savedName",   "Read a saved value (e.g. a stat like health) into a variable.", "Variables"},
     {"save_prefs",  "Write Save File",    "[file]",               "Write the saved values to disk.",                         "Save"},
+    {"game_save",   "Save To Slot",       "slot [label...]",      "Save the game (every Saveable object) to a slot, e.g. slot_1.", "Save"},
+    {"game_load",   "Load Slot",          "slot",                 "Load a slot: the level is reloaded and the saved objects put back (at the start of the next frame).", "Save"},
+    {"game_continue","Continue",          "",                     "Load the newest valid save.",                             "Save"},
+    {"game_autosave","Autosave Now",      "",                     "Save into the autosave slots (see the Save Settings component).", "Save"},
+    {"game_delete_slot","Delete Slot",    "slot",                 "Delete a save slot.",                                     "Save"},
+    {"game_slot_exists","Slot Exists",    "slot  intoVar",        "Sets a variable to 1 if the slot has a save, else 0.",    "Save"},
+    {"game_can_continue","Can Continue",  "intoVar",              "Sets a variable to 1 if there is a save to continue, else 0.", "Save"},
+    {"game_slot_age","Slot Saved Ago",    "slot  intoVar",        "Sets a variable to the seconds since the slot was saved (-1 if empty).", "Save"},
+    {"game_slot_text","Slot Saved Time",  "slot  intoTextVar",    "Sets a text variable to when the slot was saved, e.g. 2026-11-08 14:03 (UTC); empty if none.", "Save"},
     {"net_host",    "Host Game",          "port",                 "Start hosting a multiplayer session.",                    "Multiplayer"},
     {"net_join",    "Join Game",          "ip port",              "Connect to a host.",                                      "Multiplayer"},
     {"net_host_relay","Host via Relay",   "relayIp port code",    "Host through a relay using a shared code — players behind home routers connect with NO port-forwarding (NAT traversal). Run the okayspace-relay binary, or use a public one.", "Multiplayer"},
@@ -30338,6 +30353,73 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##nv")) toRemove = nv;
         }
     }
+    if (auto* sv = dynamic_cast<Saveable*>(curComp)) {
+        if (CompHeader("Saveable", sv, &toRemove)) {
+            ImGui::TextDisabled("Keep this object when the game is saved, and put it back on load.");
+            char idb[96]; std::snprintf(idb, sizeof(idb), "%s", sv->saveId.c_str());
+            if (ImGui::InputText("Save id##sv", idb, sizeof(idb))) { sv->saveId = idb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The stable key this object is found by on load. Keep it unique; it survives renaming and moving the object. Empty = the object's name path.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("New id##sv")) { sv->saveId = SaveSystem::NewId(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make a fresh unique id (use it on a duplicated object).");
+            if (!sv->saveId.empty()) {
+                int same = 0;
+                for (const auto& up : ed.scene().Objects())
+                    if (up) if (auto* o = up->GetComponent<Saveable>()) if (o->saveId == sv->saveId) ++same;
+                if (same > 1) ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.3f, 1), "Another object has this id. Press New id.");
+            }
+            if (ImGui::Checkbox("Position, rotation, scale##sv", &sv->saveTransform)) ed.dirty = true;
+            if (ImGui::Checkbox("Active (on / off)##sv", &sv->saveActive)) ed.dirty = true;
+            if (ImGui::Checkbox("Rigidbody, Inventory, Stats##sv", &sv->saveComponents)) ed.dirty = true;
+            if (ImGui::Checkbox("Script and visual-script variables##sv", &sv->saveVariables)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("This object's script globals and its visual scripts' variables.");
+            if (ImGui::Checkbox("Scene-wide variables (once per save)##sv", &sv->saveSceneVariables)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Action List numbers and text, and the visual scripts' scene and global variables. Tick this on one manager object.");
+            if (ImGui::Checkbox("Made while playing (spawned from a prefab)##sv", &sv->dynamic)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Respawned from the prefab below on load; an object that did not exist at the save is removed.");
+            if (sv->dynamic) {
+                char pb[256]; std::snprintf(pb, sizeof(pb), "%s", sv->prefab.c_str());
+                if (ImGui::InputText("Prefab##sv", pb, sizeof(pb))) { sv->prefab = pb; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okayprefab path. Empty = the object's own prefab.");
+            }
+            ImGui::TextDisabled("Also save these properties:");
+            int removeAt = -1;
+            for (std::size_t i = 0; i < sv->properties.size(); ++i) {
+                ImGui::PushID((int)i);
+                ImGui::BulletText("%s", sv->properties[i].c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) removeAt = (int)i;
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { sv->properties.erase(sv->properties.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::BeginCombo("Add property##sv", "Pick...")) {
+                for (const auto& c : sv->gameObject->Components()) {
+                    auto info = PropertyRegistry::FindFor(*c);
+                    if (!info || dynamic_cast<Saveable*>(c.get())) continue;
+                    for (const PropertyDesc& pd : info->properties) {
+                        if (pd.IsReadOnly() || pd.type == PropertyType::None || pd.type == PropertyType::ObjectRef) continue;
+                        const std::string path = info->name + "." + pd.name;
+                        if (std::find(sv->properties.begin(), sv->properties.end(), path) != sv->properties.end()) continue;
+                        if (ImGui::Selectable(path.c_str())) { sv->properties.push_back(path); ed.dirty = true; }
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::SmallButton("Remove##sv")) toRemove = sv;
+        }
+    }
+    if (auto* ss = dynamic_cast<SaveConfig*>(curComp)) {
+        if (CompHeader("Save Settings", ss, &toRemove)) {
+            ImGui::TextDisabled("When this scene saves by itself. One per scene.");
+            if (ImGui::DragFloat("Autosave every (s)##ss", &ss->autosaveInterval, 1.0f, 0.0f, 7200.0f, "%.0f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds of play between autosaves (0 = off).");
+            if (ImGui::Checkbox("Autosave when the scene starts##ss", &ss->autosaveOnSceneStart)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One autosave on entering this scene (not while a load is putting a save back).");
+            if (ImGui::DragInt("Autosave slots##ss", &ss->autosaveSlots, 0.2f, 1, 20)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("autosave_1 ... autosave_N; the oldest is replaced first. Continue loads the newest save of any kind.");
+            if (ImGui::SmallButton("Remove##ss")) toRemove = ss;
+        }
+    }
     if (auto* as = dynamic_cast<AutoSave*>(curComp)) {
         if (CompHeader("Auto Save", as, &toRemove)) {
             ImGui::TextDisabled("Saves the whole game to a slot while playing.");
@@ -39208,6 +39290,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<FirstPersonHands>(), "First Person Hands")) { go->AddComponent<FirstPersonHands>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
             if (item(!go->GetComponent<AutoSave>(), "Auto Save")) { go->AddComponent<AutoSave>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Saveable>(), "Saveable (keep when saving)")) { go->AddComponent<Saveable>()->EnsureId(); ed.dirty = true; }
+            if (item(!go->GetComponent<SaveConfig>(), "Save Settings (autosave)")) { go->AddComponent<SaveConfig>(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }

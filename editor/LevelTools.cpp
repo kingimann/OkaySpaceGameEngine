@@ -435,6 +435,8 @@ static void FoliageInspector(EditorState& ed, Foliage* f) {
     ImGui::SliderFloat("Radius##fol", &f->radius, 0.5f, 60.0f, "%.1f");
     ImGui::SliderFloat("Density##fol", &f->density, 0.005f, 4.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
     Tip("Copies per square metre. Copies are also kept apart, so painting over the same spot cannot pile them up.");
+    ImGui::SliderFloat("Spacing##fol", &f->spacing, 0.0f, 2.0f, "%.2f");
+    Tip("How far apart copies are kept, as a share of the average gap at this density. 0 = they may touch or overlap.");
     ImGui::DragFloatRange2("Scale##fol", &f->minScale, &f->maxScale, 0.02f, 0.05f, 12.0f, "%.2f", "%.2f");
     ImGui::SliderFloat("Max Slope##fol", &f->maxSlope, 0.0f, 89.0f, "%.0f deg");
     Tip("Ground steeper than this gets no plants.");

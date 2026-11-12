@@ -747,7 +747,7 @@ std::vector<std::string> PlanPrune(const std::vector<Installed>& installed, int 
     int keptSoFar = 0;
     for (const Installed& i : sorted) {
         if (i.source != "kept") continue;                           // what the person installed (or put there) is theirs to remove
-        if (keptSoFar < std::max(0, keepPrevious)) { ++keptSoFar; continue; }
+        if (keptSoFar < (std::max)(0, keepPrevious)) { ++keptSoFar; continue; }
         if (protect.count(i.version)) continue;
         out.push_back(i.version);
     }

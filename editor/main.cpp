@@ -32884,7 +32884,9 @@ void DrawInspector(EditorState& ed) {
             ImGui::Separator();
             ImGui::Text("I/O Links (%d)", (int)ls->ioLinks.size());
             oked::FieldTip("I/O Links");
-            ImGui::TextDisabled("When an output fires, deliver an input to a target. Outputs: OnTurnedOn,\nOnTurnedOff, OnPressed, or any name from a Fire Output action / fire_output().");
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("When an output fires, deliver an input to a target. Outputs: OnTurnedOn, OnTurnedOff, OnPressed, or any name from a Fire Output action / fire_output().");
+            ImGui::PopStyleColor();
             static std::string ioMsg;   // result of the last Test
             int ioRemove = -1;
             auto textField = [&](const char* label, std::string& v, const char* hint, float w) {
@@ -32936,11 +32938,22 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Once##io", &l.once)) ed.dirty = true;
                 oked::FieldTip("Once");
-                if (ImGui::SmallButton("Test##io")) ioMsg = ls->TestFire(li);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Deliver this link now (ignores delay and once).");
+                if (ImGui::SmallButton("Test##io")) {
+                    // In edit mode a test really changes the scene, so it is an undo step (Ctrl+Z puts it back).
+                    const bool edit = !ed.isPlaying();
+                    if (edit) ed.PushUndo();
+                    ioMsg = ls->TestFire(li);
+                    if (edit) { ed.dirty = true; ioMsg += " (changed the scene: Ctrl+Z undoes it)"; }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Deliver this link now (ignores delay and once).\nIn edit mode this changes the scene; Ctrl+Z undoes it.");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Remove##io")) ioRemove = (int)li;
-                if (!problem.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "Broken: %s", problem.c_str()); }
+                if (!problem.empty()) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.35f, 1.0f));
+                    ImGui::TextWrapped("Broken: %s", problem.c_str());
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Broken: %s", problem.c_str());
+                }
                 ImGui::PopID();
             }
             if (ioRemove >= 0) { ls->ioLinks.erase(ls->ioLinks.begin() + ioRemove); ed.dirty = true; }

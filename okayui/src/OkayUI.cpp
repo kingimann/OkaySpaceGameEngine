@@ -122,6 +122,7 @@ PopupSlot* popupSlot(int id, bool create) {
 int      g_openPopupThisFrame = 0;   // popup id requested to open this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
+float g_wrapPos = -1.0f;            // PushTextWrapPos: < 0 = off, 0 = wrap at the right edge, > 0 = wrap at that width
 const char* g_hintText = nullptr;   // placeholder for the next text field (InputTextWithHint)
 bool  g_focusNextField = false;     // SetKeyboardFocusHere: the next text field takes the keyboard
 bool  g_focusClaimed = false;    // a widget took the click this frame (keep focus)
@@ -753,6 +754,7 @@ void BeginFrame(const Input& in) {
     g_prevMouseX = in.mouseX;
     g_prevMouseY = in.mouseY;
     g_hot = 0;
+    g_wrapPos = -1.0f;
     g_focusClaimed = false;
     for (int i = 0; i < g_ovCurN; ++i) g_ovPrev[i] = g_ovCur[i];
     g_ovPrevN = g_ovCurN; g_ovCurN = 0;
@@ -1743,19 +1745,59 @@ void Separator() {
     quad(leftEdge(), y + gap * 0.5f, fullW(), 1.0f, g_theme.border);
 }
 
-void Text(const char* s) {
-    if (!g_lay.active) return;
+namespace {
+// One line of text at the cursor in colour `col`.
+void textLine(const char* s, const unsigned char* col) {
     const float h = rowH();
     float x, y; place(s && *s ? labelW(s) : 1.0f, h, x, y);
-    if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, g_theme.text);
+    if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
+}
+
+// Word-wrapped text: lines are filled word by word up to maxW, '\n' always breaks.
+void wrapLines(const char* text, float maxW, const unsigned char* col) {
+    char line[512]; int n = 0;
+    const char* p = text;
+    while (*p) {
+        const char* wordEnd = p;
+        while (*wordEnd && *wordEnd != ' ' && *wordEnd != '\n') ++wordEnd;
+        const int wl = (int)(wordEnd - p);
+        char trial[512]; int tn = 0;
+        for (int i = 0; i < n && tn < 500; ++i) trial[tn++] = line[i];
+        if (n > 0 && tn < 500) trial[tn++] = ' ';
+        for (int i = 0; i < wl && tn < 500; ++i) trial[tn++] = p[i];
+        trial[tn] = 0;
+        if (n > 0 && labelW(trial) > maxW) { line[n] = 0; textLine(line, col); n = 0; continue; }
+        for (int i = 0; i < tn && i < 500; ++i) line[i] = trial[i];
+        n = tn < 500 ? tn : 500;
+        p = wordEnd;
+        if (*p == '\n') { line[n] = 0; textLine(line, col); n = 0; ++p; }
+        else if (*p == ' ') ++p;
+    }
+    if (n > 0) { line[n] = 0; textLine(line, col); }
+}
+
+// Text honouring PushTextWrapPos.
+void textBlock(const char* s, const unsigned char* col) {
+    if (g_wrapPos >= 0.0f && s && *s) {
+        float maxW = availW();
+        if (g_wrapPos > 0.0f && g_wrapPos < maxW) maxW = g_wrapPos;
+        wrapLines(s, maxW, col);
+    } else textLine(s, col);
+}
+} // namespace
+
+void PushTextWrapPos(float width) { g_wrapPos = (std::isfinite(width) && width >= 0.0f) ? width : 0.0f; }
+void PopTextWrapPos() { g_wrapPos = -1.0f; }
+
+void Text(const char* s) {
+    if (!g_lay.active) return;
+    textBlock(s, g_theme.text);
 }
 
 void TextColored(unsigned char r, unsigned char g, unsigned char b, const char* s) {
     if (!g_lay.active) return;
-    const float h = rowH();
-    float x, y; place(s && *s ? labelW(s) : 1.0f, h, x, y);
     const unsigned char col[4] = { r, g, b, 255 };
-    if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
+    textBlock(s, col);
 }
 
 void TextDisabled(const char* s) {
@@ -2994,27 +3036,7 @@ void Caption(const char* text, unsigned char r, unsigned char g, unsigned char b
 
 void TextWrapped(const char* text) {
     if (!g_lay.active || !text) return;
-    const float maxW = availW();
-    char line[512]; int n = 0;
-    const char* p = text;
-    while (*p) {
-        // Take words while the line fits.
-        const char* wordEnd = p;
-        while (*wordEnd && *wordEnd != ' ' && *wordEnd != '\n') ++wordEnd;
-        const int wl = (int)(wordEnd - p);
-        char trial[512]; int tn = 0;
-        for (int i = 0; i < n && tn < 500; ++i) trial[tn++] = line[i];
-        if (n > 0 && tn < 500) trial[tn++] = ' ';
-        for (int i = 0; i < wl && tn < 500; ++i) trial[tn++] = p[i];
-        trial[tn] = 0;
-        if (n > 0 && labelW(trial) > maxW) { line[n] = 0; Text(line); n = 0; continue; }
-        for (int i = 0; i < tn && i < 500; ++i) line[i] = trial[i];
-        n = tn < 500 ? tn : 500;
-        p = wordEnd;
-        if (*p == '\n') { line[n] = 0; Text(line); n = 0; ++p; }
-        else if (*p == ' ') ++p;
-    }
-    if (n > 0) { line[n] = 0; Text(line); }
+    wrapLines(text, availW(), g_theme.text);
 }
 
 bool PrimaryButton(const char* label) {
@@ -3525,6 +3547,7 @@ void ResetState() {
     g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
+    g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false;
     g_openPopupThisFrame = 0;
     for (PopupSlot& p : g_popups) p = PopupSlot();
     for (WinSlot& w : g_wins) w = WinSlot();

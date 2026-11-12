@@ -263,6 +263,11 @@ void Text(const char* s);
 void TextColored(unsigned char r, unsigned char g, unsigned char b, const char* s);
 /// Dimmed text (hints, secondary info).
 void TextDisabled(const char* s);
+/// Until PopTextWrapPos, Text, TextColored and TextDisabled wrap their words. `width` 0 wraps at the right edge
+/// of the window; a positive `width` wraps at that many pixels (or the right edge, whichever is nearer). This
+/// is a width, not the x position the Dear ImGui call takes. Not nested: Pop turns it off.
+void PushTextWrapPos(float width = 0.0f);
+void PopTextWrapPos();
 /// A labeled divider: a line with `label` at the left (ImGui's SeparatorText).
 void SeparatorText(const char* label);
 

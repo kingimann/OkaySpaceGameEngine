@@ -197,6 +197,33 @@ void HintAndFocusTests() {
     CHECK(true);
 }
 
+void WrapTests() {
+    Rig r; UI::Rect before, after, afterPop;
+    const char* longText = "the quick brown fox jumps over the lazy dog again and again until it is tired";
+    bool wrap = false; bool pop = true;
+    r.body = [&] {
+        if (wrap) UI::PushTextWrapPos(120.0f);
+        UI::Text(longText);
+        UI::TextColored(200, 100, 50, longText);
+        if (wrap && pop) UI::PopTextWrapPos();
+        UI::Button("marker"); after = UI::GetItemRect();
+        UI::Text(longText);                                            // after Pop: one line again
+        UI::Button("marker2"); afterPop = UI::GetItemRect();
+    };
+    wrap = false; r.Frames(2); before = after; const float singleGap = afterPop.y - after.y;
+    wrap = true; r.Frames(2);
+    CHECK(after.y > before.y + 40);                                    // both texts wrapped onto several lines
+    CHECK_NEAR(afterPop.y - after.y, singleGap, 1e-3);                 // the text after PopTextWrapPos is a single line again
+    // a missing Pop does not leak into the next frame
+    pop = false; r.Frames(2); wrap = false; r.Frames(2);
+    CHECK_NEAR(after.y, before.y, 1e-3);
+    // hostile widths
+    r.body = [&] { UI::PushTextWrapPos(std::numeric_limits<float>::quiet_NaN()); UI::Text("a b c"); UI::PopTextWrapPos();
+                   UI::PushTextWrapPos(-5.0f); UI::Text(""); UI::Text(nullptr); UI::PopTextWrapPos(); UI::PopTextWrapPos(); };
+    r.Frames(3);
+    CHECK(true);
+}
+
 }  // namespace
 
 int main() {
@@ -209,5 +236,6 @@ int main() {
     InputFloatHostileTests();
     SmallWidgetTests();
     HintAndFocusTests();
+    WrapTests();
     TEST_MAIN_RESULT();
 }

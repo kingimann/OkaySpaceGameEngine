@@ -269,7 +269,7 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 |---|---|---|---|---|---|
 | 1 | Item and hover queries, tooltips | 3,274 | PARTIAL | `IsItemHovered`, `Tooltip(text)`, and now `IsItemActive`, `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked`. Missing: hover flags and delays, `BeginTooltip` blocks with widgets inside (26), `IsItemFocused`, `IsItemEdited`, `IsItemVisible`, `IsItemDeactivatedAfterEdit` (17), `GetItemID`, `IsAnyItemActive` | S |
 | 2 | Layout and cursor | 4,613 | PARTIAL | `SameLine`, `Dummy`, `Spacing`, `Indent`, item width, and now `GetCursorScreenPos`, `SetCursorScreenPos`, `GetCursorPos`/`SetCursorPos` (and X, Y), `GetContentRegionAvail`. Missing: `BeginGroup`/`EndGroup` (92), `GetContentRegionMax` (25), `CalcItemWidth`, `NewLine` | S |
-| 3 | Text | 2,851 | PARTIAL | `Text`, `TextColored`, `TextDisabled`, `TextWrapped`, `BulletText`, `SeparatorText`, `LabelText`. Missing: printf-style formatting (callers format first), `PushTextWrapPos`/`PopTextWrapPos` (164) | S |
+| 3 | Text | 2,851 | PARTIAL | `Text`, `TextColored`, `TextDisabled`, `TextWrapped`, `BulletText`, `SeparatorText`, `LabelText`. `PushTextWrapPos`/`PopTextWrapPos` (step 5; takes a width, not an x position). Missing: printf-style formatting (callers format first) | S |
 | 4 | Draw list (custom drawing) | 2,520 | HAVE (this step) | See 4.2. Missing: `AddConcavePolyFilled` (5), `AddImageRounded` (17), rounding on chosen corners only, anti-aliasing, `AddCallback` | done |
 | 5 | Buttons, checkbox, radio | 2,387 | PARTIAL | `Button`, `SmallButton`, `Checkbox`, `RadioButton`, `ToggleSwitch`, `ImageButton`, now `InvisibleButton`. Missing: `ArrowButton` (18), `ColorButton` (6), explicit button size | S |
 | 6 | Style and colours | 1,896 | PARTIAL | `Style()`, `PushStyleColor` for 8 colours, `PushTextScale`, now `GetColorU32`. Missing: `PushStyleVar`/`PopStyleVar` (375), the other ~40 `ImGuiCol` colours, `GetStyleColorVec4` (39), colour converters, `PushFont`/`PopFont` of arbitrary fonts | M |
@@ -353,3 +353,11 @@ Built: `InputTextWithHint` (a dim placeholder while the field is empty; it never
 Tested (`test_okayui_values.cpp`, 43 checks in total): the placeholder is drawn only while empty (pixel count in the field), typing after `SetKeyboardFocusHere` reaches the field with no click, a null hint and a null buffer are refused; the fuzz test draws both with hostile buffers.
 
 Not done: multi-line text, password fields, text callbacks, the hint while the field is focused and empty is shown (same as Dear ImGui) but with no separate colour setting.
+
+### 4.9 Gap-closing step 5: text wrap (family 3)
+
+Built: `PushTextWrapPos(width)` and `PopTextWrapPos()`. While on, `Text`, `TextColored` and `TextDisabled` break at word boundaries (`TextWrapped` now shares the same routine). Width 0 wraps at the right edge of the window, a positive width wraps there or at the edge, whichever is nearer. **Difference from Dear ImGui:** it takes a width, not an x position, and it does not nest (Pop turns it off). A forgotten Pop is cleared at the start of the next frame; NaN and negative widths mean the right edge.
+
+Tested (47 checks in `test_okayui_values.cpp`): both text calls wrap onto several lines, the text after Pop is one line again, a missing Pop does not leak, hostile widths; the fuzz test leaves a wrap open on purpose. Golden-image (15) and draw-list (184) suites unchanged.
+
+Not done: wrapping `BulletText` and widgets' own labels, a wrap position measured from the cursor.

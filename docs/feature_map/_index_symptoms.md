@@ -64,6 +64,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a component has no card or a field is missing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | a component's settings are lost after save and load | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | a condition node always takes the false path | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
+| a controller or the audio device behaves differently with the own backend | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
 | a coroutine stops early | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a crash loses work | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | a CSS rule does nothing | [12.5](12-ingame-ui.md#125-html-ui) HTML UI |
@@ -831,6 +832,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | script variables reset | [35.3](20-35-planned.md#353-serialization) Serialization |
 | scrolling a list with a finger also presses buttons | [8.4](08-input.md#84-cursor-and-touch) Cursor and touch |
 | scrolling with a finger does not work | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
+| SDL is still needed to build the editor | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
 | seams not where expected | [3.4](03-modeling-import.md#34-uv-tools) UV tools |
 | sections missing until `forum_sections.sql` is run | [17.5](17-launcher-platform.md#175-forums) Forums |
 | see 18.8 | [41.7](41-build-tools-infra.md#417-steam-upload-kit) Steam upload kit |
@@ -1044,6 +1046,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the official game card is missing | [17.14](17-launcher-platform.md#1714-official-game-install-update-publish) Official game: install, update, publish |
 | the okayui test targets are missing from a build | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | the Open button does nothing | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
+| the own backend cannot open a display | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
 | the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
 | the panel does not show in the Scene view | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
 | the panel is slow on a big project | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |

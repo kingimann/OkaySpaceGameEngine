@@ -4,6 +4,7 @@
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include <cstddef>  // offsetof
 #include <cstdio>   // snprintf for numeric widgets (C library, not STL)
 
@@ -1323,7 +1324,7 @@ struct ToastSlot { char text[160]; int kind; Uint32 until; Uint32 born; };
 ToastSlot g_toasts[4];
 int       g_ntoasts = 0;
 void drawToasts(float screenW, float screenH) {
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     int k = 0;
     for (int i = 0; i < g_ntoasts; ++i) if (g_toasts[i].until > now) g_toasts[k++] = g_toasts[i];
     g_ntoasts = k;
@@ -2958,7 +2959,7 @@ void Spinner(float size) {
     const float d = size > 0.0f ? size : rowH();
     float x, y; place(d, d, x, y);
     const float cx = x + d * 0.5f, cy = y + d * 0.5f, r = d * 0.38f;
-    const float a0 = (float)(SDL_GetTicks() % 1000u) / 1000.0f * 6.2831853f;
+    const float a0 = (float)(okay::platform::TicksMs32() % 1000u) / 1000.0f * 6.2831853f;
     unsigned char tmp[4];
     for (int i = 0; i < 20; ++i) {   // a 270-degree arc fading toward its tail
         const float t0 = a0 + i * 0.2356f, t1 = t0 + 0.2356f;
@@ -2974,7 +2975,7 @@ void Toast(const char* text, int kind, float seconds) {
     int i = 0; for (; text[i] && i < 159; ++i) t.text[i] = text[i];
     t.text[i] = 0;
     t.kind = kind;
-    t.born = SDL_GetTicks();
+    t.born = okay::platform::TicksMs32();
     t.until = t.born + (Uint32)((seconds > 0.5f ? seconds : 0.5f) * 1000.0f);
 }
 

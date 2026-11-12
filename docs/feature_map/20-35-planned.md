@@ -1217,10 +1217,10 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Play and use every menu with a gamepad or keyboard only, with a visible focus that moves the way the screen looks.
 - **Parts:**
   - 32.1.1 UI navigation - `Components/UINavigation` - `NavigateUI` moves focus to the nearest widget in the pressed direction (arrows, WASD, D-pad), wraps at the ends, scrolls a focused widget into view, handles button, toggle, slider, dropdown, tabs and keybind fields, and keeps focus inside an open modal
-  - 32.1.2 Gamepad input - `Input/SdlGamepad`, `Input/InputActions`, `Input/Input` - sticks, buttons, curves and dead zones; extended keys and contexts (merged #571)
+  - 32.1.2 Gamepad input - `Input/PlatformGamepad`, `Input/InputActions`, `Input/Input` - sticks, buttons, curves and dead zones; extended keys and contexts (merged #571)
   - 32.1.3 Focus graph (#574) - `UI/FocusGraph` - directional focus graph with tab order, wrap, traps; `BuildFocusGraph`, `IsNavFocusable`
   - 32.1.4 Cursor and touch - `Input/Cursor` - menus also work with the mouse and touch (area 8)
-- **Code:** `Components/UINavigation`, `Input/SdlGamepad`, `Input/InputActions`, `UI/FocusGraph`
+- **Code:** `Components/UINavigation`, `Input/PlatformGamepad`, `Input/InputActions`, `UI/FocusGraph`
 - **API:** `NavigateUI(scene)`, widget `IsFocused()`; `FocusGraph`, `BuildFocusGraph`
 - **Editor:** none (the editor itself is not controller-navigable)
 - **Docs:** `docs/input.md`, `docs/game_ui.md`; `docs/accessibility.md`
@@ -1294,9 +1294,9 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Parts:**
   - 32.4.1 Input actions and persistence - `Input/InputActions` - named actions with keys, mouse buttons, gamepad buttons and sticks; bindings saved to the player's prefs; defaults restorable
   - 32.4.2 Keybind field widget - `Components/UIKeybindField` - press-to-bind field for an action or a plain key; Escape cancels, Backspace restores the default
-  - 32.4.3 Gamepad and key tables - `Input/SdlGamepad`, `Input/SdlKeys` - extended keys, contexts and curves (merged #571)
+  - 32.4.3 Gamepad and key tables - `Input/PlatformGamepad`, `Input/SdlKeys` - extended keys, contexts and curves (merged #571)
   - 32.4.4 Remap model (#574) - `Input/RemapModel` - controls list, conflict detection (including four-key directions and the D-pad), `RemapBind` with cancel, swap, unbind or allow, reserved actions
-- **Code:** `Input/InputActions`, `Components/UIKeybindField`, `Input/SdlGamepad`, `Input/SdlKeys`, `Input/RemapModel`
+- **Code:** `Input/InputActions`, `Components/UIKeybindField`, `Input/PlatformGamepad`, `Input/SdlKeys`, `Input/RemapModel`
 - **API:** `InputActions::Get`, `UIKeybindField` (`action`, `gamepad`, `part`), `RemapConflicts`, `RemapBind`, `RemapAllConflicts`
 - **Editor:** Inspector for the Keybind Field; Project Settings has no input section yet
 - **Docs:** `docs/input.md`; `docs/accessibility.md`

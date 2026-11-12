@@ -63,7 +63,6 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
     foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_screens okayui_host)
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_soft)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)

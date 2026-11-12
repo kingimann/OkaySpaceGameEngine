@@ -15,6 +15,11 @@
 // meant to cover (documented in docs/own_ui_toolkit.md, section 5).
 #include "okay/UI/OkayUI.hpp"
 
+// SDL.h on Windows renames every `main` to SDL_main (which breaks members such as Camera::main in the engine headers):
+// the apps run their own entry point, so keep that rename off wherever this header is the first to include SDL.
+#ifndef SDL_MAIN_HANDLED
+#  define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
 
 #include <cstring>

@@ -5,10 +5,12 @@
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Image.hpp"
+#include "okay/Platform/Painter.hpp"
 
 #include <SDL.h>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -60,32 +62,25 @@ struct OkayUIScriptBridge : ScriptUIBridge {
     }
     void  Spacing(float h) override { OkayUI::Spacing(h); }
     void  Style(const char* name) override { OkayUI::UseLauncherLook(!(name && std::strcmp(name, "classic") == 0)); }
-    /// Image files (dialogue portraits) as textures, loaded once per path. Needs the
-    /// host's renderer; without one this reports false and the caller draws a stand-in.
+    /// Image files (dialogue portraits) as textures, loaded once per path. Needs the host's painter;
+    /// without one this reports false and the caller draws a stand-in.
     bool  Image(const char* path, float w, float h) override {
-        if (!renderer || !path || !*path) return false;
-        auto it = m_textures.find(path);
-        if (it == m_textures.end()) {
-            SDL_Texture* tex = nullptr;
-            okay::Image img;
-            if (img.Load(path) && img.Valid()) {
-                tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-                if (tex) {
-                    SDL_UpdateTexture(tex, nullptr, img.Data(), img.Width() * 4);
-                    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-                }
-            }
-            it = m_textures.emplace(path, tex).first;   // a failed load is remembered too
-        }
-        if (!it->second) return false;
-        OkayUI::Image(it->second, w, h);
+        if (!painter || !path || !*path) return false;
+        okay::ui2d::Tex tex = painter->LoadTexture(path);   // cached by the painter; a failed load is remembered too
+        if (!tex) return false;
+        OkayUI::Image((SDL_Texture*)tex, w, h);   // OkayUI keeps the texture as an opaque handle
         return true;
     }
-    SDL_Renderer* renderer = nullptr;   ///< set by the host; lets Image() make textures
+    okay::platform::Painter* painter = nullptr;   ///< set by the host; lets Image() make textures
+    /// For a host that only has an SDL_Renderer (the editor): the sdl2 painter over it, owned here.
+    void SetRenderer(SDL_Renderer* r) {
+        m_wrapped = okay::platform::WrapSdl2Renderer(r);
+        painter = m_wrapped.get();
+    }
 private:
+    std::unique_ptr<okay::platform::Painter> m_wrapped;
     struct Field { char buf[256] = ""; std::string lastOut; };
     std::map<std::string, Field> m_fields;
-    std::map<std::string, SDL_Texture*> m_textures;
 };
 
 } // namespace okay

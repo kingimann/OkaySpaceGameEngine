@@ -47361,7 +47361,7 @@ int main(int argc, char** argv) {
     // here in the editor during Play — the same code path the shipped player uses.
     // The editor brackets each frame with OkayUI::BeginFrame()/EndFrame() below.
     static okay::OkayUIScriptBridge g_editorUIBridge;
-    g_editorUIBridge.renderer = renderer;   // dialogue portraits as textures
+    g_editorUIBridge.SetRenderer(renderer);   // dialogue portraits as textures
     okay::SetScriptUI(&g_editorUIBridge);
 #endif
 

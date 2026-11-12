@@ -33,6 +33,7 @@ public:
         if (m_win) SDL_DestroyWindow(m_win);
     }
     uint32_t Id() const override { return SDL_GetWindowID(m_win); }
+    BackendKind Kind() const override { return BackendKind::Sdl2; }
     void* NativeHandle() const override { return m_win; }
     void GetSize(int& w, int& h) const override { SDL_GetWindowSize(m_win, &w, &h); }
     void GetPosition(int& x, int& y) const override { SDL_GetWindowPosition(m_win, &x, &y); }

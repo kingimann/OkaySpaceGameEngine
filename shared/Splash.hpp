@@ -13,6 +13,7 @@
 #  define SDL_MAIN_HANDLED
 #endif
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include <cmath>
 
 namespace okay {
@@ -40,7 +41,7 @@ inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& s
     if (!r || w <= 0 || h <= 0) return;
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     auto U8 = [](float v) { return (Uint8)((v < 0 ? 0 : (v > 1 ? 1 : v)) * 255.0f + 0.5f); };
-    const float tms = (float)SDL_GetTicks();
+    const float tms = (float)okay::platform::TicksMs32();
     const float ar = style.ar, ag = style.ag, ab = style.ab;
 
     // ---- Backdrop: gentle vertical gradient (deep charcoal) --------------

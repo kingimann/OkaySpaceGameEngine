@@ -82,6 +82,8 @@ endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
 endif()
+# okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.
+target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL} okay::platform)
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)
     target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + file dialogs, voice UDP, native HTTPS

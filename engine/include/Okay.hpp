@@ -117,6 +117,10 @@
 // More components
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/Foliage.hpp"
+#include "okay/Components/Cable.hpp"
+#include "okay/Components/Decal.hpp"
+#include "okay/Render/SurfaceRaycast.hpp"
 #include "okay/Components/TerrainDigger.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/VoxelDigger.hpp"

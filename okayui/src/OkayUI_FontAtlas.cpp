@@ -1,10 +1,12 @@
 #include "OkayUI_FontAtlas.hpp"
-#include "stb_truetype.h"   // the implementation is compiled into the engine (TtfFont.cpp)
+#include "okay/Graphics/TtfRaster.hpp"   // our own TrueType reader / rasterizer
 #include "okay/Graphics/TtfFont.hpp"   // EmbeddedUIFontData: the launcher's font (Roboto)
 #include "okay/UI/UIPainterSDL.hpp"    // SDLFontAtlas
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 namespace OkayUI {
 namespace fontatlas {
@@ -26,69 +28,73 @@ bool  g_built = false;
 
 void Build() {
     g_built = true;
-    static std::vector<unsigned char> bytes;   // stbtt reads the font in place: keep it alive
+    static std::vector<unsigned char> bytes;   // the Face reads the font in place: keep it alive
     if (!okay::EmbeddedUIFontData(bytes)) return;
-    const unsigned char* ttf = bytes.data();
-    stbtt_fontinfo info;
-    if (!stbtt_InitFont(&info, ttf, stbtt_GetFontOffsetForIndex(ttf, 0))) return;
+    okay::ttf::Face face;
+    if (!face.Load(bytes.data(), bytes.size(), 0)) return;
 
     int all[256]; const int nall = BuildCodepoints(all);
-    int cps[256]; int n = 0;
-    for (int k = 0; k < nall; ++k) if (stbtt_FindGlyphIndex(&info, all[k])) cps[n++] = all[k];
+    int cps[256]; int glyphIds[256]; int n = 0;
+    for (int k = 0; k < nall; ++k) {
+        const int gi = face.FindGlyph((std::uint32_t)all[k]);
+        if (gi) { cps[n] = all[k]; glyphIds[n] = gi; ++n; }
+    }
 
     const float sizes[] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f};
     const int nsizes = (int)(sizeof(sizes) / sizeof(sizes[0]));
     const int W = 1024, H = 1024, packH = H - 4;   // bottom rows: solid white patch
-    unsigned char* alpha = (unsigned char*)std::calloc((size_t)W * H, 1);
-    stbtt_packedchar* packed = (stbtt_packedchar*)std::calloc((size_t)n * nsizes, sizeof(stbtt_packedchar));
-    if (!alpha || !packed) { std::free(alpha); std::free(packed); return; }
-    stbtt_pack_context pc;
-    bool ok = stbtt_PackBegin(&pc, alpha, W, packH, W, 1, nullptr) != 0;
-    if (ok) {
-        stbtt_PackSetOversampling(&pc, 1, 1);   // drawn at bake size: pixel-exact and crisp
-        stbtt_pack_range ranges[6];
-        for (int s = 0; s < nsizes; ++s) {
-            ranges[s].font_size = sizes[s];
-            ranges[s].first_unicode_codepoint_in_range = 0;
-            ranges[s].array_of_unicode_codepoints = cps;
-            ranges[s].num_chars = n;
-            ranges[s].chardata_for_range = packed + (size_t)s * n;
+    std::vector<unsigned char> alpha((std::size_t)W * H, 0);
+
+    // Every (size, glyph) bitmap goes into one atlas, tallest first so the shelves stay tight.
+    struct Item { int s, k, h; };
+    std::vector<Item> items;
+    float scales[6];
+    for (int s = 0; s < nsizes; ++s) {
+        scales[s] = face.ScaleForPixelHeight(sizes[s]);
+        for (int k = 0; k < n; ++k) {
+            int x0, y0, x1, y1;
+            face.GlyphBox(glyphIds[k], scales[s], x0, y0, x1, y1);
+            items.push_back({s, k, y1 - y0});
         }
-        ok = stbtt_PackFontRanges(&pc, ttf, 0, ranges, nsizes) != 0;
-        stbtt_PackEnd(&pc);
     }
+    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.h > b.h; });
+
+    std::vector<okay::ttf::BakedGlyph> baked((std::size_t)nsizes * n);
+    okay::ttf::ShelfPacker packer(W, packH, 1);
+    bool ok = true;
+    for (const Item& it : items)
+        if (!okay::ttf::BakeGlyph(face, glyphIds[it.k], scales[it.s], packer, alpha.data(), baked[(std::size_t)it.s * n + it.k])) {
+            ok = false; break;
+        }
     if (ok) {
-        for (int y = H - 4; y < H; ++y) std::memset(alpha + (size_t)y * W, 255, (size_t)W);
+        for (int y = H - 4; y < H; ++y) std::memset(alpha.data() + (std::size_t)y * W, 255, (std::size_t)W);
         int asc = 0, desc = 0, gap = 0;
-        stbtt_GetFontVMetrics(&info, &asc, &desc, &gap);
+        face.VMetrics(asc, desc, gap);
         Atlas& a = g_atlas;
         a.w = W; a.h = H; a.nsizes = nsizes;
         a.whiteU = 2.5f / W; a.whiteV = (H - 2.0f) / H;
         for (int s = 0; s < nsizes; ++s) {
             Size& sz = a.sizes[s];
             sz.px = sizes[s];
-            sz.ascent = asc * stbtt_ScaleForPixelHeight(&info, sizes[s]);
+            sz.ascent = asc * scales[s];
             sz.count = n;
             for (int k = 0; k < n; ++k) {
-                float px = 0.0f, py = 0.0f;
-                stbtt_aligned_quad q;
-                stbtt_GetPackedQuad(packed + (size_t)s * n, W, H, k, &px, &py, &q, 0);
+                const okay::ttf::BakedGlyph& b = baked[(std::size_t)s * n + k];
                 Glyph& g = sz.glyphs[k];
                 g.cp = (unsigned)cps[k];
-                g.x0 = q.x0; g.y0 = q.y0; g.x1 = q.x1; g.y1 = q.y1;
-                g.u0 = q.s0; g.v0 = q.t0; g.u1 = q.s1; g.v1 = q.t1;
-                g.advance = packed[(size_t)s * n + k].xadvance;
+                g.x0 = b.xoff; g.y0 = b.yoff; g.x1 = b.xoff + (float)(b.x1 - b.x0); g.y1 = b.yoff + (float)(b.y1 - b.y0);
+                g.u0 = (float)b.x0 / W; g.v0 = (float)b.y0 / H; g.u1 = (float)b.x1 / W; g.v1 = (float)b.y1 / H;
+                g.advance = b.xadvance;
             }
         }
         a.rgba = (unsigned char*)std::malloc((size_t)W * H * 4);
         if (a.rgba) {
             for (int p = 0; p < W * H; ++p) {
-                a.rgba[p * 4 + 0] = 255; a.rgba[p * 4 + 1] = 255; a.rgba[p * 4 + 2] = 255; a.rgba[p * 4 + 3] = alpha[p];
+                a.rgba[p * 4 + 0] = 255; a.rgba[p * 4 + 1] = 255; a.rgba[p * 4 + 2] = 255; a.rgba[p * 4 + 3] = alpha[(std::size_t)p];
             }
             a.ok = true;
         }
     }
-    std::free(alpha); std::free(packed);
 }
 
 } // namespace

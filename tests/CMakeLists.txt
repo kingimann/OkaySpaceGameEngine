@@ -241,6 +241,13 @@ add_executable(test_ttf test_ttf.cpp)
 target_link_libraries(test_ttf PRIVATE okay::engine)
 add_test(NAME ttf COMMAND test_ttf)
 
+# Our own TrueType reader / rasterizer: synthetic fonts, DejaVu references, fuzzed files.
+add_executable(test_ttf_rasterizer test_ttf_rasterizer.cpp)
+target_link_libraries(test_ttf_rasterizer PRIVATE okay::engine)
+target_compile_definitions(test_ttf_rasterizer PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ttf_rasterizer COMMAND test_ttf_rasterizer)
+set_tests_properties(ttf_rasterizer PROPERTIES TIMEOUT 120)
+
 add_executable(test_block_builder test_block_builder.cpp)
 target_link_libraries(test_block_builder PRIVATE okay::engine)
 add_test(NAME block_builder COMMAND test_block_builder)
@@ -750,6 +757,12 @@ add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DI
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
+
+# The editor's undo (EditorState + SceneUndo.hpp on okay::UndoStack): every kind of edit does / undoes / redoes to the same scene text, merging, delete restores GUIDs, limits, new scene / Play, saved tracking.
+add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_undo PRIVATE okay::engine)
+add_test(NAME editor_undo COMMAND test_editor_undo)
 
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
 add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)

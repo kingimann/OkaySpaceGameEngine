@@ -728,7 +728,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | old save will not load after an update | [35.4](20-35-planned.md#354-versioned-save-data) Versioned save data |
 | on_level_up never fires | [11.9](11-gameplay-systems.md#119-rpg-stats-and-xp) RPG stats and XP |
 | one bone twists | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
-| one slider drag makes dozens of undo steps | [22.1](20-35-planned.md#221-undo-history) Undo history |
 | other players see no arm movement | [4.7](04-characters-cameras.md#47-first-person-camera-and-hands) First-person camera and hands |
 | other players see the item in the wrong place | [5.9](05-animation-ik.md#59-object-holding) Object holding |
 | other players slide without walking animation | [16.8](16-networking.md#168-network-player-spawning-and-avatar-motion) Network player spawning and avatar motion |
@@ -1156,10 +1155,10 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | ui_button` draws nothing | [13.4](13-scripting.md#134-script-components-and-script-ui) Script components and script UI |
 | undefined reference" after adding a .cpp (not in the list) | [41.1](41-build-tools-infra.md#411-cmake-project-layout-and-options) CMake project layout and options |
 | undo cannot say what changed | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
+| undo does nothing after an asset was moved | [22.1](20-35-planned.md#221-undo-history) Undo history |
 | undo is slow in a big scene | [22.1](20-35-planned.md#221-undo-history) Undo history |
 | undo of a UI move misbehaves | [12.10](12-ingame-ui.md#1210-ui-editing-in-the-editor) UI editing in the editor |
 | undo skips or restores too much | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
-| undo stops working after Play | [22.1](20-35-planned.md#221-undo-history) Undo history |
 | unknown function | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | unknown function | [13.7](13-scripting.md#137-built-in-function-library) Built-in function library |
 | unlocked on Steam but not in the launcher | [49.3](43-proposals.md#493-achievements-sync) Achievements sync |

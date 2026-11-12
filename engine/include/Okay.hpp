@@ -301,6 +301,8 @@
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshLink.hpp"
+#include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Audio/AudioMixer.hpp"

@@ -1821,6 +1821,10 @@ add_test(NAME post_sky COMMAND test_post_sky)
 add_executable(test_navmesh test_navmesh.cpp)
 target_link_libraries(test_navmesh PRIVATE okay::engine)
 add_test(NAME navmesh COMMAND test_navmesh)
+# Navigation areas (modifier, costs, masks) and off-mesh links (jump / drop / ladder): bake, path search, crossing, scene file
+add_executable(test_navmesh_areas test_navmesh_areas.cpp)
+target_link_libraries(test_navmesh_areas PRIVATE okay::engine)
+add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)

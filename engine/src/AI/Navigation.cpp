@@ -3,6 +3,7 @@
 #include "okay/AI/NavGrid3D.hpp"
 #include "okay/AI/NavMesh.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshLink.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -19,6 +20,7 @@ struct SceneCache {
     NavMeshSurface* surface = nullptr;
     std::vector<NavMeshAgent*> agents;
     std::vector<NavMeshObstacle*> obstacles;
+    std::vector<NavMeshLink*> links;
 };
 
 SceneCache& CacheFor(Scene& scene) {
@@ -37,11 +39,13 @@ SceneCache& CacheFor(Scene& scene) {
             if (s && s->enabled && s->gameObject && s->gameObject->active) { c->surface = s; break; }
         c->agents = scene.FindObjectsOfType<NavMeshAgent>();
         c->obstacles = scene.FindObjectsOfType<NavMeshObstacle>();
+        c->links = scene.FindObjectsOfType<NavMeshLink>();
     }
     return *c;
 }
 
 const Vec3 kSnap{2.0f, 4.0f, 2.0f};   // how far a start / goal may be from the mesh
+const Vec3 kLinkSnap{1.5f, 3.0f, 1.5f};   // how far a link's end points may be from the mesh
 
 } // namespace
 
@@ -61,12 +65,60 @@ bool Navigation::FindPath(Scene& scene, const Vec3& from, const Vec3& to, std::v
     if (const NavMesh* mesh = Mesh(scene)) {
         Vec3 s, e;
         if (mesh->FindNearestPoly(from, kSnap, &s) < 0 || mesh->FindNearestPoly(to, kSnap, &e) < 0) return false;
-        return mesh->FindPath(s, e, out, true);
+        NavQueryFilter filter;   // default mask, the surface's costs, no links
+        if (NavMeshSurface* sf = CacheFor(scene).surface) sf->FillFilter(filter);
+        return mesh->FindPath(s, e, out, true, &filter);
     }
     out = NavGrid3D::FindPath(scene, from, to, self, 0.75f, agentRadius);
     if (out.empty()) { out.push_back(from); out.push_back(to); }
     return true;
 }
+
+bool Navigation::FindPathForAgent(Scene& scene, const Vec3& from, const Vec3& to, std::vector<Vec3>& out,
+                                  std::vector<NavMeshLink*>& legLinks, std::uint32_t areaMask,
+                                  float agentRadius, GameObject* self) {
+    legLinks.clear();
+    const NavMesh* mesh = Mesh(scene);
+    if (!mesh) {
+        if (!FindPath(scene, from, to, out, agentRadius, self)) return false;
+        legLinks.assign(out.size(), nullptr);
+        return true;
+    }
+    out.clear();
+    Vec3 s, e;
+    if (mesh->FindNearestPoly(from, kSnap, &s) < 0 || mesh->FindNearestPoly(to, kSnap, &e) < 0) return false;
+    SceneCache& cache = CacheFor(scene);
+    NavQueryFilter filter;
+    filter.areaMask = areaMask;
+    if (cache.surface) cache.surface->FillFilter(filter);
+    // The scene's usable links as directed edges (a two-way link is two edges).
+    static thread_local std::vector<NavOffMeshEdge> edges;
+    static thread_local std::vector<int> legIds;
+    edges.clear();
+    for (std::size_t i = 0; i < cache.links.size(); ++i) {
+        const NavMeshLink* l = cache.links[i];
+        if (!l || !l->Usable() || !filter.Allows(l->area)) continue;
+        NavOffMeshEdge e1;
+        e1.fromPoly = mesh->FindNearestPoly(l->WorldStart(), kLinkSnap, &e1.from);
+        e1.toPoly = mesh->FindNearestPoly(l->WorldEnd(), kLinkSnap, &e1.to);
+        if (e1.fromPoly < 0 || e1.toPoly < 0) continue;
+        e1.cost = l->cost; e1.area = l->area; e1.id = (int)i;
+        edges.push_back(e1);
+        if (l->bidirectional) {
+            NavOffMeshEdge e2 = e1;
+            std::swap(e2.from, e2.to); std::swap(e2.fromPoly, e2.toPoly);
+            edges.push_back(e2);
+        }
+    }
+    filter.edges = edges.empty() ? nullptr : &edges;
+    if (!mesh->FindPath(s, e, out, true, &filter, &legIds)) { out.clear(); return false; }
+    legLinks.assign(out.size(), nullptr);
+    for (std::size_t i = 0; i < out.size() && i < legIds.size(); ++i)
+        if (legIds[i] >= 0 && legIds[i] < (int)cache.links.size()) legLinks[i] = cache.links[(std::size_t)legIds[i]];
+    return true;
+}
+
+const std::vector<NavMeshLink*>& Navigation::Links(Scene& scene) { return CacheFor(scene).links; }
 
 std::vector<Vec3> Navigation::FindPath(Scene& scene, const Vec3& from, const Vec3& to, float agentRadius, GameObject* self) {
     std::vector<Vec3> out;

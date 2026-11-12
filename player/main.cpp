@@ -11,14 +11,13 @@
 
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
 #include "okay/Core/Paths.hpp"
 #include <filesystem>
 #if defined(__linux__)
 #include <unistd.h>
 #endif
-#include "okay/Input/SdlKeys.hpp"      // F1-F12, nav keys, left / right modifiers
-#include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
@@ -1134,7 +1133,7 @@ static std::string PlayerExeStem(const char* argv0) {
 // else the exe's own folder (the oldest flat layout). Ends in '/'.
 static std::string ResolveGameBaseDir(const char* argv0) {
     std::string baseDir;
-    { char* base = SDL_GetBasePath(); baseDir = base ? base : ""; if (base) SDL_free(base); }
+    if (okay::platform::Backend* b = okay::platform::Default()) baseDir = b->BasePath();
     return okay::buildpipe::FindDataDir(baseDir, PlayerExeStem(argv0));
 }
 
@@ -1291,17 +1290,8 @@ int main(int argc, char** argv) {
 
     // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
     // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
-    const std::string baseDir = ResolveGameBaseDir(argv[0]);
+    const std::string baseDir = okay::buildpipe::FindDataDir(pb->BasePath(), PlayerExeStem(argv[0]));
     okay::Paths::SetStreamingAssetsDir(std::filesystem::is_directory(std::filesystem::u8path(baseDir) / "StreamingAssets") ? baseDir + "StreamingAssets/" : std::string());
-    // Resolve where the game files live. New builds use a clean layout
-    // (exe + DLLs at the root, scenes/config/assets in a Data/ subfolder); prefer
-    // that when present, else fall back to the flat layout (everything beside exe).
-    std::string baseDir;
-    baseDir = pb->BasePath();
-    {
-        std::ifstream probe(baseDir + "Data/game.okayconfig");
-        if (probe.good()) baseDir += "Data/";
-    }
 
     // Build settings (written by the editor's Build Settings) live in an optional
     // game.okayconfig beside the exe: window size/title/flags, the scene list (so

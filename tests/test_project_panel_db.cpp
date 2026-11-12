@@ -168,6 +168,7 @@ int main() {
         CHECK(Contains(q("uses:rock.png"), "move.okay"));                 // a script that names a file counts as a user
         CHECK(Contains(q("deps:main.okayscene"), "hero.png") && Contains(q("deps:main.okayscene"), "hero.okayprefab") && !Contains(q("deps:main.okayscene"), "unused.png"));
         CHECK(q("uses:nothing.png").empty());
+        CHECK(Names(q("uses:hero.pn")).size() == 3 && Names(q("uses:hero")).empty());   // a part of a name works when only one asset has it
         CHECK((Names(q("is:unused t:texture")) == std::vector<std::string>{"unused.png"}));
         CHECK((Names(q("is:broken")) == std::vector<std::string>{"broken.okayscene"}));
         ListOptions un; un.unusedOnly = true; un.recursive = true;

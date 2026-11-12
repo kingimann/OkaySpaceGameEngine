@@ -586,6 +586,10 @@ std::vector<Entry> Browser::List(const std::string& dirIn, const ListOptions& op
         if (r) { g = r.guid; return true; }
         for (const okay::AssetRecord* rec : m_db.All())
             if (Lower(rec->path) == text || Lower(rec->Name()) == text) { g = rec->guid; return true; }
+        const okay::AssetRecord* only = nullptr;   // a part of a name works when exactly one asset has it ("uses:hero.pn")
+        int hits = 0;
+        for (const okay::AssetRecord* rec : m_db.All()) if (ContainsCI(rec->Name(), text)) { only = rec; ++hits; }
+        if (hits == 1) { g = only->guid; return true; }
         return false;
     };
     bool noMatch = false;

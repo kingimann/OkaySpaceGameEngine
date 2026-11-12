@@ -9689,7 +9689,7 @@ void DrawProject(EditorState& ed) {
     // only the tile grid, so the "inspector" footer stays pinned in view even when
     // the folder has more assets than fit.
     const float detailsH = selected.empty() ? ImGui::GetFrameHeightWithSpacing() + 4.0f
-                                            : 136.0f;
+                                            : 168.0f;   // (room for the database line: GUID, uses, used by, tags)
     ImGui::BeginChild("gridscroll", ImVec2(0, -detailsH), false, ImGuiWindowFlags_NoNavInputs);
     const float gridAvailH = ImGui::GetContentRegionAvail().y;   // for fitting the tiles (below)
 

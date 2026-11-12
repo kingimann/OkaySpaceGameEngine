@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.861.2
+  Editor
+  - Visual script: the Add Node menu is much lighter while it is open. It now
+    draws only the rows you can see and keeps the results, topic counts and
+    search matches until something changes, so scrolling, hovering and idle
+    time in the menu cost almost nothing.
+
 v2.861.1
   Editor
   - Visual script: the Add Node menu no longer lowers the frame rate when it

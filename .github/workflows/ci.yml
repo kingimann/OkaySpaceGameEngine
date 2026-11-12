@@ -15,16 +15,33 @@ jobs:
   build-and-test:
     name: Build & test (Ubuntu)
     runs-on: ubuntu-latest
+    # The compiler cache turns the three builds below (tests, player, editor all compile
+    # the same engine) into one cold compile; a warm run only recompiles what changed.
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v6
 
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-ci-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-ci-
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build -j
@@ -38,7 +55,8 @@ jobs:
         run: |
           cmake -S . -B build-player -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-player -j
 
       # Build the editor (Dear ImGui + SDL2) and run its headless self-test so
@@ -48,7 +66,8 @@ jobs:
         run: |
           cmake -S . -B build-editor -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_TESTS=OFF \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-editor -j
           ./build-editor/bin/OkayEngine --selftest
 

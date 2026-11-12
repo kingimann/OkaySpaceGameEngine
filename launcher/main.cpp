@@ -1751,7 +1751,7 @@ int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
 std::string g_uiBackendSetting;   // "" = never chosen, else "imgui" / "okayui" (persisted as ui_backend; OKAY_UI_BACKEND overrides it)
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;   // what the setting + environment resolve to (ResolveUiBackend)
-static void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting); }
+static void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
 int g_winW = 1160, g_winH = 752;
@@ -22000,10 +22000,11 @@ int main(int argc, char** argv) {
                         // Persist + restyle when the drag ends — no separate Apply click.
                         if (ImGui::IsItemDeactivatedAfterEdit()) { DarkTheme(); SavePrefs(); }
                     });
+                    if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
                     rowDivider();
                     {   // Which toolkit draws the pages that have an OkayUI port (today: What's New). Dear ImGui stays the default.
                         const char* envBackend = std::getenv("OKAY_UI_BACKEND");
-                        const int src = okayuibackend::Source(envBackend, g_uiBackendSetting);
+                        const int src = okayuibackend::Source(envBackend, g_uiBackendSetting, true);
                         const bool can = okayuibackend::CompiledIn();
                         char bdesc[300];
                         std::snprintf(bdesc, sizeof(bdesc), "%s%s", can
@@ -22026,6 +22027,7 @@ int main(int argc, char** argv) {
                             ImGui::EndDisabled();
                         });
                     }
+                    }   // developer-only row
                     cardEnd();
                 } else if (setCat == 1) {   // ---- Chat & Notifications ----
                     cardBegin("##sc_chat", "CHAT");

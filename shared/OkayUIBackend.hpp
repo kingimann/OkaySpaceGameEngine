@@ -2,10 +2,13 @@
 // Which UI toolkit draws the launcher's and the editor's ported screens: Dear ImGui (the default) or OkayUI (preview).
 // Pure logic, std only, so the choice can be parsed, saved and tested without a window (tests/test_ui_backend.cpp).
 //
-// The order of precedence, highest first:
+// This is a DEVELOPER switch, not a user feature: nothing is offered to users until the owner declares the OkayUI ports ready.
+// In a normal run (no OKAY_DEV) the answer is the build default, Dear ImGui, whatever a saved settings file says, and the
+// settings rows that change it are not shown. With the developer flag OKAY_DEV (the switch the editor already has) on:
 //   1. the environment variable OKAY_UI_BACKEND ("okayui" or "imgui"; anything else is ignored),
-//   2. the person's setting (Settings > Appearance in the launcher, Edit > Preferences in the editor),
+//   2. the saved setting (the row in Settings > Appearance in the launcher, View > Rendering & Performance in the editor),
 //   3. the build's default: Dear ImGui, unless the build was configured with -DOKAY_UI_DEFAULT_BACKEND=okayui.
+// OKAY_UI_BACKEND alone (without OKAY_DEV) is honoured too: setting it is itself a deliberate developer act, and the tests use it.
 // A build without OkayUI compiled in (no SDL2, or the web player) always answers Dear ImGui.
 #include <cctype>
 #include <string>
@@ -57,21 +60,28 @@ inline std::string FromSettingInt(int v) { return Name(v == 1 ? Backend::OkayUI 
 /// The integer to save for a setting (never called for an empty one: nothing is saved then, so "never chosen" survives a save).
 inline int ToSettingInt(const std::string& setting) { Backend b = Backend::ImGui; return Parse(setting, b) && b == Backend::OkayUI ? 1 : 0; }
 
-/// The backend to use: the environment value (null or unreadable = none) over the setting, and Dear ImGui when OkayUI is
-/// not compiled in. `settingValue` is what the settings file held (an empty string = the person never chose).
-inline Backend Resolve(const char* envValue, const std::string& settingValue, bool compiledIn = CompiledIn()) {
+/// The developer flag: OKAY_DEV set to anything but empty or "0" (the same rule as the editor's launcher gate).
+inline bool DevMode(const char* okayDevEnv) { return okayDevEnv && okayDevEnv[0] && okayDevEnv[0] != '0'; }
+
+/// The settings rows that change the backend are shown only with the developer flag, and only where OkayUI is compiled in.
+inline bool SettingRowVisible(bool devMode, bool compiledIn = CompiledIn()) { return devMode && compiledIn; }
+
+/// The backend to use: the environment value (null or unreadable = none) over the saved setting, and Dear ImGui when OkayUI is
+/// not compiled in. The saved setting (`settingValue`, empty = never chosen) is ignored unless `devMode`, so a stale value in
+/// a settings file cannot switch a normal run.
+inline Backend Resolve(const char* envValue, const std::string& settingValue, bool devMode, bool compiledIn = CompiledIn()) {
     if (!compiledIn) return Backend::ImGui;
     Backend b = BuildDefault();
-    Parse(settingValue, b);
+    if (devMode) Parse(settingValue, b);
     if (envValue) Parse(envValue, b);
     return b;
 }
 
-/// Which source decided: 0 build default, 1 the setting, 2 the environment (for the Settings screen's note).
-inline int Source(const char* envValue, const std::string& settingValue) {
+/// Which source decided: 0 build default, 1 the saved setting, 2 the environment (for the settings row's note).
+inline int Source(const char* envValue, const std::string& settingValue, bool devMode) {
     Backend scratch = Backend::ImGui;
     if (envValue && Parse(envValue, scratch)) return 2;
-    if (Parse(settingValue, scratch)) return 1;
+    if (devMode && Parse(settingValue, scratch)) return 1;
     return 0;
 }
 

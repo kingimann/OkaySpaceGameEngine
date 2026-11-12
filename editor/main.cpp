@@ -2221,7 +2221,7 @@ bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 // Console panel has an OkayUI port; everything else is Dear ImGui either way.
 std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
-void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting); }
+void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
 #ifdef OKAY_HAVE_OKAYUI
 okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
@@ -6269,8 +6269,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
 #endif
 #ifdef OKAY_HAVE_OKAYUI
+        if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
         if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, today)
-            const int src = okayuibackend::Source(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting);
+            const int src = okayuibackend::Source(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, true);
             for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI})
                 if (ImGui::MenuItem(okayuibackend::Label(opt), nullptr, g_uiBackend == opt, src != 2) && g_uiBackend != opt) {
                     g_uiBackendSetting = okayuibackend::Name(opt);
@@ -6282,6 +6283,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::EndMenu();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
+        }
 #endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");

@@ -63,21 +63,37 @@ int main() {
     }
     {   // the default is Dear ImGui (this build was not configured with OKAY_UI_DEFAULT_BACKEND=okayui)
         CHECK(BuildDefault() == Backend::ImGui);
-        CHECK(Resolve(nullptr, "", true) == Backend::ImGui);
-        CHECK(Source(nullptr, "") == 0);
+        CHECK(Resolve(nullptr, "", true, true) == Backend::ImGui);
+        CHECK(Source(nullptr, "", true) == 0);
     }
     {   // precedence: environment over setting over default; unreadable values are ignored at every level
-        CHECK(Resolve(nullptr, "okayui", true) == Backend::OkayUI);
-        CHECK(Resolve("okayui", "", true) == Backend::OkayUI);
-        CHECK(Resolve("imgui", "okayui", true) == Backend::ImGui);
-        CHECK(Resolve("okayui", "imgui", true) == Backend::OkayUI);
-        CHECK(Resolve("nonsense", "okayui", true) == Backend::OkayUI);
-        CHECK(Resolve("", "", true) == Backend::ImGui);
-        CHECK(Resolve(nullptr, "nonsense", true) == Backend::ImGui);
-        CHECK(Source("okayui", "imgui") == 2 && Source("nonsense", "okayui") == 1 && Source(nullptr, "imgui") == 1 && Source(nullptr, "x") == 0);
+        CHECK(Resolve(nullptr, "okayui", true, true) == Backend::OkayUI);
+        CHECK(Resolve("okayui", "", true, true) == Backend::OkayUI);
+        CHECK(Resolve("imgui", "okayui", true, true) == Backend::ImGui);
+        CHECK(Resolve("okayui", "imgui", true, true) == Backend::OkayUI);
+        CHECK(Resolve("nonsense", "okayui", true, true) == Backend::OkayUI);
+        CHECK(Resolve("", "", true, true) == Backend::ImGui);
+        CHECK(Resolve(nullptr, "nonsense", true, true) == Backend::ImGui);
+        CHECK(Source("okayui", "imgui", true) == 2 && Source("nonsense", "okayui", true) == 1 && Source(nullptr, "imgui", true) == 1 && Source(nullptr, "x", true) == 0);
+    }
+    {   // developer-only: without OKAY_DEV a stale saved value is ignored, with it the value is honoured
+        const std::string stale = LauncherLoad("ui_backend=okayui\n");
+        CHECK(stale == "okayui");                                                     // it is in the file
+        CHECK(Resolve(nullptr, stale, false, true) == Backend::ImGui);                // ...a normal run ignores it
+        CHECK(Resolve(nullptr, EditorLoad("settingsver 3\nuibackend 1\n"), false, true) == Backend::ImGui);
+        CHECK(Resolve(nullptr, stale, true, true) == Backend::OkayUI);                // ...the developer flag honours it
+        CHECK(Source(nullptr, stale, false) == 0 && Source(nullptr, stale, true) == 1);
+        CHECK(Resolve("okayui", "", false, true) == Backend::OkayUI);                 // the environment variable still works
+        CHECK(Resolve("imgui", stale, true, true) == Backend::ImGui);
+        CHECK(Resolve(nullptr, "", false, true) == Backend::ImGui);                   // a normal build answers Dear ImGui
+    }
+    {   // the dev flag and the rows: hidden by default, shown only with the flag and only where OkayUI is compiled in
+        CHECK(!DevMode(nullptr) && !DevMode("") && !DevMode("0") && DevMode("1") && DevMode("yes"));
+        CHECK(!SettingRowVisible(DevMode(nullptr), true) && !SettingRowVisible(DevMode("0"), true));
+        CHECK(SettingRowVisible(DevMode("1"), true) && !SettingRowVisible(DevMode("1"), false));
     }
     {   // a build without OkayUI always answers Dear ImGui, whatever is asked
-        CHECK(Resolve("okayui", "okayui", false) == Backend::ImGui);
+        CHECK(Resolve("okayui", "okayui", true, false) == Backend::ImGui);
     }
     {   // the launcher's persistence: nothing chosen writes nothing and reads back as "never chosen"
         CHECK(LauncherSave("").empty() && LauncherLoad("").empty());
@@ -85,14 +101,14 @@ int main() {
         CHECK(LauncherLoad(LauncherSave("imgui")) == "imgui");
         CHECK(LauncherLoad("accent=2\nui_backend=OkayUI\ntheme=1\n") == "okayui");      // other keys around it, case ignored
         CHECK(LauncherLoad("ui_backend=garbage\n").empty());                           // a damaged line does not pick a backend
-        CHECK(Resolve(nullptr, LauncherLoad("ui_backend=garbage\n"), true) == Backend::ImGui);
+        CHECK(Resolve(nullptr, LauncherLoad("ui_backend=garbage\n"), true, true) == Backend::ImGui);
     }
     {   // the editor's persistence
         CHECK(EditorLoad(EditorSave("")).empty());
         CHECK(EditorSave("okayui").find("uibackend 1") != std::string::npos && EditorLoad(EditorSave("okayui")) == "okayui");
         CHECK(EditorLoad(EditorSave("imgui")) == "imgui");
         CHECK(EditorLoad("settingsver 3\nuibackend 7\n") == "imgui");                  // any number but 1 is Dear ImGui
-        CHECK(Resolve(nullptr, EditorLoad("settingsver 3\n"), true) == Backend::ImGui); // an old file with no key: the default
+        CHECK(Resolve(nullptr, EditorLoad("settingsver 3\n"), true, true) == Backend::ImGui); // an old file with no key: the default
     }
     TEST_MAIN_RESULT();
 }

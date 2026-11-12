@@ -1563,6 +1563,12 @@ target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
+# The launcher's network-input rules (launcher/NetSafety.hpp): Content-Length parsing, the download cap, GIF dims, public-hosts-only link previews. Header-only: no SDL, no network.
+add_executable(test_launcher_net_safety test_launcher_net_safety.cpp)
+target_compile_features(test_launcher_net_safety PRIVATE cxx_std_17)
+target_include_directories(test_launcher_net_safety PRIVATE ${PROJECT_SOURCE_DIR}/launcher)
+add_test(NAME launcher_net_safety COMMAND test_launcher_net_safety)
+
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)
 target_compile_features(test_app_restart PRIVATE cxx_std_17)
@@ -1805,6 +1811,12 @@ if(SDL2_FOUND)
     target_link_libraries(test_accessibility_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_accessibility_render PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME accessibility_render COMMAND test_accessibility_render)
+    # The launcher's voice-note clip (launcher/VoiceClip.hpp): SDL's WAV buffer is freed once, at conversion or when the clip goes.
+    add_executable(test_launcher_voice_clip test_launcher_voice_clip.cpp)
+    target_compile_features(test_launcher_voice_clip PRIVATE cxx_std_17)
+    target_link_libraries(test_launcher_voice_clip PRIVATE ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_launcher_voice_clip PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/launcher)
+    add_test(NAME launcher_voice_clip COMMAND test_launcher_voice_clip)
 else()
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()

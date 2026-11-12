@@ -6,9 +6,12 @@
 // It looks for OkayEngine.exe (editor) and OkaySpacePlayer.exe (runtime)
 // sitting next to it, and launches them. Built with Dear ImGui + SDL2.
 #define SDL_MAIN_HANDLED
+#include <climits>
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
+#include "VoiceClip.hpp"   // a decoded voice note; frees SDL's WAV buffer (tests/test_launcher_voice_clip.cpp)
+#include "NetSafety.hpp"   // Content-Length parsing, download cap, link-preview host check, GIF dims (tests/test_launcher_net_safety.cpp)
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
@@ -441,7 +444,8 @@ long long HeadSize(const std::string& url) {
         std::string low = line;
         for (char& c : low) c = (char)std::tolower((unsigned char)c);
         if (low.rfind("content-length:", 0) == 0) {
-            try { total = std::stoll(line.substr(15)); } catch (...) {}
+            long long v = 0;
+            if (okaynet::ParseContentLength(line, v)) total = v;
         }
     }
     f.close(); fs::remove(hdr, ec);
@@ -474,8 +478,10 @@ int DlWorker(void* data) {
     set([&]{ d->total = total; });
 
     std::error_code ec; fs::remove(d->part, ec);
-    if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
-    std::string cmd = "curl -L -s -f -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
+    // A listing or chat link may point at anything: refuse a file that says it is over the cap, and cap the transfer too.
+    if (!ShellSafeUrl(d->url) || !okaynet::DownloadAllowed(total)) { set([&]{ d->status = 3; }); return 0; }
+    std::string cmd = "curl -L -s -f --max-filesize " + std::to_string(okaynet::kMaxDownloadBytes) +
+                      " -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
     Proc p = SpawnHidden(cmd);
     if (!p.valid()) { set([&]{ d->status = 3; }); return 0; }
     set([&]{ d->proc = p; });
@@ -491,11 +497,17 @@ int DlWorker(void* data) {
             return 0;
         }
         long long got = FileSizeSafe(d->part);
+        if (okaynet::DownloadOverCap(got)) {   // a server that sent no length: stop it once it passes the cap
+            ProcKill(&p);
+            fs::remove(d->part, ec);
+            set([&]{ d->status = 3; d->proc = Proc{}; });
+            return 0;
+        }
         set([&]{ d->received = got; });
         okay::platform::DelayMs(200);
     }
     long long got = FileSizeSafe(d->part);
-    if (code == 0 && got > 0) {
+    if (code == 0 && got > 0 && !okaynet::DownloadOverCap(got)) {
         fs::remove(d->dest, ec);
         fs::rename(d->part, d->dest, ec);
         set([&]{ d->received = got; if (d->total <= 0) d->total = got; d->status = ec ? 3 : 2; d->proc = Proc{}; });
@@ -685,16 +697,8 @@ long long RemoteSize(const std::string& url) {
         // Case-insensitive "content-length:"; keep the LAST one (after redirects).
         std::string low = line;
         for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
-        auto p = low.find("content-length:");
-        if (p != std::string::npos) {
-            long long v = 0; bool any = false;
-            for (std::size_t i = p + 15; i < line.size(); ++i) {
-                char d = line[i];
-                if (d >= '0' && d <= '9') { v = v * 10 + (d - '0'); any = true; }
-                else if (any) break;
-            }
-            if (any) sz = v;
-        }
+        long long v = 0;
+        if (okaynet::ParseContentLength(line, v)) sz = v;
     }
     f.close(); fs::remove(hf, ec);
     return sz;
@@ -713,18 +717,18 @@ int DlMonitorThread(void* p) {
 }
 bool DownloadProgress(const std::string& url, const fs::path& out) {
     SDL_AtomicSet(&g_upBytesNow, 0);
-    SDL_AtomicSet(&g_upBytesTotal, (int)RemoteSize(url));   // 0 if unknown
+    SDL_AtomicSet(&g_upBytesTotal, (int)std::min<long long>(RemoteSize(url), INT_MAX));   // 0 if unknown
     DlMonitor d; d.url = url; d.out = out;
     SDL_AtomicSet(&d.done, 0); SDL_AtomicSet(&d.ok, 0);
     SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", &d);
     while (SDL_AtomicGet(&d.done) == 0) {
         std::error_code ec; auto sz = fs::file_size(out, ec);
-        SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
+        SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)std::min<unsigned long long>((unsigned long long)sz, INT_MAX));
         okay::platform::DelayMs(90);
     }
     SDL_WaitThread(th, nullptr);
     std::error_code ec; auto sz = fs::file_size(out, ec);
-    SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
+    SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)std::min<unsigned long long>((unsigned long long)sz, INT_MAX));
     return SDL_AtomicGet(&d.ok) == 1;
 }
 
@@ -2866,6 +2870,22 @@ static LinkPreview ParseLinkPreview(const std::string& url, const std::string& h
     if (!lp.title.empty()) lp.state = 1;
     return lp;
 }
+// Resolves a host for okaynet::IsPublicHost (every address it has, as text).
+static bool PublicHostResolver(const std::string& host, std::vector<std::string>& addrs) {
+#if defined(_WIN32)
+    static const bool wsa = [] { WSADATA w; return WSAStartup(MAKEWORD(2, 2), &w) == 0; }();
+    if (!wsa) return false;
+#endif
+    addrinfo hints{}; hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
+    addrinfo* res = nullptr;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0 || !res) return false;
+    for (addrinfo* a = res; a; a = a->ai_next) {
+        char buf[NI_MAXHOST];
+        if (getnameinfo(a->ai_addr, (socklen_t)a->ai_addrlen, buf, sizeof buf, nullptr, 0, NI_NUMERICHOST) == 0) addrs.push_back(buf);
+    }
+    freeaddrinfo(res);
+    return !addrs.empty();
+}
 static int LinkPreviewWorker(void*) {
     while (true) {
         std::string url;
@@ -2876,14 +2896,36 @@ static int LinkPreviewWorker(void*) {
         LinkPreview lp; lp.state = 2;
         if (ShellSafeUrl(url)) {
             std::error_code ec;
-            const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + std::to_string(std::hash<std::string>{}(url)) + ".html");
+            const std::string tag = std::to_string(std::hash<std::string>{}(url));
+            const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + tag + ".html");
+            const fs::path hdr = fs::temp_directory_path(ec) / ("okay_lp_" + tag + ".hdr");
             fs::remove(tmp, ec);
-            std::string cmd = "curl -L -s -f -m 8 --max-filesize 3000000 -r 0-262143 "
-                              "-A \"Mozilla/5.0 (compatible; OkaySpace link preview)\" -o \"" + tmp.string() + "\" \"" + url + "\"";
+            // A chat link must not make the launcher read the player's own machine or network: every hop (the link,
+            // then each redirect, at most 5) has to be a public host. curl does not follow redirects itself.
+            std::string cur = url; bool fetched = false;
+            for (int hop = 0; hop < 5; ++hop) {
+                if (!ShellSafeUrl(cur) || !okaynet::IsPublicUrl(cur, PublicHostResolver)) break;
+                fs::remove(hdr, ec);
+                std::string cmd = "curl -s -f -m 8 --max-filesize 3000000 -r 0-262143 "
+                                  "-A \"Mozilla/5.0 (compatible; OkaySpace link preview)\" -D \"" + hdr.string() +
+                                  "\" -o \"" + tmp.string() + "\" \"" + cur + "\"";
 #if !defined(_WIN32)
-            cmd += " 2>/dev/null";
+                cmd += " 2>/dev/null";
 #endif
-            RunCmd(cmd, true);
+                RunCmd(cmd, true);
+                std::string location;
+                { std::ifstream hf(hdr); std::string line;
+                  while (std::getline(hf, line)) {
+                      std::string low = line; for (char& c : low) c = (char)std::tolower((unsigned char)c);
+                      if (low.rfind("location:", 0) == 0) location = line.substr(9);
+                  } }
+                if (location.empty()) { fetched = true; break; }
+                fs::remove(tmp, ec);
+                cur = okaynet::RedirectTarget(cur, location);
+                if (cur.empty()) break;
+            }
+            fs::remove(hdr, ec);
+            if (!fetched) fs::remove(tmp, ec);
             std::ifstream f(tmp, std::ios::binary);
             if (f) {
                 std::string html((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -4892,49 +4934,8 @@ static void FinishVoiceRecord(bool send) {
 }
 
 // Playback: decoded clips by URL + one output device for the clip playing now.
-static constexpr int kVoiceBars = 30;
-struct VoiceClip {
-    bool ok = false;                 // decoded (false = unplayable; don't retry)
-    Uint8* pcm = nullptr; Uint32 len = 0;
-    SDL_AudioSpec spec{};
-    float secs = 0, bytesPerSec = 1;
-    float bars[kVoiceBars] = {};
-    std::vector<Uint8> owned;        // the converted samples when the file was not native 16-bit / float
-    std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
-};
+using okay::voice::VoiceClip; using okay::voice::kVoiceBars;
 static std::map<std::string, VoiceClip> g_voiceClips;
-// The platform audio layer plays native-endian 16-bit or float samples. A clip in any other
-// PCM layout (8-bit, 32-bit integer, big-endian) is converted to 16-bit once, at load.
-static void VoiceClipToPlayable(VoiceClip& c) {
-    const SDL_AudioFormat f = c.spec.format;
-    if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
-    const int width = SDL_AUDIO_BITSIZE(f) / 8;
-    if (width < 1 || width > 4) { c.len = 0; return; }
-    const std::size_t n = c.len / (std::size_t)width;
-    std::vector<Uint8> out(n * 2);
-    for (std::size_t i = 0; i < n; ++i) {
-        const Uint8* p = c.pcm + i * (std::size_t)width;
-        float v = 0.0f;   // -1..1
-        if (SDL_AUDIO_ISFLOAT(f)) {
-            Uint32 u = 0;
-            for (int b = 0; b < 4; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? 3 - b : b] << (8 * b);
-            std::memcpy(&v, &u, 4);
-        } else if (width == 1) {
-            v = SDL_AUDIO_ISSIGNED(f) ? (float)(Sint8)p[0] / 128.0f : ((float)p[0] - 128.0f) / 128.0f;
-        } else {
-            Uint32 u = 0;
-            for (int b = 0; b < width; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? width - 1 - b : b] << (8 * b);
-            const long long top = 1ll << (8 * width - 1);
-            long long sv = SDL_AUDIO_ISSIGNED(f) ? (long long)(Sint32)(u << (32 - 8 * width)) >> (32 - 8 * width) : (long long)u - top;
-            v = (float)sv / (float)top;
-        }
-        const Sint16 s16 = (Sint16)std::clamp(v * 32767.0f, -32768.0f, 32767.0f);
-        std::memcpy(out.data() + i * 2, &s16, 2);
-    }
-    c.owned = std::move(out);
-    c.pcm = c.owned.data(); c.len = (Uint32)c.owned.size();
-    c.spec.format = AUDIO_S16SYS;
-}
 static std::unique_ptr<okay::platform::AudioDevice> g_playDev;
 static std::string       g_playUrl;          // clip loaded on g_playDev
 static bool              g_playPaused = false;
@@ -5008,8 +5009,7 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     std::error_code ec;
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
-        if (!failed && SDL_LoadWAV(cache.string().c_str(), &c.spec, &c.pcm, &c.len)) {
-            VoiceClipToPlayable(c);
+        if (!failed && okay::voice::VoiceClipLoadFile(c, cache.string())) {
             const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
             c.bytesPerSec = (float)c.spec.freq * bps;
             c.secs = c.len / c.bytesPerSec;
@@ -15660,10 +15660,7 @@ static int GifSearchWorker(void*) {
                         g.full = urlIn("\"gif\":");
                         g.desc = okay::Messages::Field(o, "content_description");
                         std::size_t tp = o.find("\"tinygif\"");
-                        if (tp != std::string::npos) {
-                            std::size_t d = o.find("\"dims\"", tp);
-                            if (d != std::string::npos) std::sscanf(o.c_str() + o.find('[', d), "[%d,%d]", &g.w, &g.h);
-                        }
+                        if (tp != std::string::npos) okaynet::ParseGifDims(o, tp, g.w, g.h);
                         if (!g.preview.empty()) out.push_back(g);
                     }
                 } else if (c == ']' && depth == 0) break;

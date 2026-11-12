@@ -468,6 +468,9 @@ may overshoot 0..1 (Back, Elastic, a bezier with y outside it).
 
 `upper lower trim trim_start trim_end capitalize title_case str_reverse`
 `substr char_at replace split join repeat pad_left pad_right format`.
+`repeat`, `pad_left` and `pad_right` cap their result at 1 MiB (1048576 bytes); a
+larger count gives a string of that length. A `format` index beyond the arguments
+(or too large to parse) is an empty field.
 
 ### Friendly aliases
 Intuitive names for common builtins so code reads naturally:

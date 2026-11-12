@@ -128,6 +128,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -166,6 +167,16 @@ namespace okay {
 namespace {
 
 using Value = vs::VsValue;
+
+// Script string builtins that take a count (repeat, pad_left, pad_right) never build more than this
+// many bytes, however large the count: one script line must not hang a frame or exhaust memory.
+static constexpr std::size_t kMaxBuiltinString = std::size_t(1) << 20;
+// A script number as a count in [0, kMaxBuiltinString]: NaN and negatives are 0, huge values clamp.
+static std::size_t BuiltinCount(float f) {
+    if (!(f > 0.0f)) return 0;
+    if (f >= (float)kMaxBuiltinString) return kMaxBuiltinString;
+    return (std::size_t)f;
+}
 
 static FirstPersonHands::HandSide* FpSide(FirstPersonHands* h, const std::string& p, std::string& rest) {
     if (!h) return nullptr;
@@ -8414,29 +8425,34 @@ struct OkayScriptVM::Impl {
             }
             return Value{s};
         };
-        // Repeat a string n times ("=" * 10 style separators/bars).
+        // Repeat a string n times ("=" * 10 style separators/bars). The result is capped
+        // at 1 MiB (kMaxBuiltinString) so a typo'd count cannot hang or exhaust memory.
         b["repeat"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString(), out;
-            int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
-            for (int i = 0; i < n; ++i) out += s;
+            const std::size_t n = a.size() > 1 ? BuiltinCount(a[1].AsFloat()) : 0;
+            if (s.empty() || n == 0) return Value{out};
+            const std::size_t times = std::min(n, kMaxBuiltinString / s.size() + 1);
+            out.reserve(std::min(kMaxBuiltinString, s.size() * times));
+            for (std::size_t i = 0; i < times; ++i) out += s;
+            if (out.size() > kMaxBuiltinString) out.resize(kMaxBuiltinString);
             return Value{out};
         };
-        // pad_left("7", 3)      -> "  7"   ;  pad_left("7", 3, "0") -> "007"
+        // pad_left("7", 3)      -> "  7"   ;  pad_left("7", 3, "0") -> "007"   (width capped at 1 MiB)
         b["pad_left"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            const std::size_t width = a.size() > 1 ? BuiltinCount(a[1].AsFloat()) : 0;
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
-            while ((int)s.size() < width) s.insert(s.begin(), fill);
+            if (s.size() < width) s.insert(0, width - s.size(), fill);
             return Value{s};
         };
         b["pad_right"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            const std::size_t width = a.size() > 1 ? BuiltinCount(a[1].AsFloat()) : 0;
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
-            while ((int)s.size() < width) s += fill;
+            if (s.size() < width) s.append(width - s.size(), fill);
             return Value{s};
         };
         // format("hp={} of {}", 7, 9) -> "hp=7 of 9" (sequential), and also
@@ -8455,8 +8471,10 @@ struct OkayScriptVM::Impl {
                         } else {
                             bool num = !inside.empty();
                             for (char ch : inside) if (!std::isdigit((unsigned char)ch)) num = false;
-                            if (num) { std::size_t idx = (std::size_t)std::stoi(inside) + 1;
-                                       if (idx < a.size()) out += a[idx].AsString(); }
+                            if (num) {   // an index too big for size_t is an empty field, not an exception
+                                std::size_t idx = 0;
+                                const auto r = std::from_chars(inside.data(), inside.data() + inside.size(), idx);
+                                if (r.ec == std::errc() && idx < a.size() - 1) out += a[idx + 1].AsString(); }
                             else { out += '{'; out += inside; out += '}'; }   // leave literal
                         }
                         i = close;

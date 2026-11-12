@@ -184,13 +184,14 @@ hardening items are merged; nobody is touching it now.
   - 39.9.3 Visual script nodes - `VisualScript/NodesExtra` - the load-scene node refuses unsafe names; `Components/ActionList` does the same for `save_prefs` and scene actions
   - 39.9.4 Safe network spawns - `Net/AntiCheat` - only registered prefabs may be network-spawned (#351)
   - 39.9.5 Launcher shell guard - `launcher/main.cpp` (L233) - `ShellSafeUrl` allows only plain http(s) URL characters before a URL reaches curl, wget, PowerShell or cmd
+  - 39.9.6 Launcher network input - `launcher/NetSafety.hpp` - Content-Length parsed with saturation, a 2 GiB cap on marketplace and chat downloads (advertised size and bytes on disk), GIF search sizes read inside their bounds, link previews only from public hosts
 - **Code:** `Core/SaveData`, `Scripting/OkayScriptVM`, `VisualScript/NodesExtra`, `Components/ActionList`, `launcher/main.cpp`
 - **API:** `Save::IsSafeRelative`, `ShellSafeUrl`
 - **Editor:** none
 - **Docs:** `docs/anticheat.md` (spawn allowlist)
-- **Tests:** `script_paths`, `net_anticheat`
+- **Tests:** `script_paths`, `net_anticheat`, `launcher_net_safety`
 - **Status:** Works - `script_paths` runs scripts against absolute and `..` names in a temp folder
-- **Open:** no test names `ShellSafeUrl` (launcher code, no unit test); paths inside built-in components other than scripts and actions were not audited here
+- **Open:** no test names `ShellSafeUrl` (launcher code, no unit test); link previews check the host before each fetch but curl resolves it again, so a DNS answer that changes in between is not caught; paths inside built-in components other than scripts and actions were not audited here
 - **Related:** 17.11, 13.1, 1.7
 - **Words:** path traversal, absolute path, .., IsSafeRelative, script safety, sandbox, save folder, safe path, ShellSafeUrl
 - **Seen as:** a script's file call returns false or does nothing for an absolute path; a downloaded game tries to write outside its folder

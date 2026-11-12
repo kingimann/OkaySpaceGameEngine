@@ -251,6 +251,23 @@ int main() {
         CHECK(tr->text == "HP 3/10 #007");
     }
 
+    // --- repeat / pad_left / pad_right are capped; format() survives a huge index ---
+    {
+        Scene s("UCaps"); s.physicsEnabled = false;
+        GameObject* go = s.CreateGameObject("Caps");
+        auto* tr = go->AddComponent<TextRenderer>();
+        auto* sc = go->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "void Start() {\n"
+            "    set_text(to_str(str_len(repeat(\"x\", 999999999))) + \",\" + to_str(str_len(pad_left(\"x\", 999999999, \"0\"))) + \",\" +\n"
+            "             to_str(str_len(pad_right(\"x\", 999999999))) + \",\" + to_str(str_len(repeat(\"ab\", 3))) + \",\" +\n"
+            "             format(\"[{99999999999999}][{0}]\", \"a\"));\n"
+            "}\n"));
+        s.Start();
+        // 1 MiB cap on each; normal use is unchanged; a huge format index is an empty field.
+        CHECK(tr->text == "1048576,1048576,1048576,6,[][a]");
+    }
+
     // --- Mathf helpers + Color.Lerp ------------------------------------
     {
         Scene s("UMathf"); s.physicsEnabled = false;

@@ -211,7 +211,9 @@ What's supported:
   `set_tint` (which also still take separate `r, g, b[, a]` numbers).
 - **String formatting**: `format("HP {0}/{1}", hp, max)` (positional) or
   `format("HP {} / {}", hp, max)` (sequential), plus `pad_left(s, width[, ch])`
-  and `pad_right(s, width[, ch])` — also as `string.Format(...)`.
+  and `pad_right(s, width[, ch])` — also as `string.Format(...)`. `repeat`,
+  `pad_left` and `pad_right` never build more than 1 MiB (1048576 bytes), whatever the
+  count; a `format` index too large to exist (`{99999999999999}`) is an empty field.
 - **More Mathf**: `Mathf.Clamp01(x)`, `Mathf.InverseLerp(a, b, v)`,
   `Mathf.Repeat(t, len)`, `Mathf.DeltaAngle(a, b)`, `Mathf.LerpAngle(a, b, t)`,
   `Mathf.Approximately(a, b)` (and `clamp01` / `inverse_lerp` / `delta_angle` /

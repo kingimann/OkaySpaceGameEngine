@@ -2192,6 +2192,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - launcher link (37.6, 42.6.5)
 - launcher look (12.7, 40.2)
 - Launcher look, theme and fonts (40.2)
+- Launcher network input (39.9.6)
 - Launcher shell and updater (17.1)
 - Launcher shell guard (39.9.5)
 - Launcher views (16.9.3)

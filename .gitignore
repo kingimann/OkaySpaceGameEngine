@@ -40,3 +40,6 @@ winbuild.log
 # Mixamo sample rigs fetched by GameObject > Spawn Mixamo Player
 mixamo-cache/
 __pycache__/
+
+# fixtures are checked in
+!tests/data/models/*.obj

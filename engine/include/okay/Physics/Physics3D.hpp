@@ -166,7 +166,7 @@ public:
 
     // ---- Debug view ----------------------------------------------------
     /// Forget last frame's debug rays / contacts (Scene::Update calls this).
-    void BeginDebugFrame() { m_debugRays.clear(); m_debugContacts.clear(); }
+    void BeginDebugFrame();
     /// Record a query ray for the debug overlay. A no-op unless the debug view is
     /// collecting with "rays from scripts" on; scripts, visual scripts and Actions
     /// call it after their casts. `radius` > 0 marks a sphere-style cast.

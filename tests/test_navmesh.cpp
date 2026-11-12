@@ -87,9 +87,9 @@ int main() {
             CHECK(std::fabs(p.y) < 0.05f);
         }
         // Nearest point and height sampling.
-        Vec3 near;
-        CHECK(mesh && mesh->SamplePosition({0, 0, 0}, 2.0f, near));   // inside the wall: snaps out of it
-        CHECK(std::fabs(near.x) > 0.8f);
+        Vec3 nearPt;
+        CHECK(mesh && mesh->SamplePosition({0, 0, 0}, 2.0f, nearPt));   // inside the wall: snaps out of it
+        CHECK(std::fabs(nearPt.x) > 0.8f);
         CHECK_NEAR(mesh ? mesh->SampleHeight({3, 0.5f, 3}, 99.0f) : 99.0f, 0.0f, 0.05f);
     }
 

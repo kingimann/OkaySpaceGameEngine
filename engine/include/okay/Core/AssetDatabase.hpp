@@ -90,6 +90,8 @@ std::vector<FoundRef> ExtractTextRefs(const std::string& text);
 
 struct ScanOptions {
     bool createMetas = true;           ///< write a `.okaymeta` for assets that have none
+    bool indexUnmetaed = false;        ///< with createMetas off: still index assets that have no meta (in memory only, nothing is written);
+                                       ///< they get a GUID that lasts for the session and a meta appears only when something is stored (labels, settings, EnsureMeta)
     bool detectMoves = true;           ///< follow moved / renamed files by GUID, hash and name
     bool matchByName = true;           ///< last resort: one orphan meta + one new file with the same name and type
     bool verifyHashes = true;          ///< hash every file on a first scan (false: trust a meta's hash when the size matches)
@@ -109,11 +111,12 @@ struct ScanReport {
     int scanned = 0;                   ///< asset files found
     int created = 0;                   ///< metas written for new assets
     int upgraded = 0;                  ///< metas rewritten from an older layout
-    int unmetaed = 0;                  ///< assets left without a meta (createMetas off)
+    int unmetaed = 0;                  ///< assets without a meta on disk (createMetas off): left out, or indexed in memory (indexUnmetaed)
     std::vector<Move> moved;
     std::vector<Duplicate> duplicates; ///< copied metas: the copy got a new GUID
     std::vector<std::string> orphanMetas;   ///< metas whose asset is gone (project paths of the assets)
     std::vector<std::string> removed;  ///< assets that were indexed and are gone
+    bool foldersChanged = false;       ///< a folder (even an empty one) appeared or disappeared since the last scan
     std::vector<ReimportEvent> reimports;
     std::vector<std::string> warnings;
     std::string ToString() const;
@@ -195,6 +198,13 @@ public:
     const AssetRecord* Find(const std::string& guidOrPath) const;
     /// Every record, sorted by path.
     std::vector<const AssetRecord*> All() const;
+    /// Goes up whenever the index changed: an asset appeared, vanished, moved, changed content, labels or settings, a
+    /// reference started or stopped resolving, or a folder appeared or vanished. An unchanged scan leaves it alone, so a
+    /// consumer (an asset browser) can keep what it built from the database until this number moves.
+    std::uint64_t Revision() const { return m_revision; }
+    /// Every folder the last Scan walked (project paths, '/' separators, no trailing slash, sorted), empty folders
+    /// included; hidden folders and `ignoreDirs` are not listed. An asset browser builds its folder tree from this.
+    const std::vector<std::string>& Folders() const { return m_folders; }
     /// Root + project path; "" for an unknown GUID.
     std::string AbsolutePath(const Guid& guid) const;
     /// A path (absolute, or relative to the root) as a normalised project path; "" if it is outside the root.
@@ -211,6 +221,9 @@ public:
     /// Rewrite text references that still use the old path of a moved asset. Returns how
     /// many references were rewritten; `changedFiles` gets the project paths of the files.
     int FixStaleReferences(std::vector<std::string>* changedFiles = nullptr);
+    /// Write the meta file of an asset that only exists in memory (see ScanOptions::indexUnmetaed), keeping its
+    /// GUID. True when the asset has a meta afterwards. Does nothing for one that already has one.
+    bool EnsureMeta(const Guid& guid, std::string* error = nullptr);
     /// Remove the metas of orphaned assets from disk. Returns how many.
     int RemoveOrphanMetas();
 
@@ -312,6 +325,9 @@ private:
     std::map<Guid, Vanished> m_vanished;                        // indexed once, file gone (for hash matching)
     std::map<Guid, std::string> m_orphans;                      // meta on disk, no asset: guid -> asset project path
     std::vector<ExtractorRec> m_extractors;
+    std::vector<std::string> m_folders;                         // from the last scan walk, sorted
+    std::uint64_t m_revision = 0, m_signature = 0;
+    std::uint64_t IndexSignature() const;
     std::uint64_t m_depsGeneration = 1;
     std::vector<ReimportEvent> m_pending;                       // since the last TakeReimports
     std::vector<ReimportEvent> m_fresh;                         // not yet delivered to the callback

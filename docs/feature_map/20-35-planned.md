@@ -8,32 +8,32 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 20. Asset management (Critical)
 
 ### 20.1 Asset browser
-- **What:** The editor window where you find, preview, organise and use project files. Today that is the Project panel, a file-system browser built into the editor; it does not use the new asset database yet.
+- **What:** The editor window where you find, preview, organise and use project files. Today that is the Project panel; its listing, search, filters, counts, folder tree, dependency lookups and pictures come from the asset database and the thumbnail cache.
 - **Parts:**
   - 20.1.1 Folder tree, grid and list views - `editor/main.cpp` - browse the Assets folder with breadcrumb, back/forward, favourite folders, tile size and sort saved in `okay_projectview.txt`
   - 20.1.2 Search and smart filters - `editor/main.cpp` - "All Models/Textures/Audio/...", Recently Changed, Unused Assets, colour labels; search words `t:model`, `l:red`, `ext:png`
   - 20.1.3 Asset actions - `editor/main.cpp` - create script/scene/material/prefab, import files, rename (F2), delete with confirm, copy/cut/paste, multi-select, drag assets onto Inspector fields or into the scene
-  - 20.1.4 Details strip and previews - `editor/main.cpp` - preview, size, dimensions, path, "used in scene" and Find References In Scene for the selected asset
+  - 20.1.4 Details strip and previews - `editor/main.cpp` - preview, size, dimensions, path, GUID, dependency and user counts, tags, a broken-reference warning, "used in scene", Find References, Show Dependencies and Find References In Scene for the selected asset
   - 20.1.5 Asset Manager window - `editor/main.cpp` - lists Marketplace downloads (`.okayasset` sidecars written by the launcher) and imports them into the open project
-  - 20.1.6 Database search model (not wired to a window) - `Core/AssetDatabase` - `Search(AssetQuery)` with text, type, label, folder, recent, used-by filters, sort and paging
+  - 20.1.6 Database search model - `Core/AssetDatabase`, `editor/ProjectBrowser.*` - `Search(AssetQuery)` (folder, label, recent, unused, used-by, depends-on) behind `Browser::List`; the panel adds name, type-word and extension matching on top
 - **Code:** `editor/main.cpp`, `Core/AssetDatabase`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`
 - **API:** `AssetDatabase::Search`, `AssetQuery`, `AssetPage`, `CountByType`, `AllLabels`; editor: View > Panels > Project and Asset Manager
 - **Editor:** Project panel (`DrawProject`), Asset Manager window (`DrawAssetManager`)
 - **Docs:** `docs/asset_database.md`, `docs/editor.md`
-- **Tests:** `asset_database` (database side only; the Project panel has no automated test)
-- **Status:** Partial - the Project panel is a full-featured file browser (read in code), but it scans the disk itself and ignores `AssetDatabase`.
-- **Exists today:** Project panel in `editor/main.cpp` (about 1,200 lines: tree, grid and list, thumbnails, per-project colour labels, favourites, an unused-asset scan that reads scene text, clipboard, rename, delete confirm). Asset Manager window for Marketplace downloads. `Core/AssetDatabase` has the search, sort, paging and counts a browser needs (merged in #568, no caller outside tests).
+- **Tests:** `asset_database`, `project_panel`, `project_panel_db` (the model: listing, search, references, thumbnails, a 5,000-asset refresh)
+- **Status:** Partial - the Project panel is driven by `AssetDatabase` and `ThumbnailCache`; the rows below are what is still open.
+- **Exists today:** Project panel in `editor/main.cpp` and `editor/ProjectBrowser.*`: tree, grid and list from the database, search and type filters, colour labels, tags, favourites, Unused Assets from the dependency graph, clipboard, rename, delete confirm, info strip. Asset Manager window for Marketplace downloads.
 - **Work packages:**
   1. S - Own one `AssetDatabase` in `EditorState`, call `Scan` when a project opens and when the editor window regains focus; no UI change. Depends on: #568 (on main).
   2. M - Drive the Project panel's list, filters and counts from `AssetDatabase::Search` and `CountByType`, keeping the view prefs. Depends on: package 1.
   3. S - Replace the "Unused Assets" smart filter and "used in scene" text scan with `FindUnused` / `UsedBy`. Depends on: package 2.
   4. S - Add GUID, type, import settings summary and "Used by" list to the details strip. Depends on: package 2, 20.3.
-  5. M - Missing and stale references list with a Fix button (`FindMissing`, `FindStaleReferences`, `FixStaleReferences`). Depends on: package 1, 20.2.
-- **Open:** Two sources of truth for labels (the editor's own file vs `.okaymeta` labels); the panel re-lists the folder every 0.6 s instead of reacting to the database's reimport signal; no automated test for the panel; possible gap: the "Unused Assets" filter only reads files the editor knows how to scan (scenes, prefabs, materials, scripts, data), not dialogue or quest files.
+  5. Done - Broken References list (missing and stale) with a Fix button and undo (`Browser::MissingRefs`, `StaleRefs`, `FixStaleRefs`).
+- **Open:** Two sources of truth for labels (the editor's own colour labels in `.okaylabels` vs tags in `.okaymeta`); changes outside the editor are seen by polling the incremental scan (2 s or more), there is no file watcher; Unused Assets reads the references the database extracts (scenes, prefabs, materials, scripts, clips, dialogue, quests and the other text formats), not paths a script builds at run time; the window has no automated UI test (the model, including the missing and stale lists and Fix, is tested).
 - **Related:** 20.2, 20.3, 20.5, 15.4, 3.6
 - **Words:** Project panel, asset browser, content browser, Assets folder, favorites, smart filters, Recently Changed, Unused Assets, asset labels, Asset Manager, Marketplace downloads, okayasset, AssetQuery
-- **Seen as:** cannot find a texture or model; Project panel slow in a huge folder; labels or favourites vanish; downloaded asset not in my project; "unused" list shows things that are used
-- **Ask me like:** "make the Project panel use the asset database"; "show which scenes use this texture in the details strip"
+- **Seen as:** cannot find a texture or model; labels or favourites vanish; downloaded asset not in my project; "unused" list shows things that are used
+- **Ask me like:** "list the assets that depend on this prefab"; "show a Fix button for stale references"
 
 ### 20.2 Dependencies and references
 - **What:** Knowing which assets use which other assets, so a build ships exactly what a game needs and a moved or deleted file shows up before it breaks a scene.
@@ -115,22 +115,22 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 20.5 Thumbnails
 - **What:** Small preview pictures for assets in the browser, cached so the grid stays fast.
 - **Parts:**
-  - 20.5.1 Editor thumbnails today - `editor/main.cpp` - images, materials (a shaded ball), prefabs, scenes, models and primitives are rendered into small pictures and cached in memory
-  - 20.5.2 Thumbnail cache (not wired) - `Core/ThumbnailCache` - memory plus disk cache keyed by GUID and content hash, generators per type, placeholders, stats
+  - 20.5.1 Editor renderers - `editor/main.cpp` - prefabs, scenes, materials (a sphere), models and `.okaymesh` files are rendered into 128 px pictures by generators registered with the cache; primitives in the Modeling panel keep their own small cache
+  - 20.5.2 Thumbnail cache - `Core/ThumbnailCache`, `editor/ProjectBrowser.*` - memory plus disk cache keyed by GUID and content hash (a prefab, scene or material also by what it uses), generators per type, placeholders, stats; the Project panel and the Scene Manager use it
   - 20.5.3 Image generator and downscale - `Core/ThumbnailCache` - `ImageThumbnailGenerator`, area-weighted `BoxDownscale`
 - **Code:** `Core/ThumbnailCache`, `editor/main.cpp`
 - **API:** `ThumbnailCache::Get`, `AddGenerator`, `Invalidate`, `Options::diskDir`
 - **Editor:** Project panel tiles and details strip
 - **Docs:** `docs/asset_database.md`
-- **Tests:** `asset_database`
-- **Status:** Partial - the editor has working thumbnails of its own; the shared disk cache is written and tested but unused.
-- **Exists today:** `GetThumb`, `GetPrefabThumb`, `GetSceneThumb`, `GetModelThumb` and `GetPrimitiveThumb` in `editor/main.cpp` render previews on demand (scene and prefab previews instantiate into a throwaway scene with scripts off). `ThumbnailCache` adds a disk cache and failure memory.
+- **Tests:** `asset_database`, `project_panel_db`
+- **Status:** Partial - the Project panel gets every picture from the shared cache (kept on disk, made again when the content changes); pictures are made on the main thread, inside a frame time budget.
+- **Exists today:** `Browser::Thumb` and the generators in `editor/main.cpp` (scene and prefab previews instantiate into a throwaway scene with scripts off); `GetPrimitiveThumb` still serves the Modeling panel. `ThumbnailCache` adds the disk cache, failure memory and the audio waveform generator.
 - **Work packages:**
   1. M - Project panel gets its pictures from `ThumbnailCache`, with the editor's renderers registered as generators for prefab, scene, model and mesh. Depends on: 20.1 package 2.
   2. S - Disk cache under `<project>/.okay/thumbs` (hidden so scans skip it). Depends on: package 1.
   3. S - Invalidate on `SourceChanged` so an edited file refreshes its picture. Depends on: package 1, 20.4.
   4. S - Generate thumbnails off the UI thread or spread over frames for big folders. Depends on: package 1.
-- **Open:** the editor's current thumbnails are rebuilt each session (memory only); a scene thumbnail loads the whole scene; no thumbnail for audio (waveform) or fonts.
+- **Open:** pictures are made on the main thread inside a time budget, not on a worker thread (packages 1 to 3 are done; package 4 is the budget, not a thread); a scene thumbnail loads the whole scene; no thumbnail for fonts or data assets.
 - **Related:** 20.1, 15.4, 3.5
 - **Words:** thumbnail, preview picture, asset preview, ThumbnailCache, tile icon, model preview, prefab preview
 - **Seen as:** blank tiles; slow first open of a folder full of models; stale preview after editing a texture

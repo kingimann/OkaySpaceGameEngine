@@ -537,7 +537,7 @@ const TipRow kTips[] = {
     {"Rigidbody3D.continuousCollision", "Catch fast objects so they do not pass through thin walls."},
     {"BoxCollider2D.size", "Width and height of the box."},
     {"BoxCollider3D.size", "Width, height and depth of the box."},
-    {"MeshCollider3D.size", "Size of the collision shape."},
+    {"MeshCollider3D.size", "Fallback box size, used only when there is no mesh with triangles. Otherwise the exact triangles collide."},
     {"CircleCollider2D.radius", "How big the circle is."},
     {"SphereCollider3D.radius", "How big the sphere is."},
     {"CapsuleCollider2D.size", "Width and height of the capsule."},

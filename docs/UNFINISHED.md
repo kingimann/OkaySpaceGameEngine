@@ -34,6 +34,18 @@ The feature map currently has **124** rows that are Partial or Planned.
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 
+## Planned: visual-script core upgrade
+
+Not started. Today graphs can call functions, have variable scopes, and use Broadcast / On Event and the list builtins; these steps build on that. One at a time, each shipped only when finished, tested and usable in the editor:
+
+1. A better variable system for all types: vectors, colors, structs, objects, arrays and maps, with local, graph, object and global scopes and defaults editable in the Inspector.
+2. A full set of array and map nodes: add, remove, insert, find, sort, for each, length, with typed element pins.
+3. Custom events with typed parameters, and delegates (bind, unbind, call).
+4. Graphs talking to each other: call a function, fire an event or read a variable on another object's graph, with the graph checker flagging broken links.
+5. Custom function nodes: user-defined nodes with typed pins, reusable across graphs and listed in the palette.
+
+The text-script nodes below depend on this.
+
 ## Planned: text-script nodes in visual script
 
 Not started. These would let a visual-script graph run a short text script next to the normal nodes. All of it is our own code: no third-party Lua, Python or JavaScript runtime.

@@ -1,6 +1,6 @@
 # Our own UI toolkit: OkayUI replaces Dear ImGui
 
-Part of the plan in `docs/own_code_roadmap.md` (Dear ImGui row).
+Part of the plan in `docs/own_code_roadmap.md` (Dear ImGui row). Section 4 holds the current HAVE and GAP table by feature family and what the first gap-closing step built; sections 1 and 3 are the earlier per-function audit (rows closed since are marked "Done in step 1").
 
 **Decision (owner, approved): OkayUI (`okayui/`) is THE toolkit.** It slowly replaces Dear ImGui. The headless pieces that were first written as a separate library (`okay::imui`, branch `claude/own-imui-core`: a software rasteriser, a golden-image and synthetic-input test harness, behaviour tests, a fuzz test) are folded into OkayUI instead of living beside it as a second toolkit. There is exactly one own toolkit. The editor and launcher still use Dear ImGui and no ImGui call is changed by this work.
 
@@ -24,7 +24,7 @@ Style: one global singleton (single UI context, state in file-scope fixed arrays
 
 ### How it renders
 
-- Every widget appends to one fixed geometry batch: `SDL_Vertex` arrays (20,000 vertices, 30,000 32-bit indices) plus a second "overlay" batch (combo lists, tooltips, drag chip, toasts) that is appended after the main one. Quads, triangle fans for circles, rounded rectangles built from bars and corner fans. Nothing is anti-aliased.
+- Every widget appends to one fixed geometry batch: `SDL_Vertex` arrays (262,144 vertices, 393,216 32-bit indices since gap step 1; they were 20,000 and 30,000) plus a second "overlay" batch (combo lists, tooltips, drag chip, toasts) that is appended after the main one. Quads, triangle fans for circles, rounded rectangles built from bars and corner fans. Nothing is anti-aliased.
 - The batch is split into **spans**: an index offset plus a clip rectangle on/off plus a texture. `BeginChild`, the launcher-look window frame and `PushClipRect` create spans; images and fallback-font text switch the texture.
 - **SDL_Renderer backend** (`EndFrame(SDL_Renderer*)`): one `SDL_RenderGeometry` call per span under that span's clip rectangle. This is the path the player and editor use, on top of Dear ImGui's own SDL_Renderer.
 - **Direct3D 11 backend** (`EndFrameData` + `GetDrawData` + `D3D11Backend`): takes only the vertex and index arrays. **It ignores spans**, so scroll-region clipping, the TrueType atlas texture (the launcher look's text and its flat shapes all sample that texture) and images are not available on that path.
@@ -89,20 +89,20 @@ How much of that OkayUI covers today, counted over the 75 most used functions: 3
 | 8 | `Checkbox` | 713 | Done (the label is clickable) |
 | 9 | `Button` | 704 | Done (auto size; no size argument) |
 | 10 | `SetNextItemWidth` | 668 | Done (also `PushItemWidth`) |
-| 11 | `GetColorU32` | 577 | Missing (colours are RGBA bytes in `Theme`; no packed-colour helper) |
+| 11 | `GetColorU32` | 577 | Done in step 1 (`GetColorU32(Col, alpha)`, `RGBA`, `ColorMulAlpha`; section 4) |
 | 12 | `Dummy` | 535 | Done |
 | 13 | `PopID` | 393 | Done |
 | 14 | `PushStyleColor` | 392 | Partial (8 theme colours (`Col_*`), not the full ImGuiCol set) |
-| 15 | `GetWindowDrawList` | 365 | Missing (no public draw-list API for custom drawing (lines, circles, polygons, text at a point)) |
+| 15 | `GetWindowDrawList` | 365 | Done in step 1 (`GetWindowDrawList()` and the `AddXxx` and path calls; section 4) |
 | 16 | `PushID` | 361 | Done (int and string) |
-| 17 | `GetCursorScreenPos` | 346 | Missing (`GetItemRect` gives the last item only) |
+| 17 | `GetCursorScreenPos` | 346 | Done in step 1 |
 | 18 | `IsKeyPressed` | 343 | Partial (nine key edges in `Input`) |
 | 19 | `Separator` | 326 | Done |
-| 20 | `GetContentRegionAvail` | 323 | Missing |
-| 21 | `CalcTextSize` | 321 | Partial (`CalcTextWidth` (width only)) |
+| 20 | `GetContentRegionAvail` | 323 | Done in step 1 |
+| 21 | `CalcTextSize` | 321 | Done in step 1 (`CalcTextSize` returns width and line height) |
 | 22 | `PopStyleColor` | 298 | Done |
 | 23 | `TextUnformatted` | 294 | Done (`Text`) |
-| 24 | `SetCursorScreenPos` | 290 | Missing |
+| 24 | `SetCursorScreenPos` | 290 | Done in step 1 (one-shot placement of the next item) |
 | 25 | `TextColored` | 280 | Done (RGB bytes) |
 | 26 | `CloseCurrentPopup` | 272 | Done |
 | 27 | `InputText` | 248 | Partial (single line: caret, selection, UTF-8, Enter, read-only, select-all; no hint, multi-line, password, callbacks, clipboard) |
@@ -116,10 +116,10 @@ How much of that OkayUI covers today, counted over the 75 most used functions: 3
 | 35 | `EndChild` | 201 | Done |
 | 36 | `BeginChild` | 198 | Partial (size and border; no flags) |
 | 37 | `GetIO` | 182 | Partial (`Input` struct and `WantsTextInput()`) |
-| 38 | `GetTextLineHeight` | 180 | Missing |
-| 39 | `EndDisabled` | 176 | Missing |
-| 40 | `BeginDisabled` | 175 | Missing |
-| 41 | `InvisibleButton` | 158 | Missing |
+| 38 | `GetTextLineHeight` | 180 | Done in step 1 |
+| 39 | `EndDisabled` | 176 | Done in step 1 |
+| 40 | `BeginDisabled` | 175 | Done in step 1 |
+| 41 | `InvisibleButton` | 158 | Done in step 1 |
 | 42 | `Spacing` | 157 | Done |
 | 43 | `PopStyleVar` | 155 | Missing |
 | 44 | `Text` | 153 | Done (no printf formatting: pass the formatted string) |
@@ -127,7 +127,7 @@ How much of that OkayUI covers today, counted over the 75 most used functions: 3
 | 46 | `SetWindowFontScale` | 148 | Partial (`PushTextScale`) |
 | 47 | `ColorEdit4` | 137 | Missing (`ColorEdit3` only (no alpha)) |
 | 48 | `DragInt` | 125 | Done |
-| 49 | `GetFontSize` | 124 | Missing |
+| 49 | `GetFontSize` | 124 | Done in step 1 |
 | 50 | `End` | 120 | Done |
 | 51 | `BeginPopup` | 113 | Done (mouse-modal while open) |
 | 52 | `DragFloat2` | 95 | Missing (single value only) |
@@ -138,22 +138,22 @@ How much of that OkayUI covers today, counted over the 75 most used functions: 3
 | 57 | `EndCombo` | 83 | Partial (`Combo` only, no Begin/End form) |
 | 58 | `BeginCombo` | 83 | Partial (`Combo` only, no Begin/End form) |
 | 59 | `BeginPopupModal` | 81 | Missing (popups block the mouse below them but there is no modal API or dimming) |
-| 60 | `SetCursorPosX` | 79 | Missing |
+| 60 | `SetCursorPosX` | 79 | Done in step 1 |
 | 61 | `GetStyle` | 79 | Partial (`Style()` returns `Theme`) |
-| 62 | `IsItemActivated` | 78 | Missing |
+| 62 | `IsItemActivated` | 78 | Done in step 1 |
 | 63 | `SetNextWindowSize` | 77 | Done (size is a `Begin` argument; `ResizableNextWindow` adds a grip) |
 | 64 | `PushTextWrapPos` | 76 | Missing (`TextWrapped` only) |
 | 65 | `PopTextWrapPos` | 76 | Missing |
-| 66 | `GetFrameHeight` | 76 | Missing |
-| 67 | `GetCursorPosX` | 76 | Missing |
+| 66 | `GetFrameHeight` | 76 | Done in step 1 |
+| 67 | `GetCursorPosX` | 76 | Done in step 1 |
 | 68 | `GetItemRectMin` | 73 | Done (`GetItemRect`) |
 | 69 | `SetNextWindowPos` | 71 | Done (position is a `Begin` argument; `PinNextWindow`) |
 | 70 | `GetItemRectMax` | 71 | Done (`GetItemRect`) |
 | 71 | `TableSetupColumn` | 70 | Partial (headers and weights in `BeginTable`, drag-resizable) |
 | 72 | `DragFloat3` | 69 | Missing |
-| 73 | `IsMouseClicked` | 66 | Missing (edges are computed inside, not exposed) |
+| 73 | `IsMouseClicked` | 66 | Done in step 1 (also `IsMouseDown`, `IsMouseReleased`) |
 | 74 | `AlignTextToFramePadding` | 65 | Done (text rows are already frame height) |
-| 75 | `IsItemActive` | 64 | Missing |
+| 75 | `IsItemActive` | 64 | Done in step 1 (also `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked`) |
 
 Ranks 76 to 160 (call sites): `GetMainViewport` 64, `Begin` 56, `TreePop` 54, `SetKeyboardFocusHere` 54, `IsMouseDown` 54, `SeparatorText` 52, `SetClipboardText` 50, `EndGroup` 47, `TableNextColumn` 46, `BeginGroup` 45, `IsWindowAppearing` 43, `IsMouseDragging` 42, `IsPopupOpen` 41, `GetStyleColorVec4` 39, `IsWindowHovered` 38, `IsWindowFocused` 38, `CollapsingHeader` 38, `IsMouseDoubleClicked` 37, `Unindent` 35, `IsItemClicked` 35, `GetTime` 35, `SliderInt` 34, `Indent` 33, `BulletText` 33, `BeginPopupContextItem` 33, `TableSetColumnIndex` 29, `IsMouseHoveringRect` 29, `AcceptDragDropPayload` 29, `TreeNodeEx` 28, `SetCursorPosY` 28, `ColorConvertU32ToFloat4` 28, `SetCursorPos` 27, `GetCursorPosY` 27, `TreeNode` 26, `InputInt` 26, `EndDragDropTarget` 26, `InputTextMultiline` 25, `GetWindowPos` 24, `TableNextRow` 23, `ProgressBar` 23, `ColorEdit3` 23, `IsItemDeactivated` 21, `GetFrameCount` 21, `EndTable` 21, `BeginTable` 21, `BeginDragDropTarget` 21, `EndTabItem` 20, `SetNextWindowSizeConstraints` 18, `IsMouseReleased` 18, `ArrowButton` 18, `IsItemDeactivatedAfterEdit` 17, `GetWindowSize` 17, `SetWindowFocus` 16, `SetScrollHereY` 15, `RadioButton` 15, `TableHeadersRow` 14, `SetNextItemOpen` 14, `SetDragDropPayload` 13, `IsKeyDown` 13, `GetWindowWidth` 13, `GetItemRectSize` 13, `EndTooltip` 13, `EndDragDropSource` 13, `BeginTooltip` 13, `BeginTabItem` 13, `BeginDragDropSource` 13, `Image` 12, `GetFrameHeightWithSpacing` 12, `GetContentRegionMax` 12, `CalcItemWidth` 12, `GetWindowContentRegionMax` 11, `GetTextLineHeightWithSpacing` 11, `GetID` 11, `GetCurrentContext` 11, `SetNextItemAllowOverlap` 10, `IsAnyItemActive` 9, `FindWindowByName` 9, `EndTabBar` 9, `BeginTabBar` 9, `SetItemDefaultFocus` 8, `NewLine` 8, `GetScrollY` 8, `PushFont` 7, `PopFont` 7, `GetScrollMaxY` 7.
 
@@ -240,9 +240,9 @@ Shown failing before the fix (test or sanitizer report first): the combo click-t
 
 Ordered by how much of our Dear ImGui code each item blocks (call counts from section 1).
 
-1. **A public draw-list API** for custom drawing (about 2,000 `AddXxx` call sites plus `GetWindowDrawList` 365): rectangles, lines, circles, polylines, paths, quads, gradients, images, clip stack, text at a point. OkayUI has the internals; they need a stable public face and a cursor and measurement API (`GetCursorScreenPos`, `SetCursorScreenPos`, `GetContentRegionAvail`, `CalcTextSize`, `GetTextLineHeight`, `GetFontSize`, `GetFrameHeight`, about 1,800 call sites).
-2. **Item state queries and interaction helpers:** `IsItemHovered` flags, `IsItemActive`, `IsItemActivated`, `IsItemClicked`, `InvisibleButton` (158), `IsMouseClicked`/`Down`/`Dragging`/`DoubleClicked`, `GetColorU32` (577), `SetNextItemAllowOverlap`.
-3. **Style:** `PushStyleVar`/`PopStyleVar` (375), the full colour set, per-widget colours, themes; disabled blocks (`BeginDisabled`/`EndDisabled`, 351); `PushTextWrapPos`.
+1. **(Done in step 1, see section 4.)** **A public draw-list API** for custom drawing (about 2,000 `AddXxx` call sites plus `GetWindowDrawList` 365): rectangles, lines, circles, polylines, paths, quads, gradients, images, clip stack, text at a point. OkayUI has the internals; they need a stable public face and a cursor and measurement API (`GetCursorScreenPos`, `SetCursorScreenPos`, `GetContentRegionAvail`, `CalcTextSize`, `GetTextLineHeight`, `GetFontSize`, `GetFrameHeight`, about 1,800 call sites).
+2. **(Partly done in step 1: `IsItemActive`, `IsItemActivated`, `IsItemClicked`, `InvisibleButton`, the mouse queries.)** **Item state queries and interaction helpers:** `IsItemHovered` flags, `IsItemActive`, `IsItemActivated`, `IsItemClicked`, `InvisibleButton` (158), `IsMouseClicked`/`Down`/`Dragging`/`DoubleClicked`, `GetColorU32` (577), `SetNextItemAllowOverlap`.
+3. **(Disabled blocks done in step 1.)** **Style:** `PushStyleVar`/`PopStyleVar` (375), the full colour set, per-widget colours, themes; disabled blocks (`BeginDisabled`/`EndDisabled`, 351); `PushTextWrapPos`.
 4. **More input:** ctrl and alt, key down state, the other keys the editor uses (about 30), middle button, mouse delta, clipboard, double click, cursor shapes, IME; keyboard and gamepad navigation, `SetKeyboardFocusHere`.
 5. **Widget gaps:** `InputTextWithHint` (204), multi-line text (25), password; `DragFloat2/3/4` (164), `ColorEdit4`; `SliderFloat` with format and typed entry; `BeginCombo`/`EndCombo` form; nested menus and menu shortcut text; `BeginPopupModal`; tab items; table sorting, scrolling and frozen rows; tree node flags; `ProgressBar` with overlay is done; `SeparatorText`, `Bullet` are done.
 6. **Windows:** flags (auto-resize 72, no scrollbar 47, no scroll with mouse 29, no title bar 12, no background), z-order, saved settings, window queries (`IsWindowFocused`, `IsWindowHovered`, `SetWindowFocus`), `SetNextWindowSizeConstraints`.
@@ -250,7 +250,82 @@ Ordered by how much of our Dear ImGui code each item blocks (call counts from se
 8. **Typed drag and drop payloads.**
 9. **Fonts:** pushing arbitrary fonts, a monospace code font, per-window font scale.
 10. **Backends:** an OpenGL path if ever needed; the Direct3D 11 backend should use the new `DrawCmd` list (clip rectangles and the atlas texture) so it matches the SDL backend; an SDL event translator for the extra input fields is the host's job today.
-11. **Performance:** nothing measured on a large editor panel. The batch is fixed (20,000 vertices, 30,000 indices, plus an overlay batch of the same size); overflow now drops geometry safely but a full editor panel was never tried. No culling of clipped items.
+11. **Performance:** nothing measured on a large editor panel. The batch is fixed (262,144 vertices, 393,216 indices, plus an overlay batch of the same size); overflow is counted and reported (`DrawData::dropped`) but a full editor panel was never tried. No culling of clipped items.
 12. **Accessibility, IME and right-to-left** are not started.
 
 Then the migration itself: panels ported one at a time behind an option, with the same golden and behaviour tests run against both toolkits before the default changes. That is later stages of `docs/own_code_roadmap.md`, not this one.
+
+## 4. Gap-closing step 1: audit refresh and the public draw list
+
+The audit in section 1 ranked single functions. This section re-counted the whole usage by feature family, said plainly what OkayUI has and what it lacks, and built the top gap. Nothing in the editor, launcher or player calls the new code and no default changed: Dear ImGui is still what those programs run on.
+
+### 4.1 Audit: HAVE and GAP by feature family
+
+Method (repeatable): `grep -rhoE "ImGui::[A-Za-z0-9_]+"` over the 58 files under `editor/`, `launcher/` and `shared/` that mention ImGui, then each function was put in a family and the counts summed. 25,345 call sites to 261 functions (section 1 counted 24,862 to 259 earlier; the code grew). Counts are call sites in source, not calls per frame. Difficulty is our estimate for the OkayUI side: S is a day or less, M is a few days, L is a project of its own.
+
+HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is left out. GAP means nothing usable yet. The Status column is after this step.
+
+| # | Family | Call sites | Status | What is there, what is missing | Difficulty |
+|---|---|---|---|---|---|
+| 1 | Item and hover queries, tooltips | 3,274 | PARTIAL | `IsItemHovered`, `Tooltip(text)`, and now `IsItemActive`, `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked`. Missing: hover flags and delays, `BeginTooltip` blocks with widgets inside (26), `IsItemFocused`, `IsItemEdited`, `IsItemVisible`, `IsItemDeactivatedAfterEdit` (17), `GetItemID`, `IsAnyItemActive` | S |
+| 2 | Layout and cursor | 4,613 | PARTIAL | `SameLine`, `Dummy`, `Spacing`, `Indent`, item width, and now `GetCursorScreenPos`, `SetCursorScreenPos`, `GetCursorPos`/`SetCursorPos` (and X, Y), `GetContentRegionAvail`. Missing: `BeginGroup`/`EndGroup` (92), `GetContentRegionMax` (25), `CalcItemWidth`, `NewLine` | S |
+| 3 | Text | 2,851 | PARTIAL | `Text`, `TextColored`, `TextDisabled`, `TextWrapped`, `BulletText`, `SeparatorText`, `LabelText`. Missing: printf-style formatting (callers format first), `PushTextWrapPos`/`PopTextWrapPos` (164) | S |
+| 4 | Draw list (custom drawing) | 2,520 | HAVE (this step) | See 4.2. Missing: `AddConcavePolyFilled` (5), `AddImageRounded` (17), rounding on chosen corners only, anti-aliasing, `AddCallback` | done |
+| 5 | Buttons, checkbox, radio | 2,387 | PARTIAL | `Button`, `SmallButton`, `Checkbox`, `RadioButton`, `ToggleSwitch`, `ImageButton`, now `InvisibleButton`. Missing: `ArrowButton` (18), `ColorButton` (6), explicit button size | S |
+| 6 | Style and colours | 1,896 | PARTIAL | `Style()`, `PushStyleColor` for 8 colours, `PushTextScale`, now `GetColorU32`. Missing: `PushStyleVar`/`PopStyleVar` (375), the other ~40 `ImGuiCol` colours, `GetStyleColorVec4` (39), colour converters, `PushFont`/`PopFont` of arbitrary fonts | M |
+| 7 | Value widgets (drag, slider, input number) | 1,610 | PARTIAL | `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt`, `InputInt`. Missing: `DragFloat2/3/4` (about 175, the vector fields of the Inspector), `DragInt2/3`, `DragFloatRange2`, `SliderFloat2/3`, `InputFloat`, format strings, typing a value into a drag or slider | M |
+| 8 | Window, child, scroll | 1,074 | PARTIAL | `Begin`/`End`, `BeginChild`, resize grip, pin, `SetNextWindow*` as arguments. Missing: window flags (auto-resize 72, no scrollbar 47, no title bar, no background and others), z-order and click to front, `SetNextWindowSizeConstraints`, window queries (`IsWindowFocused` 38, `IsWindowHovered` 39), `GetScrollY`/`SetScrollY`, `SetScrollHereY` | M |
+| 9 | Popups | 1,038 | PARTIAL | `OpenPopup`, `BeginPopup`, `BeginPopupContextItem`, `CloseCurrentPopup`. Missing: `BeginPopupModal` (85) with dimming, `BeginPopupContextWindow`, `IsPopupOpen` (41) | M |
+| 10 | Menus | 957 | PARTIAL | menu bar, `BeginMenu`, `MenuItem(label)`. Missing: nested sub-menus, shortcut text, checked and enabled state, `Shortcut` | M |
+| 11 | Mouse, keys, IO | 901 | PARTIAL | mouse position, buttons, wheel, text, 9 key edges, and now `IsMouseDown/Clicked/Released`, `GetMousePos`, `GetMouseDelta`. Missing: Ctrl and Alt, key down, about 30 more keys, middle button, double click, drag deltas, mouse cursor shapes (92) | M |
+| 12 | IDs | 792 | HAVE | `PushID`, `PopID`. Missing: `GetID` (11), `GetStateStorage` | S |
+| 13 | Combo and selectable | 618 | PARTIAL | `Combo(items)`, `Selectable`, `ListBox`. Missing: `BeginCombo`/`EndCombo` (86) with custom content, selectable size and flags | S |
+| 14 | Text input | 545 | PARTIAL | single line with caret, selection, UTF-8. Missing: `InputTextWithHint` (207), multi-line (25), password, `SetKeyboardFocusHere` (54), callbacks | M |
+| 15 | Disabled blocks | 369 | HAVE (this step) | `BeginDisabled`/`EndDisabled`/`IsDisabled` | done |
+| 16 | Tables | 233 | PARTIAL | `BeginTable` with headers, weights, drag-resizable columns, `Columns`. Missing: sorting, scroll and frozen rows, row background, `TableSetColumnIndex` (29), flags | M |
+| 17 | Tree nodes | 201 | PARTIAL | `TreeNode`, `CollapsingHeader`. Missing: `TreeNodeEx` flags (28: leaf, selected, open on arrow), `SetNextItemOpen` (14), `IsItemToggledOpen` | S |
+| 18 | Colour editors | 168 | PARTIAL | `ColorEdit3`, `ColorPicker3`. Missing: `ColorEdit4` with alpha (137), `ColorPicker4` | S |
+| 19 | Drag and drop | 123 | PARTIAL | `DragSource(int)`, `DropTarget(int*)`. Missing: typed payloads, a preview while dragging, drop on custom rectangles | M |
+| 20 | Tabs | 55 | PARTIAL | `TabBar(labels)`. Missing: `BeginTabBar`/`BeginTabItem` with content, closable and reorderable tabs, `TabItemButton` | M |
+| 21 | Clipboard | 52 | GAP | none. Needs the clipboard in `okay::platform`, and copy, cut and paste in the text field | S |
+| 22 | Docking and viewports | 36 + 6 mentions of viewport flags | GAP | none. The editor layout depends on it, and it uses ImGui internals. Multi-viewports need OS windows from `okay::platform` | L |
+| 23 | Fonts, IME, emoji | 150 `SetWindowFontScale`, 7 `PushFont`, 26 IME mentions | PARTIAL | the 8x8 font, a bold variant, the launcher look's Roboto atlas with engine TrueType fallback. Missing: arbitrary fonts and a monospace code font, merged icon fonts, IME composition and candidate window, colour emoji | L |
+| 24 | Images, plots, progress | 3 plots, 16 images | HAVE | `PlotLines`, `PlotHistogram`, `Image`, `ProgressBar`. The software test backend does not draw textures | done |
+| 25 | Backends | not counted | PARTIAL | SDL_Renderer, Direct3D 11 (ignores clip spans and textures), CPU software. No OpenGL, no Direct3D 12 | M |
+
+Reading the table: the biggest single block that was missing outright was custom drawing (family 4), then cursor and measurement (family 2), then item and mouse queries (family 1), then style (family 6), then vector value fields (family 7). The Inspector alone calls `DragFloat2/3` about 170 times, so family 7 is the best next step after this one: it is mostly composition of what `DragFloat` already does. Docking (family 22) and IME (family 23) are the two real obstacles; neither has been started, and until they exist the editor cannot leave Dear ImGui.
+
+### 4.2 What was built
+
+All of it is in `okayui/include/okay/UI/OkayUI.hpp` and `okayui/src/OkayUI.cpp`, side by side with the existing widgets, nothing existing was changed in behaviour except that a disabled block is respected.
+
+- **Draw list.** `GetWindowDrawList()` and `GetForegroundDrawList()` return a `DrawList` with `AddLine`, `AddRect`, `AddRectFilled`, `AddRectFilledMultiColor`, `AddCircle`, `AddCircleFilled`, `AddTriangle`, `AddTriangleFilled`, `AddQuad`, `AddQuadFilled`, `AddPolyline`, `AddConvexPolyFilled`, `AddBezierCubic`, `AddText`, `AddImage`, `PushClipRect`/`PopClipRect`, and the path calls (`PathClear`, `PathLineTo`, `PathArcTo`, `PathStroke`, `PathFillConvex`). Colours are a packed `Color32` (`RGBA(r, g, b, a)`, `GetColorU32(Col)`, `ColorMulAlpha`). Rules that differ from what a port might assume: outlines are drawn inside the given bounds, polylines use mitred joins (a translucent stroke is not darker at its corners), the foreground list goes into the overlay batch and is never clipped, and a draw list call is never dimmed by `BeginDisabled`. Rectangle and circle outlines sit inside the bounds, but polyline, triangle and quad outlines are centred on their path. Non-finite or huge numbers are ignored, not drawn.
+- **Cursor and measurement.** `GetCursorScreenPos`, `SetCursorScreenPos` (the next item goes exactly there, the layout then continues below it), `GetCursorPos`, `SetCursorPos`, `GetCursorPosX/Y`, `SetCursorPosX/Y`, `GetContentRegionAvail`, `CalcTextSize`, `GetTextLineHeight`, `GetFontSize`, `GetFrameHeight`, and the `...WithSpacing` forms.
+- **Item state.** `InvisibleButton`, `IsItemActive`, `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked(button)`, `IsMouseDown/Clicked/Released(button)`, `GetMousePos`, `GetMouseDelta`, `IsMouseHoveringRect`. The item queries work after the widgets that register an id (the list is in the header); after any other item they answer false instead of reporting the previous item.
+- **Disabled blocks.** `BeginDisabled(bool)`, `EndDisabled`, `IsDisabled`. Widgets inside take no input and draw with their colours halfway to the panel colour (alpha is kept, so the stacked layers of one widget do not blend through each other). A text field that has the keyboard gives it up.
+- **Reachable.** The "Draw list lab" page in `okayui/demo/DemoScene.hpp` uses all of it (a canvas drawn with the draw list and made interactive with `InvisibleButton`; clicks place markers, a drag draws a stroke with a foreground rubber band; a gauge built with the path calls; a right-aligned label placed with `CalcTextSize` and `SetCursorScreenPos`; a locked block built with `BeginDisabled`). Run it with `okayui_headless_demo lab.png lab` (or `lab-launcher`).
+
+### 4.3 How it was tested
+
+- `okayui_drawlist` (new, `okayui/tests/test_okayui_drawlist.cpp`): pixel checks through the software backend for every primitive (exact pixel counts for rectangles and lines, areas for circles, a hexagon and a half disc; a translucent closed polyline has one single colour on every stroke pixel, which proves the mitred joins do not overlap), the path API, `AddText` against `Label` pixel for pixel, clip rectangles, foreground against window list ordering, hostile numbers (NaN, infinity, huge, negative: nothing is drawn), measurement and cursor values against the real layout, `InvisibleButton` and the item-state edges (active, activated, deactivated, clicked), mouse queries, and disabled blocks (every widget family ignores input, dimming checked per channel and the face stays opaque, nesting, unbalanced calls). Two golden images of the lab page in `okayui/tests/golden/`: `drawlist_lab.png` (classic look) and `drawlist_lab_launcher.png`.
+- `okayui_fuzz`: the random widget tree now also calls every draw list function with hostile numbers (up to 300 points per polyline, null pointers, random counts), the path calls, hostile cursor setters, `InvisibleButton` with hostile sizes, the item and mouse queries, and unbalanced `BeginDisabled`/`EndDisabled`. The draw data is checked for consistency every frame.
+
+### 4.4 Not done, said bluntly
+
+- **Nothing in the editor or launcher uses any of this.** The editor's custom drawing (about 2,500 call sites) still calls `ImDrawList`. A port needs a small adapter (a `Vec2` and colour conversion), which was not written because it would be unused code until the first panel is ported.
+- **The lab page is only reachable headlessly** (`okayui_headless_demo`). The editor's "Test UI" and the player overlay were not extended: they are big files that could not be built and run in this step, and an untested edit to them would break the rule that new controls are observed.
+- **The Direct3D 11 backend ignores clip spans**, so a clipped draw list is not clipped there. The Windows path is also untested here. The SDL_Renderer path honours clipping by construction but was not run on a display in this step.
+- **The software backend cannot show `AddImage`** (no textures), and has no anti-aliasing: diagonal lines and circle edges are hard-edged, unlike the GPU path with linear filtering. Pixel tests assert shapes and counts with tolerances, not a match with any GPU output.
+- **Concave polygons** are drawn as a fan and so wrong; there is no ear clipping. `AddConcavePolyFilled` (5 call sites) and `AddImageRounded` (17) are not provided. Rounded rectangles round all four corners or none.
+- **Text in the draw list is one line**, with no newline handling, and no per-call font.
+- **`BeginDisabled` does not cancel a drag that is already in progress**, and the widgets that do not go through the common hit test (a popup body already open, the window title bar) are not dimmed.
+- **The vertex batch is bigger but still fixed**: 262,144 vertices and 393,216 indices for each of the main and overlay layers (it was 20,000 and 30,000). Overflow is no longer silent: `DrawData::dropped` and `DroppedGeometry()` count the shapes that did not fit, and a message goes to stderr for the first five frames it happens. A frame of 50,000 vertices is drawn completely (tested); 70,000 shapes (280,000 vertices) lose the last ones and say so. The 128 draw spans (clip and texture changes) per frame are still a fixed limit and are not reported. Not measured against a real editor panel.
+- **Polylines are capped at 256 points** and the path at 256, `AddBezierCubic` at 255 segments; longer input is refused, not split.
+- **The cursor queries return whatever the layout holds.** If an earlier call put a non-finite number in the layout (for example `Dummy(INFINITY, 0)`, which OkayUI has always accepted), `GetCursorScreenPos` returns it; `GetContentRegionAvail` and `CalcTextSize` never return a negative or NaN.
+- **The other families in 4.1 are not started**: vector drag fields, `PushStyleVar`, modal popups, window flags, `InputTextWithHint`, multi-line text, clipboard, tab items, nested menus, docking, IME.
+
+### 4.5 Follow-up fixes in the same branch
+
+- **Text field UTF-8 corruption (found by the fuzz test, fixed).** `OKAYUI_FUZZ_SEED=4 OKAYUI_FUZZ_ITERS=4000` left a lead byte followed by an ASCII byte in the buffer. Root cause: the field keeps three byte offsets between frames (caret, selection anchor, first shown character). An edit below the first shown character (a selection from the left that had scrolled out of view, replaced by typed multi-byte text) changed the characters under that offset, so it pointed into the middle of a new character; a click then put the caret there and Delete cut the character in half. Fix: the three offsets are snapped back to a character boundary every frame (also after edits, and when the caller rewrites the buffer between frames). A second hole in the same area: a caller buffer that is full and not terminated got its last byte overwritten with NUL, which could cut a multi-byte character in half; an incomplete trailing sequence is now removed. Typed or pasted text that does not fit is dropped whole, as before, and invalid sequences are never inserted. Regression tests: `Utf8BufferTests` in `okayui/tests/test_okayui_behaviour.cpp` (deterministic; 4 of its checks fail on the unfixed field), plus the fuzz scenario. Fuzz clean under AddressSanitizer, UBSan and float-cast-overflow for seeds 1 to 8 at 4,000 iterations.
+- **Batch overflow no longer silent.** See the vertex batch bullet in 4.4. Test: `LargeDrawListTests` in `okayui/tests/test_okayui_drawlist.cpp` (50,000 vertices drawn exactly, 100,000 across both layers, 70,000 shapes reported as dropped), and the fuzz scenario now fills the real limit.
+

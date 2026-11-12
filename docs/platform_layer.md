@@ -105,8 +105,9 @@ is 48,000 lines with ImGui and 33 GL-context words.
   logging, DPI hint, shutdown.
 * The window is still an `SDL_Window` for the 2D drawing: `SDL_CreateRenderer` takes it from `Window::NativeHandle()`. That is
   the only SDL window use left in `player/main.cpp` (2 words) plus renderer calls.
-* On the `own` backend the player creates its window, finds there is no `SDL_Window`, says so on the log and exits with code 2
-  instead of crashing or pretending (see "What was verified").
+* On the `own` backend the stage 2 player created its window, found there was no `SDL_Window`, said so on the log and exited with
+  code 2 instead of crashing or pretending. Stage 3 (below) replaced that with a 2D painter; the exit now only happens when the
+  painter cannot be made.
 
 New API (every addition has a default, so a backend that cannot do it says so; both backends and the tests cover them):
 
@@ -138,12 +139,130 @@ New API (every addition has a default, so a backend that cannot do it says so; b
   `imgui_impl_sdlrenderer2` need `SDL_Event` and `SDL_Window*`. The editor's window (49), GL-context (33), event (30) and
   keyboard/mouse (75) words and the launcher's windows and tray hook can be moved the same way the player was, one at a time, but the
   drawing still ends in `SDL_Renderer`.
-* **The own backend cannot run the player or any app yet.** There is no 2D painter that draws on an own window. The next steps
-  are the ones in the roadmap: an own software/GL 2D painter behind `UIPainter` and OkayUI, then an own ImGui platform backend.
+* **The own backend could not run the player or any app yet.** (Stage 3, below, adds the 2D painter for the player; it is off and not
+  ready. The editor and launcher still need it moved in, plus an own ImGui platform backend.)
 * IME composition, display queries, window flashing, WAV loading, the tray-icon hook, system cursors, Wayland, touch and refresh
   rate on the own backend (see the tables).
 * Windows (own and sdl2 side by side) and the Emscripten web build of the player were not built or run here; the changed Platform
   sources pass `-fsyntax-only` with MinGW; `player/main.cpp` itself was compiled on Linux only.
+
+## Stage 3: a 2D painter, so the player can run on the own backend (own code, NOT READY, off by default)
+
+The blocker stage 2 ended on was that every app draws its 2D through `SDL_Renderer`, which needs an SDL window. Stage 3 puts
+that drawing behind `okay::platform::Painter` (`engine/include/okay/Platform/Painter.hpp`), with two implementations, and moves the
+player onto it. **The software painter is not ready.** It is reachable only by running the player with `OKAY_PLATFORM_BACKEND=own`
+in the environment (the own backend is itself opt-in); there is no setting, no CMake option, no menu entry. The default, the
+sdl2 painter, draws exactly what the player drew before.
+
+### Audit: what the player's 2D path calls
+
+Counted in the files the player's drawing runs through, on `origin/main` before this change (comments removed). `main.cpp` is
+`player/main.cpp`; `UIPainterSDL` is `engine/include/okay/UI/UIPainterSDL.hpp` (the player's UI pass painter); `OkayUI` is
+`okayui/src/OkayUI.cpp` (`EndFrame(SDL_Renderer*)`).
+
+| SDL call | main.cpp | Splash.hpp | ScriptUIBridge | UIPainterSDL | OkayUI | now |
+|---|---|---|---|---|---|---|
+| `SDL_SetRenderDrawBlendMode` / `GetRenderDrawBlendMode` | 16 / 1 | 1 | | | 2 / 1 | `Painter::SetBlendMode` / `GetBlendMode` |
+| `SDL_SetRenderDrawColor` | 15 | 2 | | 1 | | `SetDrawColor` |
+| `SDL_RenderFillRect` / `FillRectF` | 14 | 0 / 1 | | 1 | | `FillRect` / `FillRectF` |
+| `SDL_RenderDrawRect`, `DrawLine`, `DrawLineF`, `DrawPoint` | 4, 2, 0, 0 | 0, 0, 2, 0 | | 1, 1, 0, 1 | | `DrawRect`, `DrawLine`, `DrawLineF`, `DrawPoint` |
+| `SDL_RenderClear` | 2 | | | | | `Clear` |
+| `SDL_RenderSetClipRect`, `IsClipEnabled`, `GetClipRect`, `SetScale` | 2, 0, 0, 0 | | | 1, 1, 1, 1 | 4, 1, 1, 0 | `SetClipRect`, `IsClipEnabled`, `GetClipRect`, `SetScale` |
+| `SDL_RenderGeometry` | 2 | 4 | | 1 | 3 | `Geometry` (indices optional) |
+| `SDL_RenderCopy`, `CopyF`, `CopyEx`, `CopyExF` | 6, 0, 0, 1 | 0, 1, 0, 0 | | 1, 1, 1, 1 | | `Copy`, `CopyF`, `CopyEx`, `CopyExF` |
+| `SDL_CreateTexture` / `CreateTextureFromSurface` / `CreateRGBSurfaceWithFormatFrom` / `FreeSurface` | 1 / 1 / 1 / 1 | | 1 | 3 | 1 | `CreateTexture(desc, rgba)` |
+| `SDL_UpdateTexture`, `DestroyTexture`, `QueryTexture` | 1, 3, 4 | 0, 0, 1 | 1 | 3, 2, 2 | 1 | `UpdateTexture`, `DestroyTexture`, `QueryTexture` |
+| `SDL_SetTextureBlendMode`, `ScaleMode`, `ColorMod`, `AlphaMod` | 4, 1, 2, 6 | | 1 | 3, 2, 1, 1 | 1, 1, 0, 0 | the same four setters |
+| `SDL_RenderPresent`, `RenderSetVSync`, `GetRendererOutputSize` | 2, 1, 13 | 1 | | | 0, 0, 1 | `Present`, `SetVSync`, `OutputSize` |
+| `SDL_CreateRenderer`, `DestroyRenderer` | 2, 1 | | | | | `CreateSdl2Painter` (or the software painter) |
+
+The table is the whole 2D surface the player uses (about thirty calls, most of them one-liners). What a painter has to
+do for the player: fill rects and draw outlines and lines with alpha blending and a clip rectangle; copy textures (RGBA8) scaled, flipped, rotated, tinted
+(colour and alpha modulation) with nearest or linear sampling; draw coloured and textured triangles with a clip; present a frame and
+pace it. `ui2d::Painter` (the interface the in-game UI pass already drew through) was exactly this set minus clear, present, output size, the draw
+blend mode, float rect fill and line, and texture creation and upload, so the new interface extends it instead of repeating it.
+
+### The interface and its two implementations
+
+| | sdl2 painter | software painter (own) |
+|---|---|---|
+| Where | `engine/src/Platform/SdlPainter.cpp` | `okayui/soft/OkayUI_SoftPainter.cpp`, the pixel routines in `OkayUI_SoftRaster.hpp` (shared with the draw-list rasteriser of `OkayUI::soft::Render`) |
+| Made by | `CreateSdl2Painter(window)`; `WrapSdl2Renderer(SDL_Renderer*)` for the editor and launcher splash and script bridge; `CreateSdl2SurfacePainter(w, h)` (SDL's software renderer on a surface, for tests) | `OkayUI::soft::CreateWindowPainter(window)`; `CreateBitmapPainter(w, h)` (headless, for tests and tools) |
+| Draws with | `SDL_Renderer`, every method one SDL call | the CPU into an RGBA8 frame buffer that follows the window's size |
+| Present | `SDL_RenderPresent` | `Window::PresentPixels`: X11 `XPutImage` (the visual's channel masks, `XSync` after, no shared memory), Win32 `StretchDIBits` (BGRX, top-down) |
+| Frame pacing | the display (vsync) | with vsync asked for, waits for the next period of `Window::RefreshRateHz()` (60 Hz when unknown); `SetVSync` returns false because it is paced, not display-synced |
+| Textures | `SDL_Texture`, RGBA | a pixel buffer with blend mode, scale mode (nearest or bilinear), colour and alpha modulation; unknown or freed pointers are ignored |
+
+Shared by both, in `engine/src/Platform/Painter.cpp`: the path-keyed texture cache (`LoadTexture`, a miss is remembered), the TrueType glyph
+atlas upload (`FontAtlas`) and the UI batcher's atlas pages (`UploadAtlas`).
+
+OkayUI: the player keeps `OkayUI::EndFrame(SDL_Renderer*)` on the sdl2 painter. On a painter without an `SDL_Renderer` it calls
+`EndFrameData(w, h)` (which now also builds the toast messages, as `EndFrame` did with the renderer's size) and `OkayUI::soft::FrameDrawer`
+draws `GetDrawData()` through the painter interface: the glyph atlas and fallback-font atlases become painter textures and image
+commands pass through as painter textures. `FrameDrawer` works on either painter, so the two can be compared.
+
+The player (`player/main.cpp`): no `SDL_Renderer`, `SDL_Texture` or `SDL_Surface` is left in it (280 words became 0); SDL still supplies the `SDL_Rect`,
+`SDL_Color`, `SDL_Vertex` data types, which have the same layout as the `ui2d` ones (`static_assert`ed). The texture cache the player kept
+by hand moved into the painter. `shared/Splash.hpp` and `shared/OkayScriptUIBridge.hpp` draw through the painter; the editor and launcher keep
+calling `DrawSplashStyled(SDL_Renderer*, ...)`, which wraps their renderer in the sdl2 painter.
+
+### What differs on the software painter (known, not fixed)
+
+* No GPU: everything is CPU work. A full-window frame of the 3D view plus UI is fast enough for a test run and slow in a heavy scene.
+* Textures are sampled nearest or bilinear. No mip-maps and no anti-aliasing of triangle edges or rotated sprites, so rotated and minified images alias.
+* Rounding: alpha blending and modulation round to nearest, SDL's software renderer truncates: up to 1 level of difference per channel.
+* A rotated `Copy` samples each pixel centre (inverse mapping); SDL's renderers rotate differently at the edges.
+* Texture size is limited to 16384 x 16384. The software painter has no render targets.
+* OkayUI fallback fonts and `OkayUI::Image` work through the painter; a texture made by another painter is ignored.
+* Not fixed here: X11 shared memory (`XShm`; plain `XPutImage` is used), damage tracking (the whole frame is sent each frame),
+  16-bit and indexed X visuals (`PresentPixels` returns false), a big-endian X server, HiDPI on the own backend, Win32 run time (only
+  syntax-checked with MinGW).
+
+### Tests
+
+| ctest name | What | Needs |
+|---|---|---|
+| `okayui_painter` | the same drawing on the software painter and on SDL's software renderer through the sdl2 painter, pixels checked against numbers worked out by hand: clear, rects (int and float), blend / replace, clip (also empty), outline, lines, points, 1:1 / scaled / sub-rect / flipped copies, colour and alpha modulation, texture blend modes, partial updates, flat and textured triangles, vertex colour, clip on geometry, gradient, logical scale; software only: bilinear, rotation, hostile input (NaN, out-of-range indices, huge rects, freed pointers). Then OkayUI's frame through `FrameDrawer` on both painters against the committed golden image (classic look: identical to the draw-list rasteriser) and, in the launcher look, against the rasteriser with a stated tolerance | nothing |
+| `platform_painter_window` | the software painter on a real own-backend window: what it drew equals what the X server holds (`XGetImage`), through a resize and a frame smaller than the window; `PresentPixels` refuses bad input; the sdl2 painter and the software painter refuse the wrong kind of window; the pacing never runs faster than 60 Hz | Xvfb (skipped, exit 77, without) |
+
+### What was verified (stage 3)
+
+Linux x86-64, Release build, Xvfb 1024x768x24 + openbox, own `HOME`, Mesa software GL (`LIBGL_ALWAYS_SOFTWARE=1`), SDL's **software**
+renderer for the sdl2 runs (`SDL_RENDER_DRIVER=software`, so there is no GPU on either side), xdotool input. "before" is the unchanged
+`origin/main` `okay-player`, "after" is this branch with the sdl2 painter, "own" is this branch with `OKAY_PLATFORM_BACKEND=own`
+(the software painter). The same scripted session in every run: start, a click, F3 (OkayUI performance panel), F1, a held `W`, F11
+fullscreen and back, Esc. Scenes: `examples/node_playground/flow.okayscene`, `examples/visual_script/playground/gl_animation.okayscene`
+and `gl_inventory.okayscene`, and a hand-made 3D scene (perspective camera, light, floor, two cubes, a sphere, an overlay text), run
+again with the OkayUI test panels and toasts (`OKAY_TESTUI=1 OKAY_DEV=1`) and with scripted mouse and keyboard input on those panels.
+
+* **sdl2 painter, before vs after: identical.** Whole-screen screenshots of the start, click, held key, fullscreen and windowed
+  frames are pixel-identical (0 differing pixels) on the 3D scene, `gl_animation` and `gl_inventory`; on `flow` the same holds for the
+  start and click frames. The only differences are in the live frame-statistics text of the F3 / F1 panels (frame rate digits; 170 to
+  4,945 pixels inside the panel). With the OkayUI test panels open the remaining difference is the same statistics text
+  (346 pixels). Window title, size, exit code 0 on Esc: identical.
+* **The player runs on the own backend.** Log line `2D painter: software`, the scene loads, the game runs, input reaches it
+  (mouse, drag, text typed into an OkayUI field, F3, F11), exit code 0 on Esc, in every scene above. In a scripted session on the
+  OkayUI test panels the own run and the sdl2 run end in the same state (Settings tab open, Hard selected, volume slider dragged, name
+  typed). Toasts, the F3 panel, the glyph atlas text, rounded panels with shadows, the 3D frame copy and sprite/text overlays all
+  draw. The screenshots are not committed (they are 1024x768 whole-screen captures).
+* **own vs sdl2 (software renderer) differences, honestly.** The 3D frame and the sky gradient are identical (0 of 226,200 pixels
+  differ in a background crop of `flow`; on the 3D scene the interior of every face is identical). What differs: (1) text and
+  UI shapes drawn as triangles: 0.1 to 0.9 % of the screen (842 pixels on `gl_animation`, 2,115 on the 3D scene, 6,855 on `flow`;
+  max channel difference up to 170) because SDL's software renderer places triangle vertices differently (about one pixel right/down
+  of ours and with dropped pixels at some glyph and rounded-rectangle edges; our picture has no such artefacts, a GPU renderer
+  would sample pixel centres like ours does); (2) the F3 panel contents differ in the numbers and in one extra statistics line that
+  depends on timing; (3) on the 3D scene 510 pixels on the silhouette edges of the cube, sphere and floor: those come from the
+  GL renderer's edge smoothing, which runs on the own backend's GLX context here and the sdl2 backend's context there (cause not
+  isolated; the painter only copies the finished frame, which its tests pin pixel-exact).
+* **Speed (software only, no GPU).** The F3 panel on `flow`: about 36 frames/s on own against about 44 on sdl2 with SDL's software renderer
+  (this machine was also running other work, so treat it as a rough ratio). A 960x600 window needs a few milliseconds per full-window layer.
+* **Unit and integration tests** (`ctest -R "okayui|platform"`, 12 tests, all pass in a real CMake build): see the table above, plus the
+  existing okayui tests (soft, behaviour, golden, drawlist, fuzz) unchanged by the shared-rasteriser refactor. The painter test ran
+  clean under AddressSanitizer + UBSan (128 checks). `x86_64-w64-mingw32-g++ -fsyntax-only -Wall -Wextra -Wpedantic` is clean on
+  `OwnWin32.cpp` (including `PresentPixels`), `Painter.cpp` and the software painter.
+* **Not verified:** a real GPU or real desktop (only Xvfb + openbox), Windows at run time (`StretchDIBits` never ran), HiDPI,
+  typing in a non-ASCII layout, the editor and launcher splash screens (their call sites compile through the wrapper but the
+  apps were not built or run), the web build, and long sessions (memory growth of the frame buffer was not measured).
 
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 

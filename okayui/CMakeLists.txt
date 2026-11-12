@@ -48,13 +48,16 @@ endif()
 # OkayUI's draw list (OkayUI::GetDrawData) rasterised on the CPU into an RGBA bitmap, so the toolkit
 # is tested with no window, GPU or display: behaviour tests (synthetic mouse, keys and text fed to
 # OkayUI::BeginFrame), golden images, a fuzz test. See docs/own_ui_toolkit.md.
+# The software side is always built (it is small): the draw-list rasteriser the tests use and the software
+# okay::platform::Painter the player draws with on the own platform backend (own code, not ready, off by default).
+add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp soft/OkayUI_SoftPainter.cpp)
+target_include_directories(okay_ui_soft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/soft)
+target_link_libraries(okay_ui_soft PUBLIC okay_ui)
+
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
-    add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp)
-    target_include_directories(okay_ui_soft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/soft)
-    target_link_libraries(okay_ui_soft PUBLIC okay_ui)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_soft)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests)

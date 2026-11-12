@@ -452,6 +452,15 @@ endif()
 include(${CMAKE_SOURCE_DIR}/cmake/OkayPlatform.cmake)
 okay_add_platform_library()
 target_link_libraries(okay_engine PUBLIC okay_platform)
+# okay::platform::Painter (the 2D drawing surface of a window): the shared part and the sdl2 implementation.
+# The software implementation lives in okayui/soft (okay_ui_soft). Own code, not ready, off by default.
+target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp)
+if(OKAY_PLATFORM_SDL_INCLUDES)
+    target_include_directories(okay_engine PRIVATE ${OKAY_PLATFORM_SDL_INCLUDES})
+endif()
+if(OKAY_PLATFORM_SDL_OPTIONS)
+    set_source_files_properties(src/Platform/SdlPainter.cpp PROPERTIES COMPILE_OPTIONS "${OKAY_PLATFORM_SDL_OPTIONS}")
+endif()
 
 # Our own STL / PLY readers are always built. With Assimp also on, this picks which one
 # a format uses by default (docs/model_import.md); SetImportBackend() changes it at run time.

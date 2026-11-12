@@ -66,6 +66,11 @@ function(okay_add_platform_library)
     if(NOT EMSCRIPTEN AND NOT TARGET Threads::Threads)
         find_package(Threads REQUIRED)
     endif()
+    # The painter files (engine/src/Platform/Painter.cpp, SdlPainter.cpp) are compiled into okay_engine, not
+    # into this library (they need the engine's image decoder); okay_engine takes the SDL include path and
+    # options from here.
+    set(OKAY_PLATFORM_SDL_INCLUDES ${_incs} PARENT_SCOPE)
+    set(OKAY_PLATFORM_SDL_OPTIONS ${_sdl_opts} PARENT_SCOPE)
     add_library(okay_platform STATIC ${_srcs})
     target_include_directories(okay_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_include_directories(okay_platform PRIVATE ${_incs})

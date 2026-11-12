@@ -39,7 +39,7 @@ inline float CenterY(const OkayUI::Rect& r) { return r.y + r.h * 0.5f; }
 struct Sim {
     float W = 640, H = 480;
     float mx = 0, my = 0;
-    bool down = false, rdown = false, blocked = false, shift = false;
+    bool down = false, rdown = false, blocked = false, shift = false, ctrl = false;
     float wheel = 0;
     std::string text;
     bool edge[Key_COUNT] = {};
@@ -53,7 +53,7 @@ struct Sim {
         in.wheel = wheel; in.text = text.empty() ? nullptr : text.c_str();
         in.backspace = edge[Key_Backspace]; in.del = edge[Key_Delete]; in.left = edge[Key_Left]; in.right = edge[Key_Right];
         in.home = edge[Key_Home]; in.end = edge[Key_End]; in.enter = edge[Key_Enter]; in.escape = edge[Key_Escape];
-        in.selectAll = edge[Key_SelectAll]; in.shift = shift;
+        in.selectAll = edge[Key_SelectAll]; in.shift = shift; in.ctrl = ctrl;
         OkayUI::BeginFrame(in);
         ui();
         OkayUI::EndFrameData();

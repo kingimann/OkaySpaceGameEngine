@@ -46,6 +46,7 @@ struct Input {
     bool        escape    = false;     // Escape (drops keyboard focus)
     bool        selectAll = false;     // the select-all shortcut (Ctrl+A)
     bool        shift     = false;     // shift held
+    bool        ctrl      = false;     // Ctrl held (Ctrl+click on a drag or slider box types a number into it)
 };
 
 /// Visual style (colors are RGBA, 0..255). Mutable via Style().

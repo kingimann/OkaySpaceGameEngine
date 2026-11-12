@@ -21,6 +21,8 @@ struct Rig {
     void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
     void MoveTo(float x, float y) { sim.Move(x, y); Frame(); }
     // Press in a cell, scrub `dx` pixels, release.
+    void Tap(Key k) { sim.Press(k); Frame(); }
+    void Click(float x, float y) { sim.Move(x, y); Frame(); sim.Down(); Frame(); sim.Up(); Frame(); }
     void Scrub(float x, float y, float dx) { MoveTo(x, y); sim.Down(); Frame(); MoveTo(x + dx, y); sim.Up(); Frame(); }
 };
 
@@ -350,6 +352,47 @@ void BeginComboTests() {
     CHECK(true);
 }
 
+void TypedNumberTests() {
+    Rig r; float v[3] = {1, 2, 3}; int iv[2] = {5, 6}; float sl[2] = {0.25f, 0.75f}; UI::Rect rv, ri, rs;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(300); UI::DragFloat3("", v, 0.5f, -100.0f, 100.0f); rv = UI::GetItemRect(); UI::PopID();
+        UI::PushID(2); UI::SetNextItemWidth(300); UI::DragInt2("", iv, 1.0f, 0, 50); ri = UI::GetItemRect(); UI::PopID();
+        UI::PushID(3); UI::SetNextItemWidth(300); UI::SliderFloat2("", sl, 0.0f, 1.0f); rs = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    auto ctrlClick = [&](const UI::Rect& rc, int n, int i) {
+        r.sim.ctrl = true; r.MoveTo(CellX(rc.x, rc.w, n, i), CenterY(rc)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.ctrl = false;
+    };
+    // Ctrl+click a drag cell, type, Enter: the value is what was typed (the old text is replaced)
+    ctrlClick(rv, 3, 1); r.sim.Type("42.5"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK_NEAR(v[1], 42.5f, 1e-4); CHECK(v[0] == 1 && v[2] == 3);
+    // clamped to the cell's range
+    ctrlClick(rv, 3, 2); r.sim.Type("1000"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK_NEAR(v[2], 100.0f, 1e-4);
+    // Escape cancels
+    ctrlClick(rv, 3, 0); r.sim.Type("77"); r.Frame(); r.Tap(Key_Escape); r.Frame();
+    CHECK(v[0] == 1);
+    // text that is not a number keeps the old value
+    ctrlClick(rv, 3, 0); r.sim.Type("abc"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK(v[0] == 1);
+    // integers round and clamp
+    ctrlClick(ri, 2, 0); r.sim.Type("7.6"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK(iv[0] == 8 && iv[1] == 6);
+    ctrlClick(ri, 2, 1); r.sim.Type("99"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK(iv[1] == 50);
+    // slider cells take typed values too, clamped to their range
+    ctrlClick(rs, 2, 1); r.sim.Type("0.1"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK_NEAR(sl[1], 0.1f, 1e-5); CHECK(sl[0] == 0.25f);
+    // a plain click (no Ctrl) still scrubs and never opens the text box
+    const float before = v[1];
+    r.MoveTo(CellX(rv.x, rv.w, 3, 1), CenterY(rv)); r.sim.Down(); r.Frame(); r.MoveTo(CellX(rv.x, rv.w, 3, 1) + 4, CenterY(rv)); r.sim.Up(); r.Frame();
+    CHECK_NEAR(v[1], before + 2.0f, 1e-3);
+    // clicking away while typing commits
+    ctrlClick(rv, 3, 0); r.sim.Type("9"); r.Frame();
+    r.Click(450, 380);
+    CHECK_NEAR(v[0], 9.0f, 1e-4);
+}
+
 }  // namespace
 
 int main() {
@@ -367,5 +410,6 @@ int main() {
     GroupTests();
     TreeTests();
     BeginComboTests();
+    TypedNumberTests();
     TEST_MAIN_RESULT();
 }

@@ -273,7 +273,7 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 | 4 | Draw list (custom drawing) | 2,520 | HAVE (this step) | See 4.2. Missing: `AddConcavePolyFilled` (5), `AddImageRounded` (17), rounding on chosen corners only, anti-aliasing, `AddCallback` | done |
 | 5 | Buttons, checkbox, radio | 2,387 | PARTIAL | `Button`, `SmallButton`, `Checkbox`, `RadioButton`, `ToggleSwitch`, `ImageButton`, now `InvisibleButton`. Missing: `ArrowButton` (18), `ColorButton` (6), explicit button size | S |
 | 6 | Style and colours | 1,896 | PARTIAL | `Style()`, `PushStyleColor` for 8 colours, `PushTextScale`, now `GetColorU32`. Missing: `PushStyleVar`/`PopStyleVar` (375), the other ~40 `ImGuiCol` colours, `GetStyleColorVec4` (39), colour converters, `PushFont`/`PopFont` of arbitrary fonts | M |
-| 7 | Value widgets (drag, slider, input number) | 1,610 | PARTIAL (step 2) | `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt`, `InputInt`, and now `DragFloat2/3/4`, `DragInt2/3/4` and `DragFloatRange2` (several drag cells in one row sharing a label; each cell scrubs alone, clamps, range cells never cross). Missing: `SliderFloat2/3`, `InputFloat`, `DragIntRange2`, format strings, typing a value into a drag or slider, a drag-speed modifier key | M |
+| 7 | Value widgets (drag, slider, input number) | 1,610 | PARTIAL (step 2) | `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt`, `InputInt`, and now `DragFloat2/3/4`, `DragInt2/3/4` and `DragFloatRange2` (several drag cells in one row sharing a label; each cell scrubs alone, clamps, range cells never cross). Missing: `DragIntRange2`, format strings, typing into the single-value `DragFloat`/`SliderFloat` (the multi-cell ones can, step 10), a drag-speed modifier key | M |
 | 8 | Window, child, scroll | 1,074 | PARTIAL | `Begin`/`End`, `BeginChild`, resize grip, pin, `SetNextWindow*` as arguments. Missing: window flags (auto-resize 72, no scrollbar 47, no title bar, no background and others), z-order and click to front, `SetNextWindowSizeConstraints`, window queries (`IsWindowFocused` 38, `IsWindowHovered` 39), `GetScrollY`/`SetScrollY`, `SetScrollHereY` | M |
 | 9 | Popups | 1,038 | PARTIAL | `OpenPopup`, `BeginPopup`, `BeginPopupContextItem`, `CloseCurrentPopup`. Missing: `BeginPopupModal` (85) with dimming, `BeginPopupContextWindow`, `IsPopupOpen` (41) | M |
 | 10 | Menus | 957 | PARTIAL | menu bar, `BeginMenu`, `MenuItem(label)`. Missing: nested sub-menus, shortcut text, checked and enabled state, `Shortcut` | M |
@@ -391,3 +391,13 @@ Built: `BeginCombo(label, preview)` / `EndCombo()`. The box shows `preview`; whi
 Tested (80 checks in `test_okayui_values.cpp`): closed until clicked, opens on click, rows sit under the box in order, picking a row sets the value and closes, the box toggles, a click outside closes without changing the value. Fuzz draws random content in a combo; behaviour 149, golden 15, drawlist 184, soft 18 unchanged. A test mistake (reading the item rect from inside the open popup) found that `GetItemRect` was returning the popup's rect, which is why it now returns the box.
 
 Not done: selectable size and flags, keyboard navigation of the list, a height limit with scrolling.
+
+### 4.14 Gap-closing step 10: typing a number into a drag or slider cell (family 7)
+
+Built: Ctrl+click on a cell of `DragFloat2/3/4`, `DragInt2/3/4`, `DragFloatRange2` or `SliderFloat2/3/4` turns it into a text box with the whole value selected. Enter or a click elsewhere commits (clamped to the cell's range, rounded for integers, the range widget keeps low <= high); Escape cancels; text that is not a finite number keeps the old value. `Input` gained `ctrl` (Ctrl held); hosts do not set it yet, so the editor and launcher integration (`shared/OkayUIHost.hpp`) is still to do.
+
+A bug found while testing: the press that starts the edit also reached the text box's own click-to-place-caret code, which overwrote the select-all, so typed text was appended to the old value. Forced focus (`SetKeyboardFocusHere` and this) is now applied after the click handling.
+
+Tested (91 checks in `test_okayui_values.cpp`): typed value, clamp, Escape, non-number, integer rounding and clamp, slider cell, plain click still scrubs, click-away commits. Behaviour 149, fuzz 12, golden 15, drawlist 184, soft 18 unchanged.
+
+Not done: the single-value `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt` do not take Ctrl+click yet; a double click; the host sets `ctrl`.

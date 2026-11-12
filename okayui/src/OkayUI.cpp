@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
@@ -126,7 +127,10 @@ int   g_nextOpen = -1;             // SetNextItemOpen: -1 none, 0 closed, 1 open
 int   g_toggledId = 0;             // the tree node or header whose open state the user flipped this frame
 float g_wrapPos = -1.0f;            // PushTextWrapPos: < 0 = off, 0 = wrap at the right edge, > 0 = wrap at that width
 const char* g_hintText = nullptr;   // placeholder for the next text field (InputTextWithHint)
-bool  g_focusNextField = false;     // SetKeyboardFocusHere: the next text field takes the keyboard
+bool  g_focusNextField = false;
+bool  g_focusSelectAll = false;     // together with g_focusNextField: select the whole text, not just put the caret at the end
+int   g_editId = 0;                // the drag / slider box being typed into (0 = none)
+char  g_editBuf[40] = {0};     // SetKeyboardFocusHere: the next text field takes the keyboard
 bool  g_focusClaimed = false;    // a widget took the click this frame (keep focus)
 unsigned g_frame = 0;            // frame counter (drives the text caret blink)
 float    g_dragAccum = 0.0f;     // sub-unit accumulator for DragInt while dragging
@@ -1140,7 +1144,6 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
     const bool wasFocused = (g_focus == id);
-    if (g_focusNextField) { g_focusNextField = false; g_focus = id; g_focusClaimed = true; ts->caret = ts->anchor = len; }
     if (inside && g_pressed) {
         g_focus = id; g_focusClaimed = true; g_active = id;
         ts->caret = ts->anchor = indexAtX(buf, len, ts->first, tx, g_in.mouseX);
@@ -1148,6 +1151,9 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     } else if (g_active == id && g_in.mouseDown && g_focus == id) {
         ts->caret = indexAtX(buf, len, ts->first, tx, g_in.mouseX);   // drag selects
     }
+    // SetKeyboardFocusHere / a typed number: applied after the click handling above, so the same-frame click on the box
+    // cannot undo the caret or the select-all.
+    if (g_focusNextField) { g_focusNextField = false; g_focus = id; g_focusClaimed = true; ts->caret = len; ts->anchor = g_focusSelectAll ? 0 : len; g_focusSelectAll = false; }
     if (g_disCount > 0 && g_focus == id) g_focus = 0;   // a disabled field gives up the keyboard
     bool focused = (g_focus == id);
 
@@ -2343,6 +2349,34 @@ bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
 }
 
 namespace {
+// Ctrl+click on a drag or slider box turns it into a text box for typing a number (Enter or a click elsewhere
+// commits, Escape cancels; a value that is not a finite number is dropped). 0 = not editing (draw the box as
+// usual), 1 = editing (this call drew the text box), 2 = a typed value was committed (*out holds it, clamped).
+int numberEdit(int id, float x, float y, float w, float h, bool inside, double cur, bool isInt, double minV, double maxV, double* out) {
+    if (g_editId != id && inside && g_pressed && g_in.ctrl && !g_in.blocked && g_disCount == 0) {
+        g_editId = id;
+        std::snprintf(g_editBuf, sizeof g_editBuf, isInt ? "%.0f" : "%.6g", cur);
+        g_focusNextField = true; g_focusSelectAll = true;
+    }
+    if (g_editId != id) return 0;
+    const bool entered = TextField(id ^ 0x3ed17, x, y, w, h, g_editBuf, (int)sizeof g_editBuf, InputText_EnterReturnsTrue);
+    const bool lost = g_focus != (id ^ 0x3ed17);
+    const bool clickedAway = g_pressed && !inside;
+    if (!(entered || lost || clickedAway)) return 1;
+    if (g_focus == (id ^ 0x3ed17)) g_focus = 0;
+    g_editId = 0;
+    if (g_in.escape) return 0;                                         // cancelled
+    char* end = nullptr;
+    const double v = std::strtod(g_editBuf, &end);
+    if (end == g_editBuf || !std::isfinite(v)) return 0;               // not a number: keep the old value
+    double r = isInt ? std::floor(v + 0.5) : v;
+    if (minV < maxV) r = r < minV ? minV : (r > maxV ? maxV : r);
+    *out = r;
+    return 2;
+}
+} // namespace
+
+namespace {
 // One row of `n` (1..4) drag cells side by side that share one label (the vector fields of an inspector:
 // Position, Rotation, Scale). Every cell has its own id (the label's id plus the cell number), scrubs like
 // DragFloat / DragInt, and the label is drawn once to the right of the last cell. `range` keeps cell 0 <= cell 1.
@@ -2361,6 +2395,23 @@ bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float 
         const float cx = x + (float)i * (cw + gap);
         const int id = base + (i + 1) * 7919;
         const bool inside = hit(cx, y, cw, h);
+        {   // Ctrl+click: type a number into this cell
+            double typed = 0.0;
+            const int e = numberEdit(id, cx, y, cw, h, inside, fv ? (double)fv[i] : (double)iv[i], fv == nullptr, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
+            if (e == 2) {
+                if (fv) {
+                    float nv = (float)typed;
+                    if (range && n == 2) { if (i == 0 && nv > fv[1]) nv = fv[1]; if (i == 1 && nv < fv[0]) nv = fv[0]; }
+                    if (std::isfinite(nv) && nv != fv[i]) { fv[i] = nv; changed = true; }
+                } else {
+                    int nv = (int)typed;
+                    if (range && n == 2) { if (i == 0 && nv > iv[1]) nv = iv[1]; if (i == 1 && nv < iv[0]) nv = iv[0]; }
+                    if (nv != iv[i]) { iv[i] = nv; changed = true; }
+                }
+                continue;
+            }
+            if (e == 1) continue;
+        }
         float delta; dragBox(id, cx, y, cw, h, inside, delta);
         if (delta != 0.0f && std::isfinite(delta) && std::isfinite(speed)) {
             if (fv) {
@@ -2426,8 +2477,15 @@ bool sliderCells(const char* label, float* v, int n, float minV, float maxV) {
     float ctrlW = w - lw; if (ctrlW < 24.0f * (float)n) ctrlW = 24.0f * (float)n;
     const float cw = (ctrlW - gap * (float)(n - 1)) / (float)n;
     bool changed = false;
-    for (int i = 0; i < n; ++i)
-        if (Slider(base + (i + 1) * 7919, x + (float)i * (cw + gap), y, cw, h, &v[i], minV, maxV)) changed = true;
+    for (int i = 0; i < n; ++i) {
+        const float cx = x + (float)i * (cw + gap);
+        const int cid = base + (i + 1) * 7919;
+        double typed = 0.0;
+        const int e = numberEdit(cid, cx, y, cw, h, hit(cx, y, cw, h), (double)v[i], false, (double)minV, (double)maxV, &typed);
+        if (e == 2) { if ((float)typed != v[i]) { v[i] = (float)typed; changed = true; } continue; }
+        if (e == 1) continue;
+        if (Slider(cid, cx, y, cw, h, &v[i], minV, maxV)) changed = true;
+    }
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
     return changed;
 }
@@ -3642,7 +3700,7 @@ void ResetState() {
     g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
-    g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
+    g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_focusSelectAll = false; g_editId = 0; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
     g_openPopupThisFrame = 0;
     for (PopupSlot& p : g_popups) p = PopupSlot();
     for (WinSlot& w : g_wins) w = WinSlot();

@@ -2323,6 +2323,97 @@ bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float
     return changed;
 }
 
+namespace {
+// `n` (2..4) slider cells in one row that share a label (see dragCells).
+bool sliderCells(const char* label, float* v, int n, float minV, float maxV) {
+    if (!g_lay.active || !v || n < 2 || n > 4) return false;
+    const int base = hashLabel(label);
+    const float h = rowH();
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    const float gap = 4.0f;
+    float ctrlW = w - lw; if (ctrlW < 24.0f * (float)n) ctrlW = 24.0f * (float)n;
+    const float cw = (ctrlW - gap * (float)(n - 1)) / (float)n;
+    bool changed = false;
+    for (int i = 0; i < n; ++i)
+        if (Slider(base + (i + 1) * 7919, x + (float)i * (cw + gap), y, cw, h, &v[i], minV, maxV)) changed = true;
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    return changed;
+}
+} // namespace
+
+bool SliderFloat2(const char* label, float v[2], float minV, float maxV) { return sliderCells(label, v, 2, minV, maxV); }
+bool SliderFloat3(const char* label, float v[3], float minV, float maxV) { return sliderCells(label, v, 3, minV, maxV); }
+bool SliderFloat4(const char* label, float v[4], float minV, float maxV) { return sliderCells(label, v, 4, minV, maxV); }
+
+bool InputFloat(const char* label, float* value, float step) {
+    if (!g_lay.active || !value) return false;
+    const int id = hashLabel(label);
+    const float h = rowH();
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    const float btnW = h;
+    float fieldW = w - lw - btnW * 2.0f - 8.0f;
+    if (fieldW < 24.0f) fieldW = 24.0f;
+    quad(x, y, fieldW, h, g_theme.track);
+    char buf[48]; std::snprintf(buf, sizeof(buf), "%.3f", (double)*value);
+    drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text);
+    const float bx = x + fieldW + 4.0f;
+    bool ch = false;
+    const bool okStep = std::isfinite(step);
+    if (Button(id ^ 0x2d, bx, y, btnW, h, "-") && okStep && std::isfinite(*value - step))              { *value -= step; ch = true; }
+    if (Button(id ^ 0x2b, bx + btnW + 4.0f, y, btnW, h, "+") && okStep && std::isfinite(*value + step)) { *value += step; ch = true; }
+    if (lw > 0.0f) drawText(x + fieldW + btnW * 2.0f + 12.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    return ch;
+}
+
+bool ArrowButton(const char* id, int dir) {
+    if (!g_lay.active || !id) return false;
+    const float h = rowH();
+    float x, y; place(h, h, x, y);
+    static const char* const glyph[4] = {"<", ">", "^", "v"};   // left, right, up, down
+    return Button(hashLabel(id), x, y, h, h, glyph[(unsigned)dir < 4u ? dir : 0]);
+}
+
+bool ColorButton(const char* id, const float rgba[4], float size) {
+    if (!g_lay.active || !id || !rgba) return false;
+    const float h = size > 0.0f && std::isfinite(size) ? size : rowH(), b = g_theme.borderPx;
+    float x, y; place(h, h, x, y);
+    const bool clicked = Button(hashLabel(id), x, y, h, h, "");
+    unsigned char col[4] = {(unsigned char)(clamp01(rgba[0]) * 255.0f), (unsigned char)(clamp01(rgba[1]) * 255.0f),
+                            (unsigned char)(clamp01(rgba[2]) * 255.0f), (unsigned char)(clamp01(rgba[3]) * 255.0f)};
+    if (h > 2 * b + 2.0f) quad(x + b + 1.0f, y + b + 1.0f, h - 2 * b - 2.0f, h - 2 * b - 2.0f, col);
+    return clicked;
+}
+
+bool ColorEdit4(const char* label, float rgba[4]) {
+    if (!g_lay.active || !rgba) return false;
+    const int id = hashLabel(label);
+    const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
+    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    const float row = w - lw, swatch = h;
+    unsigned char col[4] = {(unsigned char)(clamp01(rgba[0]) * 255.0f), (unsigned char)(clamp01(rgba[1]) * 255.0f),
+                            (unsigned char)(clamp01(rgba[2]) * 255.0f), 255};
+    unsigned char colA[4] = {col[0], col[1], col[2], (unsigned char)(clamp01(rgba[3]) * 255.0f)};
+    quad(x, y, swatch, h, g_theme.border);
+    if (swatch > 2 * b && h > 2 * b) { quad(x + b, y + b, swatch - 2 * b, h - 2 * b, col); quad(x + b, y + b, (swatch - 2 * b) * 0.5f, h - 2 * b, colA); }   // left half: with alpha, right half: opaque
+    float slidersW = row - swatch - 6.0f; if (slidersW < 40.0f) slidersW = 40.0f;
+    const float each = (slidersW - 12.0f) / 4.0f;
+    bool changed = false;
+    for (int ch = 0; ch < 4; ++ch) {
+        const int cid = id ^ (int)(0x9e3779b9u * (unsigned)(ch + 1));
+        if (Slider(cid, x + swatch + 6.0f + (float)ch * (each + 4.0f), y, each, h, &rgba[ch], 0.0f, 1.0f)) changed = true;
+    }
+    if (lw > 0.0f) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    return changed;
+}
+
+void NewLine() { if (g_lay.active) g_lay.pendingSameLine = false; }
+
 bool ColorEdit3(const char* label, float rgb[3]) {
     if (!g_lay.active || !rgb) return false;
     const int id = hashLabel(label);

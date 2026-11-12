@@ -101,6 +101,70 @@ void HostileTests() {
     CHECK(v[0] == 0);
 }
 
+void SliderAndInputTests() {
+    Rig r; float v[3] = {0, 0, 0}; float f = 1.0f; float rgba[4] = {0.2f, 0.4f, 0.6f, 1.0f}; UI::Rect rs, rf, rc;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(300); UI::SliderFloat3("", v, 0.0f, 10.0f); rs = UI::GetItemRect(); UI::PopID();
+        UI::PushID(2); UI::SetNextItemWidth(260); UI::InputFloat("", &f, 0.25f); rf = UI::GetItemRect(); UI::PopID();
+        UI::PushID(3); UI::SetNextItemWidth(400); UI::ColorEdit4("", rgba); rc = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    // each slider cell takes the press at its own position and leaves the others alone
+    r.MoveTo(CellX(rs.x, rs.w, 3, 1), CenterY(rs)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(v[0] == 0 && v[2] == 0);
+    CHECK_NEAR(v[1], 5.0f, 0.05f);                                  // centre of the middle cell = half of 0..10
+    // InputFloat: [-] and [+] change by the step
+    const float btn = rf.h, field = rf.w - 2 * btn - 8.0f;
+    const float minusX = rf.x + field + 4.0f + btn * 0.5f, plusX = minusX + btn + 4.0f, by = CenterY(rf);
+    r.MoveTo(plusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK_NEAR(f, 1.25f, 1e-4);
+    r.MoveTo(minusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    r.MoveTo(minusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK_NEAR(f, 0.75f, 1e-4);
+    // ColorEdit4: the alpha slider is the fourth cell
+    const float cw = rc.h, sw = rc.w - cw - 6.0f, each = (sw - 12.0f) / 4.0f;
+    const float ax = rc.x + cw + 6.0f + 3.0f * (each + 4.0f) + each * 0.5f;
+    r.MoveTo(ax, CenterY(rc)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK_NEAR(rgba[3], 0.5f, 0.05f);
+    CHECK(rgba[0] == 0.2f && rgba[1] == 0.4f && rgba[2] == 0.6f);
+}
+
+void InputFloatHostileTests() {
+    Rig r; float f = 1.0f; UI::Rect rf; const float inf = std::numeric_limits<float>::infinity();
+    float step = std::numeric_limits<float>::quiet_NaN();
+    r.body = [&] { UI::PushID(1); UI::SetNextItemWidth(260); UI::InputFloat("", &f, step); rf = UI::GetItemRect(); UI::PopID(); };
+    r.Frames(2);
+    const float btn = rf.h, field = rf.w - 2 * btn - 8.0f;
+    const float plusX = rf.x + field + 4.0f + btn * 1.5f + 4.0f, by = CenterY(rf);
+    r.MoveTo(plusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(f == 1.0f);                                               // a NaN step changes nothing
+    step = inf; r.MoveTo(plusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(f == 1.0f);                                               // nor does an infinite one
+    f = std::numeric_limits<float>::max(); step = std::numeric_limits<float>::max();
+    r.MoveTo(plusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(std::isfinite(f));                                        // overflow to infinity is refused
+}
+
+void SmallWidgetTests() {
+    Rig r; int arrows = 0, colors = 0; float c[4] = {1, 0, 0, 1}; UI::Rect ra, rcb, ra2, rb;
+    r.body = [&] {
+        if (UI::ArrowButton("left", 0)) ++arrows; ra = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::ArrowButton("bad", 99)) ++arrows;                   // an unknown direction is drawn as left, not read out of range
+        if (UI::ColorButton("col", c)) ++colors; rcb = UI::GetItemRect();
+        UI::Button("a"); ra2 = UI::GetItemRect();
+        UI::SameLine(); UI::NewLine();
+        UI::Button("b"); rb = UI::GetItemRect();
+    };
+    r.Frames(2);
+    CHECK(ra.w > 0 && ra.w == ra.h);                                // square
+    r.MoveTo(CenterX(ra), CenterY(ra)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(arrows >= 1);
+    r.MoveTo(CenterX(rcb), CenterY(rcb)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(colors >= 1);
+    CHECK(rb.y > ra2.y);                                            // NewLine after SameLine starts a new row
+}
+
 }  // namespace
 
 int main() {
@@ -109,5 +173,8 @@ int main() {
     ClampAndCountTests();
     IntAndRangeTests();
     HostileTests();
+    SliderAndInputTests();
+    InputFloatHostileTests();
+    SmallWidgetTests();
     TEST_MAIN_RESULT();
 }

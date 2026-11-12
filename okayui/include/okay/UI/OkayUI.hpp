@@ -345,6 +345,22 @@ bool DragInt4(const char* label, int v[4], float speed = 0.25f, int minV = 0, in
 /// A low and a high value in one row: the low cell never goes above the high one and the high never below the low.
 bool DragFloatRange2(const char* label, float* lo, float* hi, float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
 
+/// Two, three or four sliders in one row sharing one label; every cell runs over [minV, maxV]. True on any change.
+bool SliderFloat2(const char* label, float v[2], float minV, float maxV);
+bool SliderFloat3(const char* label, float v[3], float minV, float maxV);
+bool SliderFloat4(const char* label, float v[4], float minV, float maxV);
+/// A float field with [-]/[+] steppers that change *value by `step` (the float twin of InputInt). A NaN or
+/// infinite step, or a step that would make the value non-finite, changes nothing.
+bool InputFloat(const char* label, float* value, float step = 0.1f);
+/// A square button with an arrow: dir 0 left, 1 right, 2 up, 3 down (anything else is left). `id` names it.
+bool ArrowButton(const char* id, int dir);
+/// A square swatch showing rgba[0..3] (each 0..1) that can be clicked; `size` <= 0 uses the row height.
+bool ColorButton(const char* id, const float rgba[4], float size = 0.0f);
+/// An RGBA color editor: a swatch (left half with the alpha, right half opaque) plus four 0..1 sliders.
+bool ColorEdit4(const char* label, float rgba[4]);
+/// Ends the current line: the next widget starts on a new row even right after SameLine().
+void NewLine();
+
 /// An RGB color editor: a swatch plus three 0..1 channel sliders on one row.
 /// Edits rgb[0..2] in place; returns true on any frame a channel changed.
 bool ColorEdit3(const char* label, float rgb[3]);

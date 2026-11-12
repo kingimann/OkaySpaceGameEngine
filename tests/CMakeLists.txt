@@ -102,6 +102,11 @@ add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
 
+# MeshCollider3D: real triangle-mesh collision (BVH): rays, overlaps, casts, bodies, edits, perf
+add_executable(test_meshcollider3d test_meshcollider3d.cpp)
+target_link_libraries(test_meshcollider3d PRIVATE okay::engine)
+add_test(NAME meshcollider3d COMMAND test_meshcollider3d)
+
 # Robustness: removing colliders / bodies / components from contact callbacks
 add_executable(test_physics_callback_removal test_physics_callback_removal.cpp)
 target_link_libraries(test_physics_callback_removal PRIVATE okay::engine)
@@ -770,6 +775,13 @@ target_include_directories(test_prefab_mode PRIVATE ${PROJECT_SOURCE_DIR}/editor
 target_link_libraries(test_prefab_mode PRIVATE okay::engine)
 add_test(NAME prefab_mode COMMAND test_prefab_mode)
 
+# The editor's prefab actions (editor/PrefabEdit; ImGui-free): override detection, per-field and per-component Revert / Apply, Apply updating the
+# other instances, nested prefabs and variants, objects added to or lost from an instance, Create Variant, and undo / redo that moves the prefab files too.
+add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_prefab_editor PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_prefab_editor PRIVATE okay::engine)
+add_test(NAME prefab_editor COMMAND test_prefab_editor)
+
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
 add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
 target_link_libraries(test_project_save PRIVATE okay::engine)
@@ -791,6 +803,12 @@ add_executable(test_project_panel test_project_panel.cpp ${PROJECT_SOURCE_DIR}/e
 target_include_directories(test_project_panel PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_panel PRIVATE okay::engine)
 add_test(NAME project_panel COMMAND test_project_panel)
+
+# The Project panel on the asset database and the thumbnail cache: listing / search / filters / used-by / info from the database, incremental refresh (5,000 assets timed), thumbnails by GUID + hash (hit, miss, invalidate, disk, frame budget), rename / move / delete keep GUIDs and badge broken references.
+add_executable(test_project_panel_db test_project_panel_db.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_project_panel_db PRIVATE okay::engine)
+add_test(NAME project_panel_db COMMAND test_project_panel_db)
 
 # Import settings that really change behaviour: texture Filter / Wrap / Mipmaps (software sampler + sidecar read by the OpenGL path), model Normals / Smoothing angle / Import animations.
 add_executable(test_import_settings_real test_import_settings_real.cpp)
@@ -862,6 +880,10 @@ add_test(NAME vehicle COMMAND test_vehicle)
 add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
 add_test(NAME survival COMMAND test_survival)
+
+add_executable(test_volumes test_volumes.cpp)
+target_link_libraries(test_volumes PRIVATE okay::engine)
+add_test(NAME volumes COMMAND test_volumes)
 
 add_executable(test_minimap test_minimap.cpp)
 target_link_libraries(test_minimap PRIVATE okay::engine)
@@ -1811,6 +1833,10 @@ add_test(NAME post_sky COMMAND test_post_sky)
 add_executable(test_navmesh test_navmesh.cpp)
 target_link_libraries(test_navmesh PRIVATE okay::engine)
 add_test(NAME navmesh COMMAND test_navmesh)
+# Navigation areas (modifier, costs, masks) and off-mesh links (jump / drop / ladder): bake, path search, crossing, scene file
+add_executable(test_navmesh_areas test_navmesh_areas.cpp)
+target_link_libraries(test_navmesh_areas PRIVATE okay::engine)
+add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)
@@ -1896,6 +1922,7 @@ add_test(NAME assetmanager COMMAND test_assetmanager)
 # Asset database: GUID metas, move detection, dependency graph, import settings, thumbnails, search
 add_executable(test_asset_database test_asset_database.cpp)
 target_link_libraries(test_asset_database PRIVATE okay::engine)
+target_compile_definitions(test_asset_database PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME asset_database COMMAND test_asset_database)
 
 # Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
@@ -2320,6 +2347,34 @@ add_executable(test_file_dialog test_file_dialog.cpp ${PROJECT_SOURCE_DIR}/share
 target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
+
+# Our own model readers (OBJ+MTL, STL, PLY) + the import seam: fixtures in tests/data/models,
+# malformed input, a fuzz sweep, the backend switch, and (with OKAY_USE_ASSIMP) both backends compared.
+add_executable(test_model_readers test_model_readers.cpp)
+target_link_libraries(test_model_readers PRIVATE okay::engine)
+target_compile_definitions(test_model_readers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME model_readers COMMAND test_model_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(model_readers PROPERTIES TIMEOUT 300)
+add_executable(test_model_readers_fuzz test_model_readers_fuzz.cpp)
+target_link_libraries(test_model_readers_fuzz PRIVATE okay::engine)
+target_compile_definitions(test_model_readers_fuzz PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME model_readers_fuzz COMMAND test_model_readers_fuzz WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(model_readers_fuzz PROPERTIES TIMEOUT 300)
+# "Download my data" / "Delete my account": client request building, confirmation
+# gating, export assembly, error mapping (engine/include/okay/Platform/Account/AccountData.hpp).
+add_executable(test_account_data test_account_data.cpp)
+target_compile_features(test_account_data PRIVATE cxx_std_17)
+target_include_directories(test_account_data PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME account_data COMMAND test_account_data)
+
+# The delete-account Edge Function's logic against a fake client (needs Node 22+;
+# skipped without it). Same file also runs under Deno.
+find_program(OKAY_NODE node)
+if(OKAY_NODE)
+    add_test(NAME delete_account_function
+             COMMAND ${OKAY_NODE} --experimental-strip-types --test
+                     ${CMAKE_SOURCE_DIR}/supabase/functions/delete-account/delete_account_test.ts)
+endif()
 
 # Our own FBX reader (okay::fbx), side by side with ufbx: fixtures from scripts/gen_fbx_fixtures.py
 add_executable(test_fbx_reader test_fbx_reader.cpp)

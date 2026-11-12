@@ -46,6 +46,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [survival_kit.md](survival_kit.md): health, hunger, thirst, stamina, oxygen and temperature components.
 - [npcs_and_crafting.md](npcs_and_crafting.md): NPCs and crafting.
 - [navigation.md](navigation.md): navigation meshes and agents.
+- [volumes.md](volumes.md): box, sphere and cylinder zones: checkpoint, kill, force, fog and sound, drawn and resized in the Scene view.
 - [behavior_trees.md](behavior_trees.md): behavior trees for NPC AI.
 - [dialogue_quests.md](dialogue_quests.md): dialogue graphs, story variables and quests.
 - [cutscenes.md](cutscenes.md): sequences and the Timeline window.

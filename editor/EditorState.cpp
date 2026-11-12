@@ -18,6 +18,7 @@
 #include <set>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include "../shared/ProjectCreate.hpp"
 
 namespace {
@@ -206,6 +207,68 @@ void EditorState::PushUndo(const std::string& name, std::unique_ptr<ICommand> al
     if (m_suppressUndo || m_playing) return;
     PushUndo(name);
     if (alsoUndo) m_pending.extras.push_back(std::move(alsoUndo));
+}
+
+namespace {
+// Files an edit wrote, as one ICommand of the undo step (see EditorState::PushUndo(name, alsoUndo)).
+class FileEditCommand : public ICommand {
+public:
+    FileEditCommand(std::vector<EditorState::FileEdit> e, std::string name) : m_edits(std::move(e)), m_name(std::move(name)) {}
+    bool Do() override { Apply(false); return true; }
+    bool Undo() override { Apply(true); return true; }
+    std::string Name() const override { return m_name; }
+    std::size_t MemoryBytes() const override {
+        std::size_t n = 64;
+        for (const auto& e : m_edits) n += e.path.size() + e.before.size() + e.after.size();
+        return n;
+    }
+private:
+    void Apply(bool undoing) {
+        namespace fs = std::filesystem;
+        for (const EditorState::FileEdit& e : m_edits) {
+            std::error_code ec;
+            const bool keep = undoing ? e.hadBefore : e.hasAfter;
+            if (!keep) { fs::remove(e.path, ec); continue; }
+            const std::string tmp = e.path + ".tmp";
+            {
+                std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+                f << (undoing ? e.before : e.after);
+            }
+            fs::rename(tmp, e.path, ec);
+            if (ec) { fs::remove(e.path, ec); ec.clear(); fs::rename(tmp, e.path, ec); }
+        }
+        if (!m_edits.empty()) SceneSerializer::ClearPrefabCache();   // instantiating a prefab must read the restored file
+    }
+    std::vector<EditorState::FileEdit> m_edits;
+    std::string m_name;
+};
+}
+
+std::unique_ptr<ICommand> EditorState::MakeFileUndo(std::vector<FileEdit> edits, const std::string& name) {
+    return std::make_unique<FileEditCommand>(std::move(edits), name);
+}
+
+bool EditorState::ReadTextFile(const std::string& path, std::string& out) {
+    out.clear();
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::ostringstream ss; ss << f.rdbuf();
+    out = ss.str();
+    return true;
+}
+
+bool EditorState::AttachUndoFiles(std::vector<FileEdit> edits) {
+    if (m_suppressUndo || m_playing || edits.empty()) return false;
+    if (m_pending.open) {
+        m_pending.extras.push_back(MakeFileUndo(std::move(edits), m_pending.name.empty() ? "Edit Prefab" : m_pending.name));
+        return true;
+    }
+    PushUndo("Edit Prefab", MakeFileUndo(std::move(edits)));
+    return true;
+}
+
+void EditorState::DiscardLastUndo() {
+    if (m_pending.open && m_pending.extras.empty()) m_pending = Pending{};
 }
 
 void EditorState::PushUndoText(std::string before, const std::string& name, std::uint64_t mergeKey) {

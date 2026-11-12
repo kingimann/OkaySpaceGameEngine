@@ -230,6 +230,24 @@ public:
     /// Steps with the same non-zero `mergeKey` that follow each other within a second (the same field
     /// nudged again) and touch the same place become one step.
     void PushUndoText(std::string before, const std::string& name = "", std::uint64_t mergeKey = 0);
+    /// One asset file an undoable edit wrote (a prefab Apply rewrites the .okayprefab, not just the scene). Undo puts `before` back
+    /// (or deletes the file when `hadBefore` is false), Redo writes `after` again.
+    struct FileEdit {
+        std::string path;
+        bool hadBefore = true;
+        std::string before;
+        bool hasAfter = true;
+        std::string after;
+    };
+    /// The undo command that carries file edits (an ICommand for PushUndo(name, alsoUndo); the edits are already written when it is recorded).
+    static std::unique_ptr<ICommand> MakeFileUndo(std::vector<FileEdit> edits, const std::string& name = "Edit Prefab");
+    /// Tie file edits that are already written to the step the last PushUndo opened (opens one if none is), through the same
+    /// PushUndo(name, command) path: one Undo / Redo moves the files and the scene together. No-op (false) while undo is suppressed or Play runs.
+    bool AttachUndoFiles(std::vector<FileEdit> edits);
+    /// Drop the step the last PushUndo opened when the edit it was opened for failed and changed nothing.
+    void DiscardLastUndo();
+    /// Read a whole file ("" and false when it cannot be read). Helper for building FileEdit.
+    static bool ReadTextFile(const std::string& path, std::string& out);
     /// Goes up on every PushUndo, PushUndoText, Undo and Redo: an unchanged value means "nothing touched the undo stack".
     std::uint64_t UndoSerial() const { return m_undoSerial; }
     /// Close the open step now (a no-op when none is open). The editor calls it between frames while no

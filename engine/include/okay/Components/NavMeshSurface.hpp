@@ -31,10 +31,22 @@ public:
     std::uint32_t layerMask = 0xFFFFFFFFu;
     /// Editor: bake again every time Play starts.
     bool bakeBeforePlay = false;
+    /// What one unit of distance costs in each area (A* cost = distance * this). Tunable
+    /// without a rebake: the baked polygons only carry the area number. A cost below 1
+    /// makes an area preferred (a road), above 1 avoided (a swamp). Which areas an agent
+    /// may enter at all is its own `areaMask`.
+    float areaCost[kNavAreaCount];
+    /// Project names for the areas (blank = the default name), shown in the editor.
+    std::string areaName[kNavAreaCount];
+    const char* AreaName(int area) const {
+        return area >= 0 && area < kNavAreaCount && !areaName[area].empty() ? areaName[area].c_str() : NavAreaDefaultName(area);
+    }
+    /// Copy this surface's area costs into a query filter.
+    void FillFilter(NavQueryFilter& f) const { for (int i = 0; i < kNavAreaCount; ++i) f.areaCost[i] = areaCost[i]; }
     /// Folder of the scene file this surface was loaded from (resolves a relative navPath).
     std::string sceneDir;
 
-    NavMeshSurface() = default;
+    NavMeshSurface() { for (int i = 0; i < kNavAreaCount; ++i) areaCost[i] = NavAreaDefaultCost(i); }
     ~NavMeshSurface() override;
     NavMeshSurface(const NavMeshSurface&) = delete;
     NavMeshSurface& operator=(const NavMeshSurface&) = delete;

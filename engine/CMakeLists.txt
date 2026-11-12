@@ -128,6 +128,7 @@ add_library(okay_engine
     src/Components/SplineMesh.cpp
     src/Components/LineRenderer.cpp
     src/Components/BuildMode.cpp
+    src/Components/Volume.cpp
     src/Components/DialogueGraph.cpp
     src/Components/DialogueRunner.cpp
     src/Components/QuestLog.cpp
@@ -137,6 +138,8 @@ add_library(okay_engine
     src/Platform/Account/Account.cpp
     src/Physics/Physics2D.cpp
     src/Physics/Physics3D.cpp
+    src/Physics/TriMesh.cpp
+    src/Physics/MeshCollider3D.cpp
     src/Audio/AudioMixer.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
@@ -183,6 +186,7 @@ add_library(okay_engine
     src/UI/FocusGraph.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
+    src/Render/ModelReaders.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -412,7 +416,15 @@ if(OKAY_USE_ASSIMP)
     FetchContent_MakeAvailable(assimp)
     target_link_libraries(okay_engine PUBLIC assimp)
     target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
+    target_sources(okay_engine PRIVATE src/Render/ModelImportAssimp.cpp)   # the only file that includes Assimp
     message(STATUS "OkaySpace: Assimp model import ENABLED (DAE/STL/PLY/3DS/Blend/X/3MF/AMF/X3D/MD2/MD3/MD5/MDL/SMD/MS3D/LWO/DXF/OFF/AC/B3D/BVH/PMX/...)")
+endif()
+
+# Our own STL / PLY readers are always built. With Assimp also on, this picks which one
+# a format uses by default (docs/model_import.md); SetImportBackend() changes it at run time.
+if(OKAY_PREFER_OWN_READERS)
+    target_compile_definitions(okay_engine PRIVATE OKAY_PREFER_OWN_READERS_DEFAULT)
+    message(STATUS "OkaySpace: model import prefers the built-in STL/PLY readers over Assimp")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

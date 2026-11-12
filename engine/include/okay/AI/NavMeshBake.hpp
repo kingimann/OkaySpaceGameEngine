@@ -16,15 +16,16 @@ class GameObject;
 /// responsive. Colliders become oriented boxes / spheres / capsules; heightmap
 /// terrains are copied as heightfields.
 struct NavBakeInput {
-    struct Box     { Vec3 center, half; Quat rot; };
-    struct Sphere  { Vec3 center; float radius; };
-    struct Capsule { Vec3 a, b; float radius; };
+    struct Box     { Vec3 center, half; Quat rot; int area = 0; };
+    struct Sphere  { Vec3 center; float radius; int area = 0; };
+    struct Capsule { Vec3 a, b; float radius; int area = 0; };
     struct Heightfield {
         Mat4 l2w, w2l;
         float size = 0.0f;           // local width / depth (centred on the object)
         int   dim = 0;               // heights per side
         std::vector<float> heights;  // row-major, dim * dim
         Vec3 aabbMin, aabbMax;       // world bounds
+        int  area = 0;               // NavArea of the whole terrain
         float Height(int x, int z) const {
             if (x < 0 || z < 0 || x >= dim || z >= dim) return 0.0f;
             return heights[(std::size_t)z * dim + x];
@@ -58,6 +59,9 @@ struct NavBakeStats {
 /// the agent radius, merges the cells into convex polygons (axis-aligned
 /// rectangles that stay within the cell-height tolerance of a plane) and joins
 /// neighbouring polygons with portals the funnel algorithm pulls paths through.
+/// Each collider's area comes from the NavMeshModifier on its object (or an ancestor
+/// that applies to children): the top of a span takes the area of the surface on top,
+/// a NotWalkable top is never walkable, and only cells of one area merge into a polygon.
 class NavMeshBaker {
 public:
     /// Copy the scene's static collision geometry (main thread only). Leaves out
@@ -71,6 +75,9 @@ public:
     static bool Bake(const NavBakeInput& in, const NavMeshBuildSettings& settings, NavMesh& out,
                      std::atomic<float>* progress = nullptr, std::atomic<bool>* cancel = nullptr,
                      NavBakeStats* stats = nullptr);
+    /// The navigation area of this object's colliders: its NavMeshModifier, else the nearest
+    /// ancestor's that applies to children, else Walkable.
+    static int AreaFor(const GameObject* go);
     /// Is this object (or an ancestor) something that moves and so must not be baked?
     static bool IsMovingThing(const GameObject* go);
 };

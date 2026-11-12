@@ -2,7 +2,7 @@
 
 Baked navigation meshes with agents and obstacles, the older probe grid and 2D grid A*, behavior trees with a blackboard, and
 the NPC Controller with built-in perception. Code is `engine/include/okay/AI/*` (6 headers), `engine/src/AI/*` (about 4.5k lines),
-five components and two editor windows. Docs: `docs/navigation.md`, `docs/behavior_trees.md`, `docs/npcs_and_crafting.md`.
+seven navigation components and two editor windows. Docs: `docs/navigation.md`, `docs/behavior_trees.md`, `docs/npcs_and_crafting.md`.
 No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `Scripting/OkayScriptVM` (area 13).
 
 ## 9. AI & navigation
@@ -21,9 +21,9 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **Docs:** `docs/navigation.md`
 - **Tests:** `navmesh`, `script_nav`
 - **Status:** Works - NavMesh.cpp, NavMeshSurface.cpp, Navigation.cpp and the facade header read; bake and path behaviour (walls, doorways, ramps, islands) covered by `navmesh` and `script_nav`
-- **Open:** per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; no off-mesh links (jumps, ladders) and no obstacle carving; Navigation uses only the first enabled surface in a scene; with no mesh `FindPath` always returns a path (a straight line when the grid finds none), so the grid cannot report an unreachable goal
+- **Open:** per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; no obstacle carving (area types and off-mesh links are 9.6); Navigation uses only the first enabled surface in a scene; with no mesh `FindPath` always returns a path (a straight line when the grid finds none), so the grid cannot report an unreachable goal
 - **Related:** 9.2, 9.5, 4.4, 6.2, 2.6, 27.4
-- **Words:** navmesh, nav mesh, NavMeshSurface, bake, .okaynav, pathfinding, funnel, walkable, navigation window, NavGrid3D, probe grid, agent radius, max slope, step height, off-mesh link
+- **Words:** navmesh, nav mesh, NavMeshSurface, bake, .okaynav, pathfinding, funnel, walkable, navigation window, NavGrid3D, probe grid, agent radius, max slope, step height
 - **Seen as:** enemies walk straight into walls or cannot find a way around; the mesh is missing near a doorway; enemies ignore a ramp; the Bake button does nothing; the blue overlay does not match the level; a character cannot reach a platform
 - **Ask me like:** "bake a navmesh for my level"; "my guard will not walk through the narrow door"
 
@@ -40,7 +40,7 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **Docs:** `docs/navigation.md`
 - **Tests:** `navmesh`, `script_nav`
 - **Status:** Works - NavMeshAgent.hpp and the function layout of NavMeshAgent.cpp read (Replan, Avoid, Move, Face, Animate, Update); behaviour covered by `navmesh` per its agent cases
-- **Open:** agents only avoid each other and obstacles locally; there is no crowd-wide planner; no area types or costs (mud, water, doors); obstacles do not carve the mesh
+- **Open:** agents only avoid each other and obstacles locally; there is no crowd-wide planner; obstacles do not carve the mesh; area costs and links are 9.6
 - **Related:** 9.1, 9.4, 9.5, 4.4
 - **Words:** NavMeshAgent, agent, avoidance, steering, crowd, obstacle, destination, stopping distance, SetDestination, repath, stuck
 - **Seen as:** enemies bunch up in a doorway; an agent jitters when it arrives; two agents block each other; an agent slides instead of walking; an agent gives up on a path
@@ -102,3 +102,23 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **Words:** AI, NPC, NPCController, enemy, wildlife, guard, patrol, wander, chase, flee, perception, sight cone, field of view, hearing, stealth, detection meter, leash, aggro
 - **Seen as:** an enemy sees through walls; an enemy never notices the player or notices from behind; an NPC returns to its spawn after a chase; the NPC dies but nothing drops; enemies stack on each other
 - **Ask me like:** "make a wolf that wanders and attacks when it sees me"; "stealth guard who needs two seconds to notice the player"
+
+### 9.6 Nav areas and off-mesh links
+- **What:** Each baked polygon has one of 32 areas (walkable, not walkable, water, road, custom) set per object with a Nav Mesh Modifier; the path search charges distance times the area's cost and each Nav Mesh Agent has an area mask. Nav Mesh Links (jump, drop, ladder) are extra edges the search can use and the agent crosses over time, with start and end callbacks.
+- **Parts:**
+  - 9.6.1 Area types - `Components/NavMeshModifier`, `AI/NavMeshBake`, `AI/NavMesh` - area per collider (own or ancestor's), tops win, not-walkable cuts a hole, cells merge per area, area saved in the `.okaynav` poly record
+  - 9.6.2 Costs and masks - `AI/NavMesh` (`NavQueryFilter`), `Components/NavMeshSurface` (`areaCost`, `areaName`), `Components/NavMeshAgent` (`areaMask`) - A* cost is distance times area cost, forbidden areas never entered, no rebake to change costs
+  - 9.6.3 Off-mesh links - `Components/NavMeshLink`, `AI/Navigation` (`FindPathForAgent`) - start and end points, bidirectional flag, cost, area, enabled state; edges in the A* graph, path legs report the link
+  - 9.6.4 Link crossing - `engine/src/AI/NavMeshAgent.cpp` - walk to the start, arc or fall or climb to the end over time, `onLinkStart` / `onLinkEnd`, `nav_link_start` / `nav_link_end` messages
+  - 9.6.5 Editor - `editor/NavigationWindow.*` - Areas table, area-coloured mesh overlay, link gizmos with arrows, Inspectors for modifier, link, agent mask
+- **Code:** `Components/NavMeshModifier`, `Components/NavMeshLink`, `AI/NavMesh`, `AI/NavMeshBake`, `AI/Navigation`, `engine/src/AI/NavMeshAgent.cpp`, `editor/NavigationWindow.*`
+- **API:** `NavMeshModifier`, `NavMeshLink`, `NavArea`, `NavQueryFilter`, `NavMeshAgent::areaMask`, `NavMeshAgent::onLinkStart`, `NavMeshAgent::onLinkEnd`, `NavMeshAgent::IsTraversingLink`, `Navigation::FindPathForAgent`, `NavMeshSurface::areaCost`
+- **Editor:** Add Component > Gameplay > Nav Mesh Modifier and Nav Mesh Link; Nav Mesh Agent > Area Mask; Navigation window > Areas, Show Links; Scene view colours the mesh by area and draws links
+- **Docs:** `docs/navigation.md`
+- **Tests:** `navmesh_areas`, `navmesh`
+- **Status:** Works - covered by `navmesh_areas` (cheaper road over shorter swamp, blocked area never entered, per-agent mask, link used / ignored when disabled, masked or too costly, one-way and two-way, crossing ends on the end point with events in order, scene round trip)
+- **Open:** area costs and masks apply to the baked mesh only (not the grid fallback, NPC or click-to-move controllers); crossings are not checked against geometry; link ends must be within 1.5 m of the mesh; no obstacle carving
+- **Related:** 9.1, 9.2
+- **Words:** nav area, area cost, area mask, NavMeshModifier, NavMeshLink, off-mesh link, jump link, drop, ladder, swamp, mud, water, road, traversal cost, nav_link_start
+- **Seen as:** NPCs wade through mud instead of walking round; NPCs will not jump a gap; an enemy cannot climb a ladder; a path ignores the road; an agent walks into lava
+- **Ask me like:** "make enemies avoid the water"; "let the guard jump down off the ledge"

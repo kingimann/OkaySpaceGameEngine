@@ -14,7 +14,7 @@ sent, server channel messages, reactions, forum threads, posts and votes,
 marketplace listings and reviews, achievements, playtime, badges, activity,
 servers and group chats you own or belong to, forum sections you own, cloud
 saves, leaderboard entries, player stats, anti-cheat appeals, people you
-blocked, your privacy settings, and community bans placed on you.
+blocked, user reports you filed, your privacy settings, and community bans placed on you.
 
 Honest edges:
 
@@ -59,6 +59,7 @@ Every table in `docs/sql/*.sql` and `docs/supabase-backend.md` that references
 | `matches` | `reporter` set to null |
 | `community_bans`, `ac_bans`, `forum_section_bans` | `banned_by` set to null (the ban stays, the moderator link goes) |
 | `ac_report_servers` | `added_by` set to null |
+| `reports` | `reviewed_by` set to null (the moderator's review stays, the link to the reviewer goes) |
 
 **Deleted:** `message_reactions`, `forum_votes`, `forum_posts`, `forum_threads`,
 `forum_section_members`, `forum_section_bans`, `forum_sections`,
@@ -69,7 +70,8 @@ Every table in `docs/sql/*.sql` and `docs/supabase-backend.md` that references
 `activity`, `user_achievements`, `user_playtime`, `profile_badges`,
 `cloud_saves`, `leaderboards`, `player_stats`, `match_players`, `match_tickets`,
 `party_members`, `parties`, `game_sessions`, `ac_reports` (filed by or about
-you), `ac_appeals`, `ac_report_servers`, `profiles`; every file under
+you), `reports` (user reports you filed, and reports about you or your content;
+their snapshot holds your words), `ac_appeals`, `ac_report_servers`, `profiles`; every file under
 `<your id>/` in the `chat` and `workshop` storage buckets; then the auth user.
 
 **Consequences the launcher warns about:** forum threads you started disappear

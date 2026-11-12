@@ -339,6 +339,8 @@ struct Skin {
     std::vector<std::vector<std::pair<int, float>>> weights;   // per POSITION index, strongest 4, normalised
 };
 
+struct TElem { char kind = 't'; std::string sid; float v[16] = {0}; int n = 3; };   // 'm' matrix, 't' translate, 'r' rotate, 's' scale
+
 struct PendingSkin { std::size_t part; std::vector<std::string> joints; std::vector<std::string> skeletonRoots; };
 
 
@@ -356,6 +358,8 @@ struct Reader {
     std::unordered_map<std::string, int> matIndex;                  // material id -> out->materials index
     std::vector<std::string> nodeId, nodeSid;                       // parallel to nodes (kept even when flattening)
     std::vector<ImportedNode> nodes;
+    std::vector<std::vector<TElem>> nodeElems;                       // transform elements per node, for animation
+    std::map<std::string, int> interpApprox;                         // non-LINEAR/STEP interpolation names, read as linear
     std::vector<PendingSkin> pending;
     std::size_t totalVerts = 0;
 
@@ -749,25 +753,22 @@ struct Reader {
     }
 
     // ---- scene ------------------------------------------------------------
-    Mat4 LocalTransform(int nn) {
-        Mat4 m;
+    Mat4 LocalTransform(int nn, std::vector<TElem>& elems) {
         for (int k : x.n[(std::size_t)nn].kids) {
             const std::string& nm = x.n[(std::size_t)k].name;
             std::vector<float> v;
-            if (nm == "matrix") {
-                if (ParseFloats(x.Text(k), v) && v.size() == 16) m = m * MatFromRowMajor(v.data());
-            } else if (nm == "translate") {
-                if (ParseFloats(x.Text(k), v) && v.size() == 3) m = m * Mat4::Translate(Vec3{v[0], v[1], v[2]});
-            } else if (nm == "scale") {
-                if (ParseFloats(x.Text(k), v) && v.size() == 3) m = m * Mat4::Scale(Vec3{v[0], v[1], v[2]});
-            } else if (nm == "rotate") {
-                if (ParseFloats(x.Text(k), v) && v.size() == 4 && (v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f))
-                    m = m * Mat4::Rotate(Quat::AngleAxis(v[3], Vec3{v[0], v[1], v[2]}));
-            } else if (nm == "skew" || nm == "lookat") {
-                ++skews;
-            }
+            TElem e;
+            if (nm == "matrix") { e.kind = 'm'; e.n = 16; }
+            else if (nm == "translate") { e.kind = 't'; e.n = 3; }
+            else if (nm == "scale") { e.kind = 's'; e.n = 3; }
+            else if (nm == "rotate") { e.kind = 'r'; e.n = 4; }
+            else { if (nm == "skew" || nm == "lookat") ++skews; continue; }
+            if (!ParseFloats(x.Text(k), v) || (int)v.size() != e.n) continue;
+            for (int i = 0; i < e.n; ++i) e.v[i] = v[(std::size_t)i];
+            e.sid = x.Attr(k, "sid");
+            elems.push_back(e);
         }
-        return m;
+        return ComposeElems(elems);
     }
 
     static void Bake(Mesh& m, const Mat4& w, bool skinned) {
@@ -860,7 +861,9 @@ struct Reader {
         const std::string id = x.Attr(xn, "id"), nm = x.Attr(xn, "name"), sid = x.Attr(xn, "sid");
         in.name = !id.empty() ? id : !nm.empty() ? nm : sid;   // ids are what skins and animations name
         in.parent = parent;
-        const Mat4 local = LocalTransform(xn);
+        std::vector<TElem> elems;
+        const Mat4 local = LocalTransform(xn, elems);
+        nodeElems.push_back(std::move(elems));
         if (!local.Decompose(in.position, in.rotation, in.scale)) ++badDecompose;
         const Mat4 world = parentWorld * local;
         const int me = (int)nodes.size();
@@ -917,49 +920,207 @@ struct Reader {
     }
 
     // ---- animation --------------------------------------------------------
-    void ReadAnimations(int lib) {
-        int unnamed = 0;
-        for (int top : x.All(lib, "animation")) {
-            ImportedClip clip;
-            clip.name = !x.Attr(top, "name").empty() ? x.Attr(top, "name") : !x.Attr(top, "id").empty() ? x.Attr(top, "id") : "clip" + std::to_string(unnamed);
-            ++unnamed;
-            std::vector<int> stack{top};
-            while (!stack.empty()) {
-                const int an = stack.back(); stack.pop_back();
-                for (int k : x.n[(std::size_t)an].kids) if (x.n[(std::size_t)k].name == "animation") stack.push_back(k);
-                for (int ch : x.All(an, "channel")) {
-                    const std::string target = x.Attr(ch, "target");
-                    const std::size_t slash = target.find('/');
-                    const std::string nodeRef = target.substr(0, slash), what = slash == std::string::npos ? "" : target.substr(slash + 1);
-                    auto skip = [&]() { if (animSkipped++ == 0) animExample = target; };
-                    const bool wholeMatrix = what == "transform" || what == "matrix" || what.compare(0, 7, "matrix(") == 0;
-                    const int ni = NodeByRef(nodeRef);
-                    if (!wholeMatrix || ni < 0 || what.find('(') != std::string::npos) { skip(); continue; }
-                    const int smp = [&] { const int s = Lookup(UrlId(x.Attr(ch, "source"))); return (s >= 0 && x.n[(std::size_t)s].name == "sampler") ? s : -1; }();
-                    if (smp < 0) { skip(); continue; }
-                    std::string inSrc, outSrc;
-                    for (int in : x.All(smp, "input")) {
-                        if (x.Attr(in, "semantic") == "INPUT") inSrc = UrlId(x.Attr(in, "source"));
-                        else if (x.Attr(in, "semantic") == "OUTPUT") outSrc = UrlId(x.Attr(in, "source"));
+    // Every channel animates one value of one transform element of a node (a whole matrix,
+    // a translate/scale/rotate, or one component of them). For each animated node the
+    // element values are sampled at the union of its channels' key times, recomposed
+    // into the node's local matrix, and decomposed into position / rotation / scale keys.
+    struct Track {
+        int node = -1, elem = -1, comp = -1;   // elem -1: replaces the node's whole local matrix
+        int stride = 1;
+        std::vector<float> times, vals;
+        std::vector<char> step;                // per key: the segment after it holds the key's value
+    };
+
+    static float SampleTrack(const Track& t, double at, int k) {
+        const std::size_t n = t.times.size();
+        auto v = [&](std::size_t i) { return t.vals[i * (std::size_t)t.stride + (std::size_t)k]; };
+        if (at <= t.times[0]) return v(0);
+        if (at >= t.times[n - 1]) return v(n - 1);
+        std::size_t i = (std::size_t)(std::upper_bound(t.times.begin(), t.times.end(), (float)at) - t.times.begin());
+        if (i == 0) return v(0);
+        --i;
+        if (i + 1 >= n) return v(n - 1);
+        if (t.step[i]) return v(i);
+        const double d = (double)t.times[i + 1] - (double)t.times[i];
+        const double u = d > 0.0 ? (at - (double)t.times[i]) / d : 1.0;
+        return (float)((double)v(i) + ((double)v(i + 1) - (double)v(i)) * u);
+    }
+
+    static Mat4 ComposeElems(const std::vector<TElem>& es) {
+        Mat4 m;
+        for (const TElem& e : es) {
+            if (e.kind == 'm') m = m * MatFromRowMajor(e.v);
+            else if (e.kind == 't') m = m * Mat4::Translate(Vec3{e.v[0], e.v[1], e.v[2]});
+            else if (e.kind == 's') m = m * Mat4::Scale(Vec3{e.v[0], e.v[1], e.v[2]});
+            else if (e.v[0] != 0.0f || e.v[1] != 0.0f || e.v[2] != 0.0f) m = m * Mat4::Rotate(Quat::AngleAxis(e.v[3], Vec3{e.v[0], e.v[1], e.v[2]}));
+        }
+        return m;
+    }
+
+    // "location.X" / "rotationZ.ANGLE" / "translate(1)" / "mat(1)(3)" -> component index, or -1 for the whole element.
+    static bool ParseComponent(const std::string& s, char kind, int& comp) {
+        comp = -1;
+        if (s.empty()) return true;
+        if (s[0] == '.') {
+            const std::string c = s.substr(1);
+            if (c == "X") comp = 0; else if (c == "Y") comp = 1; else if (c == "Z") comp = 2; else if (c == "W") comp = 3;
+            else if (c == "ANGLE" && kind == 'r') comp = 3;
+            else return false;
+            return true;
+        }
+        int a = -1, b = -1, used = 0;
+        if (std::sscanf(s.c_str(), "(%d)(%d)%n", &a, &b, &used) == 2 && (std::size_t)used == s.size()) {
+            if (kind != 'm' || a < 0 || a > 3 || b < 0 || b > 3) return false;
+            comp = a * 4 + b; return true;
+        }
+        if (std::sscanf(s.c_str(), "(%d)%n", &a, &used) == 1 && (std::size_t)used == s.size()) {
+            if (kind == 'm' || a < 0 || a > 3) return false;
+            comp = a; return true;
+        }
+        return false;
+    }
+
+    void SkipChannel(const std::string& target) { if (animSkipped++ == 0) animExample = target; }
+
+    bool MakeTrack(int ch, Track& tr) {
+        const std::string target = x.Attr(ch, "target");
+        const std::size_t slash = target.find('/');
+        if (slash == std::string::npos) return false;
+        const int ni = NodeByRef(target.substr(0, slash));
+        if (ni < 0) return false;
+        std::string what = target.substr(slash + 1);
+        std::size_t cut = what.find_first_of(".(");
+        const std::string sidName = what.substr(0, cut), compText = cut == std::string::npos ? std::string() : what.substr(cut);
+        tr.node = ni;
+        const std::vector<TElem>& es = nodeElems[(std::size_t)ni];
+        int found = -1;
+        for (std::size_t i = 0; i < es.size() && found < 0; ++i) if (!sidName.empty() && es[i].sid == sidName) found = (int)i;
+        int expect;
+        if (found >= 0) {
+            tr.elem = found;
+            int comp;
+            if (!ParseComponent(compText, es[(std::size_t)found].kind, comp)) return false;
+            tr.comp = comp;
+            expect = comp >= 0 ? 1 : es[(std::size_t)found].n;
+        } else if ((sidName == "transform" || sidName == "matrix") && compText.empty()) {
+            tr.elem = -1; tr.comp = -1; expect = 16;   // whole local matrix
+        } else return false;
+        const int smp = [&] { const int s = Lookup(UrlId(x.Attr(ch, "source"))); return (s >= 0 && x.n[(std::size_t)s].name == "sampler") ? s : -1; }();
+        if (smp < 0) return false;
+        std::string inSrc, outSrc, intSrc;
+        for (int in : x.All(smp, "input")) {
+            const std::string sem = x.Attr(in, "semantic");
+            if (sem == "INPUT") inSrc = UrlId(x.Attr(in, "source"));
+            else if (sem == "OUTPUT") outSrc = UrlId(x.Attr(in, "source"));
+            else if (sem == "INTERPOLATION") intSrc = UrlId(x.Attr(in, "source"));
+        }
+        Src times, vals;
+        if (!ReadSrc(inSrc, times) || !ReadSrc(outSrc, vals) || times.stride != 1 || vals.stride != expect) return false;
+        const long nk = std::min(times.Count(), vals.Count());
+        if (nk < 1) return false;
+        std::vector<std::string> interp;
+        if (!intSrc.empty()) {
+            const int is = Lookup(intSrc);
+            const int na = is >= 0 ? x.First(is, "Name_array") : -1;
+            if (na >= 0) interp = Tokens(x.Text(na));
+        }
+        tr.stride = expect;
+        for (long i = 0; i < nk; ++i) {
+            const float t = times.At(i, 0);
+            if (!vals.Has(i, expect) || (i > 0 && t < tr.times.back())) return false;   // keys must be in time order
+            tr.times.push_back(t);
+            for (int c = 0; c < expect; ++c) tr.vals.push_back(vals.At(i, c));
+            char st = 0;
+            if (i < (long)interp.size()) {
+                const std::string& m = interp[(std::size_t)i];
+                if (m == "STEP") st = 1;
+                else if (m != "LINEAR" && !m.empty()) interpApprox[m]++;
+            }
+            tr.step.push_back(st);
+        }
+        return true;
+    }
+
+    void BuildClip(const std::vector<Track>& tracks, ImportedClip& clip) {
+        std::map<int, std::vector<std::size_t>> byNode;
+        for (std::size_t i = 0; i < tracks.size(); ++i) byNode[tracks[i].node].push_back(i);
+        for (const auto& kv : byNode) {
+            const int ni = kv.first;
+            std::vector<double> ts;
+            for (std::size_t ti : kv.second) {
+                const Track& t = tracks[ti];
+                const bool rot = t.elem >= 0 && nodeElems[(std::size_t)ni][(std::size_t)t.elem].kind == 'r';
+                for (std::size_t i = 0; i < t.times.size(); ++i) {
+                    ts.push_back(t.times[i]);
+                    if (i + 1 >= t.times.size()) continue;
+                    const double a = t.times[i], b = t.times[i + 1], d = b - a;
+                    if (d <= 0.0) continue;
+                    if (t.step[i]) { ts.push_back(b - std::min(1e-4, d * 0.5)); continue; }   // hold, then jump at the next key
+                    if (rot) {   // a slerp between keys takes the short way: keep each piece under 90 degrees
+                        const int k = t.comp >= 0 ? 0 : 3;
+                        const double da = std::fabs((double)t.vals[(i + 1) * (std::size_t)t.stride + (std::size_t)k] - (double)t.vals[i * (std::size_t)t.stride + (std::size_t)k]);
+                        const int parts = (int)std::min(64.0, std::ceil(da / 90.0));
+                        for (int p = 1; p < parts; ++p) ts.push_back(a + d * p / parts);
                     }
-                    Src times, mats;
-                    if (!ReadSrc(inSrc, times) || !ReadSrc(outSrc, mats) || mats.stride != 16 || times.stride != 1) { skip(); continue; }
-                    const long nk = std::min(times.Count(), mats.Count());
-                    ImportedChannel ic; ic.node = nodes[(std::size_t)ni].name;
-                    Quat prev{0, 0, 0, 1};
-                    for (long i = 0; i < nk; ++i) {
-                        const float t = times.At(i, 0);
-                        if (!mats.Has(i, 16)) break;
-                        const Mat4 m = MatFromRowMajor(&mats.f[(std::size_t)mats.offset + (std::size_t)i * 16]);
-                        Vec3 p, s; Quat q;
-                        if (!m.Decompose(p, q, s)) continue;
-                        if (i > 0 && (q.x * prev.x + q.y * prev.y + q.z * prev.z + q.w * prev.w) < 0.0f) q = Quat{-q.x, -q.y, -q.z, -q.w};
-                        prev = q;
-                        ic.position.push_back({t, p}); ic.rotation.push_back({t, q}); ic.scale.push_back({t, s});
-                    }
-                    if (!ic.rotation.empty()) clip.channels.push_back(std::move(ic)); else skip();
                 }
             }
+            std::sort(ts.begin(), ts.end());
+            ts.erase(std::unique(ts.begin(), ts.end(), [](double a, double b) { return b - a < 1e-7; }), ts.end());
+            ImportedChannel ic; ic.node = nodes[(std::size_t)ni].name;
+            Quat prev{0, 0, 0, 1};
+            bool first = true;
+            for (double at : ts) {
+                std::vector<TElem> es = nodeElems[(std::size_t)ni];
+                bool whole = false; Mat4 wm;
+                for (std::size_t ti : kv.second) {
+                    const Track& t = tracks[ti];
+                    if (t.elem < 0) {
+                        float a[16]; for (int c = 0; c < 16; ++c) a[c] = SampleTrack(t, at, c);
+                        wm = MatFromRowMajor(a); whole = true;
+                    } else if (t.comp >= 0) es[(std::size_t)t.elem].v[t.comp] = SampleTrack(t, at, 0);
+                    else for (int c = 0; c < t.stride; ++c) es[(std::size_t)t.elem].v[c] = SampleTrack(t, at, c);
+                }
+                const Mat4 m = whole ? wm : ComposeElems(es);
+                Vec3 p, s; Quat q;
+                if (!m.Decompose(p, q, s)) continue;
+                if (!first && (q.x * prev.x + q.y * prev.y + q.z * prev.z + q.w * prev.w) < 0.0f) q = Quat{-q.x, -q.y, -q.z, -q.w};
+                prev = q; first = false;
+                ic.position.push_back({(float)at, p}); ic.rotation.push_back({(float)at, q}); ic.scale.push_back({(float)at, s});
+            }
+            if (!ic.rotation.empty()) clip.channels.push_back(std::move(ic));
+        }
+    }
+
+    void CollectTracks(int top, std::vector<Track>& tracks) {
+        std::vector<int> stack{top};
+        while (!stack.empty()) {
+            const int an = stack.back(); stack.pop_back();
+            for (int k : x.n[(std::size_t)an].kids) if (x.n[(std::size_t)k].name == "animation") stack.push_back(k);
+            for (int ch : x.All(an, "channel")) {
+                Track tr;
+                if (MakeTrack(ch, tr)) tracks.push_back(std::move(tr)); else SkipChannel(x.Attr(ch, "target"));
+            }
+        }
+    }
+
+    void ReadAnimations(int lib) {
+        // A top-level <animation> that holds other animations is a clip of its own. Plain
+        // top-level animations (one channel group per bone or property) are merged into one clip.
+        std::vector<Track> flat;
+        std::vector<int> leaves;
+        int unnamed = 0;
+        auto nameOf = [&](int a) { return !x.Attr(a, "name").empty() ? x.Attr(a, "name") : !x.Attr(a, "id").empty() ? x.Attr(a, "id") : "clip" + std::to_string(unnamed); };
+        for (int top : x.All(lib, "animation")) {
+            if (x.First(top, "animation") < 0) { leaves.push_back(top); CollectTracks(top, flat); ++unnamed; continue; }
+            std::vector<Track> tracks;
+            CollectTracks(top, tracks);
+            ImportedClip clip; clip.name = nameOf(top); ++unnamed;
+            BuildClip(tracks, clip);
+            if (!clip.channels.empty()) out->clips.push_back(std::move(clip)); else ++emptyClips;
+        }
+        if (!leaves.empty()) {
+            ImportedClip clip; clip.name = leaves.size() == 1 ? nameOf(leaves[0]) : "animation";
+            BuildClip(flat, clip);
             if (!clip.channels.empty()) out->clips.push_back(std::move(clip)); else ++emptyClips;
         }
     }
@@ -1002,7 +1163,7 @@ struct Reader {
         ImportedNode rootNode;
         rootNode.name = x.Attr(vs, "id").empty() ? "Scene" : x.Attr(vs, "id");
         if (!root.Decompose(rootNode.position, rootNode.rotation, rootNode.scale)) ++badDecompose;
-        nodes.push_back(rootNode); nodeId.push_back(""); nodeSid.push_back("");
+        nodes.push_back(rootNode); nodeId.push_back(""); nodeSid.push_back(""); nodeElems.emplace_back();
         for (int k : x.n[(std::size_t)vs].kids)
             if (x.n[(std::size_t)k].name == "node" && !BuildNode(k, 0, root, 1)) return false;
         if (!err.empty()) return false;
@@ -1033,7 +1194,8 @@ struct Reader {
         if (skinsDropped) note(std::to_string(skinsDropped) + " skin controller(s) were malformed; the mesh is imported unskinned");
         if (weightsTrunc) note(std::to_string(weightsTrunc) + " vertices had more than 4 bone weights; the 4 strongest are kept");
         if (badDecompose) note(std::to_string(badDecompose) + " non-finite node transform(s) replaced by identity");
-        if (animSkipped) note(std::to_string(animSkipped) + " animation channel(s) not read (only whole-matrix channels such as 'node/transform' are supported; first: '" + animExample + "')");
+        if (animSkipped) note(std::to_string(animSkipped) + " animation channel(s) not read (target element not found, wrong value count, keys out of order or unreadable sampler; first: '" + animExample + "')");
+        for (const auto& kv : interpApprox) note(std::to_string(kv.second) + " animation key(s) use " + kv.first + " interpolation, read as LINEAR (only LINEAR and STEP are honoured)");
         if (emptyClips) note(std::to_string(emptyClips) + " animation(s) had no readable channel and were dropped");
     }
 };

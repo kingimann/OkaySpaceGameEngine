@@ -149,7 +149,7 @@ int main() {
         for (const ImportedNode& n : m.nodes) { if (n.name == "Tip") tipNode = true; if (n.name == "Root") rootNode = true; }
         CHECK(tipNode && rootNode);
         // Animation: whole-matrix channel read as position/rotation/scale keys; the per-component channel is reported.
-        CHECK(m.clips.size() == 1 && m.clips[0].name == "Lift");
+        CHECK(m.clips.size() == 1 && m.clips[0].name == "animation");   // two plain top-level animations merge into one clip
         if (m.clips.size() == 1) {
             CHECK(m.clips[0].channels.size() == 1 && m.clips[0].channels[0].node == "Tip");
             const ImportedChannel& c = m.clips[0].channels[0];
@@ -170,6 +170,60 @@ int main() {
         ImportedModel f;
         CHECK(ReadColladaFile(kDir + "skinned_strip.dae", f, &err, true));
         CHECK(f.parts.size() == 1 && f.parts[0].bones.empty() && f.clips.empty() && f.nodes.size() == 1);
+    }
+
+    // ---------------- component_anim.dae: per-component channels, STEP, BEZIER note, merged per node ----------------
+    {
+        ImportedModel m; std::string err;
+        CHECK(ReadColladaFile(kDir + "component_anim.dae", m, &err));
+        CHECK(m.clips.size() == 1 && m.clips[0].name == "animation");
+        auto chan = [&](const char* node) -> const ImportedChannel* {
+            if (m.clips.empty()) return nullptr;
+            for (const ImportedChannel& c : m.clips[0].channels) if (c.node == node) return &c;
+            return nullptr;
+        };
+        auto at = [](const std::vector<ImportedKeyV3>& k, float t) -> const ImportedKeyV3* { for (const auto& e : k) if (std::fabs(e.time - t) < 1e-4f) return &e; return nullptr; };
+        CHECK(m.clips.size() == 1 && m.clips[0].channels.size() == 4);   // Box, Mat, Arr, Spin: one merged channel each
+        if (const ImportedChannel* b = chan("Box")) {
+            // location.X (0,1,2 -> 0,2,4), location.Y (0,2 -> 0,10) and scale merged into one channel.
+            const ImportedKeyV3* p1 = at(b->position, 1.0f); const ImportedKeyV3* p2 = at(b->position, 2.0f);
+            CHECK(p1 && p2);
+            if (p1) CHECK(Near3(p1->value, 2, 5, 0, 1e-3f));    // y is linear: 5 at t = 1
+            if (p2) CHECK(Near3(p2->value, 4, 10, 0, 1e-3f));
+            // BEZIER scale is read as linear and said so; clamps after its last key.
+            const ImportedKeyV3* s1 = at(b->scale, 1.0f); const ImportedKeyV3* s2 = at(b->scale, 2.0f);
+            CHECK(s1 && s2);
+            if (s1) CHECK(Near3(s1->value, 2, 2, 2, 1e-3f));
+            if (s2) CHECK(Near3(s2->value, 2, 2, 2, 1e-3f));
+            // STEP rotation: still identity just before t = 1, 90 degrees about Z at t = 1.
+            const ImportedKeyQ* before = nullptr; const ImportedKeyQ* atOne = nullptr;
+            for (const ImportedKeyQ& k : b->rotation) { if (k.time > 0.99f && k.time < 0.99999f) before = &k; if (std::fabs(k.time - 1.0f) < 1e-4f) atOne = &k; }
+            CHECK(before && atOne);
+            if (before) CHECK(std::fabs(before->value.w) > 0.999f);
+            if (atOne) { CHECK_NEAR(std::fabs(atOne->value.z), 0.70710678, 1e-3); CHECK_NEAR(std::fabs(atOne->value.w), 0.70710678, 1e-3); }
+            // Every key of a channel exists in all three tracks (position, rotation, scale sampled together).
+            CHECK(b->position.size() == b->rotation.size() && b->rotation.size() == b->scale.size());
+        }
+        if (const ImportedChannel* mt = chan("Mat")) {
+            const ImportedKeyV3* k = at(mt->position, 1.0f);   // matrix element (1)(3) is the y translation
+            CHECK(k && Near3(k->value, 0, 6, 0, 1e-3f));
+        } else CHECK(false);
+        if (const ImportedChannel* ar = chan("Arr")) {
+            const ImportedKeyV3* k = at(ar->position, 1.0f);   // the whole translate as a float3 channel
+            CHECK(k && Near3(k->value, 3, 0, 0, 1e-3f));
+        } else CHECK(false);
+        if (const ImportedChannel* sp = chan("Spin")) {
+            // 270 degrees in one segment is split so a slerp cannot take the short way round: 4 keys.
+            CHECK(sp->rotation.size() == 4);
+            if (sp->rotation.size() == 4) {
+                // The last key is 270 about +Y; the one before is 180: their relative angle is 90, not 270.
+                const Quat& a = sp->rotation[2].value; const Quat& b = sp->rotation[3].value;
+                const float d = std::fabs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+                CHECK_NEAR(d, 0.70710678, 1e-3);
+            }
+        } else CHECK(false);
+        CHECK(HasNote(m, "BEZIER interpolation, read as LINEAR"));
+        CHECK(!HasNote(m, "channel(s) not read"));
     }
 
     // ---------------- unsupported.dae: what is not read is said, not dropped silently ----------------
@@ -265,7 +319,7 @@ int main() {
 
 #ifdef OKAY_HAVE_ASSIMP
     // ---------------- Assimp reads the same files: compare ----------------
-    for (const char* f : {"two_materials.dae", "zup_cm.dae", "skinned_strip.dae"}) {
+    for (const char* f : {"two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "component_anim.dae"}) {
         ImportedModel own, ai; std::string e1, e2;
         const bool a = ImportModelData(kDir + f, own, ImportBackend::Own, false, &e1);
         const bool b = ImportModelData(kDir + f, ai, ImportBackend::Assimp, false, &e2);

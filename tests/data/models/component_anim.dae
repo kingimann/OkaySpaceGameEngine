@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hand-written test fixture: per-component animation channels (location.X/Y, rotationZ.ANGLE with STEP,
+     a BEZIER scale, a matrix element component mat(1)(3), a whole translate, a 270 degree rotation) on four nodes. -->
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset><unit meter="1"/><up_axis>Y_UP</up_axis></asset>
+  <library_geometries>
+    <geometry id="tri" name="Tri">
+      <mesh>
+        <source id="tri-pos"><float_array id="tri-pos-a" count="9">0 0 0  1 0 0  0 1 0</float_array>
+          <technique_common><accessor source="#tri-pos-a" count="3" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common></source>
+        <vertices id="tri-vtx"><input semantic="POSITION" source="#tri-pos"/></vertices>
+        <triangles count="1"><input semantic="VERTEX" source="#tri-vtx" offset="0"/><p>0 1 2</p></triangles>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_animations>
+    <animation id="locx">
+      <source id="locx-in"><float_array id="locx-in-a" count="3">0 1 2</float_array>
+        <technique_common><accessor source="#locx-in-a" count="3" stride="1"><param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="locx-out"><float_array id="locx-out-a" count="3">0 2 4</float_array>
+        <technique_common><accessor source="#locx-out-a" count="3" stride="1"><param name="X" type="float"/></accessor></technique_common></source>
+      <source id="locx-int"><Name_array id="locx-int-a" count="3">LINEAR LINEAR LINEAR</Name_array>
+        <technique_common><accessor source="#locx-int-a" count="3" stride="1"><param name="INTERPOLATION" type="name"/></accessor></technique_common></source>
+      <sampler id="locx-smp">
+        <input semantic="INPUT" source="#locx-in"/>
+        <input semantic="OUTPUT" source="#locx-out"/>
+        <input semantic="INTERPOLATION" source="#locx-int"/>
+      </sampler>
+      <channel source="#locx-smp" target="Box/location.X"/>
+    </animation>
+    <animation id="locy">
+      <source id="locy-in"><float_array id="locy-in-a" count="2">0 2</float_array>
+        <technique_common><accessor source="#locy-in-a" count="2" stride="1"><param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="locy-out"><float_array id="locy-out-a" count="2">0 10</float_array>
+        <technique_common><accessor source="#locy-out-a" count="2" stride="1"><param name="Y" type="float"/></accessor></technique_common></source>
+      <source id="locy-int"><Name_array id="locy-int-a" count="2">LINEAR LINEAR</Name_array>
+        <technique_common><accessor source="#locy-int-a" count="2" stride="1"><param name="INTERPOLATION" type="name"/></accessor></technique_common></source>
+      <sampler id="locy-smp">
+        <input semantic="INPUT" source="#locy-in"/>
+        <input semantic="OUTPUT" source="#locy-out"/>
+        <input semantic="INTERPOLATION" source="#locy-int"/>
+      </sampler>
+      <channel source="#locy-smp" target="Box/location.Y"/>
+    </animation>
+    <animation id="rotz">
+      <source id="rotz-in"><float_array id="rotz-in-a" count="2">0 1</float_array>
+        <technique_common><accessor source="#rotz-in-a" count="2" stride="1"><param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="rotz-out"><float_array id="rotz-out-a" count="2">0 90</float_array>
+        <technique_common><accessor source="#rotz-out-a" count="2" stride="1"><param name="ANGLE" type="float"/></accessor></technique_common></source>
+      <source id="rotz-int"><Name_array id="rotz-int-a" count="2">STEP STEP</Name_array>
+        <technique_common><accessor source="#rotz-int-a" count="2" stride="1"><param name="INTERPOLATION" type="name"/></accessor></technique_common></source>
+      <sampler id="rotz-smp">
+        <input semantic="INPUT" source="#rotz-in"/>
+        <input semantic="OUTPUT" source="#rotz-out"/>
+        <input semantic="INTERPOLATION" source="#rotz-int"/>
+      </sampler>
+      <channel source="#rotz-smp" target="Box/rotationZ.ANGLE"/>
+    </animation>
+    <animation id="scl">
+      <source id="scl-in"><float_array id="scl-in-a" count="2">0 1</float_array>
+        <technique_common><accessor source="#scl-in-a" count="2" stride="1"><param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="scl-out"><float_array id="scl-out-a" count="6">1 1 1 2 2 2</float_array>
+        <technique_common><accessor source="#scl-out-a" count="2" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common></source>
+      <source id="scl-int"><Name_array id="scl-int-a" count="2">BEZIER BEZIER</Name_array>
+        <technique_common><accessor source="#scl-int-a" count="2" stride="1"><param name="INTERPOLATION" type="name"/></accessor></technique_common></source>
+      <sampler id="scl-smp">
+        <input semantic="INPUT" source="#scl-in"/>
+        <input semantic="OUTPUT" source="#scl-out"/>
+        <input semantic="INTERPOLATION" source="#scl-int"/>
+      </sampler>
+      <channel source="#scl-smp" target="Box/scale"/>
+    </animation>
+    <animation id="mat">
+      <source id="mat-in"><float_array id="mat-in-a" count="2">0 1</float_array>
+        <technique_common><accessor source="#mat-in-a" count="2" stride="1"><param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="mat-out"><float_array id="mat-out-a" count="2">0 6</float_array>
+        <technique_common><accessor source="#mat-out-a" count="2" stride="1"><param name="VALUE" type="float"/></accessor></technique_common></source>
+      <source id="mat-int"><Name_array id="mat-int-a" count="2">LINEAR LINEAR</Name_array>
+        <technique_common><accessor source="#mat-int-a" count="2" stride="1"><param name="INTERPOLATION" type="name"/></accessor></technique_common></source>
+      <sampler id="mat-smp">
+        <input semantic="INPUT" source="#mat-in"/>
+        <input semantic="OUTPUT" source="#mat-out"/>
+        <input semantic="INTERPOLATION" source="#mat-int"/>
+      </sampler>
+      <channel source="#mat-smp" target="Mat/mat(1)(3)"/>
+    </animation>
+    <animation id="arr">
+      <source id="arr-in"><float_array id="arr-in-a" count="2">0 1</float_array>
+        <technique_common><accessor source="#arr-in-a" count="2" stride="1"><param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="arr-out"><float_array id="arr-out-a" count="6">0 0 0 3 0 0</float_array>
+        <technique_common><accessor source="#arr-out-a" count="2" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common></source>
+      <source id="arr-int"><Name_array id="arr-int-a" count="2">LINEAR LINEAR</Name_array>
+        <technique_common><accessor source="#arr-int-a" count="2" stride="1"><param name="INTERPOLATION" type="name"/></accessor></technique_common></source>
+      <sampler id="arr-smp">
+        <input semantic="INPUT" source="#arr-in"/>
+        <input semantic="OUTPUT" source="#arr-out"/>
+        <input semantic="INTERPOLATION" source="#arr-int"/>
+      </sampler>
+      <channel source="#arr-smp" target="Arr/t"/>
+    </animation>
+    <animation id="big">
+      <source id="big-in"><float_array id="big-in-a" count="2">0 1</float_array>
+        <technique_common><accessor source="#big-in-a" count="2" stride="1"><param name="TIME" type="float"/></accessor></technique_common></source>
+      <source id="big-out"><float_array id="big-out-a" count="2">0 270</float_array>
+        <technique_common><accessor source="#big-out-a" count="2" stride="1"><param name="ANGLE" type="float"/></accessor></technique_common></source>
+      <source id="big-int"><Name_array id="big-int-a" count="2">LINEAR LINEAR</Name_array>
+        <technique_common><accessor source="#big-int-a" count="2" stride="1"><param name="INTERPOLATION" type="name"/></accessor></technique_common></source>
+      <sampler id="big-smp">
+        <input semantic="INPUT" source="#big-in"/>
+        <input semantic="OUTPUT" source="#big-out"/>
+        <input semantic="INTERPOLATION" source="#big-int"/>
+      </sampler>
+      <channel source="#big-smp" target="Spin/r.ANGLE"/>
+    </animation>
+  </library_animations>
+  <library_visual_scenes>
+    <visual_scene id="Scene">
+      <node id="Box" name="Box" type="NODE">
+        <translate sid="location">0 0 0</translate>
+        <rotate sid="rotationZ">0 0 1 0</rotate>
+        <scale sid="scale">1 1 1</scale>
+        <instance_geometry url="#tri"/>
+      </node>
+      <node id="Mat" name="Mat" type="NODE">
+        <matrix sid="mat">1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1</matrix>
+        <instance_geometry url="#tri"/>
+      </node>
+      <node id="Arr" name="Arr" type="NODE">
+        <translate sid="t">0 0 0</translate>
+        <instance_geometry url="#tri"/>
+      </node>
+      <node id="Spin" name="Spin" type="NODE">
+        <rotate sid="r">0 1 0 0</rotate>
+        <instance_geometry url="#tri"/>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+  <scene><instance_visual_scene url="#Scene"/></scene>
+</COLLADA>

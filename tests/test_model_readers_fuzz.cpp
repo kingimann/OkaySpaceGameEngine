@@ -177,6 +177,21 @@ int main() {
             bool said = false; for (const std::string& n : r.notes) if (n.find("malformed") != std::string::npos) said = true;
             CHECK(said);
         }
+        // Animation inputs: bad component, unsorted keys, wrong value count, NaN, huge counts all fail soft.
+        {
+            std::string an = Slurp(kDir + "component_anim.dae");
+            auto edit = [&](const char* a, const char* b) { std::string t = an; std::size_t at = t.find(a); if (at == std::string::npos) { CHECK(false); return t; } t.replace(at, std::strlen(a), b); return t; };
+            ImportedModel r; std::string e;
+            CHECK(ReadColladaBuffer(edit("Box/location.X", "Box/location.Q"), "", r, &e) && !r.notes.empty());   // unknown component: skipped, said
+            CHECK(ReadColladaBuffer(edit("Box/location.X", "Box/nosuchsid.X"), "", r, &e));
+            CHECK(ReadColladaBuffer(edit("Box/rotationZ.ANGLE", "Box/rotationZ(9)"), "", r, &e));
+            CHECK(ReadColladaBuffer(edit("0 1 2</float_array>", "2 1 0</float_array>"), "", r, &e));              // keys out of order
+            CHECK(ReadColladaBuffer(edit("0 2 4</float_array>", "0 nan 4</float_array>"), "", r, &e));   // a NaN key drops that track, not the file
+            CHECK(ReadColladaBuffer(edit("0 2 4</float_array>", "0 2</float_array>"), "", r, &e));                // fewer values than keys
+            CHECK(ReadColladaBuffer(edit("<param name=\"X\" type=\"float\"/></accessor></technique_common></source>\n      <source id=\"locx-int\">", "</accessor></technique_common></source>\n      <source id=\"locx-int\">"), "", r, &e));
+            CHECK(ReadColladaBuffer(edit("0 90</float_array>", "0 1e30</float_array>"), "", r, &e));              // absurd angle: rotation split is capped
+            CHECK(Sane(r) && SaneRig(r));
+        }
         // Instancing loop: a node that instances itself must stop, not recurse for ever.
         CHECK(!ReadColladaBuffer("<COLLADA><library_nodes><node id='a'><instance_node url='#a'/></node></library_nodes>"
                                  "<library_visual_scenes><visual_scene id='s'><node id='b'><instance_node url='#a'/></node></visual_scene></library_visual_scenes></COLLADA>", "", m, &err));
@@ -192,7 +207,7 @@ int main() {
         std::vector<std::string> seeds;
         for (const char* f : {"cube.obj", "cube.mtl", "plain.obj", "cube_ascii.stl", "cube_binary.stl", "two_solids.stl",
                               "cube_ascii.ply", "cube_le.ply", "cube_be.ply", "tetra_plain.ply",
-                              "two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "unsupported.dae"})
+                              "two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "unsupported.dae", "component_anim.dae"})
             seeds.push_back(Slurp(kDir + f));
         int ran = 0, accepted = 0;
         for (const std::string& s : seeds) {

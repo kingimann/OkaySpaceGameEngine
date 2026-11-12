@@ -386,6 +386,17 @@ bool ColorPicker3(const char* label, float rgb[3]);
 /// A collapsing tree node. Returns true while expanded; when it does, the widgets
 /// that follow are INDENTED until you call TreePop(). Nestable. State kept per label.
 bool TreeNode(const char* label);
+enum TreeNodeFlags {
+    TreeNode_DefaultOpen = 1,   // starts open the first time it is seen
+    TreeNode_Leaf        = 2,   // no arrow and no toggling; still returns true (and indents until TreePop) so its children can be drawn
+    TreeNode_Selected    = 4,   // drawn highlighted
+};
+/// TreeNode with flags (TreeNodeFlags).
+bool TreeNodeEx(const char* label, unsigned flags);
+/// The next TreeNode, TreeNodeEx or CollapsingHeader is forced open or closed (once).
+void SetNextItemOpen(bool open);
+/// True when the last TreeNode or CollapsingHeader was opened or closed by a click this frame.
+bool IsItemToggledOpen();
 /// Close the most recent open TreeNode (removes one indent level). Pair with each
 /// TreeNode() that returned true.
 void TreePop();

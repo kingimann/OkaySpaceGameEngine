@@ -122,6 +122,8 @@ PopupSlot* popupSlot(int id, bool create) {
 int      g_openPopupThisFrame = 0;   // popup id requested to open this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
+int   g_nextOpen = -1;             // SetNextItemOpen: -1 none, 0 closed, 1 open (consumed by the next tree node / header)
+int   g_toggledId = 0;             // the tree node or header whose open state the user flipped this frame
 float g_wrapPos = -1.0f;            // PushTextWrapPos: < 0 = off, 0 = wrap at the right edge, > 0 = wrap at that width
 const char* g_hintText = nullptr;   // placeholder for the next text field (InputTextWithHint)
 bool  g_focusNextField = false;     // SetKeyboardFocusHere: the next text field takes the keyboard
@@ -768,7 +770,7 @@ void BeginFrame(const Input& in) {
     g_prevMouseX = in.mouseX;
     g_prevMouseY = in.mouseY;
     g_hot = 0;
-    g_wrapPos = -1.0f; g_grpTop = 0;
+    g_wrapPos = -1.0f; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
     g_focusClaimed = false;
     for (int i = 0; i < g_ovCurN; ++i) g_ovPrev[i] = g_ovCur[i];
     g_ovPrevN = g_ovCurN; g_ovCurN = 0;
@@ -2178,11 +2180,12 @@ bool CollapsingHeader(const char* label) {
     if (!g_lay.active) return false;
     const int id = hashLabel(label);
     bool* open = openState(id, false);
+    if (g_nextOpen >= 0) { *open = g_nextOpen != 0; g_nextOpen = -1; }
     const float h = rowH(), w = fullW();
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
-    if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
+    if (g_active == id) { if (g_released) { if (inside) { *open = !*open; g_toggledId = id; } g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
     const unsigned char* bg = (g_active == id && inside) ? g_theme.bgDown : (inside ? g_theme.bgHover : g_theme.track);
     const float s = g_theme.textScale;
@@ -2604,29 +2607,41 @@ bool ColorPicker3(const char* label, float rgb[3]) {
     return changed;
 }
 
-bool TreeNode(const char* label) {
+bool TreeNodeEx(const char* label, unsigned flags) {
     if (!g_lay.active) return false;
     const int id = hashLabel(label);
-    bool* open = openState(id, false);
+    const bool leaf = (flags & TreeNode_Leaf) != 0;
+    bool* open = openState(id, (flags & TreeNode_DefaultOpen) != 0);
+    if (g_nextOpen >= 0) { *open = g_nextOpen != 0; g_nextOpen = -1; }
     const float h = rowH(), w = fullW(), s = g_theme.textScale;
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
-    if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
+    if (g_active == id) { if (g_released) { if (inside && !leaf) { *open = !*open; g_toggledId = id; } g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
+    const bool shown = leaf || *open;
+    if ((flags & TreeNode_Selected) != 0) {
+        unsigned char sel[4] = { g_theme.accent[0], g_theme.accent[1], g_theme.accent[2], 90 };
+        quad(x, y, w, h, sel);
+    }
     if (g_look) {
         unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
         if (inside) rrect(x, y, w, h, 6.0f, withAlpha(white, 0.06f, tmp));
-        chevron(x + 11.0f, y + h * 0.5f, 8.0f, *open, g_theme.textDim);
+        if (!leaf) chevron(x + 11.0f, y + h * 0.5f, 8.0f, *open, g_theme.textDim);
         drawText(x + 24.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     } else {
-    if (inside) quad(x, y, w, h, g_theme.bgHover);
-    drawText(x + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
-    drawText(x + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        if (inside) quad(x, y, w, h, g_theme.bgHover);
+        if (!leaf) drawText(x + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
+        drawText(x + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     }
-    if (*open) g_lay.indent += 16.0f;   // children indent until TreePop()
-    return *open;
+    if (shown) g_lay.indent += 16.0f;   // children indent until TreePop()
+    return shown;
 }
+
+bool TreeNode(const char* label) { return TreeNodeEx(label, 0); }
+
+void SetNextItemOpen(bool open) { g_nextOpen = open ? 1 : 0; }
+bool IsItemToggledOpen() { return g_toggledId != 0 && g_toggledId == g_lastId; }
 
 void TreePop() {
     if (!g_lay.active) return;
@@ -3588,7 +3603,7 @@ void ResetState() {
     g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
-    g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_grpTop = 0;
+    g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
     g_openPopupThisFrame = 0;
     for (PopupSlot& p : g_popups) p = PopupSlot();
     for (WinSlot& w : g_wins) w = WinSlot();

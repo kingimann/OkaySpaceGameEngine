@@ -282,6 +282,35 @@ void GroupTests() {
     CHECK(!hov);
 }
 
+void TreeTests() {
+    Rig r; bool a = false, b = false, leafOpen = false, everToggled = false, leafToggled = false;
+    UI::Rect ra, rl; bool forceOpen = false, forceClose = false;
+    r.body = [&] {
+        if (forceOpen) { UI::SetNextItemOpen(true); forceOpen = false; }
+        if (forceClose) { UI::SetNextItemOpen(false); forceClose = false; }
+        a = UI::TreeNode("plain"); ra = UI::GetItemRect(); if (UI::IsItemToggledOpen()) everToggled = true;
+        if (a) { UI::Text("child"); UI::TreePop(); }
+        b = UI::TreeNodeEx("starts open", UI::TreeNode_DefaultOpen);
+        if (b) {
+            leafOpen = UI::TreeNodeEx("leaf", UI::TreeNode_Leaf | UI::TreeNode_Selected); rl = UI::GetItemRect();
+            if (UI::IsItemToggledOpen()) leafToggled = true;
+            if (leafOpen) UI::TreePop();
+            UI::TreePop();
+        }
+    };
+    r.Frames(2);
+    CHECK(!a && b && leafOpen);                                      // default closed, DefaultOpen starts open, a leaf returns true
+    CHECK(!everToggled);
+    r.MoveTo(CenterX(ra), CenterY(ra)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(a && everToggled);                                         // a click opens it and is reported as a toggle
+    r.MoveTo(CenterX(ra), CenterY(ra)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(!a);                                                       // the next click closes it
+    forceOpen = true; r.Frame(); CHECK(a);                           // SetNextItemOpen forces the next node open
+    forceClose = true; r.Frame(); CHECK(!a);
+    r.MoveTo(CenterX(rl), CenterY(rl)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(leafOpen && !leafToggled);                                 // clicking a leaf never toggles it
+}
+
 }  // namespace
 
 int main() {
@@ -297,5 +326,6 @@ int main() {
     WrapTests();
     ItemQueryTests();
     GroupTests();
+    TreeTests();
     TEST_MAIN_RESULT();
 }

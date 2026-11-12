@@ -283,7 +283,7 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 | 14 | Text input | 545 | PARTIAL | single line with caret, selection, UTF-8. `InputTextWithHint` and `SetKeyboardFocusHere` (step 4). Missing: multi-line (25), password, callbacks | M |
 | 15 | Disabled blocks | 369 | HAVE (this step) | `BeginDisabled`/`EndDisabled`/`IsDisabled` | done |
 | 16 | Tables | 233 | PARTIAL | `BeginTable` with headers, weights, drag-resizable columns, `Columns`. Missing: sorting, scroll and frozen rows, row background, `TableSetColumnIndex` (29), flags | M |
-| 17 | Tree nodes | 201 | PARTIAL | `TreeNode`, `CollapsingHeader`. Missing: `TreeNodeEx` flags (28: leaf, selected, open on arrow), `SetNextItemOpen` (14), `IsItemToggledOpen` | S |
+| 17 | Tree nodes | 201 | PARTIAL | `TreeNode`, `CollapsingHeader`. `TreeNodeEx` (default open, leaf, selected), `SetNextItemOpen`, `IsItemToggledOpen` (step 8). Missing: open on arrow only, bullet, span full width flags | S |
 | 18 | Colour editors | 168 | PARTIAL | `ColorEdit3`, `ColorPicker3`. Missing: `ColorEdit4` with alpha (137), `ColorPicker4` | S |
 | 19 | Drag and drop | 123 | PARTIAL | `DragSource(int)`, `DropTarget(int*)`. Missing: typed payloads, a preview while dragging, drop on custom rectangles | M |
 | 20 | Tabs | 55 | PARTIAL | `TabBar(labels)`. Missing: `BeginTabBar`/`BeginTabItem` with content, closable and reorderable tabs, `TabItemButton` | M |
@@ -375,3 +375,11 @@ Built: `BeginGroup` / `EndGroup`. Everything placed in between is one item: `Get
 Tested (63 checks in `test_okayui_values.cpp`): the group starts where its first item starts and covers both stacked buttons, `SameLine` after it goes next to its top, nested groups, empty and unmatched groups, hover on any part. Fuzz (12, now drawing random nested groups), behaviour (149), golden (15), drawlist (184), soft (18) unchanged.
 
 Not done: `GetContentRegionMax`, `CalcItemWidth`, group-wide `IsItemActive`.
+
+### 4.12 Gap-closing step 8: tree node flags (family 17)
+
+Built: `TreeNodeEx(label, flags)` with `TreeNode_DefaultOpen`, `TreeNode_Leaf` (no arrow, never toggles, returns true and indents until `TreePop` like Dear ImGui's leaf) and `TreeNode_Selected` (accent highlight); `SetNextItemOpen(bool)` (forces the next tree node or collapsing header once); `IsItemToggledOpen()` (the last node was opened or closed by a click this frame). `TreeNode` is `TreeNodeEx(label, 0)`.
+
+Tested (70 checks in `test_okayui_values.cpp`): default closed, default open, a leaf returns true, a click opens and then closes, the toggle is reported, a forced open and close, a leaf click never toggles. Fuzz draws random flags and forced states; behaviour 149, golden 15, drawlist 184, soft 18 unchanged.
+
+Not done: open on arrow only, bullet nodes, full-width selection flag.

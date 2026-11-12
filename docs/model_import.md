@@ -34,7 +34,7 @@ Choosing a backend, per format (`.obj`, `.stl`, `.ply`, `.dae` have one of ours)
 * Build time: `-DOKAY_PREFER_OWN_READERS=ON` makes STL and PLY use our readers first, with Assimp as the fallback when ours rejects a file.
 * Run time: `okay::SetImportBackend(".stl", ImportBackend::Own)` (or `Assimp`, or `Default`; `"*"` sets every format). `EffectiveImportBackend(".stl")` says what will run. Set it at start-up, not while another thread is importing.
 * **Collada is opt-in.** Unlike STL and PLY, our `.dae` reader never runs unless asked: run-time `SetImportBackend(".dae", ImportBackend::Own)`, else the environment variable `OKAY_OWN_COLLADA=1` (`=0` forces it off), else the CMake option `-DOKAY_OWN_COLLADA=ON`. Switched on, it is tried first and Assimp (when built) is the fallback for files it rejects. Without Assimp and without the switch nothing reads `.dae`, as before. `ImportableExtensions()` lists `.dae` only while ours is on or Assimp is built.
-* The Windows release build (`scripts/build-windows-dist.sh`) sets `-DOKAY_PREFER_OWN_READERS=ON`, so released games and the editor read STL and PLY with our readers first. A plain CMake build keeps the old default: with Assimp built, STL and PLY still go to Assimp; without it, they now go to our readers (before, they failed). OBJ has never gone through Assimp.
+* The default is unchanged where Assimp was used before: with Assimp built, STL and PLY still go to Assimp; without it, they now go to our readers (before, they failed). OBJ has never gone through Assimp.
 
 ## What our readers do
 

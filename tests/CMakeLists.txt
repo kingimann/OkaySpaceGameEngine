@@ -63,6 +63,16 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+# Stereo clips and placement (balance for 2D, mono-then-pan for 3D).
+add_executable(test_audio_stereo test_audio_stereo.cpp)
+target_link_libraries(test_audio_stereo PRIVATE okay::engine)
+add_test(NAME audio_stereo COMMAND test_audio_stereo)
+
+# Streaming audio: streamed vs whole-file decode, seek, loop, memory bound, underruns, hostile files.
+add_executable(test_audio_stream test_audio_stream.cpp)
+target_link_libraries(test_audio_stream PRIVATE okay::engine)
+target_compile_definitions(test_audio_stream PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME audio_stream COMMAND test_audio_stream)
 # Own Ogg Vorbis decoder: SNR vs libvorbis references, Ogg framing, headers, truncation, bit-flip and noise fuzzing.
 add_executable(test_vorbis_decoder test_vorbis_decoder.cpp)
 target_link_libraries(test_vorbis_decoder PRIVATE okay::engine)
@@ -1544,6 +1554,11 @@ add_executable(test_blocks_privacy test_blocks_privacy.cpp)
 target_compile_features(test_blocks_privacy PRIVATE cxx_std_17)
 target_include_directories(test_blocks_privacy PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME blocks_privacy COMMAND test_blocks_privacy)
+# Kick / ban / unban / promote logic for servers and group chats (shared/MemberModeration.hpp): permissions, requests, error mapping.
+add_executable(test_member_moderation test_member_moderation.cpp)
+target_compile_features(test_member_moderation PRIVATE cxx_std_17)
+target_include_directories(test_member_moderation PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/shared)
+add_test(NAME member_moderation COMMAND test_member_moderation)
 # Typing indicator / read receipts: missing-table detection (docs/sql/chat_receipts.sql).
 add_executable(test_chat_receipts test_chat_receipts.cpp)
 target_compile_features(test_chat_receipts PRIVATE cxx_std_17)
@@ -1589,6 +1604,9 @@ if(UNIX)
     set_tests_properties(anticheat_sql PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
+    # docs/sql/member_moderation.sql (kick / ban / roles) on a LOCAL Postgres, same opt-in as above.
+    add_test(NAME member_moderation_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_member_moderation_sql.sh)
+    set_tests_properties(member_moderation_sql PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME chat_receipts_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_chat_receipts_sql.sh)
     set_tests_properties(chat_receipts_sql PROPERTIES SKIP_RETURN_CODE 77)
 endif()

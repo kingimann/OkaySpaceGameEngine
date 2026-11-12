@@ -421,16 +421,20 @@ public:
     // Everyone in a group with their name, avatar, how far they've read
     // (last_read: drives "Seen by") and when they were last online. Two
     // round-trips: the member rows, then their profiles.
-    struct GroupMemberInfo { std::string uid, username, name, avatar; long lastRead = 0; long lastSeen = 0; };
+    struct GroupMemberInfo { std::string uid, username, name, avatar, role; long lastRead = 0; long lastSeen = 0; };   // role: owner/admin/member ("" before member_moderation.sql)
     std::vector<GroupMemberInfo> GroupMembersInfo(long convoId) {
         std::vector<GroupMemberInfo> out;
         if (!acct_.IsLoggedIn() || convoId <= 0) return out;
+        // `role` exists only after docs/sql/member_moderation.sql; fall back without it.
         auto r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
-                           "&select=member,last_read", "GET");
+                           "&select=member,last_read,role", "GET");
+        if (!r.ok) r = acct_.Api("/rest/v1/group_members?convo_id=eq." + std::to_string(convoId) +
+                                 "&select=member,last_read", "GET");
         if (!r.ok) return out;
         std::string ids;
         for (const auto& o : SplitObjects(r.body)) {
             GroupMemberInfo m; m.uid = Field(o, "member"); m.lastRead = std::atol(Field(o, "last_read").c_str());
+            m.role = Field(o, "role");
             if (m.uid.empty()) continue;
             if (!ids.empty()) ids += ",";
             ids += m.uid;

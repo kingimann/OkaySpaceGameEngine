@@ -1,5 +1,8 @@
 #pragma once
+#include "okay/Audio/AudioByteSource.hpp"
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -48,5 +51,44 @@ struct VorbisOptions {
 /// rejected as unsupported, as are more than 32 channels.
 bool DecodeVorbis(const unsigned char* data, std::size_t size, VorbisAudio& out,
                   std::string* error = nullptr, const VorbisOptions* options = nullptr);
+
+/// Incremental Ogg Vorbis decoder: the same decoder as DecodeVorbis, but it
+/// reads Ogg pages from an AudioByteSource as they are needed and keeps the
+/// overlap-add state between calls, so a long file is never held in memory (the
+/// codebooks and a few block buffers, a few hundred KB, plus a one-page read
+/// buffer). Open reads the file once, without decoding audio, to find the
+/// length (from the audio packets' block sizes, trimmed to the final granule
+/// position) and an index of every 16th page for seeking. Read() output is
+/// identical, sample for sample, to DecodeVorbis(first stream) up to its
+/// maxSamples cap, which streaming does not have. Seek restarts decoding at the
+/// nearest indexed page at or before the target (the first packet only primes
+/// the overlap) and is exact. Damaged pages are skipped like DecodeVorbis does.
+/// Not thread-safe. Channels are in Vorbis stream order, up to 32.
+class VorbisStream {
+public:
+    VorbisStream();
+    ~VorbisStream();
+    VorbisStream(const VorbisStream&) = delete;
+    VorbisStream& operator=(const VorbisStream&) = delete;
+
+    /// False (with `*error` set) when no Vorbis stream with valid headers and
+    /// at least one sample is found.
+    bool Open(std::shared_ptr<AudioByteSource> source, std::string* error = nullptr);
+    bool IsOpen() const;
+    int SampleRate() const;
+    int Channels() const;
+    /// Length in sample frames.
+    std::int64_t TotalFrames() const;
+    /// Up to `maxFrames` interleaved frames into `dst`; 0 at the end.
+    std::size_t Read(float* dst, std::size_t maxFrames);
+    /// The next Read starts at `frame` (clamped to the length).
+    bool Seek(std::int64_t frame);
+    /// Bytes held: setup tables, block buffers, page buffer, seek index.
+    std::size_t MemoryBytes() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> m;
+};
 
 } // namespace okay

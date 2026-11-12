@@ -1,6 +1,8 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/TriMesh.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
@@ -130,34 +132,40 @@ inline bool IsCapsuleLike(Collider3D::Shape s) {
 inline bool IsBoxLike(Collider3D::Shape s) {
     return s == Collider3D::Shape::Box || s == Collider3D::Shape::Mesh;
 }
-// A mesh collider with real triangles is resolved per triangle in its own pass.
-bool MeshHasTris(Collider3D* col) {
-    if (col->shape() != Collider3D::Shape::Mesh || !col->gameObject) return false;
-    auto* mr = col->gameObject->GetComponent<MeshRenderer>();
-    return mr && !mr->DisplayMesh().triangles.empty();
+// A mesh collider with real triangles collides per triangle (BVH), never as its box.
+inline bool MeshHasTris(Collider3D* col) {
+    return col->shape() == Collider3D::Shape::Mesh && col->gameObject &&
+           static_cast<MeshCollider3D*>(col)->HasTriangles();
 }
-
-// Closest point on triangle (a,b,c) to point p — Ericson, Real-Time Collision
-// Detection. Used for exact mesh-collider contact.
-inline Vec3 ClosestPointOnTri(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
-    Vec3 ab = b - a, ac = c - a, ap = p - a;
-    float d1 = Vec3::Dot(ab, ap), d2 = Vec3::Dot(ac, ap);
-    if (d1 <= 0.0f && d2 <= 0.0f) return a;
-    Vec3 bp = p - b;
-    float d3 = Vec3::Dot(ab, bp), d4 = Vec3::Dot(ac, bp);
-    if (d3 >= 0.0f && d4 <= d3) return b;
-    float vc = d1 * d4 - d3 * d2;
-    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) return a + ab * (d1 / (d1 - d3));
-    Vec3 cp = p - c;
-    float d5 = Vec3::Dot(ab, cp), d6 = Vec3::Dot(ac, cp);
-    if (d6 >= 0.0f && d5 <= d6) return c;
-    float vb = d5 * d2 - d1 * d6;
-    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) return a + ac * (d2 / (d2 - d6));
-    float va = d3 * d6 - d5 * d4;
-    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f)
-        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
-    float denom = 1.0f / (va + vb + vc);
-    return a + ab * (vb * denom) + ac * (vc * denom);
+inline MeshCollider3D* TriMeshOf(Collider3D* col) {
+    return MeshHasTris(col) ? static_cast<MeshCollider3D*>(col) : nullptr;
+}
+// Mesh collider contacts, from the mesh surface toward the shape.
+trimesh::Contact MeshVsShape(MeshCollider3D* mc, Collider3D* other) {
+    trimesh::WorldView v(mc->Tris(), mc->WorldMatrix());
+    switch (other->shape()) {
+    case Collider3D::Shape::Sphere: {
+        auto* s = static_cast<SphereCollider3D*>(other);
+        return v.Sphere(s->WorldCenter(), s->WorldRadius());
+    }
+    case Collider3D::Shape::Capsule: case Collider3D::Shape::Cylinder: {
+        auto* c = static_cast<CapsuleCollider3D*>(other);
+        Vec3 a, b; c->Segment(a, b);
+        return v.Capsule(a, b, c->WorldRadius());
+    }
+    case Collider3D::Shape::Box: {
+        auto* b = static_cast<BoxCollider3D*>(other);
+        Vec3 ax, ay, az; b->WorldAxes(ax, ay, az);
+        return v.Box(b->WorldCenter(), b->HalfExtents(), ax, ay, az);
+    }
+    case Collider3D::Shape::Mesh: {
+        // A box-fallback mesh (no triangles) acts as its box.
+        auto* b = static_cast<BoxCollider3D*>(other);
+        Vec3 ax, ay, az; b->WorldAxes(ax, ay, az);
+        return v.Box(b->WorldCenter(), b->HalfExtents(), ax, ay, az);
+    }
+    }
+    return {};
 }
 
 // An oriented box: center, half-extents, and its three world-space unit axes.
@@ -227,7 +235,18 @@ Contact TestColliders(Collider3D* a, Collider3D* b) {
     // A mesh collider that actually has geometry is resolved exactly (per triangle)
     // in a dedicated pass — skip it here so it doesn't ALSO over-block as a big AABB
     // box. A mesh collider with no MeshRenderer keeps the simple box behaviour.
-    if (MeshHasTris(a) || MeshHasTris(b)) return {};
+    // Only trigger overlaps are reported here; solid contact is the mesh pass in Step().
+    if (MeshHasTris(a) || MeshHasTris(b)) {
+        Contact out;
+        if (!(a->isTrigger || b->isTrigger)) return out;
+        MeshCollider3D* ma = TriMeshOf(a); MeshCollider3D* mb = TriMeshOf(b);
+        if (ma && mb) return out;                          // two triangle meshes: no mesh-mesh test
+        trimesh::Contact mc = ma ? MeshVsShape(ma, b) : MeshVsShape(mb, a);
+        if (!mc.hit) return out;
+        out.hit = true; out.penetration = mc.penetration; out.point = mc.point;
+        out.normal = ma ? mc.normal : mc.normal * -1.0f;   // A -> B
+        return out;
+    }
 
     // Capsule/cylinder vs capsule/cylinder: closest points between the two segments.
     if (IsCapsuleLike(sa) && IsCapsuleLike(sb)) {
@@ -358,8 +377,11 @@ void CatchTunneledFloor(Scene& scene, Rigidbody3D* rb) {
     Physics3D::IgnoreHierarchy own(rb->gameObject);
     const RaycastHit3D hit = scene.physics3D().Raycast(
         scene, Vec3{pos.x, startY, pos.z}, Vec3{0.0f, -1.0f, 0.0f},
-        reach, rb->gameObject, Physics3D::kAllLayers, /*queryTriggers=*/false);
+        reach, rb->gameObject, scene.physics3D().CollisionMask(col->layer), /*queryTriggers=*/false);
     if (!hit.hit || hit.normal.y <= 0.55f) return;
+    // A mesh collider on a dynamic body is refused (static only): never lift onto it.
+    if (hit.collider && hit.collider->shape() == Collider3D::Shape::Mesh &&
+        static_cast<MeshCollider3D*>(hit.collider)->IsDynamicConflict()) return;
     if (!(curFoot < hit.point.y - 0.02f)) return;
     if (!(prevFoot >= hit.point.y - 0.35f)) return;
     const float lift = hit.point.y - curFoot;
@@ -371,8 +393,14 @@ void CatchTunneledFloor(Scene& scene, Rigidbody3D* rb) {
 
 } // namespace
 
+void Physics3D::BeginDebugFrame() {
+    m_debugRays.clear(); m_debugContacts.clear();
+    MeshCollider3D::AdvanceEpoch();   // mesh colliders re-check their mesh data this frame
+}
+
 void Physics3D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
+    MeshCollider3D::AdvanceEpoch();
 
     // Sleeping thresholds: under these speeds for kSleepTime seconds, a dynamic body
     // sleeps (skipped until woken). Mirrors the PhysX rest optimisation.
@@ -812,81 +840,97 @@ void Physics3D::Step(Scene& scene, float dt) {
         }
     }
 
-    // 6) Mesh collider collision: a MeshCollider3D collides EXACTLY against its
-    // object's triangles (walls, floors, ramps you modeled or extruded), not as a
-    // loose AABB box. Each mesh collider is treated as static world geometry; every
-    // dynamic body (approximated as a vertical stack of probe spheres, feet..head)
-    // is depenetrated out of any triangle it overlaps — so you stand on modeled
-    // floors and are blocked by modeled walls instead of walking through them.
+    // 6) Mesh collider collision: a MeshCollider3D collides EXACTLY against its object's
+    // triangles (walls, floors, ramps, bowls, hollow rooms), through a BVH, not as a loose
+    // box. Each is static world geometry (a Kinematic body may move it). Every dynamic body
+    // is pushed out of any triangle it overlaps using its real shape (sphere, capsule /
+    // cylinder or oriented box) with normal, restitution and Coulomb friction (with spin)
+    // impulses against the immovable surface.
     {
-        struct MeshShape { std::vector<Vec3> tri; };   // world-space triangles (3 verts each)
-        std::vector<MeshShape> meshes;
+        struct MeshRef { MeshCollider3D* mc; Mat4 m; Vec3 mn, mx; };
+        std::vector<MeshRef> meshes;
         for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
-            if (!Alive(col) || col->shape() != Collider3D::Shape::Mesh) continue;
-            if (!col->gameObject || !col->gameObject->transform) continue;
-            auto* mr = col->gameObject->GetComponent<MeshRenderer>();
-            if (!mr || mr->DisplayMesh().triangles.empty()) continue;
-            Mat4 M = col->gameObject->transform->LocalToWorldMatrix();
-            MeshShape ms; ms.tri.reserve(mr->DisplayMesh().triangles.size());
-            for (int idx : mr->DisplayMesh().triangles)
-                if (idx >= 0 && idx < (int)mr->DisplayMesh().vertices.size())
-                    ms.tri.push_back(M.MultiplyPoint(mr->DisplayMesh().vertices[idx]));
-            if (!ms.tri.empty()) meshes.push_back(std::move(ms));
+            if (!Alive(col) || col->shape() != Collider3D::Shape::Mesh || col->isTrigger) continue;
+            if (!col->gameObject->transform) continue;
+            auto* mc = static_cast<MeshCollider3D*>(col);
+            if (!mc->HasTriangles()) continue;
+            if (mc->IsDynamicConflict()) {
+                if (!mc->m_warnedDynamic) {
+                    mc->m_warnedDynamic = true;
+                    Log::Warning("MeshCollider3D on '", mc->gameObject->name,
+                                 "' is static-only and this object has a dynamic Rigidbody3D: the mesh collider is ignored "
+                                 "for physics contact. Use a Box/Sphere/Capsule collider on moving objects.");
+                }
+                continue;
+            }
+            MeshRef r{mc, mc->WorldMatrix(), {}, {}};
+            mc->WorldAABB(r.mn, r.mx);
+            meshes.push_back(r);
         }
         if (!meshes.empty()) {
             for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
                 if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
-                if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
+                if (rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
                 Collider3D* self = rb->gameObject->GetComponent<Collider3D>();
-                if (self && self->shape() == Collider3D::Shape::Mesh) continue;  // don't self-collide
+                if (self && (self->isTrigger || !self->enabled)) continue;
                 Transform* t = rb->transform; if (!t) continue;
-                // Probe spheres spanning the body's collider AABB (feet to head).
-                float radius = 0.35f, footY = 0.0f, headY = 1.6f;
-                if (self) {
-                    Vec3 mn, mx; self->WorldAABB(mn, mx);
-                    Vec3 pos = t->Position();
-                    radius = std::min(mx.x - mn.x, mx.z - mn.z) * 0.5f;
-                    if (radius < 0.05f) radius = 0.05f;
-                    footY = (mn.y + radius) - pos.y;
-                    headY = (mx.y - radius) - pos.y;
-                }
-                if (headY < footY) headY = footY;
-                int spheres = (int)std::ceil((headY - footY) / std::max(radius, 0.01f)) + 1;
-                if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
-
-                for (const MeshShape& ms : meshes) {
-                    for (int si = 0; si < spheres; ++si) {
-                        float fy = footY + (headY - footY) * (float)si / (float)(spheres - 1);
-                        for (int iter = 0; iter < 4; ++iter) {
-                            Vec3 pos = t->Position();
-                            Vec3 c{pos.x, pos.y + fy, pos.z};
-                            float bestPen = 0.0f; Vec3 bestN{0, 0, 0}; bool any = false;
-                            for (std::size_t ti = 0; ti + 2 < ms.tri.size(); ti += 3) {
-                                Vec3 cp = ClosestPointOnTri(c, ms.tri[ti], ms.tri[ti + 1], ms.tri[ti + 2]);
-                                Vec3 d = c - cp; float d2 = d.SqrMagnitude();
-                                if (d2 >= radius * radius) continue;
-                                float dist = std::sqrt(std::max(d2, 1e-12f));
-                                float pen = radius - dist;
-                                if (pen > bestPen) {
-                                    bestPen = pen; any = true;
-                                    bestN = dist > 1e-6f ? d * (1.0f / dist)
-                                          : Vec3::Cross(ms.tri[ti + 1] - ms.tri[ti], ms.tri[ti + 2] - ms.tri[ti]).Normalized();
-                                }
-                            }
-                            if (!any) break;
-                            t->localPosition.x += bestN.x * bestPen;
-                            t->localPosition.y += bestN.y * bestPen;
-                            t->localPosition.z += bestN.z * bestPen;
-                            Vec3& v = rb->velocity;
-                            float vn = v.x * bestN.x + v.y * bestN.y + v.z * bestN.z;
-                            if (vn < 0.0f) {
-                                float rest = rb->bounciness;
-                                v.x -= vn * bestN.x * (1.0f + rest);
-                                v.y -= vn * bestN.y * (1.0f + rest);
-                                v.z -= vn * bestN.z * (1.0f + rest);
-                            }
-                            if (bestN.y > 0.4f) rb->groundedOnTerrain = true;   // standing on it
+                if (!std::isfinite(t->localPosition.x + t->localPosition.y + t->localPosition.z)) continue;
+                const float invI = InvInertia(rb, self);
+                for (const MeshRef& mr : meshes) {
+                    if (mr.mc->gameObject == rb->gameObject) continue;
+                    if (self && !LayersCollide(self->layer, mr.mc->layer)) continue;
+                    trimesh::WorldView view(mr.mc->Tris(), mr.m);
+                    for (int iter = 0; iter < 4; ++iter) {
+                        // The body's shape at its current position.
+                        trimesh::Contact k; Vec3 center = t->Position();
+                        if (self && self->shape() == Collider3D::Shape::Sphere) {
+                            auto* sp = static_cast<SphereCollider3D*>(self);
+                            center = sp->WorldCenter();
+                            k = view.Sphere(center, sp->WorldRadius());
+                        } else if (self && IsCapsuleLike(self->shape())) {
+                            auto* cp = static_cast<CapsuleCollider3D*>(self);
+                            Vec3 a, b; cp->Segment(a, b); center = cp->WorldCenter();
+                            k = view.Capsule(a, b, cp->WorldRadius());
+                        } else if (self) {                       // box (or box-fallback mesh)
+                            auto* bx = static_cast<BoxCollider3D*>(self);
+                            Vec3 ax, ay, az; bx->WorldAxes(ax, ay, az); center = bx->WorldCenter();
+                            k = view.Box(center, bx->HalfExtents(), ax, ay, az);
+                        } else {                                 // no collider: a person-sized capsule
+                            Vec3 p = t->Position();
+                            k = view.Capsule({p.x, p.y + 0.35f, p.z}, {p.x, p.y + 1.25f, p.z}, 0.35f);
+                            center = {p.x, p.y + 0.8f, p.z};
                         }
+                        if (!k.hit || k.penetration <= 1e-5f) break;
+                        const Vec3 n = k.normal;
+                        t->localPosition = t->localPosition + n * k.penetration;
+                        // Impulses against the immovable surface; n points surface -> body.
+                        const float im = rb->InvMass();
+                        Vec3 rA = k.point - center;
+                        Vec3 vp = rb->velocity + Vec3::Cross(rb->angularVelocity, rA);
+                        float vn = Vec3::Dot(vp, n);
+                        if (vn < 0.0f && im > 0.0f) {
+                            float e = rb->bounciness; if (-vn < 0.5f) e = 0.0f;
+                            Vec3 rn = Vec3::Cross(rA, n);
+                            float denom = im + rn.SqrMagnitude() * invI;
+                            float j = -(1.0f + e) * vn / denom;
+                            rb->velocity = rb->velocity + n * (j * im);
+                            rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rA, n * j) * invI;
+                            vp = rb->velocity + Vec3::Cross(rb->angularVelocity, rA);
+                            Vec3 tang = vp - n * Vec3::Dot(vp, n);
+                            float tl = std::sqrt(Vec3::Dot(tang, tang));
+                            if (tl > 1e-4f) {
+                                Vec3 tdir = tang * (1.0f / tl);
+                                Vec3 rt = Vec3::Cross(rA, tdir);
+                                float denomT = im + rt.SqrMagnitude() * invI;
+                                float jt = -tl / denomT;
+                                float mu = std::sqrt(std::max(0.0f, rb->friction) * 0.6f);
+                                float maxF = mu * j;
+                                if (jt > maxF) jt = maxF; else if (jt < -maxF) jt = -maxF;
+                                rb->velocity = rb->velocity + tdir * (jt * im);
+                                rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rA, tdir * jt) * invI;
+                            }
+                        }
+                        if (n.y > 0.4f) rb->groundedOnTerrain = true;   // standing on it
                     }
                 }
             }
@@ -1158,6 +1202,10 @@ bool RayCollider(Collider3D* c, const Vec3& o, const Vec3& d, float maxT, float&
         auto* s = static_cast<SphereCollider3D*>(c);
         return RaySphere(o, d, s->WorldCenter(), s->WorldRadius(), maxT, t, n);
     }
+    if (MeshCollider3D* mc = TriMeshOf(c)) {       // exact two-sided triangle ray test
+        trimesh::WorldView v(mc->Tris(), mc->WorldMatrix());
+        return v.Raycast(o, d, maxT, t, n);
+    }
     if (IsBoxLike(c->shape()))    // exact oriented-box ray test
         return RayOBB(o, d, static_cast<BoxCollider3D*>(c), maxT, t, n);
     auto* cap = static_cast<CapsuleCollider3D*>(c);   // capsule / cylinder
@@ -1383,6 +1431,16 @@ struct QueryShape {
 // Does query shape q touch collider col? Fills n (unit, from col's surface
 // toward the shape) and point (on col's surface). Mesh colliders count as boxes.
 bool ShapeTouch(Collider3D* col, const QueryShape& q, Vec3& n, Vec3& point) {
+    if (MeshCollider3D* mc = TriMeshOf(col)) {
+        trimesh::WorldView v(mc->Tris(), mc->WorldMatrix());
+        trimesh::Contact c;
+        if (q.kind == QueryShape::Sphere)       c = v.Sphere(q.c, q.r);
+        else if (q.kind == QueryShape::Capsule) c = v.Capsule(q.a, q.b, q.r);
+        else                                    c = v.Box(q.box.c, q.box.h, q.box.ax, q.box.ay, q.box.az);
+        if (!c.hit) return false;
+        n = c.normal; point = c.point;
+        return true;
+    }
     switch (q.kind) {
     case QueryShape::Sphere:
         return SphereTouch(col, q.c, q.r, n, point);
@@ -1578,7 +1636,7 @@ void Physics3D::SweepBody(Scene& scene, Rigidbody3D* rb, float dt) {
     Vec3 dir = motion * (1.0f / len);
     RaycastHit3D h = Sweep(scene, SphereShape(self->WorldCenter(), r), dir, len, rb->gameObject,
                            m_layerMask[self->layer & 31], /*queryTriggers*/ false,
-                           /*skipStartOverlaps*/ true, /*skipTriMeshes*/ true);
+                           /*skipStartOverlaps*/ true, /*skipTriMeshes*/ false);
     float travel = len;
     // Stop just inside the surface so this step's narrow phase sees the contact
     // and bounces / stops the body as usual.
@@ -1607,6 +1665,11 @@ Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore,
             if (!Alive(col)) continue;
             if (ignore && col->gameObject == ignore) continue;
             if (col->isTrigger) continue;                 // triggers never block
+            if (MeshCollider3D* mc = TriMeshOf(col)) {     // exact triangles
+                trimesh::Contact k = trimesh::WorldView(mc->Tris(), mc->WorldMatrix()).Sphere(c, r);
+                if (k.hit && k.penetration > 1e-5f) { c = c + k.normal * k.penetration; moved = true; }
+                continue;
+            }
             if (col->shape() == Collider3D::Shape::Sphere) {
                 Vec3 sc; float sr; AsSphere(col, c, sc, sr);
                 Vec3 d = c - sc; float dl = d.Magnitude();

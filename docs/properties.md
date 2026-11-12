@@ -298,7 +298,7 @@ has `enabled`.
 | ThirdPersonShooterController, TopDownShooterController, Platformer25DController | 47, 49, 58 | movement, camera, aim and fire, ammo, dash, depth layers, grab |
 | VehicleController, VehicleController2D | 25, 11 | the suspension fields are saved only while `suspension` is on |
 | Projectile3D, Spawner, MusicPlayer | 9, 14, 6 | `Spawner.usePool` makes the copies from an object pool; the playlist `tracks` is a list, not a property |
-| NavMeshAgent, NavMeshObstacle, NavMeshSurface | 15, 3, 14 | the surface's bake settings are flat (`agentRadius`, `maxSlope`, `cellSize` ...) |
+| NavMeshAgent, NavMeshObstacle, NavMeshSurface, NavMeshModifier, NavMeshLink | 16, 3, 14, 2, 8 | the surface's bake settings are flat (`agentRadius`, `maxSlope`, `cellSize` ...); its per-area costs and names are saved in the scene but are not properties |
 | NetworkObject, NetworkSync, NetworkTransform, SyncVar, NetworkPlayerSpawner | 4, 6, 1, 3, 7 | `NetworkObject.netId` refuses a `/` |
 | UIButton, TextRenderer, UIImage, UISlider, UIToggle, UIProgressBar, UIInputField, UIStepper, UIDropdown | 41, 32, 22, 24, 14, 22, 14, 16, 16 | position, size, anchor, colours, shape, shadow, border, behaviour switches |
 | LoadingScreen | 46 | look (layout, bar and spinner styles, colours), title and tips line, bar, spinner, and `asyncLoad` / `objectsPerFrame` for a background load; the `tips` list is not a property |

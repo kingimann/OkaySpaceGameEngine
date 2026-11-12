@@ -22,6 +22,8 @@
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshLink.hpp"
+#include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Components/NetworkObject.hpp"
@@ -975,7 +977,30 @@ void RegisterNavMeshAgent() {
      .AddBool("autoBraking", &NavMeshAgent::autoBraking).Tooltip("Slow down over the last stretch instead of stopping dead")
      .AddBool("faceMovement", &NavMeshAgent::faceMovement).Tooltip("Turn to face the direction of travel")
      .AddBool("driveAnimation", &NavMeshAgent::driveAnimation).Tooltip("Drive a sibling Character's idle / walk / run")
-     .AddFloat("baseOffset", &NavMeshAgent::baseOffset).Range(-kBig, kBig, 0.05).Tooltip("The object's origin above its feet (a cube's centre: half its height)");
+     .AddFloat("baseOffset", &NavMeshAgent::baseOffset).Range(-kBig, kBig, 0.05).Tooltip("The object's origin above its feet (a cube's centre: half its height)")
+     .AddInt("areaMask", &NavMeshAgent::areaMask).Tooltip("Areas this agent may enter (bit n = area n). Default: all but Not Walkable");
+    b.Commit();
+}
+
+// NavMeshModifier
+void RegisterNavMeshModifier() {
+    PropertyBuilder<NavMeshModifier> b("NavMeshModifier", "navmod", "Navigation");
+    b.AddInt("area", &NavMeshModifier::area).Range(0, kNavAreaCount - 1, 1).Tooltip("Navigation area (0 Walkable, 1 Not Walkable, 2 Water, 3 Road, 4..31 custom) the colliders on this object bake as")
+     .AddBool("applyToChildren", &NavMeshModifier::applyToChildren).Tooltip("Also colliders on child objects that have no modifier of their own");
+    b.Commit();
+}
+
+// NavMeshLink
+void RegisterNavMeshLink() {
+    PropertyBuilder<NavMeshLink> b("NavMeshLink", "navlink", "Navigation");
+    b.AddEnum("type", &NavMeshLink::type, {"Jump", "Drop", "Ladder"}).Tooltip("How an agent crosses: an arc, a fall, or a straight climb")
+     .AddVec3("startPoint", &NavMeshLink::startPoint).Range(-kBig, kBig, 0.1).Tooltip("Where the crossing starts, in local space (must be on the baked mesh)")
+     .AddVec3("endPoint", &NavMeshLink::endPoint).Range(-kBig, kBig, 0.1).Tooltip("Where the crossing ends, in local space (must be on the baked mesh)")
+     .AddBool("bidirectional", &NavMeshLink::bidirectional).Tooltip("Off: only from the start point to the end point")
+     .AddFloat("cost", &NavMeshLink::cost).Range(0, kBig, 0.1).Tooltip("Multiplier on the crossing distance in the path search")
+     .AddInt("area", &NavMeshLink::area).Range(0, kNavAreaCount - 1, 1).Tooltip("Navigation area, checked against each agent's area mask")
+     .AddFloat("speed", &NavMeshLink::speed).Range(0, kBig, 0.1).Tooltip("Crossing speed in units per second (0 = the agent's own speed)")
+     .AddFloat("arcHeight", &NavMeshLink::arcHeight).Range(0, kBig, 0.1).Tooltip("Jump: how high the arc peaks");
     b.Commit();
 }
 
@@ -1100,6 +1125,8 @@ void RegisterGameplayProperties() {
     RegisterWater();
     RegisterNavMeshAgent();
     RegisterNavMeshObstacle();
+    RegisterNavMeshModifier();
+    RegisterNavMeshLink();
     RegisterNavMeshSurface();
     RegisterNetworkObject();
     RegisterNetworkSync();

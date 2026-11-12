@@ -3,6 +3,8 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Math/Mat4.hpp"
+#include "okay/Physics/TriMesh.hpp"
 #include <cstdint>
 #include <string>
 
@@ -154,12 +156,62 @@ public:
     }
 };
 
-/// Mesh collider: a convex-ish collider fitted to the object's mesh bounds. It
-/// resolves as an axis-aligned box (its AABB), so an arbitrary model still blocks
-/// and can be stood on without per-triangle cost. Enable autoFit to track the mesh.
+/// Mesh collider: collides against the exact triangles of the object's MeshRenderer
+/// mesh (the modifier result when there is one), placed by the object's world matrix
+/// (rotation and non-uniform scale included). A BVH is built from the mesh and rebuilt
+/// when the mesh changes, so raycasts, sphere / capsule / box overlaps and casts,
+/// ResolveSphere and Rigidbody3D contact all work against arbitrary (concave, hollow,
+/// holed) geometry.
+///
+/// STATIC ONLY: it is world geometry. Dynamic Rigidbody3D bodies (spheres, capsules,
+/// boxes) collide with it, but a mesh collider cannot itself be a dynamic body: the
+/// solver has no concave-vs-concave contact and no convex-hull shape. A mesh collider
+/// on the same object as a non-kinematic Rigidbody3D is ignored by physics contact (a
+/// warning is logged and the Inspector says so); use a Box / Sphere / Capsule collider
+/// on moving things. Kinematic bodies may carry one (a moving platform). Queries
+/// (raycast, overlap, casts) work either way.
+///
+/// With no MeshRenderer, or a mesh with no usable triangles, it falls back to the
+/// `size` / `offset` bounding box exactly as before.
 class MeshCollider3D : public BoxCollider3D {
 public:
     Shape shape() const override { return Shape::Mesh; }
+
+    /// True when the collider has real triangles (the BVH is refreshed first).
+    bool HasTriangles() const;
+    /// The built triangle mesh + BVH (local space); empty when !HasTriangles().
+    const TriMesh& Tris() const;
+    /// Local -> world matrix the triangles are placed with: the object's. (`offset` and `size`
+    /// only describe the no-triangles fallback box; Fit sets them from the mesh bounds.)
+    Mat4 WorldMatrix() const;
+    /// Force a rebuild at the next query (the mesh data is also watched automatically:
+    /// its size / buffers every query, its contents once per physics step or frame).
+    void Invalidate() { m_valid = false; }
+    /// Number of times the BVH was (re)built; handy to see that an edit was noticed.
+    int BuildCount() const { return m_builds; }
+    /// Triangles dropped as degenerate when the BVH was last built.
+    int DroppedTriangles() const { return Tris().DroppedTriangles(); }
+    /// Why the collider is not (fully) doing what its name says; empty when it is.
+    /// Shown in the Inspector.
+    std::string StatusMessage() const;
+    /// True when a non-kinematic Rigidbody3D shares the object (unsupported, see above).
+    bool IsDynamicConflict() const;
+    /// Triangle world AABB, or the `size` box without triangles.
+    void WorldAABB(Vec3& mn, Vec3& mx) const override;
+
+    /// Call once per physics step / frame: lets every mesh collider re-check its mesh
+    /// contents (a hash of the vertices and indices) on its next query.
+    static void AdvanceEpoch();
+
+    bool m_warnedDynamic = false;   // runtime: the dynamic-body warning was logged
+private:
+    void Refresh() const;
+    mutable TriMesh m_tris;
+    mutable bool m_valid = false;
+    mutable std::uint64_t m_hash = 0, m_checkedEpoch = ~0ull;
+    mutable const void *m_vp = nullptr, *m_ip = nullptr;
+    mutable std::size_t m_vn = 0, m_in = 0;
+    mutable int m_builds = 0;
 };
 
 } // namespace okay

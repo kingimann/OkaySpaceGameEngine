@@ -614,6 +614,48 @@ unchanged.
   Inspector's; right-click any tab ▸ **Show Group as Side Tabs** picks another.
   Click an entry to show that panel, right-click it for its tab menu. Off by default.
 
+## Scene view overlays, toolbar, density and layout
+
+- **Overlays** (Scene view `...` menu ▸ Overlays; every choice is remembered):
+  - **Stats line** (`3D | 5 objects | 25 FPS | name`, top left) can be turned off. It sits on a
+    see-through pill with a dark outline so it stays readable on a bright sky.
+  - **Camera overlay** (zoom, yaw / pitch, eye, target, FOV) is **off by default**. Switched on it
+    lives in a corner you choose (**Camera overlay corner**, top right by default), is
+    semi-transparent (**Opacity** slider) and **collapsible**: click its title in the view, or use
+    **Collapse camera overlay**. It places itself clear of the stats line, the view-axis gizmo, the
+    camera inset and the isolation banner, and hides rather than cover them when the view is too small.
+    The same switch is in Preferences ▸ Debug View.
+  - **Object names** (on by default) shows the name chip of the selected object (drag it onto a visual-script
+    object slot, as before) and the names of cameras and lights. Each takes a spot clear of the gizmo handles,
+    the overlays and the other names; a name that has to sit further from its object gets a thin line back to
+    it, a name that cannot find room shrinks and dims, and a crowded view fades the camera and light names. The
+    names have a dark outline so they read on a bright sky. Off hides all of them (the Hierarchy rows still drag
+    an object into a script slot).
+  - The **view-axis gizmo** (top right: click a tip to look along that axis) is now drawn on top of the 3D
+    view; it used to be hidden under it.
+- **Toolbar**: every icon button has a tooltip with its name and shortcut, including the remove (x),
+  browse (...) and step buttons in the Inspector and the playback speed buttons. The Scene view toolbar is
+  grouped with dividers (Move / Rotate / Scale / IK, then Global-Local / Snap, then Frame). **Toolbar
+  labels** (`...` menu) writes the tool names beside the icons for beginners. When the view is too narrow
+  for every label, the leading tools (Move, Rotate, Scale, ...) keep theirs and the rest stay bare icons; when
+  even bare icons do not fit the last tools move into the `...` menu under **Tools**. The remembered choice
+  is only a preference: a wide Scene view shows all the labels, a narrow one fewer.
+- **Density** (View ▸ Appearance ▸ Density): **Comfortable** (the default) or **Compact**. It sets the row
+  spacing and field height of every panel and, in the Inspector, how wide the value column is next to the
+  label (the label keeps at least about 96 px, so it stays readable in a 440 px wide Inspector) and the
+  space above each component.
+- **Maximize viewport** (**Shift+Space**, View ▸ Layout ▸ Maximize Viewport, or the Scene `...` menu): the
+  Scene fills the editor; the other panels hide and a **Restore panels** button appears in the Scene
+  toolbar. Pressing Shift+Space again brings back the previous arrangement and open panels exactly. While
+  maximized the layout file is not written, so the next launch opens the layout you had before.
+- **Panels**: every docked panel is resizable by its splitters, floats from the tab right-click menu (**Float
+  (undock)**) or by dragging its tab out (outside the editor it becomes its own window), and now also
+  collapses: tab right-click ▸ **Collapse Group** shrinks a docked group to its tab strip and **Expand Group**
+  brings its size back. **The arrangement you leave is now restored at the next start** (the dock tree is in
+  `imgui.ini`, and the built-in layout you were on is saved in `okay_settings.txt` so the Layout dropdown names it);
+  before, every launch rebuilt the Default layout. With no `imgui.ini`, or none with a split in it, the Default layout is
+  built as before, and **Reset Layout** always rebuilds it. Layout presets and **Save Layout...** are as before.
+
 ## Editor quality-of-life
 
 - **Hierarchy right-click**:

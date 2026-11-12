@@ -21,7 +21,7 @@ jobs:
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev glslang-tools
 
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -223,11 +223,12 @@ jobs:
             -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
             -DOKAY_SODIUM_PREFIX="$OKAY_SODIUM_MINGW_PREFIX"
           cmake --build build-win-tests -j --target test_vs_acceptance test_vs_debug test_game_fiber \
-            test_polymesh test_mesh_asset test_poly_ops
+            test_polymesh test_mesh_asset test_poly_ops test_d3d11_shaders
           mkdir -p win-tests
           cp build-win-tests/tests/test_vs_acceptance.exe build-win-tests/tests/test_vs_debug.exe \
              build-win-tests/tests/test_game_fiber.exe build-win-tests/tests/test_polymesh.exe \
              build-win-tests/tests/test_mesh_asset.exe build-win-tests/tests/test_poly_ops.exe \
+             build-win-tests/tests/test_d3d11_shaders.exe \
              "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
 
       - name: Upload Windows build
@@ -266,6 +267,14 @@ jobs:
             if ($LASTEXITCODE -ne 0) { $failed += $t }
           }
           if ($failed) { throw "failed: $($failed -join ', ')" }
+
+      # Compiles every Direct3D 11 shader entry point (SSAO included) with the real D3DCompile on a
+      # Windows machine. It compiles them; it does not render with them.
+      - name: Compile the Direct3D 11 shaders
+        shell: pwsh
+        run: |
+          & "winbuild/win-tests/test_d3d11_shaders.exe" --compile
+          if ($LASTEXITCODE -ne 0) { throw "d3d11 shader compile failed ($LASTEXITCODE)" }
 
       - name: Export a game and check its visual scripts
         shell: pwsh

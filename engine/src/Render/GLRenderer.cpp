@@ -2297,7 +2297,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         const auto& ps = rsTop.post;
         g.Disable(GL_BLEND);
         // 1) Linear depth (half res) for SSAO and depth of field.
-        const bool ssaoOn = ps.ssao || SSAOEnabled();
+        const SsaoParams ssaoP = ResolveSsao(ps);
+        const bool ssaoOn = ssaoP.on;
         bool haveDepth = false;
         if ((ssaoOn || ps.dof) && EnsureSsaoProgs() && EnsureSsaoTargets(hw, hh)) {
             DrawLinearDepth(scene, vp, eye, ignore, viewFr);
@@ -2305,8 +2306,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         }
         g.Disable(GL_DEPTH_TEST);
         if (ssaoOn && haveDepth) {
-            computeAo(ps.ssao ? ps.ssaoRadius : SSAORadius());
-            multiplyAo(m_resolveFbo, ps.ssao ? ps.ssaoIntensity : SSAOStrength());
+            computeAo(ssaoP.radius);
+            multiplyAo(m_resolveFbo, ssaoP.strength);
         }
         // 2) Bloom: bright-pass to half res, blur, down to quarter, blur. Both
         //    levels are added in the uber pass (a wide soft glow + a tight one).

@@ -1229,6 +1229,21 @@ inline bool&  SSAOEnabled()  { static bool v = false; return v; }     // off by 
 inline float& SSAORadius()   { static float v = 0.45f; return v; }  // world units
 inline float& SSAOStrength() { static float v = 0.6f; return v; }
 
+/// What a GPU renderer's SSAO pass uses this frame: the scene's own post-process SSAO
+/// (Post Processing: radius, intensity) when it is on, otherwise the global Lighting /
+/// Build Settings switch with its radius and strength. Strength is capped at 1 (the
+/// multiply cannot brighten). Shared by the OpenGL and Direct3D 11 renderers so both
+/// read the same settings the same way.
+struct SsaoParams { bool on = false; float radius = 0.45f; float strength = 0.6f; };
+inline SsaoParams ResolveSsao(const Scene::RenderSettings::PostSettings& ps) {
+    SsaoParams r;
+    r.on = ps.ssao || SSAOEnabled();
+    r.radius = ps.ssao ? ps.ssaoRadius : SSAORadius();
+    r.strength = ps.ssao ? ps.ssaoIntensity : SSAOStrength();
+    if (r.strength > 1.0f) r.strength = 1.0f;
+    return r;
+}
+
 /// Darken creases/contacts using the per-pixel world position + normal G-buffer:
 /// sample a hemisphere around each pixel and count how many samples are occluded
 /// by nearer geometry. Adds soft contact shadows / depth that flat lighting can't.

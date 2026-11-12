@@ -103,7 +103,17 @@ fields. Old saved bindings are unchanged. `Input::IsKnownKeyName` (C++) tells a 
 from a typo: an unknown name such as `f13` still falls back to its first letter, as
 before, instead of failing.
 
-The editor's Play mode does not feed the new keys yet; the standalone player does.
+The editor's Play button and the built player feed the same keys (both call
+`AppendPlayKeys` in `Input/PlatformKeys.hpp`): letters and digits by the keyboard
+layout, Space, Enter, Backspace, the arrows (also as WASD), `f1` ... `f12`, Tab, the
+navigation block and the left / right modifiers. Escape reaches the game in Play only
+when Play has decided it belongs to the game (otherwise it frees the mouse). The numeric
+keypad is not a separate key set: Keypad Enter counts as Enter and the other keypad
+keys are not fed in either place.
+
+Controllers work the same way in Play and in a build: every connected controller is a
+player slot (up to four, in the order plugged in, hot-plug included), and the first also
+types WASD / Space for games that read the keyboard.
 
 ## Input contexts
 

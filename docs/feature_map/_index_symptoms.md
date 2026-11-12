@@ -661,7 +661,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | metal looks like plastic | [26.4](20-35-planned.md#264-pbr) PBR |
 | MinGW configure can't find windres | [41.2](41-build-tools-infra.md#412-cmake-modules-windows-resources-and-toolchain) CMake modules, Windows resources and toolchain |
 | minimap shows nothing or the wrong area | [11.6](11-gameplay-systems.md#116-spawners-turn-manager-minimap) Spawners, turn manager, minimap |
-| missing SSAO on Windows | [38.3](38-render-backends.md#383-direct3d-11-backend) Direct3D 11 backend |
 | missing translation shows the key | [31.1](20-35-planned.md#311-translation-tables) Translation tables |
 | model dark, inside out or without textures | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | model faces the wrong way after rigging | [30.2](20-35-planned.md#302-rig-generation) Rig generation |
@@ -868,6 +867,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | sprite pivot is always the centre | [43.2](43-proposals.md#432-sprite-atlas-and-slicing) Sprite atlas and slicing |
 | sprites draw in the wrong order | [2.12](02-rendering-world.md#212-sprites-and-sprite-animation) Sprites and sprite animation |
 | squares instead of letters in a language | [31.2](20-35-planned.md#312-font-fallback) Font fallback |
+| SSAO looking different from OpenGL on Windows | [38.3](38-render-backends.md#383-direct3d-11-backend) Direct3D 11 backend |
 | stale preview after editing a texture | [20.5](20-35-planned.md#205-thumbnails) Thumbnails |
 | stands up inside low cover | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
 | Start or Update never runs | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
@@ -1048,7 +1048,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the okayui test targets are missing from a build | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | the Open button does nothing | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the own backend cannot open a display | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
-| the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
 | the panel does not show in the Scene view | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
 | the panel is slow on a big project | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |
 | the part rig is duplicated after reload | [4.9](04-characters-cameras.md#49-blocky-character-and-customization) Blocky Character and customization |

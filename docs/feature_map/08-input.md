@@ -3,7 +3,7 @@
 Polled keyboard, mouse, gamepad and touch state, named input actions with rebinding, cursor lock, rumble and gameplay input
 blocking. Code is `engine/include/okay/Input/*` (5 headers) and `engine/src/Input/*` (about 700 lines); `player/main.cpp` and
 `editor/main.cpp` feed SDL events in. Doc: `docs/input.md`. Merged: #571 (F-keys, left/right modifiers, input contexts,
-dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Controls screen; in 2.850.0). Nothing is open here; the editor's Play mode still feeds only the old key set and one controller.
+dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Controls screen; in 2.850.0). Nothing is open here; the editor's Play mode feeds the same keys and controllers as the player (`AppendPlayKeys`, `PadSet`).
 
 ## 8. Input
 
@@ -19,9 +19,9 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **API:** `Input::GetKey`, `Input::GetKeyDown`, `Input::GetKeyUp`, `Input::AxisWASD`, `Input::MousePosition`, `Input::MouseDelta`, `Input::GetMouseButton`, `Input::MouseWheel`, `Input::TypedText`, `Input::FeedKeys`, `Input::FeedMouse`, script `Input.GetKey`, `key("space")`
 - **Editor:** none (Play mode in the Game view feeds keys and mouse)
 - **Docs:** `docs/input.md`
-- **Tests:** `transform_input`, `core_audit_input`, `input_actions`, `input_keys_gamepad`
+- **Tests:** `transform_input`, `core_audit_input`, `input_actions`, `input_keys_gamepad`, `platform_keys`
 - **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `PlatformKeys`)
-- **Open:** the editor's Play mode does not include `PlatformKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
+- **Open:** the numeric keypad is not fed (only Keypad Enter counts as Enter), in Play or in a build; `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
 - **Related:** 8.3, 8.5, 12.3, 13.4
 - **Words:** Input, GetKey, GetKeyDown, keyboard, mouse, mouse look, wheel, scroll, typed text, text input, key code, KeyFromName, press any key, WASD, arrow keys, function keys, F1, modifiers, Alt
 - **Seen as:** a key does nothing in the game; F-keys or Alt cannot be bound; mouse-look jumps on the first frame; typed text misses capitals or symbols; holding two keys drops one
@@ -37,12 +37,12 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **API:** `Input::GamepadAxis`, `Input::GetGamepadButton`, `Input::PadA`, `Input::GamepadTrigger`, `Input::GamepadConnected`, `FeedPad`, `PadSet`, `platform::Gamepad`, script `Input.gamepadConnected`
 - **Editor:** none (controller works in Play mode)
 - **Docs:** `docs/input.md`
-- **Tests:** `transform_input`, `input_actions`, `input_keys_gamepad`
-- **Status:** Works - up to four controllers with per-player settings (Input.hpp read; `player/main.cpp` uses `PadSet`; tests `input_keys_gamepad` and, for the own evdev mapping, `platform`); the editor Play view still feeds one pad
-- **Open:** the editor reads only one controller through `FeedPad`; the controller hot-plug events still come from each app's SDL event loop; no couch co-op example or settings screen for the dead zone and curve; no controller hint icons per brand
+- **Tests:** `transform_input`, `input_actions`, `input_keys_gamepad`, `platform_keys`
+- **Status:** Works - up to four controllers with per-player settings (Input.hpp read; `player/main.cpp` uses `PadSet`; tests `input_keys_gamepad` and, for the own evdev mapping, `platform`); the editor Play view uses the same `PadSet` (tests `platform_keys`, `platform_gamepad`)
+- **Open:** the controller hot-plug events still come from each app's SDL event loop; no couch co-op example or settings screen for the dead zone and curve; no controller hint icons per brand
 - **Related:** 8.3, 8.6, 12.4, 32.1
 - **Words:** gamepad, controller, joystick, stick, dead zone, trigger, d-pad, Xbox, PlayStation, SDL_GameController, FeedGamepad, rumble, hot-plug, split screen
-- **Seen as:** the character drifts with the stick untouched; the pad does nothing in the editor Play view; a second controller is ignored; triggers act as buttons too early or late
+- **Seen as:** the character drifts with the stick untouched; a second controller is ignored; triggers act as buttons too early or late
 - **Ask me like:** "add a dead zone setting for the right stick"; "support two controllers for couch co-op"
 
 ### 8.3 Input actions and rebinding UI

@@ -2419,6 +2419,25 @@ endif()
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
 add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
+# The key feed the player and the editor's Play share (Input/PlatformKeys.hpp), with a fake held-key set and fake pads.
+add_executable(test_platform_keys test_platform_keys.cpp)
+target_link_libraries(test_platform_keys PRIVATE okay::engine)
+add_test(NAME platform_keys COMMAND test_platform_keys)
+# The Direct3D 11 HLSL (engine/src/Render/D3D11Hlsl.hpp) without a GPU: d3d11_shaders checks the entry points and the
+# SSAO parity with the OpenGL renderer on every host; d3d11_shaders_compile compiles every entry point (D3DCompile
+# on Windows, glslang's HLSL front end elsewhere; skipped when that tool is missing). Neither RUNS the shaders.
+add_executable(test_d3d11_shaders test_d3d11_shaders.cpp)
+target_link_libraries(test_d3d11_shaders PRIVATE okay::engine)
+target_include_directories(test_d3d11_shaders PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+target_compile_definitions(test_d3d11_shaders PRIVATE OKAY_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME d3d11_shaders COMMAND test_d3d11_shaders)
+add_test(NAME d3d11_shaders_compile COMMAND test_d3d11_shaders --compile)
+set_tests_properties(d3d11_shaders_compile PROPERTIES SKIP_RETURN_CODE 77)
+# Which GPU renderer a build tries and the Direct3D 12 preview label (Render/GpuBackend.hpp).
+add_executable(test_gpu_backend test_gpu_backend.cpp)
+target_link_libraries(test_gpu_backend PRIVATE okay::engine)
+target_compile_definitions(test_gpu_backend PRIVATE OKAY_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME gpu_backend COMMAND test_gpu_backend)
 # okay::crypto (our own, UNREVIEWED crypto primitives; docs/crypto.md): RFC known-answer vectors,
 # tamper tests, edge cases. tests/crypto_rfc_vectors.hpp is extracted from the RFC text.
 add_executable(test_crypto test_crypto.cpp)

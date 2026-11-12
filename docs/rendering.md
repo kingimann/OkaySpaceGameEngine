@@ -22,6 +22,9 @@ their defaults and keeps the sky gradient colours. Both go through Undo.
 
 Applied by the GPU renderers (OpenGL in the editor and the Linux / web player,
 Direct3D 11 in the Windows player). The software renderer keeps its own output.
+The opt-in Direct3D 12 backend is a **preview** (Build Settings: "Direct3D 12 (preview:
+no post-processing)", off by default) and draws none of this chain except the vignette,
+which the host paints over the frame.
 
 When any effect is on, the scene renders into a float (HDR) target, so
 highlights above white survive for bloom and the tonemap, and the chain runs:
@@ -36,8 +39,8 @@ SSAO → bloom → exposure / tonemap / grading / vignette → depth of field �
 | **Colour Grading** | **Temperature** (cool ↔ warm) and **Tint** white balance, **Saturation**, **Contrast**, and per-channel **Lift** (blacks), **Gamma** (mid-tones), **Gain** (whites). |
 | **Vignette** | Darkens the edges and corners, with a **Smoothness** for how far in it reaches. 0 = off. The post chain draws it when it runs; otherwise it is an overlay that looks the same on every renderer. |
 | **Anti-aliasing (FXAA)** | A luma-driven edge filter on the finished frame. |
-| **Ambient Occlusion (SSAO)** | Darkens creases and contact points: **Radius** (world units) and **Intensity**. OpenGL only. |
-| **Depth of Field** | Blurs outside the **Focus Range** either side of the **Focus Distance**. OpenGL only. |
+| **Ambient Occlusion (SSAO)** | Darkens creases and contact points: **Radius** (world units) and **Intensity**. The same switch and numbers drive OpenGL and Direct3D 11 (the Lighting window's "Ambient occlusion" switch also turns it on). The Direct3D 11 pass is new: it compiles and its shaders pass the offline checks, but it has not been run on a GPU yet. The software renderer has its own CPU version. Not on Direct3D 12. |
+| **Depth of Field** | Blurs outside the **Focus Range** either side of the **Focus Distance**. OpenGL only (not on Direct3D 11 or 12). |
 
 A lightning strike (see Weather) spikes the exposure for a few frames, so a
 storm blinks even with every other effect off.

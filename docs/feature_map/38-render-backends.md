@@ -15,8 +15,8 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.1.4 Player choice - `player/main.cpp` - Direct3D 12 when opted in, then Direct3D 11, then OpenGL, then software; three failed frames switch to software for the rest of the run; `gpu=0` in the build config skips GPUs
   - 38.1.5 Quality presets - `Core/DisplaySettings` - Low/Medium/High (see 1.15)
 - **Code:** `Render/Renderer`, `editor/main.cpp`, `player/main.cpp`
-- **API:** `IRenderer`, `GLRenderer::RenderToPixels`, `D3D11Renderer::RenderToPixels`, `RenderMeshesSS`, Build Game "GPU renderer" and "Prefer Direct3D 12" options
-- **Editor:** View > Rendering & Performance (a read-only "Renderer: <backend>" line and 3D Anti-aliasing 2x); Build Game > quality preset, GPU renderer and Prefer Direct3D 12
+- **API:** `IRenderer`, `GLRenderer::RenderToPixels`, `D3D11Renderer::RenderToPixels`, `RenderMeshesSS`, Build Game "GPU renderer" and "Direct3D 12 (preview)" options
+- **Editor:** View > Rendering & Performance (a read-only "Renderer: <backend>" line and 3D Anti-aliasing 2x); Build Game > quality preset, GPU renderer and Direct3D 12 (preview)
 - **Docs:** `docs/rendering.md`, `docs/lighting.md` (which renderers do what)
 - **Tests:** `software_renderer`
 - **Status:** Works - read both selection chains; but the backends cannot be unit tested headless (no GL or D3D context), so only the software path and the planning maths have tests
@@ -32,7 +32,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.2.1 Loading and context - `Render/GLRenderer` - `LoadGL(getProc)` resolves modern GL functions at run time (no link-time GL dependency); the host makes a hidden SDL window with a 3.2 compatibility context; shaders are `#version 120`
   - 38.2.2 Main pass - `Render/GLRenderer` - depth-tested MSAA target resolved to one sample; up to 16 lights, textures with normal, specular and AO maps, 9 shader modes, fog, reflections, emissive and alpha
   - 38.2.3 Shadows - `Render/GLRenderer`, `Render/ShadowSetup` - sun cascade atlas and a local-light tile atlas, 12-tap filtered compare
-  - 38.2.4 Sky and post chain - `Render/GLRenderer` - procedural sky pass, HDR targets, SSAO, bloom, exposure/tonemap/grade/vignette, depth of field, FXAA (the only backend with SSAO and depth of field)
+  - 38.2.4 Sky and post chain - `Render/GLRenderer` - procedural sky pass, HDR targets, SSAO, bloom, exposure/tonemap/grade/vignette, depth of field, FXAA (the only backend with depth of field; Direct3D 11 now shares its SSAO method)
   - 38.2.5 GPU skinning - `Render/GLRenderer` - bone rows in the vertex shader (`SupportsGpuSkinning`, `GpuSkinJoints`)
   - 38.2.6 Cleanup - `Render/GLRenderer` - `Destroy()` frees every GL object with the context current
 - **Code:** `Render/GLRenderer`
@@ -53,36 +53,36 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.3.1 Device - `Render/D3D11Renderer` - `Init()` makes an isolated device with an offscreen target; `InitShared(device)` builds on SDL's own device
   - 38.3.2 Main pass - `Render/D3D11Renderer` - HLSL compiled at start with d3dcompiler (vs_4_0, ps_4_0), up to 4x MSAA resolved before read-back, lighting, textures, fog and 9 shader modes
   - 38.3.3 Shadows - `Render/D3D11Renderer`, `Render/ShadowSetup` - sun cascades and local tiles from the shared plan, plus a planar ground shadow
-  - 38.3.4 Post chain - `Render/D3D11Renderer` - bloom, tonemap, grading, vignette and FXAA; no SSAO or depth of field
+  - 38.3.4 Post chain - `Render/D3D11Renderer`, `Render/D3D11Hlsl.hpp` - bloom, tonemap, grading, vignette, FXAA and SSAO (half-resolution packed depth, 12 taps, blurred, multiplied in before bloom; same radius and strength as OpenGL, from `ResolveSsao`); no depth of field. The HLSL lives in `D3D11Hlsl.hpp` so tests can compile it
   - 38.3.5 Zero-copy and pipelined read-back - `Render/D3D11Renderer` - `RenderToTexture` resolves into an SDL texture; `SetReadbackStream(id)` shows the previous frame to avoid a GPU stall
   - 38.3.6 GPU skinning and sky - `Render/D3D11Renderer` - 256-joint bone palette; procedural sky and clouds
 - **Code:** `Render/D3D11Renderer`
 - **API:** `D3D11Renderer::Init`, `D3D11Renderer::InitShared`, `D3D11Renderer::RenderToTexture`, `D3D11Renderer::SetReadbackStream`, `D3D11Renderer::ReleaseCom`
 - **Editor:** Scene and Game views on Windows; Build Game "GPU renderer" option
 - **Docs:** `docs/rendering.md`, `docs/lighting.md`
-- **Tests:** -
+- **Tests:** `d3d11_shaders`, `d3d11_shaders_compile`
 - **Status:** Works - read the header, the effect counts in `D3D11Renderer.cpp` (2k lines) and the editor and player call sites; compiled only on Windows (guarded by `_WIN32`) and never run by a ctest
-- **Open:** no SSAO or depth of field (doc says OpenGL only); no automated runtime test; the editor's direct path falls back to read-back after 5 failures
+- **Open:** SSAO compiles (an offline HLSL front end on Linux, `D3DCompile` in a Windows CI step) but has never been run on a GPU; no depth of field; no automated runtime test; the editor's direct path falls back to read-back after 5 failures
 - **Related:** 38.1, 38.8, 38.9, 38.10, 2.3, 2.5
 - **Words:** D3D11, Direct3D 11, DirectX 11, HLSL, shared device, RenderToTexture, readback stream, zero-copy, Windows renderer
-- **Seen as:** Windows-only black view or driver crash; GPU stall in the editor view; missing SSAO on Windows
-- **Ask me like:** "Port the SSAO pass from OpenGL to Direct3D 11"
+- **Seen as:** Windows-only black view or driver crash; GPU stall in the editor view; SSAO looking different from OpenGL on Windows
+- **Ask me like:** "Does SSAO look the same on Direct3D 11 as on OpenGL?"
 
 ### 38.4 Direct3D 12 backend
 - **What:** An opt-in explicit-API sibling of the Direct3D 11 backend, used only by the player when Build Game asks for it.
 - **Parts:**
-  - 38.4.1 Opt-in selection - `player/main.cpp` - Build Game "Prefer Direct3D 12" (config `d3d12=1`); the editor does not use it
+  - 38.4.1 Opt-in selection - `player/main.cpp`, `Render/GpuBackend.hpp` - Build Game box "Direct3D 12 (preview: no post-processing)", off by default (config `d3d12=1`); `PlanGpuBackends` decides what the player tries; the box lists what the open scene would lose; the editor does not use it
   - 38.4.2 Device and command plumbing - `Render/D3D12Renderer` - isolated device, queue, list, descriptors and an offscreen target; GPU wait and barriers
   - 38.4.3 Shader - `Render/D3D12Renderer` - a copy of the Direct3D 11 HLSL (`kHLSL12`, ps_5_1) so shading matches
   - 38.4.4 Features - `Render/D3D12Renderer` - sun shadow map with PCF, fog, textures; per the file comment up to 4x MSAA and a planar ground shadow; per the header no normal, gloss or AO maps
   - 38.4.5 Missing - `Render/D3D12Renderer` - no cascades, no spot or point shadows, no post chain, no GPU skinning, no sky pass (no matches in the source)
 - **Code:** `Render/D3D12Renderer`
-- **API:** `D3D12Renderer::Init`, `D3D12Renderer::RenderToPixels`, Build Game "Prefer Direct3D 12"
-- **Editor:** Build Game > GPU renderer > Prefer Direct3D 12 (Windows only)
+- **API:** `D3D12Renderer::Init`, `D3D12Renderer::RenderToPixels`, `PlanGpuBackends`, Build Game "Direct3D 12 (preview: no post-processing)"
+- **Editor:** Build Game > GPU renderer > Direct3D 12 (preview: no post-processing) (Windows only)
 - **Docs:** `docs/lighting.md` (limitations)
-- **Tests:** -
-- **Status:** Partial - opt-in and incomplete; the source says it is compile and link verified through MinGW and "intended to be runtime-tested on Windows"
-- **Open:** possible doc mismatch: the header says `samples` is accepted but MSAA is not applied, while the `.cpp` header comment and code pick up to 4x MSAA; no post effects, cascades or skinning; no runtime test
+- **Tests:** `gpu_backend`
+- **Status:** Partial - an opt-in preview, labelled as one; the source says it is compile and link verified through MinGW and "intended to be runtime-tested on Windows"
+- **Open:** the `D3D12Renderer.hpp` comment about maps and MSAA is stale (the `.cpp` has normal, gloss and AO maps and up to 4x MSAA); no post effects, cascades or skinning; no runtime test
 - **Related:** 38.1, 38.3, 2.3
 - **Words:** D3D12, Direct3D 12, DirectX 12, explicit API, command queue, opt-in backend
 - **Seen as:** characters do not animate or post effects are off when D3D12 is chosen; shadows only from one sun

@@ -11,6 +11,7 @@
 
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Render/GpuBackend.hpp"   // backend plan + the Direct3D 12 preview label
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
@@ -1272,7 +1273,7 @@ int main(int argc, char** argv) {
         int  shadowCascades = 3, shadowResolution = 2048;
         int  antialias = 1;
         bool gpu = true;   // try the GPU (D3D11/OpenGL) 3D renderer; fall back to software
-        bool d3d12 = false; // opt-in: prefer the Direct3D 12 backend (Windows) over D3D11
+        bool d3d12 = okay::kPreferD3D12Default; // opt-in preview: prefer the Direct3D 12 backend (Windows) over D3D11
         std::string startup;
         std::vector<std::string> scenes;
         // Presentation.
@@ -1605,18 +1606,30 @@ int main(int argc, char** argv) {
     std::unique_ptr<okay::platform::Window> glWindow;   // hidden context window for the GL path
     bool                 glCtx = false;                 // its GL context exists
     bool                 glReady = false, d3dReady = false, d3d12Ready = false;
+#if defined(_WIN32)
+    const bool kHostIsWindows = true;
+#else
+    const bool kHostIsWindows = false;
+#endif
+    const okay::GpuBackendPlan gpuPlan = okay::PlanGpuBackends(cfg.gpu, cfg.d3d12, kHostIsWindows);
 #ifndef __EMSCRIPTEN__
     if (cfg.gpu) {
 #if defined(_WIN32)
-        // Opt-in Direct3D 12 backend, preferred when enabled; otherwise D3D11.
-        if (cfg.d3d12) {
+        // Opt-in Direct3D 12 PREVIEW backend, preferred when enabled; otherwise D3D11.
+        if (gpuPlan.tryD3D12) {
             d3d12Renderer = new okay::D3D12Renderer();
-            if (d3d12Renderer->Init()) d3d12Ready = true;
-            else { delete d3d12Renderer; d3d12Renderer = nullptr; }
+            if (d3d12Renderer->Init()) {
+                d3d12Ready = true;
+                const std::vector<std::string> lost = okay::D3D12UnsupportedEffects(scene.renderSettings);
+                okay::Log::Warning("[gpu] ", okay::GpuBackendLabel(okay::GpuBackend::Direct3D12),
+                                   lost.empty() ? std::string(".") : std::string(". This scene's ") + okay::JoinEffectNames(lost) + " will not be drawn.");
+            } else { delete d3d12Renderer; d3d12Renderer = nullptr; }
         }
-        d3dRenderer = new okay::D3D11Renderer();
-        if (d3dRenderer->Init()) d3dReady = true;
-        else { delete d3dRenderer; d3dRenderer = nullptr; }
+        if (gpuPlan.tryD3D11) {
+            d3dRenderer = new okay::D3D11Renderer();
+            if (d3dRenderer->Init()) d3dReady = true;
+            else { delete d3dRenderer; d3dRenderer = nullptr; }
+        }
 #endif
         // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders
         // (GLAttributes' defaults: 3.2, compatibility profile, 24-bit depth).
@@ -1881,26 +1894,8 @@ int main(int argc, char** argv) {
         okay::Matchmaker::Shared().Pump(scene.FindObjectOfType<okay::NetworkManager>());   // a found match: join / host it
 #endif
         // Feed keyboard into the engine Input.
-        auto keyHeld = [pb](PK k) { return pb->IsKeyDown(k); };
         std::vector<char> down;
-        for (char c = 'a'; c <= 'z'; ++c)
-            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);   // by the layout's letter: AZERTY WASD works
-        for (char c = '0'; c <= '9'; ++c)
-            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);
-        if (keyHeld(PK::Space)) down.push_back(' ');
-        if (keyHeld(PK::LShift) || keyHeld(PK::RShift)) down.push_back(Input::KeyShift); // sprint
-        if (keyHeld(PK::LCtrl)  || keyHeld(PK::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
-        // Editing keys for text fields (held-state; edge-detected by the field).
-        if (keyHeld(PK::Backspace)) down.push_back((char)8);
-        if (keyHeld(PK::Return) || keyHeld(PK::KpEnter)) down.push_back('\r');
-        if (keyHeld(PK::Escape)) down.push_back((char)27);
-        // Arrows count as themselves and as WASD, so axis_x/axis_y and key("w") agree.
-        if (keyHeld(PK::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
-        if (keyHeld(PK::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-        if (keyHeld(PK::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
-        if (keyHeld(PK::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
-
-        okay::AppendExtendedKeys(*pb, down);
+        okay::AppendPlayKeys(*pb, down, pb->IsKeyDown(PK::Escape));   // same feed as the editor's Play (Input/PlatformKeys.hpp)
         pads.Feed(down);   // every controller (sticks, triggers, buttons, rumble); the first also types WASD / Space
         Input::FeedKeys(down);
 

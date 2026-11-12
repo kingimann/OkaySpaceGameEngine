@@ -204,8 +204,17 @@ add_library(okay_engine
     src/Testing/SceneValidator.cpp
     src/Testing/Regression.cpp
     src/Testing/GoldenImage.cpp
+    src/Render/FbxReader.cpp
+    src/Render/FbxScene.cpp
     third_party/ufbx/ufbx.c
 )
+
+# Our own FBX reader (okay::fbx) sits next to ufbx. OKAY_OWN_FBX=ON makes it the default reader
+# for this build; it can still be switched at run time with the OKAY_OWN_FBX environment variable
+# ("1"/"0") or okay::fbx::SetOwnReaderEnabled(). Default OFF: ufbx stays the default.
+if(OKAY_OWN_FBX)
+    set_source_files_properties(src/Render/FbxScene.cpp PROPERTIES COMPILE_DEFINITIONS OKAY_OWN_FBX_DEFAULT=1)
+endif()
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
 target_include_directories(okay_engine PUBLIC

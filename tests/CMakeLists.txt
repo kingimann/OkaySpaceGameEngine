@@ -2294,3 +2294,18 @@ add_executable(test_file_dialog test_file_dialog.cpp ${PROJECT_SOURCE_DIR}/share
 target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
+
+# Our own FBX reader (okay::fbx), side by side with ufbx: fixtures from scripts/gen_fbx_fixtures.py
+add_executable(test_fbx_reader test_fbx_reader.cpp)
+target_link_libraries(test_fbx_reader PRIVATE okay::engine)
+target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_reader COMMAND test_fbx_reader)
+
+# Hostile-input tests for okay::fbx. Standalone (no engine library) so it can run under sanitizers:
+#   cmake -DOKAY_SANITIZE=address,undefined ...   (CI's sanitizer job), OKAY_FBX_FUZZ_ITERS=20000 for a longer fuzz.
+add_executable(test_fbx_hostile test_fbx_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+target_include_directories(test_fbx_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_fbx_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_hostile COMMAND test_fbx_hostile)

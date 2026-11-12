@@ -962,49 +962,72 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 29.1.3 Whole-terrain tools - `Components/Terrain` - Generate (mountains, hills, plains, plateau, islands, ridged, canyons), hydraulic and thermal erosion, terrace, normalize, invert
   - 29.1.4 Heightmap import and export - `Components/Terrain` - grayscale PNG with black to `lowY` and white to `highY`
   - 29.1.5 Voxel terrain - `Components/VoxelTerrain`, `Components/TerrainDigger`, `Components/VoxelDigger` - marching-cubes terrain with caves and runtime digging
-- **Code:** `Components/Terrain`, `Components/VoxelTerrain`, `Components/TerrainDigger`, `Components/VoxelDigger`, `editor/main.cpp`
-- **API:** `Terrain::RaiseAt`, `SmoothAt`, `FlattenAt`, `NoiseAt`, `Generate`, `Erode`, `ThermalErode`, `ExportHeightmap`, `ImportHeightmap`, `SampleHeight`, `SlopeAt`
-- **Editor:** 3D Modeling window "Terrain" tab, Terrain Inspector section, GameObject > Terrain
-- **Docs:** `docs/modeling.md`, `docs/editor.md`
-- **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`
-- **Status:** Works - brushes and generators are in the engine and covered by tests; the Scene view brush UI is read in `editor/main.cpp`.
+  - 29.1.6 Texture layers - `Components/Terrain`, `editor/LevelTools.*` - up to four ground layers (picture, tint, tiling) blended by a painted weight map; saved with the terrain (`terrainlayers`); drawn from one baked ground picture, so the software, OpenGL, Direct3D 11 and Direct3D 12 renderers all show it through the shared texture cache
+  - 29.1.7 Terrain ray cast - `Components/Terrain` - `Terrain::Raycast` finds where a ray meets the height field; the sculpt, layer and foliage brushes land on the real surface of a hill
+- **Code:** `Components/Terrain`, `Components/VoxelTerrain`, `Components/TerrainDigger`, `Components/VoxelDigger`, `editor/main.cpp`, `editor/LevelTools.*`
+- **API:** `Terrain::RaiseAt`, `SmoothAt`, `FlattenAt`, `NoiseAt`, `Generate`, `Erode`, `ThermalErode`, `ExportHeightmap`, `ImportHeightmap`, `SampleHeight`, `SlopeAt`, `Raycast`, `AddLayer`, `RemoveLayer`, `PaintLayerAt`, `FillLayer`, `LayerWeightAt`
+- **Editor:** 3D Modeling window "Terrain" tab, Terrain Inspector section (Texture layers), GameObject > Terrain
+- **Docs:** `docs/modeling.md`, `docs/editor.md`, `docs/level_tools.md`
+- **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `foliage`
+- **Status:** Works - brushes and generators are in the engine and covered by tests; texture layers are covered by the `foliage` suite and checked in the real editor (software renderer); the GPU renderers read the same baked picture but were not run here.
 - **Exists today:** Everything above on main; the planned item "sculpting brushes" is largely done.
 - **Work packages:**
-  1. M - Splat layers: paint several ground textures (grass, rock, dirt) with a brush into a weight map. Depends on: nothing.
-  2. M - Terrain undo per stroke (today a stroke uses the whole-scene snapshot). Depends on: 22.1 package 1.
-  3. M - Large terrains: tiled terrain with neighbours stitched, with `WorldStreamer` cells (27.4). Depends on: 27.4 package 1.
-  4. S - Brush preview ring and height gizmo in the Scene view. Depends on: nothing.
-  5. M - Holes and cliffs (cut a hole for caves, sharp slopes). Depends on: package 1.
-- **Open:** one `Terrain` is one square grid with a vertex colour per face, so there are no texture layers; resolution is one setting for the whole grid.
+  1. M - Terrain undo per stroke (today a stroke uses the whole-scene snapshot). Depends on: 22.1 package 1.
+  2. M - Large terrains: tiled terrain with neighbours stitched, with `WorldStreamer` cells (27.4). Depends on: 27.4 package 1.
+  3. S - Height gizmo in the Scene view (the layer and foliage brushes already draw a ring on the surface). Depends on: nothing.
+  4. M - Holes and cliffs (cut a hole for caves, sharp slopes). Depends on: nothing.
+  5. M - Per-layer normal maps and a real multi-texture shader (the layers are baked into one picture, so detail is limited by its size). Depends on: 2.1.
+- **Open:** the layers are baked into one ground picture (at most 2048 pixels a side), so fine texture detail over a very large terrain is limited by that size; resolution is one setting for the whole grid; there are no holes.
 - **Related:** 2.6, 3.1, 29.2, 29.3, 27.4
-- **Words:** terrain, sculpt, brush, heightmap, raise lower, smooth, flatten, erosion, generate landscape, voxel terrain, caves, dig
+- **Words:** terrain, sculpt, brush, heightmap, raise lower, smooth, flatten, erosion, generate landscape, voxel terrain, caves, dig, texture layers, splat, paint ground, weight map
 - **Seen as:** terrain looks blocky or one colour; cannot paint a path or sand patch; huge terrain is heavy
-- **Ask me like:** "add texture layer painting to the terrain"; "make terrain strokes undoable one by one"
+- **Ask me like:** "paint grass and dirt on the terrain"; "make terrain strokes undoable one by one"
 
 ### 29.2 Vegetation painting
 - **What:** Fill terrain with trees, rocks, bushes and grass by painting with a brush or by rules, without placing each by hand.
 - **Parts:**
-  - 29.2.1 Scatter button - `editor/main.cpp` - Terrain Inspector "Scatter props": choose prop (Tree, Pine, PalmTree, DeadTree, Bush, Rock, Mushroom, Cactus, Crystal), count, scale range, max slope and height band; each prop is a child object with its own procedural variant
+  - 29.2.1 Scatter button - `editor/LevelTools.*` - Terrain Inspector "Scatter props": choose prop (Tree, Pine, PalmTree, DeadTree, Bush, Rock, Mushroom, Cactus, Crystal), count (up to 5000), scale range, max slope and height band; the copies go into a Foliage layer under the terrain (one object per prop, not one per copy)
   - 29.2.2 Spline instancer - `Components/SplineMesh` - places copies of an object, prefab or mesh along a spline at a spacing (trees, lamp posts)
   - 29.2.3 Procedural prop shapes - `Render/Mesh` - `Mesh::FromNameSeeded` gives varied trees and rocks
-- **Code:** `editor/main.cpp`, `Components/SplineMesh`, `Components/Terrain`, `Render/Mesh`
-- **API:** `Terrain::SampleHeight`, `SlopeAt`, `SplineInstancer`, `Mesh::FromNameSeeded`
-- **Editor:** Terrain Inspector > Scatter props, Spline tools
-- **Docs:** `docs/modeling.md`, `docs/splines.md`
-- **Tests:** `splines`, `mesh_variant_hash`, `terrain_ops`
-- **Status:** Partial - one-shot scatter exists; no brush painting, no erase, no grass or detail layer.
-- **Exists today:** Scatter creates real GameObjects (up to 500 per click), so thousands of trees mean thousands of objects.
+  - 29.2.4 Foliage layer - `Components/Foliage` - one plant kind (built-in prop, mesh file or prefab) as a list of copies (position, turn, scale, lean); drawn merged into one mesh per 16 m square, so a forest is a few draw calls and whole squares out of view are skipped; saved in the scene (`foliage`); budget in triangles
+  - 29.2.5 Foliage brush - `editor/LevelTools.*` - Paint, Erase (or Shift) and Rescale in the Scene view on a terrain or any surface, with radius, density, spacing, scale range, slope and height limits, follow-ground lean; one undo step per stroke
+  - 29.2.6 Foliage checks - `Testing/SceneValidator` - `foliage.shape` (a plant that cannot be built), `foliage.budget` (over its triangle budget), `foliage.empty`, and missing mesh or prefab files
+  - 29.2.7 Surface ray cast - `Render/SurfaceRaycast` - `RaycastSurfaces` finds the first mesh surface under a ray with no colliders needed (foliage, decals and the measuring tool use it)
+- **Code:** `Components/Foliage`, `Render/SurfaceRaycast`, `editor/LevelTools.*`, `Components/SplineMesh`, `Components/Terrain`, `Render/Mesh`
+- **API:** `Foliage::Paint`, `Erase`, `Rescale`, `ScatterOnTerrain`, `TerrainSurface`, `SceneSurface`, `EnsureBuilt`, `RaycastSurfaces`, `Terrain::SampleHeight`, `SlopeAt`, `SplineInstancer`, `Mesh::FromNameSeeded`
+- **Editor:** GameObject > Foliage Layer, Add Component > Foliage, Foliage Inspector (brush), Terrain Inspector > Scatter props, Spline tools
+- **Docs:** `docs/level_tools.md`, `docs/modeling.md`, `docs/splines.md`
+- **Tests:** `foliage`, `save_coverage`, `splines`, `mesh_variant_hash`, `terrain_ops`
+- **Status:** Works - the foliage layer, brush, scatter and checks are covered by the `foliage` suite and were driven with the mouse in the real editor; no grass or detail layer, no wind, no hardware instancing.
+- **Exists today:** Painting, erasing, rescaling and scattering plants as data, drawn merged by chunk. The copies have no collider and do not sway.
 - **Work packages:**
-  1. M - Foliage brush: paint, erase and density in the Scene view, remembering each scatter operation as a group. Depends on: nothing.
-  2. M - Foliage layer component storing instances as data (position, scale, rotation) instead of objects. Depends on: package 1.
-  3. L - Instanced rendering of foliage with distance fade (needs batching, 27.3). Depends on: package 2, 27.3 package 4.
-  4. M - Grass and detail layer (billboards or cross-quads) with wind (`Environment/Wind`). Depends on: package 3.
-  5. S - Rules: avoid water, avoid steep slopes, keep distance between instances. Depends on: package 1.
-- **Open:** object-per-instance scatter will not scale; no undo grouping for a scatter pass beyond the scene snapshot.
+  1. L - Hardware instancing of foliage with distance fade (needs batching, 27.3); today a layer is merged geometry per chunk. Depends on: 27.3 package 4.
+  2. M - Grass and detail layer (billboards or cross-quads) with wind (`Environment/Wind`). Depends on: package 1.
+  3. S - Colliders for painted trees (a trunk capsule per copy, or on demand). Depends on: nothing.
+  4. S - Several prefabs in one brush with weights. Depends on: nothing.
+- **Open:** a layer holds one kind of plant (use several layers for a forest mix); the budget is triangles, not distance-faded; a prefab is flattened into one shape, so its parts share the first part's texture.
 - **Related:** 2.6, 29.1, 29.3, 27.3, 2.4
-- **Words:** vegetation, foliage, scatter, trees, grass, details, paint trees, instancer, props on terrain
+- **Words:** vegetation, foliage, scatter, trees, grass, details, paint trees, instancer, props on terrain, foliage brush, erase trees, density, slope limit
 - **Seen as:** I want to paint forests; scatter makes the editor slow; no grass
-- **Ask me like:** "add a foliage painting brush"; "scatter grass with wind"
+- **Ask me like:** "paint trees on the terrain"; "scatter grass with wind"
+
+### 29.4 Decals and cables
+- **What:** Small level-dressing pieces: a picture projected onto walls and floors, and a rope or wire that hangs between two points.
+- **Parts:**
+  - 29.4.1 Decal projector - `Components/Decal` - projects a picture along the object's forward axis onto the surfaces inside its box, as a thin mesh cut from the triangles it touches (follows bumps and corners, draws in every renderer); built on Project, not every frame
+  - 29.4.2 Cable - `Components/Cable` - a parabola with sag between this object (or a named one) and another, laid on a Line Renderer; follows its end objects in the editor and in Play; visual only
+- **Code:** `Components/Decal`, `Components/Cable`, `Render/SurfaceRaycast`, `editor/LevelTools.*`
+- **API:** `Decal::Project`, `Cable::Curve`, `Cable::Rebuild`, `Cable::Length`
+- **Editor:** GameObject > Decal Projector, GameObject > Cable, Add Component > Rendering, Inspector with a Project button
+- **Docs:** `docs/level_tools.md`
+- **Tests:** `foliage`, `save_coverage`
+- **Status:** Works - both are covered by the `foliage` suite (geometry, save and load); the cable and decal were shown in the real editor.
+- **Exists today:** Decals do not follow surfaces that move after projection (press Project again); cables have no physics (Joint3D is the physical one).
+- **Open:** soft edge fade by angle, decals on skinned meshes, a rope that swings.
+- **Related:** 29.2, 2.6, 6.1
+- **Words:** decal, projector, stain, crack, bullet hole, sign, cable, rope, wire, sag, power line, hanging
+- **Seen as:** need a dirt patch on a wall; wires between poles are straight lines
+- **Ask me like:** "add a decal projector"; "hang a cable between two poles"
 
 ### 29.3 Procedural generation
 - **What:** Generate terrain, props and layouts from rules and random seeds, repeatably.

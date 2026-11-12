@@ -131,6 +131,7 @@ add_library(okay_engine
     src/Components/SplineMesh.cpp
     src/Components/LineRenderer.cpp
     src/Components/BuildMode.cpp
+    src/Components/Volume.cpp
     src/Components/DialogueGraph.cpp
     src/Components/DialogueRunner.cpp
     src/Components/QuestLog.cpp

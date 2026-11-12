@@ -33,6 +33,7 @@
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Components/Volume.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
@@ -384,6 +385,33 @@ struct Checker {
         }
     }
 
+    // Volumes and logic zones: a region with no size never holds anything, and a zone that does nothing is a mistake.
+    void Volumes(const GameObject& go, const std::string& path) {
+        for (auto* v : go.GetComponents<Volume>()) {
+            if (!v->Geometry().Valid())
+                Add(Severity::Warning, "volume.zero_size", path, "Volume",
+                    std::string(Volume::KindName(v->kind)) + " volume has a size of zero or less on an axis (" + Num(v->size.x) +
+                    " x " + Num(v->size.y) + " x " + Num(v->size.z) + "): nothing is ever inside it");
+            if (v->kind == Volume::Kind::Force && v->forceStrength == 0.0f)
+                Add(Severity::Warning, "volume.force_zero", path, "Volume", "Force volume has a strength of 0: it pushes nothing");
+            if (v->kind == Volume::Kind::Ambience) {
+                auto* a = go.GetComponent<AudioSource>();
+                if (!a)
+                    Add(Severity::Warning, "volume.no_audio", path, "Volume",
+                        "Ambience volume needs an Audio Source on the same object: there is nothing to play");
+                else if (a->clipPath.empty() && !a->HasAudio())
+                    Add(Severity::Warning, "volume.no_audio", path, "Volume",
+                        "Ambience volume's Audio Source has no clip: there is nothing to play");
+            }
+        }
+        for (auto* ls : go.GetComponents<LogicSource>()) {
+            if ((ls->kind == LogicSource::Kind::PressurePlate || ls->kind == LogicSource::Kind::TriggerZone) &&
+                !(ls->zoneSize.x > 0.0f && ls->zoneSize.y > 0.0f && ls->zoneSize.z > 0.0f))
+                Add(Severity::Warning, "volume.zero_size", path, "LogicSource",
+                    std::string(LogicSource::KindName(ls->kind)) + " zone has a size of zero or less on an axis: nothing is ever inside it");
+        }
+    }
+
     static int CountDescendants(const Transform* t) {
         int n = 0;
         for (const Transform* c : t->Children()) n += 1 + CountDescendants(c);
@@ -462,6 +490,7 @@ struct Checker {
             if (opt.checkReferences) References(go, path);
             if (opt.checkPhysics) Physics(go, path);
             FoliageRules(go, path);
+            if (opt.checkPhysics) { Physics(go, path); Volumes(go, path); }
             if (opt.checkInactive) Inactive(go, path);
         }
         if (opt.checkAssets && !scene.uiFont.empty() && !SceneValidator::AssetExists(scene.uiFont, opt))

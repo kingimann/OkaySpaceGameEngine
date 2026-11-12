@@ -40,6 +40,7 @@
 #include "okay/Components/TopDownShooterController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/Volume.hpp"
 #include "okay/Components/Water.hpp"
 
 namespace okay {
@@ -687,6 +688,30 @@ void RegisterProjectile3D() {
     b.Commit();
 }
 
+// Volume
+void RegisterVolume() {
+    PropertyBuilder<Volume> b("Volume", "volume", "Gameplay");
+    b.AddEnum("kind", &Volume::kind, {"Checkpoint", "Kill", "Force", "Atmosphere", "Ambience"}).Tooltip("What the region does")
+     .AddEnum("shape", &Volume::shape, {"Box", "Sphere", "Cylinder"}).Tooltip("Box, the ellipsoid inside the box, or the cylinder standing on the Y axis")
+     .AddVec3("size", &Volume::size).Range(0.05, kBig, 0.1).Tooltip("The box the shape fills, in local units (scaled by the Transform)")
+     .AddVec3("offset", &Volume::offset).Range(-kBig, kBig, 0.1).Tooltip("Centre of the region, in local units")
+     .AddString("activatorTag", &Volume::activatorTag).Tooltip("Who counts: a tag or name text. Blank = any body (Force)")
+     .AddString("eventName", &Volume::eventName).Tooltip("Checkpoint / Kill: sent to scripts as an On Logic Signal when it fires")
+     .AddEnum("killAction", &Volume::killAction, {"Respawn", "Destroy"}).Tooltip("Kill: send the body back to its checkpoint, or remove it")
+     .AddFloat("killDamage", &Volume::killDamage).Range(0, kBig, 1).Tooltip("Kill: health taken before the respawn")
+     .AddEnum("forceShape", &Volume::forceShape, {"Direction", "Radial"}).Tooltip("Force: one steady direction, or away from / toward the centre")
+     .AddVec3("forceDirection", &Volume::forceDirection).Range(-1, 1, 0.05).Tooltip("Force (Direction): which way it pushes")
+     .AddBool("forceLocal", &Volume::forceLocal).Tooltip("Force (Direction): the direction turns with the object")
+     .AddFloat("forceStrength", &Volume::forceStrength).Range(-kBig, kBig, 0.5).Tooltip("Force: acceleration in m/s^2 (Radial: negative pulls in)")
+     .AddColor("fogColor", &Volume::fogColor).Tooltip("Atmosphere: fog colour inside")
+     .AddFloat("fogStart", &Volume::fogStart).Range(0, kBig, 0.5).Tooltip("Atmosphere: where the fog starts")
+     .AddFloat("fogEnd", &Volume::fogEnd).Range(0, kBig, 0.5).Tooltip("Atmosphere: where the fog is solid")
+     .AddFloat("vignette", &Volume::vignette).Range(0, 1, 0.01).Tooltip("Atmosphere: edge darkening inside")
+     .AddFloat("blend", &Volume::blend).Range(0, 1, 0.01).Tooltip("Atmosphere: how far in from the edge it takes to reach full strength")
+     .AddFloat("fadeTime", &Volume::fadeTime).Range(0, 60, 0.1).Tooltip("Ambience: seconds to fade the sound in and out");
+    b.Commit();
+}
+
 // Spawner
 void RegisterSpawner() {
     PropertyBuilder<Spawner> b("Spawner", "spawner", "Gameplay");
@@ -1057,6 +1082,7 @@ void RegisterGameplayProperties() {
     RegisterVehicleController2D();
     RegisterProjectile3D();
     RegisterSpawner();
+    RegisterVolume();
     RegisterMusicPlayer();
     RegisterCollectible();
     RegisterDamageOnTouch();

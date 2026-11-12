@@ -142,21 +142,21 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Save an object and its children as a `.okayprefab` file and place copies of it in any scene or spawn it from a script.
 - **Parts:**
   - 21.1.1 Prefab files and instantiate - `Scene/SceneSerializer` - `SaveObjectToFile`, `InstantiateFromFile`, `Instantiate` (duplicate/paste); an instance root remembers its file in `prefabSource`
-  - 21.1.2 Editor save and place - `editor/main.cpp` - Save As Prefab (Hierarchy menu and Inspector button), drag an object into the Project panel, drop a prefab into the scene, UI prefabs from the UI tools
+  - 21.1.2 Editor save and place - `editor/main.cpp`, `editor/PrefabEdit.*` - Save As Prefab (Hierarchy menu and Inspector button), drag an object into the Project panel, drop a prefab into the scene, UI prefabs from the UI tools; an object holding prefab instances is saved with `PrefabTools::SavePrefab` so the nested links stay (`SaveAsPrefabFile`)
   - 21.1.3 Spawning and pooling - `Scene/ObjectPool` - `spawn("prefab", x, y)` in scripts, `net_spawn` for replicated spawns, `ObjectPool` reuses spawned objects
   - 21.1.4 Starter templates - `Scene/SceneTemplates`, `Scene/UITemplates` - built-in object and UI templates the editor can create (different from prefab files)
 - **Code:** `Scene/SceneSerializer`, `Scene/ObjectPool`, `Scene/SceneTemplates`, `Scene/UITemplates`, `editor/main.cpp`
 - **API:** `SceneSerializer::InstantiateFromFile`, `SaveObjectToFile`, `GameObject::prefabSource`, `ObjectPool`, script `spawn`, `spawn3`, `net_spawn`
-- **Editor:** Hierarchy right-click > Save As Prefab, Project panel (drag in and out), Inspector prefab banner
+- **Editor:** Hierarchy right-click > Save As Prefab, Project panel (drag in and out), Inspector prefab header (21.4)
 - **Docs:** `docs/prefabs.md`, `docs/scene_serializer.md`, `docs/scene_management.md`
 - **Tests:** `instantiate`, `scene_ids_prefabs`, `scene_load_pool`, `templates`, `ui_templates`
 - **Status:** Works - save, place and spawn are in daily use and covered by tests.
 - **Exists today:** Everything in the Parts list on main. #575 added a cache of the last 32 decoded prefab files (`SceneSerializer::ClearPrefabCache` drops it) so repeated spawns skip the file read; #578's `PrefabTools` is reached through `InstantiateFromFile` for nested and variant files.
 - **Work packages:**
-  1. S - Prefab "Open in Prefab Mode" button that isolates the prefab in a scratch scene, edits, saves. Depends on: 21.4 package 1.
+  1. S - Prefab Mode: today **Open** (Inspector header, Hierarchy Prefab menu) selects the instance and isolates it in the Scene view; a prefab opened in its own scratch scene with a breadcrumb and Save is not built. Depends on: 21.4.
   2. S - Prefab asset thumbnail already exists; add "Used in N scenes" via `UsedBy`. Depends on: 20.2.
   3. M - Spawn presets (a prefab list on a Spawner that validates files at load). Depends on: 33.2.
-- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots"; editor's Apply overwrites the whole file from one instance.
+- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots".
 - **Related:** 1.6, 15.1, 15.4, 11.6, 21.2, 21.4
 - **Words:** prefab, okayprefab, instantiate, spawn, template, Save As Prefab, prefab instance, ObjectPool, prefabSource
 - **Seen as:** I changed the prefab but my placed copies did not change; dragging an object into Project does not create what I expected; spawned bullets stutter (pooling)
@@ -170,20 +170,19 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 21.2.3 Saving nested structures (#578) - `Scene/PrefabTools` - `SavePrefab(root, path)` writes nested instances as `nestedprefab` objects and refuses a result that would not load
   - 21.2.4 Queries and validator (#578) - `Scene/PrefabTools` - `IsPrefabInstance`, `PrefabRoot`, `NestedInstances`, `ValidateAsset`, `ValidateInstance`
   - 21.2.5 Plain prefab records - `Scene/SceneSerializer` - a `prefab` record is written for any object with `prefabSource`; plain prefab files still take the old path, only files with `nestedprefab` or `variant` go to `PrefabTools`
+  - 21.2.6 Nested prefabs in the editor - `editor/PrefabEdit.*`, `editor/main.cpp`, `editor/InspectorPanel.*` - `DescribePrefabInstance` (root, outer instance, kind), Hierarchy badge and tooltip, Inspector header, `SaveAsPrefabFile`, Validate Prefab; Apply through the inner instance updates every user of the inner prefab
 - **Code:** `Scene/PrefabTools`, `Scene/SceneSerializer`
 - **API:** `PrefabTools::SavePrefab`, `NestedInstances`, `ValidateAsset`; `SceneSerializer::InstantiateFromFile` routes nested files to `PrefabTools`
-- **Editor:** none (`docs/prefab_system.md`: "nothing in the editor calls it yet")
+- **Editor:** Hierarchy marks nested prefab instances (a square in a square) and variants (violet), the Inspector header names the kind ("nested in Car.okayprefab") with Select Asset, Save As Prefab keeps nested links, Project panel > Validate Prefab
 - **Docs:** `docs/prefab_system.md`; `docs/prefabs.md`
-- **Tests:** `prefab_nested`
-- **Status:** Partial - the data layer is on main (#578; `InstantiateFromFile` routes nested files to it, read `SceneSerializer.cpp`) and has tests (`prefab_nested`); nothing in the editor calls it (grep finds no `PrefabTools` in `editor/`).
-- **Exists today:** The whole data layer above, with about 700 lines of tests, plus the flat model (one source file and a list of overrides) for plain prefabs. `docs/prefab_system.md`: "nothing in the editor calls it yet".
+- **Tests:** `prefab_nested`; `prefab_editor`
+- **Status:** Partial - the data layer (#578) and the editor side are on main: nested instances are marked in the Hierarchy, named in the Inspector, saved without losing their links and checked by Validate Prefab (tests `prefab_nested`, `prefab_editor`); a Console list of nesting errors with the file chain and the "Used in N scenes" dependency are not built.
+- **Exists today:** The whole data layer above, with about 700 lines of tests, plus the flat model (one source file and a list of overrides) for plain prefabs, and the editor side in 21.2.6 (`docs/prefab_system.md`, "In the editor").
 - **Work packages:**
-  1. M - Editor: prefab files that use `nestedprefab` open and save without losing structure (Project panel "Save As Prefab" goes through `PrefabTools::SavePrefab`). Depends on: #578 (on main).
-  2. M - Hierarchy shows nested instance roots with a prefab icon and a link to their own file. Depends on: package 1.
-  3. S - Validator button on a prefab in the Project panel (`ValidateAsset`) and on Build (33.2). Depends on: package 1.
-  4. S - Prefab nesting depth and cycle errors shown in the Console with the file chain. Depends on: package 1.
-  5. S - Wire "Used in N scenes" and the asset database's dependency extractor to understand `nestedprefab` and `variant` lines (check `Core/AssetDatabaseDeps`). Depends on: 20.2.
-- **Open:** the editor does not use it (see Status); objects are matched by depth-first position and name, so reordering many objects can pair the wrong ones (the page says so); a nested prefab edit does not update other open instances until they are re-applied.
+  1. S - Validate Prefab on Build (33.2); the Project panel entry exists (`ValidateAsset` result in the Console). Depends on: 21.2.6.
+  2. S - Prefab nesting depth and cycle errors shown in the Console with the file chain when a scene loads. Depends on: 21.2.6.
+  3. S - Wire "Used in N scenes" and the asset database's dependency extractor to understand `nestedprefab` and `variant` lines (check `Core/AssetDatabaseDeps`). Depends on: 20.2.
+- **Open:** objects are matched by depth-first position and name, so reordering many objects can pair the wrong ones (the page says so); the editor's Apply updates the other instances in the scene, but not a second instance of the applied file inside the same outer instance.
 - **Related:** 21.1, 21.3, 21.4, 1.6
 - **Words:** nested prefab, prefab inside prefab, child prefab, nestedprefab, prefab hierarchy, instance of instance, PrefabTools
 - **Seen as:** a prefab built from other prefabs loses their link; editing a part prefab does not update the big one
@@ -194,19 +193,18 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Parts:**
   - 21.3.1 Variant file format (#578) - `Scene/PrefabTools` - a prefab file with `variant "<base>"` plus `override`, `unset`, `remove` and added objects (`under <i>`); a variant of a variant works
   - 21.3.2 Save a variant from an edited instance (#578) - `Scene/PrefabTools` - `SaveVariant(instance, path)` writes the differences and never touches the base
-  - 21.3.3 Variant creation UI - not built
+  - 21.3.3 Variant creation UI - `editor/PrefabEdit.*`, `editor/InspectorPanel.*`, `editor/main.cpp` - Inspector **Create Variant** (name box; `SaveVariant`, then the instance is linked to the new variant; one undo step that also removes the file), Hierarchy Prefab menu, Project panel **Create Variant** on a prefab (a variant with no differences yet), `PrefabNewVariantFile`
+  - 21.3.4 Variant display - `editor/PrefabEdit.*`, `editor/InspectorPanel.*` - violet Hierarchy mark, header "Prefab Variant of <base>" with **Select Base**; Apply on an instance of a variant writes the variant's override and never the base, and updates the other instances of the variant
 - **Code:** `Scene/PrefabTools`
-- **API:** `PrefabTools::SaveVariant`, `Instantiate`, `FileUsesPrefabStructure`
-- **Editor:** none
+- **API:** `PrefabTools::SaveVariant`, `Instantiate`, `FileUsesPrefabStructure`; `oked::PrefabCreateVariant`, `PrefabNewVariantFile`, `PrefabKindOfFile`, `ResolveVariantBase`
+- **Editor:** Inspector prefab header > Create Variant / Select Base, Hierarchy row menu > Prefab > Create Variant..., Project panel right-click > Create Variant
 - **Docs:** `docs/prefab_system.md`
-- **Tests:** `prefab_variants`
-- **Status:** Partial - the variant data layer is on main (#578) with tests (`prefab_variants`); no editor UI creates or shows variants (21.3.3 is not built).
-- **Exists today:** Variant files, chains with cycle and depth checks, `SaveVariant`, and compatibility (an older build loads only the added objects with warnings).
+- **Tests:** `prefab_variants`; `prefab_editor`
+- **Status:** Partial - variants can be created, shown and applied into from the editor (`prefab_editor`); a variant badge in the Project panel and "changing the base shows its effect on variants" feedback are not built.
+- **Exists today:** Variant files, chains with cycle and depth checks, `SaveVariant`, compatibility (an older build loads only the added objects with warnings), and the editor side in 21.3.3 and 21.3.4. Editing the base and pressing Apply or Update All rebuilds the variants' placed instances (each keeps its own overrides).
 - **Work packages:**
-  1. S - Project panel "Create Variant" on a prefab and in the Inspector banner ("Save as Variant" from an edited instance). Depends on: #578 (on main).
-  2. M - Variant badge and base link in the Project panel and Inspector; "Select Base". Depends on: package 1.
-  3. M - Editing the base updates variants and their placed instances (reapply). Depends on: package 1, 21.4 package 1.
-- **Open:** no UI; scene files never contain variant records (only prefab files do); override unit is a whole record, with field-level apply and revert done by writing the whole record.
+  1. S - Variant badge on the prefab's tile in the Project panel (the Hierarchy and Inspector already show it). Depends on: 21.3.4.
+- **Open:** scene files never contain variant records (only prefab files do); objects added to or lost from an instance of a variant cannot be applied into the variant (Create Variant keeps them); override unit is a whole record, with field-level apply and revert done by writing the whole record.
 - **Related:** 21.2, 21.4
 - **Words:** prefab variant, derived prefab, inherit prefab, base prefab, variant of variant, enemy variants, SaveVariant
 - **Seen as:** I need ten similar enemies and copy-pasting prefabs makes them drift apart
@@ -216,24 +214,24 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Remember how a placed instance differs from its prefab, and offer to apply, revert or re-apply those differences.
 - **Parts:**
   - 21.4.1 Override data layer - `Scene/SceneSerializer`, `Scene/GameObject` - `CapturePrefabOverrides`, `InstantiatePrefab(scene, path, overrides)`, `ReapplyPrefab`; overrides saved as `override <object> "<line>"` records (merged #570)
-  - 21.4.2 Editor instance banner - `editor/main.cpp` - Apply (overwrite the file with this instance), Revert, Reload All, Select in Project, Unlink
+  - 21.4.2 Editor prefab header - `editor/InspectorPanel.*`, `editor/PrefabEdit.*` - **Prefab: <name>** with Open, Select Asset, Revert All, Apply All, Create Variant, Update All, Unpack (the old whole-file Apply, Revert, Reload All and Unlink buttons are gone)
   - 21.4.3 Per-field diff, revert and apply (#578) - `Scene/PrefabTools` - `Diff` lists changed, added and removed records and fields ("Transform position.x: 0 -> 4"), `RevertOverride`, `RevertAll`, `ApplyToSource`, `ApplyAllToSource`; apply writes atomically into the prefab, a variant's override or a nested instance's override
   - 21.4.4 Unpack (#578) - `Scene/PrefabTools` - `Unpack(go, completely)` cuts the prefab link and keeps the objects and their ids
-  - 21.4.5 Per-field apply through the property registry - planned - `Scene/PropertyRegistry` (#578, 1.19) can list a component's fields by name (`Light.intensity`), snapshot, diff and revert them; `PrefabTools::Diff` still uses its own fixed field list
+  - 21.4.5 Per-field apply through the property registry - planned - `Scene/PropertyRegistry` (#578, 1.19) can list a component's fields by name (`Light.intensity`), snapshot, diff and revert them; `PrefabTools::Diff` still uses its own fixed field list (the editor maps an Inspector label to the diff's field names with `ChangedFieldsForLabel`)
+  - 21.4.6 Per-property display - `editor/InspectorPanel.*` (`PrefabFieldMark`), `editor/PrefabEdit.*` - a blue bar on an overridden property's row (generic card and hand-written fields), right-click **Revert Property** / **Apply Property to Prefab**; component header bar and menu **Revert / Apply Component to Prefab**
+  - 21.4.7 Changes list - `editor/InspectorPanel.*` (`DrawPrefabChanges`) - per component and per field (old -> new) with Revert / Apply, components added or lost, child objects added or lost (Revert deletes or restores them; Apply writes them into a plain prefab)
+  - 21.4.8 Apply and Revert actions with undo - `editor/PrefabEdit.*`, `editor/EditorState.*` - `PrefabRevert`, `PrefabApply`, `PrefabApplyAll`, `PrefabRevertObject`, `PrefabApplyObject`, `PrefabUnpack`, `PrefabUpdateInstances`; one undo step each; the prefab files an Apply wrote travel with the step (`AttachUndoFiles`); Apply captures the other instances' overrides against the old file and rebuilds them from the new one, so an instance that changed the same field keeps its value
 - **Code:** `Scene/SceneSerializer`, `Scene/GameObject`, `Scene/PrefabTools`, `editor/main.cpp`
 - **API:** `SceneSerializer::CapturePrefabOverrides`, `ReapplyPrefab`, `InstantiatePrefab`; `GameObject::prefabOverrides`; `PrefabTools::Diff`, `RevertOverride`, `ApplyToSource`, `Unpack`
-- **Editor:** Inspector prefab banner (Apply, Revert, Reload All, Select, Unlink)
+- **Editor:** Inspector prefab header and Changed from the prefab list, right-click a marked property, component `...` menu, Hierarchy row menu > Prefab
 - **Docs:** `docs/prefabs.md`; `docs/prefab_system.md`
-- **Tests:** `scene_ids_prefabs`; `prefab_apply_revert`
-- **Status:** Partial - the editor still uses its own whole-instance Apply and Revert; the per-field layer is on main (#578, tests `prefab_apply_revert`) but unused by the editor.
-- **Exists today:** Banner buttons in `editor/main.cpp` (`RevertPrefabInstance`, `ReloadPrefabInstances`) and the data layer for overrides. Also on main, called from nowhere in the editor: per-field diff, revert and apply, unpack and a validator.
+- **Tests:** `scene_ids_prefabs`; `prefab_apply_revert`; `prefab_editor`; `inspector_model`
+- **Status:** Works - the editor reads, shows, reverts and applies overrides per property, component, child object and instance through `PrefabTools`, with undo and with the other instances updated (tests `prefab_editor`, `prefab_apply_revert`); the registry-based field list (21.4.5) and an "are you sure" before Apply All are not built.
+- **Exists today:** The data layer for overrides, per-field diff, revert and apply, unpack and the validator, all called from the editor (21.4.2 to 21.4.8). Undo of an Apply restores the prefab file text together with the scene: the file edits are a command in the same `UndoStack` group as the scene change (`docs/prefab_system.md`, "In the editor").
 - **Work packages:**
-  1. M - Editor Revert and Reload use `PrefabTools::Reapply` so overrides survive a prefab edit; Unlink becomes `Unpack` with a "completely" choice. Depends on: #578 (on main).
-  2. M - Inspector shows a blue bar on overridden components and fields, with per-field Apply and Revert menu items (`RevertOverride`, `ApplyToSource`). Depends on: package 1.
-  3. S - "Overrides" popup listing `Diff` output (what differs, including added and lost objects). Depends on: #578 (on main).
-  4. S - Apply All and Revert All buttons using `ApplyAllToSource` and `RevertAll`; Apply All asks before overwriting. Depends on: package 2.
-  5. M - Per-field apply for any registered property through the property registry (names like `Light.intensity`, 1.19) instead of the fixed field list. Depends on: package 2, #578 (on main).
-- **Open:** `Diff` is exact for well-known records and falls back to whole records for others; objects added or lost on an instance are reported but `ApplyToSource` only handles records (use `SavePrefab` or `SaveVariant`); other instances of the same file are not touched by an apply.
+  1. M - Per-field apply for any registered property through the property registry (names like `Light.intensity`, 1.19) instead of the fixed field list. Depends on: #578 (on main).
+  2. S - Apply All asks before overwriting the prefab file. Depends on: 21.4.8.
+- **Open:** `Diff` is exact for well-known records and falls back to whole records for others; `ApplyToSource` only handles records, so the editor applies an added or lost child object itself (`SavePrefab`, plain prefab files only; variants and nested instances say why it is off); a second instance of the applied file inside the same outer instance is not updated.
 - **Related:** 21.1, 21.2, 21.3, 15.2, 1.6, 22.1
 - **Words:** prefab overrides, apply, revert, reload all, unlink, unpack, overridden, instance differences, ReapplyPrefab, CapturePrefabOverrides, PrefabTools, per-field override
 - **Seen as:** I tweaked one instance and it lost the change after the prefab was edited; Apply overwrote things I did not mean to; no way to see what is different
@@ -248,6 +246,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 22.1.2 History window - `editor/main.cpp` - View > History lists the step names ("After: ...", "Before: ..."); click one to jump there; Edit > Undo / Redo show the name and grey out when empty
   - 22.1.3 Separate undo stacks - `editor/main.cpp` - mesh edit mode keeps its own stack (`g_meshUndo`), the Localization, Timeline and Project panels have their own; the animation draft is now a command in the main stack (`AnimDraftCommand`); Ctrl+Z goes to whichever has focus
   - 22.1.4 Command-based undo stack (#572) - `Core/Undo`, `Core/UndoCommands` - `UndoStack` with groups, merging of slider drags, count and memory caps, dirty tracking; `SetProperty`, `ListEdit`, object create/delete/reparent by id
+  - 22.1.6 Asset files inside an undo step - `editor/EditorState.*` - `AttachUndoFiles(edits)` adds a file command (`MakeFileUndo`, before and after text of files an edit wrote: a prefab Apply, a new variant) to the step `PushUndo` opened, as `PushUndo(name, alsoUndo)` does; Undo and Redo move the files with the scene in one `UndoStack` group
   - 22.1.5 Property change hook as an undo source - planned - `Scene/PropertyRegistry` (#578, 1.19) fires a hook with old and new value on every real property change and has `ScopedHookSuppression` so an undo does not record itself; `Core/UndoCommands` has a `SetProperty` command, nothing connects the two or the editor
 - **Code:** `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp`, `editor/main.cpp`, `Core/Undo`, `Core/UndoCommands`
 - **API:** `EditorState::PushUndo(name)`, `PushUndoText`, `CommitUndo`, `Undo`, `Redo`, `CanUndo`, `UndoName`, `undoStack()`; `SceneDeltaCommand`, `TextDelta`, `DescribeSceneChange`; `UndoStack`, `UndoSet`, `UndoRecordSet`, `SnapshotRecorder`, `CreateObjectCommand`, `DeleteObjectCommand`, `ObjectOps`

@@ -268,7 +268,7 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 | # | Family | Call sites | Status | What is there, what is missing | Difficulty |
 |---|---|---|---|---|---|
 | 1 | Item and hover queries, tooltips | 3,274 | PARTIAL | `IsItemHovered`, `Tooltip(text)`, and now `IsItemActive`, `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked`. `IsItemFocused`, `IsItemVisible`, `GetItemID`, `IsAnyItemActive` (step 6). Missing: hover flags and delays, `BeginTooltip` blocks with widgets inside (26), `IsItemEdited`, `IsItemDeactivatedAfterEdit` (17) | S |
-| 2 | Layout and cursor | 4,613 | PARTIAL | `SameLine`, `Dummy`, `Spacing`, `Indent`, item width, and now `GetCursorScreenPos`, `SetCursorScreenPos`, `GetCursorPos`/`SetCursorPos` (and X, Y), `GetContentRegionAvail`. Missing: `BeginGroup`/`EndGroup` (92), `GetContentRegionMax` (25), `CalcItemWidth`, `NewLine` | S |
+| 2 | Layout and cursor | 4,613 | PARTIAL | `SameLine`, `Dummy`, `Spacing`, `Indent`, item width, and now `GetCursorScreenPos`, `SetCursorScreenPos`, `GetCursorPos`/`SetCursorPos` (and X, Y), `GetContentRegionAvail`. `BeginGroup`/`EndGroup` and `NewLine` (steps 3 and 7). Missing: `GetContentRegionMax` (25), `CalcItemWidth` | S |
 | 3 | Text | 2,851 | PARTIAL | `Text`, `TextColored`, `TextDisabled`, `TextWrapped`, `BulletText`, `SeparatorText`, `LabelText`. `PushTextWrapPos`/`PopTextWrapPos` (step 5; takes a width, not an x position). Missing: printf-style formatting (callers format first) | S |
 | 4 | Draw list (custom drawing) | 2,520 | HAVE (this step) | See 4.2. Missing: `AddConcavePolyFilled` (5), `AddImageRounded` (17), rounding on chosen corners only, anti-aliasing, `AddCallback` | done |
 | 5 | Buttons, checkbox, radio | 2,387 | PARTIAL | `Button`, `SmallButton`, `Checkbox`, `RadioButton`, `ToggleSwitch`, `ImageButton`, now `InvisibleButton`. Missing: `ArrowButton` (18), `ColorButton` (6), explicit button size | S |
@@ -367,3 +367,11 @@ Not done: wrapping `BulletText` and widgets' own labels, a wrap position measure
 Built: `IsItemFocused`, `GetItemID`, `IsAnyItemActive`, `IsItemVisible` (the last item against the current clip rectangle). Tested in `test_okayui_values.cpp` (55 checks in total): ids are non-zero and different per widget, focus follows a click into a text field and drops on a click elsewhere, a held press is "any active", an item outside a small clip is not visible. Behaviour (149), fuzz (12), golden (15), drawlist (184) and soft (18) suites unchanged.
 
 Not done: `IsItemEdited` and `IsItemDeactivatedAfterEdit` (need every widget to record that it changed), hover flags and delays, tooltips with widgets in them.
+
+### 4.11 Gap-closing step 7: groups (family 2)
+
+Built: `BeginGroup` / `EndGroup`. Everything placed in between is one item: `GetItemRect`, `IsItemHovered` and `SameLine` refer to the whole block (columns of widgets side by side). Nesting up to 8 deep; an empty group is a zero-size item; an unmatched `EndGroup` is ignored; a missing one is cleared at the start of the next frame. 92 call sites in the editor and launcher.
+
+Tested (63 checks in `test_okayui_values.cpp`): the group starts where its first item starts and covers both stacked buttons, `SameLine` after it goes next to its top, nested groups, empty and unmatched groups, hover on any part. Fuzz (12, now drawing random nested groups), behaviour (149), golden (15), drawlist (184), soft (18) unchanged.
+
+Not done: `GetContentRegionMax`, `CalcItemWidth`, group-wide `IsItemActive`.

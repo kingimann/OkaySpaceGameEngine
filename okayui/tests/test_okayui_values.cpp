@@ -256,6 +256,32 @@ void ItemQueryTests() {
     CHECK(inside && !outside);
 }
 
+void GroupTests() {
+    Rig r; UI::Rect ra, rb, rg, rc, rg2; bool hov = false;
+    r.body = [&] {
+        UI::BeginGroup();
+        UI::Button("first"); ra = UI::GetItemRect();
+        UI::Button("a much longer second button"); rb = UI::GetItemRect();
+        UI::EndGroup(); rg = UI::GetItemRect(); hov = UI::IsItemHovered();
+        UI::SameLine();
+        UI::Button("beside"); rc = UI::GetItemRect();
+        UI::BeginGroup(); UI::BeginGroup(); UI::Button("deep"); UI::EndGroup(); UI::EndGroup(); rg2 = UI::GetItemRect();
+        UI::BeginGroup(); UI::EndGroup();                              // an empty group is harmless
+        UI::EndGroup(); UI::EndGroup();                                // so are unmatched Ends
+        UI::BeginGroup();                                              // and a missing End (cleared next frame)
+    };
+    r.Frames(3);
+    CHECK_NEAR(rg.x, ra.x, 1e-3); CHECK_NEAR(rg.y, ra.y, 1e-3);        // the group starts where its first item starts
+    CHECK(rg.w >= rb.w - 1e-3 && rg.h >= (rb.y + rb.h - ra.y) - 1e-3); // and covers both stacked buttons
+    CHECK_NEAR(rc.y, rg.y, 1e-3);                                      // SameLine after a group goes next to its top
+    CHECK(rc.x > rg.x + rg.w);
+    CHECK(rg2.w > 0 && rg2.h > 0);                                     // nested groups report the inner item's box
+    r.MoveTo(CenterX(ra), CenterY(ra));
+    r.Frame(); CHECK(hov);                                             // hovering any part of the group hovers the group item
+    r.MoveTo(rg.x + rg.w + 1, ra.y - 20); r.Frame();
+    CHECK(!hov);
+}
+
 }  // namespace
 
 int main() {
@@ -270,5 +296,6 @@ int main() {
     HintAndFocusTests();
     WrapTests();
     ItemQueryTests();
+    GroupTests();
     TEST_MAIN_RESULT();
 }

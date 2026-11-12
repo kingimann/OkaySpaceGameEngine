@@ -177,6 +177,19 @@ struct LayoutState {
     int   seed = 0;                 // window id, mixed into label->id hashing
 };
 LayoutState g_lay;
+// BeginGroup / EndGroup: the bounding box of the items placed since BeginGroup (nested up to 8 deep).
+struct GroupBox { float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f; bool any = false; };
+GroupBox g_grp[8];
+int      g_grpTop = 0;
+inline void groupAdd(float x, float y, float w, float h) {
+    if (g_grpTop <= 0) return;
+    GroupBox& g = g_grp[g_grpTop - 1];
+    if (x < g.x0) g.x0 = x;
+    if (y < g.y0) g.y0 = y;
+    if (x + w > g.x1) g.x1 = x + w;
+    if (y + h > g.y1) g.y1 = y + h;
+    g.any = true;
+}
 bool  g_posOverride = false;      // SetCursorScreenPos: the next placed item uses (g_posX, g_posY)
 float g_posX = 0.0f, g_posY = 0.0f;
 
@@ -349,6 +362,7 @@ void place(float w, float h, float& x, float& y) {
         y = g_lay.cy;
     }
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
+    groupAdd(x, y, w, h);
     g_lastId = 0;   // the widget that follows registers its own id
     g_lay.cx = leftEdge();
     // The next line starts below the tallest item of this one, not just below the last (a short
@@ -754,7 +768,7 @@ void BeginFrame(const Input& in) {
     g_prevMouseX = in.mouseX;
     g_prevMouseY = in.mouseY;
     g_hot = 0;
-    g_wrapPos = -1.0f;
+    g_wrapPos = -1.0f; g_grpTop = 0;
     g_focusClaimed = false;
     for (int i = 0; i < g_ovCurN; ++i) g_ovPrev[i] = g_ovCur[i];
     g_ovPrevN = g_ovCurN; g_ovCurN = 0;
@@ -1785,6 +1799,24 @@ void textBlock(const char* s, const unsigned char* col) {
     } else textLine(s, col);
 }
 } // namespace
+
+void BeginGroup() {
+    if (!g_lay.active || g_grpTop >= 8) return;
+    g_grp[g_grpTop++] = GroupBox();
+}
+
+void EndGroup() {
+    if (!g_lay.active || g_grpTop <= 0) return;
+    const GroupBox g = g_grp[--g_grpTop];
+    if (g.any) {
+        g_lay.prevX = g.x0; g_lay.prevY = g.y0; g_lay.prevW = g.x1 - g.x0; g_lay.prevH = g.y1 - g.y0;
+    } else {   // an empty group is a zero-size item at the cursor
+        g_lay.prevX = leftEdge(); g_lay.prevY = g_lay.cy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    }
+    g_lastId = 0;
+    g_lay.pendingSameLine = false;
+    groupAdd(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH);   // it counts for the group around it
+}
 
 void PushTextWrapPos(float width) { g_wrapPos = (std::isfinite(width) && width >= 0.0f) ? width : 0.0f; }
 void PopTextWrapPos() { g_wrapPos = -1.0f; }
@@ -3556,7 +3588,7 @@ void ResetState() {
     g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
-    g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false;
+    g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_grpTop = 0;
     g_openPopupThisFrame = 0;
     for (PopupSlot& p : g_popups) p = PopupSlot();
     for (WinSlot& w : g_wins) w = WinSlot();

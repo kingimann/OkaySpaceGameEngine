@@ -266,6 +266,11 @@ void TextDisabled(const char* s);
 /// Until PopTextWrapPos, Text, TextColored and TextDisabled wrap their words. `width` 0 wraps at the right edge
 /// of the window; a positive `width` wraps at that many pixels (or the right edge, whichever is nearer). This
 /// is a width, not the x position the Dear ImGui call takes. Not nested: Pop turns it off.
+/// Treat everything drawn until EndGroup as one item: GetItemRect, IsItemHovered and SameLine then refer to the
+/// whole block (a column of widgets next to another column). Groups nest up to 8 deep; a missing EndGroup is
+/// cleared at the start of the next frame.
+void BeginGroup();
+void EndGroup();
 void PushTextWrapPos(float width = 0.0f);
 void PopTextWrapPos();
 /// A labeled divider: a line with `label` at the left (ImGui's SeparatorText).

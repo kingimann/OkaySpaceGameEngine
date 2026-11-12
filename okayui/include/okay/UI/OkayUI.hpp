@@ -491,12 +491,120 @@ bool WantsTextInput();
 /// (back to the classic defaults). For tests and for returning to a clean slate.
 void ResetState();
 
+// ---- Draw list, cursor, measurement, item state, disabled blocks ---------------------------------
+// The calls a custom-drawn panel needs (a gizmo, a timeline, a node graph, a viewport overlay): lines, shapes, text at
+// a point, and the cursor and size queries that let it sit inside the auto-layout. All coordinates are screen pixels.
+// Every call ignores non-finite or absurd (beyond 1e7) numbers instead of drawing them.
+
+/// A 2D point or size.
+struct Vec2 { float x = 0.0f, y = 0.0f; };
+/// A packed colour, 0xAABBGGRR: the bytes in memory are R, G, B, A (this is the byte order of the draw-list vertices).
+typedef unsigned Color32;
+constexpr Color32 RGBA(unsigned r, unsigned g, unsigned b, unsigned a = 255u) {
+    return (r & 0xffu) | ((g & 0xffu) << 8) | ((b & 0xffu) << 16) | ((a & 0xffu) << 24);
+}
+enum Col : int;   // declared in full further down; the theme colours
+/// A theme colour packed, with its alpha scaled by `alphaMul` (0..1).
+Color32 GetColorU32(Col which, float alphaMul = 1.0f);
+/// `c` with its alpha scaled by `alphaMul` (0..1).
+Color32 ColorMulAlpha(Color32 c, float alphaMul);
+
+/// Drawing into the current window's batch (GetWindowDrawList) or on top of everything (GetForegroundDrawList). Both
+/// respect the clip rectangle stack (PushClipRect), except that the foreground list is never clipped. Not dimmed by
+/// BeginDisabled. Rectangle and circle outlines are drawn INSIDE the given bounds (a rectangle of thickness 2 covers
+/// exactly its border pixels); polylines, and so triangle and quad outlines, are centred on their path. Joins are
+/// mitred, so a translucent stroke does not double up at a corner.
+struct DrawList {
+    bool overlay;
+    void AddLine(Vec2 a, Vec2 b, Color32 col, float thickness = 1.0f) const;
+    /// `rounding` is the corner radius in pixels (0 = square; clamped to half the shorter side).
+    void AddRect(Vec2 min, Vec2 max, Color32 col, float rounding = 0.0f, float thickness = 1.0f) const;
+    void AddRectFilled(Vec2 min, Vec2 max, Color32 col, float rounding = 0.0f) const;
+    /// A gradient: one colour per corner (top-left, top-right, bottom-right, bottom-left).
+    void AddRectFilledMultiColor(Vec2 min, Vec2 max, Color32 tl, Color32 tr, Color32 br, Color32 bl) const;
+    /// `segments` 0 picks a count from the radius (12 to 64); explicit counts are clamped to 3..128.
+    void AddCircle(Vec2 center, float radius, Color32 col, int segments = 0, float thickness = 1.0f) const;
+    void AddCircleFilled(Vec2 center, float radius, Color32 col, int segments = 0) const;
+    void AddTriangle(Vec2 a, Vec2 b, Vec2 c, Color32 col, float thickness = 1.0f) const;
+    void AddTriangleFilled(Vec2 a, Vec2 b, Vec2 c, Color32 col) const;
+    void AddQuad(Vec2 a, Vec2 b, Vec2 c, Vec2 d, Color32 col, float thickness = 1.0f) const;
+    void AddQuadFilled(Vec2 a, Vec2 b, Vec2 c, Vec2 d, Color32 col) const;
+    /// 2 to 256 points. `closed` joins the last point to the first.
+    void AddPolyline(const Vec2* points, int count, Color32 col, bool closed, float thickness = 1.0f) const;
+    /// A convex polygon (a triangle fan; concave shapes draw wrongly: no ear clipping yet), 3 to 256 points.
+    void AddConvexPolyFilled(const Vec2* points, int count, Color32 col) const;
+    /// A cubic Bezier curve flattened to `segments` lines (0 = 24, at most 255).
+    void AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, float thickness = 1.0f, int segments = 0) const;
+    /// Text with its top-left at `pos`; `scale` 0 uses the theme text scale (a negative or non-finite scale draws nothing). One line (no newline handling).
+    void AddText(Vec2 pos, Color32 col, const char* text, float scale = 0.0f) const;
+    /// A textured rectangle. Always goes to the main batch, also on the foreground list. The software test backend
+    /// skips textured commands.
+    void AddImage(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f},
+                  Color32 tint = 0xffffffffu) const;
+    void PushClipRect(Vec2 min, Vec2 max) const;
+    void PopClipRect() const;
+    /// A path of up to 256 points shared by both lists (cleared by PathStroke and PathFillConvex).
+    void PathClear() const;
+    void PathLineTo(Vec2 p) const;
+    /// Points along an arc (radians; 0 points right, angles grow clockwise on screen). `segments` 0 picks a count.
+    void PathArcTo(Vec2 center, float radius, float a0, float a1, int segments = 0) const;
+    void PathStroke(Color32 col, bool closed = false, float thickness = 1.0f) const;
+    void PathFillConvex(Color32 col) const;
+};
+const DrawList& GetWindowDrawList();
+const DrawList& GetForegroundDrawList();
+
+/// Width and height of one line of text in the current font and text scale (height is the line height).
+Vec2 CalcTextSize(const char* text);
+float GetTextLineHeight();
+float GetFontSize();
+float GetFrameHeight();                  // height of a standard widget row (a button, a field)
+float GetTextLineHeightWithSpacing();
+float GetFrameHeightWithSpacing();
+/// Where the next item will be placed (screen pixels), honouring a pending SameLine. Zero outside a window.
+Vec2 GetCursorScreenPos();
+/// Place the NEXT item at this screen position (a one-shot; the layout continues below it afterwards).
+void SetCursorScreenPos(Vec2 p);
+/// The same relative to the window's (or child's) content origin.
+Vec2 GetCursorPos();
+void SetCursorPos(Vec2 p);
+float GetCursorPosX();
+float GetCursorPosY();
+void SetCursorPosX(float x);
+void SetCursorPosY(float y);
+/// Width from the cursor to the right edge of the content, and height down to the bottom of the visible content area.
+Vec2 GetContentRegionAvail();
+
+/// An item with no drawing, `w`*`h` pixels (0 = full width / one row), that behaves like a button: use it as a hit area
+/// for custom drawing (draw over GetItemRect()). Returns true on the frame it is clicked.
+bool InvisibleButton(const char* id, float w, float h);
+/// Queries about the LAST item. They work after the widgets that register an id (button, checkbox, radio, switch,
+/// slider, drag field, text field, combo, selectable, tree node, header, InvisibleButton); after any other item they
+/// answer false.
+bool IsItemActive();         // pressed and held (or, for a text field, being dragged)
+bool IsItemActivated();      // became active this frame
+bool IsItemDeactivated();    // stopped being active this frame
+bool IsItemClicked(int button = 0);   // hovered and `button` (0 left, 1 right) went down this frame
+bool IsMouseDown(int button = 0);
+bool IsMouseClicked(int button = 0);
+bool IsMouseReleased(int button = 0);
+Vec2 GetMousePos();
+Vec2 GetMouseDelta();
+bool IsMouseHoveringRect(Vec2 min, Vec2 max);
+
+/// Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with
+/// `disabled` false the pair does nothing (so `BeginDisabled(!ok)` is always safe). Unbalanced calls are reset each
+/// frame. A drag already in progress when a block becomes disabled is not cancelled.
+void BeginDisabled(bool disabled = true);
+void EndDisabled();
+bool IsDisabled();
+
 /// The active theme (mutable — tweak colors/sizes in place).
 Theme& Style();
 
 // ---- Scoped style overrides (ImGui-style) --------------------------------------
 // Which theme color a PushStyleColor call overrides.
-enum Col {
+enum Col : int {
     Col_Bg, Col_BgHover, Col_BgDown, Col_Border,
     Col_Text, Col_Panel, Col_Track, Col_Accent,
     Col_COUNT

@@ -2315,6 +2315,22 @@ target_compile_features(test_file_dialog PRIVATE cxx_std_17)
 target_include_directories(test_file_dialog PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME file_dialog COMMAND test_file_dialog)
 
+# "Download my data" / "Delete my account": client request building, confirmation
+# gating, export assembly, error mapping (engine/include/okay/Platform/Account/AccountData.hpp).
+add_executable(test_account_data test_account_data.cpp)
+target_compile_features(test_account_data PRIVATE cxx_std_17)
+target_include_directories(test_account_data PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME account_data COMMAND test_account_data)
+
+# The delete-account Edge Function's logic against a fake client (needs Node 22+;
+# skipped without it). Same file also runs under Deno.
+find_program(OKAY_NODE node)
+if(OKAY_NODE)
+    add_test(NAME delete_account_function
+             COMMAND ${OKAY_NODE} --experimental-strip-types --test
+                     ${CMAKE_SOURCE_DIR}/supabase/functions/delete-account/delete_account_test.ts)
+endif()
+
 # Our own FBX reader (okay::fbx), side by side with ufbx: fixtures from scripts/gen_fbx_fixtures.py
 add_executable(test_fbx_reader test_fbx_reader.cpp)
 target_link_libraries(test_fbx_reader PRIVATE okay::engine)

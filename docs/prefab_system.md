@@ -310,12 +310,13 @@ prefab code of its own: reading and writing prefab files, overrides, nesting and
 - **Open** shows the instance on its own in the Scene view (Isolate; Esc leaves) and selects it; **Apply All**
   writes the edits back. A separate prefab-editing scene with a breadcrumb is not built (feature map 21.1).
 
-**Undo.** Every action is one step. `EditorState::PushUndo` takes the scene as before; the prefab files an action
-wrote travel with that step (`EditorState::AttachUndoFiles`: the text before and after, or "did not exist"), so
-Undo puts the old file text back together with the old scene and Redo writes it again. The editor's undo today is
-the scene-snapshot one (`EditorState`; this branch is built on it, not on the `UndoStack` work in `claude/editor-undo-stack`, whose `PushUndo(name, std::unique_ptr<ICommand> alsoUndo)` overload is where `AttachUndoFiles` goes when the two meet: the file edits become that extra command); when it moves to `UndoStack` (`okay/Core/Undo.hpp`) the file text becomes
-one command of the group that carries the scene change, with the same before and after strings, and `PrefabEdit`
-keeps calling the same two functions.
+**Undo.** Every action is one step, on the editor's `UndoStack`. `EditorState::PushUndo(name)` opens the step (named
+"Apply to Enemy", "Revert Prefab", "Create Prefab Variant" ...); the scene part is recorded at the next boundary as a
+`SceneDeltaCommand`. The prefab files an action wrote join that same step through `EditorState::AttachUndoFiles`, which
+adds a file command (`EditorState::MakeFileUndo`, the same thing as `PushUndo(name, std::unique_ptr<ICommand> alsoUndo)`)
+holding the text before and after, or "did not exist". One Ctrl+Z puts the old file text back together with the old
+scene and Ctrl+Y writes it again; a step that changes only a file (a new variant file) still exists. `DiscardLastUndo`
+drops the open step when the action failed and changed nothing.
 
 **Limits in the editor**
 - Apply updates the other instances, but not a second instance of the applied file that sits inside the same

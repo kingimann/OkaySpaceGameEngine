@@ -8,7 +8,7 @@
 // nesting and variants are okay::PrefabTools (engine/src/Scene/PrefabTools.cpp); this file adds what
 // the editor needs around it:
 //  - one undo step per action. The scene half goes through EditorState::PushUndo, the prefab files
-//    an Apply writes go through EditorState::AttachUndoFiles, so Undo / Redo move scene and files
+//    an Apply writes go through EditorState::AttachUndoFiles (a file command joined to the step by PushUndo(name, command)), so Undo / Redo move scene and files
 //    together;
 //  - Apply updates the other instances in the scene: their own overrides are captured against the
 //    OLD file first, then they are rebuilt from the NEW file, so an instance that overrode a

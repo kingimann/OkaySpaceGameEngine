@@ -126,6 +126,7 @@ static void TestRevertAndUndo() {
     const PrefabChange* lc = FindChange(ch, *inst, *inst->GetComponent<Light>());
     CHECK(lc != nullptr);
     if (!lc) return;
+    ed.CaptureUnannouncedEdits();   // the setup edits above are their own step, not part of the action measured below
     const int depth = ed.UndoDepth();
     PrefabOpResult r = PrefabRevert(ed, *inst, {TargetOf(*lc, "intensity")});
     CHECK(r.ok && r.root);
@@ -206,10 +207,12 @@ static void TestApplyPropagation() {
     const PrefabChange* lc = FindChange(ch, *a, *a->GetComponent<Light>());
     CHECK(lc != nullptr);
     if (!lc) return;
+    ed.CaptureUnannouncedEdits();   // the setup edits above are their own step, not part of the action measured below
     const int depth = ed.UndoDepth();
     PrefabOpResult r = PrefabApply(ed, *a, {TargetOf(*lc, "intensity")});
     CHECK(r.ok && r.updatedInstances == 3);
     CHECK(ed.UndoDepth() == depth + 1 && ed.dirty);
+    CHECK(ed.UndoName() == "Applied to lamp.okayprefab");          // one named step, shared with the file edit
     const std::string applied = Rd(lamp);
     CHECK(applied != original);
     // The file has the new intensity and the old range.
@@ -371,6 +374,7 @@ static void TestVariants() {
     const std::string vpath = DefaultVariantPath(lamp);
     CHECK(fs::path(vpath).filename() == "lamp Variant.okayprefab" && !fs::exists(vpath));
     const std::string baseText = Rd(lamp);
+    ed.CaptureUnannouncedEdits();   // the setup edits above are their own step, not part of the action measured below
     const int depth = ed.UndoDepth();
     PrefabOpResult r = PrefabCreateVariant(ed, *a, vpath);
     CHECK(r.ok && fs::exists(vpath));

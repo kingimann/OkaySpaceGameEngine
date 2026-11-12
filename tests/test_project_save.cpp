@@ -150,10 +150,11 @@ int main() {
 
         // Load: the loaded scene is the baseline.
         CHECK(ed.Load(t.Sub("s.okayscene")) && !ed.HasUnsavedChanges());
-        // Undo / Redo raise the flag (they change the scene), and the save clears it.
+        // Undo / Redo follow the saved state: undoing back to what was loaded is clean, redo is unsaved again, and the save clears it.
         ed.CreateCube("Cube");
         CHECK(ed.dirty);
-        CHECK(ed.Undo() && ed.dirty);
+        CHECK(ed.Undo() && !ed.dirty && !ed.HasUnsavedChanges());
+        CHECK(ed.Redo() && ed.dirty && ed.HasUnsavedChanges());
         CHECK(ed.Save(t.Sub("s.okayscene")) && !ed.HasUnsavedChanges());
     }
 

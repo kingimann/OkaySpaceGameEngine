@@ -34,6 +34,11 @@ namespace okay::editor {
 
 EditorState::EditorState() : m_scene("Untitled") {
     m_scene.runScripts = false;   // game code only runs in Play
+    m_access = std::make_shared<SceneAccess>();
+    m_access->capture = [this] { return SceneSerializer::Serialize(m_scene); };
+    m_access->apply = [this](const std::string& text, const SelectionRef& sel) { return ApplySceneText(text, sel); };
+    m_stack->SetMaxCommands(kMaxUndo);
+    m_stack->SetMergeWindow(1.0f);   // the same field nudged again within a second is one step (see PushUndoText)
     // Online services are part of the engine: a Steam simulation backend by
     // default, the real Steamworks backend when built with -DOKAY_WITH_STEAM.
     m_steam = CreateSteamService();
@@ -57,7 +62,7 @@ EditorState::EditorState() : m_scene("Untitled") {
     };
     // "Run N frames": the loop paused the game under the editor's own reason; let the toolbar's Pause flag follow.
     m_loop.OnRunFramesDone = [this] { if (onRunFramesDone) onRunFramesDone(); };
-    MarkClean();   // an empty scene is nothing to save
+    StartDocument();   // an empty scene is nothing to save
 }
 
 bool EditorState::StartHost(std::uint16_t port) {
@@ -97,6 +102,7 @@ void EditorState::StopNetwork() {
 }
 
 void EditorState::TickServices(float dt) {
+    m_stack->Tick(dt);   // the undo merge window
     if (m_steam) m_steam->RunCallbacks();
     // While playing, the scene's own Update() already ticks m_net (it's a scene
     // component); ticking it again here would double-step the netcode. Only drive
@@ -108,57 +114,135 @@ void EditorState::Achievement(const std::string& id) {
     if (m_steam) m_steam->UnlockAchievement(id);
 }
 
-// Undo/redo rebuild every object, so the selection is carried across by position
-// in the scene's object list (names double-check it) — the Inspector and the
-// Animation tab stay on what you were editing instead of going blank.
-void EditorState::RestoreKeepingSelection(const std::string& snapshot) {
+// ---- Undo / Redo ---------------------------------------------------------------------------------------
+
+SelectionRef EditorState::CaptureSelection() const {
+    SelectionRef r;
+    r.valid = true;
+    for (GameObject* g : m_multi) if (g) r.guids.push_back(g->Guid());
+    if (m_selected) {
+        r.primary = m_selected->Guid();
+        if (std::find(r.guids.begin(), r.guids.end(), r.primary) == r.guids.end()) r.guids.push_back(r.primary);   // Create* select without adding to the set
+    }
+    return r;
+}
+
+// Replace the scene with `text` and select, by GUID, what `sel` names (an invalid `sel` keeps the current
+// selection). Every object is rebuilt, so the pointers change and the GUIDs carry the selection across.
+bool EditorState::ApplySceneText(const std::string& text, const SelectionRef& sel) {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
-    std::vector<std::pair<int, std::string>> keep;
-    // Positions among the saved objects: transient ones (a Spline Instancer's copies,
-    // generated buttons) are not in the snapshot, so they must not shift the count.
-    auto saved = [&] {
-        std::vector<GameObject*> v;
-        for (const auto& up : m_scene.Objects()) if (!up->transient) v.push_back(up.get());
-        return v;
-    };
-    std::vector<GameObject*> objs = saved();
-    auto indexOf = [&](GameObject* g) {
-        for (int i = 0; i < (int)objs.size(); ++i) if (objs[(std::size_t)i] == g) return i;
-        return -1;
-    };
-    for (GameObject* g : m_multi) if (g) keep.push_back({indexOf(g), g->name});
-    int primary = m_selected ? indexOf(m_selected) : -1;
-    SceneSerializer::Deserialize(m_scene, snapshot);
+    const SelectionRef want = sel.valid ? sel : CaptureSelection();
+    StopNetwork();
+    if (!SceneSerializer::Deserialize(m_scene, text)) return false;   // all or nothing: the scene is as it was
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
-    objs = saved();
     GameObject* prim = nullptr;
-    for (const auto& k : keep) {
-        GameObject* g = nullptr;
-        if (k.first >= 0 && k.first < (int)objs.size() && objs[(std::size_t)k.first]->name == k.second) g = objs[(std::size_t)k.first];
-        if (!g) continue;
-        if (m_multi.empty()) Select(g); else ToggleSelect(g);
-        if (k.first == primary) prim = g;
+    for (const auto& up : m_scene.Objects()) {
+        if (up->transient) continue;
+        const std::string& g = up->Guid();
+        if (std::find(want.guids.begin(), want.guids.end(), g) == want.guids.end()) continue;
+        if (m_multi.empty()) Select(up.get()); else ToggleSelect(up.get());
+        if (g == want.primary) prim = up.get();
     }
     if (prim) m_selected = prim;
+    m_known = SceneSerializer::Serialize(m_scene);
+    dirty = Fingerprint(m_known) != m_savedPrint;   // back on the saved text means nothing is unsaved
+    return true;
+}
+
+void EditorState::RestoreKeepingSelection(const std::string& snapshot) {
+    ApplySceneText(snapshot, SelectionRef{});
     dirty = true;
 }
 
-void EditorState::PushUndo() {
-    if (m_suppressUndo) return;
-    ++m_undoSerial;
-    m_undo.push_back(SceneSerializer::Serialize(m_scene));
-    m_undoFiles.emplace_back();
-    if (m_undo.size() > kMaxUndo) { m_undo.erase(m_undo.begin()); m_undoFiles.erase(m_undoFiles.begin()); }
-    m_redo.clear(); m_redoFiles.clear();
+void EditorState::RecordStep(const std::string& before, const std::string& after, const std::string& name,
+                             const SelectionRef& selBefore, std::uint64_t key) {
+    if (!m_access) return;
+    const std::string label = name.empty() ? DescribeSceneChange(before, after) : name;
+    SelectionRef selAfter = selBefore.valid ? CaptureSelection() : SelectionRef{};
+    m_stack->Record(std::make_unique<SceneDeltaCommand>(label, m_access, TextDelta::Make(before, after),
+                                                        selBefore, std::move(selAfter), key));
 }
 
-void EditorState::PushUndoText(std::string before) {
-    if (m_suppressUndo) return;
+// The boundary: whatever changed since the last one becomes one step (named by the open PushUndo, or by what
+// changed). Returns true when a step was recorded.
+bool EditorState::SyncHistory() {
+    Pending p = std::move(m_pending);
+    m_pending = Pending{};
+    if (m_playing) return false;   // the running game is not part of the edit history
+    std::string cur = SceneSerializer::Serialize(m_scene);
+    const bool changed = cur != m_known;
+    if (!changed && p.extras.empty()) return false;
+    const SelectionRef sel = p.open ? p.sel : SelectionRef{};
+    if (p.extras.empty()) {
+        RecordStep(m_known, cur, p.open ? p.name : std::string(), sel, 0);
+    } else {   // the scene change and the editor-side edits are one step
+        std::string label = p.name;
+        if (label.empty()) label = changed ? DescribeSceneChange(m_known, cur) : p.extras.front()->Name();
+        m_stack->BeginGroup(label);
+        for (auto& e : p.extras) m_stack->Record(std::move(e));
+        if (changed) RecordStep(m_known, cur, label, sel, 0);
+        m_stack->EndGroup();
+    }
+    if (changed) m_known = std::move(cur);
+    return true;
+}
+
+void EditorState::CommitUndo() {
+    if (m_pending.open) SyncHistory();
+}
+
+void EditorState::PushUndo(const std::string& name) {
+    if (m_suppressUndo || m_playing) return;
     ++m_undoSerial;
-    m_undo.push_back(std::move(before));
-    m_undoFiles.emplace_back();
-    if (m_undo.size() > kMaxUndo) { m_undo.erase(m_undo.begin()); m_undoFiles.erase(m_undoFiles.begin()); }
-    m_redo.clear(); m_redoFiles.clear();
+    SyncHistory();   // the previous step ends here (an edit nobody announced becomes its own step)
+    m_pending.open = true;
+    m_pending.name = name;
+    m_pending.sel = CaptureSelection();
+}
+
+void EditorState::PushUndo(const std::string& name, std::unique_ptr<ICommand> alsoUndo) {
+    if (m_suppressUndo || m_playing) return;
+    PushUndo(name);
+    if (alsoUndo) m_pending.extras.push_back(std::move(alsoUndo));
+}
+
+namespace {
+// Files an edit wrote, as one ICommand of the undo step (see EditorState::PushUndo(name, alsoUndo)).
+class FileEditCommand : public ICommand {
+public:
+    FileEditCommand(std::vector<EditorState::FileEdit> e, std::string name) : m_edits(std::move(e)), m_name(std::move(name)) {}
+    bool Do() override { Apply(false); return true; }
+    bool Undo() override { Apply(true); return true; }
+    std::string Name() const override { return m_name; }
+    std::size_t MemoryBytes() const override {
+        std::size_t n = 64;
+        for (const auto& e : m_edits) n += e.path.size() + e.before.size() + e.after.size();
+        return n;
+    }
+private:
+    void Apply(bool undoing) {
+        namespace fs = std::filesystem;
+        for (const EditorState::FileEdit& e : m_edits) {
+            std::error_code ec;
+            const bool keep = undoing ? e.hadBefore : e.hasAfter;
+            if (!keep) { fs::remove(e.path, ec); continue; }
+            const std::string tmp = e.path + ".tmp";
+            {
+                std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+                f << (undoing ? e.before : e.after);
+            }
+            fs::rename(tmp, e.path, ec);
+            if (ec) { fs::remove(e.path, ec); ec.clear(); fs::rename(tmp, e.path, ec); }
+        }
+        if (!m_edits.empty()) SceneSerializer::ClearPrefabCache();   // instantiating a prefab must read the restored file
+    }
+    std::vector<EditorState::FileEdit> m_edits;
+    std::string m_name;
+};
+}
+
+std::unique_ptr<ICommand> EditorState::MakeFileUndo(std::vector<FileEdit> edits, const std::string& name) {
+    return std::make_unique<FileEditCommand>(std::move(edits), name);
 }
 
 bool EditorState::ReadTextFile(const std::string& path, std::string& out) {
@@ -171,60 +255,70 @@ bool EditorState::ReadTextFile(const std::string& path, std::string& out) {
 }
 
 bool EditorState::AttachUndoFiles(std::vector<FileEdit> edits) {
-    if (m_suppressUndo || m_undo.empty() || m_undoFiles.size() != m_undo.size()) return false;
-    m_undoFiles.back() = std::move(edits);
+    if (m_suppressUndo || m_playing || edits.empty()) return false;
+    if (m_pending.open) {
+        m_pending.extras.push_back(MakeFileUndo(std::move(edits), m_pending.name.empty() ? "Edit Prefab" : m_pending.name));
+        return true;
+    }
+    PushUndo("Edit Prefab", MakeFileUndo(std::move(edits)));
     return true;
 }
 
 void EditorState::DiscardLastUndo() {
-    if (m_undo.empty()) return;
-    m_undo.pop_back();
-    if (!m_undoFiles.empty()) m_undoFiles.pop_back();
+    if (m_pending.open && m_pending.extras.empty()) m_pending = Pending{};
 }
 
-void EditorState::ApplyFiles(const std::vector<FileEdit>& edits, bool undoing) {
-    namespace fs = std::filesystem;
-    for (const FileEdit& e : edits) {
-        std::error_code ec;
-        const bool keep = undoing ? e.hadBefore : e.hasAfter;
-        if (!keep) { fs::remove(e.path, ec); continue; }
-        const std::string tmp = e.path + ".tmp";
-        {
-            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-            f << (undoing ? e.before : e.after);
-        }
-        fs::rename(tmp, e.path, ec);
-        if (ec) { fs::remove(e.path, ec); ec.clear(); fs::rename(tmp, e.path, ec); }
+void EditorState::PushUndoText(std::string before, const std::string& name, std::uint64_t mergeKey) {
+    if (m_suppressUndo || m_playing) return;
+    ++m_undoSerial;
+    if (!m_pending.extras.empty()) { SyncHistory(); return; }   // editor-side edits are waiting: they and this change share one step
+    Pending p = std::move(m_pending);
+    m_pending = Pending{};
+    if (m_known != before) {   // something changed before the edit being recorded: a step of its own
+        RecordStep(m_known, before, p.open ? p.name : std::string(), p.open ? p.sel : SelectionRef{}, 0);
+        m_known = before;
     }
-    if (!edits.empty()) SceneSerializer::ClearPrefabCache();   // instantiating a prefab must read the restored file
+    std::string cur = SceneSerializer::Serialize(m_scene);
+    if (cur == m_known) return;
+    RecordStep(m_known, cur, name, SelectionRef{}, mergeKey);
+    m_known = std::move(cur);
 }
 
 bool EditorState::Undo() {
-    if (m_undo.empty()) return false;
+    if (m_playing) return false;
     ++m_undoSerial;
-    m_redo.push_back(SceneSerializer::Serialize(m_scene));
-    std::string s = m_undo.back(); m_undo.pop_back();
-    std::vector<FileEdit> files = m_undoFiles.empty() ? std::vector<FileEdit>{} : std::move(m_undoFiles.back());
-    if (!m_undoFiles.empty()) m_undoFiles.pop_back();
-    ApplyFiles(files, true);
-    m_redoFiles.push_back(std::move(files));
-    StopNetwork();
-    RestoreKeepingSelection(s);
-    return true;
+    SyncHistory();
+    if (!m_stack->CanUndo()) return false;
+    return m_stack->Undo();
 }
 
 bool EditorState::Redo() {
-    if (m_redo.empty()) return false;
+    if (m_playing) return false;
     ++m_undoSerial;
-    m_undo.push_back(SceneSerializer::Serialize(m_scene));
-    std::string s = m_redo.back(); m_redo.pop_back();
-    std::vector<FileEdit> files = m_redoFiles.empty() ? std::vector<FileEdit>{} : std::move(m_redoFiles.back());
-    if (!m_redoFiles.empty()) m_redoFiles.pop_back();
-    ApplyFiles(files, false);
-    m_undoFiles.push_back(std::move(files));
-    StopNetwork();
-    RestoreKeepingSelection(s);
-    return true;
+    SyncHistory();
+    if (!m_stack->CanRedo()) return false;
+    return m_stack->Redo();
+}
+
+std::vector<std::string> EditorState::UndoNames(std::size_t max) const {
+    std::vector<std::string> v;
+    if (m_pending.open && !m_playing) v.push_back(m_pending.name.empty() ? std::string("Edit") : m_pending.name);
+    for (std::string& n : m_stack->UndoNames(max)) { if (max && v.size() >= max) break; v.push_back(std::move(n)); }
+    return v;
+}
+
+std::vector<std::string> EditorState::RedoNames(std::size_t max) const {
+    return CanRedo() ? m_stack->RedoNames(max) : std::vector<std::string>{};
+}
+
+// A new, opened or created scene is a new document: its own empty history, this text is the baseline.
+void EditorState::StartDocument() {
+    m_stack->Clear();
+    m_pending = Pending{};
+    m_known = SceneSerializer::Serialize(m_scene);
+    m_savedPrint = Fingerprint(m_known);
+    m_stack->MarkSaved();
+    dirty = false;
 }
 
 GameObject* EditorState::CreateEmpty(const std::string& name) {
@@ -379,7 +473,7 @@ GameObject* EditorState::GroupSelected(const std::string& name) {
         ? (m_selected ? std::vector<GameObject*>{m_selected} : std::vector<GameObject*>{})
         : m_multi;
     if (targets.empty()) return nullptr;
-    PushUndo();
+    PushUndo("Group Selection");
     // The group sits under the first pick's parent; children keep their world place.
     Transform* parent = targets[0]->transform ? targets[0]->transform->Parent() : nullptr;
     GameObject* group = m_scene.CreateGameObject(name);
@@ -416,7 +510,7 @@ int EditorState::DeleteChildrenOfSelected() {
     bool any = false;
     for (const GameObject* g : targets) if (g && g->transform && g->transform->ChildCount() > 0) any = true;
     if (!any) return 0;
-    PushUndo();
+    PushUndo("Delete Children");
     int removed = 0;
     for (GameObject* g : targets) {
         if (!g || g->IsDestroyed() || !g->transform) continue;
@@ -432,7 +526,6 @@ int EditorState::DeleteChildrenOfSelected() {
 
 void EditorState::NewScene() {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
-    PushUndo();
     if (m_playing) Stop();
     StopNetwork();
     m_scene.Clear();
@@ -448,7 +541,7 @@ void EditorState::NewScene() {
     m_scene.mainCamera = cam;
     Select(nullptr);   // Clear() freed every object; clear m_multi too (no dangling ptrs)
     m_path.clear();
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewScene2D() {
@@ -464,7 +557,7 @@ void EditorState::NewScene2D() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = sp;
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewScene3D() {
@@ -551,7 +644,7 @@ void EditorState::NewScene3D() {
     m_suppressUndo = false;
     view3D = true;
     m_selected = cube;
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewPlatformer() {
@@ -561,7 +654,7 @@ void EditorState::NewPlatformer() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewPlatformer3D() {
@@ -573,7 +666,7 @@ void EditorState::NewPlatformer3D() {
     camTarget = {0, 1, 0};
     camDist = 14.0f;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewFPS() {
@@ -585,7 +678,7 @@ void EditorState::NewFPS() {
     camTarget = {0, 1, 0};
     camDist = 10.0f;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewTerrainSandbox() {
@@ -597,7 +690,7 @@ void EditorState::NewTerrainSandbox() {
     camTarget = {0, 2, 0};
     camDist = 30.0f;
     m_selected = m_scene.Find("Terrain");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewVoxelSandbox() {
@@ -609,7 +702,7 @@ void EditorState::NewVoxelSandbox() {
     camTarget = {0, 4, 0};
     camDist = 36.0f;
     m_selected = m_scene.Find("Voxel Terrain");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewThirdPerson() {
@@ -621,7 +714,7 @@ void EditorState::NewThirdPerson() {
     camTarget = {0, 1, 0};
     camDist = 8.0f;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewHumanoid() {
@@ -633,7 +726,7 @@ void EditorState::NewHumanoid() {
     camTarget = {0, 1, 0};
     camDist = 8.0f;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewThirdPersonShooter() {
@@ -645,7 +738,7 @@ void EditorState::NewThirdPersonShooter() {
     camTarget = {0, 1, 0};
     camDist = 8.0f;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewPointAndClick() {
@@ -657,7 +750,7 @@ void EditorState::NewPointAndClick() {
     camTarget = {0, 1, 0};
     camDist = 14.0f;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewMultiplayer() {
@@ -667,7 +760,7 @@ void EditorState::NewMultiplayer() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewTopDown() {
@@ -677,7 +770,7 @@ void EditorState::NewTopDown() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewTopDownShooter() {
@@ -687,7 +780,7 @@ void EditorState::NewTopDownShooter() {
     m_suppressUndo = false;
     view3D = true;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewPlatformer25D() {
@@ -697,7 +790,7 @@ void EditorState::NewPlatformer25D() {
     m_suppressUndo = false;
     view3D = true;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewVehicle3D() {
@@ -709,7 +802,7 @@ void EditorState::NewVehicle3D() {
     camTarget = {0, 1, 0};
     camDist = 12.0f;
     m_selected = m_scene.Find("Car");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewVehicle2D() {
@@ -719,7 +812,7 @@ void EditorState::NewVehicle2D() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Car");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewCoinCollector() {
@@ -729,7 +822,7 @@ void EditorState::NewCoinCollector() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Player");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewMainMenu() {
@@ -739,7 +832,7 @@ void EditorState::NewMainMenu() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("StartButton");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewSnake() {
@@ -749,7 +842,7 @@ void EditorState::NewSnake() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Board");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewBrickBreaker() {
@@ -759,7 +852,7 @@ void EditorState::NewBrickBreaker() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Paddle");
-    MarkClean();
+    StartDocument();
 }
 
 void EditorState::NewInventory() {
@@ -769,7 +862,7 @@ void EditorState::NewInventory() {
     m_suppressUndo = false;
     view3D = false;
     m_selected = m_scene.Find("Bag");
-    MarkClean();
+    StartDocument();
 }
 
 int EditorState::SaveEditedMeshAssets(std::string* report) {
@@ -819,18 +912,24 @@ std::uint64_t EditorState::Fingerprint(const std::string& text) {
 bool EditorState::RewriteAssetPaths(const std::function<std::string(const std::string&)>& rewrite) {
     if (m_playing || !rewrite) return false;
     const bool wasClean = !HasUnsavedChanges();
-    for (std::string& s : m_undo) s = rewrite(s);
-    for (std::string& s : m_redo) s = rewrite(s);
+    SyncHistory();
     const std::string now = SceneSerializer::Serialize(m_scene);
     const std::string next = rewrite(now);
-    if (next == now) return false;
+    if (next == now) return false;   // this scene does not use what moved: its history stays valid
+    // The history holds pieces of the old scene text, with the old asset paths in them, and cannot be
+    // rewritten piece by piece. Undoing past this point would bring the old paths back, so it ends here.
     RestoreKeepingSelection(next);
-    if (wasClean) MarkClean();
+    m_stack->Clear();
+    m_pending = Pending{};
+    m_known = SceneSerializer::Serialize(m_scene);
+    if (wasClean) MarkClean(); else { m_stack->MarkDirty(); dirty = true; }
     return true;
 }
 
 void EditorState::MarkClean() {
-    m_savedPrint = Fingerprint(SceneSerializer::Serialize(m_scene));
+    SyncHistory();   // the save point is the scene as it is now, edits nobody announced included
+    m_savedPrint = Fingerprint(m_known.empty() || m_playing ? SceneSerializer::Serialize(m_scene) : m_known);
+    m_stack->MarkSaved();
     dirty = false;
 }
 
@@ -885,7 +984,6 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     m_path = path;
     // A different scene is a different document: its undo history is its own. (Keeping the old one
     // would let Undo put the previous scene's objects into this file.)
-    ClearHistory();
     // Re-home the project to the scene's own project folder (the parent of its
     // Assets/ dir), so opening another project's scene switches the Project panel
     // and asset paths over instead of keeping the previous project's files around.
@@ -902,7 +1000,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     for (const auto& up : m_scene.Objects())
         if (auto* ma = up->GetComponent<ModelAnimator>())
             PoseCapture::ImportFolder(*ma, PoseCapture::AssetBaseDir());
-    MarkClean();
+    StartDocument();   // a loaded scene starts a fresh undo history, so Undo can never put the old scene's objects into the new file
     if (onSceneLoaded) onSceneLoaded();
     return true;
 }
@@ -927,9 +1025,13 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
     const std::string prevPath = m_path, prevDir = m_projectDir, prevName = m_scene.Name();
     const bool prevDirty = dirty;
     const std::uint64_t prevPrint = m_savedPrint;
-    std::vector<std::string> prevUndo = std::move(m_undo), prevRedo = std::move(m_redo);
-    auto prevUndoFiles = std::move(m_undoFiles); auto prevRedoFiles = std::move(m_redoFiles);
-    ClearHistory();
+    std::unique_ptr<UndoStack> prevStack = std::move(m_stack);   // the open scene's history, kept in case this fails
+    const std::string prevKnown = m_known;
+    Pending prevPending = std::move(m_pending);
+    m_stack = std::make_unique<UndoStack>();
+    m_stack->SetMaxCommands(kMaxUndo);
+    m_stack->SetMergeWindow(1.0f);
+    m_pending = Pending{};
     const std::string scenePath = (fs::path(root) / "Assets" / (sceneName + ".okayscene")).string();
     (this->*tpl)();
     m_scene.SetName(sceneName);
@@ -942,16 +1044,19 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
         Select(nullptr);
         m_path = prevPath;
         setProjectDir(prevDir);
-        m_undo = std::move(prevUndo);
-        m_redo = std::move(prevRedo);
-        m_undoFiles = std::move(prevUndoFiles); m_redoFiles = std::move(prevRedoFiles);
+        m_stack = std::move(prevStack);
+        m_known = prevKnown;
+        m_pending = std::move(prevPending);
         dirty = prevDirty;
         m_savedPrint = prevPrint;
         okayproj::Undo(made);   // Save is atomic: a failed one wrote nothing, so only the folders and files made above go
         r.error = err;
         return r;
     }
-    ClearHistory();
+    m_stack->Clear();   // a new project starts with a fresh history
+    m_pending = Pending{};
+    m_known = SceneSerializer::Serialize(m_scene);
+    m_stack->MarkSaved();
     r.ok = true;
     r.root = root;
     r.scene = scenePath;
@@ -960,6 +1065,7 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
 
 void EditorState::Play() {
     if (m_playing) return;
+    SyncHistory();   // close the open undo step: what Play changes is thrown away and never recorded
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
     m_playPrint = Fingerprint(m_snapshot);            // what "unsaved changes" means while the game runs
     m_dirtyAtPlay = dirty;

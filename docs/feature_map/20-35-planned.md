@@ -227,7 +227,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/prefabs.md`; `docs/prefab_system.md`
 - **Tests:** `scene_ids_prefabs`; `prefab_apply_revert`; `prefab_editor`; `inspector_model`
 - **Status:** Works - the editor reads, shows, reverts and applies overrides per property, component, child object and instance through `PrefabTools`, with undo and with the other instances updated (tests `prefab_editor`, `prefab_apply_revert`); the registry-based field list (21.4.5) and an "are you sure" before Apply All are not built.
-- **Exists today:** The data layer for overrides, per-field diff, revert and apply, unpack and the validator, all called from the editor (21.4.2 to 21.4.8). Undo of an Apply restores the prefab file text together with the scene snapshot; when the editor's undo moves to `UndoStack` (22.1.4) that text becomes one command in the same group (`docs/prefab_system.md`, "In the editor").
+- **Exists today:** The data layer for overrides, per-field diff, revert and apply, unpack and the validator, all called from the editor (21.4.2 to 21.4.8). Undo of an Apply restores the prefab file text together with the scene: the file edits are a command in the same `UndoStack` group as the scene change (`docs/prefab_system.md`, "In the editor").
 - **Work packages:**
   1. M - Per-field apply for any registered property through the property registry (names like `Light.intensity`, 1.19) instead of the fixed field list. Depends on: #578 (on main).
   2. S - Apply All asks before overwriting the prefab file. Depends on: 21.4.8.
@@ -242,31 +242,31 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 22.1 Undo history
 - **What:** Step back and forward through your edits with Ctrl+Z and Ctrl+Y, and jump to any earlier step from a history list.
 - **Parts:**
-  - 22.1.1 Whole-scene snapshot undo - `editor/EditorState.*` - `PushUndo` stores the whole scene as text before a change; 100 steps; `Undo`, `Redo`, `UndoDepth`
-  - 22.1.2 History window - `editor/main.cpp` - View > History lists the steps; click one to jump there
-  - 22.1.3 Separate undo stacks - `editor/main.cpp` - mesh edit mode keeps its own stack (`g_meshUndo`), the animation draft and the Localization window have their own; Ctrl+Z goes to whichever has focus
+  - 22.1.1 Scene undo on `UndoStack` - `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp` - `PushUndo` opens a step, closed at the next boundary as a `SceneDeltaCommand` (scene-text delta, selection by GUID); 100 steps; named steps; drags and repeated edits of one widget merged; `Undo`, `Redo`, `UndoName`, `UndoDepth`; empty history on New / Open; off during Play
+  - 22.1.2 History window - `editor/main.cpp` - View > History lists the step names ("After: ...", "Before: ..."); click one to jump there; Edit > Undo / Redo show the name and grey out when empty
+  - 22.1.3 Separate undo stacks - `editor/main.cpp` - mesh edit mode keeps its own stack (`g_meshUndo`), the Localization, Timeline and Project panels have their own; the animation draft is now a command in the main stack (`AnimDraftCommand`); Ctrl+Z goes to whichever has focus
   - 22.1.4 Command-based undo stack (#572) - `Core/Undo`, `Core/UndoCommands` - `UndoStack` with groups, merging of slider drags, count and memory caps, dirty tracking; `SetProperty`, `ListEdit`, object create/delete/reparent by id
-  - 22.1.6 Asset files inside an undo step - `editor/EditorState.*` - `AttachUndoFiles(edits)` ties the before and after text of files an edit wrote (a prefab Apply, a new variant) to the step `PushUndo` made; Undo and Redo move them with the scene. Moves into a command of the `UndoStack` group when 22.1.4 is adopted
+  - 22.1.6 Asset files inside an undo step - `editor/EditorState.*` - `AttachUndoFiles(edits)` adds a file command (`MakeFileUndo`, before and after text of files an edit wrote: a prefab Apply, a new variant) to the step `PushUndo` opened, as `PushUndo(name, alsoUndo)` does; Undo and Redo move the files with the scene in one `UndoStack` group
   - 22.1.5 Property change hook as an undo source - planned - `Scene/PropertyRegistry` (#578, 1.19) fires a hook with old and new value on every real property change and has `ScopedHookSuppression` so an undo does not record itself; `Core/UndoCommands` has a `SetProperty` command, nothing connects the two or the editor
-- **Code:** `editor/EditorState.*`, `editor/main.cpp`, `Core/Undo`, `Core/UndoCommands`
-- **API:** `EditorState::PushUndo`, `Undo`, `Redo`, `CanUndo`; `UndoStack`, `UndoSet`, `UndoRecordSet`, `SnapshotRecorder`, `CreateObjectCommand`, `DeleteObjectCommand`, `ObjectOps`
+- **Code:** `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp`, `editor/main.cpp`, `Core/Undo`, `Core/UndoCommands`
+- **API:** `EditorState::PushUndo(name)`, `PushUndoText`, `CommitUndo`, `Undo`, `Redo`, `CanUndo`, `UndoName`, `undoStack()`; `SceneDeltaCommand`, `TextDelta`, `DescribeSceneChange`; `UndoStack`, `UndoSet`, `UndoRecordSet`, `SnapshotRecorder`, `CreateObjectCommand`, `DeleteObjectCommand`, `ObjectOps`
 - **Editor:** Edit > Undo / Redo, View > History
-- **Docs:** `docs/editor.md`; `docs/undo_recovery.md`
-- **Tests:** editor `--selftest` covers undo around a creation; `undo`
-- **Status:** Partial - the snapshot undo is what ships; the command-based stack is on main (#572, test `undo`) but the editor does not use it (grep finds `UndoStack` only in the engine).
-- **Exists today:** Every edit pushes the whole scene as text, so one step costs a full serialize and the history holds 100 scene copies. `docs/undo_recovery.md` ("engine side only") describes how to adopt `UndoStack` in the editor step by step, with `SnapshotRecorder` as a bridge so behaviour stays the same.
+- **Docs:** `docs/editor.md`; `docs/editor_undo.md` (audit of every edit); `docs/undo_recovery.md`
+- **Tests:** `editor_undo` (delta, command, 25 edit kinds by scene text, merge, GUID restore, limit, New / Open, Play, saved tracking); editor `--selftest` covers undo around a creation; `undo`
+- **Status:** Partial - the editor records scene edits on the engine `UndoStack` (headless tests above). Not done: per-object and per-property commands (each Undo rebuilds the scene), folding mesh edit / Timeline / Localization / Project undo into one stack, an asset move keeps the scene history. The GUI paths (Edit menu, shortcuts, History panel, `WatchEditUndo`) were compiled but not run.
+- **Exists today:** One step costs a scene serialisation at the boundary and stores only the differing stretch of text; an undo rebuilds the scene from text, as the snapshot undo did. Undo history survives Play and Stop (it is off, and records nothing, while Play runs).
 - **Work packages:**
-  1. M - Put one `UndoStack` in `EditorState` fed by `SnapshotRecorder` (same behaviour); use `IsDirty()` for the title-bar mark. Depends on: #572 (on main).
-  2. M - Inspector sliders and drags use `UndoRecordSet` plus `BreakMerge()` so one drag is one step and costs no scene copy; the property registry's change hook could feed this for registered components. Depends on: package 1.
+  1. Done - one `UndoStack` in `EditorState`; `IsDirty()` tracks saved state (`MarkClean` is the save point; the title-bar mark still reads `dirty`, kept in step on undo and redo).
+  2. Done in effect - a drag is one step and costs the changed text, not a scene copy (`WatchEditUndo` + `TextDelta`); same-widget edits merge. The property registry hook is not used. Depends on: package 1.
   3. L - Create, delete, duplicate and reparent use object commands keyed by `GameObject::Guid()` (ids must survive a restore). Depends on: package 1, #570 (on main).
   4. M - Fold the mesh-edit, animation-draft and localization stacks into the same stack so Ctrl+Z always does the expected thing. Depends on: package 1.
-  5. M - History window shows the step names (`UndoNames`) and the memory used. Depends on: package 1.
-  6. M - Undo across Play and Stop (history is kept). Depends on: package 1, 34.1.
-- **Open:** each snapshot is a full scene text (memory grows with scene size); three separate stacks can confuse Ctrl+Z; behaviour of the stack across Play and Stop is not verified; the property registry (on main, #578, 1.19) offers names and change hooks that `SetProperty` commands could use.
+  5. Done for names (History and Edit menu); the memory figure is not shown. Depends on: package 1.
+  6. Done - history is kept across Play and Stop; Undo is off and nothing is recorded while Play runs. Depends on: package 1, 34.1.
+- **Open:** per-object commands (`ObjectOps`, Guid) would avoid the rebuild and keep Inspector state; asset moves clear the scene history; several stacks remain (mesh, Timeline, Localization, Project) and Ctrl+Z goes to the focused one; the property registry (#578, 1.19) could feed `SetProperty` commands.
 - **Related:** 15.9, 15.2, 22.2, 34.1
 - **Words:** undo, redo, Ctrl+Z, history window, PushUndo, UndoStack, command undo, snapshot undo, SetProperty, merge slider drags
-- **Seen as:** undo is slow in a big scene; one slider drag makes dozens of undo steps; Ctrl+Z undoes the wrong thing after mesh editing; undo stops working after Play
-- **Ask me like:** "switch the editor to the command undo stack"; "make dragging a slider one undo step"
+- **Seen as:** undo is slow in a big scene; Ctrl+Z undoes the wrong thing after mesh editing; undo does nothing after an asset was moved
+- **Ask me like:** "make delete / reparent per-object undo commands"; "keep the scene history when an asset is moved"
 
 ### 22.2 Autosave
 - **What:** The editor quietly saves a recovery copy of your work every few minutes so a crash costs little.

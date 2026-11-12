@@ -28,10 +28,15 @@ std::string LowerS(std::string s) {
 
 bool StartsWith(const char* s, const char* prefix) { return std::strncmp(s, prefix, std::strlen(prefix)) == 0; }
 
-// Is this window the Inspector or the Hierarchy, or a popup / child opened from one?
+// Is this window one whose widgets edit the scene (or a popup / child opened from one)? The Inspector and
+// Hierarchy, and the panels that write into the scene too: Lighting (scene settings), Material, the Animation
+// tab and Custom Actions. Panels with an undo of their own (Modeling, Timeline, the script editors, the Project
+// panel ...) stay out, so one edit never lands on two stacks.
 bool InEditorWindow(const ImGuiWindow* w) {
     for (; w; w = w->ParentWindow)
-        if (StartsWith(w->Name, "Inspector") || StartsWith(w->Name, "Hierarchy")) return true;
+        if (StartsWith(w->Name, "Inspector") || StartsWith(w->Name, "Hierarchy") || StartsWith(w->Name, "Lighting") ||
+            StartsWith(w->Name, "Material") || StartsWith(w->Name, "Animation") || StartsWith(w->Name, "Custom Actions"))
+            return true;
     return false;
 }
 
@@ -72,6 +77,7 @@ bool ClearButton(const char* id) {
 
 void WatchEditUndo(okay::editor::EditorState& ed) {
     static EditUndo u;
+    static ImGuiID lastActive = 0;   // the widget being edited: the same widget edited again joins the step
     s_ed = &ed;
     if (ed.isPlaying()) { if (u.IsOpen()) u.Cancel(); return; }   // Play changes are thrown away anyway
     ImGuiContext& g = *GImGui;
@@ -82,10 +88,11 @@ void WatchEditUndo(okay::editor::EditorState& ed) {
         // The picture is taken on the press, before the widget changes anything.
         // (In a huge scene the extra picture on every click would be felt: then only a pressed widget starts one.)
         const bool bigScene = ed.scene().Objects().size() > 8000;
-        if ((clicked && !bigScene && InEditorWindow(g.HoveredWindow)) || activeMine) u.Begin(ed);
+        if ((clicked && !bigScene && InEditorWindow(g.HoveredWindow)) || activeMine) { u.Begin(ed); lastActive = 0; }
     } else if (!down && !activeMine) {
-        u.End(ed);
+        u.End(ed, lastActive);
     }
+    if (u.IsOpen() && activeMine) lastActive = g.ActiveId;
 }
 
 // ---- Reference fields -----------------------------------------------------------------------------------

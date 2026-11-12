@@ -211,9 +211,9 @@ PrefabOpResult SourceEdit(EditorState& ed, GameObject& root, const std::string& 
     if (root.prefabSource.empty()) return Fail("This object is not a prefab instance.");
     const std::vector<std::string> reach = Reach(root.prefabSource);
     const std::vector<Snap> before = TakeFiles(reach);
+    ed.PushUndo(doneText);   // first: capturing the other instances' overrides below edits the scene and belongs to this one step
     GameObject* self = PrefabTools::PrefabRoot(root);
     std::vector<Dependent> deps = CaptureDependents(ed.scene(), self, reach);   // against the OLD file: what an instance overrode stays
-    ed.PushUndo();
     std::string err;
     if (!edit(err)) {
         ed.DiscardLastUndo();
@@ -375,7 +375,7 @@ PrefabTarget TargetOf(const PrefabChange& ch, const std::string& field) {
 PrefabOpResult PrefabRevert(EditorState& ed, GameObject& root, const std::vector<PrefabTarget>& targets) {
     if (root.prefabSource.empty()) return Fail("This object is not a prefab instance.");
     if (targets.empty()) return Fail("Nothing to revert.");
-    ed.PushUndo();
+    ed.PushUndo("Revert Prefab Overrides");
     const RootSlot slot = CaptureRootSlot(ed.scene(), root);
     GameObject* cur = &root;
     std::string err;
@@ -398,7 +398,7 @@ PrefabOpResult PrefabRevert(EditorState& ed, GameObject& root, const std::vector
 
 PrefabOpResult PrefabRevertAll(EditorState& ed, GameObject& root) {
     if (root.prefabSource.empty()) return Fail("This object is not a prefab instance.");
-    ed.PushUndo();
+    ed.PushUndo("Revert Prefab");
     const RootSlot slot = CaptureRootSlot(ed.scene(), root);
     std::string err;
     GameObject* fresh = PrefabTools::RevertAll(ed.scene(), root, &err);
@@ -528,7 +528,7 @@ PrefabOpResult PrefabRevertObject(EditorState& ed, GameObject& root, const Prefa
     if (root.prefabSource.empty()) return Fail("This object is not a prefab instance.");
     if (ch.added) {
         if (!ch.live || ch.live->IsDestroyed() || !Inside(&root, ch.live) || ch.live == &root) return Fail("The object is gone.");
-        ed.PushUndo();
+        ed.PushUndo("Revert Prefab Object");
         ed.Deselect(ch.live);
         ed.scene().Destroy(ch.live);
         ed.scene().FlushDestroyed();
@@ -544,7 +544,7 @@ PrefabOpResult PrefabRevertObject(EditorState& ed, GameObject& root, const Prefa
     GameObject* proto = sc.objs[(std::size_t)ch.prefabObject];
     GameObject* parent = proto->transform->Parent() ? LiveCounterpart(root, proto->transform->Parent()->gameObject, sc.root) : nullptr;
     if (!parent) return Fail("The parent of " + ch.name + " is gone too: use Revert All.");
-    ed.PushUndo();
+    ed.PushUndo("Restore Prefab Object");
     GameObject* back = SceneSerializer::InstantiateFromText(ed.scene(), SceneSerializer::SerializeObject(*proto), &err);
     if (!back) { ed.DiscardLastUndo(); return Fail(err); }
     back->transform->SetParent(parent->transform, false);
@@ -567,7 +567,7 @@ PrefabOpResult PrefabCreateVariant(EditorState& ed, GameObject& root, const std:
     if (root.prefabSource.empty()) return Fail("This object is not a prefab instance.");
     std::error_code ec;
     if (fs::exists(variantPath, ec)) return Fail(FileName(variantPath) + " already exists.");
-    ed.PushUndo();
+    ed.PushUndo("Create Prefab Variant");
     std::string err;
     if (!PrefabTools::SaveVariant(root, variantPath, &err)) { ed.DiscardLastUndo(); return Fail("Create Variant failed: " + err); }
     EditorState::FileEdit fe;
@@ -596,7 +596,7 @@ PrefabOpResult PrefabNewVariantFile(EditorState& ed, const std::string& basePath
     if (!sc.Load(basePath, err)) return Fail("Cannot read " + FileName(basePath) + ": " + err);
     sc.root->prefabSource = basePath;
     if (!PrefabTools::SaveVariant(*sc.root, variantPath, &err)) return Fail("Create Variant failed: " + err);
-    ed.PushUndo();   // the scene does not change; the step carries the new file so Undo deletes it
+    ed.PushUndo("Create Prefab Variant");   // the scene does not change; the step carries the new file so Undo deletes it
     EditorState::FileEdit fe;
     fe.path = Norm(variantPath); fe.hadBefore = false; fe.hasAfter = true;
     EditorState::ReadTextFile(variantPath, fe.after);
@@ -608,7 +608,7 @@ PrefabOpResult PrefabNewVariantFile(EditorState& ed, const std::string& basePath
 
 PrefabOpResult PrefabUnpack(EditorState& ed, GameObject& go, bool completely) {
     if (!PrefabTools::IsPrefabInstance(go)) return Fail("This object is not a prefab instance.");
-    ed.PushUndo();
+    ed.PushUndo(completely ? "Unpack Prefab Completely" : "Unpack Prefab");
     const int n = PrefabTools::Unpack(go, completely);
     if (n == 0) { ed.DiscardLastUndo(); return Fail("Nothing to unpack."); }
     ed.dirty = true;
@@ -621,9 +621,9 @@ PrefabOpResult PrefabUnpack(EditorState& ed, GameObject& go, bool completely) {
 PrefabOpResult PrefabUpdateInstances(EditorState& ed, const std::string& sourcePath) {
     if (sourcePath.empty()) return Fail("No prefab.");
     const std::vector<std::string> files{Norm(sourcePath)};
+    ed.PushUndo("Update Prefab Instances");   // before the capture: it edits the scene and belongs to the same step
     std::vector<Dependent> deps = CaptureDependents(ed.scene(), nullptr, files);   // keep what each one changed
-    if (deps.empty()) return Fail("No instance of " + FileName(sourcePath) + " in the scene.");
-    ed.PushUndo();
+    if (deps.empty()) { ed.DiscardLastUndo(); return Fail("No instance of " + FileName(sourcePath) + " in the scene."); }
     SceneSerializer::ClearPrefabCache();
     std::string err;
     PrefabOpResult r;

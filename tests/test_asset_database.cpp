@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Audio/AudioClip.hpp"
 #include "okay/Core/AssetDatabase.hpp"
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/DataPack.hpp"
@@ -1461,6 +1462,63 @@ int main() {
         CHECK(deps.size() == 2 && Contains(deps, db.PathToGuid("tex/a.png")) && Contains(deps, db.PathToGuid("tex/mesh.bin")));
         const auto miss = db.FindMissing();
         CHECK(miss.size() == 1 && miss[0].reference == "tex/gone.png");
+    }
+
+    RUN_SUITE("indexUnmetaed: every asset is indexed in memory and nothing is written");
+    {
+        Project p("virtual");
+        p.Png("art/hero.png", Color(1, 0, 0, 1));
+        p.Text("scenes/a.okayscene", "scene \"A\"\ngameobject \"o\"\n  sprite texture \"art/hero.png\"\n");
+        p.Text("empty/.keep", "");
+        std::error_code mk; fs::create_directories(p.P("empty/inner"), mk);
+        AssetDatabase db;
+        ScanOptions o; o.createMetas = false; o.indexUnmetaed = true; o.logWarnings = false;
+        ScanReport r = db.Scan(p.Root(), o);
+        CHECK(db.Count() == 2 && r.created == 0 && r.unmetaed == 2 && r.foldersChanged);
+        CHECK(!p.Exists("art/hero.png.okaymeta") && !p.Exists("scenes/a.okayscene.okaymeta"));
+        const Guid hero = db.PathToGuid("art/hero.png");
+        CHECK(!hero.IsNull() && db.Find(hero)->metaVersion == 0 && db.UsedBy(hero).size() == 1);   // the graph works without metas
+        CHECK((db.Folders() == std::vector<std::string>{"art", "empty", "empty/inner", "scenes"}));
+        const std::uint64_t rev = db.Revision();
+        r = db.Scan(p.Root(), o);
+        CHECK(db.Revision() == rev && !r.foldersChanged && r.reimports.empty() && db.PathToGuid("art/hero.png") == hero);   // nothing changed: nothing moves
+        p.Png("art/new.png", Color(0, 1, 0, 1));
+        db.Scan(p.Root(), o);
+        CHECK(db.Revision() > rev && db.Count() == 3);
+        // a moved file keeps its GUID by content, still without a meta
+        p.Move("art/hero.png", "art/champ.png", false);
+        r = db.Scan(p.Root(), o);
+        CHECK(r.moved.size() == 1 && r.moved[0].how == "hash" && db.PathToGuid("art/champ.png") == hero && !p.Exists("art/champ.png.okaymeta"));
+        CHECK(db.UsedBy(hero).size() == 1 && db.FindStaleReferences().size() == 1);   // the scene still says art/hero.png: stale, not lost
+        // the meta is written only on request, with the GUID the asset already had
+        CHECK(db.EnsureMeta(hero) && p.Exists("art/champ.png.okaymeta") && db.Find(hero)->metaVersion > 0);
+        AssetDatabase again;
+        again.Scan(p.Root(), o);
+        CHECK(again.PathToGuid("art/champ.png") == hero);                            // and now it survives a new session
+        // an in-memory asset is not written by a refresh either
+        const Guid nw = db.PathToGuid("art/new.png");
+        p.Png("art/new.png", Color(0, 0, 1, 1), 9, 9);
+        db.RefreshFile("art/new.png");
+        CHECK(!p.Exists("art/new.png.okaymeta") && db.Find(nw)->metaVersion == 0);
+        // labels are the other thing that writes a meta
+        CHECK(db.AddLabel(nw, "tag") && p.Exists("art/new.png.okaymeta") && db.Find(nw)->HasLabel("TAG"));
+    }
+
+    RUN_SUITE("audio files get a waveform thumbnail");
+    {
+        Project p("wave");
+        AudioClip clip = AudioClip::Const(0.8f, 8000, 8000);
+        std::error_code mk; fs::create_directories(p.P("audio"), mk);
+        CHECK(clip.SaveWAV(p.P("audio/tone.wav").string()));
+        p.Text("audio/bad.wav", "not audio");
+        AssetDatabase db;
+        db.Scan(p.Root());
+        ThumbnailCache cache;
+        const auto t = cache.Get(db, db.PathToGuid("audio/tone.wav"));
+        CHECK(!t.placeholder && t.image->Width() == 128 && t.source == ThumbnailCache::Source::Generated);
+        CHECK(t.image->GetPixel(64, 30).g > 0.5f);                                     // the wave fills the column
+        const auto bad = cache.Get(db, db.PathToGuid("audio/bad.wav"));
+        CHECK(bad.placeholder && bad.failed);
     }
 
     TEST_MAIN_RESULT();

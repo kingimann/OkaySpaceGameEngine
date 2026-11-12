@@ -523,6 +523,22 @@ collider keeps all its shapes) and **audio sources**. Other types still save the
 - Build and Export stop Play first and ship the scene you edited.
 - Title bar and status bar show the project and scene and the save state.
 
+## Project panel on the asset database
+
+The Project panel lists, searches and counts assets from the asset database (`okay::AssetDatabase`) and gets its pictures from the
+thumbnail cache (`okay::ThumbnailCache`); it has no folder scan of its own. Details are in `project_panel.md` and `asset_database.md`.
+
+- **Refresh.** An incremental database scan runs every two seconds or more (30 times as long as the last scan took on a big project);
+  files whose size and time did not change are not read again and an unchanged project rebuilds nothing. The "..." menu shows how
+  many assets are indexed and how long the last refresh took. There is no file watcher.
+- **Search.** Names, tags and type words, plus `t:`, `ext:`, `l:`, `is:unused`, `is:broken`, `uses:` and `deps:`. Right-click > Find
+  References and Show Dependencies list the users and the dependencies, with a whole-graph switch; click a line to show it.
+- **Pictures.** Textures, audio waveforms, models, mesh files, materials, prefabs and scenes; made lazily within a few milliseconds per
+  frame, kept in `.okay/thumbs`, made again when the file (or what it uses) changes. Tile size: slider, or Small / Medium / Large.
+- **Info strip.** Type, size, GUID (short), uses and used-by counts, tags and a broken-reference warning (also a triangle on the tile).
+- **Rename, move, delete.** The GUID stays with the asset, references are rewritten, Ctrl+Z in the panel undoes them and puts the open
+  scene's paths back, and a deleted asset's references show as broken until it is restored.
+
 ## Notes
 
 This editor renders the scene with ImGui's 2D draw lists, which is perfect for

@@ -246,6 +246,7 @@ void AssetDatabase::Clear() {
     m_fresh.clear();
     m_reverse.clear();
     m_reverseValid = false;
+    m_folders.clear();
 }
 
 std::string AssetDatabase::KeyOf(const std::string& projectPath) const { return AssetManager::Normalize(projectPath); }
@@ -467,6 +468,7 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
 
     // 1. Walk the tree: asset files and metas.
     std::vector<FileEntry> files, metaFiles;
+    std::vector<std::string> folders;
     {
         std::set<std::string> skipDirs(opt.ignoreDirs.begin(), opt.ignoreDirs.end());
         std::set<std::string> skipExts;
@@ -478,6 +480,7 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             std::error_code e2;
             if (e.is_directory(e2)) {
                 if (name.empty() || name[0] == '.' || skipDirs.count(name)) it.disable_recursion_pending();
+                else folders.push_back(U8(e.path().lexically_relative(rootPath)));
                 continue;
             }
             if (name.empty() || name[0] == '.' || !e.is_regular_file(e2)) continue;
@@ -493,6 +496,8 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
         }
         if (ec) warn("the scan stopped early: " + ec.message());
     }
+    std::sort(folders.begin(), folders.end());
+    if (folders != m_folders) { rep.foldersChanged = true; m_folders = std::move(folders); }
     std::sort(files.begin(), files.end(), [](const FileEntry& a, const FileEntry& b) { return a.rel < b.rel; });
     std::sort(metaFiles.begin(), metaFiles.end(), [](const FileEntry& a, const FileEntry& b) { return a.rel < b.rel; });
     rep.scanned = static_cast<int>(files.size());
@@ -609,7 +614,15 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
         if (c.hash != 0) c.fe.size = sz;
     };
     for (Cand& c : cands) {
-        if (!c.hasMeta) continue;
+        if (!c.hasMeta) {   // no meta: an asset indexed earlier at this path with the same size and time keeps its hash
+            auto pi = m_pathIndex.find(KeyOf(c.fe.rel));
+            const Slot* known = pi == m_pathIndex.end() ? nullptr : SlotOf(pi->second);
+            if (known && !c.dupLoser && known->stamp == c.fe.stamp && known->rec.size == c.fe.size && known->rec.hash != 0) {
+                c.hash = known->rec.hash;
+                c.hashed = true;
+            }
+            continue;
+        }
         const Slot* prev = SlotOf(c.pm.guid);
         if (prev && prev->stamp == c.fe.stamp && prev->rec.size == c.fe.size && prev->rec.hash != 0) {
             c.hash = prev->rec.hash;
@@ -697,6 +710,10 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
         c.movedFrom = s.oldRel;
         c.movedHow = how;
         c.needsWrite = true;   // a meta must be written, unless an orphan's own file is moved into place below
+        if (s.type != 0 && !opt.createMetas) {   // an asset that only lived in memory (no meta) moved: it stays in memory
+            const AssetRecord& was = s.type == 1 ? m_slots.at(s.guid).rec : m_vanished.at(s.guid).rec;
+            c.needsWrite = was.metaVersion > 0;
+        }
         if (s.type == 0) {
             const Orphan& o = orphans[s.orphan];
             c.labels = o.pm.labels;
@@ -749,7 +766,7 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             auto sl = m_slots.find(pi->second);
             if (sl == m_slots.end()) continue;
             c.guid = pi->second;
-            c.needsWrite = true;
+            c.needsWrite = opt.createMetas || sl->second.rec.metaVersion > 0;   // an in-memory asset stays in memory
             c.labels = sl->second.rec.labels;
             c.settings = sl->second.rec.settings;
             c.settingsSet = true;
@@ -808,10 +825,14 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
     for (std::size_t i : unmetaed) {
         Cand& c = cands[i];
         if (!c.guid.IsNull()) continue;
-        if (!opt.createMetas) { c.skip = true; ++rep.unmetaed; continue; }
+        bool writeIt = true;
+        if (!opt.createMetas) {
+            if (!opt.indexUnmetaed) { c.skip = true; ++rep.unmetaed; continue; }
+            writeIt = c.dupLoser;   // a copied meta needs its own GUID on disk, or it would change at every scan
+        }
         c.guid = NewGuid();
         c.created = true;
-        c.needsWrite = true;
+        c.needsWrite = writeIt;
         if (c.dupLoser) {
             c.labels = c.pm.labels;
             c.unknown = c.pm.unknown;
@@ -890,7 +911,8 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             if (opt.storeHashInMeta && c.hash != 0 && c.baseHash != c.hash) write = true;
             if (c.upgradeWanted && opt.upgradeMetas) { write = true; ++rep.upgraded; }
         }
-        if (c.created) ++rep.created;
+        if (c.created && c.needsWrite) ++rep.created;
+        if (!c.hasMeta && !c.needsWrite && !c.adoptedFromDisk) ++rep.unmetaed;   // indexed in memory only
         if (write && !s.rec.metaReadOnly) {
             std::string err;
             if (!opt.storeHashInMeta) {
@@ -953,9 +975,30 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
     if (opt.buildDependencies) for (auto& kv : m_slots) ExtractDependencies(kv.second, false);
     ResolveAllEdges();
 
+    {   // an unchanged project leaves the revision alone
+        const std::uint64_t sig = IndexSignature();
+        if (sig != m_signature) { m_signature = sig; ++m_revision; }
+    }
     rep.reimports = std::move(events);
     Deliver();
     return rep;
+}
+
+std::uint64_t AssetDatabase::IndexSignature() const {
+    auto mix = [](std::uint64_t h, std::uint64_t v) { return (h ^ v) * 1099511628211ull + 0x9E3779B97F4A7C15ull; };
+    auto str = [&](std::uint64_t h, const std::string& s) { for (unsigned char c : s) h = (h ^ c) * 1099511628211ull; return h; };
+    std::uint64_t h = 1469598103934665603ull;
+    for (const auto& kv : m_slots) {
+        const AssetRecord& r = kv.second.rec;
+        h = mix(h, kv.first.hi); h = mix(h, kv.first.lo);
+        h = str(h, r.path);
+        h = mix(h, r.hash); h = mix(h, static_cast<std::uint64_t>(r.size)); h = mix(h, static_cast<std::uint64_t>(r.metaVersion));
+        for (const auto& l : r.labels) h = str(h, l);
+        h = str(h, kv.second.settingsPrint);
+        for (const Edge& e : kv.second.edges) { h = mix(h, e.target.hi); h = mix(h, e.target.lo); h = mix(h, e.missing ? 1 : 0); }
+    }
+    for (const auto& f : m_folders) h = str(h, f);
+    return h;
 }
 
 // --- Changes -------------------------------------------------------------------------------
@@ -983,10 +1026,11 @@ Guid AssetDatabase::RefreshFile(const std::string& path) {
     s->rec.size = size;
     if (h != 0 && h != s->rec.hash) {
         s->rec.hash = h;
-        if (m_options.storeHashInMeta && !s->rec.metaReadOnly) { std::string err; WriteMeta(*s, &err); }
+        if (m_options.storeHashInMeta && !s->rec.metaReadOnly && s->rec.metaVersion > 0) { std::string err; WriteMeta(*s, &err); }   // an in-memory asset stays in memory
         ExtractDependencies(*s, false);
         ResolveEdgesOf(*s);
         Raise({r.guid, s->rec.path, ReimportEvent::Reason::SourceChanged});
+        ++m_revision;
         Deliver();
     }
     return r.guid;
@@ -1029,6 +1073,16 @@ bool AssetDatabase::MoveAsset(const std::string& guidOrPath, const std::string& 
     m_redirects.erase(KeyOf(to));
     ResolveAllEdges();
     if (!s->rec.metaReadOnly && !fs::exists(toMeta, ec)) { std::string err; WriteMeta(*s, &err); }
+    ++m_revision;
+    return true;
+}
+
+bool AssetDatabase::EnsureMeta(const Guid& guid, std::string* error) {
+    Slot* s = SlotOf(guid);
+    if (!s) { if (error) *error = "unknown asset"; return false; }
+    if (s->rec.metaVersion > 0) return true;
+    if (!WriteMeta(*s, error)) return false;
+    ++m_revision;
     return true;
 }
 
@@ -1065,6 +1119,7 @@ bool AssetDatabase::SetLabels(const Guid& guid, const std::vector<std::string>& 
     std::vector<std::string> old = std::move(s->rec.labels);
     s->rec.labels = std::move(clean);
     if (!WriteMeta(*s, error)) { s->rec.labels = std::move(old); return false; }
+    ++m_revision;
     return true;
 }
 
@@ -1122,6 +1177,7 @@ bool AssetDatabase::SetSettings(const Guid& guid, const ImportSettings& settings
     if (!WriteMeta(*s, error)) { s->rec.settings = old; s->settingsPrint = oldPrint; return false; }
     Raise({guid, s->rec.path, ReimportEvent::Reason::SettingsChanged});
     Deliver();
+    ++m_revision;
     return true;
 }
 

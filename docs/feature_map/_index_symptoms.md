@@ -194,6 +194,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a primitive is dark or inside out | [3.5](03-modeling-import.md#35-mesh-assets-and-primitives) Mesh assets and primitives |
 | a problem does not select its object | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
 | a project is missing from the list | [17.12](17-launcher-platform.md#1712-create-page-projects-templates-and-git) Create page: projects, templates and Git |
+| a Project panel row without a type or a wrong Used By count | [1.12](01-core-scene.md#112-asset-database) Asset database |
 | a proxy `version.dll` next to the exe is flagged | [39.4](39-security-anticheat.md#394-client-integrity-signed-manifest-and-launch-check) Client integrity: signed manifest and launch check |
 | a public field is missing or reset in the Inspector | [13.4](13-scripting.md#134-script-components-and-script-ui) Script components and script UI |
 | a quest cannot be restarted | [10.3](10-story-cinematics.md#103-quests-and-story-variables) Quests and story variables |
@@ -697,7 +698,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no soft shadows from point lights | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | no sound at all | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | no sound in a call | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
-| no thumbnails in the Project panel | [1.12](01-core-scene.md#112-asset-database) Asset database |
 | no warning before building | [33.2](20-35-planned.md#332-scene-validation) Scene validation |
 | no way to add my own look | [26.3](20-35-planned.md#263-custom-shaders) Custom shaders |
 | no way to draw a level with my art | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
@@ -774,7 +774,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | profiler shows GPU time that does not change | [23.1](20-35-planned.md#231-cpugpu-profiler) CPU/GPU profiler |
 | progress lost | [1.7](01-core-scene.md#17-saves-and-prefs) Saves and prefs |
 | progress lost when changing computers | [49.1](43-proposals.md#491-cloud-saves) Cloud saves |
-| Project panel slow in a huge folder | [20.1](20-35-planned.md#201-asset-browser) Asset browser |
 | prop is a flat plastic colour | [3.10](03-modeling-import.md#310-add-library-and-procedural-props) Add library and procedural props |
 | published item not showing (needs review) | [17.6](17-launcher-platform.md#176-marketplace-and-workshop) Marketplace and Workshop |
 | publishing is refused" before the SQL is run | [17.14](17-launcher-platform.md#1714-official-game-install-update-publish) Official game: install, update, publish |

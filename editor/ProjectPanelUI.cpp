@@ -38,8 +38,18 @@ struct RefState {
     std::vector<std::string> users, uses;
     std::string root;
     std::function<void(const std::string&)> onPick;
+    okaypb::Browser* browser = nullptr;
+    RefMode mode = RefMode::Both;
+    bool whole = false;         // the whole graph instead of the direct links
 };
 RefState g_refs;
+void FillRefs() {
+    g_refs.users.clear();
+    g_refs.uses.clear();
+    if (!g_refs.browser) return;
+    if (g_refs.mode != RefMode::Uses) g_refs.users = g_refs.browser->UsersOfList(g_refs.asset, g_refs.whole);
+    if (g_refs.mode != RefMode::UsedBy) g_refs.uses = g_refs.browser->DependenciesOf(g_refs.asset, g_refs.whole);
+}
 
 std::string Short(const std::string& root, const std::string& abs) {
     const std::string r = okaypb::Slash(root);
@@ -72,12 +82,14 @@ void AskDelete(okaypb::Browser& browser, std::vector<std::string> paths, std::fu
     g_del.pending = true;
 }
 
-void ShowReferences(okaypb::Browser& browser, const std::string& assetPath, std::function<void(const std::string&)> onPick) {
+void ShowReferences(okaypb::Browser& browser, const std::string& assetPath, std::function<void(const std::string&)> onPick, RefMode mode) {
+    browser.Sync();   // incremental: what changed since the last look is in the graph
     g_refs.asset = assetPath;
     g_refs.root = browser.Root();
-    g_refs.users.clear();
-    for (const auto& r : browser.ReferencesTo({assetPath})) g_refs.users.push_back(r.path);
-    g_refs.uses = browser.DependenciesOf(assetPath);
+    g_refs.browser = &browser;
+    g_refs.mode = mode;
+    g_refs.whole = false;
+    FillRefs();
     g_refs.onPick = std::move(onPick);
     g_refs.pending = true;
 }
@@ -173,7 +185,8 @@ void DrawDialogs() {
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
         if (ImGui::BeginPopupModal("##projrefs", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("References: %s", NameOf(g_refs.asset).c_str());
+            ImGui::Text("%s: %s", g_refs.mode == RefMode::Uses ? "Dependencies" : g_refs.mode == RefMode::UsedBy ? "Used by" : "References", NameOf(g_refs.asset).c_str());
+            if (ImGui::Checkbox("Whole graph (everything it reaches)", &g_refs.whole)) FillRefs();
             ImGui::Spacing();
             auto list = [&](const char* head, const char* empty, const std::vector<std::string>& v, const char* id) {
                 ImGui::TextDisabled("%s", head);
@@ -191,9 +204,9 @@ void DrawDialogs() {
                 }
                 ImGui::EndChild();
             };
-            list("USED BY (click to show it in the Project panel)", "Nothing uses it.", g_refs.users, "##ru");
-            ImGui::Spacing();
-            if (g_refs.active) list("USES", "It uses nothing.", g_refs.uses, "##rd");
+            if (g_refs.mode != RefMode::Uses) list(g_refs.whole ? "USED BY, directly or through other assets (click to show it)" : "USED BY (click to show it in the Project panel)", "Nothing uses it.", g_refs.users, "##ru");
+            if (g_refs.mode == RefMode::Both) ImGui::Spacing();
+            if (g_refs.active && g_refs.mode != RefMode::UsedBy) list(g_refs.whole ? "USES, directly or through other assets (click to show it)" : "USES (click to show it)", "It uses nothing.", g_refs.uses, "##rd");
             if (g_refs.active) {
                 ImGui::Spacing();
                 if (ImGui::Button("Close", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) { g_refs.active = false; ImGui::CloseCurrentPopup(); }

@@ -264,9 +264,9 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Load the boss music in the background and tell me when it is ready"; "Reload textures when I save them"
 
 ### 1.12 Asset database
-- **What:** The data layer an asset browser sits on: stable GUIDs in `.okaymeta` files, move tracking, a dependency graph, typed import settings, thumbnails and a search query. No UI yet.
+- **What:** The data layer an asset browser sits on: stable GUIDs in `.okaymeta` files (or in memory for an asset that has none yet), move tracking, a dependency graph, typed import settings, thumbnails and a search query. The Project panel is built on it.
 - **Parts:**
-  - 1.12.1 GUIDs and meta files - `Core/AssetDatabase` - `Scan`, `Guid`, `.okaymeta` sidecars, `MoveAsset`, rename and duplicate handling, orphan reports, labels
+  - 1.12.1 GUIDs and meta files - `Core/AssetDatabase` - `Scan`, `Guid`, `.okaymeta` sidecars, `MoveAsset`, rename and duplicate handling, orphan reports, labels; `ScanOptions::indexUnmetaed` (index assets that have no meta in memory, write nothing), `EnsureMeta`, `Folders()` (every folder walked, empty ones too), `Revision()` (moves only when the index changed)
   - 1.12.2 Dependency graph - `Core/AssetDatabaseDeps` - extractors for scenes, prefabs, materials and text assets; `DependenciesOf`, `UsedBy`, `BuildClosure`, `FindUnused`, `FindMissing`, `FixStaleReferences`
   - 1.12.3 Import settings - `Core/ImportSettings` - typed texture, model and audio settings with versions and migration; reimport signal
   - 1.12.4 Thumbnails - see 1.20 (`Core/ThumbnailCache` is its own sub-area)
@@ -274,14 +274,14 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.12.6 Shared helpers - `Core/AssetDatabaseInternal` - private utilities used by the three database sources
 - **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`
 - **API:** `AssetDatabase::Scan`, `AssetDatabase::BuildClosurePaths`, `AssetDatabase::Search`, `Guid`, `ImportSettings`
-- **Editor:** none yet (the Project panel does not call it)
-- **Docs:** `docs/asset_database.md`
-- **Tests:** `asset_database`
-- **Status:** Partial - merged in #568 with a 1467-line test, but nothing consumes it: no importer reads the import settings, scenes still store paths, the editor does not use it (docs "Not covered")
-- **Open:** asset browser window and thumbnail grid (an old branch claude/asset-browser exists but shares no history with main); importers reading the settings; GUID references inside scene files; build/export closure wiring; binary formats such as `.fbx` have no dependency edges
+- **Editor:** Project panel (`editor/ProjectBrowser.*`: listing, search, filters, counts, folder tree, info strip, Find References, Show Dependencies, tags, broken-reference badge)
+- **Docs:** `docs/asset_database.md`, `docs/project_panel.md`
+- **Tests:** `asset_database`, `project_panel`, `project_panel_db`
+- **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; no importer reads `srgb`, `compress` or the audio settings, scenes still store paths, the build/export code does not call it
+- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
 - **Related:** 1.11, 1.20, 20, 15.4, 18.1
 - **Words:** AssetDatabase, GUID, meta file, okaymeta, dependency, import settings, unused assets, missing assets, asset browser, reference, closure
-- **Seen as:** moving a file in the project loses its texture in scenes; the build ships unused files or misses one; no thumbnails in the Project panel
+- **Seen as:** moving a file in the project loses its texture in scenes; the build ships unused files or misses one; a Project panel row without a type or a wrong Used By count
 - **Ask me like:** "List every asset nothing references"; "Which scenes use `hero.png`?"
 
 ### 1.13 Object pooling
@@ -425,16 +425,16 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **What:** A cache that returns a small picture for any asset, so an asset browser can show a grid; edited files never show a stale picture.
 - **Parts:**
   - 1.20.1 Cache layers - `Core/ThumbnailCache` - least-recently-used memory layer (`maxEntries`, `maxBytes`) and an optional folder of PNGs keyed by GUID, content hash, size and a tag; `Invalidate`, `Clear`, `ClearDisk`, `GetStats`
-  - 1.20.2 Generators - `Core/ThumbnailCache` - `ThumbnailGenerator` plug-ins (asked newest first); built-in `ImageThumbnailGenerator` for png, jpg, bmp, tga, gif, psd, hdr through `Image::Load`
+  - 1.20.2 Generators - `Core/ThumbnailCache` - `ThumbnailGenerator` plug-ins (asked newest first); built-in `ImageThumbnailGenerator` for png, jpg, bmp, tga, gif, psd, hdr through `Image::Load` and `WaveformThumbnailGenerator` for wav, ogg, mp3 (a min/max waveform)
   - 1.20.3 Scaling and placeholders - `Core/ThumbnailCache` - `BoxDownscale` (area-weighted, alpha-aware, never enlarges) and `MakePlaceholderThumbnail` tiles with the extension; a failing generator gets a red tile and is not retried every frame
-  - 1.20.4 Editor thumbnails today - `editor/SceneManagerPanel.*`, `editor/main.cpp` - the Project panel's `GetThumb` (images and `proc:` textures) and the Scene Manager's `GetSceneThumb` are separate caches that do not use this one
+  - 1.20.4 Editor use - `editor/ProjectBrowser.*`, `editor/main.cpp` - the Project panel and the Scene Manager draw their pictures from this cache through `Browser::Thumb`; prefab, scene, material, model and mesh generators are the editor's own renderers registered with `AddThumbGenerator`; a frame budget (`Browser::ThumbFrame`) spreads the work over frames
 - **Code:** `Core/ThumbnailCache`
 - **API:** `ThumbnailCache::Get`, `ThumbnailCache::AddGenerator`, `ThumbnailGenerator`, `BoxDownscale`, `MakePlaceholderThumbnail`
-- **Editor:** none yet (the Project panel and Scene Manager draw their own thumbnails)
-- **Docs:** `docs/asset_database.md`
-- **Tests:** `asset_database`
-- **Status:** Partial - merged in #568 and covered by the `asset_database` test, but no editor window uses it; only image files get real pictures
-- **Open:** generators for meshes, materials, prefabs, models and scenes (the docs show a mesh example); move the Project panel's `GetThumb` onto this cache; an asset browser grid (area 20)
+- **Editor:** Project panel tiles, rows and info strip; Scene Manager scene pictures
+- **Docs:** `docs/asset_database.md`, `docs/project_panel.md`
+- **Tests:** `asset_database`, `project_panel_db`
+- **Status:** Works - used by the Project panel (textures, audio waveforms, models, mesh files, materials, prefabs, scenes), kept on disk under `<project>/.okay/thumbs`, made again when the content (or what a prefab, scene or material uses) changes
+- **Open:** pictures are made on the main thread inside a per-frame time budget, not on a worker thread (the renderers need the editor's scene objects); one picture size (128 px) scaled to the tile size; no pictures for fonts or `.okaydata`; a scene picture loads the whole scene (files over 4 MB are skipped)
 - **Related:** 1.12, 20, 15.4, 2.9
 - **Words:** thumbnail, ThumbnailCache, preview, icon, asset preview, placeholder, BoxDownscale, asset browser
 - **Seen as:** no preview pictures for models or scenes in the Project panel; a thumbnail shows an old version of a texture; a red tile for a broken image

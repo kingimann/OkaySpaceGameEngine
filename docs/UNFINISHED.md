@@ -75,11 +75,11 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 |---|---|---|---|
 | [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | prefab overrides in the editor (apply, revert, per-field, prefab mode, variant creation, nested roots in the Hierarchy); the old... |
 | [1.11](feature_map/01-core-scene.md#111-asset-manager) | Asset manager | Partial | move existing loaders (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) onto it; track GPU resources; an... |
-| [1.12](feature_map/01-core-scene.md#112-asset-database) | Asset database | Partial | asset browser window and thumbnail grid (an old branch claude/asset-browser exists but shares no history with main); importers... |
+| [1.12](feature_map/01-core-scene.md#112-asset-database) | Asset database | Partial | importers reading the remaining settings; GUID references inside scene files; build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no file watcher (the Project panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings... |
 | [1.13](feature_map/01-core-scene.md#113-object-pooling) | Object pooling | Partial | a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job |
 | [1.16](feature_map/01-core-scene.md#116-localization-tools) | Localization tools | Partial | wire the window to `LocTable`, the checker and the scanner (31.1), a language preview that mirrors right-to-left text (31.3)... |
 | [1.19](feature_map/01-core-scene.md#119-property-reflection) | Property reflection | Partial | not registered yet: controllers, scripts, the other UI widgets, navigation, networking; animation and IK components are left to... |
-| [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | generators for meshes, materials, prefabs, models and scenes (the docs show a mesh example); move the Project panel's `GetThumb`... |
+| [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | pictures are made on the main thread inside a per-frame time budget, not on a worker thread; one 128 px size scaled to the tile size; no pictures for fonts or data assets; a scene picture loads the whole scene... |
 
 ### 3. 3D modeling & import
 
@@ -143,11 +143,11 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [20.1](feature_map/20-35-planned.md#201-asset-browser) | Asset browser | Partial | Two sources of truth for labels (the editor's own file vs `.okaymeta` labels); the panel re-lists the folder every 0.6 s instead... |
+| [20.1](feature_map/20-35-planned.md#201-asset-browser) | Asset browser | Partial | Two sources of truth for labels (colour labels in `.okaylabels` vs tags in `.okaymeta`); no file watcher, outside changes show on the next poll (2 s or more); the Missing and stale references list with a Fix button is not built; no automated UI test of the window... |
 | [20.2](feature_map/20-35-planned.md#202-dependencies-and-references) | Dependencies and references | Partial | possible bug: Build Game collects assets from the open scene only (extra scenes in the build list are copied but not scanned)... |
 | [20.3](feature_map/20-35-planned.md#203-guids) | GUIDs | Partial | meta files are matched by content hash (FNV-1a, not cryptographic); files over 512 MB hash only head and tail; a project already... |
 | [20.4](feature_map/20-35-planned.md#204-import-settings) | Import settings | Partial | no UI; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins... |
-| [20.5](feature_map/20-35-planned.md#205-thumbnails) | Thumbnails | Partial | the editor's current thumbnails are rebuilt each session (memory only); a scene thumbnail loads the whole scene; no thumbnail for... |
+| [20.5](feature_map/20-35-planned.md#205-thumbnails) | Thumbnails | Partial | pictures are made on the main thread inside a time budget, not on a worker thread; a scene thumbnail loads the whole scene; no thumbnail for fonts or data assets |
 
 ### 21. Prefab system (Critical)
 

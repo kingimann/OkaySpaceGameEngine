@@ -1,6 +1,9 @@
 #pragma once
 // The Project panel's logic, with no window code in it (so tests can run it without ImGui):
-//   * a folder model: list a folder or search the whole project, filter by type, sort (natural order),
+//   * a folder model read from the asset database (no disk walk of its own): list a folder or search the whole
+//     project by name, type, label, "used by" and "depends on", filter by type, sort (natural order),
+//   * asset info (type, size, GUID, dependency counts, broken references) and thumbnails from the database's
+//     ThumbnailCache, made lazily within a per-frame time budget,
 //   * safe file operations inside the Assets folder: create, rename, move, copy, duplicate, delete to a
 //     trash folder, and undo for each. Every operation either completes or puts everything back,
 //   * rename and move keep references: a scene, prefab, material or other text asset that points at the
@@ -10,6 +13,7 @@
 // It sits on okay::AssetDatabase (GUIDs, dependency graph). See docs/project_panel.md.
 // Failure injection: SetFailureHook makes any file step fail, so tests can check nothing is lost.
 #include "okay/Core/AssetDatabase.hpp"
+#include "okay/Core/ThumbnailCache.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -53,14 +57,24 @@ struct Entry {
     bool isDir = false;
     std::uint64_t size = 0;
     std::int64_t modified = 0; ///< seconds since the epoch (file clock), 0 when unknown
+    okay::Guid guid;           ///< the database's GUID (null for folders)
+    okay::AssetType kind = okay::AssetType::Other;
+    bool hasMeta = false;      ///< a .okaymeta file exists (the GUID is kept on disk); false: the GUID lasts for this session
+    int missingRefs = 0;       ///< references from this asset to files that do not exist (the warning badge)
 };
 
-/// What the search box means: plain words (all must be in the name) plus t:model, ext:png, folder.
+/// What the search box means: plain words (each must be in the name, a label, or be the asset's type word) plus
+/// t:model, ext:png, l:label, is:unused, is:broken, uses:<asset> (assets that use it) and deps:<asset> (assets it uses).
 struct Query {
     std::vector<std::string> words;     // lower case
     Filter filter = Filter::All;        // from "t:<type>"
     bool foldersOnly = false;           // "t:folder"
     std::string ext;                    // ".png" from "ext:png"
+    std::vector<std::string> labels;    // from "l:red": every one must be a label of the asset (database labels)
+    bool unused = false;                // "is:unused": nothing references the asset
+    bool broken = false;                // "is:broken": it references a file that is missing
+    std::string usedBy;                 // "uses:hero.png": the assets that use hero.png (a name or a project path)
+    std::string dependsOn;              // "deps:main.okayscene": the assets main.okayscene uses
 };
 Query ParseQuery(const std::string& text);
 
@@ -71,11 +85,11 @@ struct ListOptions {
     bool descending = false;
     bool recursive = false;             ///< search below the folder (true when searching in this folder or the whole project)
     std::size_t limit = 4000;           ///< stop after this many entries
+    std::int64_t modifiedWithinSeconds = 0;   ///< "recently changed" (0 = any)
+    std::int64_t now = 0;               ///< the clock for the line above (0 = now), so tests are exact
+    bool unusedOnly = false;            ///< assets nothing references (the Unused smart filter)
 };
-/// The folder's entries (hidden files, .okaymeta files and temp files skipped), folders first. With `text`
-/// or `recursive`, everything below `dir` that matches.
-std::vector<Entry> ListFolder(const std::string& dir, const ListOptions& options);
-/// Sort in place the way ListFolder does (folders first).
+/// Sort in place the way Browser::List does (folders first).
 void SortEntries(std::vector<Entry>& entries, SortKey key, bool descending);
 /// True for names the panel never shows (starting with ".", .okaymeta, .tmp, .part, .bak, .swp).
 bool IsHiddenName(const std::string& fileName);
@@ -121,7 +135,8 @@ public:
     std::string ProjectDir() const;
     okay::AssetDatabase& Db() { return m_db; }
 
-    /// Index (or re-index) the assets: GUIDs, meta files, the dependency graph. Cheap when nothing changed.
+    /// Index (or re-index) the assets: GUIDs, the dependency graph. Nothing is written (an asset gets a .okaymeta only
+    /// when it is given labels or settings). Incremental: files whose size and time did not change are not read again.
     /// Returns false when the folder cannot be scanned.
     bool Sync();
     /// Call every frame with a millisecond clock. Re-indexes when due: the next poll waits at least 2 seconds
@@ -130,19 +145,89 @@ public:
     /// operation or the info pane needs the database). Returns true when the scan found changes.
     bool Poll(std::uint64_t nowMs);
     bool Indexed() const { return m_indexed; }
-    /// How many assets use this one (0 when none). Cheap: no scan.
+    /// How many assets use this one (0 when none), straight from the database's graph. Cheap: no scan.
     int UsersOf(const std::string& path);
+    /// Goes up whenever a scan found a change (a file or folder created, changed, renamed, moved or deleted) and
+    /// after every operation of this class. A listing that was made at the same revision is still right.
+    std::uint64_t Revision() const { return m_revision; }
+    /// How long the last scan took, in milliseconds (the cost of a refresh), and how many assets it indexed.
+    double LastScanMs() const { return m_scanMs; }
+    int AssetCount() const { return static_cast<int>(m_db.Count()); }
+
+    /// The folder's contents (or, with a search or `recursive`, everything below it) as the database sees them:
+    /// no disk walk. `dir` is absolute and inside the Assets folder. Folders first, then the sort order.
+    std::vector<Entry> List(const std::string& dir, const ListOptions& options);
     /// Make the meta file (the asset's GUID) for one asset if it has none, and return its GUID. Opening a project
-    /// writes no metas: they appear only for assets that are given settings or labels.
+    /// writes no metas: they appear only for assets that are given settings or labels. The GUID the asset already
+    /// had in this session is the one written.
     okay::Guid EnsureMeta(const std::string& path);
+
+    /// The folders directly inside `absDir` (from the database's folder list, no disk walk), sorted by name, with how
+    /// many files and folders each holds.
+    struct FolderRow { std::string path; bool hasKids = false; int items = 0; };
+    std::vector<FolderRow> SubFolders(const std::string& absDir);
+
+    /// Counts for the smart filters: assets per type filter (index = Filter) and changed in the last week.
+    struct Counts { int byFilter[10] = {0}; int recent = 0; int total = 0; };
+    const Counts& CountsNow(std::int64_t now = 0);
+
+    /// What the info strip shows about one asset.
+    struct AssetInfo {
+        bool indexed = false;
+        okay::AssetType kind = okay::AssetType::Other;
+        std::string typeName;               ///< "Texture", "Prefab", ...
+        std::uint64_t size = 0;
+        okay::Guid guid;
+        std::string guidShort;              ///< the first 8 hex digits
+        bool hasMeta = false;
+        std::uint64_t hash = 0;
+        int uses = 0;                       ///< assets this one references (direct)
+        int usedBy = 0;                     ///< assets that reference it (direct)
+        int usesAll = 0;                    ///< everything it needs, through the whole graph
+        std::vector<std::string> missing;   ///< references written in the file that point at nothing
+        std::vector<std::string> labels;
+    };
+    AssetInfo Info(const std::string& path);
+    /// Labels (tags) are kept in the asset's .okaymeta; adding one writes the meta if there is none.
+    bool AddLabel(const std::string& path, const std::string& label, std::string* error = nullptr);
+    bool RemoveLabel(const std::string& path, const std::string& label, std::string* error = nullptr);
+    /// Everything `path` needs (absolute paths), direct or through the whole graph.
+    std::vector<std::string> DependenciesOf(const std::string& path, bool recursive);
+    /// The assets that use `path`, direct or through the whole graph.
+    std::vector<std::string> UsersOfList(const std::string& path, bool recursive);
     /// Import settings of a texture or model (defaults when the asset has no meta). False for other kinds.
     bool GetImportSettings(const std::string& path, okay::ImportSettings& out);
     /// Store settings. Nothing is written when the asset has no meta and the settings are the defaults.
     bool SetImportSettings(const std::string& path, const okay::ImportSettings& settings, std::string* error = nullptr);
     /// Read a file again after it changed outside: forgets what was learned about it.
     bool Reimport(const std::string& path);
-    /// A cache key for the thumbnail of a file: from its path, size and time (no meta, no reading).
-    void ThumbKey(const std::string& path, okay::Guid& guid, std::uint64_t& hash) const;
+    // ---- thumbnails: the database's ThumbnailCache, keyed by GUID and content hash --------------------------
+    /// The cache key of a file's thumbnail: the asset's GUID (a stable stand-in made from the path while it has no
+    /// meta) and its content hash from the database; for a prefab, scene or material the hashes of everything it
+    /// uses are mixed in, so the picture is made again when a texture or mesh it shows changes.
+    void ThumbKey(const std::string& path, okay::Guid& guid, std::uint64_t& hash);
+    struct ThumbResult {
+        std::shared_ptr<const okay::Image> image;   ///< null when it is not ready (draw the type icon)
+        bool ready = false;                         ///< a real picture of the asset (memory, disk or just made)
+        bool placeholder = false;                   ///< there is no picture for this type, or it could not be made
+        bool failed = false;
+        std::string key;                            ///< "<guid>:<hash>": changes with the content
+    };
+    /// Start a frame: up to `budgetMs` of thumbnail making is allowed until the next call (the first one of a frame is
+    /// always allowed, so progress never stalls). Pictures already in memory or on disk are free.
+    void ThumbFrame(double budgetMs);
+    /// The picture for an asset. A missing one is made now when the frame budget allows, else `ready` is false and
+    /// the caller shows an icon and asks again next frame.
+    ThumbResult Thumb(const std::string& path);
+    /// For prefabs, scenes, models and materials (and anything else): `render(absolutePath)` returns an Image, or an
+    /// empty one when it cannot. Takes effect for pictures not yet made.
+    void AddThumbGenerator(const std::vector<std::string>& extensions, std::function<okay::Image(const std::string&)> render);
+    /// Forget a file's picture (memory and disk) so it is made again (Reimport, import settings changed).
+    void ForgetThumb(const std::string& path);
+    /// The cache (memory layer, disk folder <project>/.okay/thumbs): for tests and the stats. Made on first use.
+    okay::ThumbnailCache& Thumbs();
+    /// Delete cached pictures of assets that no longer exist.
+    int PruneThumbs();
     /// Copy a file or folder from anywhere (an OS drop, the Import button) into `destDir`, under a free name.
     /// All or nothing; undo-able.
     Result ImportFile(const std::string& source, const std::string& destDir);
@@ -172,8 +257,8 @@ public:
 
     /// Assets (outside `paths`) that use any of `paths` or anything inside a folder in `paths`.
     std::vector<Referrer> ReferencesTo(const std::vector<std::string>& paths);
-    /// What an asset uses, as absolute paths.
-    std::vector<std::string> DependenciesOf(const std::string& path);
+    /// What an asset uses, as absolute paths (direct).
+    std::vector<std::string> DependenciesOf(const std::string& path) { return DependenciesOf(path, false); }
     /// Trash entries kept (folders under .okay/trash).
     int TrashCount() const;
     /// Remove everything in the trash for good. Returns false if something could not be removed.
@@ -185,12 +270,26 @@ private:
     okay::AssetDatabase m_db;
     bool m_indexed = false;
     std::uint64_t m_nextPoll = 0;
-    struct RefEntry { std::int64_t stamp = 0; std::uint64_t size = 0; std::vector<std::string> targets; };
-    std::map<std::string, RefEntry> m_refs;                         // text asset -> the asset files it names
-    std::map<std::string, std::vector<std::string>> m_users;        // asset -> text assets that name it
-    bool m_usersValid = false;
-    bool RefreshRefs();
-    void BuildUsers();
+    std::uint64_t m_revision = 0;
+    struct FolderStat { int files = 0; std::vector<std::string> kids; };
+    std::map<std::string, FolderStat> m_folderStats;                // parent project path -> contents, per revision
+    std::uint64_t m_folderStatsRev = ~0ull;
+    bool m_prunePending = false;
+    std::vector<okay::Guid> GuidsUnder(const std::string& abs);   // the asset at a path, or every asset inside a folder
+    double m_scanMs = 0;
+    bool DoScan();                                                  // one incremental database scan (false: the folder cannot be read); raises m_revision on a change
+    bool m_scanChanged = false;                                     // the last scan found a change
+    std::map<okay::Guid, std::vector<std::string>> m_missing;       // asset -> references that point at nothing (rebuilt per revision)
+    std::uint64_t m_missingRev = ~0ull;
+    void EnsureMissing();
+    Counts m_counts; std::uint64_t m_countsRev = ~0ull; std::int64_t m_countsNow = -1;
+    struct ThumbKeyEntry { std::uint64_t rev = ~0ull; okay::Guid guid; std::uint64_t hash = 0; };
+    std::map<std::string, ThumbKeyEntry> m_thumbKeys;               // path -> key at a revision
+    std::unique_ptr<okay::ThumbnailCache> m_thumbs;
+    std::vector<std::pair<std::vector<std::string>, std::function<okay::Image(const std::string&)>>> m_thumbGens;
+    double m_thumbBudgetMs = 0, m_thumbSpentMs = 0;
+    std::string AbsOf(const std::string& projectPath) const { return m_root + "/" + projectPath; }
+    okay::Guid ThumbGuidOf(const okay::AssetRecord& rec) const;
     std::function<bool(const char*, const std::string&)> m_fail;
     std::vector<UndoEntry> m_undo;
 

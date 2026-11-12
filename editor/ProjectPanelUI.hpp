@@ -26,8 +26,13 @@ bool NamePromptOpen();
 /// Ask before deleting. Lists what uses the assets. `onConfirm` runs when the user agrees.
 void AskDelete(okaypb::Browser& browser, std::vector<std::string> paths, std::function<void()> onConfirm);
 
-/// Show what uses an asset (and what it uses). Clicking a line calls `onPick(path)`.
-void ShowReferences(okaypb::Browser& browser, const std::string& assetPath, std::function<void(const std::string&)> onPick);
+/// What the references window lists: both lists, only what uses the asset ("Find References") or only what it uses
+/// ("Show Dependencies").
+enum class RefMode { Both, UsedBy, Uses };
+/// Show what uses an asset (and what it uses), read from the asset database's dependency graph. A checkbox switches
+/// between the direct links and the whole graph. Clicking a line calls `onPick(path)`.
+void ShowReferences(okaypb::Browser& browser, const std::string& assetPath, std::function<void(const std::string&)> onPick,
+                    RefMode mode = RefMode::Both);
 
 /// Draw all open dialogs. Call every frame, inside the Project window, outside any child window.
 void DrawDialogs();

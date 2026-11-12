@@ -1526,8 +1526,8 @@ static SDL_Texture* RenderObjectThumb(okay::Scene& sc, GameObject* root) {
     AnimFocusBounds(root, center, radius);
     return RenderFramedThumb(sc, center, radius);
 }
-static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float radius) {
-    if (!g_sdlRenderer) return nullptr;
+// The picture itself (RGBA, 128 x 128, transparent where nothing was drawn); an invalid Image when nothing is visible.
+static okay::Image RenderFramedImage(okay::Scene& sc, const Vec3& center, float radius) {
     ApplySceneLight(sc);      // the editor sun/ambient, so shading matches the Scene view
     Vec3 dir{0.62f, 0.5f, 0.62f};
     float dm = std::sqrt(Vec3::Dot(dir, dir));
@@ -1538,95 +1538,111 @@ static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float
               Mat4::LookAt(eye, center, Vec3::Up);
     Raster work; std::vector<std::uint32_t> out;
     const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, eye, W, H, 2);
-    if (!px) return nullptr;
-    // Nothing visible (no 3D meshes) renders fully transparent — report that so
-    // callers fall back to the type icon instead of an invisible tile.
+    if (!px) return okay::Image();
+    // Nothing visible (no 3D meshes) renders fully transparent: report that so callers fall back to the type icon.
     bool anyPixel = false;
     for (int i2 = 0; i2 < W * H && !anyPixel; ++i2)
         if (px[i2] >> 24) anyPixel = true;
-    if (!anyPixel) return nullptr;
-    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                         SDL_TEXTUREACCESS_STATIC, W, H);
+    if (!anyPixel) return okay::Image();
+    okay::Image img(W, H);
+    std::memcpy(img.Data(), px, static_cast<std::size_t>(W) * H * 4);
+    return img;
+}
+static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float radius) {
+    if (!g_sdlRenderer) return nullptr;
+    const okay::Image img = RenderFramedImage(sc, center, radius);
+    if (!img.Valid()) return nullptr;
+    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
     if (tex) {
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, px, W * 4);
+        SDL_UpdateTexture(tex, nullptr, img.Data(), img.Width() * 4);
     }
     return tex;
 }
 
-static int g_renderThumbBudget = 4;   // prefab / scene / model previews that may be drawn this frame (DrawProject resets it)
-// Rendered thumbnail for a .okayprefab: instantiate it into a throwaway scene,
-// frame it and software-render one small image, cached until the file changes.
-static SDL_Texture* GetPrefabThumb(const std::string& path) {
-    struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
-    static std::unordered_map<std::string, Entry> cache;
+// Pictures of prefabs, scenes, materials and models for the Project panel. Each one draws a throwaway scene into an
+// Image; the asset database's ThumbnailCache (through okaypb::Browser::AddThumbGenerator) keeps them by GUID and
+// content hash, on disk under <project>/.okay/thumbs, and asks for a few per frame. They are registered by
+// DrawProject. An empty Image means "cannot draw this": the panel shows the type icon.
+static okay::Image RenderPrefabImage(const std::string& path) {
+    okay::Scene sc;
+    sc.runScripts = false;   // a prefab thumbnail must never run its scripts
+    GameObject* root = SceneSerializer::InstantiateFromFile(sc, path, nullptr);
+    if (!root) return okay::Image();
+    sc.Update(0.0f);
+    Vec3 center; float radius;
+    AnimFocusBounds(root, center, radius);
+    return RenderFramedImage(sc, center, radius);
+}
+static okay::Image RenderSceneImage(const std::string& path) {
     std::error_code ec;
-    auto mt = std::filesystem::last_write_time(path, ec);
-    auto it = cache.find(path);
-    if (it != cache.end() && (ec || it->second.mtime == mt)) return it->second.tex;
-    if (g_renderThumbBudget <= 0) return it != cache.end() ? it->second.tex : nullptr;   // a few renders per frame: the rest wait their turn
-    --g_renderThumbBudget;
-
-    SDL_Texture* tex = nullptr;
-    {
-        okay::Scene sc;
-        sc.runScripts = false;   // a prefab thumbnail must never run its scripts
-        if (GameObject* root = SceneSerializer::InstantiateFromFile(sc, path, nullptr))
-            tex = RenderObjectThumb(sc, root);
+    const auto sz = std::filesystem::file_size(path, ec);
+    if (ec || sz > 4u * 1024u * 1024u) return okay::Image();   // oversized scene files are skipped rather than stalling the panel
+    okay::Scene sc;
+    sc.runScripts = false;   // a thumbnail must never run the scene's game code
+    if (!SceneSerializer::LoadFromFile(sc, path, nullptr)) return okay::Image();
+    sc.Update(0.0f);
+    // Combined bounds over every root object (two passes: centroid, then reach).
+    Vec3 center{0, 0, 0}; int n = 0;
+    std::vector<std::pair<Vec3, float>> parts;
+    for (const auto& up : sc.Objects()) {
+        if (!up || !up->transform || up->transform->Parent()) continue;
+        Vec3 c2; float r2;
+        AnimFocusBounds(up.get(), c2, r2);
+        parts.push_back({c2, r2});
+        center = center + c2; ++n;
     }
-    if (it != cache.end() && it->second.tex && it->second.tex != tex)
-        SDL_DestroyTexture(it->second.tex);
-    cache[path] = {tex, mt};
-    return tex;
+    if (n == 0) return okay::Image();
+    center = center * (1.0f / (float)n);
+    float radius = 1.0f;
+    for (const auto& pr : parts) {
+        Vec3 d = pr.first - center;
+        radius = std::max(radius, std::sqrt(Vec3::Dot(d, d)) + pr.second);
+    }
+    return RenderFramedImage(sc, center, radius);
 }
-
-// Rendered thumbnail for a .okayscene: load the whole scene into a throwaway
-// Scene, frame ALL of its objects, snapshot once. Cached until the file
-// changes; oversized scene files are skipped rather than stalling the browser.
-SDL_Texture* GetSceneThumb(const std::string& path) {
-    struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
-    static std::unordered_map<std::string, Entry> cache;
+static okay::Image RenderModelImage(const std::string& path) {
     std::error_code ec;
-    auto mt = std::filesystem::last_write_time(path, ec);
-    auto it = cache.find(path);
-    if (it != cache.end() && (ec || it->second.mtime == mt)) return it->second.tex;
-    if (g_renderThumbBudget <= 0) return it != cache.end() ? it->second.tex : nullptr;   // a few renders per frame: the rest wait their turn
-    --g_renderThumbBudget;
-
-    SDL_Texture* tex = nullptr;
-    auto sz = std::filesystem::file_size(path, ec);
-    if (!ec && sz <= 4u * 1024u * 1024u && g_sdlRenderer) {
-        okay::Scene sc;
-        sc.runScripts = false;   // a thumbnail must never run the scene's game code
-        if (SceneSerializer::LoadFromFile(sc, path, nullptr)) {
-            sc.Update(0.0f);
-            // Combined bounds over every root object (two passes: centroid, then reach).
-            Vec3 center{0, 0, 0}; int n = 0;
-            std::vector<std::pair<Vec3, float>> parts;
-            for (const auto& up : sc.Objects()) {
-                if (!up || !up->transform || up->transform->Parent()) continue;
-                Vec3 c2; float r2;
-                AnimFocusBounds(up.get(), c2, r2);
-                parts.push_back({c2, r2});
-                center = center + c2; ++n;
-            }
-            if (n > 0) {
-                center = center * (1.0f / (float)n);
-                float radius = 1.0f;
-                for (const auto& pr : parts) {
-                    Vec3 d = pr.first - center;
-                    radius = std::max(radius, std::sqrt(Vec3::Dot(d, d)) + pr.second);
-                }
-                tex = RenderFramedThumb(sc, center, radius);
-            }
-        }
-    }
-    if (it != cache.end() && it->second.tex && it->second.tex != tex)
-        SDL_DestroyTexture(it->second.tex);
-    cache[path] = {tex, mt};
-    return tex;
+    const auto sz = std::filesystem::file_size(path, ec);
+    if (ec || sz > 20u * 1024u * 1024u) return okay::Image();   // skip >20 MB: the import would hitch the UI
+    okay::Scene sc;
+    bool okm = false;
+    GameObject* root = okay::ImportModelScene(sc, path, &okm);
+    if (!root || !okm) return okay::Image();
+    sc.Update(0.0f);
+    Vec3 center; float radius;
+    AnimFocusBounds(root, center, radius);
+    return RenderFramedImage(sc, center, radius);
 }
+static okay::Image RenderMeshFileImage(const std::string& path) {   // a .okaymesh file on its own
+    Mesh m; std::string tex, err;
+    if (!okay::modeling::LoadMeshAsset(path, m, &tex, &err)) return okay::Image();
+    okay::Scene sc;
+    GameObject* g = sc.CreateGameObject("mesh");
+    MeshRenderer* mr = g->AddComponent<MeshRenderer>();
+    mr->mesh = m;
+    sc.Update(0.0f);
+    Vec3 center; float radius;
+    AnimFocusBounds(g, center, radius);
+    return RenderFramedImage(sc, center, radius);
+}
+static okay::Image RenderMaterialImage(const std::string& path) {   // the material on a sphere
+    okay::Material m;
+    if (!okay::Material::LoadFromFile(path, m)) return okay::Image();
+    okay::Scene sc;
+    GameObject* g = sc.CreateGameObject("ball");
+    MeshRenderer* mr = g->AddComponent<MeshRenderer>();
+    mr->mesh = Mesh::FromName("Sphere");
+    m.ApplyTo(*mr);
+    sc.Update(0.0f);
+    Vec3 center; float radius;
+    AnimFocusBounds(g, center, radius);
+    return RenderFramedImage(sc, center, radius);
+}
+// A scene's picture for other windows (the Scene Manager): the Project panel's cached one. Null while it is not made yet.
+static SDL_Texture* ProjectThumb(const std::string& abs);
+SDL_Texture* GetSceneThumb(const std::string& path) { return ProjectThumb(path); }
 
 // Rendered thumbnail for a built-in primitive/prop mesh by name (the Modeling
 // panel's Add library). Rendered once per name, cached for the session, and
@@ -1649,47 +1665,6 @@ static SDL_Texture* GetPrimitiveThumb(const char* name) {
         tex = RenderObjectThumb(sc, g);
     }
     cache[name] = tex;   // cache even nullptr (unrenderable) so we don't retry forever
-    return tex;
-}
-
-// Rendered thumbnail for a model file (.obj/.fbx/.glb/...): import it into a
-// throwaway scene (same pipeline as drag-drop, so materials/rigs apply) and
-// snapshot it. Import can be slow, so it's cached until the file changes and
-// oversized files are skipped rather than stalling the Project browser.
-struct ModelThumbEntry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
-static std::unordered_map<std::string, ModelThumbEntry>& ModelThumbCache() {
-    static std::unordered_map<std::string, ModelThumbEntry> cache;
-    return cache;
-}
-// A model's import settings changed: draw its preview again.
-static void ForgetModelThumb(const std::string& path) {
-    auto& cache = ModelThumbCache();
-    auto it = cache.find(path);
-    if (it == cache.end()) return;
-    if (it->second.tex) SDL_DestroyTexture(it->second.tex);
-    cache.erase(it);
-}
-static SDL_Texture* GetModelThumb(const std::string& path) {
-    using Entry = ModelThumbEntry;
-    auto& cache = ModelThumbCache();
-    std::error_code ec;
-    auto mt = std::filesystem::last_write_time(path, ec);
-    auto it = cache.find(path);
-    if (it != cache.end() && (ec || it->second.mtime == mt)) return it->second.tex;
-    if (g_renderThumbBudget <= 0) return it != cache.end() ? it->second.tex : nullptr;   // a few renders per frame: the rest wait their turn
-    --g_renderThumbBudget;
-
-    SDL_Texture* tex = nullptr;
-    auto sz = std::filesystem::file_size(path, ec);
-    if (!ec && sz <= 20u * 1024u * 1024u) {   // skip >20 MB: import would hitch the UI
-        okay::Scene sc;
-        bool okm = false;
-        GameObject* root = okay::ImportModelScene(sc, path, &okm);
-        if (root && okm) tex = RenderObjectThumb(sc, root);
-    }
-    if (it != cache.end() && it->second.tex && it->second.tex != tex)
-        SDL_DestroyTexture(it->second.tex);
-    cache[path] = {tex, mt};
     return tex;
 }
 
@@ -7343,12 +7318,10 @@ static void DrawFindInFiles(EditorState& ed) {
 
 // Compact "modified ago" stamp for a file: "now", "5m", "3h", "12d" ("" if the
 // time can't be read). Used by the Project list's Date column.
-static std::string AgoShort(const std::filesystem::path& p) {
-    std::error_code ec;
-    auto wt = std::filesystem::last_write_time(p, ec);
-    if (ec) return {};
-    auto secs = std::chrono::duration_cast<std::chrono::seconds>(
-        std::filesystem::file_time_type::clock::now() - wt).count();
+static std::string AgoShort(std::int64_t modifiedEpochSeconds) {
+    if (modifiedEpochSeconds <= 0) return {};
+    auto secs = static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count()) - static_cast<long long>(modifiedEpochSeconds);
     if (secs < 0) secs = 0;
     if (secs < 60)    return "now";
     if (secs < 3600)  return std::to_string(secs / 60) + "m";
@@ -8141,36 +8114,14 @@ static void TreeNote(const std::string& path, bool open) { g_treeShownNow.push_b
 static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::size_t bufsz,
                            char* search, bool reveal) {
     namespace fs = std::filesystem;
-    // Cache each folder's subfolder listing (+ whether each has children) so the
-    // recursive tree doesn't re-scan the disk every frame for every open folder
-    // (a real stutter on big projects). ~1s TTL picks up external changes.
+    // The folders come from the asset database's folder list (okaypb::Browser::SubFolders): no disk walk per open node.
     struct TreeSub { fs::path path; bool hasKids = false; int items = 0; };
-    static std::map<std::string, std::pair<Uint32, std::vector<TreeSub>>> s_treeCache;
-    std::string dkey = dir.string();
-    auto& cached = s_treeCache[dkey];
-    Uint32 nowMs = SDL_GetTicks();
-    if (nowMs >= cached.first) {
-        cached.first = nowMs + 1000;
-        cached.second.clear();
-        std::vector<fs::path> subs;
-        std::error_code se;
-        for (auto& e : fs::directory_iterator(dir, se))
-            if (e.is_directory(se) && !okaypb::IsHiddenName(e.path().filename().string())) subs.push_back(e.path());
-        std::sort(subs.begin(), subs.end(), [](const fs::path& a, const fs::path& b) {
-            return Lower(a.filename().string()) < Lower(b.filename().string());
-        });
-        for (const fs::path& s : subs) {
-            TreeSub ts; ts.path = s; std::error_code e2;
-            for (auto& c : fs::directory_iterator(s, e2)) {
-                if (okaypb::IsHiddenName(c.path().filename().string())) continue;   // .okaymeta files and dot-folders do not count
-                if (c.is_directory(e2)) ts.hasKids = true;
-                if (++ts.items >= 999) break;
-            }
-            cached.second.push_back(ts);
-        }
-    }
+    std::vector<TreeSub> subsList;
+    if (g_pb && g_pb->Indexed())
+        for (const okaypb::Browser::FolderRow& fr : g_pb->SubFolders(dir.generic_string()))
+            subsList.push_back({fs::path(NativePath(fr.path)), fr.hasKids, fr.items});
     fs::path cur(dirBuf);
-    for (const auto& pr : cached.second) {
+    for (const auto& pr : subsList) {
         const fs::path& s = pr.path;
         bool hasKids = pr.hasKids;
         ImGuiTreeNodeFlags f = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth |
@@ -9122,19 +9073,7 @@ static void DrawPluginManager(EditorState& ed) {
 
 // Project type filters (g_projFilter ids): 1 scripts, 2 images, 3 scenes,
 // 4 materials, 5 prefabs, 6 data, 7 audio, 8 models.
-static bool ProjectFilterMatches(int f, const std::string& ext) {
-    switch (f) {
-        case 1: return ext==".okay"||ext==".lua"||ext==".cs"||ext==".okayvs";
-        case 2: return ext==".png"||ext==".jpg"||ext==".jpeg"||ext==".bmp"||ext==".tga"||ext==".gif"||ext==".hdr";
-        case 3: return ext==".okayscene";
-        case 4: return ext==".okaymat";
-        case 5: return ext==".okayprefab";
-        case 6: return ext==".okaydata";
-        case 7: return ext==".wav"||ext==".ogg"||ext==".mp3"||ext==".flac";
-        case 8: { const char* k = ImportKindLabel(ext); return k && std::strcmp(k, "model") == 0; }
-    }
-    return true;
-}
+static bool ProjectFilterMatches(int f, const std::string& ext) { return okaypb::FilterMatches(static_cast<okaypb::Filter>(f), ext); }
 // ---- Asset color labels (per project, stored in <project>/.okaylabels) ----------
 static const char* kAssetLabelNames[] = {"None", "Red", "Orange", "Yellow", "Green", "Blue", "Purple"};
 static const ImU32 kAssetLabelCols[] = {0, IM_COL32(230, 80, 80, 255), IM_COL32(240, 150, 60, 255), IM_COL32(235, 205, 70, 255),
@@ -9170,51 +9109,81 @@ static void SetAssetLabel(const std::string& proj, const std::string& full, int 
     std::ofstream f(std::filesystem::path(proj) / ".okaylabels", std::ios::trunc);
     for (const auto& kv : g_assetLabels) f << kv.second << "\t" << kv.first << "\n";
 }
-// A picture for an image asset: made once per file content (the asset database's thumbnail cache, a small PNG on
-// disk under .okay/thumbs), so a folder of big textures opens fast and the next editor start reuses them. At most a
-// few new ones are made per frame (g_thumbBudget); the rest show their icon until their turn.
-static std::unique_ptr<okay::ThumbnailCache> g_thumbCache;
-static std::string g_thumbCacheDir;
-static std::map<std::string, SDL_Texture*> g_thumbTex;   // "<guid>:<hash>" -> texture
-static int g_thumbBudget = 0;
+// Pictures for the Project panel come from the asset database's ThumbnailCache, through okaypb::Browser::Thumb: keyed by
+// the asset's GUID and content hash, kept on disk in <project>/.okay/thumbs, made lazily (a few milliseconds per frame,
+// see Browser::ThumbFrame) and shown as the type icon until their turn. Textures are decoded and shrunk, audio is drawn
+// as a waveform, and prefabs, scenes, materials, models and mesh files are rendered by the functions above. This file
+// only turns the cache's Image into an SDL texture, kept while it is used.
+struct ProjThumbTex { SDL_Texture* tex = nullptr; int lastUse = 0; };
+static std::map<std::string, ProjThumbTex> g_thumbTex;   // "<guid>:<hash>" -> texture
+static int g_thumbFrame = 0;
+static bool g_thumbGensFor = false;
+static std::string g_thumbGenRoot;
+static void ProjectRegisterThumbGenerators() {
+    if (!g_pb || g_thumbGenRoot == g_pb->Root()) return;
+    g_thumbGenRoot = g_pb->Root();
+    g_pb->AddThumbGenerator({"okayprefab"}, RenderPrefabImage);
+    g_pb->AddThumbGenerator({"okayscene"}, RenderSceneImage);
+    g_pb->AddThumbGenerator({"okaymat"}, RenderMaterialImage);
+    g_pb->AddThumbGenerator({"okaymesh"}, RenderMeshFileImage);
+    g_pb->AddThumbGenerator(okay::ExtensionsOfType(okay::AssetType::Model), RenderModelImage);
+    g_thumbGensFor = true;
+}
+// Types that can have a picture at all (a script or a data file never does: do not even ask).
+static bool ProjectHasThumb(const std::string& ext) {
+    switch (okay::AssetTypeFromExtension(ext)) {
+        case okay::AssetType::Texture: case okay::AssetType::Model: case okay::AssetType::Mesh: case okay::AssetType::Audio:
+        case okay::AssetType::Material: case okay::AssetType::Scene: case okay::AssetType::Prefab: return true;
+        default: return false;
+    }
+}
 static SDL_Texture* ProjectThumb(const std::string& abs) {
-    if (!g_pb || !g_sdlRenderer) return GetThumb(abs);
-    const std::string dirWanted = g_pb->ProjectDir() + "/.okay/thumbs";
-    if (!g_thumbCache || g_thumbCacheDir != dirWanted) {
-        for (auto& kv : g_thumbTex) if (kv.second) SDL_DestroyTexture(kv.second);
-        g_thumbTex.clear();
-        okay::ThumbnailCache::Options o;
-        o.size = 128; o.diskDir = dirWanted;
-        g_thumbCache = std::make_unique<okay::ThumbnailCache>(o);
-        g_thumbCacheDir = dirWanted;
+    if (!g_pb || !g_sdlRenderer) return nullptr;
+    if (!ProjectHasThumb(Lower(std::filesystem::path(abs).extension().string()))) return nullptr;
+    ProjectRegisterThumbGenerators();
+    const okaypb::Browser::ThumbResult r = g_pb->Thumb(NativePath(abs));
+    if (r.key.empty()) return nullptr;
+    auto it = g_thumbTex.find(r.key);
+    if (it != g_thumbTex.end()) { it->second.lastUse = g_thumbFrame; return it->second.tex; }
+    if (!r.ready) return nullptr;   // not made yet (or no picture for it): the icon shows
+    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, r.image->Width(), r.image->Height());
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        SDL_UpdateTexture(tex, nullptr, r.image->Pixels().data(), r.image->Width() * 4);
     }
-    okay::Guid guid; std::uint64_t hash = 0;
-    g_pb->ThumbKey(abs, guid, hash);   // from the path, size and time: no meta file needed
-    const std::string key = guid.ToString() + ":" + std::to_string(hash);
-    auto it = g_thumbTex.find(key);
-    if (it != g_thumbTex.end()) return it->second;
-    if (!g_thumbCache->InMemory(guid, hash) && !g_thumbCache->OnDisk(guid, hash)) {
-        if (g_thumbBudget <= 0) return nullptr;
-        --g_thumbBudget;
-    }
-    const okay::ThumbnailCache::Thumb t = g_thumbCache->Get(guid, hash, abs, okay::AssetTypeFromPath(abs));
-    SDL_Texture* tex = nullptr;
-    if (!t.placeholder && t.image && t.image->Valid()) {
-        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, t.image->Width(), t.image->Height());
-        if (tex) {
-            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-            SDL_UpdateTexture(tex, nullptr, t.image->Pixels().data(), t.image->Width() * 4);
-        }
-    }
-    g_thumbTex[key] = tex;
+    g_thumbTex[r.key] = {tex, g_thumbFrame};
     return tex;
 }
-static void ProjectForgetThumb(const okay::Guid& g) {
-    if (g_thumbCache) g_thumbCache->Invalidate(g);
+// Every frame: textures nobody asked for in the last two seconds go (a changed or deleted asset has a new key, so its
+// old picture is never drawn again, and here it is freed).
+static void ProjectThumbFrame() {
+    ++g_thumbFrame;
+    if (g_pb) g_pb->ThumbFrame(10.0);
+    if (g_thumbTex.size() < 64 || (g_thumbFrame & 31) != 0) return;
+    for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
+        if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex) SDL_DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); }
+        else ++it;
+    }
+}
+// The asset's picture must be made again (Reimport, changed import settings).
+static void ProjectForgetThumb(const std::string& abs) {
+    if (!g_pb) return;
+    okay::Guid g; std::uint64_t h = 0;
+    g_pb->ThumbKey(NativePath(abs), g, h);
+    g_pb->ForgetThumb(NativePath(abs));
     const std::string pre = g.ToString() + ":";
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
-        if (it->first.rfind(pre, 0) == 0) { if (it->second) SDL_DestroyTexture(it->second); it = g_thumbTex.erase(it); } else ++it;
+        if (it->first.rfind(pre, 0) == 0) { if (it->second.tex) SDL_DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); } else ++it;
     }
+}
+
+// A small orange warning triangle: the asset names a file that is not there (a broken reference).
+static void DrawBrokenBadge(ImDrawList* dl, ImVec2 c, float r) {
+    dl->AddTriangleFilled(ImVec2(c.x, c.y - r), ImVec2(c.x + r * 1.1f, c.y + r * 0.9f), ImVec2(c.x - r * 1.1f, c.y + r * 0.9f), IM_COL32(245, 175, 50, 255));
+    dl->AddTriangle(ImVec2(c.x, c.y - r), ImVec2(c.x + r * 1.1f, c.y + r * 0.9f), ImVec2(c.x - r * 1.1f, c.y + r * 0.9f), IM_COL32(40, 28, 8, 230), 1.2f);
+    dl->AddLine(ImVec2(c.x, c.y - r * 0.35f), ImVec2(c.x, c.y + r * 0.35f), IM_COL32(40, 28, 8, 255), 1.8f);
+    dl->AddCircleFilled(ImVec2(c.x, c.y + r * 0.62f), 1.1f, IM_COL32(40, 28, 8, 255));
 }
 
 // After a rename / move / undo of assets: labels follow the files, the open scene follows its own file and
@@ -9340,13 +9309,8 @@ void DrawProject(EditorState& ed) {
         }
     }
     g_projectSelected = selected;
-    g_thumbBudget = 6;
-    g_renderThumbBudget = 4;
     if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
-    {   // keep the asset index fresh without a thread: re-scan when due (cheap; waits 30x as long as the scan took)
-        static std::string s_changedSig;
-        if (pb.Poll(SDL_GetTicks())) s_changedSig.clear();
-    }
+    pb.Poll(SDL_GetTicks());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
@@ -9437,25 +9401,9 @@ void DrawProject(EditorState& ed) {
     // Smart filters: every model / texture / sound / script / ... in the project at
     // once, with counts (a cached whole-project scan, refreshed every few seconds).
     {
-        static std::string s_cntRoot; static Uint32 s_cntNext = 0;
-        static int s_cnt[9] = {0}; static int s_cntRecent = 0;
-        if (s_cntRoot != root.string() || SDL_GetTicks() >= s_cntNext) {
-            s_cntRoot = root.string(); s_cntNext = SDL_GetTicks() + 3000;
-            for (int& c : s_cnt) c = 0;
-            s_cntRecent = 0;
-            std::error_code ce;
-            const auto weekAgo = fs::file_time_type::clock::now() - std::chrono::hours(24 * 7);
-            int seen = 0;
-            for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ce);
-                 !ce && it != fs::recursive_directory_iterator(); it.increment(ce)) {
-                if (++seen > 20000) break;
-                if (!it->is_regular_file(ce)) continue;
-                std::string x = Lower(it->path().extension().string());
-                for (int f = 1; f <= 8; ++f) if (ProjectFilterMatches(f, x)) s_cnt[f]++;
-                auto wt = it->last_write_time(ce);
-                if (!ce && wt >= weekAgo) ++s_cntRecent;
-            }
-        }
+        // The counts come from the database's index (one pass over its records, redone only when its revision moves).
+        const okaypb::Browser::Counts& cnt = pb.CountsNow();
+        const int* s_cnt = cnt.byFilter; const int s_cntRecent = cnt.recent;
         ImGui::TextDisabled("SMART FILTERS");
         struct SF { int id; ImU32 col; };
         static const SF kSF[] = {{8, IM_COL32(110, 170, 255, 255)}, {2, IM_COL32(235, 160, 90, 255)},
@@ -9593,6 +9541,8 @@ void DrawProject(EditorState& ed) {
     static bool undoReq = false;
     static bool duplicateSel = false, reimportSel = false;   // set by the menu / Ctrl+D, handled once below
     static std::string findRefsFor;                           // "Find References" asked for this asset
+    static std::string showDepsFor;                           // "Show Dependencies" asked for this asset
+    static std::string tagFor;                                // "Add Tag..." asked for this asset
     static bool s_searchAll = false;                          // search the whole project instead of this folder
     static bool s_scrollToSel = false;                        // a key moved the selection: scroll it into view
     static bool s_focusSearch = false;                        // Ctrl+F: put the cursor in the search box
@@ -9743,127 +9693,75 @@ void DrawProject(EditorState& ed) {
     ImGui::BeginChild("gridscroll", ImVec2(0, -detailsH), false, ImGuiWindowFlags_NoNavInputs);
     const float gridAvailH = ImGui::GetContentRegionAvail().y;   // for fitting the tiles (below)
 
-    // Map the filter to a set of extensions ("" = always show, dirs always show).
-    auto passFilter = [&](const std::string& ext, bool isDir) -> bool {
-        if (s_smart >= 0) {   // smart view: files only, of the smart type (recent: any type)
-            if (isDir) return false;
-            return s_smart >= kSmartRecent || ProjectFilterMatches(s_smart, ext);   // recent/unused/labels pre-filtered by the scan
-        }
-        if (isDir || s_filter == 0) return true;
-        return ProjectFilterMatches(s_filter, ext);
-    };
-
-    // Cache the directory scan + sort so the Project panel doesn't hit the disk
-    // every frame (per-comparison file_size/last_write_time made that a real
-    // stutter on big asset folders). Re-scan when the folder / search / sort
-    // change, or every ~0.6s to pick up external edits.
-    static std::string s_scanDir, s_scanSearch; static int s_scanSort = -1;
-    static Uint32 s_scanNext = 0;
-    static std::vector<fs::directory_entry> s_scanEntries;
+    // The listing comes from the asset database (okaypb::Browser::List): no disk walk of the panel's own. It is made again only
+    // when the folder, the search, the sort or a filter changes, or when the database's revision moves (a scan found a change,
+    // or an operation here made one), so an idle panel does no work at all.
+    static std::string s_scanDir, s_scanSearch; static int s_scanSort = -2, s_scanFilter = -2, s_scanSmart = -2;
+    static bool s_scanAll = false;
+    static std::uint64_t s_scanRev = ~0ull;
+    static std::vector<okaypb::Entry> s_scanEntries;
+    // Search syntax: plain words match names, labels and type words; "t:model" (model, texture, audio, script, scene, material,
+    // prefab, data, folder), "ext:png", "l:red" (a colour label, or a tag from the asset database), "is:unused", "is:broken",
+    // "uses:hero.png" (what uses it) and "deps:main.okayscene" (what it uses). Combine freely.
+    int qColor = -1;                 // "l:red" naming a colour label is applied here (colour labels are the editor's own list)
+    std::string dbText;              // the rest goes to the database
     {
-        Uint32 nowMs = SDL_GetTicks();
-        static int s_scanSmart = -2;
-        static bool s_scanAll = false;
-        bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort ||
-                       s_scanSmart != s_smart || s_scanAll != s_searchAll;
-        if (changed || nowMs >= s_scanNext) {
-            s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanSmart = s_smart; s_scanAll = s_searchAll;
-            s_scanNext = nowMs + (s_smart >= 0 ? 2000 : 600);
-            s_scanEntries.clear();
-            std::error_code sec;
-            if (s_smart >= 0 && fs::is_directory(root, sec)) {
-                // Whole project, flat. "Recently changed" keeps the last week, newest first.
-                const auto weekAgo = fs::file_time_type::clock::now() - std::chrono::hours(24 * 7);
-                // Unused Assets: one lower-cased corpus of every file that can reference
-                // an asset by name (scenes, prefabs, materials, scripts, data).
-                std::string corpus;
-                if (s_smart == 101) {
-                    std::error_code ce;
-                    for (auto& e : fs::recursive_directory_iterator(fs::path(labelProj), fs::directory_options::skip_permission_denied, ce)) {
-                        if (!e.is_regular_file(ce)) continue;
-                        std::string x = Lower(e.path().extension().string());
-                        if (x != ".okayscene" && x != ".okayprefab" && x != ".okaymat" && x != ".okay" && x != ".lua" && x != ".cs" &&
-                            x != ".okayvs" && x != ".okayanim" && x != ".okaydata" && x != ".json" && x != ".okayproj" && x != ".txt") continue;
-                        std::error_code se2;
-                        if (e.file_size(se2) > (4u << 20) || corpus.size() > (96u << 20)) continue;
-                        corpus += Lower(extide::ReadFile(e.path().string()));
-                        corpus += '\n';
-                    }
-                }
-                for (auto& e : fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, sec)) {
-                    if (!e.is_regular_file(sec)) continue;
-                    if (s_smart == kSmartRecent) { auto wt = e.last_write_time(sec); if (sec || wt < weekAgo) { sec.clear(); continue; } }
-                    else if (s_smart == 101) {
-                        std::string x = Lower(e.path().extension().string());
-                        bool referenceable = ProjectFilterMatches(2, x) || ProjectFilterMatches(7, x) || ProjectFilterMatches(8, x) ||
-                                             ProjectFilterMatches(4, x) || ProjectFilterMatches(5, x) || x == ".ttf" || x == ".otf";
-                        if (!referenceable) continue;
-                        if (corpus.find(Lower(e.path().filename().string())) != std::string::npos) continue;
-                    }
-                    else if (s_smart >= 200) { if (AssetLabelOf(labelProj, e.path().string()) != s_smart - 200) continue; }
-                    else if (!ProjectFilterMatches(s_smart, Lower(e.path().extension().string()))) continue;
-                    s_scanEntries.push_back(e);
-                    if (s_scanEntries.size() >= 4000) break;
-                }
-                if (s_smart == kSmartRecent) {
-                    std::sort(s_scanEntries.begin(), s_scanEntries.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
-                        std::error_code x, y; return a.last_write_time(x) > b.last_write_time(y);
-                    });
-                    if (s_scanEntries.size() > 200) s_scanEntries.resize(200);
-                }
-            } else if (fs::is_directory(dir, sec)) {
-                if (search[0] == '\0') {
-                    for (auto& e : fs::directory_iterator(dir, sec)) s_scanEntries.push_back(e);
-                } else {
-                    // A search looks through THIS FOLDER AND EVERYTHING BELOW it
-                    // capped so a giant tree can't stall the scan.
-                    // (or the whole project, when the search is set to "Project")
-                    for (auto& e : fs::recursive_directory_iterator(
-                             s_searchAll ? root : dir, fs::directory_options::skip_permission_denied, sec)) {
-                        s_scanEntries.push_back(e);
-                        if (s_scanEntries.size() >= 4000) break;
-                    }
-                }
-            }
-            if (s_smart != kSmartRecent)
-            std::sort(s_scanEntries.begin(), s_scanEntries.end(), [&](const fs::directory_entry& a, const fs::directory_entry& b) {
-                bool da = a.is_directory(), db = b.is_directory();
-                if (da != db) return da;     // folders first
-                if (s_sort == 1 && !da) {    // by type (extension), then name
-                    std::string ea = Lower(a.path().extension().string()), eb = Lower(b.path().extension().string());
-                    if (ea != eb) return ea < eb;
-                } else if (s_sort == 2 && !da) {   // by size, largest first, then name
-                    std::error_code sa, sb;
-                    auto za = fs::file_size(a.path(), sa), zb = fs::file_size(b.path(), sb);
-                    if (!sa && !sb && za != zb) return za > zb;
-                } else if (s_sort == 3) {          // by modified time, newest first
-                    std::error_code ta, tb;
-                    auto wa = fs::last_write_time(a.path(), ta), wb = fs::last_write_time(b.path(), tb);
-                    if (!ta && !tb && wa != wb) return wa > wb;
-                }
-                return Lower(a.path().filename().string()) < Lower(b.path().filename().string());
-            });
-        }
-    }
-    std::vector<fs::directory_entry>& entries = s_scanEntries;
-
-    std::string needle = Lower(search);
-    // Search syntax: plain words match names; "t:model" (model,
-    // texture, audio, script, scene, material, prefab, data, folder), "l:red"
-    // (a color label) and "ext:png" narrow it down. Combine freely.
-    int qType = -1, qLabel = -1; std::string qExt, qText;
-    {
-        std::istringstream qs(needle); std::string w;
+        std::istringstream qs(Lower(search)); std::string w;
         while (qs >> w) {
-            if (w.rfind("t:", 0) == 0) qType = ProjectTypeWord(w.substr(2));
-            else if (w.rfind("l:", 0) == 0) {
-                std::string ln = w.substr(2);
-                for (int i = 1; i < kAssetLabelCount; ++i) if (Lower(kAssetLabelNames[i]) == ln) qLabel = i;
+            if (w.rfind("l:", 0) == 0) {
+                const std::string ln = w.substr(2);
+                for (int i = 1; i < kAssetLabelCount; ++i) if (Lower(kAssetLabelNames[i]) == ln) qColor = i;
+                if (qColor > 0 && Lower(kAssetLabelNames[qColor]) == ln) continue;
             }
-            else if (w.rfind("ext:", 0) == 0) { qExt = w.substr(4); if (!qExt.empty() && qExt[0] != '.') qExt = "." + qExt; }
-            else { if (!qText.empty()) qText += ' '; qText += w; }
+            if (!dbText.empty()) dbText += ' ';
+            dbText += w;
         }
     }
+    const bool haveProject = !ed.projectDir().empty() && fs::is_directory(root, ec);
+    {
+        const bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort ||
+                             s_scanFilter != s_filter || s_scanSmart != s_smart || s_scanAll != s_searchAll || s_scanRev != pb.Revision();
+        if (changed) {
+            s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanFilter = s_filter; s_scanSmart = s_smart;
+            s_scanAll = s_searchAll; s_scanRev = pb.Revision();
+            s_scanEntries.clear();
+            if (haveProject) {
+                okaypb::ListOptions lo;
+                lo.text = dbText;
+                lo.filter = static_cast<okaypb::Filter>(s_filter);
+                lo.sort = s_sort == 1 ? okaypb::SortKey::Type : s_sort == 2 ? okaypb::SortKey::Size : s_sort == 3 ? okaypb::SortKey::Modified : okaypb::SortKey::Name;
+                lo.descending = s_sort == 2 || s_sort == 3;   // biggest and newest first
+                std::string scope = dir.generic_string();
+                if (s_smart >= 0) {   // a smart view lists the whole project, flat
+                    scope = root.generic_string();
+                    lo.recursive = true; lo.text.clear(); lo.filter = okaypb::Filter::All;
+                    if (s_smart >= 1 && s_smart <= 8) lo.filter = static_cast<okaypb::Filter>(s_smart);
+                    else if (s_smart == kSmartRecent) { lo.modifiedWithinSeconds = 7 * 24 * 3600; lo.sort = okaypb::SortKey::Modified; lo.descending = true; lo.limit = 200; }
+                    else if (s_smart == 101) lo.unusedOnly = true;
+                } else if (!dbText.empty() || qColor > 0) {
+                    if (s_searchAll) scope = root.generic_string();   // a search looks in this folder and below, or the whole project
+                    lo.recursive = true;
+                }
+                std::vector<okaypb::Entry> list = pb.List(scope, lo);
+                for (okaypb::Entry& e : list) {
+                    if (s_smart >= 0 && e.isDir) continue;
+                    if (s_smart == 101) {   // Unused Assets: the kinds a scene or script points at, that nothing points at
+                        const okay::AssetType k = e.kind;
+                        const bool referenceable = k == okay::AssetType::Texture || k == okay::AssetType::Audio || k == okay::AssetType::Model ||
+                                                   k == okay::AssetType::Material || k == okay::AssetType::Prefab || k == okay::AssetType::Font;
+                        if (!referenceable) continue;
+                    }
+                    const int colour = e.isDir ? 0 : AssetLabelOf(labelProj, NativePath(e.path));
+                    if (s_smart >= 200 && colour != s_smart - 200) continue;
+                    if (qColor > 0 && colour != qColor) continue;
+                    s_scanEntries.push_back(std::move(e));
+                }
+            }
+        }
+    }
+    std::vector<okaypb::Entry>& entries = s_scanEntries;
+    const std::string needle = Lower(search);
+
     // In a short panel (the default dock is only a few rows tall) shrink the tiles so
     // at least one full row, names included, fits instead of being cut off mid-tile.
     const float tileLabelH = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y + 10.0f;
@@ -9966,7 +9864,9 @@ void DrawProject(EditorState& ed) {
             ImGui::Separator();
             // -- Find --
             if (!isDir && ImGui::MenuItem("Find References")) findRefsFor = full;
-            if (!isDir && ImGui::IsItemHovered()) ImGui::SetTooltip("List the assets that use this one, and what it uses.");
+            if (!isDir && ImGui::IsItemHovered()) ImGui::SetTooltip("List the assets that use this one (from the asset database).");
+            if (!isDir && ImGui::MenuItem("Show Dependencies")) showDepsFor = full;
+            if (!isDir && ImGui::IsItemHovered()) ImGui::SetTooltip("List what this asset uses, directly or through other assets.");
             if (!isDir && ImGui::MenuItem("Find References in Scene")) {
                 std::string fn = fs::path(full).filename().string();
                 int hits = 0; GameObject* first = nullptr;
@@ -9981,6 +9881,13 @@ void DrawProject(EditorState& ed) {
             ImGui::Separator();
             // -- Organise --
             if (ImGui::MenuItem(IsFavFolder(full) ? "Remove from Favourites" : "Add to Favourites")) ToggleFavFolder(full);
+            if (!isDir && ImGui::BeginMenu("Tags")) {
+                if (ImGui::MenuItem("Add Tag...")) tagFor = full;
+                const okaypb::Browser::AssetInfo ti = pb.Info(full);
+                for (const std::string& lb : ti.labels)
+                    if (ImGui::MenuItem(("Remove \"" + lb + "\"").c_str())) pb.RemoveLabel(NativePath(full), lb);
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Label")) {
                 int cur = AssetLabelOf(labelProj, full);
                 for (int li = 0; li < kAssetLabelCount; ++li) {
@@ -10072,25 +9979,12 @@ void DrawProject(EditorState& ed) {
     };
 
     int shown = 0, col = 0;
-    for (auto& e : entries) {
-        std::error_code de;
-        bool isDir = e.is_directory(de);
-        std::string name = e.path().filename().string();
-        if (okaypb::IsHiddenName(name)) continue;   // .okaymeta files, temp files and dot-folders are never shown
-        if (search[0] || s_smart >= 0) {            // (a search or smart view looks inside folders: skip dot-folders' contents too)
-            const std::string pth = e.path().string(), rs = root.string();
-            const std::string below = pth.size() > rs.size() && pth.compare(0, rs.size(), rs) == 0 ? pth.substr(rs.size()) : pth;
-            if (below.find("/.") != std::string::npos || below.find("\\.") != std::string::npos) continue;
-        }
-        if (!qText.empty() && Lower(name).find(qText) == std::string::npos) continue;
-        std::string ext = Lower(e.path().extension().string());
-        if (qType > 0 && (isDir || !ProjectFilterMatches(qType, ext))) continue;
-        if (qType == -2 && !isDir) continue;
-        if (!qExt.empty() && ext != qExt) continue;
-        if (qLabel > 0 && AssetLabelOf(labelProj, e.path().string()) != qLabel) continue;
-        if (!passFilter(ext, isDir)) continue;
+    for (const okaypb::Entry& e : entries) {
+        const bool isDir = e.isDir;
+        const std::string& name = e.name;
+        const std::string& ext = e.ext;
         AssetKind k = KindOf(ext, isDir);
-        std::string full = e.path().string();
+        const std::string full = NativePath(e.path);
         shownPaths.push_back(full);
         const bool isSel = isSelected(full);
 
@@ -10101,13 +9995,7 @@ void DrawProject(EditorState& ed) {
             // ---- Grid tile (thumbnail / icon + wrapped name) ----
             ImGui::BeginGroup();
             ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
-            SDL_Texture* thumb = (std::string(k.letter) == "IMG") ? ProjectThumb(full) : nullptr;
-            if (!thumb && !isDir && ext == ".okayprefab") thumb = GetPrefabThumb(full);
-            if (!thumb && !isDir) {
-                if (const char* mk = ImportKindLabel(ext); mk && std::strcmp(mk, "model") == 0)
-                    thumb = GetModelThumb(full);
-            }
-            if (!thumb && !isDir && ext == ".okayscene") thumb = GetSceneThumb(full);
+            SDL_Texture* thumb = isDir ? nullptr : ProjectThumb(full);   // from the database's thumbnail cache; the icon shows until it is made
             ImVec4 matCol;
             bool isMat = !isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, matCol);
             if (thumb) {
@@ -10137,6 +10025,10 @@ void DrawProject(EditorState& ed) {
                 ImVec2 mn = ImGui::GetItemRectMin();
                 DrawStar(ImGui::GetWindowDrawList(), ImVec2(mn.x + 11.0f, mn.y + 11.0f), 7.0f, IM_COL32(255, 204, 64, 240));
             }
+            if (e.missingRefs > 0) {   // a reference in this asset points at nothing: warning badge (bottom-left)
+                ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                DrawBrokenBadge(ImGui::GetWindowDrawList(), ImVec2(mn.x + 11.0f, mx.y - 12.0f), 8.0f);
+            }
             if (int lb = AssetLabelOf(labelProj, full)) {   // color label dot (top-right)
                 ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, kAssetLabelCols[lb]);
@@ -10157,7 +10049,7 @@ void DrawProject(EditorState& ed) {
                 else ImGui::TextUnformatted(name.c_str());
                 ImGui::EndDragDropSource();
             }
-            if (isDir) AssetDropTarget(e.path());
+            if (isDir) AssetDropTarget(fs::path(full));
             {   // one line, elided to the tile width (the tooltip has the full name), so
                 // a long name can't spill past the row the grid reserved for it
                 std::string lbl = name;
@@ -10176,7 +10068,8 @@ void DrawProject(EditorState& ed) {
             ImGui::EndGroup();
             hov = ImGui::IsItemHovered();
             if (hov) {
-                ImGui::SetTooltip("%s", name.c_str());
+                if (e.missingRefs > 0) ImGui::SetTooltip("%s\n%d broken reference%s: it names a file that is not there (select it to see which).", name.c_str(), e.missingRefs, e.missingRefs == 1 ? "" : "s");
+                else ImGui::SetTooltip("%s", name.c_str());
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) dbl = true;
             }
         } else {
@@ -10194,20 +10087,14 @@ void DrawProject(EditorState& ed) {
                 else ImGui::TextUnformatted(name.c_str());
                 ImGui::EndDragDropSource();
             }
-            if (isDir) AssetDropTarget(e.path());
+            if (isDir) AssetDropTarget(fs::path(full));
             ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
             ImDrawList* dl = ImGui::GetWindowDrawList();
             float sq = rowH - 6.0f;
             ImVec2 c0(mn.x + 5.0f, mn.y + 3.0f), c1(c0.x + sq, c0.y + sq);
             // Real previews where they're cheap: image files show their pixels,
             // materials their albedo ball; everything else keeps its icon chip.
-            SDL_Texture* rowThumb = (std::string(k.letter) == "IMG") ? ProjectThumb(full) : nullptr;
-            if (!rowThumb && !isDir && ext == ".okayprefab") rowThumb = GetPrefabThumb(full);
-            if (!rowThumb && !isDir) {
-                if (const char* mk = ImportKindLabel(ext); mk && std::strcmp(mk, "model") == 0)
-                    rowThumb = GetModelThumb(full);
-            }
-            if (!rowThumb && !isDir && ext == ".okayscene") rowThumb = GetSceneThumb(full);
+            SDL_Texture* rowThumb = isDir ? nullptr : ProjectThumb(full);
             ImVec4 rowMat;
             if (rowThumb) dl->AddImage((ImTextureID)rowThumb, c0, c1);
             else if (!isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, rowMat))
@@ -10221,19 +10108,20 @@ void DrawProject(EditorState& ed) {
             std::string tn = AssetTypeName(k.icon);
             std::string szs;
             if (!isDir) {
-                std::error_code ze; auto z = fs::file_size(e.path(), ze);
-                if (!ze) szs = z < 1024 ? std::to_string(z) + " B"
-                              : z < 1024 * 1024 ? std::to_string(z / 1024) + " KB"
-                              : std::to_string(z / (1024 * 1024)) + " MB";
+                const std::uintmax_t z = e.size;
+                szs = z < 1024 ? std::to_string(z) + " B"
+                    : z < 1024 * 1024 ? std::to_string(z / 1024) + " KB"
+                    : std::to_string(z / (1024 * 1024)) + " MB";
             }
             float sizeX = mn.x + sizeOff, typeX = mn.x + typeOff, dateX = mn.x + dateOff;
             // Clip the name so a long filename never runs into the Type column.
-            dl->PushClipRect(ImVec2(c1.x + 7.0f, mn.y), ImVec2(typeX - 6.0f, mx.y), true);
+            dl->PushClipRect(ImVec2(c1.x + 7.0f, mn.y), ImVec2(typeX - 6.0f, mx.y - 0.0f), true);
             dl->AddText(ImVec2(c1.x + 7.0f, ty), tcol, name.c_str());
+            if (e.missingRefs > 0) DrawBrokenBadge(dl, ImVec2(c1.x + 7.0f + ImGui::CalcTextSize(name.c_str()).x + 12.0f, (mn.y + mx.y) * 0.5f), 6.0f);
             dl->PopClipRect();
             if (typeX > c1.x + 40.0f) dl->AddText(ImVec2(typeX, ty), dcol, tn.c_str());
             if (!szs.empty())         dl->AddText(ImVec2(sizeX, ty), dcol, szs.c_str());
-            std::string ago = AgoShort(e.path());
+            std::string ago = AgoShort(e.modified);
             if (!ago.empty())         dl->AddText(ImVec2(dateX, ty), dcol, ago.c_str());
         }
 
@@ -10325,13 +10213,7 @@ void DrawProject(EditorState& ed) {
         AssetKind sk = KindOf(sext, selDir);
         // Left: a larger preview — the real image for textures, else the type icon.
         const float pv = 68.0f;
-        SDL_Texture* pthumb = (!selDir && sk.icon == AssetIcon::Image) ? ProjectThumb(selected) : nullptr;
-        if (!pthumb && !selDir && sext == ".okayprefab") pthumb = GetPrefabThumb(selected);
-        if (!pthumb && !selDir) {
-            if (const char* mk = ImportKindLabel(sext); mk && std::strcmp(mk, "model") == 0)
-                pthumb = GetModelThumb(selected);
-        }
-        if (!pthumb && !selDir && sext == ".okayscene") pthumb = GetSceneThumb(selected);
+        SDL_Texture* pthumb = selDir ? nullptr : ProjectThumb(selected);
         ImVec4 pmat;
         bool pIsMat = !selDir && sk.icon == AssetIcon::Material && GetMaterialSwatch(selected, pmat);
         ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + pv, p0.y + pv);
@@ -10355,8 +10237,9 @@ void DrawProject(EditorState& ed) {
                  : std::to_string(z / (1024 * 1024)) + " MB";
         };
         if (selDir) {
-            int nItems = 0; std::error_code ce;
-            for (auto& c : fs::directory_iterator(sp, ce)) { if (!okaypb::IsHiddenName(c.path().filename().string())) ++nItems; }
+            int nItems = 0;
+            for (const okaypb::Browser::FolderRow& fr : pb.SubFolders(fs::path(sp).parent_path().generic_string()))
+                if (fs::path(NativePath(fr.path)) == sp) nItems = fr.items;   // from the database, no disk walk
             meta += "   \xe2\x80\xa2   " + std::to_string(nItems) + (nItems == 1 ? " item" : " items");
         } else {
             std::uintmax_t sz = fs::is_regular_file(sp, se) ? fs::file_size(sp, se) : 0;
@@ -10378,6 +10261,34 @@ void DrawProject(EditorState& ed) {
         ImGui::TextDisabled("%s", (re2 || rel.empty() || rel.native()[0] == '.')
                                       ? sp.string().c_str()
                                       : ("Assets/" + rel.generic_string()).c_str());
+        // From the asset database: GUID, dependency counts, tags, and a warning when a reference points at nothing.
+        if (!selDir) {
+            const okaypb::Browser::AssetInfo info = pb.Info(selected);
+            if (info.indexed) {
+                std::string l = "GUID " + info.guidShort + (info.hasMeta ? "" : " (this session)") + "   \xe2\x80\xa2   uses " + std::to_string(info.uses) +
+                                (info.usesAll > info.uses ? " (" + std::to_string(info.usesAll) + " in all)" : std::string()) +
+                                "   \xe2\x80\xa2   used by " + std::to_string(info.usedBy);
+                ImGui::TextDisabled("%s", l.c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("GUID %s\nContent hash %016llx\n%s", info.guid.ToString().c_str(), (unsigned long long)info.hash,
+                                      info.hasMeta ? "The GUID is kept in the .okaymeta file next to the asset: renames and moves keep it."
+                                                   : "No .okaymeta yet: it is written when you give the asset a tag or import settings.");
+                if (!info.missing.empty()) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f), "!  %d broken reference%s", (int)info.missing.size(), info.missing.size() == 1 ? "" : "s");
+                    if (ImGui::IsItemHovered()) {
+                        std::string tip = "These paths are written in this file, but nothing is there:";
+                        for (std::size_t i = 0; i < info.missing.size() && i < 8; ++i) tip += "\n  " + info.missing[i];
+                        ImGui::SetTooltip("%s", tip.c_str());
+                    }
+                }
+                if (!info.labels.empty()) {
+                    std::string t = "Tags:";
+                    for (const std::string& lb : info.labels) t += " " + lb;
+                    ImGui::TextDisabled("%s", t.c_str());
+                }
+            }
+        }
         // What uses it: other assets (the asset database) and objects in the open scene, on one line.
         if (!selDir) {
             int uses = 0;
@@ -10404,6 +10315,11 @@ void DrawProject(EditorState& ed) {
             extide::RevealInFiles((selDir ? sp : sp.parent_path()).string());
         ImGui::SameLine();
         if (ImGui::SmallButton("Copy Path")) ImGui::SetClipboardText(selected.c_str());
+        if (!selDir) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Dependencies##strip")) showDepsFor = selected;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("List what this asset uses (click a line to show it).");
+        }
         if (!selDir && (sk.icon == AssetIcon::Image || IsModelExt(sext))) {
             ImGui::SameLine();
             if (ImGui::SmallButton("Import Settings")) ImGui::OpenPopup("##impset");
@@ -10412,7 +10328,7 @@ void DrawProject(EditorState& ed) {
         if (ImGui::BeginPopup("##impset")) {
             ImGui::Text("%s", sp.filename().string().c_str());
             ImGui::Separator();
-            if (oked::projectpanel::HasImportSettings(pb, selected)) { if (oked::projectpanel::DrawImportSettings(pb, selected)) ForgetModelThumb(selected); }
+            if (oked::projectpanel::HasImportSettings(pb, selected)) { if (oked::projectpanel::DrawImportSettings(pb, selected)) ProjectForgetThumb(selected); }
             else ImGui::TextDisabled("This file has no import settings.");
             ImGui::EndPopup();
         }
@@ -10501,16 +10417,31 @@ void DrawProject(EditorState& ed) {
         reimportSel = false;
         int n = 0;
         for (const std::string& p : selectionList()) {
-            okay::Guid g; std::uint64_t h = 0;
-            pb.ThumbKey(p, g, h);
-            ProjectForgetThumb(g);                 // the picture is made again
+            ProjectForgetThumb(p);                 // the picture is made again
             if (pb.Reimport(p)) ++n;
         }
         ConsoleLog("Reimported " + std::to_string(n) + " asset" + (n == 1 ? "" : "s"));
     }
     if (!findRefsFor.empty()) {
-        oked::projectpanel::ShowReferences(pb, findRefsFor, [](const std::string& p) { g_pingAsset = p; });
+        oked::projectpanel::ShowReferences(pb, findRefsFor, [](const std::string& p) { g_pingAsset = p; }, oked::projectpanel::RefMode::UsedBy);
         findRefsFor.clear();
+    }
+    if (!showDepsFor.empty()) {
+        oked::projectpanel::ShowReferences(pb, showDepsFor, [](const std::string& p) { g_pingAsset = p; }, oked::projectpanel::RefMode::Uses);
+        showDepsFor.clear();
+    }
+    if (!tagFor.empty()) {   // tags are labels in the asset database (kept in the .okaymeta; searched with l:tag)
+        oked::projectpanel::NameRequest rq;
+        rq.title = "Add a tag to " + fs::path(tagFor).filename().string(); rq.okLabel = "Add"; rq.initial = ""; rq.hint = "Search for it with l:tag. It is saved in the asset's .okaymeta.";
+        const std::string target = tagFor;
+        rq.accept = [target](const std::string& tag) -> std::string {
+            std::string err;
+            if (!g_pb->AddLabel(NativePath(target), tag, &err)) return err.empty() ? "The tag could not be saved." : err;
+            ConsoleLog("Tagged " + fs::path(target).filename().string() + " with " + tag);
+            return {};
+        };
+        oked::projectpanel::AskName(std::move(rq));
+        tagFor.clear();
     }
     if (panelFocus) {
         ImGuiIO& kio = ImGui::GetIO();
@@ -10660,6 +10591,13 @@ void DrawProject(EditorState& ed) {
             ImGui::SetNextItemWidth(160);
             ImGui::SliderFloat("##size", &s_cell, 48.0f, 128.0f, "%.0f px");
             prefsChanged |= ImGui::IsItemDeactivatedAfterEdit();
+            for (const auto& sz : {std::pair<const char*, float>{"Small", 64.0f}, {"Medium", 96.0f}, {"Large", 128.0f}}) {
+                if (ImGui::SmallButton(sz.first)) { s_cell = sz.second; s_view = 0; prefsChanged = true; }
+                ImGui::SameLine();
+            }
+            ImGui::NewLine();
+            ImGui::Separator();
+            ImGui::TextDisabled("%d assets indexed, last refresh %.1f ms", pb.AssetCount(), pb.LastScanMs());
             ImGui::Separator();
             if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(dir.string());
             if (ImGui::MenuItem(IsFavFolder(dir.string()) ? "Remove folder from Favourites" : "Add folder to Favourites"))
@@ -28043,7 +27981,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled(bytes >= 1048576.0 ? "%.1f MB" : "%.1f KB", bytes >= 1048576.0 ? bytes / 1048576.0 : bytes / 1024.0);
             if (ImGui::SmallButton("Show in Project")) { g_pingAsset = s_seenAsset; g_showProject = true; ImGui::SetWindowFocus("Project"); }
             ImGui::Separator();
-            if (oked::projectpanel::HasImportSettings(*g_pb, s_seenAsset)) { if (oked::projectpanel::DrawImportSettings(*g_pb, s_seenAsset)) ForgetModelThumb(s_seenAsset); }
+            if (oked::projectpanel::HasImportSettings(*g_pb, s_seenAsset)) { if (oked::projectpanel::DrawImportSettings(*g_pb, s_seenAsset)) ProjectForgetThumb(s_seenAsset); }
             else ImGui::TextDisabled("This file has no import settings.");
             ImGui::PopStyleVar(3);
             ImGui::End();
@@ -47455,7 +47393,7 @@ int main(int argc, char** argv) {
             if (raise && window) { SDL_RestoreWindow(window); SDL_RaiseWindow(window); SDL_ShowWindow(window); }
         }
 
-        g_renderThumbBudget = 4;   // previews drawn per frame (see GetPrefabThumb)
+        ProjectThumbFrame();   // thumbnails made this frame: a few milliseconds at most (the Project panel and the Scene Manager share them)
         { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
         {   // dev screenshot hook: OKAY_UI_FOCUS="Inspector,Project" brings those dock tabs forward
             static int s_focusFrames = 0;

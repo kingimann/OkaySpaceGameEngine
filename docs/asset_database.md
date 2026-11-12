@@ -53,6 +53,12 @@ set compress 0
 - `okaymeta <n>` is the meta layout version (`AssetDatabase::kMetaVersion`, 1 today). A meta written by a newer
   layout is read as far as it is understood and **never rewritten** (`AssetRecord::metaReadOnly`); changing its
   labels or settings fails with an error instead of damaging it. Unknown lines in a same-version meta are kept.
+- **Assets without a meta.** `ScanOptions::createMetas = false` leaves them unindexed. With `indexUnmetaed = true` as well, every asset is
+  indexed in memory and nothing is written: it has a GUID for this session (`AssetRecord::metaVersion` is 0), appears in searches and the
+  dependency graph, and keeps its GUID when it is moved or renamed within the session (matched by content). A meta is written only when something is
+  stored: `AddLabel`, `SetSettings` with other values, or `EnsureMeta(guid)`, and the GUID it already had is the one written. An unchanged
+  in-memory asset keeps its hash from the previous scan (same size and time) and is not read again; a refresh never writes a meta for one. The
+  editor's Project panel opens a project this way, so opening a project writes no files.
 - `hash` and `size` describe the asset content (FNV-1a 64 of the bytes; files over 512 MB hash their first and last
   4 MB plus the size). They let a meta find its asset again after a move, even in a later session, and are how a
   source change is noticed. Turn off writing them with `ScanOptions::storeHashInMeta = false` (then only moves
@@ -90,6 +96,11 @@ Anything else is a new asset: a fresh GUID and a new meta, and an `Added` reimpo
 - **Old paths keep resolving.** After a move `Resolve("art/hero.png")` still returns the asset (with
   `viaRedirect = true`), and the dependency graph keeps the edge. `MoveAsset(from, to)` moves an asset and its meta
   together; use it for renames made inside the editor.
+
+`Folders()` lists every folder the last scan walked (empty ones too; hidden folders and `ignoreDirs` are left out) and `ScanReport::foldersChanged`
+says when that list changed. `Revision()` goes up when the index changed (an asset appeared, vanished, moved or changed content, labels or
+settings, a reference started or stopped resolving, a folder appeared or vanished) and stays put on an unchanged scan, so a consumer can keep
+what it built until the number moves.
 
 Lookups: `GuidToPath`, `PathToGuid` (exact project path; also accepts an absolute path inside the root, `./` and
 `..` forms and backslashes), `Resolve(guidOrPath)` (a GUID in text form, a path, or an old path), `Find`, `All`,
@@ -217,7 +228,8 @@ auto t = thumbs.Get(db, hero);                     // t.image is never null; t.s
 thumbs.AddGenerator({"okaymesh"}, [](const std::string& path) { return RenderMeshPreview(path); });
 ```
 
-`Get` order: memory, disk, a generator, then a placeholder. Generators (`render(path) -> Image`, asked newest
+`Get` order: memory, disk, a generator, then a placeholder. `WaveformThumbnailGenerator` (wav, ogg, mp3; on by default, `Options::audioGenerator`) draws the
+clip as a min/max waveform; a file over 64 MB or one that does not decode keeps the placeholder. Generators (`render(path) -> Image`, asked newest
 first) return an empty image when they cannot; the result is scaled down with `BoxDownscale` (area-weighted, alpha
 aware, never enlarges). The built-in `ImageThumbnailGenerator` handles `png jpg jpeg bmp tga gif psd hdr` through
 `Image::Load`. Types without a generator get a coloured placeholder tile with the extension; a failing generator
@@ -227,7 +239,8 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
 
 ## Not covered
 
-- No UI here. The editor's Project panel is the one consumer (see `project_panel.md`); the build/export code does not call this yet.
+- No UI here. The editor's Project panel is the one consumer (see `project_panel.md`); the build/export code does not call this yet. There is no file
+  watcher: a consumer calls `Scan` again (the panel does so every two seconds or more; an unchanged 5,000-asset project takes about 45 ms).
 - References are found by text scanning, not by loading. A path built at runtime, or stored in a binary file, is not
   seen; a name that happens to end in a known extension inside a quoted string can be taken for a path.
 - Binary formats are not parsed: a `.fbx` that points at external textures has no edges (a `.gltf` does).
@@ -238,4 +251,4 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
 - GUID references inside scene files do not exist yet (scenes store paths); `FixStaleReferences` is the bridge.
 - Meta files are matched by content hash, which is not a cryptographic hash.
 
-Tests: `tests/test_asset_database.cpp` (ctest name `asset_database`).
+Tests: `tests/test_asset_database.cpp` (ctest name `asset_database`); the Project panel's use of it is in `tests/test_project_panel_db.cpp` (`project_panel_db`).

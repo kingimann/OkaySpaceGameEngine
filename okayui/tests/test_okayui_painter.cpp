@@ -262,7 +262,7 @@ void Suite(plat::Painter& p, const char* label, bool software) {
         Img i = Read(p);
         const int n = CountColor(i, 0, 0, 64, 48, 255, 0, 0);
         CHECK(n == 45 || n == 55);        // the hypotenuse's pixel centres sit exactly on the edge
-        CHECK(Is(i, 10, 10, 255, 0, 0) && Is(i, 19, 10, 255, 0, 0) && Is(i, 10, 19, 255, 0, 0) && Is(i, 19, 19, 0, 0, 0));
+        CHECK(Is(i, 10, 10, 255, 0, 0) && Is(i, 18, 10, 255, 0, 0) && Is(i, 10, 18, 255, 0, 0) && Is(i, 19, 19, 0, 0, 0) && Is(i, 20, 10, 0, 0, 0));
         // textured quad, 1:1, equals the copy
         Fill(p, 0, 0, 0);
         ui2d::Tex t = Grid(p);

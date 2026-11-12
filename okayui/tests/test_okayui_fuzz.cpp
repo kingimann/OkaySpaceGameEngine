@@ -119,7 +119,7 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
         const std::string lbl = r.Label();
         if (r.Chance(10)) UI::SameLine(r.Chance(50) ? r.Nasty() : -1.0f);
         if (r.Chance(8)) UI::SetNextItemWidth(r.Nasty());
-        switch (r.Int(48)) {
+        switch (r.Int(52)) {
             case 0: UI::Button(lbl.c_str()); break;
             case 1: UI::SmallButton(lbl.c_str()); break;
             case 2: UI::Checkbox(lbl.c_str(), &bools[r.Int(4)]); break;
@@ -168,6 +168,10 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 44: UI::InvisibleButton(lbl.c_str(), r.Nasty(), r.Nasty()); UI::IsItemActive(); UI::IsItemActivated(); UI::IsItemDeactivated(); UI::IsItemClicked(r.Int(2)); break;
             case 45: UI::IsMouseDown(r.Int(3)); UI::IsMouseClicked(r.Int(3)); UI::IsMouseReleased(r.Int(3)); UI::GetMousePos(); UI::GetMouseDelta(); UI::IsMouseHoveringRect({r.Nasty(), r.Nasty()}, {r.Nasty(), r.Nasty()}); break;
             case 46: UI::EndDisabled(); UI::IsDisabled(); UI::GetColorU32((UI::Col)r.Int(UI::Col_COUNT), r.Nasty()); UI::ColorMulAlpha(r.Next(), r.Nasty()); break;
+            case 48: UI::DragFloat3(lbl.c_str(), &floats[r.Int(2)], r.Nasty(), r.Nasty(), r.Nasty()); break;   // 3 floats: index <= 1 stays in range
+            case 49: UI::DragFloat4(lbl.c_str(), floats, r.Nasty(), r.Nasty(), r.Nasty()); break;
+            case 50: UI::DragInt3(lbl.c_str(), &ints[r.Int(2)], r.Nasty(), r.NastyInt(1000), r.NastyInt(1000)); break;
+            case 51: UI::DragFloatRange2(lbl.c_str(), &floats[0], &floats[r.Int(4)], r.Nasty(), r.Nasty(), r.Nasty()); break;
             default: UI::ColorEdit3(lbl.c_str(), &floats[r.Int(2)]); break;   // reads 3 floats: the array has 4 entries, index <= 1 stays in range
         }
         if (r.Chance(20)) { UI::IsItemHovered(); UI::GetItemRect(); UI::WantsTextInput(); }

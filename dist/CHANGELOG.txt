@@ -18,6 +18,10 @@ v2.860.0
   - Kick, ban, unban and admin role for community servers and group chats.
     Run docs/sql/member_moderation.sql on your Supabase project first; it also
     closes a hole that let anyone join a server as admin (#668).
+  - Blocking and privacy are enforced by the server, not just the PC: nobody can
+    DM, call or friend-request someone who blocked them, and the DM, friend
+    request and online-status settings are applied by the database. Needs
+    docs/sql/blocks.sql (applied to the live project with this release) (#667).
   - Password-reset page and an honest message when no reset page is set up
     (#647). Typing indicators and read receipts say "Not set up on the server
     yet" until docs/sql/chat_receipts.sql is run (#646).

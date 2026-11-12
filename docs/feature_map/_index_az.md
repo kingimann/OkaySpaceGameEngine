@@ -4804,6 +4804,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - user content (47.1)
 - user directory (37.8)
 - User functions (24.3.2)
+- User reports (17.9.6)
 - User shader files (26.3.3)
 - username (17.2)
 - Using it from a game (16.14.4)

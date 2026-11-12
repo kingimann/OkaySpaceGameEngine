@@ -1637,11 +1637,19 @@ add_executable(test_anticheat_backend test_anticheat_backend.cpp)
 target_link_libraries(test_anticheat_backend PRIVATE okay::engine)
 target_include_directories(test_anticheat_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
+# User reports (docs/sql/reports.sql): requests, honest outcomes, the moderator list...
+add_executable(test_user_reports test_user_reports.cpp)
+target_link_libraries(test_user_reports PRIVATE okay::engine)
+target_include_directories(test_user_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME user_reports COMMAND test_user_reports)
 # ...and docs/sql/anticheat.sql on a LOCAL Postgres (skipped unless
 # OKAY_SQL_TEST_PGHOST names one; see the script).
 if(UNIX)
     add_test(NAME anticheat_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_anticheat_sql.sh)
     set_tests_properties(anticheat_sql PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME reports_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reports_sql.sh)
+    set_tests_properties(reports_sql PROPERTIES SKIP_RETURN_CODE 77)
+
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
     # docs/sql/member_moderation.sql (kick / ban / roles) on a LOCAL Postgres, same opt-in as above.

@@ -240,7 +240,7 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
 ## Not covered
 
 - No UI here. The editor's Project panel is the one consumer (see `project_panel.md`); the build/export code does not call this yet. There is no file
-  watcher: a consumer calls `Scan` again (the panel does so every two seconds or more; an unchanged 5,000-asset project takes about 45 ms).
+  watcher: a consumer calls `Scan` again (the panel does so every two seconds or more; an unchanged 5,000-asset project takes about 45 ms in a Release build and 135 ms in a Debug build).
 - References are found by text scanning, not by loading. A path built at runtime, or stored in a binary file, is not
   seen; a name that happens to end in a known extension inside a quoted string can be taken for a path.
 - Binary formats are not parsed: a `.fbx` that points at external textures has no edges (a `.gltf` does).

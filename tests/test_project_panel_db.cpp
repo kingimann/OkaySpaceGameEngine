@@ -334,6 +334,64 @@ int main() {
         }
     }
 
+    RUN_SUITE("broken references: missing and stale lists, Fix, undo");
+    {
+        Proj p;
+        Browser b(p.td.assets());
+        auto missing = b.MissingRefs();
+        CHECK(missing.size() == 1 && missing[0].referrer == p.td.at("Scenes/broken.okayscene") && Has(missing[0].reference, "gone.png"));
+        CHECK(b.StaleRefs().empty() && b.ReferenceProblemCount() == 1);
+        CHECK(b.FixStaleRefs().ok && b.FixStaleRefs().note.find("no stale") != std::string::npos);   // nothing to fix is not an error
+        // a file moved outside the editor: the scene, prefab and material still use the old path
+        std::uint64_t t = 10000000;
+        b.Poll(t);
+        const std::string mainBefore = ReadFile(p.td.at("Scenes/main.okayscene"));
+        fs::create_directories(fs::u8path(p.td.at("Moved")));
+        fs::rename(fs::u8path(p.td.at("Art/hero.png")), fs::u8path(p.td.at("Moved/hero.png")));
+        CHECK(b.Poll(t + 10000000));
+        auto stale = b.StaleRefs();
+        std::set<std::string> who; for (auto& s : stale) { who.insert(s.referrer); CHECK(s.target == p.td.at("Moved/hero.png") && s.reference == "Art/hero.png"); }
+        CHECK(who == std::set<std::string>({p.td.at("Art/hero.okaymat"), p.td.at("Prefabs/hero.okayprefab"), p.td.at("Scenes/main.okayscene")}));
+        CHECK(b.ReferenceProblemCount() == 4);                                  // the missing one and the three stale
+        CHECK(b.MissingRefs().size() == 1);                                     // a stale reference is not also missing
+        // Fix rewrites only the path text
+        auto r = b.FixStaleRefs();
+        CHECK(r.ok && r.referencesRewritten == 3 && r.filesRewritten == 3 && r.paths.size() == 3);
+        std::string mainAfter = ReadFile(p.td.at("Scenes/main.okayscene"));
+        CHECK(Has(mainAfter, "Moved/hero.png") && !Has(mainAfter, "Art/hero.png") && Has(mainAfter, "Art/rock.png"));
+        CHECK(Has(ReadFile(p.td.at("Art/hero.okaymat")), "texture Moved/hero.png") && Has(ReadFile(p.td.at("Prefabs/hero.okayprefab")), "Moved/hero.png"));
+        CHECK(b.StaleRefs().empty() && b.ReferenceProblemCount() == 1 && b.UsersOf(p.td.at("Moved/hero.png")) == 3);
+        CHECK(b.Poll(t + 20000000) == false || b.StaleRefs().empty());
+        // undo puts the old text back, byte for byte
+        CHECK(b.CanUndo() && b.UndoLabel() == "Fix references" && b.Undo().ok);
+        CHECK(ReadFile(p.td.at("Scenes/main.okayscene")) == mainBefore && b.StaleRefs().size() == 3);
+        // delete a referenced file: the references are missing (not stale), so Fix has nothing to do and says so
+        CHECK(b.Trash({p.td.at("Moved/hero.png")}).ok);
+        CHECK(b.MissingRefs().size() == 4 && b.StaleRefs().empty());
+        CHECK(b.FixStaleRefs().filesRewritten == 0);
+        CHECK(b.Undo().ok && b.MissingRefs().size() == 1);
+    }
+
+    RUN_SUITE("Scenes In Build follows a rename or move");
+    {
+        Proj p;
+        Browser b(p.td.assets());
+        std::vector<std::string> build = {p.td.at("Scenes/main.okayscene"), p.td.at("Scenes/broken.okayscene"), p.td.at("Elsewhere/none.okayscene")};
+        const std::vector<std::string> original = build;
+        auto r = b.Rename(p.td.at("Scenes/main.okayscene"), "level1");
+        CHECK(r.ok);
+        CHECK(RemapPaths(r.moved, build) && build[0] == p.td.at("Scenes/level1.okayscene") && build[1] == original[1] && build[2] == original[2]);
+        auto mv = b.Move({p.td.at("Scenes")}, p.td.at("Empty"));                  // a whole folder moves: every scene in it follows
+        CHECK(mv.ok && RemapPaths(mv.moved, build));
+        CHECK(build[0] == p.td.at("Empty/Scenes/level1.okayscene") && build[1] == p.td.at("Empty/Scenes/broken.okayscene") && build[2] == original[2]);
+        CHECK(!RemapPaths(mv.moved, build));                                      // nothing left to follow
+        CHECK(b.Undo().ok);                                                       // and undo's own move list takes it back
+        std::vector<std::string> back = build;
+        // (the panel applies the undo's moved list the same way)
+        PathMap rev; for (const auto& kv : mv.moved) rev.emplace_back(kv.second, kv.first);
+        CHECK(RemapPaths(rev, back) && back[0] == p.td.at("Scenes/level1.okayscene"));
+    }
+
     RUN_SUITE("5,000 assets: refresh cost");
     {
         TempDir td;

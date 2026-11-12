@@ -748,6 +748,67 @@ std::vector<std::string> Browser::DependenciesOf(const std::string& path, bool r
     return out;
 }
 
+std::vector<Browser::MissingRefRow> Browser::MissingRefs() {
+    std::vector<MissingRefRow> out;
+    if (!m_indexed && !Sync()) return out;
+    for (const okay::MissingRef& m : m_db.FindMissing()) out.push_back({AbsOf(m.referrerPath), m.reference});
+    std::sort(out.begin(), out.end(), [](const MissingRefRow& a, const MissingRefRow& b) { return a.referrer != b.referrer ? a.referrer < b.referrer : a.reference < b.reference; });
+    return out;
+}
+
+std::vector<Browser::StaleRefRow> Browser::StaleRefs() {
+    std::vector<StaleRefRow> out;
+    if (!m_indexed && !Sync()) return out;
+    for (const okay::StaleRef& s : m_db.FindStaleReferences()) out.push_back({AbsOf(s.referrerPath), s.reference, AbsOf(s.targetPath)});
+    std::sort(out.begin(), out.end(), [](const StaleRefRow& a, const StaleRefRow& b) { return a.referrer != b.referrer ? a.referrer < b.referrer : a.reference < b.reference; });
+    return out;
+}
+
+int Browser::ReferenceProblemCount() {
+    if (!m_indexed) Sync();
+    if (m_problemRev != m_revision) {
+        m_problemCount = static_cast<int>(m_db.FindMissing().size() + m_db.FindStaleReferences().size());
+        m_problemRev = m_revision;
+    }
+    return m_problemCount;
+}
+
+Result Browser::FixStaleRefs() {
+    Result r;
+    if (!Sync()) { r.error = "The Assets folder could not be read."; return r; }
+    std::map<std::string, std::string> before;   // the text of every file that is about to change, for Undo
+    for (const StaleRefRow& s : StaleRefs()) {
+        std::string text;
+        if (!before.count(s.referrer) && ReadText(s.referrer, text, 32u << 20)) before[s.referrer] = text;
+    }
+    if (before.empty()) { r.ok = true; r.note = "There are no stale references to fix."; return r; }
+    std::vector<std::string> changed;
+    const int n = m_db.FixStaleReferences(&changed);
+    Sync();
+    ++m_revision;
+    std::map<std::string, std::string> undoTexts;
+    for (const std::string& c : changed) {
+        const std::string abs = AbsOf(c);
+        r.paths.push_back(abs);
+        auto it = before.find(abs);
+        if (it != before.end()) undoTexts[abs] = it->second;
+    }
+    r.ok = true;
+    r.referencesRewritten = n;
+    r.filesRewritten = static_cast<int>(changed.size());
+    if (!undoTexts.empty())
+        PushUndo("Fix references", [this, undoTexts]() {
+            Result u;
+            Tx tx(*this);
+            for (const auto& kv : undoTexts) if (!tx.Write(kv.first, kv.second)) { tx.Rollback(); u.error = tx.error + " Nothing was changed."; return u; }
+            Sync();
+            ++m_revision;
+            u.ok = true;
+            return u;
+        });
+    return r;
+}
+
 std::vector<std::string> Browser::UsersOfList(const std::string& path, bool recursive) {
     std::vector<std::string> out;
     if (!m_indexed && !Sync()) return out;
@@ -1325,6 +1386,15 @@ std::vector<Referrer> Browser::ReferencesTo(const std::vector<std::string>& path
     }
     std::sort(out.begin(), out.end(), [](const Referrer& a, const Referrer& b) { return a.path != b.path ? a.path < b.path : a.target < b.target; });
     return out;
+}
+
+bool RemapPaths(const PathMap& map, std::vector<std::string>& paths) {
+    bool changed = false;
+    for (std::string& p : paths) {
+        const std::string to = RemapPath(map, p);
+        if (!to.empty()) { p = to; changed = true; }
+    }
+    return changed;
 }
 
 // ---- favourites ----------------------------------------------------------------------------------

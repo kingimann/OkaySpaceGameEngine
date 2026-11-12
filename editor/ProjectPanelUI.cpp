@@ -94,6 +94,33 @@ void ShowReferences(okaypb::Browser& browser, const std::string& assetPath, std:
     g_refs.pending = true;
 }
 
+namespace {
+struct ProbState {
+    bool pending = false, active = false;
+    okaypb::Browser* browser = nullptr;
+    std::vector<okaypb::Browser::MissingRefRow> missing;
+    std::vector<okaypb::Browser::StaleRefRow> stale;
+    std::function<void(const std::string&)> onPick;
+    std::function<void(const okaypb::Result&)> onFixed;
+    std::string message;
+};
+ProbState g_prob;
+void FillProblems() {
+    g_prob.missing = g_prob.browser->MissingRefs();
+    g_prob.stale = g_prob.browser->StaleRefs();
+}
+} // namespace
+
+void ShowReferenceProblems(okaypb::Browser& browser, std::function<void(const std::string&)> onPick, std::function<void(const okaypb::Result&)> onFixed) {
+    browser.Sync();   // incremental: what changed since the last look is in the graph
+    g_prob.browser = &browser;
+    g_prob.onPick = std::move(onPick);
+    g_prob.onFixed = std::move(onFixed);
+    g_prob.message.clear();
+    FillProblems();
+    g_prob.pending = true;
+}
+
 void DrawDialogs() {
     const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
 
@@ -213,6 +240,62 @@ void DrawDialogs() {
             }
             ImGui::EndPopup();
         } else g_refs.active = false;
+    }
+
+    // ---- broken references -------------------------------------------------------------------
+    if (g_prob.pending) { ImGui::OpenPopup("##projprob"); g_prob.pending = false; g_prob.active = true; }
+    if (g_prob.active) {
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("##projprob", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
+            const std::string root = g_prob.browser->Root();
+            ImGui::Text("Broken references");
+            ImGui::TextDisabled("Read from the asset database's dependency graph.");
+            ImGui::Spacing();
+            ImGui::TextDisabled("MISSING: the file is not there (click a line to show the asset that names it)");
+            if (g_prob.missing.empty()) ImGui::Text("  None.");
+            else {
+                ImGui::BeginChild("##probmiss", ImVec2(0, std::min<float>(150.0f, 26.0f * (float)g_prob.missing.size() + 20.0f)), true);
+                for (std::size_t i = 0; i < g_prob.missing.size(); ++i) {
+                    ImGui::PushID((int)i);
+                    const std::string line = Short(root, g_prob.missing[i].referrer) + "  names  " + g_prob.missing[i].reference;
+                    if (ImGui::Selectable(line.c_str()) && g_prob.onPick) { auto pick = g_prob.onPick; g_prob.active = false; ImGui::CloseCurrentPopup(); pick(g_prob.missing[i].referrer); ImGui::PopID(); break; }
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
+            }
+            if (g_prob.active) {
+                ImGui::Spacing();
+                ImGui::TextDisabled("STALE: still the old path of a file that was moved outside the editor");
+                if (g_prob.stale.empty()) ImGui::Text("  None.");
+                else {
+                    ImGui::BeginChild("##probstale", ImVec2(0, std::min<float>(150.0f, 26.0f * (float)g_prob.stale.size() + 20.0f)), true);
+                    for (std::size_t i = 0; i < g_prob.stale.size(); ++i) {
+                        ImGui::PushID(1000 + (int)i);
+                        const std::string line = Short(root, g_prob.stale[i].referrer) + ":  " + g_prob.stale[i].reference + "  ->  " + Short(root, g_prob.stale[i].target);
+                        if (ImGui::Selectable(line.c_str()) && g_prob.onPick) { auto pick = g_prob.onPick; g_prob.active = false; ImGui::CloseCurrentPopup(); pick(g_prob.stale[i].referrer); ImGui::PopID(); break; }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                }
+            }
+            if (g_prob.active) {
+                if (!g_prob.message.empty()) ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.6f, 1.0f), "%s", g_prob.message.c_str());
+                ImGui::Spacing();
+                ImGui::BeginDisabled(g_prob.stale.empty());
+                if (ImGui::Button("Fix stale references", ImVec2(170, 0))) {
+                    const okaypb::Result r = g_prob.browser->FixStaleRefs();
+                    g_prob.message = r.ok ? ("Rewrote " + std::to_string(r.referencesRewritten) + " reference(s) in " + std::to_string(r.filesRewritten) + " file(s). A scene that is open in the editor keeps its old text until you open it again.") : r.error;
+                    if (r.ok && g_prob.onFixed) g_prob.onFixed(r);
+                    FillProblems();
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Rewrites only the path text in the files that use the old path. Ctrl+Z in the Project panel undoes it.\nMissing references cannot be fixed here: restore the file, or point the asset at another one.");
+                ImGui::SameLine();
+                if (ImGui::Button("Close", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) { g_prob.active = false; ImGui::CloseCurrentPopup(); }
+            }
+            ImGui::EndPopup();
+        } else g_prob.active = false;
     }
 }
 

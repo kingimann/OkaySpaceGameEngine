@@ -38,6 +38,11 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
   the assets that use it, **Show Dependencies** lists what it uses. A checkbox switches from the direct links to everything it reaches
   through other assets. Click a line to show that asset. The lists come from the database's dependency graph, which reads scenes,
   prefabs, materials, scripts, clips, dialogue, quests and the other text assets (see `asset_database.md`).
+- **Broken References.** The left side lists **Broken References** with a count. Click it for two lists read from the dependency
+  graph: *missing* (an asset names a file that is not there; click a line to show the asset that names it) and *stale* (it still
+  uses the old path of a file that was moved outside the editor). **Fix stale references** rewrites only those path texts in the
+  files that use them, and Ctrl+Z in the Project panel puts the old text back. Missing references cannot be fixed by the panel:
+  restore the file or point the asset somewhere else. A scene that is open in the editor keeps its old text until it is opened again.
 - **Tags.** Right-click > Tags > Add Tag... stores a tag in the asset's `.okaymeta` (that is the only time the panel writes one besides
   import settings); search for it with `l:tag`.
 - **Import Settings.** For textures and models, the info strip has an Import Settings button (stored in the asset's
@@ -93,4 +98,4 @@ spaces and non-English letters are fine; names the operating system would refuse
 - Rewriting finds references through the database's dependency graph (scenes, prefabs, materials, clips, dialogue, ...). A path built
   in a script at run time, or stored in a binary file, is not found. The database re-reads only the text assets that changed.
 - The colour labels (Label menu) are the editor's own list in `.okaylabels`; tags are the database's labels in the `.okaymeta`. They are separate.
-- The **Scenes In Build** list follows a renamed or moved scene.
+- The **Scenes In Build** list follows a renamed or moved scene (and every scene inside a moved folder), and follows it back on undo; the path mapping is tested in `project_panel_db`.

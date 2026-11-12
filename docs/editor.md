@@ -535,6 +535,7 @@ thumbnail cache (`okay::ThumbnailCache`); it has no folder scan of its own. Deta
   References and Show Dependencies list the users and the dependencies, with a whole-graph switch; click a line to show it.
 - **Pictures.** Textures, audio waveforms, models, mesh files, materials, prefabs and scenes; made lazily within a few milliseconds per
   frame, kept in `.okay/thumbs`, made again when the file (or what it uses) changes. Tile size: slider, or Small / Medium / Large.
+- **Broken References.** A list of missing and stale references from the dependency graph; Fix rewrites the stale ones (Ctrl+Z in the panel undoes it).
 - **Info strip.** Type, size, GUID (short), uses and used-by counts, tags and a broken-reference warning (also a triangle on the tile).
 - **Rename, move, delete.** The GUID stays with the asset, references are rewritten, Ctrl+Z in the panel undoes them and puts the open
   scene's paths back, and a deleted asset's references show as broken until it is restored.

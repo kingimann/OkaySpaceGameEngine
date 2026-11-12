@@ -1858,6 +1858,7 @@ add_test(NAME assetmanager COMMAND test_assetmanager)
 # Asset database: GUID metas, move detection, dependency graph, import settings, thumbnails, search
 add_executable(test_asset_database test_asset_database.cpp)
 target_link_libraries(test_asset_database PRIVATE okay::engine)
+target_compile_definitions(test_asset_database PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME asset_database COMMAND test_asset_database)
 
 # Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate

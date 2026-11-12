@@ -9212,12 +9212,12 @@ static void ProjectApplyMoves(const okaypb::Result& r) {
     g_fav.Remap(r.moved);   // stars follow
     {   // the build list (Scenes In Build) follows a renamed or moved scene
         std::vector<oked::SceneBuildEntry> list = oked::SceneBuildSnapshot();
-        bool listChanged = false;
-        for (auto& e : list) {
-            const std::string to = okaypb::RemapPath(r.moved, e.path);
-            if (!to.empty()) { e.path = to; listChanged = true; }
+        std::vector<std::string> paths;
+        for (const auto& e : list) paths.push_back(e.path);
+        if (okaypb::RemapPaths(r.moved, paths)) {   // (tested in project_panel_db)
+            for (std::size_t i = 0; i < list.size(); ++i) list[i].path = paths[i];
+            oked::SceneBuildApply(ed, list);
         }
-        if (listChanged) oked::SceneBuildApply(ed, list);
     }
     const std::string oldScene = ed.path().empty() ? g_pb->Root() + "/untitled.okayscene" : okaypb::Slash(ed.path());
     std::string newScene = oldScene;
@@ -9252,6 +9252,7 @@ void DrawProject(EditorState& ed) {
     // Smart filter (sidebar): -1 off; else a type filter id (as g_projFilter) or 100 =
     // recently changed — lists matching assets from the WHOLE project, flat.
     static int s_smart = -1;
+    static bool showProblems = false;   // the Broken References list was asked for (opened after the panels are drawn)
     static const int kSmartRecent = 100;
     auto smartName = [](int id) -> const char* {
         switch (id) { case 8: return "All Models"; case 2: return "All Textures"; case 7: return "All Audio";
@@ -9426,6 +9427,17 @@ void DrawProject(EditorState& ed) {
             } else sdl->AddCircleFilled(ImVec2(mn.x + 8.0f, cy), r * 1.2f, sf.col);
             char cnt[12]; std::snprintf(cnt, sizeof(cnt), "%d", n);
             sdl->AddText(ImVec2(mx.x - ImGui::CalcTextSize(cnt).x - 4.0f, mn.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), cnt);
+            ImGui::PopID();
+        }
+        {   // Broken References: missing and stale references, with a Fix button for the stale ones.
+            const int bad = pb.ReferenceProblemCount();
+            ImGui::PushID("brokenrefs");
+            if (ImGui::Selectable("     Broken References", false)) showProblems = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("References to files that are not there, and references that still use the old path of a file moved outside the editor.\nClick for the list; the stale ones can be fixed.");
+            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            DrawBrokenBadge(ImGui::GetWindowDrawList(), ImVec2(mn.x + 8.0f, (mn.y + mx.y) * 0.5f), 5.5f);
+            char cnt[12]; std::snprintf(cnt, sizeof(cnt), "%d", bad);
+            ImGui::GetWindowDrawList()->AddText(ImVec2(mx.x - ImGui::CalcTextSize(cnt).x - 4.0f, mn.y), bad ? IM_COL32(245, 175, 50, 255) : ImGui::GetColorU32(ImGuiCol_TextDisabled), cnt);
             ImGui::PopID();
         }
         {   // Unused Assets: models/textures/sounds/materials/prefabs/fonts nothing references.
@@ -10425,6 +10437,13 @@ void DrawProject(EditorState& ed) {
     if (!findRefsFor.empty()) {
         oked::projectpanel::ShowReferences(pb, findRefsFor, [](const std::string& p) { g_pingAsset = p; }, oked::projectpanel::RefMode::UsedBy);
         findRefsFor.clear();
+    }
+    if (showProblems) {
+        showProblems = false;
+        oked::projectpanel::ShowReferenceProblems(pb, [](const std::string& p) { g_pingAsset = p; },
+            [](const okaypb::Result& r) {
+                ConsoleLog("Fixed " + std::to_string(r.referencesRewritten) + " reference" + (r.referencesRewritten == 1 ? "" : "s") + " in " + std::to_string(r.filesRewritten) + " file" + (r.filesRewritten == 1 ? "" : "s") + " (Ctrl+Z in the Project panel puts them back)");
+            });
     }
     if (!showDepsFor.empty()) {
         oked::projectpanel::ShowReferences(pb, showDepsFor, [](const std::string& p) { g_pingAsset = p; }, oked::projectpanel::RefMode::Uses);

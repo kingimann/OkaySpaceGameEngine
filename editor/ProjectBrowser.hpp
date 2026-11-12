@@ -188,6 +188,17 @@ public:
         std::vector<std::string> labels;
     };
     AssetInfo Info(const std::string& path);
+    /// References that point at nothing, and references that only work through the old path of an asset that was moved
+    /// outside the editor (the database remembers the move). Both are read from the dependency graph.
+    struct MissingRefRow { std::string referrer; std::string reference; };   ///< referrer: absolute path; reference: as written in it
+    struct StaleRefRow { std::string referrer; std::string reference; std::string target; };   ///< target: where the asset is now (absolute)
+    std::vector<MissingRefRow> MissingRefs();
+    std::vector<StaleRefRow> StaleRefs();
+    /// Missing plus stale, cheap (cached per revision): the number the panel shows next to "Broken References".
+    int ReferenceProblemCount();
+    /// Rewrite the stale references so they name the asset's current path (only the path text changes; written
+    /// atomically). Undo-able. `r.referencesRewritten` and `r.filesRewritten` say what changed; `r.paths` the files.
+    Result FixStaleRefs();
     /// Labels (tags) are kept in the asset's .okaymeta; adding one writes the meta if there is none.
     bool AddLabel(const std::string& path, const std::string& label, std::string* error = nullptr);
     bool RemoveLabel(const std::string& path, const std::string& label, std::string* error = nullptr);
@@ -271,6 +282,7 @@ private:
     bool m_indexed = false;
     std::uint64_t m_nextPoll = 0;
     std::uint64_t m_revision = 0;
+    std::uint64_t m_problemRev = ~0ull; int m_problemCount = 0;
     struct FolderStat { int files = 0; std::vector<std::string> kids; };
     std::map<std::string, FolderStat> m_folderStats;                // parent project path -> contents, per revision
     std::uint64_t m_folderStatsRev = ~0ull;
@@ -305,6 +317,9 @@ private:
 
 /// Where `abs` ends up after the moves in `map` (a folder entry moves what is inside it); "" when it does not move.
 std::string RemapPath(const PathMap& map, const std::string& abs);
+
+/// Follow renames and moves in a list of absolute paths (the "Scenes In Build" list). Returns true when one changed.
+bool RemapPaths(const PathMap& map, std::vector<std::string>& paths);
 
 /// Starred files and folders, kept in the project (<project>/.okay/favourites.txt, one path relative to Assets per
 /// line) so they travel with it. Missing items are dropped when listed; moves and renames are followed.

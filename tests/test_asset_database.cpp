@@ -1521,5 +1521,25 @@ int main() {
         CHECK(bad.placeholder && bad.failed);
     }
 
+    RUN_SUITE("ogg and mp3 files get a waveform thumbnail too");
+    {
+        Project p("wave2");
+        const std::string src = std::string(OKAY_SOURCE_DIR) + "/tests/data/audio/";
+        std::error_code mk; fs::create_directories(p.P("audio"), mk);
+        fs::copy_file(src + "tone_stereo.ogg", p.P("audio/a.ogg"), mk);
+        fs::copy_file(src + "tone_mono.mp3", p.P("audio/b.mp3"), mk);
+        CHECK(p.Exists("audio/a.ogg") && p.Exists("audio/b.mp3"));
+        AssetDatabase db;
+        db.Scan(p.Root());
+        ThumbnailCache cache;
+        for (const char* f : {"audio/a.ogg", "audio/b.mp3"}) {
+            const auto t = cache.Get(db, db.PathToGuid(f));
+            CHECK(!t.placeholder && !t.failed && t.image->Width() == 128 && t.source == ThumbnailCache::Source::Generated);
+            int wave = 0;   // the waveform colour (green) is drawn somewhere, and the background is not all one colour
+            for (int y = 0; y < 128; ++y) for (int x = 0; x < 128; ++x) if (t.image->GetPixel(x, y).g > 0.7f) ++wave;
+            CHECK(wave > 40);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

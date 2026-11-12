@@ -274,7 +274,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.12.6 Shared helpers - `Core/AssetDatabaseInternal` - private utilities used by the three database sources
 - **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`
 - **API:** `AssetDatabase::Scan`, `AssetDatabase::BuildClosurePaths`, `AssetDatabase::Search`, `Guid`, `ImportSettings`
-- **Editor:** Project panel (`editor/ProjectBrowser.*`: listing, search, filters, counts, folder tree, info strip, Find References, Show Dependencies, tags, broken-reference badge)
+- **Editor:** Project panel (`editor/ProjectBrowser.*`: listing, search, filters, counts, folder tree, info strip, Find References, Show Dependencies, tags, broken-reference badge, Broken References list with Fix)
 - **Docs:** `docs/asset_database.md`, `docs/project_panel.md`
 - **Tests:** `asset_database`, `project_panel`, `project_panel_db`
 - **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; no importer reads `srgb`, `compress` or the audio settings, scenes still store paths, the build/export code does not call it

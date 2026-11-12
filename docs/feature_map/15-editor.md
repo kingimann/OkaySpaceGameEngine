@@ -184,7 +184,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **What:** The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model.
 - **Parts:**
   - 15.9.1 Editor model - `editor/EditorState.*` - scene, selection, create helpers, Play and Stop with snapshot restore, editor camera; free of ImGui so tests can use it
-  - 15.9.2 Undo and redo - `editor/EditorState.*` - snapshot-based: the whole scene as text, up to 100 steps; History panel jumps to any step (`DrawHistory` ~6709)
+  - 15.9.2 Undo and redo - `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp` - scene edits are `SceneDeltaCommand`s on an `UndoStack` (text delta, selection by GUID, up to 100 steps, drags and repeated edits of one widget merged, named steps); Edit menu shows "Undo <name>" and greys out; History panel lists and jumps to steps (`DrawHistory`); no recording and no undo during Play; New / Open start an empty history; saved state follows undo
   - 15.9.3 Autosave and recovery - `editor/main.cpp`, `editor/DocRecovery.hpp` - recovery-folder copies of dirty graphs, scripts and the scene; a newer leftover `<scene>.autosave` is still offered and is not written again
   - 15.9.4 Panel tabs and layouts - `editor/EditorTabs.hpp`, `editor/main.cpp` (~4337-5388) - saved named layouts, presets (Default, Tall, Wide, 2 by 3, Scripting, Animation), Ctrl+Tab switcher, tab overflow, side tabs
   - 15.9.5 Edit-mode undo for meshes - `editor/main.cpp` (~3021) - undo inside mesh edit mode
@@ -193,14 +193,14 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Code:** `editor/EditorState.*`, `editor/EditorTabs.hpp`, `editor/main.cpp`
 - **API:** Edit > Undo / Redo, View > Layout, File > Autosave, View > Panels > History
 - **Editor:** Edit menu, History panel, Layout dropdown
-- **Docs:** `docs/editor.md` (Panel tabs & layouts, Editor quality-of-life)
-- **Tests:** `editor_tabs`, `ui_frame` (drives the editor undo stack), `editor` (selftest)
-- **Status:** Works - snapshot undo and tabs are tested headlessly; autosave has no test
-- **Open:** #572 added an engine-side command undo stack, recovery and backups (`docs/undo_recovery.md`: "engine side only", the editor still uses the full snapshot, "Adopting it in the editor" is the plan); undo across Play, rolling backups and a restore UI are planned (area 22)
+- **Docs:** `docs/editor.md` (Panel tabs & layouts, Editor quality-of-life), `docs/editor_undo.md`
+- **Tests:** `editor_undo` (every edit kind do / undo / redo by scene text, merge, GUID restore, limit, Play, saved tracking), `editor_tabs`, `ui_frame`, `editor_hooks`, `inspector_model`, `project_save`, `editor` (selftest)
+- **Status:** Works - scene undo on `UndoStack` and tabs are tested headlessly; the Edit menu, shortcuts, History panel and `WatchEditUndo` are GUI code that was compiled but not run; autosave has no test
+- **Open:** audit in `docs/editor_undo.md`; each Undo rebuilds the whole scene (no per-object or per-property commands); moving an asset the scene uses clears the scene history; mesh edit, Project panel, Timeline, Localization and script editors keep their own undo; rolling backups and a restore UI are planned (area 22)
 - **Related:** 22, 15.3, 15.11, 15.12
-- **Words:** undo, redo, history, autosave, crash recovery, console (editor), editor, layout, tabs, Ctrl+Tab, save layout, side tabs, panel switcher, snapshot undo
+- **Words:** undo, redo, history, autosave, crash recovery, console (editor), editor, layout, tabs, Ctrl+Tab, save layout, side tabs, panel switcher, snapshot undo, delta undo, undo stack, Undo menu
 - **Seen as:** undo skips or restores too much; the layout resets; the editor crashes or shows a black screen; a crash loses work; the recovery prompt does not appear; Ctrl+Tab picks the wrong panel
-- **Ask me like:** "work on 15.9.2, per-property undo using the new engine command stack"; "layouts reset after restart"
+- **Ask me like:** "work on 15.9.2, per-object undo commands so Undo does not rebuild the scene"; "layouts reset after restart"
 
 ### 15.10 Splitting `editor/main.cpp` into panel files (~45k lines)
 - **What:** The ongoing move of panels out of the huge `main.cpp` into their own files with small headers, so each can be edited and reviewed alone.

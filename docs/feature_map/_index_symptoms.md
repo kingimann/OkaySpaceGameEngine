@@ -69,6 +69,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a CSS rule does nothing | [12.5](12-ingame-ui.md#125-html-ui) HTML UI |
 | a custom tag or layer name is lost on restart | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a custom widget does not repeat | [12.5](12-ingame-ui.md#125-html-ui) HTML UI |
+| a custom-drawn panel does not clip | [40.7](40-okayui-library.md#407-draw-list-cursor-item-state-and-disabled-blocks) Draw list, cursor, item state and disabled blocks |
 | a dark cave level looks the same as a bright one | [43.4](43-proposals.md#434-2d-lighting) 2D lighting |
 | a data file edit not showing in game | [1.14](01-core-scene.md#114-data-assets-and-data-packs) Data assets and data packs |
 | a dead player can still move | [11.4](11-gameplay-systems.md#114-survival-stats-afflictions-zones) Survival: stats, afflictions, zones |
@@ -77,6 +78,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a destroyed pickup respawns | [35.3](20-35-planned.md#353-serialization) Serialization |
 | a dialog lets clicks through to widgets behind it | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
 | a disabled parent does not disable its children's scripts | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
+| a disabled widget still reacts | [40.7](40-okayui-library.md#407-draw-list-cursor-item-state-and-disabled-blocks) Draw list, cursor, item state and disabled blocks |
 | a doc page isn't linked from the index | [19.1](19-docs-tests-health.md#191-readme-and-docs) README and docs |
 | a doc says a feature isn't built but it is | [19.1](19-docs-tests-health.md#191-readme-and-docs) README and docs |
 | a door does not swing about its hinge | [6.3](06-physics.md#63-joints) Joints |
@@ -283,6 +285,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a tooltip runs off the screen or never shows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
 | a trail looks flat or jagged | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
 | a translated text is cut off | [1.16](01-core-scene.md#116-localization-tools) Localization tools |
+| a translucent line is darker at its corners | [40.7](40-okayui-library.md#407-draw-list-cursor-item-state-and-disabled-blocks) Draw list, cursor, item state and disabled blocks |
 | a tree node cannot be wired | [15.6](15-editor.md#156-navigation-behavior-tree-dialogue-localization-modeling-windows) Navigation, Behavior Tree, Dialogue, Localization, Modeling windows |
 | a trigger blocks a ray | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
 | a tween keeps going after its object was deleted | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |

@@ -48,7 +48,8 @@ such files to `PrefabTools` themselves; plain prefab files work as described on 
   `ReapplyPrefab`.
 - An override naming an object the prefab no longer has is dropped, with a warning.
 - The editor shows overrides per property and applies or reverts them through `PrefabTools`
-  (see "In the editor" in [prefab_system.md](prefab_system.md)).
+  (see "In the editor" in [prefab_system.md](prefab_system.md)). "Open" on an instance enters prefab mode
+  ([prefab_mode.md](prefab_mode.md)).
 
 ## Object ids
 

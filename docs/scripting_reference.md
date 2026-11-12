@@ -231,6 +231,9 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `seq_prepend(seq, id)` / `seq_join_callback(seq, "fn")` | Play a tween before everything in a sequence / call a function when the last appended tween starts |
 | `tween_prop(path, to, dur [, ease][, "done"])` | Tween any property of this object by path (`"Light.intensity"`, `"Transform.scale.y"`; see docs/properties.md). The ease is a name or curve text: `"cubic-bezier(0.4,0,0.2,1)"`, `"steps(4)"` |
 | `save_game([slot] [, label])` / `load_game([slot])` | Save / load the whole game (see docs/save_games.md) |
+| `game_save(slot [, label])` / `game_load(slot)` / `game_continue()` | Save slots for objects marked with a Saveable component (see docs/save_framework.md, "Saving without code"). `game_load` and `game_continue` take effect at the start of the next frame and reload the saved level. Return 1 when accepted, 0 (with a `[save]` Console error) when the slot is missing, damaged or from a newer version |
+| `game_delete_slot(slot)` / `game_slot_exists(slot)` / `game_can_continue()` / `game_autosave()` | Delete a slot, ask whether it exists, ask whether any valid save exists, save into the autosave ring |
+| `game_slot_text(slot)` / `game_slot_age(slot)` / `game_slot_label(slot)` | When a slot was saved (`"2026-11-08 14:03"` UTC, `""` if none), seconds since then (-1 if none), and its label |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/cutscenes.md) |
 | `sequence_playing()` / `sequence_time()` | 1 while a sequence plays / seconds into it; events reach `on_sequence_event(name)` |

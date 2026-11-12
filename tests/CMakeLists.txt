@@ -2390,9 +2390,18 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
         target_link_libraries(test_platform PRIVATE SDL2::SDL2)   # the Key / SDL scancode numbering check
     endif()
     add_test(NAME platform COMMAND test_platform)
+    # OKAY_PLATFORM_BACKEND in the environment overrides the build's default backend at run time.
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_default_env_${_okay_pb} COMMAND test_platform --print-default)
+        set_tests_properties(platform_default_env_${_okay_pb} PROPERTIES
+            ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}" PASS_REGULAR_EXPRESSION "default=${_okay_pb}")
+    endforeach()
 
     add_executable(test_platform_window test_platform_window.cpp)
     target_link_libraries(test_platform_window PRIVATE okay::platform)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_platform_window PRIVATE SDL2::SDL2)   # pushes touch / natural-scroll events through the sdl2 backend
+    endif()
     target_include_directories(test_platform_window PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
     foreach(_okay_pb sdl2 own)
         add_test(NAME platform_window_${_okay_pb}

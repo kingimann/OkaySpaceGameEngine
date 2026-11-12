@@ -1317,9 +1317,9 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Parts:**
   - 32.4.1 Input actions and persistence - `Input/InputActions` - named actions with keys, mouse buttons, gamepad buttons and sticks; bindings saved to the player's prefs; defaults restorable
   - 32.4.2 Keybind field widget - `Components/UIKeybindField` - press-to-bind field for an action or a plain key; Escape cancels, Backspace restores the default
-  - 32.4.3 Gamepad and key tables - `Input/PlatformGamepad`, `Input/SdlKeys` - extended keys, contexts and curves (merged #571)
+  - 32.4.3 Gamepad and key tables - `Input/PlatformGamepad`, `Input/PlatformKeys` - extended keys, contexts and curves (merged #571)
   - 32.4.4 Remap model (#574) - `Input/RemapModel` - controls list, conflict detection (including four-key directions and the D-pad), `RemapBind` with cancel, swap, unbind or allow, reserved actions
-- **Code:** `Input/InputActions`, `Components/UIKeybindField`, `Input/PlatformGamepad`, `Input/SdlKeys`, `Input/RemapModel`
+- **Code:** `Input/InputActions`, `Components/UIKeybindField`, `Input/PlatformGamepad`, `Input/PlatformKeys`, `Input/RemapModel`
 - **API:** `InputActions::Get`, `UIKeybindField` (`action`, `gamepad`, `part`), `RemapConflicts`, `RemapBind`, `RemapAllConflicts`
 - **Editor:** Inspector for the Keybind Field; Project Settings has no input section yet
 - **Docs:** `docs/input.md`; `docs/accessibility.md`

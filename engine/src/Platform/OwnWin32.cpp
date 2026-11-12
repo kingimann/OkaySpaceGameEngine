@@ -106,6 +106,7 @@ public:
     void Raise() override { SetForegroundWindow(m_hwnd); SetFocus(m_hwnd); }
     void Minimize() override { ShowWindow(m_hwnd, SW_MINIMIZE); }
     void Restore() override { ShowWindow(m_hwnd, SW_RESTORE); }
+    bool IsFullscreen() const override { return m_full; }
     void SetFullscreen(bool on) override {
         if (on == m_full) return;
         if (on) {
@@ -209,7 +210,8 @@ public:
         DragAcceptFiles(h, TRUE);
         auto* w = new WinWindow(this, h);
         m_wins[h] = w;
-        if (!d.hidden) ShowWindow(h, SW_SHOW);
+        if (!d.hidden) ShowWindow(h, d.maximized && d.resizable && !d.fullscreen ? SW_SHOWMAXIMIZED : SW_SHOW);
+        if (d.fullscreen) w->SetFullscreen(true);
         return std::unique_ptr<Window>(w);
     }
     void Unregister(HWND h) { m_wins.erase(h); }
@@ -268,6 +270,24 @@ public:
         m_relative = on;
         if (on) { ::ShowCursor(FALSE); CenterCursor(); } else { ::ShowCursor(TRUE); ClipCursor(nullptr); }
         return true;
+    }
+    bool IsCursorShown() override { return m_cursorShown; }
+    uint32_t RelativeMouseState(int* dx, int* dy) override {
+        if (dx) *dx = m_relAccX;
+        if (dy) *dy = m_relAccY;
+        m_relAccX = m_relAccY = 0;
+        return MouseState(nullptr, nullptr);
+    }
+    bool SupportsRelativeMouseState() override { return true; }
+    bool SetPerMonitorDpiAware() override {
+        using SetCtx = BOOL (WINAPI*)(HANDLE);
+        HMODULE u = GetModuleHandleW(L"user32.dll");
+        SetCtx f = u ? (SetCtx)(void*)GetProcAddress(u, "SetProcessDpiAwarenessContext") : nullptr;
+        return f && f((HANDLE)-4) != FALSE;   // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    }
+    bool ShowErrorBox(const std::string& title, const std::string& text, Window* parent) override {
+        return MessageBoxW(parent ? (HWND)parent->NativeHandle() : nullptr, Wide(text).c_str(), Wide(title).c_str(),
+                           MB_OK | MB_ICONERROR) != 0;
     }
     void ShowCursor(bool show) override { if (show != m_cursorShown) { m_cursorShown = show; ::ShowCursor(show ? TRUE : FALSE); } }
     void WarpMouse(Window* w, int x, int y) override {
@@ -386,6 +406,7 @@ public:
                 b->CenterCursor();
             } else { e.dx = e.x - b->m_lastX; e.dy = e.y - b->m_lastY; }
             b->m_lastX = e.x; b->m_lastY = e.y;
+            b->m_relAccX += e.dx; b->m_relAccY += e.dy;
             b->m_pending.push_back(e);
             return 0;
         }
@@ -443,6 +464,7 @@ public:
     std::deque<Event> m_pending;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false;
     int m_lastX = 0, m_lastY = 0;
+    int m_relAccX = 0, m_relAccY = 0;
     std::string m_err;
 
 private:

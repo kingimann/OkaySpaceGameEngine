@@ -9,6 +9,8 @@
 #include <linux/input.h>
 #include <unistd.h>
 #endif
+#include <string>
+#include <unistd.h>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -200,6 +202,63 @@ void TestEvdevMapping() {
 }
 #endif
 
+// The process-level helpers the apps used to take from SDL directly.
+void TestHelpers(Backend& b) {
+    // BasePath: the executable's directory with a trailing separator.
+    const std::string base = b.BasePath();
+    CHECK(base.size() > 1);
+    CHECK(base.back() == '/' || base.back() == '\\');
+#if defined(__linux__)
+    {
+        char buf[4096];
+        const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        CHECK(n > 0);
+        if (n > 0) {
+            std::string exe(buf, (size_t)n);
+            CHECK(exe.compare(0, base.size(), base) == 0);
+            CHECK(exe.find('/', base.size()) == std::string::npos);   // the exe sits directly in it
+        }
+    }
+#endif
+    // PrefPath: created, writable, under XDG_DATA_HOME, trailing separator.
+    char tmpl[] = "/tmp/okay_prefXXXXXX";
+    if (mkdtemp(tmpl)) {
+        setenv("XDG_DATA_HOME", tmpl, 1);
+        const std::string pref = b.PrefPath("OkayOrg", "Okay App");
+        std::cout << "  PrefPath -> " << pref << "\n";
+        CHECK(!pref.empty() && pref.back() == '/');
+        CHECK(pref.compare(0, std::strlen(tmpl), tmpl) == 0);
+        CHECK(access(pref.c_str(), W_OK) == 0);
+        if (b.Kind() == BackendKind::Own) CHECK(b.PrefPath("", "x").empty());
+        unsetenv("XDG_DATA_HOME");
+        std::string rm = std::string("rm -rf ") + tmpl;
+        CHECK(std::system(rm.c_str()) == 0);
+    }
+    // PreferredLocales: well formed whichever backend answers; our own parsing is exact.
+    for (const std::string& l : b.PreferredLocales()) CHECK(!l.empty() && l.find('_') == std::string::npos);
+    if (b.Kind() == BackendKind::Own) {
+        setenv("LANGUAGE", "de_DE.UTF-8:fr:C", 1);
+        const std::vector<std::string> l = b.PreferredLocales();
+        CHECK(l.size() == 2 && l[0] == "de-DE" && l[1] == "fr");
+        unsetenv("LANGUAGE");
+        setenv("LC_ALL", "pt_BR.UTF-8@x", 1);
+        const std::vector<std::string> l2 = b.PreferredLocales();
+        CHECK(l2.size() == 1 && l2[0] == "pt-BR");
+        unsetenv("LC_ALL");
+        // The base class (own backend) cannot show a message box: it says so instead of pretending.
+        CHECK(!b.ShowErrorBox("t", "this error box is not available on the own Linux backend (expected)"));
+        // Layout-aware key lookup needs a display; without one it is the US table.
+        CHECK(b.KeyForChar('a') == Key::A && b.KeyForChar('z') == Key::Z && b.KeyForChar('5') == Key::N5);
+        CHECK(b.KeyForChar('0') == Key::N0 && b.KeyForChar(' ') == Key::Space && b.KeyForChar('?') == Key::Unknown);
+        CHECK(!b.SetPerMonitorDpiAware());
+    } else {
+        CHECK(b.SupportsRelativeMouseState());
+    }
+    b.Log("platform test log line (expected on stderr)");
+    if (b.Kind() == BackendKind::Own) CHECK(b.IsCursorShown());   // no display: nothing hid it (sdl2 needs video to answer)
+    CHECK(b.ModState() == 0);   // no keys held
+}
+
 void TestKeyNumbering() {
     // The Key enum is USB HID usage ids; spot-check the ones that matter.
     CHECK((int)Key::A == 4 && (int)Key::Z == 29 && (int)Key::N1 == 30 && (int)Key::N0 == 39);
@@ -221,7 +280,13 @@ void TestKeyNumbering() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    // `test_platform --print-default`: which backend Default() picks (the OKAY_PLATFORM_BACKEND
+    // environment variable overrides the build's choice); the ctest entries below check it.
+    if (argc > 1 && std::strcmp(argv[1], "--print-default") == 0) {
+        std::cout << "default=" << BackendName(DefaultKind()) << "\n";
+        return 0;
+    }
     RUN_SUITE("platform");
     BackendKind k{};
     CHECK(ParseBackendName("sdl2", k) && k == BackendKind::Sdl2);
@@ -252,6 +317,7 @@ int main() {
         TestTime(*b);
         TestAudio(*b);
         TestGamepadsAbsent(*b);
+        TestHelpers(*b);
         b->Shutdown();
     }
     CHECK(ran >= 1);

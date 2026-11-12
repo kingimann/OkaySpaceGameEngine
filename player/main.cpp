@@ -7,7 +7,7 @@
 // game is just <Game>.exe + game.okayscene (+ any assets).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
-#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
@@ -18,6 +18,7 @@
 #include <unistd.h>
 #endif
 #include "okay/Input/SdlKeys.hpp"      // F1-F12, nav keys, left / right modifiers
+#include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
@@ -378,7 +379,7 @@ static bool ParseMatchLink(const std::string& link, okay::MatchRequest& out) {
 // The built-in in-game server browser ("Find a server"): public servers for this
 // game plus the LAN, with ping, players, filters, a password prompt and Join. A
 // game opens it with net_browser_open() (or the Open Server Browser action).
-static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
+static void DrawServerBrowserWindow(okay::Scene& scene, okay::platform::Window* window) {
     okay::ServerBrowser& sb = okay::ServerBrowser::Shared();
     static bool wasOpen = false;
     static int tab = 0, shownTab = -1, sel = -1;
@@ -389,14 +390,14 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
     static Uint32 lastClick = 0; static int lastClickRow = -1;
     static bool cursorWasShown = true;
     if (!sb.windowOpen) {
-        if (wasOpen) { wasOpen = false; SDL_ShowCursor(cursorWasShown ? SDL_ENABLE : SDL_DISABLE); }
+        if (wasOpen) { wasOpen = false; okay::platform::Default()->ShowCursor(cursorWasShown); }
         return;
     }
     if (!wasOpen) {   // just opened: fresh search, free the mouse (FPS games capture it)
         wasOpen = true; shownTab = -1; sel = -1; status.clear(); joining = nullptr;
-        cursorWasShown = SDL_ShowCursor(SDL_QUERY) == SDL_ENABLE;
+        cursorWasShown = okay::platform::Default()->IsCursorShown();
         okay::Cursor::Capture(false);
-        SDL_ShowCursor(SDL_ENABLE);
+        okay::platform::Default()->ShowCursor(true);
     }
     const int sources = tab == 1 ? okay::ServerBrowser::kInternet : tab == 2 ? okay::ServerBrowser::kLan : okay::ServerBrowser::kAll;
     if (shownTab != tab && !sb.Busy()) { shownTab = tab; sb.Refresh(sources); sel = -1; }
@@ -416,7 +417,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
         }
     }
 
-    int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
+    int ww = 960, wh = 600; window->GetSize(ww, wh);
     const float W = (float)std::min(780, ww - 40), H = (float)std::min(620, wh - 40);
     bool open = true;
     if (OkayUI::Begin("Find a server", (ww - W) * 0.5f, (wh - H) * 0.5f, W, H, &open)) {
@@ -552,7 +553,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
 
 // "Finding a match 0:23 · 6 searching [Cancel]" while matchmaking runs (top of the
 // screen), "Match found" as it connects, and why it stopped if it failed.
-static void DrawMatchmakingBanner(SDL_Window* window) {
+static void DrawMatchmakingBanner(okay::platform::Window* window) {
     okay::Matchmaker& mm = okay::Matchmaker::Shared();
     const auto st = mm.GetState();
     static Uint32 foundAt = 0, failedAt = 0;
@@ -562,7 +563,7 @@ static void DrawMatchmakingBanner(SDL_Window* window) {
     const Uint32 now = okay::platform::TicksMs32();
     if (st == okay::Matchmaker::State::Found) { if (!foundAt) foundAt = now; if (now - foundAt > 4000) return; }
     if (st == okay::Matchmaker::State::Failed) { if (!failedAt) failedAt = now; if (now - failedAt > 8000) { mm.Cancel(); return; } }
-    int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
+    int ww = 960, wh = 600; window->GetSize(ww, wh);
     const float W = std::min(440.0f, (float)ww - 20.0f), H = 184.0f;
     bool open = true;
     if (OkayUI::Begin("Matchmaking", (ww - W) * 0.5f, 14.0f, W, H, &open)) {
@@ -1138,12 +1139,13 @@ static std::string ResolveGameBaseDir(const char* argv0) {
 }
 
 int main(int argc, char** argv) {
-    SDL_SetMainReady();
+    // The window, events, input and GL context go through okay::platform (SDL2 is the default
+    // backend; see docs/platform_layer.md). The 2D drawing below still needs an SDL window.
+    okay::platform::Backend* pb = okay::platform::Default();
+    if (!pb) { std::fprintf(stderr, "no okay::platform backend is compiled in\n"); return 1; }
     // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
     // resolution instead of being bitmap-stretched (blurry) on scaled displays.
-#ifdef SDL_HINT_WINDOWS_DPI_AWARENESS   // SDL >= 2.24; the Linux server build uses an older SDL
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
-#endif
+    pb->SetPerMonitorDpiAware();   // Windows only; a hint on SDL >= 2.24, nothing elsewhere
     // `--server`: run headless as the game's dedicated server (no window, GPU or
     // audio). See okay/Net/DedicatedServer.hpp for the flags.
     for (int i = 1; i < argc; ++i)
@@ -1280,10 +1282,10 @@ int main(int argc, char** argv) {
         else launchJoin.clear();
     }
     if (dedicatedServer) {
-        if (SDL_Init(SDL_INIT_TIMER) != 0) { std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError()); return 1; }
-    } else
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
-        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        okay::platform::InitFlags none; none.video = none.audio = none.gamepad = false;   // headless: timers only
+        if (!pb->Init(none)) { std::fprintf(stderr, "SDL_Init failed: %s\n", pb->LastError().c_str()); return 1; }
+    } else if (!pb->Init(okay::platform::InitFlags())) {   // video + audio + game controllers
+        pb->Log("SDL_Init failed: " + pb->LastError());
         return 1;
     }
 
@@ -1291,6 +1293,15 @@ int main(int argc, char** argv) {
     // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
     const std::string baseDir = ResolveGameBaseDir(argv[0]);
     okay::Paths::SetStreamingAssetsDir(std::filesystem::is_directory(std::filesystem::u8path(baseDir) / "StreamingAssets") ? baseDir + "StreamingAssets/" : std::string());
+    // Resolve where the game files live. New builds use a clean layout
+    // (exe + DLLs at the root, scenes/config/assets in a Data/ subfolder); prefer
+    // that when present, else fall back to the flat layout (everything beside exe).
+    std::string baseDir;
+    baseDir = pb->BasePath();
+    {
+        std::ifstream probe(baseDir + "Data/game.okayconfig");
+        if (probe.good()) baseDir += "Data/";
+    }
 
     // Build settings (written by the editor's Build Settings) live in an optional
     // game.okayconfig beside the exe: window size/title/flags, the scene list (so
@@ -1429,7 +1440,8 @@ int main(int argc, char** argv) {
     if (cfg.saveToUserDir) {
         const char* org = cfg.company.empty() ? "OkaySpace" : cfg.company.c_str();
         const char* app = cfg.title.empty() ? "Game" : cfg.title.c_str();
-        if (char* pref = SDL_GetPrefPath(org, app)) { saveDir = pref; SDL_free(pref); }
+        const std::string pref = pb->PrefPath(org, app);
+        if (!pref.empty()) saveDir = pref;
     }
     okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
 
@@ -1446,17 +1458,10 @@ int main(int argc, char** argv) {
     // when the game has it, else the table's default.
     if (std::ifstream(baseDir + "strings.okayloc").good()) {
         std::string locErr;
-        if (!Localization::LoadTable(baseDir + "strings.okayloc", &locErr)) SDL_Log("strings.okayloc: %s", locErr.c_str());
+        if (!Localization::LoadTable(baseDir + "strings.okayloc", &locErr)) pb->Log("strings.okayloc: " + locErr);
     }
     {
-        std::vector<std::string> osLocales;
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-        if (SDL_Locale* locs = SDL_GetPreferredLocales()) {
-            for (const SDL_Locale* l = locs; l->language; ++l)
-                osLocales.push_back(l->country ? std::string(l->language) + "-" + l->country : std::string(l->language));
-            SDL_free(locs);
-        }
-#endif
+        std::vector<std::string> osLocales = pb->PreferredLocales();
         Localization::LoadSettings(osLocales);
     }
 
@@ -1468,9 +1473,9 @@ int main(int argc, char** argv) {
     // at all, and its signed mode can't be lowered by editing game.okayconfig.
     // The runtime checks run in the frame loop. (Dedicated servers: not checked.)
     std::string acRoot;
-    { char* b = SDL_GetBasePath(); acRoot = b ? b : ""; if (b) SDL_free(b); }
-    auto acLog = [&saveDir](const std::string& line) {
-        SDL_Log("%s", line.c_str());
+    acRoot = pb->BasePath();
+    auto acLog = [&saveDir, pb](const std::string& line) {
+        pb->Log(line);
         std::ofstream(saveDir + "anticheat.log", std::ios::app) << line << "\n";
     };
     okayac::StartDecision acStart;
@@ -1501,8 +1506,8 @@ int main(int argc, char** argv) {
             }
         }
         if (!acStart.allow) {
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(), acStart.message.c_str(), nullptr);
-            SDL_Quit();
+            pb->ShowErrorBox(cfg.title, acStart.message);
+            pb->Shutdown();
             return 1;
         }
     }
@@ -1519,7 +1524,7 @@ int main(int argc, char** argv) {
                         cfg.title, cfg.version.empty() ? std::string() : cfg.version + " (build " + std::to_string(cfg.buildNumber) + ")", scenePath);
     okay::devlog::HitchWatch hitchWatch;
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
-        SDL_Log("Could not load %s: %s", scenePath.c_str(), err.c_str());
+        pb->Log("Could not load " + scenePath + ": " + err);
         okay::Log::Error("[scene] could not load '", scenePath, "': ", err);
         // Keep running with an empty scene rather than failing outright.
     } else {
@@ -1532,13 +1537,13 @@ int main(int argc, char** argv) {
         scene.interpolatePhysics = false;   // nothing is drawn; snapshots send the real physics poses
         const int rc = okay::RunDedicatedServer(scene, serverOpts);
         Prefs::Save(prefsPath);
-        SDL_Quit();
+        pb->Shutdown();
         return rc;
     }
     {   // A scene without a camera would render nothing: add one.
         bool made = false;
         okay::EnsureSceneCamera(scene, okay::SceneLooks2D(scene), &made);
-        if (made) SDL_Log("Scene has no camera; added a Main Camera.");
+        if (made) pb->Log("Scene has no camera; added a Main Camera.");
     }
     // Multiplayer: a signed-in OkaySpace player presents their account when joining
     // (servers started with --auth only let signed-in accounts in).
@@ -1548,39 +1553,50 @@ int main(int argc, char** argv) {
     if (okay::Account::IsLoggedIn())   // also for networks scripts create later
         okay::NetworkManager::SetDefaultIdentity(okay::Account::Token(), okay::Account::Username());
     if (!launchJoin.empty()) {
-        SDL_Log("Joining %s", launchJoin.c_str());
+        pb->Log("Joining " + launchJoin);
         okay::NetworkManager::SetLaunchJoin(launchJoin);
     }
 
-    Uint32 winFlags = SDL_WINDOW_ALLOW_HIGHDPI;
-    if (cfg.resizable)  winFlags |= SDL_WINDOW_RESIZABLE;
-    if (cfg.fullscreen) winFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-    if (cfg.borderless) winFlags |= SDL_WINDOW_BORDERLESS;
-    if (cfg.startMaximized && cfg.resizable && !cfg.fullscreen) winFlags |= SDL_WINDOW_MAXIMIZED;
+    okay::platform::WindowDesc wd;
+    wd.highDpi = true;
+    wd.resizable = cfg.resizable;
+    wd.fullscreen = cfg.fullscreen;
+    wd.borderless = cfg.borderless;
+    wd.maximized = cfg.startMaximized && cfg.resizable && !cfg.fullscreen;
+    wd.hidden = false;
 #if !defined(__EMSCRIPTEN__)
     // Create hidden so the game never flashes a black window during renderer /
     // GPU setup; we draw the boot splash then reveal it (see below).
-    if (!cfg.fullscreen) winFlags |= SDL_WINDOW_HIDDEN;
+    wd.hidden = !cfg.fullscreen;
 #endif
-    if (!cfg.showCursor) SDL_ShowCursor(SDL_DISABLE);
+    if (!cfg.showCursor) pb->ShowCursor(false);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
-    SDL_Window* window = SDL_CreateWindow(
-        title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        cfg.width, cfg.height, winFlags);
+    wd.title = title;
+    wd.width = cfg.width; wd.height = cfg.height;
+    std::unique_ptr<okay::platform::Window> windowOwner = pb->MakeWindow(wd);
+    okay::platform::Window* window = windowOwner.get();
     if (window && cfg.minWidth > 0 && cfg.minHeight > 0)
-        SDL_SetWindowMinimumSize(window, cfg.minWidth, cfg.minHeight);
+        window->SetMinimumSize(cfg.minWidth, cfg.minHeight);
     // Window/taskbar icon: load the PNG and apply it.
     if (window && !cfg.icon.empty()) {
         okay::Image ico;
-        if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon)) {
-            SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
-                (void*)ico.Data(), ico.Width(), ico.Height(), 32, ico.Width() * 4, SDL_PIXELFORMAT_ABGR8888);
-            if (surf) { SDL_SetWindowIcon(window, surf); SDL_FreeSurface(surf); }
-        }
+        if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon))
+            window->SetIcon((const uint8_t*)ico.Data(), ico.Width(), ico.Height());
+    }
+    // The 2D drawing (SDL_Renderer, the OkayUI backend) needs an SDL window. Only the sdl2
+    // backend makes one; our own backend's windows (X11 / Win32) cannot be drawn on yet.
+    SDL_Window* sdlWindow = nullptr;
+    if (window && pb->Kind() == okay::platform::BackendKind::Sdl2) sdlWindow = (SDL_Window*)window->NativeHandle();
+    else if (window) {
+        pb->Log(std::string("the player draws through SDL_Renderer, which needs the sdl2 platform backend; backend '") +
+                pb->Name() + "' made its window but has no 2D painter yet (see docs/platform_layer.md)");
+        windowOwner.reset();
+        pb->Shutdown();
+        return 2;
     }
     Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    SDL_Renderer* renderer = SDL_CreateRenderer(sdlWindow, -1, renFlags);
+    if (!renderer) renderer = SDL_CreateRenderer(sdlWindow, -1, 0);
 
     // ---- Boot splash: the project's branded loading frame, shown immediately so
     // the game doesn't flash a black window while the renderer / GPU / scene set
@@ -1607,7 +1623,7 @@ int main(int argc, char** argv) {
         int bw = cfg.width, bh = cfg.height; SDL_GetRendererOutputSize(renderer, &bw, &bh);
         okay::DrawSplashStyled(renderer, bw, bh, st);
 #if !defined(__EMSCRIPTEN__)
-        SDL_ShowWindow(window); SDL_RaiseWindow(window);
+        window->Show(); window->Raise();
         okay::DrawSplashStyled(renderer, bw, bh, st);
 #endif
     }
@@ -1625,7 +1641,7 @@ int main(int argc, char** argv) {
     if (!cfg.sawCursorMode && cfg.lockCursor) cfg.cursorMode = 1;
     if (cfg.cursorMode == 1) Cursor::Capture(true);
     else if (cfg.cursorMode == 2) { Cursor::SetLock(Cursor::LockMode::Confined); Cursor::SetVisible(true); }
-    SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
+    pb->StartTextInput();   // deliver text-input events for UI input fields
 
     // Optional GPU 3D renderer — the same hardware path the editor's Scene view uses,
     // now shipped with the game. Picks the best backend for this machine (Direct3D 11
@@ -1638,8 +1654,8 @@ int main(int argc, char** argv) {
     okay::D3D11Renderer* d3dRenderer = nullptr;  // Direct3D 11 backend (Windows)
     okay::D3D12Renderer* d3d12Renderer = nullptr;// Direct3D 12 backend (Windows, opt-in)
 #endif
-    SDL_Window*          glWindow = nullptr;      // hidden context window for the GL path
-    SDL_GLContext        glCtx = nullptr;
+    std::unique_ptr<okay::platform::Window> glWindow;   // hidden context window for the GL path
+    bool                 glCtx = false;                 // its GL context exists
     bool                 glReady = false, d3dReady = false, d3d12Ready = false;
 #ifndef __EMSCRIPTEN__
     if (cfg.gpu) {
@@ -1654,21 +1670,20 @@ int main(int argc, char** argv) {
         if (d3dRenderer->Init()) d3dReady = true;
         else { delete d3dRenderer; d3dRenderer = nullptr; }
 #endif
-        // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders.
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-        glWindow = SDL_CreateWindow("okay-gl", 0, 0, 16, 16, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders
+        // (GLAttributes' defaults: 3.2, compatibility profile, 24-bit depth).
+        okay::platform::WindowDesc gd;
+        gd.title = "okay-gl"; gd.x = 0; gd.y = 0; gd.width = 16; gd.height = 16;
+        gd.resizable = false; gd.opengl = true; gd.hidden = true;
+        glWindow = pb->MakeWindow(gd);
         if (glWindow) {
-            glCtx = SDL_GL_CreateContext(glWindow);
-            if (glCtx) {
-                SDL_GL_MakeCurrent(glWindow, glCtx);
-                if (okay::GLRenderer::LoadGL((okay::GLRenderer::GLGetProc)SDL_GL_GetProcAddress)) {
+            glCtx = glWindow->CreateGLContext(okay::platform::GLAttributes());
+            if (glCtx) {   // CreateGLContext also made it current
+                if (okay::GLRenderer::LoadGL([](const char* n) -> void* { return okay::platform::Default()->GLProcAddress(n); })) {
                     glRenderer = new okay::GLRenderer();
                     glReady = true;
                 }
-                SDL_GL_MakeCurrent(nullptr, nullptr);
+                pb->ReleaseCurrent();
             }
         }
     }
@@ -1791,9 +1806,9 @@ int main(int argc, char** argv) {
         std::string link;
         if (okay::GameIpc::TakeJoin(link)) {   // the launcher: "join this now" (or "find me a match")
             okay::MatchRequest mr;
-            if (ParseMatchLink(link, mr)) { SDL_Log("Launcher asked to find a match (%d players)", mr.players); okay::Matchmaker::Shared().Start(mr); }
+            if (ParseMatchLink(link, mr)) { pb->Log("Launcher asked to find a match (" + std::to_string(mr.players) + " players)"); okay::Matchmaker::Shared().Start(mr); }
             else {
-                SDL_Log("Launcher asked to join %s", link.c_str());
+                pb->Log("Launcher asked to join " + link);
                 if (nm) nm->JoinByLink(link); else okay::NetworkManager::SetLaunchJoin(link);
             }
         }
@@ -1840,60 +1855,66 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         g_uiText[0] = '\0'; g_uiBack = false; g_uiWheel = 0.0f;
 #endif
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) running = false;
+        okay::platform::Event e;
+        using ET = okay::platform::EventType;
+        using PK = okay::platform::Key;
+        while (pb->PollEvent(e)) {
+            const bool keyDown = e.type == ET::KeyDown;
+            // The wheel as the OS user set it up (natural scrolling flips it), as SDL reported it.
+            const float osWheelY = e.wheelFlipped ? -e.wheelY : e.wheelY;
+            if (e.type == ET::Quit) running = false;
 #ifdef OKAY_HAVE_OKAYUI
-            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F1 && devPanels) g_testUI = !g_testUI;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F3) g_statsUI = !g_statsUI;
-            if (e.type == SDL_MOUSEWHEEL) g_uiWheel += (float)e.wheel.y;   // for OkayUI scrolling
+            if (keyDown && e.key == PK::F1 && devPanels) g_testUI = !g_testUI;
+            if (keyDown && e.key == PK::F3) g_statsUI = !g_statsUI;
+            if (e.type == ET::MouseWheel) g_uiWheel += osWheelY;   // for OkayUI scrolling
             if (g_testUI || okay::ServerBrowser::Shared().windowOpen) {   // OkayUI text fields need the typing
-                if (e.type == SDL_TEXTINPUT) SDL_strlcat(g_uiText, e.text.text, sizeof(g_uiText));
-                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) g_uiBack = true;
+                if (e.type == ET::TextInput) {   // append, truncated to the buffer like SDL_strlcat did
+                    const size_t used = std::strlen(g_uiText);
+                    const size_t room = sizeof(g_uiText) - 1 - used;
+                    std::strncat(g_uiText, e.text.c_str(), room);
+                }
+                if (keyDown && e.key == PK::Backspace) g_uiBack = true;
             }
 #endif
 #if !defined(__EMSCRIPTEN__)
-            if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_TAB &&
-                (e.key.keysym.mod & KMOD_SHIFT)) {
+            if (keyDown && !e.repeat && e.key == PK::Tab && (e.mods & okay::platform::ModShift)) {
                 okay::GameIpc::RequestInvite();   // the launcher pops its invite-friends window
-                SDL_Log("Asked the OkaySpace launcher to open Invite friends");
+                pb->Log("Asked the OkaySpace launcher to open Invite friends");
             }
 #endif
-            if (e.type == SDL_WINDOWEVENT) {
-                if (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) windowFocused = true;
-                else if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { windowFocused = false; cursorReleased = true; }
-            }
+            if (e.type == ET::WindowFocusGained) windowFocused = true;
+            else if (e.type == ET::WindowFocusLost) { windowFocused = false; cursorReleased = true; }
             // A click in the window gives a released cursor back to the game.
-            if (e.type == SDL_MOUSEBUTTONDOWN && cursorReleased) cursorReleased = false;
-            if (e.type == SDL_CONTROLLERDEVICEADDED) pads.Add(e.cdevice.which);
-            if (e.type == SDL_CONTROLLERDEVICEREMOVED) pads.Remove(e.cdevice.which);
-            if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
-            if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
-            if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION || e.type == SDL_FINGERUP) {
+            if (e.type == ET::MouseButtonDown && cursorReleased) cursorReleased = false;
+            if (e.type == ET::GamepadAdded) pads.Add(e.deviceId);
+            if (e.type == ET::GamepadRemoved) pads.Remove(e.deviceId);
+            if (e.type == ET::TextInput) Input::FeedText(e.text.c_str());   // real characters
+            if (e.type == ET::MouseWheel) Input::FeedMouseWheel(osWheelY);
+            if (e.type == ET::FingerDown || e.type == ET::FingerMotion || e.type == ET::FingerUp) {
                 // Finger coordinates are 0..1 of the window; the UI works in renderer pixels.
                 int ow = 0, oh = 0;
                 SDL_GetRendererOutputSize(renderer, &ow, &oh);
-                const int state = e.type == SDL_FINGERDOWN ? 0 : e.type == SDL_FINGERMOTION ? 1 : 2;
-                Input::FeedTouch((long long)e.tfinger.fingerId, state, Vec2{e.tfinger.x * ow, e.tfinger.y * oh});
+                const int state = e.type == ET::FingerDown ? 0 : e.type == ET::FingerMotion ? 1 : 2;
+                Input::FeedTouch(e.fingerId, state, Vec2{e.fx * ow, e.fy * oh});
             }
             // Alt+Enter / F11: switch between fullscreen and windowed (when enabled in Build Settings).
-            if (cfg.fullscreenToggle && e.type == SDL_KEYDOWN && !e.key.repeat &&
-                (e.key.keysym.sym == SDLK_F11 ||
-                 ((e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) && (e.key.keysym.mod & KMOD_ALT)))) {
-                const bool fs = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
-                SDL_SetWindowFullscreen(window, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+            if (cfg.fullscreenToggle && keyDown && !e.repeat &&
+                (e.key == PK::F11 ||
+                 ((e.key == PK::Return || e.key == PK::KpEnter) && (e.mods & okay::platform::ModAlt)))) {
+                const bool fs = window->IsFullscreen();
+                window->SetFullscreen(!fs);
                 okay::DisplaySettings::SetFullscreen(!fs);
                 continue;
             }
             // Esc quits only when no input field is focused (otherwise it cancels it).
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+            if (keyDown && e.key == PK::Escape) {
                 bool typing = false;
                 for (const auto& up : scene.Objects())
                     if (auto* f = up->GetComponent<UIInputField>()) if (f->focused) typing = true;
                 // Shift+Esc is a GUARANTEED quit: it always closes the game regardless of
                 // pause menus, fullscreen or a hidden cursor — so a player can never get
                 // trapped in a game with no visible way out.
-                bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+                bool shift = (pb->ModState() & okay::platform::ModShift) != 0;
                 if (shift && !typing) { running = false; }
                 else {
                     // A PauseMenu owns a plain Escape (it pauses instead of quitting); only
@@ -1912,26 +1933,26 @@ int main(int argc, char** argv) {
         okay::Matchmaker::Shared().Pump(scene.FindObjectOfType<okay::NetworkManager>());   // a found match: join / host it
 #endif
         // Feed keyboard into the engine Input.
-        const Uint8* ks = SDL_GetKeyboardState(nullptr);
+        auto keyHeld = [pb](PK k) { return pb->IsKeyDown(k); };
         std::vector<char> down;
         for (char c = 'a'; c <= 'z'; ++c)
-            if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
+            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);   // by the layout's letter: AZERTY WASD works
         for (char c = '0'; c <= '9'; ++c)
-            if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
-        if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
-        if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
-        if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
+            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);
+        if (keyHeld(PK::Space)) down.push_back(' ');
+        if (keyHeld(PK::LShift) || keyHeld(PK::RShift)) down.push_back(Input::KeyShift); // sprint
+        if (keyHeld(PK::LCtrl)  || keyHeld(PK::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
         // Editing keys for text fields (held-state; edge-detected by the field).
-        if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8);
-        if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
-        if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
+        if (keyHeld(PK::Backspace)) down.push_back((char)8);
+        if (keyHeld(PK::Return) || keyHeld(PK::KpEnter)) down.push_back('\r');
+        if (keyHeld(PK::Escape)) down.push_back((char)27);
         // Arrows count as themselves and as WASD, so axis_x/axis_y and key("w") agree.
-        if (ks[SDL_SCANCODE_UP])    { down.push_back('w'); down.push_back(Input::KeyUp); }
-        if (ks[SDL_SCANCODE_LEFT])  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-        if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
-        if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
+        if (keyHeld(PK::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
+        if (keyHeld(PK::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
+        if (keyHeld(PK::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
+        if (keyHeld(PK::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
-        okay::AppendSdlExtendedKeys(ks, down);
+        okay::AppendExtendedKeys(*pb, down);
         pads.Feed(down);   // every controller (sticks, triggers, buttons, rumble); the first also types WASD / Space
         Input::FeedKeys(down);
 
@@ -1969,15 +1990,15 @@ int main(int argc, char** argv) {
         // the cursor always appears in the middle and the look anchor resets cleanly.
         static bool s_prevInvModal = false;
         if (gameModal != s_prevInvModal && Cursor::IsLocked()) {
-            int ww = 0, wh = 0; SDL_GetWindowSize(window, &ww, &wh);
-            SDL_WarpMouseInWindow(window, ww / 2, wh / 2);
+            int ww = 0, wh = 0; window->GetSize(ww, wh);
+            pb->WarpMouse(window, ww / 2, wh / 2);
         }
         s_prevInvModal = gameModal;
         // Relative mode only on the transition. Calling it every frame re-warps,
         // and that warp was added on top of the real delta.
         static bool s_relLocked = false;
         if (locked != s_relLocked) {
-            SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+            pb->SetRelativeMouse(locked);
             okay::NoteMouseSpaceChanged();
             s_relLocked = locked;
         }
@@ -1987,22 +2008,22 @@ int main(int argc, char** argv) {
         // nearest-slot drop to the slot above. Hiding it makes the icon centre the only
         // reference, so "drop where the item is" lines up with the slot under it.
         bool showCursor = (Cursor::visible || gameModal || cursorReleased) && !itemDragging;
-        SDL_ShowCursor(showCursor ? SDL_ENABLE : SDL_DISABLE);
+        pb->ShowCursor(showCursor);
 
         // Feed the mouse (position in pixels + left/right/middle button state). When
         // locked we accumulate relative motion into a virtual position so the
         // controllers' look deltas keep working with a hidden, centred cursor.
         int mx, my; Uint32 mb;
         if (locked) {
-            int rx, ry; mb = SDL_GetRelativeMouseState(&rx, &ry);
+            int rx, ry; mb = pb->RelativeMouseState(&rx, &ry);
             s_virtualMouse.x += (float)rx; s_virtualMouse.y += (float)ry;
         } else {
-            int ax, ay; mb = SDL_GetMouseState(&ax, &ay);
+            int ax, ay; mb = pb->MouseState(&ax, &ay);
             // SDL_GetMouseState is in window POINTS, but the UI is drawn in renderer
             // PIXELS (the window is High-DPI). Scale so UI hit-testing — inventory
             // slots, buttons — lines up with what's on screen.
             int ww = 0, wh = 0, ow = 0, oh = 0;
-            SDL_GetWindowSize(window, &ww, &wh);
+            window->GetSize(ww, wh);
             SDL_GetRendererOutputSize(renderer, &ow, &oh);
             float sx = ww > 0 ? (float)ow / ww : 1.0f, sy = wh > 0 ? (float)oh / wh : 1.0f;
             if (confined && ww > 1 && wh > 1) {
@@ -2010,14 +2031,14 @@ int main(int argc, char** argv) {
                 if (ay < 0) ay = 0;
                 if (ax > ww - 1) ax = ww - 1;
                 if (ay > wh - 1) ay = wh - 1;
-                SDL_WarpMouseInWindow(window, ax, ay);
+                pb->WarpMouse(window, ax, ay);
             }
             s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
         unsigned mask = 0;
-        if (mb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
-        if (mb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
-        if (mb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
+        if (mb & okay::platform::MouseMask(okay::platform::MouseLeft))   mask |= 1u << 0;
+        if (mb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
+        if (mb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
         Input::FeedMouse(s_virtualMouse, mask);
         InputActions::Tick();   // after every device is fed: Jump, Move, Fire... for this frame
 
@@ -2027,7 +2048,7 @@ int main(int argc, char** argv) {
             const int gen = okay::DisplaySettings::Generation();
             if (gen != s_dispGen) {
                 s_dispGen = gen;
-                SDL_SetWindowFullscreen(window, okay::DisplaySettings::Fullscreen() ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                window->SetFullscreen(okay::DisplaySettings::Fullscreen());
                 cfg.vsync = okay::DisplaySettings::VSync();
                 SDL_RenderSetVSync(renderer, cfg.vsync ? 1 : 0);
                 okay::DisplaySettings::ApplyQuality();
@@ -2044,8 +2065,7 @@ int main(int argc, char** argv) {
         static float s_refreshHz = 0.0f;
         static int s_refreshAge = 0;
         if (s_refreshAge-- <= 0) {
-            SDL_DisplayMode dm;
-            s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
+            s_refreshHz = window ? (float)window->RefreshRateHz() : 0.0f;
             s_refreshAge = 120;
         }
         {   // the loop snaps to refresh periods only with vsync on (Settings can switch it while playing)
@@ -2092,11 +2112,11 @@ int main(int argc, char** argv) {
         // (via the installed ScriptUIBridge) draw into this frame. Flushed after the
         // game is rendered (see EndFrame near the present), so UI sits on top.
         {
-            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            int mx, my; Uint32 mb = pb->MouseState(&mx, &my);
             OkayUI::Input ui;
             ui.mouseX = (float)mx; ui.mouseY = (float)my;
-            ui.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-            ui.rightDown = (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0;
+            ui.mouseDown = (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0;
+            ui.rightDown = (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0;
             ui.text = g_uiText[0] ? g_uiText : nullptr;
             ui.backspace = g_uiBack;
             ui.wheel = g_uiWheel;
@@ -2118,8 +2138,7 @@ int main(int argc, char** argv) {
         {
             static bool s_bmPrev = false, s_bmOn = false;
             static BuilderMode* s_bm = nullptr;
-            const Uint8* kb = SDL_GetKeyboardState(nullptr);
-            bool f2 = kb && kb[SDL_SCANCODE_F2] != 0;
+            bool f2 = pb->IsKeyDown(PK::F2);
             if (f2 && !s_bmPrev) {
                 s_bmOn = !s_bmOn;
                 if (s_bmOn && !s_bm && scene.mainCamera && scene.mainCamera->gameObject) {
@@ -2158,8 +2177,8 @@ int main(int argc, char** argv) {
         if (!loop.BeginFrame(tick ? (double)measuredDt : 0.0)) running = false;   // false: a PauseMenu / script asked to quit
         if (acGuard.Tick()) {   // only ever true in enforce mode
             running = false;
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(),
-                ("The game was closed by its anti-cheat: " + acGuard.Findings().back().detail + ".").c_str(), window);
+            pb->ShowErrorBox(cfg.title,
+                "The game was closed by its anti-cheat: " + acGuard.Findings().back().detail + ".", window);
         }
 
         // Keyboard / gamepad menu navigation (arrows/WASD + Enter/Space/A).
@@ -2329,10 +2348,10 @@ int main(int argc, char** argv) {
                                                                   p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
 #endif
                             if (!got && glReady && glRenderer && glWindow && glCtx) {
-                                if (SDL_GL_MakeCurrent(glWindow, glCtx) == 0) {
+                                if (glWindow->MakeCurrent()) {
                                     got = glRenderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
                                                                      p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
-                                    SDL_GL_MakeCurrent(nullptr, nullptr);
+                                    okay::platform::Default()->ReleaseCurrent();
                                 }
                             }
                         }
@@ -2366,10 +2385,10 @@ int main(int argc, char** argv) {
                                                          0.0f, 0.0f, 0.0f, 0.0f, ignore);
 #endif
                     if (!px && glReady && glRenderer && glWindow && glCtx) {
-                        if (SDL_GL_MakeCurrent(glWindow, glCtx) == 0) {
+                        if (glWindow->MakeCurrent()) {
                             px = glRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                             0.0f, 0.0f, 0.0f, 0.0f, ignore);
-                            SDL_GL_MakeCurrent(nullptr, nullptr);
+                            okay::platform::Default()->ReleaseCurrent();
                         }
                     }
                     if (!px) ++gpuFails; else gpuFails = 0;
@@ -2707,7 +2726,7 @@ int main(int argc, char** argv) {
             OkayUI::End();
         }
         OkayUI::EndFrame(renderer);
-        SDL_StartTextInput();   // keep text flowing for OkayUI text fields
+        pb->StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
         // Minecraft-style inventory hotbar / backpack (under the loading screen).
         for (const auto& up : scene.Objects()) {
@@ -2783,10 +2802,11 @@ int main(int argc, char** argv) {
             while (running && !done) {
                 double el = (double)(okay::platform::PerfCounter() - t0) / (double)okay::platform::PerfFrequency();
                 if (el >= dur) break;
-                SDL_Event e;
-                while (SDL_PollEvent(&e)) {
-                    if (e.type == SDL_QUIT) { running = false; }
-                    else if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN) done = true;  // skip
+                okay::platform::Event e;
+                while (pb->PollEvent(e)) {
+                    if (e.type == okay::platform::EventType::Quit) { running = false; }
+                    else if (e.type == okay::platform::EventType::KeyDown ||
+                             e.type == okay::platform::EventType::MouseButtonDown) done = true;  // skip
                 }
                 double a = 1.0;
                 if (el < fade) a = el / fade;
@@ -2834,14 +2854,13 @@ int main(int argc, char** argv) {
     if (d3dRenderer) { d3dRenderer->Destroy(); delete d3dRenderer; }
 #endif
     if (glRenderer) {
-        if (glWindow && glCtx) SDL_GL_MakeCurrent(glWindow, glCtx);
+        if (glWindow && glCtx) glWindow->MakeCurrent();
         glRenderer->Destroy(); delete glRenderer;
-        SDL_GL_MakeCurrent(nullptr, nullptr);
+        okay::platform::Default()->ReleaseCurrent();
     }
-    if (glCtx) SDL_GL_DeleteContext(glCtx);
-    if (glWindow) SDL_DestroyWindow(glWindow);
+    glWindow.reset();   // destroys its GL context, then the hidden window
     SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    windowOwner.reset();
+    pb->Shutdown();
     return 0;
 }

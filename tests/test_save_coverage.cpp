@@ -47,7 +47,7 @@ using namespace okay;
     X(NetworkTransform) X(OxygenStat) X(ParticleSystem) X(PauseMenu) X(Platformer25DController) \
     X(PlayerController) X(PlayerView) X(PoisonStat) X(PolygonCollider2D) X(PoseCapture) \
     X(ProceduralObjectHolding) X(Projectile3D) X(QuestLog) X(QuestTrigger) X(RadiationStat) X(Ragdoll) \
-    X(Rigidbody2D) X(Rigidbody3D) X(RootMotion) X(SanityStat) X(Saveable) X(ScriptComponent) X(Seat) \
+    X(Rigidbody2D) X(Rigidbody3D) X(RootMotion) X(SanityStat) X(SaveConfig) X(Saveable) X(ScriptComponent) X(Seat) \
     X(SequencePlayer) X(SettingsScreen) X(SkinnedMesh) X(SleepStat) X(Spawner) X(SphereCollider3D) X(Spinner) \
     X(Spline) X(SplineFollower) X(SplineInstancer) X(SplineMesh) X(SpriteAnimator) X(SpriteRenderer) \
     X(StaminaStat) X(StatComponent) X(Stats) X(StatusEffectStat) X(SteamManager) X(StoryState) \
@@ -136,9 +136,10 @@ int main() {
     //   testing::EventProbe    a test helper (okay/Testing/PlayTest.hpp)
     //   SettingsScreen         rebuilt on its own: SettingsScreen::Ensure binds the "Settings" panel when Play starts
     //   SteamManager           added by game code at startup (docs/steam_release.md), not a scene object
-    //   Saveable, CheckpointTrigger   the Save Framework's: added by game code, saved by the framework (docs/save_framework.md)
+    //   CheckpointTrigger      the Save Framework's: added by game code, saved by the framework (docs/save_framework.md)
+    //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/save_framework.md)
     const std::set<std::string> kRuntimeOnly = {"StatComponent", "TimedDestroy", "UIToastItem", "WeatherRig", "NetworkAvatarMotion",
-                                                "testing::EventProbe", "SettingsScreen", "SteamManager", "Saveable", "CheckpointTrigger"};
+                                                "testing::EventProbe", "SettingsScreen", "SteamManager", "CheckpointTrigger"};
     for (const auto& n : dropped) CHECK(kRuntimeOnly.count(n) != 0);
     for (const auto& n : kRuntimeOnly) CHECK(std::find(dropped.begin(), dropped.end(), n) != dropped.end());   // keep this list honest: remove a type once it is saved
     CHECK(notSwitchable.empty());

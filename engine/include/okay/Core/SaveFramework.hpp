@@ -340,9 +340,10 @@ public:
 /// ("Root/Child", "Crate#1" for the second sibling called Crate), so renaming an
 /// object breaks the link to its old save.
 ///
-/// The scene file format on this branch has no record for this component: attach it
-/// from code (SaveApplyOptions::prepare runs after a level loads and before state is
-/// put back), or mark objects by tag (SaveCaptureOptions::includeTag).
+/// The scene file stores it (record "saveable"), so a level loaded from a file keeps its
+/// Saveable components: the editor's Add Component > Save > Saveable, or code. For
+/// objects without one, SaveApplyOptions::prepare can attach them after a load, or mark
+/// objects with a tag and save with SaveCaptureOptions::includeTag.
 class Saveable : public Behaviour, public ISaveable {
 public:
     std::string saveId;           ///< stable key (empty = the scene path; dynamic objects get one)
@@ -351,10 +352,23 @@ public:
     bool saveTransform = true;    ///< local position / rotation / scale
     bool saveActive = true;
     bool saveComponents = true;   ///< the built-in adapters: Rigidbody2D/3D, Inventory, Stats
+    /// Property-registry paths to store too ("Light.intensity", "Health.current"): any
+    /// registered component property, so a no-code user picks fields without writing an
+    /// OnSave. A path that does not resolve is reported (capture) and skipped (load).
+    std::vector<std::string> properties;
+    /// Also store this object's script variables (text scripts' globals) and the
+    /// variables of its visual scripts.
+    bool saveVariables = false;
+    /// Also store the scene-wide variables once per save: Action List numbers and text,
+    /// the visual scripts' scene variables and their global variables. Tick it on one
+    /// object per scene (a manager object); it is written once however many ask.
+    bool saveSceneVariables = false;
     std::function<void(SaveWriter&)> onSave;
     std::function<void(SaveReader&)> onLoad;
 
     std::string SaveName() const override { return "saveable"; }
+    /// Notes this object as part of the level (so a later save can record it as destroyed).
+    void Start() override;
     void OnSave(SaveWriter& w) override { if (onSave) onSave(w); }
     void OnLoad(SaveReader& r) override { if (onLoad) onLoad(r); }
     /// Give this object a fresh unique id if it has none; returns the id.
@@ -422,6 +436,9 @@ public:
     /// which were destroyed. Call it right after a level loads. (CaptureScene does it
     /// itself the first time it sees a scene, which then reports nothing destroyed.)
     static void MarkSceneLoaded(Scene& scene, const SaveCaptureOptions& options = {});
+    /// What Saveable::Start calls: when `go` is part of a level that was just (re)loaded,
+    /// take the starting set now, so objects destroyed before the first save are recorded.
+    static void NoteLevelObject(Scene& scene, GameObject& go);
     /// Objects queued with Scene::Destroy are still in the scene until the frame ends,
     /// so they are captured as present: save at the start of a frame, or the next one.
     static SaveDocument CaptureScene(Scene& scene, const SaveCaptureOptions& options = {}, SaveCaptureReport* report = nullptr);

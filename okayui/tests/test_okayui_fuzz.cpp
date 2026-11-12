@@ -77,6 +77,39 @@ bool DataSane(const UI::DrawData& d) {
     return d.indexCount == 0 ? d.cmdCount == 0 || next == 0 : next == d.indexCount;
 }
 
+// Random calls to the public draw list with hostile numbers.
+void RandomDraw(Rng& r, const UI::DrawList& dl) {
+    auto P = [&] { return UI::Vec2{r.Chance(30) ? r.Nasty() : r.Uni(-50, 400), r.Chance(30) ? r.Nasty() : r.Uni(-50, 300)}; };
+    const UI::Color32 col = r.Next();
+    const float th = r.Chance(40) ? r.Nasty() : r.Uni(0, 12);
+    switch (r.Int(16)) {
+        case 0: dl.AddLine(P(), P(), col, th); break;
+        case 1: dl.AddRect(P(), P(), col, r.Nasty(), th); break;
+        case 2: dl.AddRectFilled(P(), P(), col, r.Nasty()); break;
+        case 3: dl.AddRectFilledMultiColor(P(), P(), col, r.Next(), r.Next(), r.Next()); break;
+        case 4: dl.AddCircle(P(), r.Chance(30) ? r.Nasty() : r.Uni(0, 80), col, r.NastyInt(200) - 20, th); break;
+        case 5: dl.AddCircleFilled(P(), r.Chance(30) ? r.Nasty() : r.Uni(0, 80), col, r.NastyInt(200) - 20); break;
+        case 6: dl.AddTriangle(P(), P(), P(), col, th); dl.AddTriangleFilled(P(), P(), P(), col); break;
+        case 7: dl.AddQuad(P(), P(), P(), P(), col, th); dl.AddQuadFilled(P(), P(), P(), P(), col); break;
+        case 8: {
+            UI::Vec2 pts[300];
+            for (auto& p : pts) p = P();
+            const int n = r.Int(310) - 3;
+            if (r.Chance(5)) dl.AddPolyline(nullptr, n, col, r.Chance(50), th);
+            else if (r.Chance(50)) dl.AddPolyline(pts, n, col, r.Chance(50), th);
+            else dl.AddConvexPolyFilled(pts, n, col);
+            break;
+        }
+        case 9: dl.AddBezierCubic(P(), P(), P(), P(), col, th, r.NastyInt(400) - 5); break;
+        case 10: { const std::string t = r.Junk(20); dl.AddText(P(), col, r.Chance(10) ? nullptr : t.c_str(), r.Nasty()); break; }
+        case 11: for (int i = 0, n = r.Int(40); i < n; ++i) dl.PathLineTo(P()); dl.PathStroke(col, r.Chance(50), th); break;
+        case 12: dl.PathArcTo(P(), r.Nasty(), r.Nasty(), r.Nasty(), r.NastyInt(300) - 5); dl.PathFillConvex(col); break;
+        case 13: dl.PathClear(); dl.PathArcTo(P(), r.Uni(0, 50), r.Uni(-9, 9), r.Uni(-9, 9), r.Int(40)); dl.PathStroke(col, false, th); break;
+        case 14: { const UI::Vec2 a = P(), b = P(); dl.PushClipRect(a, b); dl.AddRectFilled(P(), P(), col); dl.PopClipRect(); break; }
+        default: dl.PopClipRect(); dl.AddImage(nullptr, P(), P()); break;
+    }
+}
+
 // A random but well nested widget tree: every Begin / Push has its matching End / Pop.
 void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floats, int* ints, int* combo) {
     static const char* const items[] = {"Alpha", "Beta", "", "A very long combo entry that will not fit", "\xC3\xA9"};
@@ -86,7 +119,7 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
         const std::string lbl = r.Label();
         if (r.Chance(10)) UI::SameLine(r.Chance(50) ? r.Nasty() : -1.0f);
         if (r.Chance(8)) UI::SetNextItemWidth(r.Nasty());
-        switch (r.Int(40)) {
+        switch (r.Int(48)) {
             case 0: UI::Button(lbl.c_str()); break;
             case 1: UI::SmallButton(lbl.c_str()); break;
             case 2: UI::Checkbox(lbl.c_str(), &bools[r.Int(4)]); break;
@@ -126,6 +159,15 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 36: UI::ListBox(lbl.c_str(), &ints[1], items, r.Int(7) - 1, r.Int(6) - 1); break;
             case 37: { int p = 0; if (UI::DragSource(r.Int(9))) {} if (UI::DropTarget(&p)) {} break; }
             case 38: UI::TextWrapped(lbl.c_str()); UI::BulletText(lbl.c_str()); UI::SeparatorText(lbl.c_str()); break;
+            case 39: UI::BeginDisabled(r.Chance(60)); if (depth < 3) RandomWidgets(r, depth + 1, strs, bools, floats, ints, combo); if (r.Chance(90)) UI::EndDisabled(); break;   // sometimes unbalanced
+            case 40: RandomDraw(r, UI::GetWindowDrawList()); break;
+            case 41: RandomDraw(r, UI::GetForegroundDrawList()); break;
+            case 42: UI::SetCursorScreenPos({r.Nasty(), r.Nasty()}); UI::SetCursorPos({r.Nasty(), r.Nasty()}); UI::SetCursorPosX(r.Nasty()); UI::SetCursorPosY(r.Nasty()); break;
+            case 43: { const UI::Vec2 a = UI::GetCursorScreenPos(), b = UI::GetContentRegionAvail(), c = UI::GetCursorPos(), d = UI::CalcTextSize(lbl.c_str());
+                       if (!(b.x >= 0) || !(b.y >= 0) || !(d.x >= 0) || !(d.y >= 0)) std::fprintf(stderr, "  negative or NaN measurement: avail %g %g text %g %g (cursor %g %g %g %g)\n", b.x, b.y, d.x, d.y, a.x, a.y, c.x, c.y), std::abort(); break; }
+            case 44: UI::InvisibleButton(lbl.c_str(), r.Nasty(), r.Nasty()); UI::IsItemActive(); UI::IsItemActivated(); UI::IsItemDeactivated(); UI::IsItemClicked(r.Int(2)); break;
+            case 45: UI::IsMouseDown(r.Int(3)); UI::IsMouseClicked(r.Int(3)); UI::IsMouseReleased(r.Int(3)); UI::GetMousePos(); UI::GetMouseDelta(); UI::IsMouseHoveringRect({r.Nasty(), r.Nasty()}, {r.Nasty(), r.Nasty()}); break;
+            case 46: UI::EndDisabled(); UI::IsDisabled(); UI::GetColorU32((UI::Col)r.Int(UI::Col_COUNT), r.Nasty()); UI::ColorMulAlpha(r.Next(), r.Nasty()); break;
             default: UI::ColorEdit3(lbl.c_str(), &floats[r.Int(2)]); break;   // reads 3 floats: the array has 4 entries, index <= 1 stays in range
         }
         if (r.Chance(20)) { UI::IsItemHovered(); UI::GetItemRect(); UI::WantsTextInput(); }
@@ -219,16 +261,16 @@ int main() {
         UI::EndFrameData();
     }
 
-    // ---- a frame too big for the fixed batch: geometry is dropped, the draw list stays valid ---
+    // ---- a frame too big for the batch: geometry is dropped, the draw list stays valid ---
     {
         Reset();
         Sim sim(700, 500);
         sim.Move(60, 60);
-        int worst = 0;
+        int worst = 0; bool sawDrop = false;
         for (int f = 0; f < 3; ++f) {
             sim.Frame([&] {
                 if (UI::Begin("big", 0, 0, 600, 400)) {
-                    for (int i = 0; i < 900; ++i) { UI::Text("WWWWWWWWWWWWWWWW"); if (i == 0) UI::Tooltip("overlay while the main batch overflows"); }
+                    for (int i = 0; i < 14000; ++i) { UI::Text("WWWWWWWWWWWWWWWW"); if (i == 0) UI::Tooltip("overlay while the main batch overflows"); }
                     UI::Button("last"); UI::Tooltip("tip");
                 }
                 UI::End();
@@ -236,9 +278,11 @@ int main() {
             const UI::DrawData d = UI::GetDrawData();
             CHECK(DataSane(d));
             worst = std::max(worst, d.vertexCount);
+            if (d.dropped > 0 && UI::DroppedGeometry() == d.dropped) sawDrop = true;
             sim.Draw();
         }
-        CHECK(worst >= 19000);       // the batch really was full
+        CHECK(worst >= 262000);      // the batch really was full
+        CHECK(sawDrop);              // and it said so
     }
 
     // ---- text editing against a reference model ----------------------------------------------

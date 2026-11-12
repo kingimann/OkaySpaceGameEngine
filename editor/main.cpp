@@ -40,6 +40,8 @@
 #include "okay/Render/ModelImport.hpp"        // AutoMapLocomotion / slot suggestions
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"   // Saveable: pick registry properties to save
+#include "okay/Core/GameSaves.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include "okay/Core/DisplaySettings.hpp"
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
@@ -590,6 +592,39 @@ static int RunSelfTest() {
         check(loaded.load(path) && loaded.nodes.size() == 2 && loaded.find(start)
               && loaded.find(start)->type == "OnStart", "saved graph reopens with the same nodes");
         std::remove(path.c_str());
+    }
+
+    // Prefab mode: open a prefab on its own, edit, save, go back; the instance in the scene is rebuilt.
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_selftest_prefab_mode";
+        std::error_code pec;
+        fs::remove_all(dir, pec); fs::create_directories(dir, pec);
+        const std::string pf = (dir / "box.okayprefab").string();
+        {
+            Scene tmp("t");
+            GameObject* r = tmp.CreateGameObject("Box");
+            r->AddComponent<SpriteRenderer>();
+            PrefabTools::SavePrefab(*r, pf, nullptr);
+        }
+        EditorState pm;
+        std::string perr;
+        GameObject* inst = PrefabTools::Instantiate(pm.scene(), pf, {}, &perr);
+        check(inst != nullptr, "prefab mode: instance placed");
+        inst->name = "BoxA";
+        const std::string guid = inst->Guid();
+        check(pm.OpenPrefabOf(inst, &perr) && pm.InPrefabMode() && pm.PrefabDepth() == 1, "prefab mode: Open Prefab on an instance");
+        pm.Play();
+        check(!pm.isPlaying() && !pm.PlayBlockedReason().empty(), "prefab mode: Play is refused");
+        pm.PushUndo("Add Lid");
+        GameObject* lid = pm.scene().CreateGameObject("Lid");
+        lid->transform->SetParent(pm.PrefabRootObject()->transform, false);
+        pm.dirty = true;
+        check(pm.SavePrefab(&perr) && !pm.HasUnsavedChanges(), "prefab mode: Save writes the file and clears the unsaved mark");
+        check(pm.ClosePrefab(false, &perr) && !pm.InPrefabMode(), "prefab mode: Back returns to the scene");
+        GameObject* back = pm.scene().Find("BoxA");
+        check(back && back->Guid() == guid && back->transform->Children().size() == 1, "prefab mode: the instance was rebuilt with the new child");
+        fs::remove_all(dir, pec);
     }
 
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
@@ -2805,6 +2840,14 @@ static bool SaveSceneTo(EditorState& ed, std::string p);              // save un
 // Run `action` now, or once the person has answered "Save changes to <scene> before <doing>?" (Save / Don't Save /
 // Cancel) when the open scene has unsaved changes. Every way of replacing the open scene goes through this.
 void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function<void()> action, std::function<void()> onCancel = {});
+// Prefab mode (docs/prefab_mode.md): open a prefab on its own, the bar above the Scene view, Save / Revert / Back.
+static void OpenPrefabMode(EditorState& ed, const std::string& path);
+static void OpenPrefabModeOf(EditorState& ed, GameObject* go);
+static void RequestLeavePrefab(EditorState& ed, int depth);
+static void DrawPrefabModeBar(EditorState& ed);
+static void DrawPrefabLeavePrompt(EditorState& ed);
+static void ApplyPrefabModeQueue(EditorState& ed);
+static void SavePrefabCmd(EditorState& ed);
 // A modal with the problem in plain words and the reason (also logged to the Console).
 void ShowErrorPopup(const std::string& title, const std::string& text);
 static bool g_openNewProjectDialog = false;                            // File > New Project... (the dialog is further down)
@@ -5766,6 +5809,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Main Menu",            &okay::UITemplates::AddMainMenu);
         add("Pause Menu",           &okay::UITemplates::AddPauseMenu);
         add("Settings",             &okay::UITemplates::AddSettings);
+        add("Save Slots",           &okay::UITemplates::AddSaveSlots);
         add("Confirm Dialog",       &okay::UITemplates::AddConfirmDialog);
         add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
         if (ImGui::BeginMenu("Loading Screens")) {
@@ -6716,7 +6760,10 @@ void DrawMenuAndToolbar(EditorState& ed) {
     const bool playing = ed.isPlaying();
     // Play / Stop
     if (playing) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.56f, 0.30f, 1.0f));
+    const bool playBlocked = !playing && ed.InPrefabMode();   // a prefab is open: there is no game to run
+    ImGui::BeginDisabled(playBlocked);
     bool playHit = ImGui::Button("##tplay", ImVec2(bw, tb));
+    ImGui::EndDisabled();
     if (playing) ImGui::PopStyleColor();
     {
         ImVec2 c = iconC(); float s = tb * 0.22f;
@@ -6725,7 +6772,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
         else dl->AddTriangleFilled(ImVec2(c.x - s * 0.7f, c.y - s), ImVec2(c.x - s * 0.7f, c.y + s),
                                    ImVec2(c.x + s, c.y), IM_COL32(110, 220, 130, 255));
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip(playing ? "Stop (Ctrl+P)" : "Play (Ctrl+P)");
+    if (playBlocked) { if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", ed.PlayBlockedReason().c_str()); }
+    else if (ImGui::IsItemHovered()) ImGui::SetTooltip(playing ? "Stop (Ctrl+P)" : "Play (Ctrl+P)");
     if (playHit) {
         if (!playing) {
             if (g_clearConsoleOnPlay) ConsoleClear();
@@ -9882,7 +9930,16 @@ void DrawProject(EditorState& ed) {
             const bool many = s_multi.size() > 1;
             if (many) ImGui::TextDisabled("%d selected", (int)s_multi.size());
             // -- Open --
-            if (ImGui::MenuItem(isDir ? "Open Folder" : (ext == ".okayprefab" ? "Place in Scene" : "Open"))) wantOpen = true;
+            if (ImGui::MenuItem(isDir ? "Open Folder" : (ext == ".okayprefab" ? "Open Prefab" : "Open"))) wantOpen = true;
+            if (!isDir && ext == ".okayprefab" && ImGui::IsItemHovered())
+                ImGui::SetTooltip("Edit this prefab on its own: the Scene view shows only the prefab, and Save updates every instance.");
+            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Place in Scene")) {
+                ed.PushUndo();
+                std::string err;
+                if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
+                    ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + full);
+                } else ConsoleLog("Prefab load failed: " + err);
+            }
             if (!isDir && IsModelExt(ext) && ImGui::MenuItem("Make Playable Character")) {
                 sPendingPlayable = true;
                 sPendingPlayablePath = full;
@@ -9992,11 +10049,7 @@ void DrawProject(EditorState& ed) {
         else if (ext == ".okayscene") {
             RequestLoad(ed, full);
         } else if (ext == ".okayprefab") {
-            ed.PushUndo();
-            std::string err;
-            if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
-                ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + full);
-            } else ConsoleLog("Prefab load failed: " + err);
+            OpenPrefabMode(ed, full);   // double-click: edit the prefab on its own (right-click > Place in Scene puts a copy in the scene)
         } else if (ext == ".okaydata") {
             g_dataAssetPath = full; g_dataAssetOpen = true;
         } else if (ext == ".okaymat") {
@@ -11717,7 +11770,8 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
         ImGui::TextDisabled("Save keeps the scene, every edited script and every open graph.");
         {
             std::vector<std::string> names;
-            if (ed.dirty) names.push_back("Scene: " + (ed.path().empty() ? ed.scene().Name() : ed.path()));
+            if (ed.InPrefabMode()) { for (const auto& c : ed.PrefabCrumbs()) if (c.unsaved) names.push_back((c.path.empty() ? "Scene: " : "Prefab: ") + (c.path.empty() ? c.label : c.path)); }
+            else if (ed.dirty) names.push_back("Scene: " + (ed.path().empty() ? ed.scene().Name() : ed.path()));
             for (okay::ScriptComponent* t : g_scriptTabs)
                 if (t && ScriptTabDirty(t)) names.push_back("Script: " + (t->Path().empty() ? std::string("Untitled") : t->Path()));
             okay::editor::vsed::VsDirtyTitles(names);
@@ -12225,6 +12279,9 @@ void DrawScriptDocs() {
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
         fapi("seq_prepend(s, id) / seq_join_callback(s, \"fn\")", "play before everything / call when the last tween starts");
         fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
+        fapi("game_save(slot[, label]) / game_load(slot) / game_continue()", "save slots for Saveable objects (docs/save_framework.md); load happens next frame");
+        fapi("game_delete_slot(slot) / game_slot_exists(slot) / game_can_continue()", "manage and ask about save slots");
+        fapi("game_slot_text(slot) / game_slot_age(slot) / game_slot_label(slot) / game_autosave()", "when a slot was saved (UTC text, seconds ago), its label, autosave ring");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
         ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce,\nor a curve as text: \"cubic-bezier(0.4,0,0.2,1)\", \"steps(4)\".");
     }
@@ -17819,6 +17876,11 @@ static std::string OpenSceneLabel(EditorState& ed) {
 // Run `action` now when nothing is unsaved; otherwise ask first. `doing` completes "before ...": "opening another scene".
 void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function<void()> action, std::function<void()> onCancel) {
     if (!action) return;
+    if (ed.InPrefabMode()) {   // a prefab is open: the scene is put aside, and replacing it would lose it
+        ShowErrorPopup("Go back to the scene first", "A prefab is open, so the scene is put aside. Use Back in the bar above the Scene view (or its Scene crumb), then try again (" + doing + ").");
+        if (onCancel) onCancel();
+        return;
+    }
     if (g_savePromptOpen) { if (onCancel) onCancel(); return; }   // one question at a time
     if (!ed.HasUnsavedChanges()) { action(); return; }
     g_savePromptWhat = doing; g_savePromptAction = std::move(action); g_savePromptCancel = std::move(onCancel);
@@ -19446,8 +19508,7 @@ void DrawHierarchy(EditorState& ed) {
                         ImGui::TextDisabled("%s", pn.c_str());
                         const bool changed = oked::PrefabOverrideCount(*proot) > 0;
                         if (ImGui::MenuItem("Open")) {
-                            ed.Select(proot); g_isolate = proot;
-                            ConsoleLog("Editing prefab " + pn + ": the Scene view shows only this instance (Esc to leave). Apply All writes your changes into the prefab.");
+                            OpenPrefabModeOf(ed, proot);
                         }
                         if (ImGui::MenuItem("Select Asset")) { g_pingAsset = proot->prefabSource; g_showProject = true; ImGui::SetWindowFocus("Project"); }
                         ImGui::Separator();
@@ -20208,6 +20269,15 @@ static const ActionOpInfo kInstrOps[] = {
     {"add_prefs",   "Add To Saved Value", "key amount",           "Add to a stored (saved) value.",                          "Save"},
     {"get_prefs",   "Grab A Value",       "intoVar  savedName",   "Read a saved value (e.g. a stat like health) into a variable.", "Variables"},
     {"save_prefs",  "Write Save File",    "[file]",               "Write the saved values to disk.",                         "Save"},
+    {"game_save",   "Save To Slot",       "slot [label...]",      "Save the game (every Saveable object) to a slot, e.g. slot_1.", "Save"},
+    {"game_load",   "Load Slot",          "slot",                 "Load a slot: the level is reloaded and the saved objects put back (at the start of the next frame).", "Save"},
+    {"game_continue","Continue",          "",                     "Load the newest valid save.",                             "Save"},
+    {"game_autosave","Autosave Now",      "",                     "Save into the autosave slots (see the Save Settings component).", "Save"},
+    {"game_delete_slot","Delete Slot",    "slot",                 "Delete a save slot.",                                     "Save"},
+    {"game_slot_exists","Slot Exists",    "slot  intoVar",        "Sets a variable to 1 if the slot has a save, else 0.",    "Save"},
+    {"game_can_continue","Can Continue",  "intoVar",              "Sets a variable to 1 if there is a save to continue, else 0.", "Save"},
+    {"game_slot_age","Slot Saved Ago",    "slot  intoVar",        "Sets a variable to the seconds since the slot was saved (-1 if empty).", "Save"},
+    {"game_slot_text","Slot Saved Time",  "slot  intoTextVar",    "Sets a text variable to when the slot was saved, e.g. 2026-11-08 14:03 (UTC); empty if none.", "Save"},
     {"net_host",    "Host Game",          "port",                 "Start hosting a multiplayer session.",                    "Multiplayer"},
     {"net_join",    "Join Game",          "ip port",              "Connect to a host.",                                      "Multiplayer"},
     {"net_host_relay","Host via Relay",   "relayIp port code",    "Host through a relay using a shared code — players behind home routers connect with NO port-forwarding (NAT traversal). Run the okayspace-relay binary, or use a public one.", "Multiplayer"},
@@ -28271,11 +28341,7 @@ void DrawInspector(EditorState& ed) {
             oked::PrefabUiHooks h;
             h.selectAsset = [](const std::string& path) { g_pingAsset = path; g_showProject = true; ImGui::SetWindowFocus("Project"); };
             h.open = [&ed](GameObject* root) {
-                if (!root) return;
-                ed.Select(root);
-                g_isolate = root;
-                ConsoleLog("Editing prefab " + std::filesystem::path(root->prefabSource).filename().string() +
-                           ": the Scene view shows only this instance (Esc to leave). Apply All writes your changes into the prefab.");
+                if (root) OpenPrefabModeOf(ed, root);
             };
             oked::SetPrefabUiHooks(std::move(h));
         }
@@ -30336,6 +30402,73 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Clients may send##nv", &nv->clientsMaySend)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = only the host may call this RPC.");
             if (ImGui::SmallButton("Remove##nv")) toRemove = nv;
+        }
+    }
+    if (auto* sv = dynamic_cast<Saveable*>(curComp)) {
+        if (CompHeader("Saveable", sv, &toRemove)) {
+            ImGui::TextDisabled("Keep this object when the game is saved, and put it back on load.");
+            char idb[96]; std::snprintf(idb, sizeof(idb), "%s", sv->saveId.c_str());
+            if (ImGui::InputText("Save id##sv", idb, sizeof(idb))) { sv->saveId = idb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The stable key this object is found by on load. Keep it unique; it survives renaming and moving the object. Empty = the object's name path.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("New id##sv")) { sv->saveId = SaveSystem::NewId(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make a fresh unique id (use it on a duplicated object).");
+            if (!sv->saveId.empty()) {
+                int same = 0;
+                for (const auto& up : ed.scene().Objects())
+                    if (up) if (auto* o = up->GetComponent<Saveable>()) if (o->saveId == sv->saveId) ++same;
+                if (same > 1) ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.3f, 1), "Another object has this id. Press New id.");
+            }
+            if (ImGui::Checkbox("Position, rotation, scale##sv", &sv->saveTransform)) ed.dirty = true;
+            if (ImGui::Checkbox("Active (on / off)##sv", &sv->saveActive)) ed.dirty = true;
+            if (ImGui::Checkbox("Rigidbody, Inventory, Stats##sv", &sv->saveComponents)) ed.dirty = true;
+            if (ImGui::Checkbox("Script and visual-script variables##sv", &sv->saveVariables)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("This object's script globals and its visual scripts' variables.");
+            if (ImGui::Checkbox("Scene-wide variables (once per save)##sv", &sv->saveSceneVariables)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Action List numbers and text, and the visual scripts' scene and global variables. Tick this on one manager object.");
+            if (ImGui::Checkbox("Made while playing (spawned from a prefab)##sv", &sv->dynamic)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Respawned from the prefab below on load; an object that did not exist at the save is removed.");
+            if (sv->dynamic) {
+                char pb[256]; std::snprintf(pb, sizeof(pb), "%s", sv->prefab.c_str());
+                if (ImGui::InputText("Prefab##sv", pb, sizeof(pb))) { sv->prefab = pb; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okayprefab path. Empty = the object's own prefab.");
+            }
+            ImGui::TextDisabled("Also save these properties:");
+            int removeAt = -1;
+            for (std::size_t i = 0; i < sv->properties.size(); ++i) {
+                ImGui::PushID((int)i);
+                ImGui::BulletText("%s", sv->properties[i].c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) removeAt = (int)i;
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { sv->properties.erase(sv->properties.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::BeginCombo("Add property##sv", "Pick...")) {
+                for (const auto& c : sv->gameObject->Components()) {
+                    auto info = PropertyRegistry::FindFor(*c);
+                    if (!info || dynamic_cast<Saveable*>(c.get())) continue;
+                    for (const PropertyDesc& pd : info->properties) {
+                        if (pd.IsReadOnly() || pd.type == PropertyType::None || pd.type == PropertyType::ObjectRef) continue;
+                        const std::string path = info->name + "." + pd.name;
+                        if (std::find(sv->properties.begin(), sv->properties.end(), path) != sv->properties.end()) continue;
+                        if (ImGui::Selectable(path.c_str())) { sv->properties.push_back(path); ed.dirty = true; }
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::SmallButton("Remove##sv")) toRemove = sv;
+        }
+    }
+    if (auto* ss = dynamic_cast<SaveConfig*>(curComp)) {
+        if (CompHeader("Save Settings", ss, &toRemove)) {
+            ImGui::TextDisabled("When this scene saves by itself. One per scene.");
+            if (ImGui::DragFloat("Autosave every (s)##ss", &ss->autosaveInterval, 1.0f, 0.0f, 7200.0f, "%.0f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds of play between autosaves (0 = off).");
+            if (ImGui::Checkbox("Autosave when the scene starts##ss", &ss->autosaveOnSceneStart)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One autosave on entering this scene (not while a load is putting a save back).");
+            if (ImGui::DragInt("Autosave slots##ss", &ss->autosaveSlots, 0.2f, 1, 20)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("autosave_1 ... autosave_N; the oldest is replaced first. Continue loads the newest save of any kind.");
+            if (ImGui::SmallButton("Remove##ss")) toRemove = ss;
         }
     }
     if (auto* as = dynamic_cast<AutoSave*>(curComp)) {
@@ -39208,6 +39341,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<FirstPersonHands>(), "First Person Hands")) { go->AddComponent<FirstPersonHands>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
             if (item(!go->GetComponent<AutoSave>(), "Auto Save")) { go->AddComponent<AutoSave>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Saveable>(), "Saveable (keep when saving)")) { go->AddComponent<Saveable>()->EnsureId(); ed.dirty = true; }
+            if (item(!go->GetComponent<SaveConfig>(), "Save Settings (autosave)")) { go->AddComponent<SaveConfig>(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
@@ -44331,6 +44466,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             }
         }
     }
+    if (!uiPanel) DrawPrefabModeBar(ed);   // prefab mode: where you are, Back, Save, Revert
     ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
     // ---- View-axis gizmo (top-right corner, 3D view): shows the camera
@@ -44404,7 +44540,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     okay::UIResolutionScale() = uiResScale * (uiOnly ? g_uiEditZoom : 1.0f);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(canvasPos, canvasEnd, IM_COL32(15, 15, 30, 255));
+    dl->AddRectFilled(canvasPos, canvasEnd, ed.InPrefabMode() ? IM_COL32(16, 38, 58, 255) : IM_COL32(15, 15, 30, 255));   // prefab mode: a blue-green ground and frame, so you know you are not in the scene
+    if (ed.InPrefabMode()) dl->AddRect(canvasPos, canvasEnd, IM_COL32(70, 200, 225, 255), 0.0f, 0, 3.0f);
 
     ImGui::SetNextItemAllowOverlap();   // the selection's drag chip sits on top of the picture
     ImGui::InvisibleButton("canvas", canvasSize,
@@ -45677,6 +45814,7 @@ static bool SaveSceneTo(EditorState& ed, std::string p) {
     return true;
 }
 static void SaveSceneAsCmd(EditorState& ed) {
+    if (ed.InPrefabMode()) { SavePrefabCmd(ed); return; }   // a prefab is saved in place (Save As is for scenes)
     if (ed.isPlaying()) { ConsoleLog("Stop Play first: saving now would save the running game, not your scene.", 1); return; }
     const std::string def = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
     std::error_code ec;
@@ -45687,6 +45825,7 @@ static void SaveSceneAsCmd(EditorState& ed) {
     });
 }
 static void SaveSceneCmd(EditorState& ed) {
+    if (ed.InPrefabMode()) { SavePrefabCmd(ed); return; }
     if (ed.isPlaying()) { ConsoleLog("Stop Play first: saving now would save the running game, not your scene.", 1); return; }
     if (ed.path().empty()) { SaveSceneAsCmd(ed); return; }   // first save: choose where
     if (!SaveSceneTo(ed, ed.path())) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor. Fix the problem (or use Save Scene As) and try again.");
@@ -45719,14 +45858,150 @@ static bool SaveEditorDocument(const std::string& path, const std::string& conte
     return EditorBackups().SaveWithBackup(path, content);
 }
 static bool AnyUnsavedWork(EditorState& ed) {
-    if (ed.HasUnsavedChanges()) return true;   // the flag, or the scene text differing from what was saved
+    if (ed.HasUnsavedChanges() || ed.PrefabOuterUnsaved()) return true;   // the flag, or the scene text differing from what was saved (the open prefab, or what it was opened from)
     for (okay::ScriptComponent* t : g_scriptTabs)
         if (t && ScriptTabDirty(t)) return true;
     return okay::editor::vsed::VsAnyUnsaved();
 }
+// ---- Prefab mode ---------------------------------------------------------------------------------
+// The state machine lives in EditorState (OpenPrefab / SavePrefab / ClosePrefab ...); this is the screen side:
+// the bar above the Scene view, the question when leaving with unsaved edits, and the entry points.
+// Opening, leaving and reverting rebuild every object in the scene, so they are queued from the panels (which hold
+// object pointers while they draw) and run between frames (ApplyPrefabModeQueue, just before NewFrame).
+static struct { std::string open; int leave = -1; bool leaveSave = false; bool revert = false; } g_pmQueue;
+static int g_prefabLeaveDepth = -1;        // >= 0: the "Save prefab changes?" question is open for going back to this depth
+static std::string g_prefabLeaveError;
+static void StopEditorPreviews(EditorState& ed) {
+    StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();   // previews hold pointers into the scene that is about to be put aside
+    okay::editor::apreview::Stop(ed.scene());
+}
+static void OpenPrefabMode(EditorState&, const std::string& path) { g_pmQueue.open = path; }
+static void OpenPrefabModeNow(EditorState& ed, const std::string& path) {
+    if (ed.isPlaying()) { ShowErrorPopup("Stop Play first", "Prefab mode edits the prefab, not the running game. Press Stop, then open the prefab."); return; }
+    std::string why;
+    if (!ed.CanOpenPrefab(path, &why)) { ShowErrorPopup("Couldn't open the prefab", why); return; }
+    StopEditorPreviews(ed);
+    if (!ed.OpenPrefab(path, &why)) { ShowErrorPopup("Couldn't open the prefab", why); return; }
+    g_showHierarchy = true;
+    ConsoleLog("Prefab mode: editing " + std::filesystem::path(path).filename().string() + ". Save writes it; Back returns to " + ed.PrefabCrumbs()[(size_t)ed.PrefabDepth() - 1].label + ".");
+}
+static void OpenPrefabModeOf(EditorState& ed, GameObject* go) {
+    GameObject* r = go ? PrefabTools::NearestPrefabRoot(*go) : nullptr;
+    if (!r) { ShowErrorPopup("Couldn't open the prefab", "That object is not a prefab instance."); return; }
+    OpenPrefabMode(ed, r->prefabSource);
+}
+static void SavePrefabCmd(EditorState& ed) {
+    std::string err, warn;
+    if (!ed.SavePrefab(&err, &warn)) { g_lastSaveError = err; ConsoleLog(err, 2); ShowErrorPopup("Couldn't save the prefab", err + "\n\nNothing was lost: your edits are still open."); return; }
+    g_lastSaveError.clear();
+    g_lastSavedAt = SDL_GetTicks64();
+    ConsoleLog("Saved prefab " + std::filesystem::path(ed.PrefabPath()).filename().string() + ". Instances in the scene update when you go Back.");
+    if (!warn.empty()) ConsoleLog(warn, 1);
+}
+static void LeavePrefabNow(EditorState& ed, int depth, bool save) {
+    if (g_pmQueue.leave < 0 || depth < g_pmQueue.leave) { g_pmQueue.leave = depth; g_pmQueue.leaveSave = save; }   // queued: run between frames
+}
+static void LeavePrefabReally(EditorState& ed, int depth, bool save) {
+    std::string err;
+    StopEditorPreviews(ed);
+    if (!ed.ClosePrefabTo(depth, save, &err)) { ShowErrorPopup("Couldn't leave the prefab", err + "\n\nYou are still in prefab mode and nothing was lost."); return; }
+    ConsoleLog(depth == 0 ? std::string("Back in the scene.") : "Back in " + ed.PrefabCrumbs().back().label + ".");
+    if (!ed.PrefabNote().empty()) ConsoleLog(ed.PrefabNote());
+}
+static void RequestLeavePrefab(EditorState& ed, int depth) {
+    if (!ed.InPrefabMode() || depth < 0 || depth >= ed.PrefabDepth()) return;
+    if (g_prefabLeaveDepth >= 0) return;   // one question at a time
+    if (!ed.PrefabUnsavedFrom(depth + 1)) { LeavePrefabNow(ed, depth, false); return; }
+    g_prefabLeaveDepth = depth; g_prefabLeaveError.clear();
+}
+static void ApplyPrefabModeQueue(EditorState& ed) {
+    if (!g_pmQueue.open.empty()) { const std::string p = std::move(g_pmQueue.open); g_pmQueue.open.clear(); OpenPrefabModeNow(ed, p); }
+    if (g_pmQueue.revert) {
+        g_pmQueue.revert = false;
+        std::string err;
+        if (!ed.InPrefabMode()) {}
+        else if (ed.RevertPrefab(&err)) ConsoleLog("Reverted " + std::filesystem::path(ed.PrefabPath()).filename().string() + " to the saved file (Undo brings your edits back).");
+        else ShowErrorPopup("Couldn't revert the prefab", err);
+    }
+    if (g_pmQueue.leave >= 0) { const int d = g_pmQueue.leave; const bool sv = g_pmQueue.leaveSave; g_pmQueue.leave = -1; if (ed.InPrefabMode() && d < ed.PrefabDepth()) LeavePrefabReally(ed, d, sv); }
+}
+static void DrawPrefabLeavePrompt(EditorState& ed) {
+    if (g_prefabLeaveDepth >= 0 && !ed.InPrefabMode()) g_prefabLeaveDepth = -1;
+    if (g_prefabLeaveDepth >= 0 && !ImGui::IsPopupOpen("Save prefab changes?")) ImGui::OpenPopup("Save prefab changes?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Save prefab changes?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    const auto crumbs = ed.PrefabCrumbs();
+    ImGui::TextWrapped("Save your changes before going back to %s?", g_prefabLeaveDepth >= 0 && g_prefabLeaveDepth < (int)crumbs.size() ? crumbs[(size_t)g_prefabLeaveDepth].label.c_str() : "the scene");
+    for (size_t i = (size_t)std::max(g_prefabLeaveDepth + 1, 0); i < crumbs.size(); ++i)
+        if (crumbs[i].unsaved) ImGui::BulletText("%s", crumbs[i].label.c_str());
+    ImGui::TextDisabled("If you don't save, the changes you made to the prefab are lost.");
+    if (!g_prefabLeaveError.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.55f, 0.50f, 1.0f)); ImGui::TextWrapped("Couldn't save: %s", g_prefabLeaveError.c_str()); ImGui::PopStyleColor(); }
+    ImGui::Dummy(ImVec2(0, 8));
+    const int depth = g_prefabLeaveDepth;
+    if (ImGui::Button("Save", ImVec2(120, 0))) {
+        std::string err;
+        // Save first (nothing is rebuilt by it), so a failure keeps the question open; then leaving is queued.
+        const bool ok = ed.SaveAllPrefabLevels(&err, depth + 1);
+        if (ok) { g_prefabLeaveDepth = -1; ImGui::CloseCurrentPopup(); LeavePrefabNow(ed, depth, false); }
+        else g_prefabLeaveError = err;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Don't Save", ImVec2(120, 0))) { g_prefabLeaveDepth = -1; ImGui::CloseCurrentPopup(); LeavePrefabNow(ed, depth, false); }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { g_prefabLeaveDepth = -1; ImGui::CloseCurrentPopup(); }
+    ImGui::EndPopup();
+}
+// The bar at the top of the Scene view while a prefab is open: Back, the crumbs (Scene > Prefab > Nested, each one a
+// button that goes back to it), Save and Revert, and one line saying what is going on.
+static void DrawPrefabModeBar(EditorState& ed) {
+    if (!ed.InPrefabMode()) return;
+    static int s_tick = 0;
+    if ((s_tick++ % 20) == 0 && !ed.isPlaying()) ed.SyncDirty();   // an edit that forgot to say so still shows
+    const auto crumbs = ed.PrefabCrumbs();
+    const bool unsaved = ed.dirty;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.29f, 0.38f, 1.0f));
+    ImGui::BeginChild("##prefabbar", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+    const std::string backTo = crumbs.size() >= 2 ? crumbs[crumbs.size() - 2].label : std::string("the scene");
+    if (ImGui::Button("< Back")) RequestLeavePrefab(ed, ed.PrefabDepth() - 1);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Leave the prefab and return to %s, with its selection and view as you left them.", backTo.c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.55f, 0.90f, 1.0f, 1.0f), "PREFAB MODE");
+    for (size_t i = 0; i < crumbs.size(); ++i) {
+        ImGui::SameLine();
+        ImGui::TextDisabled(">");
+        ImGui::SameLine();
+        ImGui::PushID((int)i);
+        const std::string lab = crumbs[i].label + (crumbs[i].unsaved ? " *" : "");
+        if (i + 1 < crumbs.size()) {
+            if (ImGui::SmallButton(lab.c_str())) RequestLeavePrefab(ed, (int)i);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(i == 0 ? "Go back to the scene" : "Go back to %s", crumbs[i].label.c_str());
+        } else ImGui::TextUnformatted(lab.c_str());
+        ImGui::PopID();
+    }
+    const float bw = ImGui::CalcTextSize("Revert").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float sw = ImGui::CalcTextSize("Save").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float x = ImGui::GetContentRegionMax().x - (bw + sw + ImGui::GetStyle().ItemSpacing.x);
+    ImGui::SameLine(std::max(x, ImGui::GetCursorPosX() + 12.0f));
+    ImGui::BeginDisabled(!unsaved);
+    if (ImGui::SmallButton("Save")) SavePrefabCmd(ed);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(unsaved ? "Write %s (Ctrl+S). Instances in the scene update when you go Back." : "Nothing to save: the file is what you see.", std::filesystem::path(ed.PrefabPath()).filename().string().c_str());
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!unsaved);
+    if (ImGui::SmallButton("Revert")) {
+        g_pmQueue.revert = true;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(unsaved ? "Throw away the changes since the last save and read the file again. Undo brings them back." : "Nothing to revert.");
+    ImGui::TextDisabled("Editing %s on its own. Play is off here. Save, then Back: every instance of it in the scene is rebuilt.", std::filesystem::path(ed.PrefabPath()).filename().string().c_str());
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
 static int g_pendingAction = 0;          // 1 play, 2 stop, 3 load scene
 static std::string g_pendingPath;
 static void StartPlayNow(EditorState& ed) {
+    if (ed.InPrefabMode()) { ConsoleLog(ed.PlayBlockedReason(), 1); return; }
     if (g_clearConsoleOnPlay) ConsoleClear();
     StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
     okay::editor::apreview::Stop(ed.scene());
@@ -45758,6 +46033,7 @@ static void RunPendingAction(EditorState& ed) {
     else if (a == 3) LoadSceneNow(ed, path);
 }
 static void RequestPlay(EditorState& ed) {
+    if (ed.InPrefabMode()) { ConsoleLog(ed.PlayBlockedReason(), 1); return; }
     if (AnyUnsavedWork(ed)) { g_pendingAction = 1; return; }
     StartPlayNow(ed);
 }
@@ -45897,7 +46173,11 @@ static bool SaveProject(EditorState& ed, bool interactive) {
         if (interactive) sceneSkipped = true;
         else { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // save the edited scene, not the running copy
     }
-    if (!sceneSkipped) {   // always written: "Save Project" means everything is on disk
+    if (!sceneSkipped && ed.InPrefabMode()) {   // the open prefab, the prefabs it was opened from, and the scene put aside
+        std::string why;
+        if (ed.SaveAllPrefabLevels(&why)) saved.push_back("prefab and scene");
+        else { ok = false; g_lastSaveError = why; ConsoleLog("Couldn't save: " + why, 2); }
+    } else if (!sceneSkipped) {   // always written: "Save Project" means everything is on disk
         const std::string p = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
         if (SaveSceneTo(ed, p)) saved.push_back("scene"); else ok = false;
     }
@@ -46892,7 +47172,7 @@ int main(int argc, char** argv) {
             if (c.kind != "script") continue;
             docs.push_back({"closed", c.key, c.text});
         }
-        if (ed.dirty && !ed.isPlaying()) {
+        if (ed.dirty && !ed.isPlaying() && !ed.InPrefabMode()) {   // (a prefab being edited has no recovery copy; its Save is explicit)
             okay::editor::docrec::Buffer b;
             b.kind = "scene";
             b.key = ed.path().empty() ? "untitled-scene" : ed.path();
@@ -47444,7 +47724,7 @@ int main(int argc, char** argv) {
                     const char* live = PeekCodeBuffer(t);
                     if (live && SaveEditorDocument(t->Path(), live)) g_scriptSaved[t] = live;
                 }
-                if (ed.dirty && !ed.isPlaying() && !ed.path().empty()) SaveSceneTo(ed, ed.path());
+                if (ed.dirty && !ed.isPlaying() && !ed.InPrefabMode() && !ed.path().empty()) SaveSceneTo(ed, ed.path());
             }
         }
         if (!AnyUnsavedWork(ed)) DocRecovery().OnSaved();
@@ -47479,6 +47759,7 @@ int main(int argc, char** argv) {
         std::string title = "OkaySpace Editor  -  ";
         if (!ed.projectDir().empty()) title += std::filesystem::path(ed.projectDir()).filename().string() + "  /  ";
         title += ed.path().empty() ? ed.scene().Name() : std::filesystem::path(ed.path()).stem().string();
+        if (ed.InPrefabMode()) { for (const auto& c : ed.PrefabCrumbs()) if (!c.path.empty()) title += "  >  " + c.label; }
         title += std::string(ed.dirty && !ed.isPlaying() ? " *" : "") + "   [v" OKAY_ENGINE_VERSION "]";
         if (title != lastTitle) { SDL_SetWindowTitle(window, title.c_str()); lastTitle = title; }
 
@@ -47524,6 +47805,7 @@ int main(int argc, char** argv) {
         // open undo step now, so the Edit menu names the real last action and the scene is compared once.
         if (GImGui && GImGui->ActiveId == 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
             ed.CommitUndo();
+        ApplyPrefabModeQueue(ed);   // prefab mode: open / leave / revert rebuild the scene, so they run here, between frames
         {
             TabPaddingScope tabPad;   // floating panel groups lay their tabs out in NewFrame()
             ImGui::NewFrame();
@@ -47586,7 +47868,7 @@ int main(int argc, char** argv) {
         }
 
         ProjectThumbFrame();   // thumbnails made this frame: a few milliseconds at most (the Project panel and the Scene Manager share them)
-        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
+        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawPrefabLeavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
         {   // dev screenshot hook: OKAY_UI_FOCUS="Inspector,Project" brings those dock tabs forward
             static int s_focusFrames = 0;
             if (s_focusFrames < 90) ++s_focusFrames;
@@ -48147,7 +48429,7 @@ int main(int argc, char** argv) {
         {   // Every scene needs a camera (the Game view and builds render through it):
             // put one back if the scene has none. Checked a few times a second.
             static int s_camCheck = 0;
-            if (!std::getenv("OKAY_UI_DIAG") && !ed.isPlaying() && ++s_camCheck >= 20) {
+            if (!std::getenv("OKAY_UI_DIAG") && !ed.isPlaying() && !ed.InPrefabMode() && ++s_camCheck >= 20) {   // (a prefab is not a scene: no camera is added to it)
                 s_camCheck = 0;
                 bool made = false, restored = false;
                 Camera* ensured = okay::EnsureSceneCamera(ed.scene(), !ed.view3D, &made, &restored);

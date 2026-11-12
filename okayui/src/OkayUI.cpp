@@ -18,8 +18,11 @@ namespace {
 // Fixed-capacity geometry batch. Text is drawn as one small quad per lit font
 // pixel, so size generously for several labelled buttons per frame; on overflow we
 // silently drop further geometry rather than grow/allocate.
-constexpr int kMaxVerts = 20000;
-constexpr int kMaxIdx   = 30000;
+constexpr int kMaxVerts = 262144;   // per batch (main and overlay): about 5 MB of vertices each
+constexpr int kMaxIdx   = 393216;
+// Geometry that did not fit is counted, not hidden: DrawData::dropped, DroppedGeometry() and a message on stderr.
+int g_dropped = 0;
+inline void noteDrop() { ++g_dropped; }
 SDL_Vertex g_verts[kMaxVerts];
 int        g_nv = 0;
 int        g_idx[kMaxIdx];
@@ -87,6 +90,17 @@ void pushClipSpan(bool on, SDL_Rect rect) { g_curClipOn = on; g_curClipRect = re
 void setTexture(SDL_Texture* t) { if (t != g_curTex) { g_curTex = t; pushSpan(); } }
 
 Input g_in;                      // this frame's input
+// Item state for the IsItem* queries: the id of the last widget that registered itself, and which id was
+// active when the frame began (so "activated" and "deactivated" are edges). place() clears g_lastId.
+int   g_lastId = 0;
+int   g_activeAtFrameStart = 0;
+// BeginDisabled/EndDisabled: while any enclosing block is disabled, widgets take no input and draw with their
+// colours halfway to the panel colour. The public draw list bypasses the dimming (g_rawDraw), like a raw draw list ignores style alpha.
+bool  g_disStack[16];
+int   g_disTop = 0;          // blocks pushed (disabled or not)
+int   g_disCount = 0;        // how many of them are disabled
+bool  g_rawDraw = false;
+bool  g_rReleased = false;   // right button went up this frame
 bool  g_prevDown = false;        // last frame's mouse-down (for edge detection)
 bool  g_pressed  = false;        // mouse went down this frame
 bool  g_released = false;        // mouse went up this frame
@@ -154,9 +168,12 @@ struct LayoutState {
     bool  pendingSameLine = false;
     float sameLineSpacing = -1.0f;
     float indent = 0.0f;            // TreeNode indentation of the content's left edge
+    float bottom = 0.0f;            // bottom of the visible content area (GetContentRegionAvail)
     int   seed = 0;                 // window id, mixed into label->id hashing
 };
 LayoutState g_lay;
+bool  g_posOverride = false;      // SetCursorScreenPos: the next placed item uses (g_posX, g_posY)
+float g_posX = 0.0f, g_posY = 0.0f;
 
 // Saved parent layout + child metadata while inside a BeginChild/EndChild pair.
 struct ChildSave {
@@ -312,7 +329,10 @@ inline float availW() {
 // to the next line (SameLine() keeps it on the current line instead).
 void place(float w, float h, float& x, float& y) {
     bool sameLine = false;
-    if (g_lay.pendingSameLine) {
+    if (g_posOverride) {   // SetCursorScreenPos: this item goes exactly there
+        g_posOverride = false;
+        x = g_posX; y = g_posY; g_lay.pendingSameLine = false; g_lay.sameLineSpacing = -1.0f;
+    } else if (g_lay.pendingSameLine) {
         float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
         x = g_lay.prevX + g_lay.prevW + sp;
         y = g_lay.prevY;
@@ -324,6 +344,7 @@ void place(float w, float h, float& x, float& y) {
         y = g_lay.cy;
     }
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
+    g_lastId = 0;   // the widget that follows registers its own id
     g_lay.cx = leftEdge();
     // The next line starts below the tallest item of this one, not just below the last (a short
     // item after a tall one on the same line used to let the next line overlap the tall one).
@@ -333,7 +354,12 @@ void place(float w, float h, float& x, float& y) {
 }
 
 inline SDL_Color toColor(const unsigned char c[4]) {
-    SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3]; return sc;
+    SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3];
+    if (g_disCount > 0 && !g_rawDraw) {   // inside BeginDisabled: halfway to the panel colour, alpha kept
+        const unsigned char* p = g_theme.panel;   // (so stacked layers of one widget do not blend through each other)
+        sc.r = (unsigned char)((sc.r + p[0]) / 2); sc.g = (unsigned char)((sc.g + p[1]) / 2); sc.b = (unsigned char)((sc.b + p[2]) / 2);
+    }
+    return sc;
 }
 
 // Append an axis-aligned rectangle (two triangles) in a flat color, to whichever
@@ -343,7 +369,7 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;   // overflow: drop silently
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }   // batch full: counted and reported
     const SDL_Color sc = toColor(c);
     const int base = nv;
     SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
@@ -363,7 +389,7 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
 void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
              float u0, float v0, float u1, float v1, const unsigned char tint[4]) {
     setTexture(tex);
-    if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { setTexture(g_defTex); return; }
+    if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { noteDrop(); setTexture(g_defTex); return; }
     const SDL_Color sc = toColor(tint);
     const int base = g_nv;
     SDL_Vertex v; v.color = sc;
@@ -383,7 +409,7 @@ void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
     const SDL_Color sc = toColor(c);
     const int base = nv;
     SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
@@ -405,7 +431,7 @@ void gradQuad(float x, float y, float w, float h,
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) return;
+    if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
     const int base = nv;
     SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
     SDL_Vertex v; v.tex_coord = uv;
@@ -469,7 +495,7 @@ void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsig
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) return;
+    if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) { noteDrop(); return; }
     const SDL_Color sc = toColor(c);
     const int base = nv;
     SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
@@ -547,6 +573,7 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
     for (const char* p = str; *p;) {
         const okay::TtfFont::Glyph* g = f->GlyphFor(fontatlas::NextCodepoint(&p));
         if (!g) continue;
+        if (g->x1 > g->x0 && g->y1 > g->y0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
         if (g->x1 > g->x0 && g->y1 > g->y0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
             const float x0 = pen + g->xoff * k, y0 = base + g->yoff * k;
             const float x1 = x0 + (g->x1 - g->x0) * k, y1 = y0 + (g->y1 - g->y0) * k;
@@ -586,6 +613,7 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
             const unsigned cp = fontatlas::NextCodepoint(&p);
             const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
             if (!g) continue;
+            if (g->x1 > g->x0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
             if (g->x1 > g->x0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
                 const float x0 = pen + g->x0 * k, y0 = base + g->y0 * k, x1 = pen + g->x1 * k, y1 = base + g->y1 * k;
                 const int b0 = nv;
@@ -679,6 +707,7 @@ inline bool inClip() {
     return pointIn(g_in.mouseX, g_in.mouseY, (float)c.x, (float)c.y, (float)c.w, (float)c.h);
 }
 inline bool hit(float x, float y, float w, float h) {
+    if (g_disCount > 0) return false;   // inside BeginDisabled: no hover, no click
     if (!hitOverlay(x, y, w, h)) return false;
     if (g_popupTop > 0) return true;   // a widget inside a popup body
     if (!inClip()) return false;
@@ -708,7 +737,11 @@ void BeginFrame(const Input& in) {
     g_released = !in.mouseDown &&  g_prevDown;
     g_prevDown = in.mouseDown;
     g_rPressed  = in.rightDown && !g_rPrevDown;
+    g_rReleased = !in.rightDown && g_rPrevDown;
     g_rPrevDown = in.rightDown;
+    g_activeAtFrameStart = g_active;
+    g_lastId = 0;
+    g_disTop = g_disCount = 0; g_rawDraw = false;   // an unbalanced BeginDisabled never leaks into the next frame
     g_openPopupThisFrame = 0;
     g_popupTop = 0;
     g_mouseDX = in.mouseX - g_prevMouseX;
@@ -722,7 +755,7 @@ void BeginFrame(const Input& in) {
     g_lay.active = false;            // widgets called outside Begin/End no-op
     g_lay.pendingSameLine = false;
     ++g_frame;
-    g_nv = 0; g_ni = 0;
+    g_nv = 0; g_ni = 0; g_dropped = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
     g_inMenuBar = false; g_curMenu.active = false;
     g_idSeed = 0; g_idTop = 0;        // reset the ID stack each frame
@@ -739,7 +772,7 @@ void BeginFrame(const Input& in) {
 
 bool Button(int id, float x, float y, float w, float h, const char* label) {
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
 
     // Hot/active (Casey-style) interaction: arm on press-inside, fire on
     // release-inside. A release outside cancels without firing.
@@ -785,7 +818,7 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
     if (!value) return false;
     // The label is part of the target (clicking the text toggles, like every desktop toolkit).
     const bool inside = hit(x, y, size + (label && *label ? 8.0f + labelW(label) : 0.0f), size);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
 
     bool changed = false;
     if (g_active == id) {
@@ -824,7 +857,7 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
 bool ToggleSwitch(int id, float x, float y, float w, float h, const char* label, bool* value) {
     if (!value || w <= 0.0f || h <= 0.0f) return false;
     const bool inside = hit(x, y, w + (label && *label ? 8.0f + labelW(label) : 0.0f), h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
 
     bool changed = false;
     if (g_active == id) {
@@ -855,7 +888,7 @@ bool ToggleSwitch(int id, float x, float y, float w, float h, const char* label,
 bool Slider(int id, float x, float y, float w, float h, float* value, float minV, float maxV) {
     if (!value || w <= 0.0f || maxV <= minV) return false;
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
 
     bool changed = false;
     auto setFromMouse = [&]() {
@@ -922,7 +955,7 @@ void ProgressBar(float x, float y, float w, float h, float t) {
 bool RadioButton(int id, float x, float y, float size, const char* label, int* value, int option) {
     if (!value) return false;
     const bool inside = hit(x, y, size + (label && *label ? 8.0f + labelW(label) : 0.0f), size);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
 
     bool changed = false;
     if (g_active == id) {
@@ -952,7 +985,7 @@ bool RadioButton(int id, float x, float y, float size, const char* label, int* v
 bool Tab(int id, float x, float y, float w, float h, const char* label, int* current, int index) {
     if (!current) return false;
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
 
     if (g_active == id) {
         if (g_released) { if (inside) *current = index; g_active = 0; }
@@ -1016,6 +1049,23 @@ int printableUtf8Len(const char* p) {
     if (cp >= 0xD800u && cp <= 0xDFFFu) return 0;
     return n;
 }
+// If the string ends in an incomplete UTF-8 sequence (a lead byte whose continuation bytes were cut off),
+// cut that sequence off.
+void trimPartialChar(char* b) {
+    const int len = cstrlen(b);
+    int j = len - 1;
+    while (j >= 0 && len - j < 4 && ((unsigned char)b[j] & 0xC0) == 0x80) --j;   // back over continuation bytes
+    if (j < 0) return;
+    const unsigned char c = (unsigned char)b[j];
+    const int need = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+    if (need > len - j) b[j] = '\0';
+}
+// Move `i` back to the start of the character it points into (a stale index after the text changed).
+inline int snapToChar(const char* b, int len, int i) {
+    if (i > len) i = len;
+    while (i > 0 && i < len && ((unsigned char)b[i] & 0xC0) == 0x80) --i;
+    return i;
+}
 inline int prevChar(const char* b, int i) { if (i > 0) --i; while (i > 0 && ((unsigned char)b[i] & 0xC0) == 0x80) --i; return i; }
 inline int nextChar(const char* b, int len, int i) { if (i < len) ++i; while (i < len && ((unsigned char)b[i] & 0xC0) == 0x80) ++i; return i; }
 // Width in pixels of buf[from, to).
@@ -1047,19 +1097,26 @@ void eraseBytes(char* b, int& len, int from, int to) {
 
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags) {
     if (!buf || cap < 1) return false;
-    buf[cap - 1] = '\0';   // never trust the caller's buffer to be terminated
+    if (buf[cap - 1] != '\0') {   // never trust the caller's buffer to be terminated
+        buf[cap - 1] = '\0';
+        trimPartialChar(buf);      // and cutting it must not leave half a character
+    }
     int len = cstrlen(buf);
     const bool readOnly = (flags & InputText_ReadOnly) != 0;
     TextSlot* ts = textSlot(id);
-    if (ts->caret > len) ts->caret = len;
-    if (ts->anchor > len) ts->anchor = len;
-    if (ts->first > len) ts->first = len;
+    // The caret, selection anchor and first shown character are byte offsets kept between frames. Keep them
+    // on character boundaries: the text may have changed under them (the caller edits the buffer, or an edit
+    // below `first` replaced characters there), and an offset inside a character would let Delete or a click
+    // split it.
+    ts->caret = snapToChar(buf, len, ts->caret);
+    ts->anchor = snapToChar(buf, len, ts->anchor);
+    ts->first = snapToChar(buf, len, ts->first);
 
     const float s = g_theme.textScale, th = fH() * s, b = g_theme.borderPx;
     const float pad = g_look ? 9.0f : 6.0f;
     const float tx = x + pad;
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     const bool wasFocused = (g_focus == id);
     if (inside && g_pressed) {
         g_focus = id; g_focusClaimed = true; g_active = id;
@@ -1068,6 +1125,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     } else if (g_active == id && g_in.mouseDown && g_focus == id) {
         ts->caret = indexAtX(buf, len, ts->first, tx, g_in.mouseX);   // drag selects
     }
+    if (g_disCount > 0 && g_focus == id) g_focus = 0;   // a disabled field gives up the keyboard
     bool focused = (g_focus == id);
 
     // Keystrokes, applied only while focused (the host forwards the ones it wants OkayUI to have).
@@ -1125,6 +1183,8 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     // Scroll horizontally so the caret stays visible: drop leading characters until the text
     // between the first shown character and the caret fits (whole UTF-8 characters only).
     const float innerW = w - 2.0f * pad;
+    ts->caret = snapToChar(buf, len, ts->caret); ts->anchor = snapToChar(buf, len, ts->anchor);
+    ts->first = snapToChar(buf, len, ts->first);   // an edit below `first` can leave it inside a new character
     if (ts->first > ts->caret) ts->first = ts->caret;
     while (ts->first < ts->caret && textWidth(buf, ts->first, ts->caret) > innerW - 2.0f) ts->first = nextChar(buf, len, ts->first);
     const float ty = y + (h - th) * 0.5f;
@@ -1159,9 +1219,10 @@ void mergeOverlay() {
     // Whole triangles only: when the batch is full, a triangle that references a vertex that
     // did not fit (or does not fit in the index buffer) is dropped, so the index buffer always
     // stays valid and a multiple of three.
+    if (g_ni + g_oni > kMaxIdx || g_nv + g_onv > kMaxVerts) noteDrop();
     for (int j = 0; j + 3 <= g_oni && g_ni + 3 <= kMaxIdx; j += 3) {
         while (sp < g_novSpans && g_ovSpans[sp].startIdx <= j) setTexture(g_ovSpans[sp++].tex);
-        if (g_ovIdx[j] >= fit || g_ovIdx[j + 1] >= fit || g_ovIdx[j + 2] >= fit) continue;
+        if (g_ovIdx[j] >= fit || g_ovIdx[j + 1] >= fit || g_ovIdx[j + 2] >= fit) { noteDrop(); continue; }
         g_idx[g_ni++] = base + g_ovIdx[j]; g_idx[g_ni++] = base + g_ovIdx[j + 1]; g_idx[g_ni++] = base + g_ovIdx[j + 2];
     }
     g_onv = 0; g_oni = 0; g_novSpans = 0;
@@ -1180,6 +1241,14 @@ void finalizeFrame() {
     }
     if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; }
     mergeOverlay();
+    // Fail loudly: a full batch means shapes are missing from the picture. Say so on stderr (the first few
+    // frames only, so a permanently too-big UI does not flood the log) and in DrawData::dropped.
+    static int reports = 0;
+    if (g_dropped > 0 && reports < 5) {
+        ++reports;
+        std::fprintf(stderr, "OkayUI: the draw batch is full (%d vertices, %d indices): %d shape(s) were dropped this frame\n",
+                     kMaxVerts, kMaxIdx, g_dropped);
+    }
 }
 } // namespace
 
@@ -1212,12 +1281,15 @@ int buildCmds() {
 }
 } // namespace
 
+int DroppedGeometry() { return g_dropped; }
+
 DrawData GetDrawData() {
     DrawData d;
     d.vertices = g_verts; d.vertexCount = g_nv;
     d.indices = g_idx;    d.indexCount = g_ni;
     d.vertexStride = (int)sizeof(DrawVertex);
     d.cmds = g_cmds; d.cmdCount = buildCmds();
+    d.dropped = g_dropped;
     if (g_ttf && g_ttf->ok) {
         d.atlasTexture = (const void*)kAtlasTex; d.atlasRgba = g_ttf->rgba; d.atlasW = g_ttf->w; d.atlasH = g_ttf->h;
     }
@@ -1387,6 +1459,7 @@ static float g_resizeMinW = 100.0f, g_resizeMinH = 60.0f;
 void ResizableNextWindow(float minW, float minH) { g_resizeNext = true; g_resizeMinW = minW; g_resizeMinH = minH; }
 
 bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) {
+    g_posOverride = false;             // a SetCursorScreenPos left over from the previous window
     g_lay.seed = 0;                    // hash the window id from a FIXED seed so it (and
     const int id = hashLabel(title);   // every widget id under it) is stable across frames
     WinSlot* slot = nullptr;
@@ -1512,6 +1585,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_lay.cx = g_lay.ox;
     g_lay.cy = g_lay.oy;
     g_lay.contentW = w - 2.0f * pad;
+    g_lay.bottom = wy + h - pad;
     g_lay.spacingX = g_look ? 9.0f : 8.0f; g_lay.spacingY = g_look ? 8.0f : 6.0f;
     g_lay.indent = 0.0f;
     g_lay.pendingSameLine = false;
@@ -1520,6 +1594,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 }
 
 void End() {
+    g_posOverride = false;
     if (g_lay.winClip) { PopClipRect(); g_lay.winClip = false; }
     g_lay.active = false;
 }
@@ -1552,6 +1627,7 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     }
     g_lay.ox = rx + pad;
     g_lay.contentW = rw - 2.0f * pad - kScrollbarW;
+    g_lay.bottom = ry + rh - pad;
     g_lay.oy = ry + pad - *scroll;
     g_lay.cx = g_lay.ox;
     g_lay.cy = g_lay.oy;
@@ -1606,6 +1682,7 @@ void EndChild() {
     }
 
     g_lay = c.lay;   // restore the parent layout (cursor already past the region)
+    g_posOverride = false;
 }
 
 void SameLine(float spacing) {
@@ -1813,7 +1890,7 @@ bool VSliderFloat(const char* label, float w, float h, float* value, float minV,
     if (h <= 0.0f) h = rowH() * 3.0f;
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     bool changed = false;
     if (g_active == id) {
         if (!g_in.mouseDown) g_active = 0;
@@ -1843,7 +1920,7 @@ bool Knob(const char* label, float* value, float minV, float maxV, float size) {
     float x, y; place(d + lw, d, x, y);
     const float cx = x + d * 0.5f, cy = y + d * 0.5f, rad = d * 0.5f - 2.0f;
     const bool inside = hit(x, y, d, d);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     bool changed = false;
     if (g_active == id) {
         if (!g_in.mouseDown) g_active = 0;
@@ -2014,7 +2091,7 @@ bool CollapsingHeader(const char* label) {
     const float h = rowH(), w = fullW();
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
     const unsigned char* bg = (g_active == id && inside) ? g_theme.bgDown : (inside ? g_theme.bgHover : g_theme.track);
@@ -2065,7 +2142,7 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
 
     const bool insideBox = hitOverlay(x, y, boxW, h) && inClip();
-    if (insideBox) g_hot = id;
+    g_lastId = id; if (insideBox) g_hot = id;
     if (g_active == id) { if (g_released) { if (insideBox) *open = !*open; g_active = 0; } }
     else if (insideBox && g_pressed) g_active = id;
 
@@ -2108,7 +2185,7 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
 namespace {
 bool dragBox(int id, float x, float y, float w, float h, bool inside, float& outDelta) {
     outDelta = 0.0f;
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     bool dragging = false;
     if (g_active == id) {
         if (!g_in.mouseDown) g_active = 0;
@@ -2282,7 +2359,7 @@ bool TreeNode(const char* label) {
     const float h = rowH(), w = fullW(), s = g_theme.textScale;
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
     if (g_look) {
@@ -2326,7 +2403,7 @@ bool BeginMenu(const char* label) {
     g_barX += bw;   // advance the bar cursor for the next menu
 
     const bool inside = hit(x, y, bw, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
     if (*open || inside) quad(x, y, bw, h, g_theme.bgHover);
@@ -2378,7 +2455,7 @@ bool Selectable(const char* label, bool selected) {
     const float h = rowH(), w = fullW(), s = g_theme.textScale;
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     bool clicked = false;
     if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
@@ -2768,7 +2845,7 @@ bool PrimaryButton(const char* label) {
     const float w = labelW(label) + 40.0f, h = rowH();
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     bool clicked = false;
     if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
@@ -2846,7 +2923,7 @@ bool ListItem(const char* title, const char* subtitle, const char* right, bool s
     const float h = two ? rowH() + textH() * 0.85f : rowH() + 4.0f, w = fullW();
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
-    if (inside) g_hot = id;
+    g_lastId = id; if (inside) g_hot = id;
     bool clicked = false;
     if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
@@ -2914,12 +2991,360 @@ bool IsItemHovered() {
 
 bool WantsTextInput() { return g_focus != 0; }
 
+// ---------------------------------------------------------------------------------------------
+// Public draw list, cursor and measurement, item state, disabled blocks (docs/own_ui_toolkit.md, section 4)
+// ---------------------------------------------------------------------------------------------
+namespace {
+
+constexpr int kMaxPath = 256;
+Vec2 g_path[kMaxPath];
+int  g_pathN = 0;
+
+inline bool finite1(float v) { return v == v && v > -1.0e7f && v < 1.0e7f; }
+inline bool finite2(Vec2 p) { return finite1(p.x) && finite1(p.y); }
+
+void unpack(Color32 c, unsigned char out[4]) {
+    out[0] = (unsigned char)(c & 0xffu);         out[1] = (unsigned char)((c >> 8) & 0xffu);
+    out[2] = (unsigned char)((c >> 16) & 0xffu); out[3] = (unsigned char)((c >> 24) & 0xffu);
+}
+
+// A drawing call of the public draw list: dimming off for its duration, overlay batch for the foreground list.
+struct ListScope {
+    bool prevRaw, prevOv;
+    explicit ListScope(bool overlay) : prevRaw(g_rawDraw), prevOv(g_toOverlay) { g_rawDraw = true; g_toOverlay = overlay; }
+    ~ListScope() { g_rawDraw = prevRaw; g_toOverlay = prevOv; }
+};
+
+int circleSegments(float r, int requested) {
+    if (requested >= 3) return requested > 128 ? 128 : requested;
+    int n = 10 + (int)(r * 0.9f);
+    return n < 12 ? 12 : (n > 64 ? 64 : n);
+}
+
+// Stroke a polyline as one quad strip with mitred joins (so a translucent stroke never double-blends at a
+// joint). Consecutive duplicate points are dropped; a join sharper than the mitre limit is clamped.
+void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned char c[4]) {
+    if (n < 2 || !(th > 0.0f) || !finite1(th)) return;
+    Vec2 p[kMaxPath]; int m = 0;
+    for (int i = 0; i < n && m < kMaxPath; ++i) {
+        if (m > 0) {
+            const float dx = in[i].x - p[m - 1].x, dy = in[i].y - p[m - 1].y;
+            if (dx * dx + dy * dy < 1.0e-6f) continue;
+        }
+        p[m++] = in[i];
+    }
+    if (closed && m > 2) { const float dx = p[0].x - p[m - 1].x, dy = p[0].y - p[m - 1].y; if (dx * dx + dy * dy < 1.0e-6f) --m; }
+    if (m < 2) { if (m == 1) quad(p[0].x - th * 0.5f, p[0].y - th * 0.5f, th, th, c); return; }
+    if (m == 2) closed = false;
+    const float half = th * 0.5f;
+    Vec2 off[kMaxPath];
+    auto segNormal = [&](int a, int b) {
+        float dx = p[b].x - p[a].x, dy = p[b].y - p[a].y;
+        const float l = SDL_sqrtf(dx * dx + dy * dy);
+        return Vec2{ -dy / l, dx / l };
+    };
+    for (int i = 0; i < m; ++i) {
+        const bool hasPrev = closed || i > 0, hasNext = closed || i < m - 1;
+        const Vec2 nb = hasNext ? segNormal(i, (i + 1) % m) : segNormal(i - 1, i);
+        const Vec2 na = hasPrev ? segNormal((i + m - 1) % m, i) : nb;
+        float mx = na.x + nb.x, my = na.y + nb.y;
+        const float ml = SDL_sqrtf(mx * mx + my * my);
+        if (ml < 1.0e-4f) { off[i] = Vec2{ na.x * half, na.y * half }; continue; }   // a U-turn: no mitre
+        mx /= ml; my /= ml;
+        float k = mx * na.x + my * na.y;                  // cos of half the turn angle
+        if (k < 0.34f) k = 0.34f;                         // mitre limit about 3x
+        off[i] = Vec2{ mx * half / k, my * half / k };
+    }
+    const int segs = closed ? m : m - 1;
+    for (int i = 0; i < segs; ++i) {
+        const int j = (i + 1) % m;
+        quadPts(p[i].x + off[i].x, p[i].y + off[i].y, p[j].x + off[j].x, p[j].y + off[j].y,
+                p[j].x - off[j].x, p[j].y - off[j].y, p[i].x - off[i].x, p[i].y - off[i].y, c);
+    }
+}
+
+void fillConvex(const Vec2* p, int n, const unsigned char c[4]) {
+    if (n < 3) return;
+    for (int i = 1; i + 1 < n; ++i) tri(p[0].x, p[0].y, p[i].x, p[i].y, p[i + 1].x, p[i + 1].y, c);
+}
+
+// The rounded-rectangle outline as a closed path (corner radius `rad`, arcs of 6 segments).
+int roundedRectPath(Vec2* out, float x0, float y0, float x1, float y1, float rad) {
+    const float w = x1 - x0, h = y1 - y0;
+    if (rad > w * 0.5f) rad = w * 0.5f;
+    if (rad > h * 0.5f) rad = h * 0.5f;
+    int n = 0;
+    if (rad <= 0.5f) {
+        out[n++] = Vec2{ x0, y0 }; out[n++] = Vec2{ x1, y0 }; out[n++] = Vec2{ x1, y1 }; out[n++] = Vec2{ x0, y1 };
+        return n;
+    }
+    const float PI = 3.14159265f;
+    const float cx[4] = { x0 + rad, x1 - rad, x1 - rad, x0 + rad }, cy[4] = { y0 + rad, y0 + rad, y1 - rad, y1 - rad };
+    const float a0[4] = { PI, 1.5f * PI, 0.0f, 0.5f * PI };
+    for (int k = 0; k < 4; ++k)
+        for (int i = 0; i <= 6; ++i) {
+            const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f;
+            out[n++] = Vec2{ cx[k] + rad * SDL_cosf(a), cy[k] + rad * SDL_sinf(a) };
+        }
+    return n;
+}
+
+} // namespace
+
+Color32 GetColorU32(Col which, float alphaMul) {
+    const unsigned char* c = themeColor((int)which);
+    float a = (float)c[3] * (alphaMul != alphaMul ? 0.0f : (alphaMul < 0.0f ? 0.0f : (alphaMul > 1.0f ? 1.0f : alphaMul)));
+    return RGBA(c[0], c[1], c[2], (unsigned char)(a + 0.5f));
+}
+
+Color32 ColorMulAlpha(Color32 c, float alphaMul) {
+    if (alphaMul != alphaMul) alphaMul = 0.0f;
+    if (alphaMul < 0.0f) alphaMul = 0.0f;
+    if (alphaMul > 1.0f) alphaMul = 1.0f;
+    const unsigned a = (unsigned)((float)(c >> 24) * alphaMul + 0.5f);
+    return (c & 0x00ffffffu) | (a << 24);
+}
+
+// ---- DrawList ---------------------------------------------------------------------------------
+void DrawList::AddLine(Vec2 a, Vec2 b, Color32 col, float th) const {
+    if (!finite2(a) || !finite2(b) || !finite1(th) || th <= 0.0f) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    line(a.x, a.y, b.x, b.y, th, c);
+}
+
+void DrawList::AddRectFilled(Vec2 mn, Vec2 mx, Color32 col, float rounding) const {
+    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    rrect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, finite1(rounding) ? rounding : 0.0f, c);
+}
+
+void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, float th) const {
+    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y || !finite1(th) || th <= 0.0f) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    const float w = mx.x - mn.x, h = mx.y - mn.y;
+    if (th * 2.0f >= w || th * 2.0f >= h) { quad(mn.x, mn.y, w, h, c); return; }   // the stroke fills the box
+    if (!finite1(rounding) || rounding <= 0.5f) {   // four bars, drawn inside the rectangle, no overlap
+        quad(mn.x, mn.y, w, th, c);
+        quad(mn.x, mx.y - th, w, th, c);
+        quad(mn.x, mn.y + th, th, h - 2.0f * th, c);
+        quad(mx.x - th, mn.y + th, th, h - 2.0f * th, c);
+        return;
+    }
+    Vec2 pts[32];
+    const int n = roundedRectPath(pts, mn.x + th * 0.5f, mn.y + th * 0.5f, mx.x - th * 0.5f, mx.y - th * 0.5f,
+                                  rounding - th * 0.5f > 0.0f ? rounding - th * 0.5f : 0.0f);
+    strokePath(pts, n, true, th, c);
+}
+
+void DrawList::AddRectFilledMultiColor(Vec2 mn, Vec2 mx, Color32 tl, Color32 tr, Color32 br, Color32 bl) const {
+    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
+    ListScope s(overlay); unsigned char a[4], b[4], c[4], d[4];
+    unpack(tl, a); unpack(tr, b); unpack(br, c); unpack(bl, d);
+    gradQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, a, b, c, d);
+}
+
+void DrawList::AddCircleFilled(Vec2 center, float radius, Color32 col, int segments) const {
+    if (!finite2(center) || !finite1(radius) || radius <= 0.0f) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    fillCircle(center.x, center.y, radius, c, circleSegments(radius, segments));
+}
+
+void DrawList::AddCircle(Vec2 center, float radius, Color32 col, int segments, float th) const {
+    if (!finite2(center) || !finite1(radius) || radius <= 0.0f || !finite1(th) || th <= 0.0f) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    const int n = circleSegments(radius, segments);
+    float r = radius - th * 0.5f; if (r < 0.0f) r = 0.0f;   // the stroke sits inside `radius`
+    if (th >= radius) { fillCircle(center.x, center.y, radius, c, n); return; }
+    Vec2 pts[128];
+    for (int i = 0; i < n; ++i) {
+        const float a = 6.2831853f * (float)i / (float)n;
+        pts[i] = Vec2{ center.x + r * SDL_cosf(a), center.y + r * SDL_sinf(a) };
+    }
+    strokePath(pts, n, true, th, c);
+}
+
+void DrawList::AddTriangleFilled(Vec2 a, Vec2 b, Vec2 c3, Color32 col) const {
+    if (!finite2(a) || !finite2(b) || !finite2(c3)) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    tri(a.x, a.y, b.x, b.y, c3.x, c3.y, c);
+}
+
+void DrawList::AddTriangle(Vec2 a, Vec2 b, Vec2 c3, Color32 col, float th) const {
+    if (!finite2(a) || !finite2(b) || !finite2(c3)) return;
+    const Vec2 p[3] = { a, b, c3 };
+    AddPolyline(p, 3, col, true, th);
+}
+
+void DrawList::AddQuadFilled(Vec2 a, Vec2 b, Vec2 c3, Vec2 d, Color32 col) const {
+    if (!finite2(a) || !finite2(b) || !finite2(c3) || !finite2(d)) return;
+    const Vec2 p[4] = { a, b, c3, d };
+    AddConvexPolyFilled(p, 4, col);
+}
+
+void DrawList::AddQuad(Vec2 a, Vec2 b, Vec2 c3, Vec2 d, Color32 col, float th) const {
+    const Vec2 p[4] = { a, b, c3, d };
+    AddPolyline(p, 4, col, true, th);
+}
+
+void DrawList::AddPolyline(const Vec2* pts, int count, Color32 col, bool closed, float th) const {
+    if (!pts || count < 2 || count > kMaxPath || !finite1(th) || th <= 0.0f) return;
+    for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    strokePath(pts, count, closed, th, c);
+}
+
+void DrawList::AddConvexPolyFilled(const Vec2* pts, int count, Color32 col) const {
+    if (!pts || count < 3 || count > kMaxPath) return;
+    for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    fillConvex(pts, count, c);
+}
+
+void DrawList::AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, float th, int segments) const {
+    if (!finite2(p1) || !finite2(p2) || !finite2(p3) || !finite2(p4)) return;
+    int n = segments > 0 ? segments : 24;
+    if (n > kMaxPath - 1) n = kMaxPath - 1;
+    Vec2 pts[kMaxPath];
+    for (int i = 0; i <= n; ++i) {
+        const float t = (float)i / (float)n, u = 1.0f - t;
+        const float a = u * u * u, b = 3.0f * u * u * t, cc = 3.0f * u * t * t, d = t * t * t;
+        pts[i] = Vec2{ a * p1.x + b * p2.x + cc * p3.x + d * p4.x, a * p1.y + b * p2.y + cc * p3.y + d * p4.y };
+    }
+    AddPolyline(pts, n + 1, col, false, th);
+}
+
+void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) const {
+    if (!text || !*text || !finite2(pos)) return;
+    if (scale == 0.0f) scale = g_theme.textScale;
+    else if (!(scale > 0.0f) || !finite1(scale)) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    drawText(pos.x, pos.y, text, scale, c);
+}
+
+void DrawList::AddImage(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint) const {
+    if (!tex || !finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
+    ListScope s(false); unsigned char c[4]; unpack(tint, c);   // textured geometry always goes to the main batch
+    texQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, tex, uv0.x, uv0.y, uv1.x, uv1.y, c);
+}
+
+void DrawList::PushClipRect(Vec2 mn, Vec2 mx) const {
+    OkayUI::PushClipRect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
+}
+void DrawList::PopClipRect() const { OkayUI::PopClipRect(); }
+
+void DrawList::PathClear() const { g_pathN = 0; }
+void DrawList::PathLineTo(Vec2 p) const { if (g_pathN < kMaxPath && finite2(p)) g_path[g_pathN++] = p; }
+void DrawList::PathArcTo(Vec2 center, float radius, float a0, float a1, int segments) const {
+    if (!finite2(center) || !finite1(radius) || !finite1(a0) || !finite1(a1) || radius < 0.0f) return;
+    int n = segments > 0 ? segments : circleSegments(radius, 0) / 4 + 1;
+    if (n > 128) n = 128;
+    for (int i = 0; i <= n; ++i) {
+        const float a = a0 + (a1 - a0) * (float)i / (float)n;
+        PathLineTo(Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) });
+    }
+}
+void DrawList::PathStroke(Color32 col, bool closed, float th) const {
+    if (g_pathN >= 2) AddPolyline(g_path, g_pathN, col, closed, th);
+    g_pathN = 0;
+}
+void DrawList::PathFillConvex(Color32 col) const {
+    if (g_pathN >= 3) AddConvexPolyFilled(g_path, g_pathN, col);
+    g_pathN = 0;
+}
+
+static const DrawList g_windowList = { false };
+static const DrawList g_foregroundList = { true };
+const DrawList& GetWindowDrawList() { return g_windowList; }
+const DrawList& GetForegroundDrawList() { return g_foregroundList; }
+
+// ---- Measurement and cursor -------------------------------------------------------------------
+Vec2 CalcTextSize(const char* text) {
+    if (!text || !*text) return Vec2{ 0.0f, textH() };
+    return Vec2{ labelW(text), textH() };
+}
+float GetTextLineHeight() { return textH(); }
+float GetFontSize() { return textH(); }
+float GetFrameHeight() { return rowH(); }
+float GetTextLineHeightWithSpacing() { return textH() + g_lay.spacingY; }
+float GetFrameHeightWithSpacing() { return rowH() + g_lay.spacingY; }
+
+Vec2 GetCursorScreenPos() {
+    if (!g_lay.active) return Vec2{};
+    if (g_posOverride) return Vec2{ g_posX, g_posY };
+    return g_lay.pendingSameLine ? Vec2{ cursorX(), g_lay.prevY } : Vec2{ leftEdge(), g_lay.cy };
+}
+void SetCursorScreenPos(Vec2 p) {
+    if (!g_lay.active || !finite2(p)) return;
+    g_lay.pendingSameLine = false;
+    g_lay.cx = p.x; g_lay.cy = p.y;
+    g_posOverride = true; g_posX = p.x; g_posY = p.y;
+}
+Vec2 GetCursorPos() {
+    const Vec2 s = GetCursorScreenPos();
+    return Vec2{ s.x - g_lay.ox, s.y - g_lay.oy };
+}
+void SetCursorPos(Vec2 p) { SetCursorScreenPos(Vec2{ g_lay.ox + p.x, g_lay.oy + p.y }); }
+float GetCursorPosX() { return GetCursorPos().x; }
+float GetCursorPosY() { return GetCursorPos().y; }
+void SetCursorPosX(float x) { SetCursorScreenPos(Vec2{ g_lay.ox + x, GetCursorScreenPos().y }); }
+void SetCursorPosY(float y) { SetCursorScreenPos(Vec2{ GetCursorScreenPos().x, g_lay.oy + y }); }
+Vec2 GetContentRegionAvail() {
+    if (!g_lay.active) return Vec2{};
+    const Vec2 c = GetCursorScreenPos();
+    const float w = g_lay.ox + g_lay.contentW - c.x, h = g_lay.bottom - c.y;
+    return Vec2{ w > 0.0f ? w : 0.0f, h > 0.0f ? h : 0.0f };
+}
+
+// ---- Item state and mouse queries ---------------------------------------------------------------
+bool InvisibleButton(const char* id, float w, float h) {
+    if (!g_lay.active || !finite1(w) || !finite1(h)) return false;
+    const int wid = hashLabel(id);
+    if (w <= 0.0f) w = availW();
+    if (h <= 0.0f) h = rowH();
+    float x, y; place(w, h, x, y);
+    g_lastId = wid;
+    const bool inside = hit(x, y, w, h);
+    if (inside) g_hot = wid;
+    bool clicked = false;
+    if (g_active == wid) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
+    else if (inside && g_pressed) g_active = wid;
+    return clicked;
+}
+bool IsItemActive()      { return g_lastId != 0 && g_active == g_lastId; }
+bool IsItemActivated()   { return IsItemActive() && g_activeAtFrameStart != g_lastId; }
+bool IsItemDeactivated() { return g_lastId != 0 && g_activeAtFrameStart == g_lastId && g_active != g_lastId; }
+bool IsItemClicked(int button) {
+    if (!IsItemHovered()) return false;
+    return button == 1 ? g_rPressed : g_pressed;
+}
+bool IsMouseDown(int button)     { return !g_in.blocked && (button == 1 ? g_in.rightDown : g_in.mouseDown); }
+bool IsMouseClicked(int button)  { return !g_in.blocked && (button == 1 ? g_rPressed : g_pressed); }
+bool IsMouseReleased(int button) { return button == 1 ? g_rReleased : g_released; }
+Vec2 GetMousePos()   { return Vec2{ g_in.mouseX, g_in.mouseY }; }
+Vec2 GetMouseDelta() { return Vec2{ g_mouseDX, g_mouseDY }; }
+bool IsMouseHoveringRect(Vec2 mn, Vec2 mx) {
+    return !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
+}
+
+// ---- Disabled blocks --------------------------------------------------------------------------
+void BeginDisabled(bool disabled) {
+    if (g_disTop >= 16) return;
+    g_disStack[g_disTop++] = disabled;
+    if (disabled) ++g_disCount;
+}
+void EndDisabled() {
+    if (g_disTop <= 0) return;
+    if (g_disStack[--g_disTop]) --g_disCount;
+}
+bool IsDisabled() { return g_disCount > 0; }
+
 void ResetState() {
     UseLauncherLook(false);
     g_theme = Theme();
     g_font = &kFontDefault;
     g_in = Input();
-    g_prevDown = g_pressed = g_released = g_rPrevDown = g_rPressed = false;
+    g_prevDown = g_pressed = g_released = g_rPrevDown = g_rPressed = g_rReleased = false;
+    g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
     g_openPopupThisFrame = 0;
@@ -2934,7 +3359,7 @@ void ResetState() {
     g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_resizeNext = false;
     g_ovCurN = g_ovPrevN = 0;
-    g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false;
+    g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
 }
 
 } // namespace OkayUI

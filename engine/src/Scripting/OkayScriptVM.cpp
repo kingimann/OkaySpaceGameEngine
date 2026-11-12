@@ -109,6 +109,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Core/GameSaves.hpp"
 #include "okay/Core/SaveFramework.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/DialogueRunner.hpp"   // dialogue / story / quest builtins
@@ -5520,6 +5521,34 @@ struct OkayScriptVM::Impl {
             const SaveSlotInfo i = SaveGame::Info(slotArg(a));
             return Value{i.exists && i.savedAt > 0 ? SaveMenuModel::FormatAgo((long long)Time::UnixSeconds() - i.savedAt) : std::string()};
         };
+        // Save slots with no code to write (docs/save_framework.md): objects marked with a Saveable
+        // component are stored; game_save("slot_1" [, "label"]), game_load("slot_1") (at the start
+        // of the next frame), game_delete_slot, game_slot_exists, game_slot_age (seconds since it was saved, -1 = none),
+        // game_slot_text ("2026-11-08 14:03"), game_slot_label, game_continue, game_can_continue,
+        // game_autosave. Every problem (missing, damaged or newer-version slot) is a Console error.
+        auto gameSlot = [](std::vector<Value>& a) { return a.empty() ? std::string("slot_1") : a[0].AsString(); };
+        b["game_save"] = [sceneOf, gameSlot](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            return Value{s && GameSaves::Save(*s, gameSlot(a), a.size() > 1 ? a[1].AsString() : "") ? 1.0f : 0.0f};
+        };
+        b["game_load"] = [sceneOf, gameSlot](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            return Value{s && GameSaves::Load(*s, gameSlot(a)) ? 1.0f : 0.0f};
+        };
+        b["game_continue"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            return Value{s && GameSaves::Continue(*s) ? 1.0f : 0.0f};
+        };
+        b["game_autosave"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            return Value{s && GameSaves::AutoSave(*s) ? 1.0f : 0.0f};
+        };
+        b["game_delete_slot"]  = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::Delete(gameSlot(a)) ? 1.0f : 0.0f}; };
+        b["game_slot_exists"]  = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::Exists(gameSlot(a)) ? 1.0f : 0.0f}; };
+        b["game_slot_age"]     = [gameSlot](std::vector<Value>& a) { return Value{(float)GameSaves::SecondsSinceSave(gameSlot(a))}; };
+        b["game_slot_text"]    = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::SavedText(gameSlot(a))}; };
+        b["game_slot_label"]   = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::Label(gameSlot(a))}; };
+        b["game_can_continue"] = [](std::vector<Value>&) { return Value{GameSaves::CanContinue() ? 1.0f : 0.0f}; };
         // Localization (docs/localization.md): loc("key", args...) is the key's text in
         // the player's language with {0}, {1}... filled from the arguments, or {name}
         // from a map (loc("greet", map_set(map(), "player", name))); set_language("fr") switches and

@@ -12,6 +12,7 @@ add_library(okay_engine
     src/Core/SaveFramework.cpp
     src/Core/SaveFrameworkScene.cpp
     src/Core/SaveFrameworkSync.cpp
+    src/Core/GameSaves.cpp
     src/Core/Scheduler.cpp
     src/Core/Tween.cpp
     src/Core/TimerDebug.cpp
@@ -50,6 +51,16 @@ add_library(okay_engine
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
     src/Net/SessionTicket.cpp
+    src/Crypto/Util.cpp
+    src/Crypto/Random.cpp
+    src/Crypto/ChaCha20.cpp
+    src/Crypto/Poly1305.cpp
+    src/Crypto/Aead.cpp
+    src/Crypto/Blake2b.cpp
+    src/Crypto/Sha256.cpp
+    src/Crypto/Sha512.cpp
+    src/Crypto/X25519.cpp
+    src/Crypto/Ed25519.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
@@ -311,7 +322,18 @@ endif()
 #    libsodium-win64 dir (the one containing include/sodium.h and lib/libsodium.a).
 # Without it the transport still builds and runs — just unencrypted (the
 # NetworkManager encryption toggle becomes a no-op), so it's a soft dependency.
-if(OKAY_USE_SODIUM)
+# ---- Our own crypto (okay::crypto), side by side with libsodium ------
+# The primitives in src/Crypto are ALWAYS compiled (and tested); OKAY_OWN_CRYPTO only
+# decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
+# outside cryptographer: it must not become the default, and libsodium must not be
+# removed, before that review (docs/own_code_roadmap.md, docs/crypto.md).
+if(WIN32)
+    target_link_libraries(okay_engine PUBLIC bcrypt)   # BCryptGenRandom
+endif()
+if(OKAY_OWN_CRYPTO)
+    target_compile_definitions(okay_engine PUBLIC OKAY_OWN_CRYPTO OKAY_NET_CRYPTO)
+    message(STATUS "OkaySpace: packet encryption ENABLED (OUR OWN crypto, unreviewed; OKAY_OWN_CRYPTO=ON)")
+elseif(OKAY_USE_SODIUM)
     set(_okay_sodium FALSE)
     if(OKAY_SODIUM_PREFIX)
         # Explicit prefix (e.g. the MinGW prebuilt): reference the static lib directly
@@ -335,7 +357,7 @@ if(OKAY_USE_SODIUM)
         endif()
     endif()
     if(_okay_sodium)
-        target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_SODIUM)
+        target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_SODIUM OKAY_NET_CRYPTO)
         message(STATUS "OkaySpace: packet encryption ENABLED (libsodium)")
     else()
         message(STATUS "OkaySpace: libsodium not found; packet encryption disabled")

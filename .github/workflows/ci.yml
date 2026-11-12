@@ -300,7 +300,8 @@ jobs:
 
       - name: Run the restart and self-update tests
         # app_restart also drives the verified restart with real processes: self-check, rollback to the previous launcher file, state file.
-        run: ctest --test-dir build -C Release -R "^(app_restart|self_update)$" --output-on-failure
+        # --timeout: a hang in a real-process case fails in 150 s with its output instead of using the whole 30 minutes; -V prints each case as it runs.
+        run: ctest --test-dir build -C Release -R "^(app_restart|self_update)$" --output-on-failure --timeout 150 -V
 
   web-build:
     name: WebGL build (Emscripten)

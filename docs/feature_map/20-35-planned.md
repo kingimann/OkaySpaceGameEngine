@@ -145,18 +145,18 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 21.1.2 Editor save and place - `editor/main.cpp`, `editor/PrefabEdit.*` - Save As Prefab (Hierarchy menu and Inspector button), drag an object into the Project panel, drop a prefab into the scene, UI prefabs from the UI tools; an object holding prefab instances is saved with `PrefabTools::SavePrefab` so the nested links stay (`SaveAsPrefabFile`)
   - 21.1.3 Spawning and pooling - `Scene/ObjectPool` - `spawn("prefab", x, y)` in scripts, `net_spawn` for replicated spawns, `ObjectPool` reuses spawned objects
   - 21.1.4 Starter templates - `Scene/SceneTemplates`, `Scene/UITemplates` - built-in object and UI templates the editor can create (different from prefab files)
+  - 21.1.5 Prefab mode - `editor/EditorState` (`OpenPrefab`, `SavePrefab`, `RevertPrefab`, `ClosePrefab`), `editor/main.cpp` bar - double-click a prefab in the Project panel, or Open Prefab in the Hierarchy menu or the Inspector's Prefab box: the prefab opens alone with a Scene > Prefab > Nested bar, Back, Save, Revert; nested prefabs drill in; each level has its own undo history and unsaved mark; saving then going Back rebuilds every instance in the scene keeping its overrides; Play is off meanwhile
 - **Code:** `Scene/SceneSerializer`, `Scene/ObjectPool`, `Scene/SceneTemplates`, `Scene/UITemplates`, `editor/main.cpp`
 - **API:** `SceneSerializer::InstantiateFromFile`, `SaveObjectToFile`, `GameObject::prefabSource`, `ObjectPool`, script `spawn`, `spawn3`, `net_spawn`
-- **Editor:** Hierarchy right-click > Save As Prefab, Project panel (drag in and out), Inspector prefab header (21.4)
-- **Docs:** `docs/prefabs.md`, `docs/scene_serializer.md`, `docs/scene_management.md`
-- **Tests:** `instantiate`, `scene_ids_prefabs`, `scene_load_pool`, `templates`, `ui_templates`
+- **Editor:** Hierarchy right-click > Save As Prefab and the Prefab submenu (Open enters prefab mode), Project panel (drag in and out, double-click or right-click > Open Prefab, Place in Scene), Inspector prefab header (21.4; Open enters prefab mode), the prefab mode bar above the Scene view
+- **Docs:** `docs/prefabs.md`, `docs/prefab_mode.md`, `docs/scene_serializer.md`, `docs/scene_management.md`
+- **Tests:** `instantiate`, `scene_ids_prefabs`, `scene_load_pool`, `templates`, `ui_templates`, `prefab_mode`
 - **Status:** Works - save, place and spawn are in daily use and covered by tests.
 - **Exists today:** Everything in the Parts list on main. #575 added a cache of the last 32 decoded prefab files (`SceneSerializer::ClearPrefabCache` drops it) so repeated spawns skip the file read; #578's `PrefabTools` is reached through `InstantiateFromFile` for nested and variant files.
 - **Work packages:**
-  1. S - Prefab Mode: today **Open** (Inspector header, Hierarchy Prefab menu) selects the instance and isolates it in the Scene view; a prefab opened in its own scratch scene with a breadcrumb and Save is not built. Depends on: 21.4.
-  2. S - Prefab asset thumbnail already exists; add "Used in N scenes" via `UsedBy`. Depends on: 20.2.
-  3. M - Spawn presets (a prefab list on a Spawner that validates files at load). Depends on: 33.2.
-- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots".
+  1. S - Prefab asset thumbnail already exists; add "Used in N scenes" via `UsedBy`. Depends on: 20.2.
+  2. M - Spawn presets (a prefab list on a Spawner that validates files at load). Depends on: 33.2.
+- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots"; prefab mode does not open variants, saves only the prefab's root tree and keeps no crash-recovery copy of a prefab being edited (`docs/prefab_mode.md`).
 - **Related:** 1.6, 15.1, 15.4, 11.6, 21.2, 21.4
 - **Words:** prefab, okayprefab, instantiate, spawn, template, Save As Prefab, prefab instance, ObjectPool, prefabSource
 - **Seen as:** I changed the prefab but my placed copies did not change; dragging an object into Project does not create what I expected; spawned bullets stutter (pooling)
@@ -1509,15 +1509,17 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 35.1.3 Framework slots (#572) - `Core/SaveFramework` - `SaveManager` slots `<slot>.okayslot` with headers (label, scene, time, play time, thumbnail, kind, game version), listing, copy, rename and delete
   - 35.1.4 Slot menu model (#572) - `Core/SaveFramework` - `SaveMenuModel` rows with ready-made text and flags (empty, corrupt, newer version, auto, quick, can load, can save)
   - 35.1.5 Cloud sync hooks (#572) - `Core/SaveFrameworkSync` - `ISaveSync` with in-memory and folder backends; PlayFab user data and Steam Cloud calls exist elsewhere (`Platform/PlayFab/PlayFab`, `Platform/Steam/SteamService`) but nothing connects saves to them
-- **Code:** `Core/SaveGame`, `Core/SaveData`, `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`, `Platform/PlayFab/PlayFab`, `Platform/Steam/SteamService`
-- **API:** `SaveGame::Save/Load/List`, `Save::SetInt`; `SaveManager`, `SaveRequest`, `SaveMenuModel`, `ISaveSync`
-- **Editor:** none (no save slot UI component; a load menu is built by the game from `SaveGame::List`)
+  - 35.1.6 No-code slot calls - `Core/GameSaves` - `GameSaves::Save`, `Load`, `Continue`, `Delete`, `Exists`, `SavedText`, `SecondsSinceSave`, `AutoSave`; script `game_save`, `game_load`, `game_continue`, `game_delete_slot`, `game_slot_exists`, `game_slot_text`, `game_slot_age`, `game_slot_label`, `game_can_continue`, `game_autosave`; visual-script `Fn.game_*` nodes; Action List `game_*` actions; every failure is a `[save]` Console error
+  - 35.1.7 Save Slots screen - `Scene/UITemplates` - `AddSaveSlots`: three slots with label and saved time, Save / Load / Delete, Continue, Close, status line (UI > Prebuilt Screens > Menus)
+- **Code:** `Core/SaveGame`, `Core/SaveData`, `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`, `Core/GameSaves`, `Scene/UITemplates`, `Platform/PlayFab/PlayFab`, `Platform/Steam/SteamService`
+- **API:** `SaveGame::Save/Load/List`, `Save::SetInt`; `SaveManager`, `SaveRequest`, `SaveMenuModel`, `ISaveSync`; `GameSaves`
+- **Editor:** UI > Prebuilt Screens > Menus > Save Slots (Save / Load / Delete / Continue per slot); Add Component > Saveable and Save Settings
 - **Docs:** `docs/save_games.md`; `docs/save_framework.md`
-- **Tests:** `save_game`, `durable_saves`, `savedata`; `save_framework`, `save_scene`
-- **Status:** Works - `SaveGame` slots are in use and tested; the richer framework (`SaveManager`, #572, tests `save_framework`, `save_scene`) is on main but no component, scene template or editor window uses it.
-- **Exists today:** SaveGame slots with durable writes. A load screen is made by hand from `List()`. The framework's slots, menu model and sync hooks exist as library code only (grep finds no use in `editor/`, `player/` or `Components/`).
+- **Tests:** `save_game`, `durable_saves`, `savedata`; `save_framework`, `save_scene`, `save_nocode`, `ui_templates`
+- **Status:** Works - `SaveGame` slots are in use and tested; the framework (`SaveManager`, tests `save_framework`, `save_scene`) is now reachable without code through `GameSaves`, script builtins, visual-script nodes, Action List actions and the Save Slots screen (test `save_nocode`).
+- **Exists today:** SaveGame slots with durable writes. The framework's slots are used by the no-code route (`game_*` calls and the Save Slots screen, which shows the slot label and saved time, not a thumbnail). The screen does not use `SaveMenuModel` and has three fixed slots; rename and thumbnails are not in it. Sync hooks are library code only.
 - **Work packages:**
-  1. M - Save Slots UI component: a list bound to `SaveMenuModel` with load, delete, rename and a thumbnail (UI kit widget). Depends on: #572 (on main), 12.4.
+  1. S - Save Slots screen: a list bound to `SaveMenuModel` with any number of slots, rename and a thumbnail (the shipped screen has three fixed slots). Depends on: #572 (on main), 12.4.
   2. S - Screenshot thumbnail captured on save (needs 50.1). Depends on: package 1.
   3. M - Choose one system: either move SaveGame callers to the framework or keep both with clear names (two slot formats). Depends on: #572 (on main).
   4. M - Cloud sync: `ISaveSync` backends for Steam Cloud and PlayFab user data. Depends on: package 3, 49.1.
@@ -1526,7 +1528,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Related:** 1.7, 12.8, 17.10, 35.2, 49.1
 - **Words:** save slot, save game, load game, Continue, SaveGame, SaveManager, slot list, load screen, cloud save, save folder
 - **Seen as:** Load screen is empty; save corrupted after a crash (handled by .bak); two kinds of saves in the folder
-- **Ask me like:** "add a Save Slots UI component"; "sync saves to Steam Cloud"
+- **Ask me like:** "make the Save Slots screen show a screenshot"; "sync saves to Steam Cloud"
 
 ### 35.2 Checkpoints
 - **What:** Automatic save points (entering a level, reaching a checkpoint, timed autosave) and quick save and load.
@@ -1534,15 +1536,16 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 35.2.1 Auto Save component - `Components/AutoSave` - saves the whole game to a slot every N seconds and optionally when the scene starts
   - 35.2.2 Quick save, autosave ring and Continue (#572) - `Core/SaveFramework` - `SaveManager::QuickSave`, `AutoSave` rotating `autosave_1..3`, `ContinueSlot` loads the newest valid slot
   - 35.2.3 Named checkpoints and trigger (#572) - `Core/SaveFramework` - `CheckpointManager` (`Reach`, `Restore`, `RestoreLast`, keep newest N) and a `CheckpointTrigger` component that fires when the player comes within a radius or enters a trigger collider
-- **Code:** `Components/AutoSave`, `Core/SaveFramework`
-- **API:** `AutoSave` fields (`interval`, `slot`, `label`, `saveOnStart`), `SaveNow()`; `SaveManager::QuickSave`, `AutoSave`, `CheckpointManager::Reach`, `RestoreLast`, `CheckpointTrigger`
-- **Editor:** Add Component > Auto Save
+  - 35.2.4 Save Settings component - `Core/GameSaves` - one per scene: autosave every N seconds and/or when the scene starts, into the ring of N autosave slots (skipped while a load is putting a save back); script `game_autosave`, Action List `game_autosave`
+- **Code:** `Components/AutoSave`, `Core/SaveFramework`, `Core/GameSaves`
+- **API:** `AutoSave` fields (`interval`, `slot`, `label`, `saveOnStart`), `SaveNow()`; `SaveConfig` fields (`autosaveInterval`, `autosaveOnSceneStart`, `autosaveSlots`); `SaveManager::QuickSave`, `AutoSave`, `CheckpointManager::Reach`, `RestoreLast`, `CheckpointTrigger`
+- **Editor:** Add Component > Auto Save, Save Settings (autosave)
 - **Docs:** `docs/save_games.md`; `docs/save_framework.md`
-- **Tests:** `save_game`; `save_framework`
-- **Status:** Partial - a timer autosave component exists; quick save, the autosave ring and checkpoints are on main (#572) but a `CheckpointTrigger` cannot be saved in a scene file yet.
-- **Exists today:** `AutoSave` (interval 120 s by default) saving through `SaveGame`. `docs/save_framework.md` says the scene file has no record for Saveable components yet, so `CheckpointTrigger` and `Saveable` must be attached from code.
+- **Tests:** `save_game`; `save_framework`; `save_nocode`
+- **Status:** Partial - `AutoSave` and the framework's autosave ring (set up with Save Settings) work without code; quick save and checkpoints are on main (#572) but a `CheckpointTrigger` cannot be saved in a scene file yet.
+- **Exists today:** `AutoSave` (interval 120 s by default) saving through `SaveGame`, and `SaveConfig` saving through the framework's ring. `CheckpointTrigger` still has to be attached from code (`Saveable` now has a scene-file record).
 - **Work packages:**
-  1. M - Scene serializer entries and Inspector for `CheckpointTrigger` and `Saveable` (so levels made in the editor can use them). Depends on: #572 (on main).
+  1. S - Scene serializer entry and Inspector for `CheckpointTrigger` (`Saveable` has both now). Depends on: #572 (on main).
   2. S - Death and respawn flow: `RestoreLast` after the player dies, as a visual-script node and script call. Depends on: package 1.
   3. S - Quick save and quick load keys through `InputActions`. Depends on: #572 (on main), 32.4.
   4. S - "Saving..." indicator widget. Depends on: 12.2.
@@ -1561,18 +1564,18 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 35.3.3 Saveable state (#572) - `Core/SaveFrameworkScene` - `Saveable` component with a key, typed field helpers, `SaveSystem::CaptureScene` and `ApplyScene`, spawned and destroyed objects handled
   - 35.3.4 Stable object ids - `Scene/SceneSerializer` - persistent `GameObject::Guid()` (merged #570), usable as a save key
   - 35.3.5 Clocks, time scale and random streams - `Core/TimeSnapshot`, `Core/Countdown` - (#585) `TimeSnapshot::Capture().AddRandom("loot", rng).Write(doc.Writer("time"))` stores every `Clock`, the gameplay time scale and named random streams in a save document so a reload cannot re-roll a chest; `Cooldown` and `Countdown` have `Save/Load` through `SaveWriter`/`SaveReader` (1.1.14, 1.1.15); `Time::ElapsedTime` and `FrameCount` are deliberately not restored
+  - 35.3.6 No-code Saveable - `Core/SaveFrameworkScene`, `Scene/SceneSerializer` - the `Saveable` component stored in the scene file (record `saveable`) with a save id, flags for transform / active / built-in components, a list of property-registry paths, script and visual-script variables, scene-wide Action List and visual-script variables; added and edited in the Inspector
 - **Code:** `Core/SaveGame`, `Inventory/InventoryPersistence`, `Core/SaveFrameworkScene`, `Core/SaveFramework`, `Core/TimeSnapshot`, `Core/Countdown`, `Scene/SceneSerializer`
-- **API:** `SaveGame::Save`; `Saveable`, `SaveSystem::CaptureScene`, `ApplyScene`
-- **Editor:** none yet (no Add Component entry or Inspector section for Saveable)
+- **API:** `SaveGame::Save`; `Saveable` (`saveId`, `properties`, `saveVariables`, `saveSceneVariables`), `SaveSystem::CaptureScene`, `ApplyScene`
+- **Editor:** Add Component > Saveable (keep when saving); Inspector: save id, New id, what to save, property picker
 - **Docs:** `docs/save_games.md`; `docs/save_framework.md`
-- **Tests:** `save_game`, `inventory_persist_craft`; `save_scene`, `time_snapshot`, `countdown`
-- **Status:** Works - whole-scene saves are shipped and tested; the selective saveable-objects model is on main (#572, test `save_scene`) but has no scene-file record or Inspector.
+- **Tests:** `save_game`, `inventory_persist_craft`; `save_scene`, `save_nocode`, `time_snapshot`, `countdown`
+- **Status:** Works - whole-scene saves are shipped and tested; the selective saveable-objects model has a scene-file record, an Inspector and a no-code route (tests `save_scene`, `save_nocode`).
 - **Exists today:** Whole-scene save replaces the scene on load, so scripts restart and saves tie to one scene layout. Streamed worlds (27.4) are not covered.
 - **Work packages:**
-  1. M - Scene file record, Add Component entry and Inspector section for `Saveable` (the scene format has none today, per `docs/save_framework.md`). Depends on: #572 (on main).
-  2. S - Save keys use `GameObject::Guid()` (the framework doc says "GameObject has no GUID in this build"; #570 added one) instead of name paths. Depends on: package 1.
+  1. S - Save keys use `GameObject::Guid()` (the framework doc says "GameObject has no GUID in this build"; #570 added one) instead of name paths; the Saveable's own save id is the key today.
   3. M - Saves cover streamed cells (state of unloaded cells kept as data). Depends on: 27.4 package 1.
-  4. S - Per-component "save this" attributes from the property registry (flags such as `RuntimeOnly` and `Structural` already exist). Depends on: the property registry (on main, #578, 1.19).
+  4. S - Pick properties by flag, not by path: save every property that is not `RuntimeOnly` (the Saveable lists paths one by one today). Depends on: the property registry (on main, #578, 1.19).
   5. S - Save diff viewer in the editor for debugging. Depends on: 28.2.
 - **Open:** the two systems (whole scene vs saveable state) overlap; streamed worlds not covered.
 - **Related:** 1.5, 11.1, 27.4, 35.1, 35.4
@@ -1591,14 +1594,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `SaveGame::SetMigration`; `SaveStore::SetDataVersion`, `RegisterMigration`, `MigrationPath`, `SaveSlotInfo::incompatible`
 - **Editor:** none
 - **Docs:** `docs/save_games.md`; `docs/save_framework.md`
-- **Tests:** `durable_saves`, `save_game`; `save_framework`
-- **Status:** Works - header, checksum, newer-version refusal and migration hook are in the shipped code and tested.
+- **Tests:** `durable_saves`, `save_game`; `save_framework`; `save_nocode`
+- **Status:** Works - header, checksum, newer-version refusal and migration hook are in the shipped code and tested; the no-code calls (`game_load`, Continue) report a newer-version, damaged or missing slot as a `[save]` Console error.
 - **Exists today:** Everything in Parts 35.4.1-35.4.3.
 - **Work packages:**
   1. S - Game-version string in the header (framework slot header has `gameVersion`); show it in a load screen. Depends on: #572 (on main).
   2. M - Migration helpers for common changes (rename a key, move a value) so authors do not write text code. Depends on: nothing.
   3. S - Test pack of old save files kept in the repo, loaded in CI. Depends on: nothing.
-  4. S - Slot status text ("Saved by a newer version") in the Save Slots component. Depends on: 35.1 package 1.
+  4. S - Slot status text ("Saved by a newer version") in the Save Slots screen rows (the Console reports it today). Depends on: 35.1 package 1.
 - **Open:** migrations operate on text; no tool to inspect a save.
 - **Related:** 1.7, 25.3, 35.1, 22.4
 - **Words:** save version, migration, newer version, incompatible save, checksum, SetMigration, old saves, damaged save

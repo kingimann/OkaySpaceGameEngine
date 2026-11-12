@@ -9,6 +9,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [making_a_game.md](making_a_game.md): make your first game, from an empty editor to a shipped one.
 - [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
 - [prefab_system.md](prefab_system.md): nested prefabs, variants, unpack, per-record and per-field apply and revert, and the prefab validator.
+- [prefab_mode.md](prefab_mode.md): open a prefab on its own in the editor, edit it (nested prefabs too), save it, and see every instance update.
 - [scene_serializer.md](scene_serializer.md): what a scene round trip keeps, and the component serializer registry.
 - [properties.md](properties.md): the property registry: read, write, watch, snapshot and diff any component field by name (the base for per-property undo, live editing and prefab overrides).
 - [scene_diff_merge.md](scene_diff_merge.md): canonical scene text, structured diffs, three-way merge and format migration for version control.

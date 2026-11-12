@@ -15,6 +15,7 @@
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
 #include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
+#include "UserReports.hpp"          // "Report" for players, messages, posts, listings, servers (Admin > Reports)
 #include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
@@ -1300,6 +1301,10 @@ Uint32 g_toastHoldUntil = 0;   // an anti-cheat toast isn't replaced by the call
 // "Report cheating" in a chat's menu asks for this; DrawAcBanBanner shows the dialog.
 static std::string g_acReportUid, g_acReportName; static bool g_acReportOpen = false;
 static void DrawAcReportPopup();
+// "Report ..." (abuse, spam, scams...): every Report control calls OpenReport; the dialog is
+// drawn once per frame by DrawReportPopup and sends to public.reports (docs/sql/reports.sql).
+static void OpenReport(okayrep::Target t, const std::string& id, const std::string& label);
+static void DrawReportPopup();
 void Toast(const std::string& m, int kind);
 
 // `official`: the official game must be signed by a key built in with
@@ -7440,6 +7445,7 @@ static void DrawGroupConversation(
             if (ImGui::MenuItem("Reply")) startReply();
             if (ImGui::MenuItem("Copy text")) ImGui::SetClipboardText(mb.c_str());
             if (ImGui::MenuItem("Forward\xE2\x80\xA6")) ChatForward(m.body, m.mine ? myName : m.senderName);
+            if (!m.mine && ImGui::MenuItem("Report message\xE2\x80\xA6")) OpenReport(okayrep::Target::GroupMessage, std::to_string(m.id), "a message from " + m.senderName);
             if (ImGui::MenuItem(ChatIsPinned(true, m.id) ? "Unpin message" : "Pin message")) ChatPinToggle(true, m.id);
             if (ImGui::MenuItem(starred ? "Unstar" : "Star message")) {
                 if (starred) g_starred.erase(starKey);
@@ -9234,6 +9240,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 ImGui::Separator();
                 if (ImGui::MenuItem("Copy username")) ImGui::SetClipboardText(selName.c_str());
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
+                if (ImGui::MenuItem("Report user\xE2\x80\xA6")) OpenReport(okayrep::Target::User, selUid, selName);
                 if (ImGui::MenuItem("Report cheating\xE2\x80\xA6")) { g_acReportUid = selUid; g_acReportName = selName; g_acReportOpen = true; }
                 if (ImGui::MenuItem(selBlocked ? "Unblock" : "Block")) {
                     SetBlocked(selUid, selName, !selBlocked);
@@ -9714,6 +9721,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                     if (ImGui::MenuItem("Reply")) { replyTo = m.id; replyName = m.mine ? "yourself" : selName; replySnippet = ChatPreview(mb, 40); }
                     if (ImGui::MenuItem("Copy text")) ImGui::SetClipboardText(mb.c_str());
                     if (ImGui::MenuItem("Forward\xE2\x80\xA6")) ChatForward(m.body, m.mine ? myName : selName);
+                    if (!m.mine && ImGui::MenuItem("Report message\xE2\x80\xA6")) OpenReport(okayrep::Target::Message, std::to_string(m.id), "a message from " + selName);
                     if (ImGui::MenuItem(ChatIsPinned(false, m.id) ? "Unpin message" : "Pin message")) ChatPinToggle(false, m.id);
                     if (m.edited && ImGui::MenuItem("Edit history")) OpenEditHistory(dm, false, m.id, m.body);
                     // Star = save for later (WhatsApp); listed under Conversation > Starred.
@@ -13530,6 +13538,261 @@ static void DrawAcBanBanner() {
     }
 }
 
+// ---- Reports: abuse, spam, scams, illegal content (docs/sql/reports.sql) -------
+// Every "Report ..." control (a player, a chat message, a forum post or comment, a
+// marketplace listing, a server) calls OpenReport; the dialog is drawn once per
+// frame (DrawReportPopup). "Report sent" is only shown after the server accepted
+// the row; a missing table, a signed-out player, a duplicate and a flood limit
+// each get their own sentence (shared/UserReports.hpp). Moderators review under
+// Admin > Reports (DrawReportsAdmin, below).
+namespace rep = okayrep;
+static SDL_mutex* g_repMutex = nullptr;
+static rep::Target g_repTarget = rep::Target::User;
+static std::string g_repId, g_repLabel;
+static bool g_repOpenReq = false;
+static volatile bool g_repBusy = false;
+static bool g_repResultReady = false; static rep::Outcome g_repResult = rep::Outcome::Other;   // (guarded)
+struct RepSendJob { rep::Request req; };
+static int ReportSendWorker(void* p) {
+    std::unique_ptr<RepSendJob> j(static_cast<RepSendJob*>(p));
+    rep::Outcome o = rep::Outcome::NoNetwork;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        if (!a.IsLoggedIn()) o = rep::Outcome::SignedOut;
+        else { const auto r = acb::Send(a, j->req); o = r.ok ? rep::Outcome::Sent : rep::Classify(r.status, r.body); }
+    } catch (...) { o = rep::Outcome::NoNetwork; }
+    if (!g_repMutex) g_repMutex = SDL_CreateMutex();
+    SDL_LockMutex(g_repMutex);
+    g_repResult = o; g_repResultReady = true;
+    SDL_UnlockMutex(g_repMutex);
+    g_repBusy = false;
+    return 0;
+}
+static void OpenReport(rep::Target t, const std::string& id, const std::string& label) {
+    g_repTarget = t; g_repId = id; g_repLabel = label; g_repOpenReq = true;
+}
+static void DrawReportPopup() {
+    static const bool kDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;
+    static int reason = -1;
+    static char note[rep::kNoteMax + 8] = "";
+    static std::string inlineMsg;     // why the last send did not go through ("" = none)
+    static bool closeNow = false;
+    if (!g_repMutex) g_repMutex = SDL_CreateMutex();
+    if (g_repOpenReq) {
+        g_repOpenReq = false; reason = -1; note[0] = '\0'; inlineMsg.clear(); closeNow = false;
+        ImGui::OpenPopup("Report##userreport");
+    }
+    // The server's answer (also when the dialog was closed while it was out).
+    bool ready = false; rep::Outcome res = rep::Outcome::Other;
+    SDL_LockMutex(g_repMutex);
+    if (g_repResultReady) { g_repResultReady = false; ready = true; res = g_repResult; }
+    SDL_UnlockMutex(g_repMutex);
+    if (ready) {
+        if (rep::Accepted(res)) { Toast(rep::Message(res), 1); closeNow = true; }
+        else { inlineMsg = rep::Message(res); Toast(inlineMsg, 2); }
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Report##userreport", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        if (closeNow) { closeNow = false; ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::Text("Report %s", g_repLabel.empty() ? rep::TargetLabel(rep::TargetKey(g_repTarget)) : g_repLabel.c_str());
+        ImGui::TextDisabled("Moderators review every report. Reporting is not anonymous to them; the other person is not told.");
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextUnformatted("Why are you reporting this?");
+        int n = 0; const rep::Reason* rs = rep::Reasons(n);
+        for (int i = 0; i < n; ++i) if (ImGui::RadioButton(rs[i].label, reason == i)) reason = i;
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::InputTextMultiline("##reportnote", note, sizeof(note), ImVec2(420, 70));
+        ImGui::TextDisabled("Optional note (what happened, where). %d / %d", (int)std::strlen(note), (int)rep::kNoteMax);
+        if (std::strlen(note) > rep::kNoteMax) note[rep::kNoteMax] = '\0';
+        if (!inlineMsg.empty()) {
+            ImGui::Dummy(ImVec2(0, 2));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.5f, 0.45f, 1));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420);
+            ImGui::TextUnformatted(inlineMsg.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+        }
+        ImGui::Dummy(ImVec2(0, 4));
+        const bool busy = g_repBusy;
+        if (busy) ImGui::BeginDisabled();
+        if (PrimaryButton(busy ? "Sending\xE2\x80\xA6" : "Send report", ImVec2(140, 30))) {
+            rep::Request q; std::string err;
+            inlineMsg.clear();
+            if (reason < 0) inlineMsg = "Pick a reason first.";
+            else if (!rep::Build(g_repTarget, g_repId, rs[reason].key, note, std::string(), q, &err)) inlineMsg = err;
+            else if (kDemo) { Toast("Demo: nothing is sent", 0); ImGui::CloseCurrentPopup(); }
+            else if (g_pollCfgDir.empty()) inlineMsg = rep::Message(rep::Outcome::SignedOut);
+            else {
+                g_repBusy = true;
+                RepSendJob* j = new RepSendJob; j->req = q;
+                if (SDL_Thread* t = SDL_CreateThread(ReportSendWorker, "okay-report", j)) SDL_DetachThread(t);
+                else { g_repBusy = false; delete j; inlineMsg = rep::Message(rep::Outcome::NoNetwork); }
+            }
+        }
+        if (busy) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 30))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+// Admin > Reports (every moderator): the open reports with what was reported, why and by whom;
+// mark each resolved or dismissed (or reopen it). The server decides who may (RLS in reports.sql).
+struct RepAdminData {
+    std::vector<rep::Row> rows;
+    std::map<std::string, std::string> names;   // uuid -> username
+    std::string loadError;
+};
+struct RepAdminJob { bool hasAction = false; rep::Request action; std::string okMsg, status; };
+static SDL_mutex* g_repAdMutex = nullptr;
+static volatile bool g_repAdBusy = false;
+static RepAdminData g_repAdNew; static bool g_repAdReady = false;   // (guarded)
+static std::string g_repAdMsg; static bool g_repAdMsgErr = false;   // (guarded)
+static int RepAdminWorker(void* p) {
+    std::unique_ptr<RepAdminJob> j(static_cast<RepAdminJob*>(p));
+    RepAdminData d; std::string msg; bool err = false;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        if (j->hasAction) {
+            const auto r = acb::Send(a, j->action);
+            msg = r.ok ? j->okMsg : rep::AdminError(r.status, r.body); err = !r.ok;
+        }
+        const auto r = acb::Send(a, rep::List(j->status, 200));
+        if (!r.ok || !rep::ParseRows(r.body, d.rows)) d.loadError = rep::AdminError(r.status, r.body);
+        std::vector<std::string> ids;
+        for (const auto& x : d.rows) { ids.push_back(x.reporter); ids.push_back(x.targetUser); }
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        for (std::size_t i = 0; i < ids.size(); i += 80) {
+            std::vector<std::string> part(ids.begin() + (long)i, ids.begin() + (long)std::min(ids.size(), i + 80));
+            const auto nr = acb::Send(a, acb::Usernames(part));
+            if (nr.ok) acb::ParseUsernames(nr.body, d.names);
+        }
+    } catch (...) { msg = "Something went wrong"; err = true; }
+    SDL_LockMutex(g_repAdMutex);
+    g_repAdNew = std::move(d); g_repAdReady = true;
+    if (!msg.empty()) { g_repAdMsg = msg; g_repAdMsgErr = err; }
+    SDL_UnlockMutex(g_repAdMutex);
+    g_repAdBusy = false;
+    return 0;
+}
+static RepAdminData DemoRepAdminData() {
+    RepAdminData d;
+    const long t0 = (long)std::time(nullptr);
+    const std::string uA = "0b5a4c1e-0000-4000-8000-000000000011", uB = "0b5a4c1e-0000-4000-8000-000000000012", uC = "0b5a4c1e-0000-4000-8000-000000000013";
+    d.names[uA] = "maya"; d.names[uB] = "tim"; d.names[uC] = "spambot77";
+    auto row = [&](long id, const char* type, const char* tid, const std::string& tu, const char* why, const char* note, const char* snap, const char* st, const std::string& by, long ago) {
+        rep::Row r; r.id = id; r.targetType = type; r.targetId = tid; r.targetUser = tu; r.reason = why; r.note = note; r.snapshot = snap;
+        r.status = st; r.reporter = by; r.created = t0 - ago; d.rows.push_back(r); };
+    row(3, "forum_post", "41", uC, "spam", "Same link in five threads", "FREE ROBUX click here http://totally.legit", "open", uA, 600);
+    row(2, "message", "812", uC, "scam", "", "send me your password and I will give you coins", "open", uB, 5400);
+    row(1, "market_item", "7", uB, "illegal", "Uploads a cracked paid asset pack", "Neon UI Kit (cracked)", "resolved", uA, 86400);
+    return d;
+}
+static void DrawReportsAdmin() {
+    static const bool kDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;
+    static RepAdminData D;
+    static bool loaded = false, firstFrame = true;
+    static int filter = 0;   // Open, Resolved, Dismissed, All
+    static long selReport = 0;
+    static char note[300] = "";
+    static const char* kStatus[] = {"open", "resolved", "dismissed", ""};
+    const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    if (!g_repAdMutex) g_repAdMutex = SDL_CreateMutex();
+    if (kDemo && !loaded) { loaded = true; D = DemoRepAdminData(); }
+    auto queue = [&](RepAdminJob* j) {
+        if (kDemo) { delete j; Toast("Demo: nothing is sent", 0); return; }
+        if (g_repAdBusy) { delete j; Toast("Still working on the last action\xE2\x80\xA6", 0); return; }
+        j->status = kStatus[filter];
+        g_repAdBusy = true;
+        if (SDL_Thread* t = SDL_CreateThread(RepAdminWorker, "okay-repadmin", j)) SDL_DetachThread(t);
+        else { g_repAdBusy = false; delete j; }
+    };
+    if (!kDemo) {
+        if (firstFrame) { firstFrame = false; queue(new RepAdminJob); }
+        SDL_LockMutex(g_repAdMutex);
+        if (g_repAdReady) { g_repAdReady = false; D = g_repAdNew; loaded = true; }
+        if (!g_repAdMsg.empty()) { Toast(g_repAdMsg, g_repAdMsgErr ? 2 : 1); g_repAdMsg.clear(); }
+        SDL_UnlockMutex(g_repAdMutex);
+    }
+    auto name = [&](const std::string& uid) -> std::string {
+        if (uid.empty()) return std::string("(gone)");
+        auto it = D.names.find(uid);
+        return it != D.names.end() && !it->second.empty() ? "@" + it->second : uid.substr(0, 8);
+    };
+    auto statusCol = [](const std::string& s) -> ImU32 {
+        return s == "open" ? IM_COL32(236, 150, 60, 255) : s == "resolved" ? IM_COL32(67, 181, 129, 255) : IM_COL32(120, 128, 140, 255);
+    };
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::Combo("##repfilter", &filter, "Open\0Resolved\0Dismissed\0All\0")) { selReport = 0; queue(new RepAdminJob); }
+    ImGui::SameLine();
+    if (ImGui::Button(g_repAdBusy ? "Loading\xE2\x80\xA6" : "Refresh", ImVec2(110, 28))) queue(new RepAdminJob);
+    ImGui::SameLine();
+    ImGui::TextDisabled("Reports from players about people, messages, posts, listings and servers. Cheating reports are under Anti-cheat.");
+    ImGui::Dummy(ImVec2(0, 4));
+    if (!D.loadError.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.45f, 1));
+        ImGui::TextWrapped("%s", D.loadError.c_str());
+        ImGui::PopStyleColor();
+    }
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::kRaised);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 14));
+    ImGui::BeginChild("##repcard", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    int shown = 0;
+    for (const auto& r : D.rows) {
+        if (filter < 3 && r.status != kStatus[filter]) continue;
+        ++shown;
+        ImGui::PushID((int)r.id);
+        const bool sel = selReport == r.id;
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        if (ImGui::Selectable("##rep", sel, 0, ImVec2(0, 44))) selReport = sel ? 0 : r.id;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddText(ImVec2(p.x + 6, p.y + 4), cDim, RelTime(r.created).c_str());
+        const std::string head = std::string(rep::TargetLabel(r.targetType)) + ": " + rep::ReasonLabel(r.reason) +
+                                 (r.targetType == "user" ? std::string() : "  \xC2\xB7  by " + name(r.targetUser));
+        dl->AddText(ImVec2(p.x + 96, p.y + 4), cText, head.c_str());
+        std::string what = r.snapshot.empty() ? (r.targetType == "user" ? name(r.targetId) : "#" + r.targetId) : r.snapshot;
+        for (auto& c : what) if (c == '\n' || c == '\r') c = ' ';
+        dl->AddText(ImVec2(p.x + 96, p.y + 23), cDim, FitText(what, std::max(120.0f, ImGui::GetContentRegionAvail().x - 260)).c_str());
+        const std::string tag = "reported by " + name(r.reporter);
+        const ImVec2 ts = ImGui::CalcTextSize(r.status.c_str());
+        const float rx = p.x + ImGui::GetContentRegionAvail().x;
+        dl->AddRectFilled(ImVec2(rx - ts.x - 18, p.y + 4), ImVec2(rx - 4, p.y + 8 + ts.y), statusCol(r.status), 8.0f);
+        dl->AddText(ImVec2(rx - ts.x - 11, p.y + 6), IM_COL32_WHITE, r.status.c_str());
+        dl->AddText(ImVec2(rx - ImGui::CalcTextSize(tag.c_str()).x - 6, p.y + 24), cDim, tag.c_str());
+        if (sel) {
+            ImGui::Indent(96);
+            ImGui::PushTextWrapPos(0.0f);
+            if (!r.snapshot.empty()) ImGui::TextWrapped("\"%s\"", r.snapshot.c_str());
+            if (!r.note.empty()) ImGui::TextDisabled("Reporter's note: %s", r.note.c_str());
+            if (r.targetType != "user" || !r.targetUser.empty()) ImGui::TextDisabled("Belongs to %s  \xC2\xB7  %s #%s", name(r.targetUser).c_str(), r.targetType.c_str(), r.targetId.c_str());
+            if (!r.reviewNote.empty()) ImGui::TextDisabled("Review note: %s", r.reviewNote.c_str());
+            ImGui::PopTextWrapPos();
+            if (r.targetType == "user" && ImGui::SmallButton("Open profile")) OpenPublicProfile(r.targetId, std::string(), std::string());
+            ImGui::SetNextItemWidth(260);
+            ImGui::InputTextWithHint("##repnote", "Note (optional)", note, sizeof(note));
+            ImGui::SameLine();
+            rep::Request q; std::string err;
+            auto set = [&](const char* st, const char* okMsg) {
+                if (rep::SetStatus(r.id, st, note, q, &err)) {
+                    RepAdminJob* j = new RepAdminJob; j->hasAction = true; j->action = q; j->okMsg = okMsg; queue(j); note[0] = '\0';
+                } else Toast(err, 2);
+            };
+            if (r.status != "resolved" && PrimaryButton("Resolve", ImVec2(90, 0))) set("resolved", "Marked resolved");
+            ImGui::SameLine();
+            if (r.status != "dismissed" && ImGui::Button("Dismiss")) set("dismissed", "Report dismissed");
+            ImGui::SameLine();
+            if (r.status != "open" && ImGui::Button("Reopen")) set("open", "Report reopened");
+            ImGui::Unindent(96);
+            ImGui::Dummy(ImVec2(0, 4));
+        }
+        ImGui::PopID();
+    }
+    if (!shown) ImGui::TextDisabled(!D.loadError.empty() ? "" : loaded ? "Nothing here." : "Loading\xE2\x80\xA6");
+    ImGui::EndChild(); ImGui::PopStyleVar(2); ImGui::PopStyleColor();
+}
+
 // "Report cheating" (a chat's menu). Drawn from the chat window itself, so the
 // dialog sits above the chat rather than under it.
 static void DrawAcReportPopup() {
@@ -13555,6 +13818,7 @@ static void DrawAcReportPopup() {
 }
 
 static void DrawOfficialAdmin(okay::account::AccountService& account);   // Admin > Official game (below)
+static void DrawReportsAdmin();   // Admin > Reports (above)
 
 static void DrawAdminPage(okay::account::AccountService& account) {
     static const bool kDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;
@@ -13624,8 +13888,8 @@ static void DrawAdminPage(okay::account::AccountService& account) {
     // ---- Sub-tabs ----
     // "Official game" (publish OkaySpace's own game) is for admins only; the
     // server refuses everyone else anyway (docs/sql/official_game_admin.sql).
-    static const char* kSubs[] = {"Overview", "Players", "Marketplace", "Forums", "Bans", "Audit log", "Official game", "Anti-cheat"};
-    const int nSubs = myRank >= 3 ? 8 : 6;   // Anti-cheat: admins only too (docs/sql/anticheat.sql)
+    static const char* kSubs[] = {"Overview", "Players", "Marketplace", "Forums", "Bans", "Audit log", "Reports", "Official game", "Anti-cheat"};
+    const int nSubs = myRank >= 3 ? 9 : 7;   // Reports: every moderator (docs/sql/reports.sql); Official game and Anti-cheat: admins only
     if (sub >= nSubs || sub < 0) sub = 0;
     {
         ImGui::Dummy(ImVec2(0, 8));
@@ -13664,8 +13928,9 @@ static void DrawAdminPage(okay::account::AccountService& account) {
         else if (sub == 4) queue(job(15));
         else if (sub == 5) queue(job(16));
     }
-    if (sub == 6) { DrawOfficialAdmin(account); return; }
-    if (sub == 7) { DrawAntiCheatAdmin(); return; }
+    if (sub == 6) { DrawReportsAdmin(); return; }
+    if (sub == 7) { DrawOfficialAdmin(account); return; }
+    if (sub == 8) { DrawAntiCheatAdmin(); return; }
     if (sub == 3 && !kDemo && (loadedMask & kAdSections) && !(loadedMask & kAdThreads) && !g_adBusy) { loadedMask |= kAdThreads; queue(job(13)); }
 
     // Shared bits.
@@ -14726,6 +14991,7 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
             if (!me && MpCanInvite() && ImGui::MenuItem(("Invite to " + MpGameTitle()).c_str())) MpInviteUser(p.id, p.username);
             if (!me && s_b.friendStatus == "accepted" && ImGui::MenuItem(MpPartyId().empty() ? "Start a party with them" : "Invite to party")) MpPartyInvite(p.id, p.username);
             if (me && ImGui::MenuItem("View all achievements")) { out.gotoTab = 5; ClosePublicProfile(); }
+            if (!me && ImGui::MenuItem("Report user\xE2\x80\xA6")) OpenReport(okayrep::Target::User, p.id, p.username);
             if (!me && s_b.friendStatus == "pending" && s_b.incoming) {
                 ImGui::Separator();
                 if (ImGui::MenuItem("Decline request")) {
@@ -18683,6 +18949,7 @@ int main(int argc, char** argv) {
         }
         DrawBanBanner();
         DrawAcBanBanner();
+        DrawReportPopup();
         if (g_pfOpen) {
             PfPageOut po = DrawPublicProfilePage(account, tab);
             if (po.gotoTab >= 0) {
@@ -23523,6 +23790,10 @@ int main(int argc, char** argv) {
                             std::snprintf(rvBody, sizeof(rvBody), "%s", rev.body.c_str());
                         }
                     }
+                    if (me.empty() || me != w.author) {
+                        if (ImGui::SmallButton("Report")) OpenReport(okayrep::Target::MarketItem, std::to_string(w.id), w.title);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Report this listing to the moderators");
+                    }
                     if (!me.empty() && me == w.author) {
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Edit")) {
@@ -23948,6 +24219,7 @@ int main(int argc, char** argv) {
                             if (!svIAmOwner) {
                                 ImGui::Separator();
                                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                                if (ImGui::MenuItem("Report server\xE2\x80\xA6")) OpenReport(okayrep::Target::Server, std::to_string(svSel), svSelName);
                                 if (ImGui::MenuItem("Leave server")) {
                                     if (sv.Leave(svSel)) { svSel = 0; svChan = 0; svNextList = 0; Toast("Left server", 1); }
                                 }
@@ -25604,6 +25876,15 @@ int main(int argc, char** argv) {
                     }
                     if (!openBody.empty()) { ImGui::Dummy(ImVec2(0, 4)); RenderChatBody(openBody, ImGui::GetContentRegionAvail().x - 8); }
                     if (openLocked) { ImGui::Dummy(ImVec2(0, 2)); ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.40f, 1.0f), "Locked \xE2\x80\x94 no new comments"); }
+                    {   // report this post (anyone but its author)
+                        const std::string meNow = kFoDemo ? std::string(std::getenv("OKAY_UI_DEMO_USER")) : account.CurrentSession().username;
+                        if (openAuthor.empty() || openAuthor != meNow) {
+                            ImGui::Dummy(ImVec2(0, 4));
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.05f));
+                            if (ImGui::SmallButton("Report post")) OpenReport(okayrep::Target::ForumThread, std::to_string(openThread), openTitle);
+                            ImGui::PopStyleColor();
+                        }
+                    }
                     if (canModerate(openSection)) {   // moderator tools for this post
                         ImGui::Dummy(ImVec2(0, 4));
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.07f));
@@ -25661,6 +25942,12 @@ int main(int argc, char** argv) {
                     ImGui::SameLine(0, 8); ImGui::TextDisabled("%s", RelTime(p.when).c_str());
                     RenderChatBody(p.body, ImGui::GetContentRegionAvail().x - 8);
                     voteWidget("post", p.id, poScores, poMy, true);
+                    if (!mine) {
+                        ImGui::SameLine(0, 12);
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.05f));
+                        if (ImGui::SmallButton("Report")) OpenReport(okayrep::Target::ForumPost, std::to_string(p.id), "a comment by " + (p.author.empty() ? std::string("unknown") : p.author));
+                        ImGui::PopStyleColor();
+                    }
                     if (canModerate(openSection) || mine) {
                         ImGui::SameLine(0, 12);
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1, 1, 1, 0.05f));

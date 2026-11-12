@@ -96,6 +96,21 @@ exec 3 0 4
 entry OnStart 1
 )VS";
 
+// One On Start wire fanned out to three steps (3 wires on the same pin).
+const char* kFan = R"VS(
+node 1 OnStart
+node 2 SetVar x
+default 2 0 1
+node 3 SetVar x
+default 3 0 2
+node 4 SetVar x
+default 4 0 3
+exec 1 0 2
+exec 1 0 3
+exec 1 0 4
+entry OnStart 1
+)VS";
+
 } // namespace
 
 int main() {
@@ -224,9 +239,33 @@ int main() {
         if (g_stops.size() == 2) CHECK(g_stops[1].node == 1 && g_stops[1].event == "OnStart");   // B's On Start event itself
     }
 
+    // ---- One exec pin with three wires: stepping goes into each branch in order ----
+    {
+        Reset();
+        VsDebugger::Get().SetBreakpoint("dbg_fan.okayvs", 2, true);
+        g_plan = {VsDebugger::Step::Into, VsDebugger::Step::Into, VsDebugger::Step::None};
+        Scene s("D5"); auto* v = Attach(s.CreateGameObject("Fan"), "dbg_fan.okayvs", kFan);
+        s.Start(); s.Update(1.0f / 60.0f);
+        // Only the file's nodes stop (never the helper the loader put behind the pin).
+        CHECK(g_stops.size() == 3);
+        if (g_stops.size() == 3) {
+            CHECK(g_stops[0].node == 2 && g_stops[1].node == 3 && g_stops[2].node == 4);
+            CHECK(g_stops[1].x == 1.0f && g_stops[2].x == 2.0f);   // each branch finished before the next began
+            CHECK(g_stops[0].depth == 0 && g_stops[2].depth == 0 && g_stops[2].event == "OnStart");
+        }
+        CHECK(v->GetVariable("x").AsFloat() == 3.0f);
+
+        // A breakpoint on the last branch alone stops once; none of the others stop.
+        Reset();
+        VsDebugger::Get().SetBreakpoint("dbg_fan.okayvs", 4, true);
+        Scene s2("D5b"); Attach(s2.CreateGameObject("Fan"), "dbg_fan.okayvs", kFan);
+        s2.Start(); s2.Update(1.0f / 60.0f);
+        CHECK(g_stops.size() == 1 && g_stops[0].node == 4);
+    }
+
     VsDebugger::Get().onStop = nullptr;
     VsDebugger::Get().ClearBreakpoints();
-    for (const char* f : {"dbg_counter.okayvs", "dbg_other.okayvs", "dbg_fn.okayvs"}) std::remove(f);
+    for (const char* f : {"dbg_counter.okayvs", "dbg_other.okayvs", "dbg_fn.okayvs", "dbg_fan.okayvs"}) std::remove(f);
     Log::sink = nullptr;
     TEST_MAIN_RESULT();
 }

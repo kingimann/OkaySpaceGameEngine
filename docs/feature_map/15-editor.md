@@ -77,8 +77,8 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 ### 15.4 Project panel and asset manager
 - **What:** The file browser of the project's Assets folder (folders, thumbnails, smart filters, search, color labels, drag and drop into the scene) and a window that imports marketplace downloads into the project.
 - **Parts:**
-  - 15.4.1 Project panel - `editor/main.cpp` (`DrawProject` ~8590-9804) - folder tree, list and grid, search with type words (`t:model`), smart filters (All Models, Recently Changed, Unused Assets), multi-select
-  - 15.4.2 Asset icons and thumbnails - `editor/main.cpp` (~6945, ~7106) - drawn icons per asset kind, material ball, drag-drop character model swap
+  - 15.4.1 Project panel - `editor/main.cpp` (`DrawProject`), `editor/ProjectBrowser.*` - folder tree, list and grid, search (`t:model`, `ext:png`, `l:tag`, `is:unused`, `is:broken`, `uses:`, `deps:`), smart filters (All Models, Recently Changed, Unused Assets), multi-select; the listing, counts, folders and dependency lookups come from `AssetDatabase`
+  - 15.4.2 Asset icons and thumbnails - `editor/main.cpp`, `editor/ProjectBrowser.*` - drawn icons per asset kind while a picture is not made yet; pictures from `ThumbnailCache` (textures, audio waveforms, models, meshes, materials, prefabs, scenes), tile size Small / Medium / Large and a slider, grid or list
   - 15.4.3 Asset color labels - `editor/main.cpp` (~8542-8589) - per-project labels stored in `.okaylabels`
   - 15.4.4 Import Model - `editor/main.cpp` (~2407-2512) - OS file picker first, then a settings dialog
   - 15.4.5 Asset Manager window - `editor/main.cpp` (`DrawAssetManager` ~7643-7935) - lists marketplace downloads by type (sidecar `.okayasset`) and imports them into Assets
@@ -87,9 +87,9 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **API:** View > Panels > Project, View > Panels > Asset Manager, File > Import Model
 - **Editor:** Project panel, Asset Manager window
 - **Docs:** `docs/editor.md` (Drag & drop from Project)
-- **Tests:** `assetmanager`, `asset_database` (engine data layers, not the panel)
-- **Status:** Works - the browser and manager are implemented in `main.cpp`
-- **Open:** polish (carried from the earlier map); planned area 20: an asset browser window on top of the new asset manager (PR #568, on main) and asset database (GUIDs, dependencies, import settings, thumbnails); the panel does not use them yet (per the code: no database calls found)
+- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`
+- **Status:** Works - the panel reads from the asset database and thumbnail cache; the window itself is only checked by running the editor (screenshots), the model has tests
+- **Open:** colour labels are still the editor's own list (`.okaylabels`), separate from the tags in `.okaymeta`; changes made outside the editor show up on the next poll (2 s or more), not at once; thumbnails are made on the main thread within a frame budget
 - **Related:** 20, 3.6, 1.6, 17.6, 15.2
 - **Words:** Project panel, assets, Assets folder, import, asset browser, asset manager, marketplace downloads, thumbnails, labels, unused assets, drag from project
 - **Seen as:** an asset does not show or has the wrong icon; import fails; dragging into the scene does nothing; the panel is slow on a big project; marketplace download is not listed

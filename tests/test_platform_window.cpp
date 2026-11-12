@@ -8,6 +8,7 @@
 // Exit code 77 = skipped (no display, no xdotool, backend not compiled in).
 #include "test_framework.hpp"
 #include "okay/Platform/Platform.hpp"
+#include "okay/Input/PlatformKeys.hpp"
 #include "Platform/Internal.hpp"
 #if defined(__linux__)
 #include "Platform/OwnLinux.hpp"
@@ -21,6 +22,12 @@
 #include <string>
 #include <thread>
 #include <vector>
+#if defined(__has_include)
+#if __has_include(<SDL.h>)
+#include <SDL.h>
+#define OKAY_TEST_HAVE_SDL_HEADERS 1
+#endif
+#endif
 
 using namespace okay::platform;
 
@@ -274,6 +281,36 @@ int main(int argc, char** argv) {
         CHECK(Find(ev, EventType::KeyDown, [](const Event& e) { return e.key == Key::LCtrl; }) != nullptr);
         CHECK(Count(ev, EventType::TextInput) == 0);    // Ctrl+C makes no text
     }
+    // KeyForChar: the physical key that types a letter on the CURRENT layout (US here).
+    CHECK(b->KeyForChar('a') == Key::A && b->KeyForChar('z') == Key::Z && b->KeyForChar('w') == Key::W);
+    CHECK(b->KeyForChar('1') == Key::N1 && b->KeyForChar('0') == Key::N0 && b->KeyForChar(' ') == Key::Space);
+    CHECK(b->KeyForChar('A') == Key::A || b->KeyForChar('A') == Key::Unknown);   // sdl2 maps the keycode 'A' to nothing
+    CHECK(b->KeyForChar('!') == Key::Unknown);
+    // ModState follows the held modifier keys.
+    Inject(*b, "keydown shift", 100);
+    CHECK((b->ModState() & ModShift) != 0 && (b->ModState() & ModCtrl) == 0);
+    Inject(*b, "keyup shift", 100);
+    CHECK((b->ModState() & ModShift) == 0);
+    // The extended keys the player feeds the game (F-keys, navigation block, Tab, L/R modifiers).
+    {
+        Inject(*b, "keydown F5", 80); Inject(*b, "keydown Tab", 80); Inject(*b, "keydown Home", 80);
+        Inject(*b, "keydown Control_R", 80); Inject(*b, "keydown Shift_L", 80);
+        std::vector<char> down;
+        okay::AppendExtendedKeys(*b, down);
+        auto has = [&](char c) { for (char d : down) if (d == c) return true; return false; };
+        CHECK(has(okay::Input::KeyF(5)) && has('\t') && has(okay::Input::KeyHome));
+        CHECK(has(okay::Input::KeyRCtrl) && has(okay::Input::KeyLShift));
+        for (char d : down) std::cout << " " << (int)(unsigned char)d;
+        std::cout << "  <- extended keys held\n";
+        CHECK(!has(okay::Input::KeyF(6)));
+        CHECK(!has(okay::Input::KeyRShift));
+        CHECK(!has(okay::Input::KeyEnd));
+        Inject(*b, "keyup F5", 80); Inject(*b, "keyup Tab", 80); Inject(*b, "keyup Home", 80);
+        Inject(*b, "keyup Control_R", 80); Inject(*b, "keyup Shift_L", 80);
+        down.clear();
+        okay::AppendExtendedKeys(*b, down);
+        CHECK(down.empty());
+    }
     Inject(*b, "keydown a", 100);
     CHECK(b->IsKeyDown(Key::A));
     CHECK(!b->IsKeyDown(Key::B));
@@ -290,6 +327,10 @@ int main(int argc, char** argv) {
     // client reads the event, which would make this test race).
     if (std::system("setxkbmap de >/dev/null 2>&1") == 0) {
         Pump(*b, 200);   // the MappingNotify: the backend must refresh its keymap
+        // German layout: the physical key that types "z" is where US has Y, and the other way round.
+        CHECK(b->KeyForChar('z') == Key::Y);
+        CHECK(b->KeyForChar('y') == Key::Z);
+        CHECK(b->KeyForChar('a') == Key::A);
         ev = Inject(*b, "key adiaeresis", 300);
         std::cout << "  German layout, a-umlaut key -> text events: \"" << TextOf(ev) << "\"\n";
         CHECK(TextOf(ev) == "\xC3\xA4");
@@ -311,16 +352,31 @@ int main(int argc, char** argv) {
     // ---- relative mouse (mouse-look) --------------------------------------------------------
     if (b->SetRelativeMouse(true)) {
         Pump(*b, 100);
+        { int fx, fy; b->RelativeMouseState(&fx, &fy); }   // flush motion from before the lock
         ev = Inject(*b, "mousemove_relative 12 7", 200);
         const Event* mv = Find(ev, EventType::MouseMove, [](const Event& e) { return e.dx != 0 || e.dy != 0; });
         std::cout << "  relative motion: dx=" << (mv ? mv->dx : 0) << " dy=" << (mv ? mv->dy : 0) << "\n";
         CHECK(mv != nullptr && mv->dx == 12 && mv->dy == 7);
+        // The same motion, summed since the last read (what the game's mouse-look uses).
+        CHECK(b->SupportsRelativeMouseState());
+        int rdx = -1, rdy = -1;
+        b->RelativeMouseState(&rdx, &rdy);
+        // Pump() above collected the events but the sum is kept by the backend: it must be 12, 7.
+        CHECK(rdx == 12 && rdy == 7);
+        b->RelativeMouseState(&rdx, &rdy);
+        CHECK(rdx == 0 && rdy == 0);   // read resets it
+        ev = Inject(*b, "mousemove_relative -- -5 3", 200);
+        b->RelativeMouseState(&rdx, &rdy);
+        CHECK(rdx == -5 && rdy == 3);
         b->SetRelativeMouse(false);
     } else {
         std::cout << "  relative mouse: not available on this server\n";
     }
+    CHECK(b->IsCursorShown());
     b->ShowCursor(false);
+    CHECK(!b->IsCursorShown());
     b->ShowCursor(true);
+    CHECK(b->IsCursorShown());
 
     // ---- clipboard ---------------------------------------------------------------------------
     CHECK(b->SetClipboardText("clip \xC3\xA9 1"));
@@ -350,6 +406,64 @@ int main(int argc, char** argv) {
         CHECK(got2 == "from the other client");
         w2.reset();
         other->Shutdown();
+    }
+#endif
+
+    // ---- window extras the player needs: fullscreen at creation, icon, refresh rate -------------
+    {
+        WindowDesc fd; fd.title = "fs"; fd.width = 200; fd.height = 150; fd.fullscreen = true; fd.hidden = true;
+        auto fw = b->MakeWindow(fd);
+        CHECK(fw != nullptr);
+        if (fw) {
+            CHECK(fw->IsFullscreen());            // (no window manager here: the flag, not the pixels)
+            fw->SetFullscreen(false);
+            Pump(*b, 100);
+            CHECK(!fw->IsFullscreen());
+            fw->SetFullscreen(true);
+            Pump(*b, 100);
+            CHECK(fw->IsFullscreen());
+            fw.reset();
+        }
+        WindowDesc md; md.title = "max"; md.width = 200; md.height = 150; md.maximized = true; md.resizable = true;
+        auto mw = b->MakeWindow(md);
+        CHECK(mw != nullptr);
+        if (mw) {
+            CHECK(!mw->IsFullscreen());
+            const uint8_t icon[4 * 4 * 4] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+                                             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+                                             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+                                             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+            CHECK(mw->SetIcon(icon, 4, 4));
+            CHECK(!mw->SetIcon(nullptr, 4, 4));
+            CHECK(!mw->SetIcon(icon, 0, 4));
+            const int hz = mw->RefreshRateHz();
+            std::cout << "  refresh rate reported: " << hz << " Hz\n";
+            CHECK(hz >= 0 && hz < 1000);
+            mw.reset();
+        }
+        CHECK(b->BasePath().size() > 1);
+    }
+#ifdef OKAY_TEST_HAVE_SDL_HEADERS
+    if (kind == BackendKind::Sdl2) {
+        // Touch and natural-scrolling events cannot come from XTEST: push them as SDL would.
+        SDL_Event fe; SDL_memset(&fe, 0, sizeof(fe));
+        fe.type = SDL_FINGERDOWN; fe.tfinger.fingerId = 7; fe.tfinger.x = 0.25f; fe.tfinger.y = 0.75f;
+        SDL_PushEvent(&fe);
+        fe.type = SDL_FINGERMOTION; fe.tfinger.x = 0.5f; SDL_PushEvent(&fe);
+        fe.type = SDL_FINGERUP; SDL_PushEvent(&fe);
+        SDL_Event we; SDL_memset(&we, 0, sizeof(we));
+        we.type = SDL_MOUSEWHEEL; we.wheel.y = -2; we.wheel.direction = SDL_MOUSEWHEEL_FLIPPED;
+        SDL_PushEvent(&we);
+        we.wheel.y = 3; we.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+        SDL_PushEvent(&we);
+        ev = Pump(*b, 50);
+        const Event* fd0 = Find(ev, EventType::FingerDown);
+        CHECK(fd0 && fd0->fingerId == 7 && fd0->fx == 0.25f && fd0->fy == 0.75f);
+        CHECK(Find(ev, EventType::FingerMotion, [](const Event& e) { return e.fx == 0.5f; }) != nullptr);
+        CHECK(Count(ev, EventType::FingerUp) == 1);
+        // Flipped: wheelY is "up = +y" (so +2) and wheelFlipped says the OS value was -2.
+        CHECK(Find(ev, EventType::MouseWheel, [](const Event& e) { return e.wheelFlipped && e.wheelY == 2.0f; }) != nullptr);
+        CHECK(Find(ev, EventType::MouseWheel, [](const Event& e) { return !e.wheelFlipped && e.wheelY == 3.0f; }) != nullptr);
     }
 #endif
 

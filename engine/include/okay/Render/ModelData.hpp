@@ -7,7 +7,7 @@
 //   * ImportModelData() is the single entry point that picks a backend for a
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
-//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary) are
+//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -84,6 +84,10 @@ struct ImportedModel {
     std::vector<ImportedMaterial> materials;
     std::vector<ImportedClip>     clips;
     std::string backend;            ///< "own" or "assimp" — who produced this
+    /// Parts of the file the reader did not read (or read only partly), one line each.
+    /// Our own readers fill this instead of dropping content silently; ImportModelData
+    /// also logs each line as a warning. Empty = everything in the file was read.
+    std::vector<std::string> notes;
 };
 
 /// What a model holds, for comparing two backends' output of the same file.
@@ -120,19 +124,37 @@ bool ReadStlBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// smooth normals are generated.
 bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 
+/// COLLADA (.dae) 1.4 / 1.5. Reads geometry (triangles, polylist, polygons; fan-triangulated,
+/// welded per position+normal+uv, smooth normals when the file has none), materials (phong /
+/// blinn / lambert / constant: diffuse, emission, shininess, specular and bump textures),
+/// the node hierarchy (matrix, translate, rotate, scale, instance_node), skins (4 strongest
+/// weights, bind shape folded into the inverse bind matrix) and animations whose channels
+/// drive a whole node matrix (decomposed to position / rotation / scale keys). The root node
+/// carries the file's unit scale and the up-axis rotation (the engine is Y-up). UV v is
+/// flipped like the other bottom-up formats. `flatten` bakes every node transform into the
+/// vertices and returns one root node, no skins, no clips. Everything not read (lines,
+/// tristrips, morphs, per-component animation channels, vertex colors, extra UV sets,
+/// cameras, lights ...) is reported in `out.notes`. `baseDir` ends with a slash or is empty.
+bool ReadColladaBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply have one
+    Own,       ///< our reader; only .obj .stl .ply .dae have one
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 
 /// True when `ext` (".stl", any case) has one of our own readers.
+/// Collada (.dae) is the odd one out: its reader is off by default (docs/model_import.md);
+/// it runs when SetImportBackend(".dae", Own), the environment variable OKAY_OWN_COLLADA=1
+/// or the CMake option OKAY_OWN_COLLADA says so (run-time choice beats the variable, which
+/// beats CMake; OKAY_OWN_COLLADA=0 forces it off).
 bool HasOwnReader(const std::string& ext);
 /// Choose the backend for one extension (".stl"), or for every format with
 /// an own reader when `ext` is "*". Returns false for an extension without an own

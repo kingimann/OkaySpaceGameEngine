@@ -2930,6 +2930,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Overrides (21.4)
 - own backend (17.17)
 - Own body and head hiding (4.7.2)
+- Own Collada reader (side by side, off by default) (3.6.11)
 - own crypto (16.1)
 - Own crypto, side by side (UNREVIEWED, off by default) (16.1.6)
 - own FBX reader (3.6)

@@ -330,9 +330,9 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "show me the latest editor crash"
 
 ### 17.17 Platform layer (`okay::platform`) and the own backend
-- **What:** The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and evdev through `dlopen`; Windows: Win32, compiles but untested; macOS: not written). Not the online services in the same `Platform/` folder. Timers, audio devices and game controllers of the editor, launcher and player already go through it; their windows, event loops and GL contexts still call SDL directly (so does everything built on `SDL_Renderer`).
+- **What:** The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and evdev through `dlopen`; Windows: Win32, compiles but untested; macOS: not written). Not the online services in the same `Platform/` folder. Timers, audio devices and game controllers of the editor, launcher and player go through it, and the player's window, event loop, keyboard and mouse state, GL context, base and save paths, locales, error boxes and logging do too (stage 2; the sdl2 backend behaves as before). The editor's and launcher's windows and event loops still call SDL directly, and so does everything drawn through `SDL_Renderer` (the player included), so the own backend cannot run an app yet.
 - **Parts:**
-  - 17.17.1 Interface - `Platform/Platform` - `Backend`, `Window`, `Event`, `Key` (USB HID numbering = SDL scancodes), `AudioDevice`, `Gamepad`, free timer functions; `Get(kind)`, `Default()`
+  - 17.17.1 Interface - `Platform/Platform` - `Backend`, `Window`, `Event` (incl. touch), `Key` (USB HID numbering = SDL scancodes), `AudioDevice`, `Gamepad`, free timer functions; `Get(kind)`, `Default()`; run-time override `OKAY_PLATFORM_BACKEND=sdl2|own`; also `RelativeMouseState`, `ModState`, `KeyForChar`, `BasePath`, `PrefPath`, `PreferredLocales`, `ShowErrorBox`, `Window::SetIcon` / `IsFullscreen` / `RefreshRateHz`
   - 17.17.2 SDL2 backend - `engine/src/Platform/SdlBackend.cpp` - thin wrapper, the default
   - 17.17.3 Own Linux backend - `engine/src/Platform/OwnLinuxX11.cpp`, `OwnLinuxAudio.cpp`, `OwnLinuxEvdev.cpp`, `OwnLinux.cpp` - X11 + GLX window, keys, text, mouse, clipboard; ALSA playback and capture; evdev controllers; all `dlopen`
   - 17.17.4 Own Windows backend - `engine/src/Platform/OwnWin32.cpp` - Win32, WGL, XInput; compiles under MinGW, never run
@@ -341,9 +341,9 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **API:** `okay::platform::Backend`, `Window`, `AudioDevice`, `Gamepad`, `Get`, `Default`, `TicksMs32`
 - **Editor:** none
 - **Docs:** `docs/platform_layer.md` (the SDL audit, what is and is not behind the seam, what was tested)
-- **Tests:** `platform`, `platform_window_sdl2`, `platform_window_own` (the last two need Xvfb and xdotool and skip without them)
-- **Status:** Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the apps' windows are not moved yet
-- **Open:** editor, launcher and player windows, events and GL still use SDL (they need an `SDL_Window` for `SDL_Renderer` and ImGui's SDL backends); no Wayland, XDND file drop, touch or DPI queries in the own Linux backend; no Windows audio; no macOS
+- **Tests:** `platform`, `platform_window_sdl2`, `platform_window_own` (these two need Xvfb and xdotool and skip without them), `platform_default_env_sdl2`, `platform_default_env_own`
+- **Status:** Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the player's window is moved (checked against the unchanged player under Xvfb), the editor's and launcher's are not
+- **Open:** editor and launcher windows, events and GL still use SDL, and all three apps draw through `SDL_Renderer` / ImGui's SDL backends, which need an `SDL_Window` (with the own backend the player says so and exits with code 2); no Wayland, XDND file drop, touch or DPI queries in the own Linux backend; no Windows audio; no macOS
 - **Related:** 7.1, 8.2, 17.1
 - **Words:** SDL2, platform layer, backend, own backend, X11, GLX, ALSA, evdev, Win32, WGL, XInput, window, event loop, OKAY_PLATFORM_BACKEND, Xvfb
 - **Seen as:** a controller or the audio device behaves differently with the own backend; the own backend cannot open a display; SDL is still needed to build the editor

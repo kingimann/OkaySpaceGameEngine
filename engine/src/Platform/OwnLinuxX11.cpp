@@ -71,6 +71,7 @@ namespace {
     F(XSizeHints*, XAllocSizeHints, (void)) \
     F(void, XSetWMNormalHints, (Display*, ::Window, XSizeHints*)) \
     F(KeySym, XLookupKeysym, (XKeyEvent*, int)) \
+    F(KeyCode, XKeysymToKeycode, (Display*, KeySym)) \
     F(int, XLookupString, (XKeyEvent*, char*, int, KeySym*, XComposeStatus*)) \
     F(Pixmap, XCreateBitmapFromData, (Display*, ::Drawable, const char*, unsigned, unsigned)) \
     F(Cursor, XCreatePixmapCursor, (Display*, Pixmap, Pixmap, XColor*, XColor*, unsigned, unsigned)) \
@@ -222,6 +223,8 @@ public:
     void Restore() override;
     void SetFullscreen(bool on) override;
     bool IsFocused() const override;
+    bool IsFullscreen() const override { return m_fullscreen; }
+    bool SetIcon(const uint8_t* rgba, int w, int h) override;
     bool CreateGLContext(const GLAttributes& a) override;
     void DestroyGLContext() override;
     bool MakeCurrent() override;
@@ -235,6 +238,7 @@ public:
     GLXFBConfig m_fbc = nullptr;
     GLXContext m_ctx = nullptr;
     bool m_focused = false;
+    bool m_fullscreen = false;
     bool m_resizable = true;
     int m_minW = 0, m_minH = 0;
     int m_w = 0, m_h = 0;      // last size seen in ConfigureNotify (or requested)
@@ -262,6 +266,9 @@ public:
         m_aProtocols = m_x.XInternAtom(m_dpy, "WM_PROTOCOLS", False);
         m_aNetState = m_x.XInternAtom(m_dpy, "_NET_WM_STATE", False);
         m_aNetFull = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_FULLSCREEN", False);
+        m_aMaxH = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+        m_aMaxV = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+        m_aNetIcon = m_x.XInternAtom(m_dpy, "_NET_WM_ICON", False);
         m_aNetName = m_x.XInternAtom(m_dpy, "_NET_WM_NAME", False);
         m_aUtf8 = m_x.XInternAtom(m_dpy, "UTF8_STRING", False);
         m_aClipboard = m_x.XInternAtom(m_dpy, "CLIPBOARD", False);
@@ -336,6 +343,12 @@ public:
             win->m_ic = m_x.XCreateIC_(m_im, XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
                                        XNClientWindow, w, XNFocusWindow, w, (void*)nullptr);
         }
+        {   // start fullscreen / maximised: the initial _NET_WM_STATE is read when the window is mapped
+            Atom st[2]; int n = 0;
+            if (d.fullscreen) { st[n++] = m_aNetFull; win->m_fullscreen = true; }
+            else if (d.maximized && d.resizable) { st[n++] = m_aMaxH; st[n++] = m_aMaxV; }
+            if (n) m_x.XChangeProperty(m_dpy, w, m_aNetState, XA_ATOM, 32, PropModeReplace, (const unsigned char*)st, n);
+        }
         if (!d.hidden) win->Show();
         m_x.XSync(m_dpy, False);
         return std::unique_ptr<Window>(win);
@@ -409,6 +422,7 @@ public:
                     e.dx = e.x - m_lastX; e.dy = e.y - m_lastY;
                 }
                 m_lastX = e.x; m_lastY = e.y;
+                m_relAccX += e.dx; m_relAccY += e.dy;
                 m_pending.push_back(e);
             }
             break;
@@ -526,8 +540,25 @@ public:
         if (mask & Button3Mask) r |= MouseMask(MouseRight);
         return r;
     }
+    uint32_t RelativeMouseState(int* dx, int* dy) override {
+        if (dx) *dx = m_relAccX;
+        if (dy) *dy = m_relAccY;
+        m_relAccX = m_relAccY = 0;
+        return MouseState(nullptr, nullptr);
+    }
+    Key KeyForChar(char c) override {
+        // The key whose unshifted keysym is `c` on the current layout (X keycode - 8 = evdev code).
+        KeySym ks = 0;
+        if (c >= 'A' && c <= 'Z') ks = (KeySym)(c - 'A' + 'a');
+        else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ') ks = (KeySym)c;
+        else return Key::Unknown;
+        const KeyCode kc = m_x.XKeysymToKeycode(m_dpy, ks);
+        return kc ? KeyFromEvdev((int)kc - 8) : Key::Unknown;
+    }
+    bool IsCursorShown() override { return !m_cursorHidden; }
     bool SetRelativeMouse(bool on) override {
         if (on == m_relative) return true;
+        m_relAccX = m_relAccY = 0;   // no stale motion across a mode change
         ::Window w = m_focus;
         if (!w && !m_wins.empty()) w = m_wins.begin()->first;
         if (!w) return false;
@@ -671,6 +702,7 @@ public:
     int m_screen = 0;
     ::Window m_root = 0;
     XIM m_im = nullptr;
+    Atom m_aMaxH = 0, m_aMaxV = 0, m_aNetIcon = 0;
     Atom m_aDelete = 0, m_aProtocols = 0, m_aNetState = 0, m_aNetFull = 0, m_aNetName = 0, m_aUtf8 = 0,
          m_aClipboard = 0, m_aTargets = 0, m_aProp = 0, m_aTextPlain = 0;
     std::unordered_map<::Window, X11Win*> m_wins;
@@ -679,6 +711,7 @@ public:
     bool m_textInput = false, m_relative = false, m_warped = false, m_cursorHidden = false;
     Cursor m_blankCursor = 0;
     int m_lastX = 0, m_lastY = 0;
+    int m_relAccX = 0, m_relAccY = 0;   // motion since RelativeMouseState was last read
     int m_lastBtn = 0, m_clicks = 0; unsigned long m_lastBtnTime = 0;
     std::string m_clip;
     bool m_ownsClip = false, m_selNotify = false;
@@ -746,7 +779,21 @@ void X11Win::Raise() {
 }
 void X11Win::Minimize() { XF.XIconifyWindow(XD, m_win, m_sys->m_screen); XF.XFlush(XD); }
 void X11Win::Restore() { XF.XMapWindow(XD, m_win); XF.XRaiseWindow(XD, m_win); XF.XFlush(XD); }
+bool X11Win::SetIcon(const uint8_t* rgba, int w, int h) {
+    if (!rgba || w <= 0 || h <= 0) return false;
+    std::vector<unsigned long> data((size_t)w * h + 2);   // _NET_WM_ICON: CARD32 as long: w, h, ARGB...
+    data[0] = (unsigned long)w; data[1] = (unsigned long)h;
+    for (size_t i = 0; i < (size_t)w * h; ++i) {
+        const uint8_t* p = rgba + i * 4;
+        data[2 + i] = ((unsigned long)p[3] << 24) | ((unsigned long)p[0] << 16) | ((unsigned long)p[1] << 8) | p[2];
+    }
+    XF.XChangeProperty(XD, m_win, m_sys->m_aNetIcon, XA_CARDINAL, 32, PropModeReplace,
+                       (const unsigned char*)data.data(), (int)data.size());
+    XF.XFlush(XD);
+    return true;
+}
 void X11Win::SetFullscreen(bool on) {
+    m_fullscreen = on;
     XEvent e; std::memset(&e, 0, sizeof(e));
     e.xclient.type = ClientMessage;
     e.xclient.window = m_win;

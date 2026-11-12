@@ -68,6 +68,13 @@ public:
     bool SetRelativeMouse(bool on) override { return m_x11 && m_x11->SetRelativeMouse(on); }
     void ShowCursor(bool s) override { if (m_x11) m_x11->ShowCursor(s); }
     void WarpMouse(Window* w, int x, int y) override { if (m_x11) m_x11->WarpMouse(w, x, y); }
+    bool IsCursorShown() override { return !m_x11 || m_x11->IsCursorShown(); }
+    uint32_t RelativeMouseState(int* dx, int* dy) override {
+        if (!m_x11) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }
+        return m_x11->RelativeMouseState(dx, dy);
+    }
+    bool SupportsRelativeMouseState() override { return true; }
+    Key KeyForChar(char c) override { return m_x11 ? m_x11->KeyForChar(c) : Backend::KeyForChar(c); }
 
     bool SetClipboardText(const std::string& t) override { return m_x11 && m_x11->SetClipboardText(t); }
     std::string GetClipboardText() override { return m_x11 ? m_x11->GetClipboardText() : std::string(); }

@@ -186,12 +186,12 @@ int main() {
 
     // ---------------- The seam: backend switch ----------------
     {
-        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && !HasOwnReader(".dae"));
-        CHECK(!SetImportBackend(".dae", ImportBackend::Own));
+        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && HasOwnReader(".dae") && !HasOwnReader(".3ds"));
+        CHECK(!SetImportBackend(".3ds", ImportBackend::Own));
         SetImportBackend("*", ImportBackend::Default);
         CHECK(EffectiveImportBackend(".obj") == ImportBackend::Own);          // OBJ never went through Assimp
         if (AssimpAvailable()) CHECK(EffectiveImportBackend(".stl") == ImportBackend::Assimp || EffectiveImportBackend(".stl") == ImportBackend::Own);
-        else { CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own); CHECK(EffectiveImportBackend(".dae") == ImportBackend::Default); }
+        else { CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own); CHECK(EffectiveImportBackend(".dae") == ImportBackend::Default || EffectiveImportBackend(".dae") == ImportBackend::Own); }
         SetImportBackend(".stl", ImportBackend::Own);
         CHECK(EffectiveImportBackend(".stl") == ImportBackend::Own);
         SetImportBackend(".stl", ImportBackend::Assimp);

@@ -14,14 +14,14 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
   - 8.1.2 Mouse - `Input/Input` - position, `MouseDelta` (first sample is not a jump), buttons 0-2, wheel via `FeedMouseWheel`
   - 8.1.3 Typed text - `Input/Input` - `TypedText` and `FeedText` carry real typed characters (shift, caps, symbols) from the OS text event
   - 8.1.4 Terminal fallback - `Input/Input` - raw non-blocking console keys when there is no window; no input in a headless run
-  - 8.1.5 Extended keys (#571) - `Input/Input`, `Input/SdlKeys` - F1-F12, Insert/Delete/Home/End/PageUp/PageDown, left and right Shift, Ctrl and Alt, `Input::KeyF(n)`; `SdlKeys` feeds them from SDL scancodes (the player includes it, `editor/main.cpp` does not)
+  - 8.1.5 Extended keys (#571) - `Input/Input`, `Input/PlatformKeys` - F1-F12, Insert/Delete/Home/End/PageUp/PageDown, left and right Shift, Ctrl and Alt, `Input::KeyF(n)`; `PlatformKeys` (`AppendExtendedKeys`) feeds them from physical keys through `okay::platform` (the player includes it, `editor/main.cpp` does not; it replaced `SdlKeys`)
 - **Code:** `Input/Input`, `engine/src/Input/Input.cpp`, `player/main.cpp` (SDL event feed), `editor/main.cpp` (Play-mode feed)
 - **API:** `Input::GetKey`, `Input::GetKeyDown`, `Input::GetKeyUp`, `Input::AxisWASD`, `Input::MousePosition`, `Input::MouseDelta`, `Input::GetMouseButton`, `Input::MouseWheel`, `Input::TypedText`, `Input::FeedKeys`, `Input::FeedMouse`, script `Input.GetKey`, `key("space")`
 - **Editor:** none (Play mode in the Game view feeds keys and mouse)
 - **Docs:** `docs/input.md`
 - **Tests:** `transform_input`, `core_audit_input`, `input_actions`, `input_keys_gamepad`
-- **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `SdlKeys`)
-- **Open:** the editor's Play mode does not include `SdlKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
+- **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `PlatformKeys`)
+- **Open:** the editor's Play mode does not include `PlatformKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
 - **Related:** 8.3, 8.5, 12.3, 13.4
 - **Words:** Input, GetKey, GetKeyDown, keyboard, mouse, mouse look, wheel, scroll, typed text, text input, key code, KeyFromName, press any key, WASD, arrow keys, function keys, F1, modifiers, Alt
 - **Seen as:** a key does nothing in the game; F-keys or Alt cannot be bound; mouse-look jumps on the first frame; typed text misses capitals or symbols; holding two keys drops one

@@ -150,7 +150,7 @@ private:
         std::vector<std::uint32_t> epoch;
         std::vector<std::uint8_t>  closed;
         std::vector<std::pair<float, int>> heap;
-        std::vector<int>  polyPath, pathLinks, near;
+        std::vector<int>  polyPath, pathLinks, nearPolys;
         std::vector<Vec3> left, right;
         std::vector<std::uint32_t> mark;   // PolysNear de-duplication
         std::uint32_t stamp = 0, markStamp = 0;

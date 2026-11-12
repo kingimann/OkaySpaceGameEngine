@@ -97,7 +97,7 @@ void NavMesh::Finalize() {
     m_s.g.assign(n, 0.0f); m_s.parent.assign(n, -1); m_s.parentLink.assign(n, -1);
     m_s.epoch.assign(n, 0); m_s.closed.assign(n, 0); m_s.mark.assign(n, 0);
     m_s.stamp = 0; m_s.markStamp = 0;
-    m_s.heap.reserve(64); m_s.polyPath.reserve(64); m_s.pathLinks.reserve(64); m_s.near.reserve(64);
+    m_s.heap.reserve(64); m_s.polyPath.reserve(64); m_s.pathLinks.reserve(64); m_s.nearPolys.reserve(64);
     m_s.left.reserve(64); m_s.right.reserve(64);
 }
 
@@ -174,10 +174,10 @@ float NavMesh::HeightAt(int poly, float x, float z) const {
 }
 
 int NavMesh::FindNearestPoly(const Vec3& p, const Vec3& extents, Vec3* nearest) const {
-    PolysNear(p.x - extents.x, p.z - extents.z, p.x + extents.x, p.z + extents.z, m_s.near);
+    PolysNear(p.x - extents.x, p.z - extents.z, p.x + extents.x, p.z + extents.z, m_s.nearPolys);
     int best = -1; float bestScore = 1e30f; Vec3 bestPt;
     const float maxXZ = std::max(extents.x, extents.z);
-    for (int pi : m_s.near) {
+    for (int pi : m_s.nearPolys) {
         const Poly& q = polys[(std::size_t)pi];
         const float cx = std::clamp(p.x, q.minX, q.maxX), cz = std::clamp(p.z, q.minZ, q.maxZ);
         const float y = HeightAt(pi, cx, cz);

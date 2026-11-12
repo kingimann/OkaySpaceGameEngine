@@ -153,6 +153,8 @@ int main() {
         CHECK(Sane(obj));
         CHECK(obj.parts.size() == 2);                 // two usemtl runs: red (faces 1-3), blue (4-6)
         CHECK(obj.materials.size() == 2);
+        // A missing/unreadable fixture must fail the test, not crash it on parts[0].
+        if (obj.parts.size() != 2 || obj.materials.size() != 2) { std::printf("  cube.obj fixture missing or wrong\n"); TEST_MAIN_RESULT(); }
         CHECK(obj.parts[0].mesh.name == "red" && obj.parts[1].mesh.name == "blue");
         CHECK(obj.parts[0].mesh.TriangleCount() == 6 && obj.parts[1].mesh.TriangleCount() == 6);
         CHECK(obj.parts[0].mesh.HasNormals() && obj.parts[0].mesh.HasUVs());

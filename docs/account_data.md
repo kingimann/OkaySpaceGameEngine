@@ -13,7 +13,8 @@ Sections: profile, friendships, follows, messages you sent, group messages you
 sent, server channel messages, reactions, forum threads, posts and votes,
 marketplace listings and reviews, achievements, playtime, badges, activity,
 servers and group chats you own or belong to, forum sections you own, cloud
-saves, leaderboard entries, player stats, anti-cheat appeals.
+saves, leaderboard entries, player stats, anti-cheat appeals, people you
+blocked, your privacy settings, and community bans placed on you.
 
 Honest edges:
 
@@ -56,12 +57,15 @@ Every table in `docs/sql/*.sql` and `docs/supabase-backend.md` that references
 | `admin_log` | `actor`/`target` set to null, names set to `[deleted]` |
 | `ac_bans` | `user_id` set to null; machine-hash bans stay. Account-only bans (no hash) are deleted |
 | `matches` | `reporter` set to null |
+| `community_bans`, `ac_bans`, `forum_section_bans` | `banned_by` set to null (the ban stays, the moderator link goes) |
+| `ac_report_servers` | `added_by` set to null |
 
 **Deleted:** `message_reactions`, `forum_votes`, `forum_posts`, `forum_threads`,
 `forum_section_members`, `forum_section_bans`, `forum_sections`,
 `workshop_reviews`, `workshop_items`, `channel_messages`, `server_members`,
 `servers`, `group_messages`, `group_members`, `group_convos`, `message_edits`,
-`message_pins`, `messages` (sent and received), `friendships`, `follows`,
+`community_bans` (bans placed on you), `blocks` (both directions),
+`privacy_settings`, `typing_state`, `message_reads`, `message_pins`, `messages` (sent and received), `friendships`, `follows`,
 `activity`, `user_achievements`, `user_playtime`, `profile_badges`,
 `cloud_saves`, `leaderboards`, `player_stats`, `match_players`, `match_tickets`,
 `party_members`, `parties`, `game_sessions`, `ac_reports` (filed by or about

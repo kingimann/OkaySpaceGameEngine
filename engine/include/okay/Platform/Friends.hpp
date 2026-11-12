@@ -17,6 +17,7 @@
 // calls below fall through — so nothing here breaks a build that hasn't run
 // social.sql.
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Privacy.hpp"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -273,7 +274,10 @@ private:
         if (!acct_.IsLoggedIn()) { if (err) *err = "Sign in first."; return false; }
         if (uid.empty())         { if (err) *err = notFound;         return false; }
         auto r = acct_.Api("/rest/v1/friendships", "POST", "{\"addressee\":" + JStr(uid) + "}");
-        if (!r.ok && err) *err = r.body.empty() ? "Request failed." : r.body;
+        if (!r.ok && err) {
+            const privacy::Rule rule = privacy::ParseRule(r.body);   // a server rule said no (docs/sql/blocks.sql)
+            *err = rule != privacy::Rule::None ? std::string(privacy::RuleText(rule)) : r.body.empty() ? "Request failed." : r.body;
+        }
         return r.ok;
     }
 
@@ -295,8 +299,8 @@ private:
     Profile ProfileOf(const std::string& uid) {
         Profile p;
         if (uid.empty()) return p;
-        auto r = acct_.Api("/rest/v1/profiles?select=username,friend_code,playing,session_code,display_name,avatar_url,bio,accent,status,favorite_game,location,last_seen"
-                           "&id=eq." + Url(uid), "GET");
+        auto r = privacy::ProfilesGet(acct_, "select=username,friend_code,playing,session_code,display_name,avatar_url,bio,accent,status,favorite_game,location,last_seen"
+                           "&id=eq." + Url(uid));
         if (!r.ok) return p;
         auto objs = SplitObjects(r.body);
         if (objs.empty()) return p;

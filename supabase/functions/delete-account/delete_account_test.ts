@@ -115,6 +115,23 @@ test("STEPS covers every user-owned table in docs/sql (guards against drift)", a
   // site_bans is guarded (refuse) instead of deleted; party_members etc. are listed.
   const missing = [...tables].filter((t) => !covered.has(t) && t !== "site_bans");
   assert.deepEqual(missing, []);
+
+  // Column level: every column that references auth.users, or is a user id the
+  // schema names without a foreign key (community_bans.banned_by), needs a step
+  // whose filter hits that column. Catches e.g. blocks.blocked or banned_by.
+  const cols: Array<[string, string]> = [];
+  const scan = (t: string) => {
+    for (const m of t.matchAll(/create table if not exists public\.(\w+)\s*\(([\s\S]*?)\n\);/g))
+      for (const line of m[2].split("\n")) {
+        const c = /^\s*(\w+)\s+uuid\b(.*)$/i.exec(line);
+        if (c && (/references auth\.users/.test(c[2]) || /default auth\.uid\(\)/.test(c[2]))) cols.push([m[1], c[1]]);
+      }
+  };
+  for (const f of fs.readdirSync(dir)) scan(fs.readFileSync(path.join(dir, f), "utf8"));
+  scan(doc);
+  const uncovered = cols.filter(([t, c]) =>
+    t !== "site_bans" && !STEPS.some((s) => s.table === t && s.filter("X").startsWith(`${c}=eq.`) ));
+  assert.deepEqual(uncovered, []);
 });
 
 test("partial failure names the failing step, stops, and keeps the auth user", async () => {

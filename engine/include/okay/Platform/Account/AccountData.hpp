@@ -53,6 +53,9 @@ inline std::vector<ExportSection> ExportSections(const std::string& uid) {
         {"leaderboard_entries", eq("leaderboards", "user_id")},
         {"player_stats", eq("player_stats", "user_id")},
         {"anticheat_appeals", eq("ac_appeals", "user_id")},
+        {"blocked_users", eq("blocks", "blocker")},
+        {"privacy_settings", eq("privacy_settings", "user_id")},
+        {"community_bans_on_me", eq("community_bans", "user_id")},
     };
 }
 

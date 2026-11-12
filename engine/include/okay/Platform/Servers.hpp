@@ -6,6 +6,7 @@
 // others' servers; everything else is plain PostgREST gated by RLS. No-ops when
 // signed out / offline.
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/Privacy.hpp"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -104,8 +105,8 @@ public:
             inList += m.uid;
         }
         if (inList.empty()) return out;
-        auto p = acct_.Api("/rest/v1/profiles?select=id,username,display_name,avatar_url,last_seen"
-                           "&id=in.(" + inList + ")", "GET");
+        auto p = privacy::ProfilesGet(acct_, "select=id,username,display_name,avatar_url,last_seen"
+                           "&id=in.(" + inList + ")");
         if (p.ok) {
             for (const auto& o : SplitObjects(p.body)) {
                 std::string id = Field(o, "id");
@@ -191,10 +192,12 @@ public:
         return out;
     }
 
-    // Leave a server (RLS only lets a non-owner delete their own membership row).
+    // Leave a server: delete MY membership row only. (Without the member filter an
+    // owner or admin would also match, and be allowed to remove, everyone below them.)
     bool Leave(long serverId) {
         if (serverId <= 0) return false;
-        return acct_.Api("/rest/v1/server_members?server_id=eq." + std::to_string(serverId), "DELETE").ok;
+        const std::string me = MyUid(); if (me.empty()) return false;
+        return acct_.Api("/rest/v1/server_members?server_id=eq." + std::to_string(serverId) + "&member=eq." + me, "DELETE").ok;
     }
 
     // ---- owner management (RLS restricts these to the server's owner) ------

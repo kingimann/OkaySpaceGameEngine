@@ -49,6 +49,12 @@ export const STEPS: Step[] = [
   { id: "ac_bans.account_only", kind: "delete", table: "ac_bans", filter: (u) => `user_id=eq.${u}&hw_hash=is.null` },
   { id: "ac_bans.user_id", kind: "anonymise", table: "ac_bans", filter: eq("user_id"), patch: { user_id: null } },
   { id: "matches.reporter", kind: "anonymise", table: "matches", filter: eq("reporter"), patch: { reporter: null } },
+  // rows an admin/moderator created stay for the people they concern; only the link to the issuer goes
+  { id: "ac_bans.banned_by", kind: "anonymise", table: "ac_bans", filter: eq("banned_by"), patch: { banned_by: null } },
+  { id: "ac_report_servers.added_by", kind: "anonymise", table: "ac_report_servers", filter: eq("added_by"), patch: { added_by: null } },
+  { id: "forum_section_bans.banned_by", kind: "anonymise", table: "forum_section_bans", filter: eq("banned_by"), patch: { banned_by: null } },
+  // a ban outlives the moderator's account: keep the row, drop the link to who issued it
+  { id: "community_bans.banned_by", kind: "anonymise", table: "community_bans", filter: eq("banned_by"), patch: { banned_by: null } },
   // --- deleted ---
   { id: "message_reactions", kind: "delete", table: "message_reactions", filter: eq("reactor") },
   { id: "forum_votes", kind: "delete", table: "forum_votes", filter: eq("voter") },
@@ -70,6 +76,10 @@ export const STEPS: Step[] = [
   { id: "typing_state.peer", kind: "delete", table: "typing_state", filter: eq("peer") },
   { id: "message_reads.reader", kind: "delete", table: "message_reads", filter: eq("reader") },
   { id: "message_reads.peer", kind: "delete", table: "message_reads", filter: eq("peer") },
+  { id: "community_bans.user_id", kind: "delete", table: "community_bans", filter: eq("user_id") },
+  { id: "blocks.blocker", kind: "delete", table: "blocks", filter: eq("blocker") },
+  { id: "blocks.blocked", kind: "delete", table: "blocks", filter: eq("blocked") },
+  { id: "privacy_settings", kind: "delete", table: "privacy_settings", filter: eq("user_id") },
   { id: "message_pins", kind: "delete", table: "message_pins", filter: eq("pinned_by") },
   { id: "messages.sent", kind: "delete", table: "messages", filter: eq("sender") },
   { id: "messages.received", kind: "delete", table: "messages", filter: eq("recipient") },

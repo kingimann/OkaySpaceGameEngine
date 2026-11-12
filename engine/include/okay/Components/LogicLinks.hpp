@@ -33,10 +33,60 @@ class LogicTarget;
 ///    counts (players, physics props); static level geometry and placed blocks
 ///    without a Rigidbody 3D don't. `activatorTag` narrows it to one tag.
 ///  - Timer: on for `onTime` seconds out of every `interval`.
+///  - Relay: no signal of its own; it only carries output links, fired from an
+///    Actions list (`fire_output`), a script (`fire_output`) or code (`FireOutput`).
+///
+/// Every source also has **named outputs** with **I/O links** (`ioLinks`): when
+/// an output fires - "OnTurnedOn" / "OnTurnedOff" when the signal changes,
+/// "OnPressed" when a button is pressed, or any name an Actions list or script
+/// fires - each enabled link of that name delivers its `input` (with `param`)
+/// to the target object, after `delay` seconds, and at most once when `once` is
+/// set. This is the general form of a link: any object to any object, not just
+/// the on / off wiring of `links`.
 class LogicSource : public Behaviour {
 public:
-    enum class Kind { Button = 0, PressurePlate = 1, TriggerZone = 2, Timer = 3 };
-    static constexpr int kKindCount = 4;
+    enum class Kind { Button = 0, PressurePlate = 1, TriggerZone = 2, Timer = 3, Relay = 4 };
+    static constexpr int kKindCount = 5;
+
+    /// One I/O link: when output `output` fires, deliver `input` (with `param`) to `target`.
+    /// `target` is an object name or path ("" = this object); it is looked up under this
+    /// object first (so a prefab's links to its own children keep working in every copy),
+    /// then in the whole scene. Inputs: Enable, Disable, ToggleActive, TurnOn, TurnOff, Toggle
+    /// (Logic Target), Spawn (Logic Target), Press (button), Fire (fires the output named by
+    /// `param` on the target's Logic Source); anything else is sent as a custom event of that
+    /// name (On Message in Actions lists, On Custom Event in graphs, OnEvent_<name> in
+    /// scripts), with `param` as event_value (a number) and event_text.
+    struct IoLink {
+        std::string output = "OnTurnedOn";
+        std::string target;
+        std::string input;
+        std::string param;
+        float delay   = 0.0f;     ///< seconds between the output firing and the delivery
+        bool  once    = false;    ///< deliver only the first time the output fires
+        bool  enabled = true;
+        bool  spent   = false;    ///< runtime: a `once` link that has already delivered (not saved)
+    };
+    std::vector<IoLink> ioLinks;
+
+    /// The inputs the editor offers (a custom event name may be typed instead).
+    static const std::vector<std::string>& InputNames();
+    /// The outputs a source raises by itself.
+    static const std::vector<std::string>& BuiltInOutputs();
+    /// Fire the output `name`: every enabled link of that name is delivered now or after
+    /// its delay. `param` replaces the link's own parameter when not empty. Returns how
+    /// many links were delivered or queued.
+    int FireOutput(const std::string& name, const std::string& param = "");
+    /// Deliver link `index` right now, ignoring delay, once and enabled (the editor's
+    /// test-fire). Returns a one-line result: what was reached, or why not.
+    std::string TestFire(std::size_t index);
+    /// The object link `l` points at, or nullptr when it cannot be found.
+    GameObject* IoTarget(const IoLink& l) const;
+    /// Why link `l` cannot work ("" = it can): no output / input, or the target is missing.
+    std::string IoProblem(const IoLink& l) const;
+    /// Links waiting out their delay.
+    int PendingIo() const { return (int)m_pendingIo.size(); }
+    /// Forget which `once` links fired and drop queued deliveries (Play start).
+    void ResetIo();
 
     Kind  kind     = Kind::Button;
     bool  toggle   = true;                    ///< Button: each press flips (off = momentary)
@@ -70,11 +120,16 @@ public:
 
     static const char* KindName(Kind k);
 
+    void Start() override { ResetIo(); }
     void Update(float dt) override;
 
 private:
     bool  m_out = false;
     bool  m_init = false;
+    bool  m_prevOut = false;
+    struct QueuedIo { IoLink link; float left = 0.0f; std::string param; };
+    std::vector<QueuedIo> m_pendingIo;
+    bool DeliverIo(const IoLink& l, const std::string& param, std::string* why);
     float m_timer = 0.0f;
     int   m_occupants = 0;
     // Link targets resolved by id, refreshed when the scene's objects change.

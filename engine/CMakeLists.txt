@@ -425,6 +425,7 @@ endif()
 include(${CMAKE_SOURCE_DIR}/cmake/OkayPlatform.cmake)
 okay_add_platform_library()
 target_link_libraries(okay_engine PUBLIC okay_platform)
+
 # Our own STL / PLY readers are always built. With Assimp also on, this picks which one
 # a format uses by default (docs/model_import.md); SetImportBackend() changes it at run time.
 if(OKAY_PREFER_OWN_READERS)

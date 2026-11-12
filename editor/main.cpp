@@ -8153,30 +8153,6 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
     namespace fs = std::filesystem;
     // The folders come from the asset database's folder list (okaypb::Browser::SubFolders): no disk walk per open node.
     struct TreeSub { fs::path path; bool hasKids = false; int items = 0; };
-    static std::map<std::string, std::pair<Uint32, std::vector<TreeSub>>> s_treeCache;
-    std::string dkey = dir.string();
-    auto& cached = s_treeCache[dkey];
-    Uint32 nowMs = okay::platform::TicksMs32();
-    if (nowMs >= cached.first) {
-        cached.first = nowMs + 1000;
-        cached.second.clear();
-        std::vector<fs::path> subs;
-        std::error_code se;
-        for (auto& e : fs::directory_iterator(dir, se))
-            if (e.is_directory(se) && !okaypb::IsHiddenName(e.path().filename().string())) subs.push_back(e.path());
-        std::sort(subs.begin(), subs.end(), [](const fs::path& a, const fs::path& b) {
-            return Lower(a.filename().string()) < Lower(b.filename().string());
-        });
-        for (const fs::path& s : subs) {
-            TreeSub ts; ts.path = s; std::error_code e2;
-            for (auto& c : fs::directory_iterator(s, e2)) {
-                if (okaypb::IsHiddenName(c.path().filename().string())) continue;   // .okaymeta files and dot-folders do not count
-                if (c.is_directory(e2)) ts.hasKids = true;
-                if (++ts.items >= 999) break;
-            }
-            cached.second.push_back(ts);
-        }
-    }
     std::vector<TreeSub> subsList;
     if (g_pb && g_pb->Indexed())
         for (const okaypb::Browser::FolderRow& fr : g_pb->SubFolders(dir.generic_string()))
@@ -9374,11 +9350,7 @@ void DrawProject(EditorState& ed) {
     }
     g_projectSelected = selected;
     if (!pb.Indexed() && !ed.projectDir().empty() && fs::is_directory(root, ec)) pb.Sync();   // first look at the project: index the assets once
-    {   // keep the asset index fresh without a thread: re-scan when due (cheap; waits 30x as long as the scan took)
-        static std::string s_changedSig;
-        if (pb.Poll(okay::platform::TicksMs32())) s_changedSig.clear();
-    }
-    pb.Poll(SDL_GetTicks());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
+    pb.Poll(okay::platform::TicksMs32());   // keep the database fresh without a thread: an incremental scan when due (waits at least 2 s and 30x as long as the last scan took)
     // Let OS file-drops land in the folder we're browsing (falls back to Assets root).
     g_assetImportDir = fs::is_directory(dir, ec) ? dir.string() : root.string();
 
@@ -9469,25 +9441,6 @@ void DrawProject(EditorState& ed) {
     // Smart filters: every model / texture / sound / script / ... in the project at
     // once, with counts (a cached whole-project scan, refreshed every few seconds).
     {
-        static std::string s_cntRoot; static Uint32 s_cntNext = 0;
-        static int s_cnt[9] = {0}; static int s_cntRecent = 0;
-        if (s_cntRoot != root.string() || okay::platform::TicksMs32() >= s_cntNext) {
-            s_cntRoot = root.string(); s_cntNext = okay::platform::TicksMs32() + 3000;
-            for (int& c : s_cnt) c = 0;
-            s_cntRecent = 0;
-            std::error_code ce;
-            const auto weekAgo = fs::file_time_type::clock::now() - std::chrono::hours(24 * 7);
-            int seen = 0;
-            for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ce);
-                 !ce && it != fs::recursive_directory_iterator(); it.increment(ce)) {
-                if (++seen > 20000) break;
-                if (!it->is_regular_file(ce)) continue;
-                std::string x = Lower(it->path().extension().string());
-                for (int f = 1; f <= 8; ++f) if (ProjectFilterMatches(f, x)) s_cnt[f]++;
-                auto wt = it->last_write_time(ce);
-                if (!ce && wt >= weekAgo) ++s_cntRecent;
-            }
-        }
         // The counts come from the database's index (one pass over its records, redone only when its revision moves).
         const okaypb::Browser::Counts& cnt = pb.CountsNow();
         const int* s_cnt = cnt.byFilter; const int s_cntRecent = cnt.recent;
@@ -9804,99 +9757,6 @@ void DrawProject(EditorState& ed) {
     int qColor = -1;                 // "l:red" naming a colour label is applied here (colour labels are the editor's own list)
     std::string dbText;              // the rest goes to the database
     {
-        Uint32 nowMs = okay::platform::TicksMs32();
-        static int s_scanSmart = -2;
-        static bool s_scanAll = false;
-        bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort ||
-                       s_scanSmart != s_smart || s_scanAll != s_searchAll;
-        if (changed || nowMs >= s_scanNext) {
-            s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanSmart = s_smart; s_scanAll = s_searchAll;
-            s_scanNext = nowMs + (s_smart >= 0 ? 2000 : 600);
-            s_scanEntries.clear();
-            std::error_code sec;
-            if (s_smart >= 0 && fs::is_directory(root, sec)) {
-                // Whole project, flat. "Recently changed" keeps the last week, newest first.
-                const auto weekAgo = fs::file_time_type::clock::now() - std::chrono::hours(24 * 7);
-                // Unused Assets: one lower-cased corpus of every file that can reference
-                // an asset by name (scenes, prefabs, materials, scripts, data).
-                std::string corpus;
-                if (s_smart == 101) {
-                    std::error_code ce;
-                    for (auto& e : fs::recursive_directory_iterator(fs::path(labelProj), fs::directory_options::skip_permission_denied, ce)) {
-                        if (!e.is_regular_file(ce)) continue;
-                        std::string x = Lower(e.path().extension().string());
-                        if (x != ".okayscene" && x != ".okayprefab" && x != ".okaymat" && x != ".okay" && x != ".lua" && x != ".cs" &&
-                            x != ".okayvs" && x != ".okayanim" && x != ".okaydata" && x != ".json" && x != ".okayproj" && x != ".txt") continue;
-                        std::error_code se2;
-                        if (e.file_size(se2) > (4u << 20) || corpus.size() > (96u << 20)) continue;
-                        corpus += Lower(extide::ReadFile(e.path().string()));
-                        corpus += '\n';
-                    }
-                }
-                for (auto& e : fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, sec)) {
-                    if (!e.is_regular_file(sec)) continue;
-                    if (s_smart == kSmartRecent) { auto wt = e.last_write_time(sec); if (sec || wt < weekAgo) { sec.clear(); continue; } }
-                    else if (s_smart == 101) {
-                        std::string x = Lower(e.path().extension().string());
-                        bool referenceable = ProjectFilterMatches(2, x) || ProjectFilterMatches(7, x) || ProjectFilterMatches(8, x) ||
-                                             ProjectFilterMatches(4, x) || ProjectFilterMatches(5, x) || x == ".ttf" || x == ".otf";
-                        if (!referenceable) continue;
-                        if (corpus.find(Lower(e.path().filename().string())) != std::string::npos) continue;
-                    }
-                    else if (s_smart >= 200) { if (AssetLabelOf(labelProj, e.path().string()) != s_smart - 200) continue; }
-                    else if (!ProjectFilterMatches(s_smart, Lower(e.path().extension().string()))) continue;
-                    s_scanEntries.push_back(e);
-                    if (s_scanEntries.size() >= 4000) break;
-                }
-                if (s_smart == kSmartRecent) {
-                    std::sort(s_scanEntries.begin(), s_scanEntries.end(), [](const fs::directory_entry& a, const fs::directory_entry& b) {
-                        std::error_code x, y; return a.last_write_time(x) > b.last_write_time(y);
-                    });
-                    if (s_scanEntries.size() > 200) s_scanEntries.resize(200);
-                }
-            } else if (fs::is_directory(dir, sec)) {
-                if (search[0] == '\0') {
-                    for (auto& e : fs::directory_iterator(dir, sec)) s_scanEntries.push_back(e);
-                } else {
-                    // A search looks through THIS FOLDER AND EVERYTHING BELOW it
-                    // capped so a giant tree can't stall the scan.
-                    // (or the whole project, when the search is set to "Project")
-                    for (auto& e : fs::recursive_directory_iterator(
-                             s_searchAll ? root : dir, fs::directory_options::skip_permission_denied, sec)) {
-                        s_scanEntries.push_back(e);
-                        if (s_scanEntries.size() >= 4000) break;
-                    }
-                }
-            }
-            if (s_smart != kSmartRecent)
-            std::sort(s_scanEntries.begin(), s_scanEntries.end(), [&](const fs::directory_entry& a, const fs::directory_entry& b) {
-                bool da = a.is_directory(), db = b.is_directory();
-                if (da != db) return da;     // folders first
-                if (s_sort == 1 && !da) {    // by type (extension), then name
-                    std::string ea = Lower(a.path().extension().string()), eb = Lower(b.path().extension().string());
-                    if (ea != eb) return ea < eb;
-                } else if (s_sort == 2 && !da) {   // by size, largest first, then name
-                    std::error_code sa, sb;
-                    auto za = fs::file_size(a.path(), sa), zb = fs::file_size(b.path(), sb);
-                    if (!sa && !sb && za != zb) return za > zb;
-                } else if (s_sort == 3) {          // by modified time, newest first
-                    std::error_code ta, tb;
-                    auto wa = fs::last_write_time(a.path(), ta), wb = fs::last_write_time(b.path(), tb);
-                    if (!ta && !tb && wa != wb) return wa > wb;
-                }
-                return Lower(a.path().filename().string()) < Lower(b.path().filename().string());
-            });
-        }
-    }
-    std::vector<fs::directory_entry>& entries = s_scanEntries;
-
-    std::string needle = Lower(search);
-    // Search syntax: plain words match names; "t:model" (model,
-    // texture, audio, script, scene, material, prefab, data, folder), "l:red"
-    // (a color label) and "ext:png" narrow it down. Combine freely.
-    int qType = -1, qLabel = -1; std::string qExt, qText;
-    {
-        std::istringstream qs(needle); std::string w;
         std::istringstream qs(Lower(search)); std::string w;
         while (qs >> w) {
             if (w.rfind("l:", 0) == 0) {

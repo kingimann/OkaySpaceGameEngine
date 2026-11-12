@@ -9,6 +9,8 @@
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
+#include "okay/Components/Foliage.hpp"
+#include "okay/Components/Decal.hpp"
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/LogicLinks.hpp"
 #include "okay/Components/LootSource.hpp"
@@ -164,6 +166,7 @@ std::string JoinPath(const std::string& dir, const std::string& rel) {
 bool SceneValidator::AssetExists(const std::string& path, const ValidatorOptions& o) {
     if (path.empty()) return true;
     if (path.rfind("proc:", 0) == 0 || path.find("://") != std::string::npos) return true;   // built in / remote
+    if (path[0] == '@') return true;   // a picture made in memory (a terrain's baked layers)
     auto exists = [&](const std::string& p) { return o.fileExists ? o.fileExists(p) : DiskFileExists(p); };
     const std::string rel = Slashes(path);
     if (std::filesystem::path(rel).is_absolute()) return exists(rel);
@@ -192,6 +195,12 @@ std::vector<AssetRef> SceneValidator::AssetReferences(const GameObject& go) {
     for (auto* c : go.GetComponents<Terrain>()) {
         add("Terrain", "texture", "texture", c->texture);
         add("Terrain", "normalMap", "texture", c->normalMap);
+        for (const auto& l : c->layers) add("Terrain", "layers.texture", "texture", l.texture);
+    }
+    for (auto* c : go.GetComponents<Decal>()) add("Decal", "texture", "texture", c->texture);
+    for (auto* c : go.GetComponents<Foliage>()) {
+        add("Foliage", "meshPath", "mesh", c->meshPath);
+        add("Foliage", "prefabPath", "prefab", c->prefabPath);
     }
     for (auto* c : go.GetComponents<VoxelTerrain>()) add("VoxelTerrain", "texture", "texture", c->texture);
     for (auto* c : go.GetComponents<ParticleSystem>()) add("ParticleSystem", "texture", "texture", c->texture);
@@ -372,6 +381,22 @@ struct Checker {
                 "Rigidbody3D without a 3D collider: it will fall through everything");
     }
 
+    void FoliageRules(const GameObject& go, const std::string& path) {
+        for (auto* f : go.GetComponents<Foliage>()) {
+            // Const-cast: Problem() / TrianglesPerInstance() build the shape on first use, which is not an edit.
+            Foliage* fm = const_cast<Foliage*>(f);
+            const int tpi = fm->TrianglesPerInstance();
+            if (!fm->Problem().empty())
+                Add(Severity::Error, "foliage.shape", path, "Foliage", "Foliage layer cannot draw: " + fm->Problem());
+            if (fm->Count() > 0 && fm->TotalTriangles() > fm->maxTriangles)
+                Add(Severity::Warning, "foliage.budget", path, "Foliage",
+                    "Foliage layer has " + std::to_string(fm->Count()) + " copies (" + std::to_string(fm->Count() * tpi) +
+                    " triangles), over its budget of " + std::to_string(fm->maxTriangles) + ": erase some or raise the budget");
+            else if (fm->Count() == 0)
+                Add(Severity::Info, "foliage.empty", path, "Foliage", "Foliage layer has nothing painted yet");
+        }
+    }
+
     // Volumes and logic zones: a region with no size never holds anything, and a zone that does nothing is a mistake.
     void Volumes(const GameObject& go, const std::string& path) {
         for (auto* v : go.GetComponents<Volume>()) {
@@ -475,6 +500,7 @@ struct Checker {
             if (opt.checkAssets) Assets(go, path);
             if (opt.checkScripts) Scripts(go, path);
             if (opt.checkReferences) { References(go, path); IoLinks(go, path); }
+            FoliageRules(go, path);
             if (opt.checkPhysics) { Physics(go, path); Volumes(go, path); }
             if (opt.checkInactive) Inactive(go, path);
         }

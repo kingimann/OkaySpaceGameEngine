@@ -4,8 +4,12 @@
 #include "okay/Core/Random.hpp"
 #include "okay/Graphics/Image.hpp"
 
+#include "okay/Render/SoftwareRenderer.hpp"
+
+#include <atomic>
 #include <cmath>
 #include <algorithm>
+#include <cstdlib>
 
 namespace okay {
 
@@ -47,11 +51,18 @@ void Terrain::ClampFloor(float& h) const {
     if (h < floorY_) h = floorY_;
 }
 
+Terrain::Terrain() {
+    static std::atomic<unsigned> counter{0};
+    splatName_ = "@terrainsplat:" + std::to_string(++counter);
+    Resize(resolution);
+}
+
 void Terrain::Resize(int res) {
     if (res < 1) res = 1;
     resolution = res;
     heights.assign((std::size_t)Dim() * Dim(), 0.0f);
     ForgetFloor();
+    ResetSplat();
 }
 
 float Terrain::GetHeight(int x, int z) const {
@@ -584,6 +595,45 @@ bool Terrain::ImportHeightmap(const std::string& path, float lowY, float highY) 
     return true;
 }
 
+bool Terrain::Raycast(const Vec3& origin, const Vec3& dir, float maxDistance, Vec3& hitWorld) const {
+    if (!transform || heights.empty()) return false;
+    const Mat4 M = transform->LocalToWorldMatrix();
+    const Mat4 Mi = M.Inverse();
+    const Vec3 o = Mi.MultiplyPoint(origin);
+    Vec3 d = Mi.MultiplyVector(dir);
+    const float k = d.Magnitude();
+    if (k < 1e-9f) return false;
+    d = d * (1.0f / k);
+    const float lmax = maxDistance * k;
+    const float half = size * 0.5f;
+    // The part of the ray over the terrain's square (slab test in XZ).
+    float t0 = 0.0f, t1 = lmax;
+    const float oo[2] = {o.x, o.z}, dd[2] = {d.x, d.z};
+    for (int a = 0; a < 2; ++a) {
+        if (std::fabs(dd[a]) < 1e-9f) { if (oo[a] < -half || oo[a] > half) return false; continue; }
+        float ta = (-half - oo[a]) / dd[a], tb = (half - oo[a]) / dd[a];
+        if (ta > tb) std::swap(ta, tb);
+        t0 = std::fmax(t0, ta); t1 = std::fmin(t1, tb);
+        if (t0 > t1) return false;
+    }
+    const float step = std::fmax(CellSize() * 0.5f, 1e-3f);
+    auto above = [&](float t) { const Vec3 p = o + d * t; return p.y - SampleHeight(p.x, p.z); };
+    float prevT = t0, prev = above(t0);
+    if (prev < 0.0f) { hitWorld = M.MultiplyPoint(o + d * t0); return true; }   // starts under the ground
+    for (float t = t0 + step; ; t += step) {
+        const float tc = std::fmin(t, t1);
+        const float cur = above(tc);
+        if (cur < 0.0f) {
+            float lo = prevT, hi = tc;
+            for (int i = 0; i < 12; ++i) { const float mid = 0.5f * (lo + hi); (above(mid) < 0.0f ? hi : lo) = mid; }
+            hitWorld = M.MultiplyPoint(o + d * (0.5f * (lo + hi)));
+            return true;
+        }
+        if (tc >= t1) return false;
+        prevT = tc; prev = cur;
+    }
+}
+
 Mesh Terrain::BuildMesh() const {
     Mesh m;
     m.name = "Terrain";
@@ -598,7 +648,7 @@ Mesh Terrain::BuildMesh() const {
             m.uvs.push_back({(float)x / (dim - 1), (float)z / (dim - 1)});
         }
     m.triangles.reserve((std::size_t)resolution * resolution * 6);
-    if (autoColor) m.triColors.reserve((std::size_t)resolution * resolution * 2);
+    if (autoColor && layers.empty()) m.triColors.reserve((std::size_t)resolution * resolution * 2);
     // Pick a layer color for a face from its elevation + steepness.
     auto faceColor = [&](int a, int b, int c) {
         const Vec3& va = m.vertices[a]; const Vec3& vb = m.vertices[b]; const Vec3& vc = m.vertices[c];
@@ -623,7 +673,7 @@ Mesh Terrain::BuildMesh() const {
             // Wound so the face normal points up (+Y).
             m.triangles.push_back(i00); m.triangles.push_back(i01); m.triangles.push_back(i10);
             m.triangles.push_back(i10); m.triangles.push_back(i01); m.triangles.push_back(i11);
-            if (autoColor) {
+            if (autoColor && layers.empty()) {
                 m.triColors.push_back(faceColor(i00, i01, i10));
                 m.triColors.push_back(faceColor(i10, i01, i11));
             }
@@ -638,6 +688,18 @@ void Terrain::Apply() {
     if (!mr) mr = gameObject->AddComponent<MeshRenderer>();
     mr->mesh = BuildMesh();
     mr->color = color;
+    if (!layers.empty()) {
+        // Texture layers: one baked ground picture over the whole terrain (UVs run 0..1).
+        if (!SplatImage() || splatSized_ != splatResolution) { BakeSplat(); PublishSplat(); }   // else already current
+        mr->color = Color(1.0f, 1.0f, 1.0f, color.a);   // the layers carry the colours: the Terrain colour would darken them
+        mr->doubleSided = true;
+        mr->texture = splatName_;
+        mr->tiling = {1.0f, 1.0f};
+        mr->triplanar = false;
+        mr->normalMap = normalMap;
+        mr->normalStrength = normalStrength;
+        return;
+    }
     mr->doubleSided = true;   // visible from above and below regardless of winding
     // Ground texture via the material pipeline. Triplanar keeps cliffs from smearing;
     // tiling repeats the texture across the surface. Auto-colours (per-face) tint it.
@@ -650,6 +712,246 @@ void Terrain::Apply() {
     }
     mr->normalMap = normalMap;
     mr->normalStrength = normalStrength;
+}
+
+// ---- Texture layers -------------------------------------------------------
+
+void Terrain::ResetSplat() {
+    const std::size_t n = (std::size_t)Dim() * Dim();
+    splat.assign(n * layers.size(), 0);
+    if (!layers.empty()) std::fill(splat.begin(), splat.begin() + n, (std::uint8_t)255);
+    splatSized_ = 0;
+}
+
+int Terrain::AddLayer(const TerrainLayer& l) {
+    if ((int)layers.size() >= kMaxLayers) return -1;
+    const std::size_t n = (std::size_t)Dim() * Dim();
+    const bool first = layers.empty();
+    layers.push_back(l);
+    splat.resize(n * layers.size(), 0);
+    if (first) std::fill(splat.begin(), splat.begin() + n, (std::uint8_t)255);
+    splatSized_ = 0;
+    return (int)layers.size() - 1;
+}
+
+bool Terrain::RemoveLayer(int i) {
+    if (i < 0 || i >= (int)layers.size()) return false;
+    const std::size_t n = (std::size_t)Dim() * Dim();
+    if (splat.size() != n * layers.size()) ResetSplat();
+    splat.erase(splat.begin() + i * n, splat.begin() + (i + 1) * n);
+    layers.erase(layers.begin() + i);
+    const int L = (int)layers.size();
+    if (L == 0) {
+        splat.clear();
+        TextureCacheMap().erase(splatName_);
+        MipCacheMap().erase(splatName_);
+        ++TextureCacheGeneration();
+    } else {
+        for (std::size_t v = 0; v < n; ++v) {   // renormalise what is left to 255
+            int sum = 0;
+            for (int k = 0; k < L; ++k) sum += splat[k * n + v];
+            if (sum <= 0) { splat[v] = 255; continue; }
+            int total = 0, big = 0;
+            for (int k = 0; k < L; ++k) {
+                splat[k * n + v] = (std::uint8_t)(splat[k * n + v] * 255 / sum);
+                total += splat[k * n + v];
+                if (splat[k * n + v] > splat[big * n + v]) big = k;
+            }
+            splat[big * n + v] = (std::uint8_t)(splat[big * n + v] + (255 - total));
+        }
+    }
+    splatSized_ = 0;
+    return true;
+}
+
+float Terrain::LayerWeight(int i, int x, int z) const {
+    const int dim = Dim();
+    const std::size_t n = (std::size_t)dim * dim;
+    if (i < 0 || i >= (int)layers.size() || x < 0 || z < 0 || x >= dim || z >= dim || splat.size() != n * layers.size())
+        return 0.0f;
+    return splat[i * n + (std::size_t)z * dim + x] * (1.0f / 255.0f);
+}
+
+float Terrain::LayerWeightAt(int i, float localX, float localZ) const {
+    const int dim = Dim();
+    const float cell = CellSize();
+    if (!(cell > 1e-8f)) return 0.0f;
+    float fx = (localX + size * 0.5f) / cell, fz = (localZ + size * 0.5f) / cell;
+    fx = std::fmin(std::fmax(fx, 0.0f), (float)(dim - 1));
+    fz = std::fmin(std::fmax(fz, 0.0f), (float)(dim - 1));
+    int x0 = (int)fx, z0 = (int)fz;
+    int x1 = std::min(x0 + 1, dim - 1), z1 = std::min(z0 + 1, dim - 1);
+    float ax = fx - x0, az = fz - z0;
+    float a = LayerWeight(i, x0, z0) * (1 - ax) + LayerWeight(i, x1, z0) * ax;
+    float b = LayerWeight(i, x0, z1) * (1 - ax) + LayerWeight(i, x1, z1) * ax;
+    return a * (1 - az) + b * az;
+}
+
+void Terrain::PaintLayerAt(int i, float localX, float localZ, float radius, float amount, float hardness) {
+    const int L = (int)layers.size();
+    const int dim = Dim();
+    const std::size_t n = (std::size_t)dim * dim;
+    if (i < 0 || i >= L || amount == 0.0f) return;
+    if (splat.size() != n * L) ResetSplat();
+    int x0, z0, x1, z1;
+    BrushSpan(*this, localX, localZ, radius, x0, z0, x1, z1);
+    const float cell = CellSize(), half = size * 0.5f;
+    int bx0 = dim, bz0 = dim, bx1 = -1, bz1 = -1;
+    for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
+            const float dx = x * cell - half - localX, dz = z * cell - half - localZ;
+            const float w = BrushWeight(std::sqrt(dx * dx + dz * dz), radius, hardness);
+            if (w <= 0.0f) continue;
+            float k = std::fmin(1.0f, std::fabs(amount) * w);
+            float wt[kMaxLayers];
+            for (int j = 0; j < L; ++j) wt[j] = splat[j * n + (std::size_t)z * dim + x] * (1.0f / 255.0f);
+            if (amount > 0.0f) {
+                for (int j = 0; j < L; ++j) wt[j] = (j == i) ? wt[j] + (1.0f - wt[j]) * k : wt[j] * (1.0f - k);
+            } else {
+                const float take = wt[i] * k;           // the base layer (or layer 0 when erasing the base's neighbour) gets it back
+                wt[i] -= take;
+                const int to = (i == 0 && L > 1) ? 1 : 0;
+                if (i == 0 && L == 1) wt[i] += take;    // a lone base layer cannot be erased
+                else wt[to] += take;
+            }
+            float sum = 0.0f;
+            for (int j = 0; j < L; ++j) sum += wt[j];
+            if (sum <= 1e-6f) { wt[0] = 1.0f; sum = 1.0f; }
+            int total = 0, big = 0;
+            for (int j = 0; j < L; ++j) {
+                int v = (int)std::lround(wt[j] / sum * 255.0f);
+                splat[j * n + (std::size_t)z * dim + x] = (std::uint8_t)v;
+                total += v;
+                if (wt[j] > wt[big]) big = j;
+            }
+            const int fix = (int)splat[big * n + (std::size_t)z * dim + x] + (255 - total);
+            splat[big * n + (std::size_t)z * dim + x] = (std::uint8_t)std::min(255, std::max(0, fix));
+            bx0 = std::min(bx0, x); bx1 = std::max(bx1, x); bz0 = std::min(bz0, z); bz1 = std::max(bz1, z);
+        }
+    if (bx1 < 0) return;
+    // Texels of the baked picture that these vertices influence (one cell of padding).
+    const int res = splatResolution;
+    auto toPix = [&](int g) { return (int)std::floor((float)g / (dim - 1) * res); };
+    BakeRect(toPix(std::max(bx0 - 1, 0)) - 1, toPix(std::max(bz0 - 1, 0)) - 1,
+             toPix(std::min(bx1 + 1, dim - 1)) + 1, toPix(std::min(bz1 + 1, dim - 1)) + 1);
+}
+
+void Terrain::FillLayer(int i) {
+    const int L = (int)layers.size();
+    const std::size_t n = (std::size_t)Dim() * Dim();
+    if (i < 0 || i >= L) return;
+    splat.assign(n * L, 0);
+    std::fill(splat.begin() + i * n, splat.begin() + (i + 1) * n, (std::uint8_t)255);
+    splatSized_ = 0;
+}
+
+const Image* Terrain::SplatImage() const {
+    if (layers.empty()) return nullptr;
+    auto& cache = TextureCacheMap();
+    auto it = cache.find(splatName_);
+    return it == cache.end() ? nullptr : &it->second;
+}
+
+void Terrain::BakeSplat() {
+    if (layers.empty()) return;
+    splatResolution = std::min(4096, std::max(64, splatResolution));
+    BakeRect(0, 0, splatResolution - 1, splatResolution - 1);
+}
+
+void Terrain::BakeRect(int x0, int y0, int x1, int y1) {
+    const int L = (int)layers.size();
+    if (L == 0) return;
+    const int dim = Dim();
+    const std::size_t n = (std::size_t)dim * dim;
+    if (splat.size() != n * L) ResetSplat();
+    splatResolution = std::min(4096, std::max(64, splatResolution));
+    const int res = splatResolution;
+    Image& img = TextureCacheMap()[splatName_];
+    if (img.Width() != res || img.Height() != res || splatSized_ != res) {
+        img = Image(res, res);               // a new size, or the layers changed: bake everything
+        splatSized_ = res;
+        x0 = 0; y0 = 0; x1 = res - 1; y1 = res - 1;
+    }
+    x0 = std::max(x0, 0); y0 = std::max(y0, 0); x1 = std::min(x1, res - 1); y1 = std::min(y1, res - 1);
+    const Image* pics[kMaxLayers] = {};
+    for (int k = 0; k < L && k < kMaxLayers; ++k)
+        if (!layers[k].texture.empty()) pics[k] = GetCachedTexture(layers[k].texture);
+    for (int py = y0; py <= y1; ++py) {
+        const float v = (py + 0.5f) / res;
+        const float gz = std::fmin(v * (dim - 1), (float)(dim - 1));
+        const int z0 = (int)gz, z1 = std::min(z0 + 1, dim - 1);
+        const float az = gz - z0;
+        for (int px = x0; px <= x1; ++px) {
+            const float u = (px + 0.5f) / res;
+            const float gx = std::fmin(u * (dim - 1), (float)(dim - 1));
+            const int xa = (int)gx, xb = std::min(xa + 1, dim - 1);
+            const float ax = gx - xa;
+            float r = 0, g = 0, b = 0;
+            for (int k = 0; k < L && k < kMaxLayers; ++k) {
+                const std::uint8_t* s = &splat[k * n];
+                const float w00 = s[(std::size_t)z0 * dim + xa], w10 = s[(std::size_t)z0 * dim + xb];
+                const float w01 = s[(std::size_t)z1 * dim + xa], w11 = s[(std::size_t)z1 * dim + xb];
+                const float w = ((w00 * (1 - ax) + w10 * ax) * (1 - az) + (w01 * (1 - ax) + w11 * ax) * az) * (1.0f / 255.0f);
+                if (w <= 0.0f) continue;
+                Color c = layers[k].tint;
+                if (pics[k]) {
+                    float tu = u * layers[k].tiling, tv = v * layers[k].tiling;
+                    tu -= std::floor(tu); tv -= std::floor(tv);
+                    const Color t = pics[k]->Sample(tu, tv);
+                    c = Color(t.r * c.r, t.g * c.g, t.b * c.b, 1.0f);
+                }
+                r += c.r * w; g += c.g * w; b += c.b * w;
+            }
+            img.SetPixel(px, py, Color(r, g, b, 1.0f));
+        }
+    }
+}
+
+void Terrain::PublishSplat() {
+    if (layers.empty()) return;
+    MipCacheMap().erase(splatName_);   // the software renderer rebuilds its mip chain from the new pixels
+    ++TextureCacheGeneration();        // the GPU renderers re-upload
+}
+
+namespace {
+const char* kHex = "0123456789abcdef";
+}
+
+std::string Terrain::EncodeSplat() const {
+    std::string out;
+    std::size_t i = 0;
+    while (i < splat.size()) {
+        std::size_t j = i;
+        while (j < splat.size() && splat[j] == splat[i]) ++j;
+        out += kHex[splat[i] >> 4]; out += kHex[splat[i] & 15];
+        out += std::to_string(j - i); out += ';';
+        i = j;
+    }
+    return out;
+}
+
+bool Terrain::DecodeSplat(const std::string& text) {
+    const std::size_t want = (std::size_t)Dim() * Dim() * layers.size();
+    std::vector<std::uint8_t> out;
+    out.reserve(want);
+    auto hv = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
+    std::size_t i = 0;
+    while (i < text.size()) {
+        if (i + 2 >= text.size()) return false;
+        int a = hv(text[i]), b = hv(text[i + 1]);
+        if (a < 0 || b < 0) return false;
+        i += 2;
+        std::size_t cnt = 0, digits = 0;
+        while (i < text.size() && text[i] >= '0' && text[i] <= '9') { cnt = cnt * 10 + (text[i] - '0'); ++i; if (++digits > 9) return false; }
+        if (digits == 0 || i >= text.size() || text[i] != ';') return false;
+        ++i;
+        if (out.size() + cnt > want) return false;
+        out.insert(out.end(), cnt, (std::uint8_t)(a * 16 + b));
+    }
+    if (out.size() != want) return false;
+    splat = std::move(out);
+    splatSized_ = 0;
+    return true;
 }
 
 } // namespace okay

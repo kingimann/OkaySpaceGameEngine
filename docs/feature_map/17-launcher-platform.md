@@ -328,3 +328,23 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Words:** crash report, okay_crash.txt, okay_crashlog.txt, last step, exception, SIGSEGV
 - **Seen as:** the editor closed by itself; Crash reports page empty
 - **Ask me like:** "show me the latest editor crash"
+
+### 17.17 Platform layer (`okay::platform`) and the own backend
+- **What:** The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and evdev through `dlopen`; Windows: Win32, compiles but untested; macOS: not written). Not the online services in the same `Platform/` folder. Timers, audio devices and game controllers of the editor, launcher and player already go through it; their windows, event loops and GL contexts still call SDL directly (so does everything built on `SDL_Renderer`).
+- **Parts:**
+  - 17.17.1 Interface - `Platform/Platform` - `Backend`, `Window`, `Event`, `Key` (USB HID numbering = SDL scancodes), `AudioDevice`, `Gamepad`, free timer functions; `Get(kind)`, `Default()`
+  - 17.17.2 SDL2 backend - `engine/src/Platform/SdlBackend.cpp` - thin wrapper, the default
+  - 17.17.3 Own Linux backend - `engine/src/Platform/OwnLinuxX11.cpp`, `OwnLinuxAudio.cpp`, `OwnLinuxEvdev.cpp`, `OwnLinux.cpp` - X11 + GLX window, keys, text, mouse, clipboard; ALSA playback and capture; evdev controllers; all `dlopen`
+  - 17.17.4 Own Windows backend - `engine/src/Platform/OwnWin32.cpp` - Win32, WGL, XInput; compiles under MinGW, never run
+  - 17.17.5 Build switch - `cmake/OkayPlatform.cmake` - `-DOKAY_PLATFORM_BACKEND=sdl2|own` picks `Default()`; both are built
+- **Code:** `Platform/Platform`, `engine/src/Platform/Platform.cpp`, `engine/src/Platform/SdlBackend.cpp`, `engine/src/Platform/OwnLinux.cpp`, `engine/src/Platform/OwnLinuxX11.cpp`, `engine/src/Platform/OwnLinuxAudio.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Platform/OwnWin32.cpp`
+- **API:** `okay::platform::Backend`, `Window`, `AudioDevice`, `Gamepad`, `Get`, `Default`, `TicksMs32`
+- **Editor:** none
+- **Docs:** `docs/platform_layer.md` (the SDL audit, what is and is not behind the seam, what was tested)
+- **Tests:** `platform`, `platform_window_sdl2`, `platform_window_own` (the last two need Xvfb and xdotool and skip without them)
+- **Status:** Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the apps' windows are not moved yet
+- **Open:** editor, launcher and player windows, events and GL still use SDL (they need an `SDL_Window` for `SDL_Renderer` and ImGui's SDL backends); no Wayland, XDND file drop, touch or DPI queries in the own Linux backend; no Windows audio; no macOS
+- **Related:** 7.1, 8.2, 17.1
+- **Words:** SDL2, platform layer, backend, own backend, X11, GLX, ALSA, evdev, Win32, WGL, XInput, window, event loop, OKAY_PLATFORM_BACKEND, Xvfb
+- **Seen as:** a controller or the audio device behaves differently with the own backend; the own backend cannot open a display; SDL is still needed to build the editor
+- **Ask me like:** "run the editor on the own platform backend"; "why is SDL still linked?"

@@ -54,10 +54,10 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | Editor Play mode does not feed function keys, Alt, Tab or left/right modifiers | `editor/main.cpp:47007-47027` builds keys by hand; the built game calls `okay::AppendSdlExtendedKeys(ks, down)` at `player/main.cpp:1890` | A game that binds F-keys, Alt or Tab works when built and silently fails in the editor Play button | High | Small |
-| Editor Play feeds one controller only | `editor/main.cpp:47025` (`FeedSdlGamepad(g_pad, down)`), player uses `pads.Feed` for all pads (`player/main.cpp:1891`) | Co-op controller games cannot be tested in the editor | Medium | Small |
+| Editor Play feeds one controller only | `editor/main.cpp:47025` (`FeedPad(g_pad.get(), down)`), player uses `pads.Feed` for all pads (`player/main.cpp:1891`) | Co-op controller games cannot be tested in the editor | Medium | Small |
 | No on-screen virtual stick, D-pad, or touch buttons; no pinch, swipe, long-press recognisers | no matches for joystick, gesture or swipe in `engine/include/okay/Components` or `UI/` | Mobile and web-touch games must build their own controls | Medium | Medium |
 | Input contexts (`PushContext`) have no consumer | no reference from `engine/include/okay/Components`, editor or player | The feature exists but a pause menu does not use it; `Input::SetUICaptured` is the real path | Low | Small |
-| `SdlGamepad` has no test | no test names `FeedSdlGamepad` or `SdlGamepad` | Controller mapping regressions go unseen | Low | Small |
+| `PlatformGamepad` has no test | no test names `FeedPad` or `PadSet` (the platform controller mapping is tested in `platform`, not this feed) | Controller mapping regressions go unseen | Low | Small |
 
 ## 6. AI and navigation
 

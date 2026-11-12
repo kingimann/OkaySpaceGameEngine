@@ -19,30 +19,31 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **API:** `NavMeshSurface`, `NavMesh`, `NavMeshBuildSettings`, `Navigation::FindPath`, `Navigation::SamplePosition`, `Navigation::Raycast`, `Navigation::RandomPoint`, `NavGrid3D::FindPath`, script `nav_path_exists`, `nav_path_length`, `nav_point_walkable`, `nav_nearest_point`
 - **Editor:** View > Editors & Tools > Navigation (Add Nav Mesh Surface, Bake, Clear); Scene view mesh overlay; Add Component > Gameplay > Nav Mesh Surface
 - **Docs:** `docs/navigation.md`
-- **Tests:** `navmesh`, `script_nav`
+- **Tests:** `navmesh`, `navmesh_carving`, `script_nav`
 - **Status:** Works - NavMesh.cpp, NavMeshSurface.cpp, Navigation.cpp and the facade header read; bake and path behaviour (walls, doorways, ramps, islands) covered by `navmesh` and `script_nav`
-- **Open:** per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; no obstacle carving (area types and off-mesh links are 9.6); Navigation uses only the first enabled surface in a scene; with no mesh `FindPath` always returns a path (a straight line when the grid finds none), so the grid cannot report an unreachable goal
+- **Open:** per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; obstacle carving is 9.2.5 (area types and off-mesh links are 9.6); Navigation uses only the first enabled surface in a scene; with no mesh `FindPath` always returns a path (a straight line when the grid finds none), so the grid cannot report an unreachable goal
 - **Related:** 9.2, 9.5, 4.4, 6.2, 2.6, 27.4
 - **Words:** navmesh, nav mesh, NavMeshSurface, bake, .okaynav, pathfinding, funnel, walkable, navigation window, NavGrid3D, probe grid, agent radius, max slope, step height
 - **Seen as:** enemies walk straight into walls or cannot find a way around; the mesh is missing near a doorway; enemies ignore a ramp; the Bake button does nothing; the blue overlay does not match the level; a character cannot reach a platform
 - **Ask me like:** "bake a navmesh for my level"; "my guard will not walk through the narrow door"
 
 ### 9.2 Nav agents and obstacles
-- **What:** A Nav Mesh Agent walks its object to a destination along the mesh path, steers around other agents and moving obstacles, replans when stuck and reports arrival; a Nav Mesh Obstacle is a moving box agents dodge.
+- **What:** A Nav Mesh Agent walks its object to a destination along the mesh path, steers around other agents and moving obstacles, replans when stuck and reports arrival; a Nav Mesh Obstacle is a box or capsule agents dodge, and with Carve on it cuts a hole in the mesh so paths go around it.
 - **Parts:**
   - 9.2.1 Agent movement - `Components/NavMeshAgent`, `engine/src/AI/NavMeshAgent.cpp` - `SetDestination`, `Stop`, `Resume`, `Warp`, speed, acceleration, turn rate, stopping distance, auto braking, drives a Rigidbody3D by velocity or the Transform
   - 9.2.2 Local avoidance - `Components/NavMeshAgent` - reciprocal velocity sampling against other agents and obstacles, avoidance priority and range
   - 9.2.3 Replanning and arrival - `Components/NavMeshAgent` - repath interval, stuck replans, `nav_arrived` message to Action Lists; hands the destination to an NPCController or ClickToMoveController when one is on the object
-  - 9.2.4 Obstacle - `Components/NavMeshObstacle` - a moving box that is never baked and tracks its own velocity
-- **Code:** `Components/NavMeshAgent`, `engine/src/AI/NavMeshAgent.cpp`, `Components/NavMeshObstacle`, `editor/NavigationWindow.*`
-- **API:** `NavMeshAgent`, `NavMeshObstacle`, `SetDestination`, `Arrived`, `RemainingDistance`, `HasPath`, script `nav_move_to`, `nav_arrived`, `nav_stop`, visual-script Nav Move To, Nav Stop, Nav Arrived
-- **Editor:** Add Component > Gameplay > Nav Mesh Agent and Nav Mesh Obstacle; Navigation window Send Selected Agent To Click; paths drawn as cyan lines in the Scene view
+  - 9.2.4 Obstacle - `Components/NavMeshObstacle` - a box or capsule that is never baked and tracks its own velocity; local avoidance always
+  - 9.2.5 Obstacle carving - `AI/NavMeshCarve.cpp`, `Components/NavMeshSurface`, `AI/Navigation` - Carve cuts the obstacle's footprint out of a copy of the baked mesh at run time (carve only when stationary after a time, or follow it past a move threshold); agents already walking replan at once; `navobstacle` scene record, property registry entries, validator codes `navobstacle.zero_size`, `navobstacle.carve_no_surface`, `navobstacle.carve_no_mesh`, `navobstacle.carve_every_frame`
+- **Code:** `Components/NavMeshAgent`, `engine/src/AI/NavMeshAgent.cpp`, `Components/NavMeshObstacle`, `engine/src/AI/NavMeshCarve.cpp`, `editor/NavigationWindow.*`
+- **API:** `NavMeshAgent`, `NavMeshObstacle`, `Carve`, `Carving`, `NavMesh::Carve`, `Navigation::CarveGeneration`, `SetDestination`, `Arrived`, `RemainingDistance`, `HasPath`, script `nav_move_to`, `nav_arrived`, `nav_stop`, visual-script Nav Move To, Nav Stop, Nav Arrived
+- **Editor:** Add Component > Gameplay > Nav Mesh Agent and Nav Mesh Obstacle (box or capsule, Carve fields, red carve footprint in the Scene view); Navigation window Send Selected Agent To Click; paths drawn as cyan lines in the Scene view
 - **Docs:** `docs/navigation.md`
-- **Tests:** `navmesh`, `script_nav`
+- **Tests:** `navmesh`, `navmesh_carving`, `script_nav`
 - **Status:** Works - NavMeshAgent.hpp and the function layout of NavMeshAgent.cpp read (Replan, Avoid, Move, Face, Animate, Update); behaviour covered by `navmesh` per its agent cases
-- **Open:** agents only avoid each other and obstacles locally; there is no crowd-wide planner; obstacles do not carve the mesh; area costs and links are 9.6
+- **Open:** agents only avoid each other and obstacles locally; there is no crowd-wide planner; carving is run time only (the editor previews the footprint), is a hole in the shared mesh for every agent and rebuilds the carved copy whole; area costs and links are 9.6
 - **Related:** 9.1, 9.4, 9.5, 4.4
-- **Words:** NavMeshAgent, agent, avoidance, steering, crowd, obstacle, destination, stopping distance, SetDestination, repath, stuck
+- **Words:** NavMeshAgent, agent, avoidance, steering, crowd, obstacle, carve, carving, nav mesh obstacle, moving obstacle, destination, stopping distance, SetDestination, repath, stuck
 - **Seen as:** enemies bunch up in a doorway; an agent jitters when it arrives; two agents block each other; an agent slides instead of walking; an agent gives up on a path
 - **Ask me like:** "make the guard walk to the player and stop 2 m away"; "enemies keep stacking on each other"
 
@@ -117,7 +118,7 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **Docs:** `docs/navigation.md`
 - **Tests:** `navmesh_areas`, `navmesh`
 - **Status:** Works - covered by `navmesh_areas` (cheaper road over shorter swamp, blocked area never entered, per-agent mask, link used / ignored when disabled, masked or too costly, one-way and two-way, crossing ends on the end point with events in order, scene round trip)
-- **Open:** area costs and masks apply to the baked mesh only (not the grid fallback, NPC or click-to-move controllers); crossings are not checked against geometry; link ends must be within 1.5 m of the mesh; no obstacle carving
+- **Open:** area costs and masks apply to the baked mesh only (not the grid fallback, NPC or click-to-move controllers); crossings are not checked against geometry; link ends must be within 1.5 m of the mesh
 - **Related:** 9.1, 9.2
 - **Words:** nav area, area cost, area mask, NavMeshModifier, NavMeshLink, off-mesh link, jump link, drop, ladder, swamp, mud, water, road, traversal cost, nav_link_start
 - **Seen as:** NPCs wade through mud instead of walking round; NPCs will not jump a gap; an enemy cannot climb a ladder; a path ignores the road; an agent walks into lava

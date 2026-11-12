@@ -1869,6 +1869,10 @@ add_test(NAME navmesh COMMAND test_navmesh)
 add_executable(test_navmesh_areas test_navmesh_areas.cpp)
 target_link_libraries(test_navmesh_areas PRIVATE okay::engine)
 add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
+# Navigation obstacle carving: footprint strips, polygon subtraction, portals, stationary timing, agents replanning, scene file, validator
+add_executable(test_navmesh_carving test_navmesh_carving.cpp)
+target_link_libraries(test_navmesh_carving PRIVATE okay::engine)
+add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)

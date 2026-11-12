@@ -635,6 +635,11 @@ unchanged.
     it, a name that cannot find room shrinks and dims, and a crowded view fades the camera and light names. The
     names have a dark outline so they read on a bright sky. Off hides all of them (the Hierarchy rows still drag
     an object into a script slot).
+  - **Navigation overlay** (View ▸ Editors & Tools ▸ Navigation; details in `docs/navigation.md`): mesh polygons, agent
+    paths, links and **Nav Mesh Obstacles** as orange boxes or capsules. An obstacle with **Carve** on also shows the
+    hole it cuts: a faint yellow footprint in the editor (where it would be cut once it is still), solid red in Play
+    while the hole is in the mesh. The obstacle's Inspector has Shape, Size or Radius / Height, Carve, Carve Only When
+    Stationary, Time To Stationary or Move Threshold, and says whether it is carving now.
   - The **view-axis gizmo** (top right: click a tip to look along that axis) is now drawn on top of the 3D
     view; it used to be hidden under it.
 - **Toolbar**: every icon button has a tooltip with its name and shortcut, including the remove (x),

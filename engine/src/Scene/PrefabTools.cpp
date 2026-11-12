@@ -1304,6 +1304,16 @@ GameObject* RebuildInstance(Scene& scene, GameObject& old, const RebuildMods& mo
         fresh->transform->SetParent(par, /*worldPositionStays=*/false);
         Transform* before = (std::size_t)slot < par->Children().size() ? par->Children()[(std::size_t)slot] : nullptr;
         if (before && before != fresh->transform) par->ReorderChild(fresh->transform, before, /*after=*/false);
+    } else {
+        // A top-level instance keeps its place in the scene's list too (the rebuilt copy was appended at the end).
+        GameObject* next = nullptr;
+        bool seen = false;
+        for (const auto& up : scene.Objects()) {
+            if (!up || up->IsDestroyed() || !up->transform || up->transform->Parent()) continue;
+            if (up.get() == &old) { seen = true; continue; }
+            if (seen && up.get() != fresh) { next = up.get(); break; }
+        }
+        if (next) scene.ReorderSibling(fresh, next, /*after=*/false);
     }
     scene.Destroy(&old);
     return fresh;

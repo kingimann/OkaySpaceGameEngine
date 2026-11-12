@@ -3179,6 +3179,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - prefab hierarchy (21.2)
 - prefab inside prefab (21.2)
 - prefab instance (21.1)
+- Prefab mode (1.6.11, 21.1.5)
 - Prefab overrides (1.6.2, 21.4)
 - prefab preview (20.5)
 - prefab save (15.1)

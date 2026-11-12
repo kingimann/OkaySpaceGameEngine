@@ -64,6 +64,11 @@ void RelayServer::SendWelcome(const Endpoint& to, std::uint32_t yourSlot, std::u
     w.Write(hostSlot);
     w.Write(kRelayProtocolVersion);   // version-1 peers stop reading before this
     WriteKey(w, hostKey);
+    // Version 4: echo the nonce the peer's hello carried, so the peer can tell this
+    // welcome from one an off-path sender forged. Peers without one get the
+    // 18-byte welcome older versions send.
+    if (auto it = m_peers.find(to); it != m_peers.end() && it->second.nonce != 0)
+        WriteKey(w, it->second.nonce);
     m_socket.SendTo(to, w.Data(), w.Size());
 }
 
@@ -227,11 +232,17 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
         if (p.Ok()) { version = v; key = (static_cast<std::uint64_t>(hi) << 32) | lo; }
     }
     Cookie cookie{};
+    std::uint64_t nonce = 0;
     if (version >= 3) {
         // [tag][role][u32 length + code][version][u64 key], then the cookie.
         const std::size_t at = 1 + 1 + 4 + code.size() + 1 + 8;
         if (len < kRelayHelloMinBytes || len < at + cookie.size()) return;
         std::memcpy(cookie.data(), data + at, cookie.size());
+        // Version 4 follows the cookie with a u64 nonce for the welcome to echo.
+        const std::size_t nat = at + cookie.size();
+        if (version >= 4 && len >= nat + 8)
+            nonce = static_cast<std::uint64_t>(LoadU32LE(data + nat)) |
+                    (static_cast<std::uint64_t>(LoadU32LE(data + nat + 4)) << 32);
     }
     if (version < kRelayMinProtocolVersion) { SendRefused(from, RelayRefusedVersion); return; }
 
@@ -289,6 +300,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
             Peer moved = old->second;
             moved.idle = 0.0f;
             moved.version = version;
+            moved.nonce = nonce;
             auto opa = m_perAddress.find(old->first.address);
             if (opa != m_perAddress.end() && --opa->second == 0) m_perAddress.erase(opa);
             m_peers.erase(old);
@@ -323,6 +335,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     peer.host = asHost;
     peer.hub = asHub;
     peer.version = version;
+    peer.nonce = nonce;
     peer.packets = 2.0f * kPacketsPerSecond;
     peer.bytes = 2.0f * kBytesPerSecond;
     peer.refilled = m_now;
@@ -388,7 +401,7 @@ void RelayServer::HandleData(const Endpoint& from, const std::uint8_t* data, std
     const std::uint32_t src = sender->second.slot;
     m_out.resize(len);
     m_out[0] = RelayData;
-    std::memcpy(m_out.data() + 1, &src, sizeof(src));   // Packet's layout: native u32
+    StoreU32LE(m_out.data() + 1, src);   // Packet's layout: little-endian u32
     if (len > payloadOff) std::memcpy(m_out.data() + payloadOff, data + payloadOff, len - payloadOff);
     m_socket.SendTo(destEp->second, m_out.data(), len);
 }

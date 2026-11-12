@@ -5057,6 +5057,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - weight map (29.1)
 - weighted table (1.1)
 - weights (3.6)
+- Welcome nonce (39.8.6)
 - welcome screen (51.3)
 - Welcome screen and tips (51.3)
 - weld (6.3)

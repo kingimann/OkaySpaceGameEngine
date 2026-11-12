@@ -68,6 +68,19 @@ get there changes.
 - The relay assigns each peer a **slot** and tells it (and, for clients, the
   host's slot) in a `RelayWelcome`. The host's welcome also carries the
   session's **host key**.
+- Each game picks a random 64-bit **nonce** per attempt and puts it in its hellos
+  (after the cookie). The relay echoes it in every welcome for that peer, and the
+  game ignores a welcome that doesn't carry it, so a welcome forged by someone who
+  can't see the game's traffic can't pair it, point it at another slot, or end its
+  session as "the host left". A host also ignores a welcome too short to carry its
+  host key.
+- If the relay doesn't answer within `NetworkManager::relayTimeoutSeconds` (15 by
+  default, 0 waits forever) the attempt ends and `RelayError()` says so. A client
+  whose code has no host yet hears nothing either, so it times out the same way.
+- A refusal is reported as what it is: a code taken, a protocol version the relay
+  doesn't speak, or "refused for an unknown reason (code N)".
+- All multi-byte numbers on the wire, in the relay frames and in the game's own
+  packets, are little-endian, whatever the host's byte order.
 - App traffic is wrapped as `RelayData{destSlot}` to the relay, which forwards it
   as `RelayData{srcSlot}` to the destination.
 - Inside `NetworkManager`, a relayed peer is keyed by a synthetic
@@ -110,9 +123,15 @@ The relay is on the internet, so it doesn't trust its peers:
   that as a burst. A host's caps are multiplied by its client count. Each peer
   also receives at most 4 MiB per second from its whole session, so a host's
   clients can't add up to a flood.
-- **Versions.** Hellos and welcomes carry the relay protocol version (3 now).
+- **Versions.** Hellos and welcomes carry the relay protocol version (4 now).
   The relay refuses a version older than it supports with
-  `RelayRefused{version}`.
+  `RelayRefused{version}`. Version 4 only adds the nonce: a version-3 game
+  still works against a version-4 relay (it gets the old, shorter welcome), and a
+  version-4 game that meets an older relay drops its welcomes as unverifiable and
+  gives up with "the relay's welcome could not be verified". To use an older relay
+  anyway, set `allowUnverifiedRelay = true` on that game; its welcomes are then
+  trusted as before, so a forged one can't be told from the real one. Update the
+  relay instead where you can.
 
 **Legacy hellos.** Version-1 and -2 hellos carry no cookie. The relay still
 accepts them while `--legacy-hello` is on (the default for now), and logs how

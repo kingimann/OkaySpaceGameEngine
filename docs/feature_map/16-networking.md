@@ -13,7 +13,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **What:** The UDP layer under all multiplayer: sockets, byte packets that are split when large, authenticated encryption with libsodium (or, opt-in and unreviewed, our own okay::crypto), and two per-channel delivery modes on top of plain UDP (reliable ordered, and unreliable where only the newest counts).
 - **Parts:**
   - 16.1.1 UDP socket and endpoints - `Net/UdpSocket` - non-blocking UDP, an `Endpoint` (IPv4 address and port) that can key a table, wait-until-readable for the relay loop
-  - 16.1.2 Packet buffer and fragmentation - `Net/Packet` - little-endian byte buffer; sends over 1200 bytes are split and reassembled; receive buffer is 64 KB
+  - 16.1.2 Packet buffer and fragmentation - `Net/Packet` - little-endian byte buffer (byte layout pinned by `net_packet_layout`); sends over 1200 bytes are split and reassembled; receive buffer is 64 KB
   - 16.1.3 Sealed channel - `Net/SecureChannel` - X25519 key pair per peer, one key per direction, XChaCha20-Poly1305 sealing, opt-in sequence numbers (replay window of 64); a harmless stub when built without a crypto backend
   - 16.1.4 Reliable ordered and sequenced channels - `Net/NetChannels` - one ordered stream per named channel (resent until a cumulative ack) and unreliable-sequenced (newer replaces older); wire types 30 to 32
   - 16.1.5 Transport interface - `Net/NetTransport` - `INetTransport` seam with a Native provider that wraps NetworkManager (Photon provider: 16.10)
@@ -270,16 +270,16 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 ### 16.14 Relay server (NAT traversal)
 - **What:** A small program players behind home routers meet at: both connect out to it, share a code, and it forwards datagrams by slot without reading them. It is exposed to the internet, so it caps and trusts nothing. Also carries voice (16.7).
 - **Parts:**
-  - 16.14.1 Relay protocol - `Net/RelayProtocol` - outer frames Hello (0x90), Welcome, Data, Bye, Refused; versions 1 to 3; the relay strips its header so inner messages are untouched
+  - 16.14.1 Relay protocol - `Net/RelayProtocol` - outer frames Hello (0x90), Welcome, Data, Bye, Refused; versions 1 to 4 (4 adds the welcome nonce); little-endian throughout; the relay strips its header so inner messages are untouched
   - 16.14.2 Relay server core - `Net/RelayServer` - sessions by code, slot ids, host-secret key for version-2 hosts, cookie round trip for version-3, per-address and global caps, rate limits, idle expiry
   - 16.14.3 Standalone program - `relay/main.cpp` - `okayspace-relay [port] [--legacy-hello=on|off]`, default port 45100; target `okayspace-relay` (always built except for Emscripten)
-  - 16.14.4 Using it from a game - `Net/NetworkManager` - `HostViaRelay`, `JoinViaRelay`, `RelayReady`, `RelayError`; scripts `net_host_relay`, `net_join_relay`
+  - 16.14.4 Using it from a game - `Net/NetworkManager` - `HostViaRelay`, `JoinViaRelay`, `RelayReady`, `RelayError`; welcome timeout (`relayTimeoutSeconds`) and nonce check (`allowUnverifiedRelay`); scripts `net_host_relay`, `net_join_relay`
   - 16.14.5 Hosting kits - `deploy/voice-server/Dockerfile` - Dockerfile, docker-compose, systemd unit and `install.sh` for a VPS (built without libsodium, port 45100/udp)
 - **Code:** `Net/RelayProtocol`, `Net/RelayServer`, `relay/main.cpp`, `relay/CMakeLists.txt`, `deploy/voice-server/Dockerfile`, `deploy/voice-server/docker-compose.yml`, `deploy/voice-server/install.sh`, `deploy/voice-server/okayspace-voice.service`
 - **API:** `RelayServer`, `okayspace-relay`, `NetworkManager::HostViaRelay`, `JoinViaRelay`, `RelayAddress`, `RelayCode`
 - **Editor:** none (launcher uses it for calls; the Windows dist ships `Tools/okayspace-relay.exe`)
 - **Docs:** `docs/relay.md`, `docs/voice-server.md`
-- **Tests:** `net_relay`, `relay_security`, `net_anticheat_ph2`
+- **Tests:** `net_relay`, `relay_security`, `net_relay_hardening`, `net_anticheat_ph2`
 - **Status:** Works - `net_relay` joins through an in-process relay, `relay_security` covers isolation, unguessable slots, floods and random datagrams
 - **Open:** whether the live relay was redeployed with the cookie hardening can't be told from the repo (ROADMAP item 7); `--legacy-hello` still defaults to on, to be turned off once the log's legacy count stays zero; no deploy automation (manual `install.sh` or Docker)
 - **Related:** 16.5, 16.7, 39.8, 41.5

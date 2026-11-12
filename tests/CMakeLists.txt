@@ -1,3 +1,8 @@
+# The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
+add_executable(test_sandbox test_sandbox.cpp)
+target_link_libraries(test_sandbox PRIVATE okay::engine)
+add_test(NAME sandbox COMMAND test_sandbox)
+
 add_executable(test_math test_math.cpp)
 target_link_libraries(test_math PRIVATE okay::engine)
 add_test(NAME math COMMAND test_math)
@@ -1167,6 +1172,7 @@ target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)
 add_executable(test_vs_inventory test_vs_inventory.cpp)
 target_link_libraries(test_vs_inventory PRIVATE okay::engine)
+target_compile_definitions(test_vs_inventory PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_inventory COMMAND test_vs_inventory)
 
 # The Visual Script editor's graph model (save / load / paste), without drawing:
@@ -1185,6 +1191,7 @@ endif()
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
+target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
 add_executable(test_vs_names test_vs_names.cpp)
@@ -1385,6 +1392,7 @@ add_test(NAME vs_runtime COMMAND test_vs_runtime)
 
 add_executable(test_vs_gameplay test_vs_gameplay.cpp)
 target_link_libraries(test_vs_gameplay PRIVATE okay::engine)
+target_compile_definitions(test_vs_gameplay PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_gameplay COMMAND test_vs_gameplay)
 
 add_executable(test_vs_node_behavior test_vs_node_behavior.cpp)
@@ -1412,6 +1420,7 @@ add_test(NAME vs_flow_playground COMMAND test_vs_flow_playground)
 add_executable(test_vs_registry_effect test_vs_registry_effect.cpp)
 target_include_directories(test_vs_registry_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_registry_effect PRIVATE okay::engine)
+target_compile_definitions(test_vs_registry_effect PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_registry_effect COMMAND test_vs_registry_effect)
 
 add_executable(test_vs_node_effect test_vs_node_effect.cpp)

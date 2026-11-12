@@ -3510,6 +3510,15 @@ bool InvisibleButton(const char* id, float w, float h) {
     else if (inside && g_pressed) g_active = wid;
     return clicked;
 }
+bool IsItemFocused()     { return g_lastId != 0 && g_focus == g_lastId; }          // the last item has the keyboard (a text field)
+unsigned GetItemID()     { return (unsigned)g_lastId; }                              // 0 when the last item is not a widget with an id
+bool IsAnyItemActive()   { return g_active != 0; }                                   // some widget is being held (pressed or dragged)
+bool IsItemVisible() {                                                                // the last item overlaps the current clip rectangle
+    if (!g_lay.active) return false;
+    float x0 = 0.0f, y0 = 0.0f, x1 = 1e9f, y1 = 1e9f;
+    if (g_clipTop > 0) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
+    return g_lay.prevX < x1 && g_lay.prevX + g_lay.prevW > x0 && g_lay.prevY < y1 && g_lay.prevY + g_lay.prevH > y0;
+}
 bool IsItemActive()      { return g_lastId != 0 && g_active == g_lastId; }
 bool IsItemActivated()   { return IsItemActive() && g_activeAtFrameStart != g_lastId; }
 bool IsItemDeactivated() { return g_lastId != 0 && g_activeAtFrameStart == g_lastId && g_active != g_lastId; }

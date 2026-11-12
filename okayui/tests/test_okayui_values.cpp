@@ -224,6 +224,38 @@ void WrapTests() {
     CHECK(true);
 }
 
+void ItemQueryTests() {
+    Rig r; char text[16] = ""; UI::Rect rt, rb, rb2; bool focT = false, focB = false, anyActive = false, visT = false;
+    unsigned idT = 0, idB = 0, idB2 = 0;
+    r.body = [&] {
+        UI::InputText("t", text, (int)sizeof text); rt = UI::GetItemRect(); focT = UI::IsItemFocused(); idT = UI::GetItemID(); visT = UI::IsItemVisible();
+        UI::Button("b1"); rb = UI::GetItemRect(); focB = UI::IsItemFocused(); idB = UI::GetItemID();
+        UI::Button("b2"); rb2 = UI::GetItemRect(); idB2 = UI::GetItemID();
+        anyActive = UI::IsAnyItemActive();
+    };
+    r.Frames(2);
+    CHECK(idT != 0 && idB != 0 && idB2 != 0);
+    CHECK(idT != idB && idB != idB2 && idT != idB2);                // every widget has its own id
+    CHECK(!focT && !focB && !anyActive);
+    CHECK(visT);
+    r.MoveTo(CenterX(rt), CenterY(rt)); r.sim.Down(); r.Frame();
+    CHECK(anyActive);                                               // the press is held
+    r.sim.Up(); r.Frame();
+    CHECK(focT && !focB);                                           // the clicked text field has the keyboard, the button after it does not
+    r.MoveTo(CenterX(rb), CenterY(rb)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(!focT);                                                   // clicking elsewhere drops it
+    // an item outside a small clip rectangle is not visible
+    bool inside = true, outside = true;
+    r.body = [&] {
+        UI::PushClipRect(0, 0, 50, 50);
+        UI::Button("tiny"); inside = UI::IsItemVisible();
+        UI::Dummy(10, 600); UI::Button("far"); outside = UI::IsItemVisible();
+        UI::PopClipRect();
+    };
+    r.Frames(2);
+    CHECK(inside && !outside);
+}
+
 }  // namespace
 
 int main() {
@@ -237,5 +269,6 @@ int main() {
     SmallWidgetTests();
     HintAndFocusTests();
     WrapTests();
+    ItemQueryTests();
     TEST_MAIN_RESULT();
 }

@@ -630,6 +630,14 @@ bool InvisibleButton(const char* id, float w, float h);
 /// Queries about the LAST item. They work after the widgets that register an id (button, checkbox, radio, switch,
 /// slider, drag field, text field, combo, selectable, tree node, header, InvisibleButton); after any other item they
 /// answer false.
+/// True while the last item has the keyboard (a text field that was clicked into).
+bool IsItemFocused();
+/// An id for the last item (0 if it has none); two different widgets in the same ID scope get different ids.
+unsigned GetItemID();
+/// True while any widget is held (pressed or being dragged).
+bool IsAnyItemActive();
+/// True when the last item overlaps the current clip rectangle (false when it was scrolled out of a child).
+bool IsItemVisible();
 bool IsItemActive();         // pressed and held (or, for a text field, being dragged)
 bool IsItemActivated();      // became active this frame
 bool IsItemDeactivated();    // stopped being active this frame

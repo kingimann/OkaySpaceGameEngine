@@ -193,6 +193,11 @@ Color Accessibility::FilterColor(const Color& c) {
     return DaltonizeColor(c, s.colorblind, s.colorblindStrength);
 }
 
+void Accessibility::FilterFrame(std::uint8_t* rgba, std::size_t pixels) {
+    const AccessibilitySettings& s = S().settings;
+    DaltonizeRgba8(rgba, pixels, s.colorblind, s.colorblindStrength);
+}
+
 Color Accessibility::TextColor(const Color& foreground, const Color& background) {
     return S().settings.highContrast ? EnsureContrast(foreground, background, 7.0f) : foreground;
 }

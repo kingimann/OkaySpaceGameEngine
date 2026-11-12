@@ -1,10 +1,24 @@
 # Accessibility
 
-The engine side of accessibility: subtitles and captions, colour vision support,
+The engine side of accessibility. What a player can change today, and what really happens
+(each row is on the Settings screen, tested, and saved to Prefs when Done is pressed):
+
+| Settings screen row | What it does in the player |
+|---|---|
+| Text size (75%, 100%, 125%, 150%, 200%) | Screen-space Text objects (their wrap width too), button, toggle, keybind, tooltip and context-menu labels draw that much larger. Best Fit text already fills its box and is not scaled again. World text is not scaled. Slider, dropdown, input and progress text keep their size; widgets do not resize, so a long label can overflow its box |
+| Colour filter (Off, Protanopia, Deuteranopia, Tritanopia) | The rendered 3D frame (every renderer: it is the pixel buffer the player uploads) and every flat colour and text colour of the screen UI are daltonized (`DaltonizeRgba8`, `Accessibility::FilterColor`). UI images are not filtered |
+| High contrast | UI text is pushed to 7:1 against the last large solid fill drawn before it (the panel or button under it); text over the bare scene is measured against near black. A panel with a thin gradient or image under the text can be misjudged |
+| Reduce motion | `Camera::Shake` is ignored and a shake in progress stops. UI Animation slides, pop, drop and grow become a quarter-length fade and its loops (pulse, breathe, bob, sway) hold still |
+| Reduce flashing | The `flash` action does nothing and the UI Animation blink loop holds still |
+
+Everything else below is plain engine API. Settings that have no reader yet are not offered on
+the Settings screen: see "Not done" at the end.
+
+The rest of this page: subtitles and captions, colour vision support,
 controller and keyboard navigation of UI, a controls-screen model with conflict
 detection, and one settings object a player sets once and the whole game honours.
-Everything is plain C++ (`#include <Okay.hpp>`); none of it draws anything, so a
-game's UI decides how it looks.
+Everything is plain C++ (`#include <Okay.hpp>`); the captions and navigation helpers draw
+nothing, so a game's UI decides how they look.
 
 | Header | What it has |
 |---|---|
@@ -269,9 +283,20 @@ four-key direction (up, down, left, right); its own other keys count as conflict
 Not covered yet: the navigation keys of `NavigateUI` (WASD, Enter, Space, the D-pad and A)
 are fixed in code, so UI navigation itself can't be remapped.
 
-## Not in this change
+## Not done
 
-The editor has no accessibility windows yet, there is no ready-made subtitle widget (a game
-draws `Lines()` itself), and the Cutscene Sequencer's Subtitle action still shows its own
-text rather than going through `CaptionManager`. Colour vision correction is a function you
-call on colours and images; a full-screen filter in the renderers is future work.
+These settings exist in `AccessibilitySettings` but nothing reads them yet, so the Settings
+screen does not show them:
+
+* **Subtitles and sound captions** (size, background, on or off): no widget draws `CaptionManager::Lines()`,
+  the Cutscene Sequencer's Subtitle action shows its own text, and nothing calls `Sound()` for audio.
+* **Hold or toggle** (`toggleAllHolds`, `toggleActions`): `HoldToggle` is not used by the first person
+  controller, aim or crouch.
+* **Aim assist** and **screen reader hints**: no game system or platform announcer reads them.
+* **Reduce motion** does not yet change first person head bob, the landing dip, parallax or sprite sway;
+  only camera shake and UI animation.
+* **Achromatopsia** has no correction (a grayscale user has no hue to recover), so it is not offered as a filter.
+* **okayui** (the editor and launcher chrome) does not read the settings; only the in-game UI does.
+* A Settings screen saved in a scene before this change lacks the new rows until the prefab is added again
+  (the bindings skip rows that are missing).
+* The editor has no accessibility windows or colour-blindness preview of the Game view.

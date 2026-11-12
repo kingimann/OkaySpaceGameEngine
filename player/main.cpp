@@ -1395,6 +1395,7 @@ int main(int argc, char** argv) {
     // Persistent prefs (high scores, settings) live in the save folder.
     std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
+    okay::Accessibility::Load();   // the player's saved accessibility choices (text size, contrast, motion, colour filter)
     okay::DisplaySettings::Restore();   // the player's saved fullscreen, vsync and quality apply on the first frame (the watcher below)
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
@@ -2359,6 +2360,12 @@ int main(int argc, char** argv) {
                                                       SDL_TEXTUREACCESS_STREAMING, vw, vh);
                         SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
                         mesh3DW = vw; mesh3DH = vh;
+                    }
+                    if (okay::Accessibility::Get().colorblind != okay::ColorblindMode::None) {   // colour vision filter over the 3D frame
+                        static std::vector<std::uint32_t> a11yFrame;
+                        a11yFrame.assign(px, px + (std::size_t)vw * (std::size_t)vh);
+                        okay::Accessibility::FilterFrame((std::uint8_t*)a11yFrame.data(), a11yFrame.size());
+                        px = a11yFrame.data();
                     }
                     SDL_UpdateTexture(mesh3DTex, nullptr, px, vw * 4);
                     if (fullView) SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);

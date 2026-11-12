@@ -1,4 +1,5 @@
 #include "okay/Components/ActionList.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Components/LogicLinks.hpp"
 #include <algorithm>
 #include <cctype>
@@ -892,7 +893,7 @@ void ActionList::Update(float dt) {
                     tween(dur, [apply, mix, start, to, e](float u) {
                         apply(mix(start, to, Easing::Evaluate(e, u)));
                     });
-                } else {                            // flash [seconds] [r g b] — blink, then restore
+                } else if (Accessibility::FlashScale() > 0.0f) {   // flash [seconds] [r g b] — blink, then restore (skipped with reduced flashing)
                     float dur = Num(it, 0);
                     if (dur <= 0.0f) dur = 0.2f;
                     Color fc = it.args.size() > 3 ? Color{Num(it, 1), Num(it, 2), Num(it, 3), start.a}

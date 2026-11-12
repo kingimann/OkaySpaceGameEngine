@@ -84,17 +84,19 @@ std::uint8_t LinearToByte(float v) {
     return t[(std::size_t)(Clamp01(v) * 4096.0f + 0.5f)];
 }
 
-template <class Fn> void ForPixels(Image& img, Fn fn) {
-    if (!img.Valid()) return;
+template <class Fn> void ForBytes(std::uint8_t* p, std::size_t n, Fn fn) {
     const auto& lut = ByteToLinear();
-    std::uint8_t* p = img.Data();
-    const std::size_t n = (std::size_t)img.Width() * (std::size_t)img.Height();
     for (std::size_t i = 0; i < n; ++i, p += 4) {
         const Rgb out = fn(Rgb{lut[p[0]], lut[p[1]], lut[p[2]]});
         p[0] = LinearToByte(out.r);
         p[1] = LinearToByte(out.g);
         p[2] = LinearToByte(out.b);
     }
+}
+
+template <class Fn> void ForPixels(Image& img, Fn fn) {
+    if (!img.Valid()) return;
+    ForBytes(img.Data(), (std::size_t)img.Width() * (std::size_t)img.Height(), fn);
 }
 
 // The palette (see SafePalette): chosen by farthest-point search over sRGB colours that are
@@ -189,6 +191,13 @@ void DaltonizeImage(Image& img, ColorblindMode mode, float strength) {
     const ColorMatrix3 m = ColorblindMatrix(mode), shift = ShiftFor(mode);
     const float k = Clamp01(strength);
     ForPixels(img, [&](const Rgb& lin) { return Daltonize(lin, m, shift, k); });
+}
+
+void DaltonizeRgba8(std::uint8_t* rgba, std::size_t pixels, ColorblindMode mode, float strength) {
+    if (!rgba || mode == ColorblindMode::None || mode == ColorblindMode::Achromatopsia || strength <= 0.0f) return;
+    const ColorMatrix3 m = ColorblindMatrix(mode), shift = ShiftFor(mode);
+    const float k = Clamp01(strength);
+    ForBytes(rgba, pixels, [&](const Rgb& lin) { return Daltonize(lin, m, shift, k); });
 }
 
 Image SimulatedColorblind(const Image& img, ColorblindMode mode, float severity) {

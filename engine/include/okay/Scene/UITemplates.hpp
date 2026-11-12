@@ -8,6 +8,7 @@
 // Everything is styled like the OkaySpace launcher ("Slate"): blue-tinted dark
 // cards with hairline borders and soft shadows, the accent colour for the main
 // action, dim secondary text, pill badges and round avatars.
+#include <vector>
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -376,11 +377,11 @@ inline GameObject* AddPauseMenu(Scene& scene) {
     return root;
 }
 
-// Settings panel: Music / SFX sliders, Fullscreen / VSync switches, Quality dropdown, Back.
+// Settings panel: Music / SFX sliders, Fullscreen / VSync switches, Quality dropdown, Accessibility rows, Back.
 inline GameObject* AddSettings(Scene& scene) {
     using namespace detail;
     GameObject* canvas = EnsureCanvas(scene);
-    GameObject* root = Panel(scene, canvas, "Settings", UIAnchor::Center, {0, 0}, {440, 480},
+    GameObject* root = Panel(scene, canvas, "Settings", UIAnchor::Center, {0, 0}, {440, 680},
                              slate::Panel(), 16.0f, true);
     Text(scene, root, "Title", "Settings", UIAnchor::TopLeft, {32, 24}, {376, 40}, 30.0f, slate::Text(), 0, true);
     Caption(scene, root, "AudioCaption", "AUDIO", UIAnchor::TopLeft, {32, 82}, 376);
@@ -407,6 +408,20 @@ inline GameObject* AddSettings(Scene& scene) {
     { GameObject* g = Child(scene, root, "QualityDropdown"); auto* dd = g->AddComponent<UIDropdown>();
       dd->anchor = UIAnchor::TopLeft; dd->position = {208, 306}; dd->size = {200, 32};
       dd->options = {"Low", "Medium", "High"}; dd->value = 2; }
+    Divider(scene, root, UIAnchor::TopLeft, {32, 356}, 376);
+    Caption(scene, root, "AccessibilityCaption", "ACCESSIBILITY", UIAnchor::TopLeft, {32, 372}, 376);
+    auto dropdown = [&](const char* name, const char* label, float y, std::vector<std::string> opts, int v) {
+        Text(scene, root, (std::string(name) + "Label").c_str(), label, UIAnchor::TopLeft, {32, y}, {170, 32}, 16.0f);
+        GameObject* g = Child(scene, root, (std::string(name) + "Dropdown").c_str());
+        auto* dd = g->AddComponent<UIDropdown>();
+        dd->anchor = UIAnchor::TopLeft; dd->position = {208, y}; dd->size = {200, 32};
+        dd->options = std::move(opts); dd->value = v;
+    };
+    dropdown("TextSize", "Text size", 396, {"75%", "100%", "125%", "150%", "200%"}, 1);
+    dropdown("ColorFilter", "Colour filter", 436, {"Off", "Protanopia", "Deuteranopia", "Tritanopia"}, 0);
+    toggle("HighContrast", "High contrast", 484, false);
+    toggle("ReduceMotion", "Reduce motion", 520, false);
+    toggle("ReduceFlashing", "Reduce flashing", 556, false);
     Button(scene, root, "BackButton", "Done", UIAnchor::BottomLeft, {32, -28}, {376, 48});
     root->AddComponent<SettingsScreen>();
     return root;

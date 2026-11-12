@@ -109,8 +109,11 @@ jobs:
           echo "SAN_TESTS=$TESTS" >> "$GITHUB_ENV"
           echo "$TESTS"
 
+      # Capped at 3 parallel jobs: with an unbounded -j the runner was shut down mid-link
+      # (out of memory) on most runs, because every sanitized test executable links the
+      # whole sanitized engine.
       - name: Build
-        run: cmake --build build-asan -j --target $SAN_TESTS
+        run: cmake --build build-asan -j 3 --target $SAN_TESTS
 
       - name: Test
         working-directory: build-asan/tests

@@ -488,7 +488,6 @@ struct Checker {
             if (opt.checkAssets) Assets(go, path);
             if (opt.checkScripts) Scripts(go, path);
             if (opt.checkReferences) References(go, path);
-            if (opt.checkPhysics) Physics(go, path);
             FoliageRules(go, path);
             if (opt.checkPhysics) { Physics(go, path); Volumes(go, path); }
             if (opt.checkInactive) Inactive(go, path);

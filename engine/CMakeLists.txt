@@ -128,6 +128,7 @@ add_library(okay_engine
     src/Components/SplineMesh.cpp
     src/Components/LineRenderer.cpp
     src/Components/BuildMode.cpp
+    src/Components/Volume.cpp
     src/Components/DialogueGraph.cpp
     src/Components/DialogueRunner.cpp
     src/Components/QuestLog.cpp
@@ -137,6 +138,8 @@ add_library(okay_engine
     src/Platform/Account/Account.cpp
     src/Physics/Physics2D.cpp
     src/Physics/Physics3D.cpp
+    src/Physics/TriMesh.cpp
+    src/Physics/MeshCollider3D.cpp
     src/Audio/AudioMixer.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp

@@ -4,7 +4,7 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **124** rows that are Partial or Planned.
+The feature map currently has **123** rows that are Partial or Planned.
 
 ## Audits
 
@@ -33,6 +33,18 @@ The feature map currently has **124** rows that are Partial or Planned.
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
+
+## Planned: visual-script core upgrade
+
+Not started. Today graphs can call functions, have variable scopes, and use Broadcast / On Event and the list builtins; these steps build on that. One at a time, each shipped only when finished, tested and usable in the editor:
+
+1. A better variable system for all types: vectors, colors, structs, objects, arrays and maps, with local, graph, object and global scopes and defaults editable in the Inspector.
+2. A full set of array and map nodes: add, remove, insert, find, sort, for each, length, with typed element pins.
+3. Custom events with typed parameters, and delegates (bind, unbind, call).
+4. Graphs talking to each other: call a function, fire an event or read a variable on another object's graph, with the graph checker flagging broken links.
+5. Custom function nodes: user-defined nodes with typed pins, reusable across graphs and listed in the palette.
+
+The text-script nodes below depend on this.
 
 ## Planned: text-script nodes in visual script
 
@@ -73,7 +85,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | prefab overrides in the editor (apply, revert, per-field, prefab mode, variant creation, nested roots in the Hierarchy); the old... |
+| [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | prefab mode (editing a prefab in its own scene; Open only isolates the instance); the old... |
 | [1.11](feature_map/01-core-scene.md#111-asset-manager) | Asset manager | Partial | move existing loaders (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) onto it; track GPU resources; an... |
 | [1.12](feature_map/01-core-scene.md#112-asset-database) | Asset database | Partial | asset browser window and thumbnail grid (an old branch claude/asset-browser exists but shares no history with main); importers... |
 | [1.13](feature_map/01-core-scene.md#113-object-pooling) | Object pooling | Partial | a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job |
@@ -153,9 +165,8 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [21.2](feature_map/20-35-planned.md#212-nested-prefabs) | Nested prefabs | Partial | the editor does not use it (see Status); objects are matched by depth-first position and name, so reordering many objects can... |
-| [21.3](feature_map/20-35-planned.md#213-variants) | Variants | Partial | no UI; scene files never contain variant records (only prefab files do); override unit is a whole record, with field-level apply... |
-| [21.4](feature_map/20-35-planned.md#214-overrides) | Overrides | Partial | `Diff` is exact for well-known records and falls back to whole records for others; objects added or lost on an instance are... |
+| [21.2](feature_map/20-35-planned.md#212-nested-prefabs) | Nested prefabs | Partial | objects are matched by depth-first position and name, so reordering many objects can pair the wrong ones; nesting errors are not listed in the Console on load; a second instance of the applied file inside the same outer instance is not updated by Apply... |
+| [21.3](feature_map/20-35-planned.md#213-variants) | Variants | Partial | no variant badge on the Project panel tile; scene files never contain variant records (only prefab files do); objects added to or lost from a variant instance cannot be applied into the variant... |
 
 ### 22. Undo/redo & recovery (Critical)
 

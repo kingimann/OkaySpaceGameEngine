@@ -20142,6 +20142,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"call",        "Call Script Event",  "event name",           "Call a function on this object's Script.",                "Flow"},
     {"send",        "Broadcast Message",  "message",              "Send a message to ALL action lists in the scene.",        "Flow"},
     {"send_to",     "Message One Object", "object message",       "Send a message to one named object's actions.",           "Flow"},
+    {"fire_output", "Fire Output",        "name [value]",         "Raise a named output on this object's Logic Source so its I/O links run (target, input, delay, once). The value replaces each link's parameter.", "Flow"},
     {"send_value",  "Broadcast + Number", "message number",       "Broadcast a message with a number; receivers read `event_value`.", "Flow"},
     {"send_text",   "Broadcast + Text",   "message text...",      "Broadcast a message with text; receivers read `event_text`.",      "Flow"},
     {"log",         "Log To Console",     "text",                 "Print text to the console (for debugging).",              "Flow"},
@@ -20323,6 +20324,7 @@ static std::string ActionOpSummary(const ActionList::Item& it) {
     if (op == "wait") return a(0) + "s";
     if (op == "send" || op == "send_value" || op == "send_text") return "\"" + a(0) + "\"";
     if (op == "send_to") return a(0) + " <- \"" + a(1) + "\"";
+    if (op == "fire_output") return "output \"" + a(0) + "\"";
     if (op == "load_scene") return a(0);
     if (op == "goto") return "line " + a(0);
     if (op == "if_goto") return a(0) + " " + a(1) + " " + a(2) + " -> " + a(3);
@@ -32839,7 +32841,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* ls = dynamic_cast<LogicSource*>(curComp)) {
         if (CompHeader("Logic Source", ls, &toRemove)) {
             ImGui::TextDisabled("Sends on / off down its links (wire them in build mode with L).");
-            const char* kinds[] = {"Button", "Pressure Plate", "Trigger Zone", "Timer"};
+            const char* kinds[] = {"Button", "Pressure Plate", "Trigger Zone", "Timer", "Relay (outputs only)"};
             int k = (int)ls->kind;
             if (ImGui::Combo("Kind##ls", &k, kinds, LogicSource::kKindCount)) {
                 ls->kind = (LogicSource::Kind)k;
@@ -32878,6 +32880,76 @@ void DrawInspector(EditorState& ed) {
             for (int id : ls->links) ids += (ids.empty() ? "" : ", ") + std::to_string(id);
             ImGui::TextDisabled("Links: %s", ids.empty() ? "none" : ids.c_str());
             if (!ls->links.empty()) { ImGui::SameLine(); if (ImGui::SmallButton("Clear##lsl")) { ls->links.clear(); ed.dirty = true; } }
+            // ---- I/O links: a named output of this object -> an input on any object ----
+            ImGui::Separator();
+            ImGui::Text("I/O Links (%d)", (int)ls->ioLinks.size());
+            oked::FieldTip("I/O Links");
+            ImGui::TextDisabled("When an output fires, deliver an input to a target. Outputs: OnTurnedOn,\nOnTurnedOff, OnPressed, or any name from a Fire Output action / fire_output().");
+            static std::string ioMsg;   // result of the last Test
+            int ioRemove = -1;
+            auto textField = [&](const char* label, std::string& v, const char* hint, float w) {
+                char b[96]; std::snprintf(b, sizeof(b), "%s", v.c_str());
+                ImGui::SetNextItemWidth(w);
+                if (ImGui::InputTextWithHint(label, hint, b, sizeof(b))) { v = b; ed.dirty = true; }
+            };
+            for (std::size_t li = 0; li < ls->ioLinks.size(); ++li) {
+                auto& l = ls->ioLinks[li];
+                ImGui::PushID((int)li);
+                const std::string problem = ls->IoProblem(l);
+                ImGui::Separator();
+                if (ImGui::Checkbox("##ioen", &l.enabled)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enabled");
+                ImGui::SameLine();
+                textField("Output##io", l.output, "OnTurnedOn", 120);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(24);
+                if (ImGui::BeginCombo("##iooutp", "", ImGuiComboFlags_NoPreview)) {
+                    for (const auto& n : LogicSource::BuiltInOutputs())
+                        if (ImGui::Selectable(n.c_str(), l.output == n)) { l.output = n; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+                textField("Target##io", l.target, "(this object)", 140);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(24);
+                if (ImGui::BeginCombo("##iotgt", "", ImGuiComboFlags_NoPreview)) {
+                    if (ImGui::Selectable("(this object)", l.target.empty())) { l.target.clear(); ed.dirty = true; }
+                    for (const auto& up : ed.scene().Objects()) {
+                        GameObject* g = up.get();
+                        if (!g || g->IsDestroyed() || g == ls->gameObject) continue;
+                        if (ImGui::Selectable(g->name.c_str(), g->name == l.target)) { l.target = g->name; ed.dirty = true; }
+                    }
+                    ImGui::EndCombo();
+                }
+                textField("Input##io", l.input, "Enable / event name", 140);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(24);
+                if (ImGui::BeginCombo("##ioinp", "", ImGuiComboFlags_NoPreview)) {
+                    for (const auto& n : LogicSource::InputNames())
+                        if (ImGui::Selectable(n.c_str(), l.input == n)) { l.input = n; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+                textField("Param##io", l.param, "optional", 120);
+                oked::FieldTip("Param");
+                ImGui::SetNextItemWidth(80);
+                if (ImGui::DragFloat("Delay (s)##io", &l.delay, 0.05f, 0.0f, 3600.0f)) { if (l.delay < 0.0f) l.delay = 0.0f; ed.dirty = true; }
+                oked::FieldTip("Delay (s)");
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Once##io", &l.once)) ed.dirty = true;
+                oked::FieldTip("Once");
+                if (ImGui::SmallButton("Test##io")) ioMsg = ls->TestFire(li);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Deliver this link now (ignores delay and once).");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove##io")) ioRemove = (int)li;
+                if (!problem.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "Broken: %s", problem.c_str()); }
+                ImGui::PopID();
+            }
+            if (ioRemove >= 0) { ls->ioLinks.erase(ls->ioLinks.begin() + ioRemove); ed.dirty = true; }
+            if (ImGui::SmallButton("Add I/O Link##ls")) {
+                LogicSource::IoLink nl;
+                if (ls->kind == LogicSource::Kind::Relay) nl.output = "OnPressed";
+                ls->ioLinks.push_back(nl); ed.dirty = true;
+            }
+            if (!ioMsg.empty()) ImGui::TextWrapped("Test: %s", ioMsg.c_str());
             if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
         }
     }

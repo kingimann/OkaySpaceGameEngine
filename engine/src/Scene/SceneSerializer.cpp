@@ -2004,6 +2004,16 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("ox", ls->zoneOffset.x)("oy", ls->zoneOffset.y)("oz", ls->zoneOffset.z)
          .str("tag", ls->activatorTag).key("key", ls->pressKey)("pad", ls->pressPadButton)
          ("reach", ls->pressReach).str("links", links);
+        if (!ls->ioLinks.empty()) {
+            k("io", ls->ioLinks.size());
+            for (std::size_t i = 0; i < ls->ioLinks.size(); ++i) {
+                const auto& l = ls->ioLinks[i];
+                const std::string p = "io" + std::to_string(i);
+                k.str((p + "o").c_str(), l.output).str((p + "t").c_str(), l.target)
+                 .str((p + "i").c_str(), l.input).str((p + "p").c_str(), l.param)
+                 ((p + "d").c_str(), l.delay).b((p + "x").c_str(), l.once).b((p + "e").c_str(), l.enabled);
+            }
+        }
         out << "\n";
     }
     if (auto* lt = go->GetComponent<LogicTarget>()) {
@@ -5635,6 +5645,16 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     std::replace(links.begin(), links.end(), ',', ' ');
                     std::istringstream ids(links);
                     for (int id = 0; ids >> id;) if (id != 0) ls->links.push_back(id);
+                    int nio = 0; k.i("io", nio);
+                    for (int i = 0; i < nio && i < 256; ++i) {
+                        const std::string p = "io" + std::to_string(i);
+                        LogicSource::IoLink l;
+                        k.str((p + "o").c_str(), l.output); k.str((p + "t").c_str(), l.target);
+                        k.str((p + "i").c_str(), l.input); k.str((p + "p").c_str(), l.param);
+                        k.f((p + "d").c_str(), l.delay); k.b((p + "x").c_str(), l.once); k.b((p + "e").c_str(), l.enabled);
+                        if (!(l.delay >= 0.0f)) l.delay = 0.0f;
+                        ls->ioLinks.push_back(l);
+                    }
                 } else if (field == "logictarget") {
                     auto* lt = go->AddComponent<LogicTarget>();
                     KvIn k(in);

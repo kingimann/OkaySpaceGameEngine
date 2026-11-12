@@ -262,6 +262,11 @@ add_executable(test_build_mode test_build_mode.cpp)
 target_link_libraries(test_build_mode PRIVATE okay::engine)
 add_test(NAME build_mode COMMAND test_build_mode)
 
+# Generalised I/O links on a Logic Source: named outputs, inputs, delay, once, save/load, prefab overrides
+add_executable(test_io_links test_io_links.cpp)
+target_link_libraries(test_io_links PRIVATE okay::engine)
+add_test(NAME io_links COMMAND test_io_links)
+
 add_executable(test_loading_screen test_loading_screen.cpp)
 target_link_libraries(test_loading_screen PRIVATE okay::engine)
 add_test(NAME loading_screen COMMAND test_loading_screen)

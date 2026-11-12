@@ -97,15 +97,15 @@ No open PR touches this area.
 - **What:** Several ways to build: a Build Mode players use in your game (palette, snapping, undo, logic links, saved creations), a Rust-style tiered Structure Builder, a Minecraft-style Block Builder, and a developer Builder Mode for modelling while walking.
 - **Parts:**
   - 11.5.1 Build Mode - `Components/BuildMode`, `Components/Buildable` - palette hotbar, grid snap, rotate, move, copy, delete, undo and redo, reach and object caps, `BuildCreation` save and load to a creations file
-  - 11.5.2 Logic links - `Components/LogicLinks` - Logic Source (button, pressure plate, trigger zone, timer) wired to Logic Targets (door, mover, light, spawner, event) by Buildable id
+  - 11.5.2 Logic links - `Components/LogicLinks` - Logic Source (button, pressure plate, trigger zone, timer) wired to Logic Targets (door, mover, light, spawner, event) by Buildable id; I/O links on a source (named output to target object, input, parameter, delay, fire-once, enabled; Relay kind; Fire Output action and script call)
   - 11.5.3 Structure Builder - `Components/StructureBuilder`, `Components/BuildPiece` - foundations, walls, floors, pillars and ramps that snap to each other, wood-stone-metal upgrades, repair, cost from the inventory
   - 11.5.4 Block Builder - `Components/BlockBuilder` - place and remove grid cubes by aiming at surfaces
   - 11.5.5 Builder Mode - `Components/BuilderMode` - developer tool: drop primitives or stamp prefabs, rotate and scale, save the assembly as a `.okayprefab`
 - **Code:** `Components/BuildMode`, `Components/Buildable`, `Components/LogicLinks`, `Components/StructureBuilder`, `Components/BuildPiece`, `Components/BlockBuilder`, `Components/BuilderMode`, `editor/main.cpp` (build inspectors)
-- **API:** `BuildMode`, `Buildable`, `BuildPaletteItem`, `BuildCreation`, `LogicSource`, `LogicTarget`, `StructureBuilder`, `BuildPiece`, `BlockBuilder`, `BuilderMode`, script `build_enter`, `build_exit`, `build_toggle`, `on_object_placed`
-- **Editor:** Add Component > Gameplay rows "Build Mode (players build + wire)", "Buildable (players may edit)", Logic Source, Logic Target, "Block Builder (voxel)", "Structure Builder (Rust-style)"; Builder Mode is toggled in Play from the editor
+- **API:** `BuildMode`, `Buildable`, `BuildPaletteItem`, `BuildCreation`, `LogicSource`, `LogicTarget`, `StructureBuilder`, `BuildPiece`, `BlockBuilder`, `BuilderMode`, script `build_enter`, `build_exit`, `build_toggle`, `on_object_placed`, `fire_output`, Actions step `fire_output`, `LogicSource::IoLink`, `FireOutput`
+- **Editor:** Add Component > Gameplay rows "Build Mode (players build + wire)", "Buildable (players may edit)", Logic Source (with an I/O Links list: Add, Test, Remove, broken-target warning), Logic Target, "Block Builder (voxel)", "Structure Builder (Rust-style)"; Builder Mode is toggled in Play from the editor
 - **Docs:** `docs/build_mode.md`
-- **Tests:** `build_mode`, `structure_builder`, `block_builder`, `builder_mode`, `inventory_build_charge`
+- **Tests:** `build_mode`, `io_links`, `structure_builder`, `block_builder`, `builder_mode`, `inventory_build_charge`
 - **Status:** Works - BuildMode.hpp, Buildable.hpp, LogicLinks.hpp and the other builder headers read; placement, undo, links and charging for pieces covered by `build_mode`, `structure_builder` and `inventory_build_charge`
 - **Open:** per `docs/build_mode.md` "Not covered yet": placements and links are not synced between players, building is 3D only, pressure plates need a collider; Build Mode and Builder Mode are different features with confusingly similar names
 - **Related:** 6.6, 11.1, 11.3, 12.8, 16.8, 2.6

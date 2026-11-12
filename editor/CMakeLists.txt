@@ -99,8 +99,11 @@ if(WIN32)
 endif()
 # OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
 if(TARGET okay_ui)
-    target_link_libraries(okay-editor PRIVATE okay_ui)
+    target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
+endif()
+if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
+    target_compile_definitions(okay-editor PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
 endif()
 set_target_properties(okay-editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

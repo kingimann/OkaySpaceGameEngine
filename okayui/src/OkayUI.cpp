@@ -184,6 +184,7 @@ struct ChildSave {
     float* maxSlot;       // persisted max scroll from last frame (clamps this frame)
     float pad;
     bool  hovered;        // mouse over the region this frame
+    float setScroll;      // SetScrollY's request, applied once the content has been measured (< 0: none)
 };
 ChildSave g_childStack[8];
 int       g_childTop = 0;
@@ -299,6 +300,16 @@ inline float fCharW() { return g_ttf ? fMeasure("n") : (float)fW(); }
 inline float rowH() { return fH() * g_theme.textScale + (g_look ? 15.0f : 12.0f); }
 inline float textH() { return fH() * g_theme.textScale; }
 inline float labelW(const char* s) { return s && *s ? fMeasure(s) * g_theme.textScale : 0.0f; }
+// ImGui's convention for labels: what follows "##" is only part of the widget id and is not shown.
+struct VisLabel {
+    char b[128];
+    explicit VisLabel(const char* s) {
+        int n = 0;
+        for (; s && s[n] && n < 127; ++n) if (s[n] == '#' && s[n + 1] == '#') break;
+        for (int i = 0; i < n; ++i) b[i] = s[i];
+        b[n] = 0;
+    }
+};
 
 // The indented content left edge and full indented content width.
 inline float leftEdge() { return g_lay.ox + g_lay.indent; }
@@ -1454,6 +1465,8 @@ const Font* FontBold()      { return &kFontBold; }
 
 static bool g_pinNext = false;   // PinNextWindow: the next Begin sits where it is told
 void PinNextWindow() { g_pinNext = true; }
+static bool g_bareNext = false;   // BareNextWindow: the next Begin has no title bar (a panel that fills a host's rectangle)
+void BareNextWindow() { g_bareNext = true; }
 static bool  g_resizeNext = false;   // ResizableNextWindow: the next Begin gets a resize grip
 static float g_resizeMinW = 100.0f, g_resizeMinH = 60.0f;
 void ResizableNextWindow(float minW, float minH) { g_resizeNext = true; g_resizeMinW = minW; g_resizeMinH = minH; }
@@ -1465,7 +1478,9 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     WinSlot* slot = nullptr;
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
     if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { ws.used = true; ws.id = id; ws.x = x; ws.y = y; slot = &ws; break; }
-    const bool pinned = g_pinNext;
+    const bool bare = g_bareNext;       // no title bar, never collapsed, never dragged: it is where the host put it
+    g_bareNext = false;
+    const bool pinned = g_pinNext || bare;
     g_pinNext = false;
     // Opt-in resize grip (ResizableNextWindow): the remembered size replaces the w and h passed in.
     const bool resizable = g_resizeNext && slot != nullptr;
@@ -1478,8 +1493,10 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     if (pinned && slot) { slot->x = x; slot->y = y; }
     float wx = slot ? slot->x : x, wy = slot ? slot->y : y;
     if (pinned) { wx = x; wy = y; }
-    const float titleH = rowH();
-    bool* collapsed = openState(id ^ 0x5c01, false);   // per-window collapsed flag
+    const float titleH = bare ? 0.0f : rowH();
+    static bool s_bareOpen = false;     // a bare window's "collapsed" flag: always false
+    bool* collapsed = bare ? &s_bareOpen : openState(id ^ 0x5c01, false);   // per-window collapsed flag
+    if (bare) { s_bareOpen = false; p_open = nullptr; }
 
     // Title-bar sub-rects: a collapse caret on the left, an optional close [x] on the
     // right, and the draggable strip in between.
@@ -1488,7 +1505,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     const float closeX = wx + w - btn, closeW = p_open ? btn : 0.0f;
 
     // Collapse toggle: click the caret to fold/unfold the window.
-    const bool overCaret = hit(caretX, wy, caretW, titleH);
+    const bool overCaret = !bare && hit(caretX, wy, caretW, titleH);
     if (overCaret) g_hot = id ^ 0x5c01;
     if (g_active == (id ^ 0x5c01)) { if (g_released) { if (overCaret) *collapsed = !*collapsed; g_active = 0; } }
     else if (overCaret && g_pressed) { g_active = id ^ 0x5c01; g_focusClaimed = true; }
@@ -1504,7 +1521,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
     // Drag the window by the title bar (the strip between caret and close button).
     const float dragX = wx + caretW, dragW = w - caretW - closeW;
-    const bool overDrag = hit(dragX, wy, dragW, titleH);
+    const bool overDrag = !bare && hit(dragX, wy, dragW, titleH);
     if (overDrag) g_hot = id;
     if (g_active == id) {
         if (!g_in.mouseDown) g_active = 0;
@@ -1532,7 +1549,9 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
     // Frame: panel body (only the title bar when collapsed) + accent underline + title.
     const float bodyH = *collapsed ? titleH : h;
-    if (g_look) {   // launcher window: shadow, rounded body with a hairline, slim title bar
+    if (bare) {
+        // A bare window draws no frame at all: the host's own window behind it is the background.
+    } else if (g_look) {   // launcher window: shadow, rounded body with a hairline, slim title bar
         const float wr = g_theme.windowRounding;
         if (g_theme.windowShadow) softShadow(wx, wy, w, bodyH, wr);
         rrect(wx, wy, w, bodyH, wr, g_theme.border);
@@ -1551,7 +1570,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
         }
     } else
     Panel(wx, wy, w, bodyH);
-    if (!g_look) {
+    if (!g_look && !bare) {
     // Title bar: round the TOP corners to match the panel, square at the bottom edge
     // (drawn as a rounded rect, then a square strip fills its lower half flush to body).
     const float rd = rnd();
@@ -1575,8 +1594,8 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
         line(wx + w - 4.0f, wy + h - 7.0f, wx + w - 7.0f, wy + h - 4.0f, 1.5f, gc);
     }
 
-    // Establish the content layout region.
-    const float pad = g_theme.windowPadding;
+    // Establish the content layout region. (A bare window has no padding: the host's own window already has its own.)
+    const float pad = bare ? 0.0f : g_theme.windowPadding;
     if (g_look) { PushClipRect(wx + 1.0f, wy + titleH, w - 2.0f, h - titleH - 1.0f); g_lay.winClip = true; }
     g_lay.active = true;
     g_lay.seed = id;
@@ -1623,7 +1642,7 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     if (g_childTop < 8) {
         ChildSave& c = g_childStack[g_childTop++];
         c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
-        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered;
+        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered; c.setScroll = -1.0f;
     }
     g_lay.ox = rx + pad;
     g_lay.contentW = rw - 2.0f * pad - kScrollbarW;
@@ -1638,6 +1657,14 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     return true;
 }
 
+float GetScrollY()    { return g_childTop > 0 ? *g_childStack[g_childTop - 1].scroll : 0.0f; }
+float GetScrollMaxY() { return g_childTop > 0 ? *g_childStack[g_childTop - 1].maxSlot : 0.0f; }
+void SetScrollY(float y) {
+    if (g_childTop <= 0) return;
+    if (!(y > 0.0f)) y = 0.0f;                  // also catches NaN
+    g_childStack[g_childTop - 1].setScroll = y;   // applied by EndChild, after it measured the content, and clamped to it
+}
+
 void EndChild() {
     if (g_childTop <= 0) return;
     ChildSave& c = g_childStack[--g_childTop];
@@ -1646,6 +1673,7 @@ void EndChild() {
     const float contentH = g_lay.cy - (c.top - *c.scroll);
     const float viewH = c.rh - 2.0f * c.pad;
     float maxScroll = contentH - viewH; if (maxScroll < 0.0f) maxScroll = 0.0f;
+    if (c.setScroll >= 0.0f) *c.scroll = c.setScroll;   // SetScrollY, now that the content is measured
     *c.maxSlot = maxScroll;                     // remember for next frame's clamp
     if (*c.scroll < 0.0f) *c.scroll = 0.0f;
     if (*c.scroll > maxScroll) *c.scroll = maxScroll;
@@ -2050,13 +2078,14 @@ bool ImageButton(const char* id, SDL_Texture* tex, float w, float h) {
 
 bool InputText(const char* label, char* buf, int cap, unsigned flags) {
     if (!g_lay.active || !buf) return false;
+    const VisLabel vis(label);
     const float h = rowH();
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
     const bool ch = TextField(hashLabel(label), x, y, ctrlW, h, buf, cap, flags);
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
     return ch;
 }
 
@@ -2084,10 +2113,12 @@ bool InputInt(const char* label, int* value, int step) {
     return ch;
 }
 
-bool CollapsingHeader(const char* label) {
+bool CollapsingHeader(const char* label, bool defaultOpen);
+bool CollapsingHeader(const char* label) { return CollapsingHeader(label, false); }
+bool CollapsingHeader(const char* label, bool defaultOpen) {
     if (!g_lay.active) return false;
     const int id = hashLabel(label);
-    bool* open = openState(id, false);
+    bool* open = openState(id, defaultOpen);
     const float h = rowH(), w = fullW();
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
@@ -2135,8 +2166,9 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
     if (!g_lay.active || !items || !current || count <= 0) return false;
     const int id = hashLabel(label);
     bool* open = openState(id, false);
+    const VisLabel vis(label);
     const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
@@ -2152,7 +2184,7 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, cur, s, g_theme.text);
     if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, g_theme.textDim);
     else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
-    if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
 
     bool changed = false;
     if (*open) {
@@ -3357,7 +3389,7 @@ void ResetState() {
     g_lay = LayoutState(); g_col = ColumnState(); g_tbl = TableState();
     g_childTop = g_popupTop = g_colTop = g_idTop = g_itemWTop = g_clipTop = 0;
     g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
-    g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_resizeNext = false;
+    g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_bareNext = false; g_resizeNext = false;
     g_ovCurN = g_ovPrevN = 0;
     g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
 }

@@ -73,6 +73,15 @@ target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
     ${CMAKE_SOURCE_DIR}/engine/include)
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
+# The opt-in OkayUI backend (Settings > Appearance > UI backend): the What's New page has an OkayUI port. Dear ImGui stays the
+# default; OKAY_UI_DEFAULT_BACKEND=okayui flips the build's default. Without okay_ui (no SDL2) the setting is absent.
+if(TARGET okay_ui_screens)
+    target_link_libraries(okayspace-launcher PRIVATE okay_ui_screens)
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_HAVE_OKAYUI=1)
+endif()
+if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
+endif()
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)
     target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + file dialogs, voice UDP, native HTTPS

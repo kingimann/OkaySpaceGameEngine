@@ -146,3 +146,23 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Words:** draw list, GetWindowDrawList, custom drawing, canvas, InvisibleButton, BeginDisabled, cursor position, content region, CalcTextSize, polyline, bezier, replace Dear ImGui
 - **Seen as:** a custom-drawn panel does not clip; a disabled widget still reacts; a translucent line is darker at its corners
 - **Ask me like:** "work on 40.7.1, add AddConcavePolyFilled"; "render the draw list lab page to a PNG"
+
+### 40.8 Opt-in OkayUI backend in the launcher and editor
+- **What:** The first step that runs OkayUI inside the real apps: a setting "UI backend: Dear ImGui (default) / OkayUI (preview)" (and the env var `OKAY_UI_BACKEND`, and the CMake default `OKAY_UI_DEFAULT_BACKEND`) that makes one ported screen per app draw with OkayUI instead of Dear ImGui: the launcher's What's New page and the editor's Console panel. Everything else is still Dear ImGui, and Dear ImGui is the default.
+- **Parts:**
+  - 40.8.1 Backend switch - `shared/OkayUIBackend.hpp` - `Backend {ImGui, OkayUI}`, `Parse`, `Normalize`, `Name`, `Label`, `Resolve` (env over setting over build default; Dear ImGui when OkayUI is not compiled in); saved as `ui_backend=` in `launcher.cfg` and `uibackend 0|1` in `okay_settings.txt`
+  - 40.8.2 Host layer - `shared/OkayUIHost.hpp` - `InputCollector` (SDL events to `OkayUI::Input`: text, Backspace, Delete, arrows, Home, End, Enter, Escape, select-all, shift, wheel) and `Region` (the rectangle a hosted screen occupies inside an ImGui window, so OkayUI owns the mouse there and ImGui everywhere else)
+  - 40.8.3 Screens - `okayui/screens/OkayUIScreens.*` - `DrawWhatsNew` (version, update status and its button, release cards, earlier releases, link to all releases) and `DrawConsole` (search, category, level toggles with counts, collapse, auto-scroll, Clear on Play, Pause on error, Copy all, Save, per-row copy menu, source jump, details, Open Script); plain functions with no SDL and no ImGui
+  - 40.8.4 Library additions - `okayui/src/OkayUI.cpp` - `BareNextWindow` (a window without a title bar that fills a host's rectangle), `GetScrollY`, `GetScrollMaxY`, `SetScrollY`, `CollapsingHeader(label, defaultOpen)`, `##` hidden label suffix for `InputText` and `Combo`
+  - 40.8.5 App wiring - `launcher/main.cpp` (Settings > Appearance > Interface > UI backend, frame bracket, What's New branch), `editor/main.cpp` and `editor/ConsolePanel.cpp` (the "UI backend" menu entry, input and mouse ownership, `DrawConsoleOkayUI`)
+- **Code:** `shared/OkayUIBackend.hpp`, `shared/OkayUIHost.hpp`, `shared/OkayUIHostImGui.hpp`, `shared/ConsoleScriptLink.hpp`, `okayui/screens/OkayUIScreens.hpp`, `okayui/screens/OkayUIScreens.cpp`, `okayui/tests/test_okayui_screens.cpp`, `okayui/tests/test_okayui_host.cpp`, `tests/test_ui_backend.cpp`, `launcher/main.cpp`, `editor/main.cpp`, `editor/ConsolePanel.cpp`, `okayui/CMakeLists.txt`, `CMakeLists.txt`
+- **API:** env `OKAY_UI_BACKEND=okayui|imgui`; CMake `-DOKAY_UI_DEFAULT_BACKEND=imgui|okayui`; `okayuibackend::Resolve`; `okayuihost::InputCollector`, `okayuihost::Region`; `okayuiscreens::DrawWhatsNew`, `okayuiscreens::DrawConsole`
+- **Editor:** View > Rendering & Performance > UI backend (next to VSync); with OkayUI chosen the Console panel is drawn by OkayUI inside its dock tab
+- **Docs:** `docs/own_ui_toolkit.md` (section 5, with the design, what is not covered and the screenshots)
+- **Tests:** `ui_backend` (parse, persist, precedence, default), `okayui_host` (events to input, region ownership, typing through OkayUI), `okayui_screens` (every control of both screens, 6 golden images)
+- **Status:** Partial - both ported screens work and were run in the real windows under Xvfb; preview, off by default
+- **Open:** OkayUI draws on top of every ImGui window, so a window or menu that overlaps a hosted rectangle is covered by it; one frame of mouse-ownership latency; the other pages and panels are Dear ImGui; differences from the ported pages are listed in `docs/own_ui_toolkit.md` section 5.5; not run on Windows or with a GPU
+- **Related:** 40.3, 40.4, 40.6, 15.11, 17.1
+- **Words:** UI backend, OKAY_UI_BACKEND, OKAY_UI_DEFAULT_BACKEND, OkayUI preview, hosted region, BareNextWindow, InputCollector, okayuiscreens, okayuihost, What's New OkayUI, Console OkayUI, replace Dear ImGui
+- **Seen as:** the setting does nothing (OKAY_UI_BACKEND is set and wins); a panel is covered by the OkayUI page; typing in the OkayUI search field also triggers an editor shortcut; the What's New page looks different from the old one
+- **Ask me like:** "work on 40.8.3, port the Stats panel"; "make OkayUI the default backend in this build"

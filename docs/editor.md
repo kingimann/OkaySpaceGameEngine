@@ -833,6 +833,13 @@ launch hands its request to the first), which matters when you script it for scr
   `unscaled_dt`, `is_paused`, `hitch_count`, `push_pause`, `pop_pause`, `is_paused_by`, `hit_stop`, `slow_motion`,
   `ramp_timescale` and `ease_curve` are in the Scripting Reference (Timing and Easing sections), the signature hints and
   the hover descriptions; the completion list already took every VM builtin.
+- **Visual script, Nodes tab**: the Visual Script window's left panel has a **Nodes** tab next to **Outline**. It is the
+  Add Node list kept open beside the graph: search (Ctrl+F or `/`), the Basic / Inter / Adv filter, folding groups
+  (Favourites, Recently used, Starter, then one per topic), a line of help under each node, and a star that pins a
+  favourite. Drag a row onto the graph to drop the node there, or double-click / press Enter to add it in the middle of
+  the view. Drag the panel's edge to resize it, `<<` folds it to icons, Ctrl+\ hides it. The pop-up (right-click or Space
+  on the canvas, or a wire dropped in empty space) is the same list. The panel's width, tab, level, favourites, recent
+  nodes and open groups are saved in `okay_vsnodes.txt`. See `docs/visual_scripting.md`.
 - **Visual script**: the seven tween, spring and ease nodes are in the node search and palette: **Ease With Curve**
   (Math), **Spring Step** (Math), **Tween Move**, **Tween Move By Speed**, **Kill / Pause / Play Tweens With Tag**
   (Action), each with its pins, setting hint and help text. "Generate script" turns Ease With Curve into

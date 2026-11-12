@@ -2157,7 +2157,12 @@ struct VsEditState {
     std::map<int, float> flash;
     bool   showMinimap = true;
     bool   liveValues = true;
-    bool   showOutline = true;   // events, variables and parameters on the left
+    bool   showOutline = true;   // the left side panel (Outline and Nodes tabs); mirrors VsListPrefs().panelShown
+    // A node picked in the Nodes tab (double-click, Enter, Add to graph) or dropped from it
+    // on the graph: placed after the canvas is laid out, where the view maths is known.
+    std::string listAddType, listAddArg, listAddKey;
+    bool   listAddAtDrop = false;   // dropped at listAddX/Y; otherwise the middle of the view
+    float  listAddX = 0.0f, listAddY = 0.0f;
     bool   showDetails = false;  // the selected node's description, on the right
     bool   snapGrid = true;      // snap a moved node to the canvas grid on release
     bool   wasNodeDrag = false;
@@ -3156,6 +3161,16 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     VsEditState& st = State();
     VsEditGraph& g = st.g;
+    VsNodeListPrefs& lp = VsListPrefs();   // side panel: shown, tab, width (one setting for every graph tab)
+    st.showOutline = lp.panelShown;
+    static bool s_forceSideTab = false;    // a shortcut or toolbar button asked for a tab: bring it to the front
+    // Show (or hide, when it is already the tab in front) one side panel tab.
+    auto toggleSideTab = [&](VsSideTab tab) {
+        if (lp.panelShown && !lp.rail && lp.tab == (int)tab) lp.panelShown = false;
+        else { lp.panelShown = true; lp.rail = false; lp.tab = (int)tab; s_forceSideTab = true; }
+        st.showOutline = lp.panelShown;
+        VsSaveListPrefs();
+    };
     // Names and paths already in the file become references when the scene
     // (or the file extension) tells us what they point at. Older files still run.
     if (VsUpgradeGraph(g, ed.scene())) g.dirty = true;
@@ -3258,7 +3273,7 @@ inline void Draw(EditorState& ed, bool* open) {
         }
         if (ImGui::MenuItem("Templates...")) st.openTemplates = true;
         ImGui::Separator();
-        ImGui::MenuItem("Outline", nullptr, &st.showOutline);
+        ImGui::MenuItem("Side panel (Nodes, Outline)", "Ctrl+\\", &st.showOutline);
         ImGui::MenuItem("Node details", nullptr, &st.showDetails);
         ImGui::MenuItem("Minimap", nullptr, &st.showMinimap);
         ImGui::MenuItem("Live values while playing", nullptr, &st.liveValues);
@@ -3456,7 +3471,10 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::Button("+##vszoomin")) st.zoom = std::clamp(st.zoom * 1.12f, 0.28f, 2.2f);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
         ImGui::SameLine();
-        if (ImGui::Button(st.showOutline ? "Outline" : "Outline##off")) st.showOutline = !st.showOutline;
+        if (ImGui::Button(st.showOutline && lp.tab == (int)VsSideTab::Nodes && !lp.rail ? "Nodes" : "Nodes##off")) toggleSideTab(VsSideTab::Nodes);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The node list beside the graph: search, topics, favourites. Ctrl+F searches, Ctrl+\\ hides the panel.");
+        ImGui::SameLine();
+        if (ImGui::Button(st.showOutline && lp.tab == (int)VsSideTab::Outline && !lp.rail ? "Outline" : "Outline##off")) toggleSideTab(VsSideTab::Outline);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Events, variables and parameters");
         ImGui::SameLine();
         if (ImGui::Button(st.showDetails ? "Details" : "Details##off")) st.showDetails = !st.showDetails;
@@ -3573,13 +3591,62 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SetClipboardText(VsSelectionText(g, st.sel).c_str());
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) addComment = true;
         if (ImGui::IsKeyPressed(ImGuiKey_F9, false)) for (int id : std::vector<int>(st.sel.begin(), st.sel.end())) toggleBreakpoint(id);
+        // The side panel: Ctrl+\\ shows or hides it, Ctrl+F or / jumps to the node search.
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) { st.showOutline = !st.showOutline; lp.rail = false; }
+        if ((ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) || (!ctrl && ImGui::IsKeyPressed(ImGuiKey_Slash, false))) {
+            st.showOutline = true; lp.rail = false; lp.tab = (int)VsSideTab::Nodes;
+            s_forceSideTab = true; VsFocusNodeSearch() = true;
+        }
     }
+    if (st.showOutline != lp.panelShown) { lp.panelShown = st.showOutline; VsSaveListPrefs(); }
 
-    // ---- Events list: every event chain in the graph; click one to jump to it ----
-    if (st.showOutline) {
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+    // ---- Side panel: the Nodes tab, and the Outline (events, variables, parameters) ----
+    // Resizable (drag the edge), folds to a narrow strip of icons, remembered between runs.
+    if (st.showOutline && lp.rail) {
+        ImGui::BeginChild("vsrail", ImVec2(36.0f, 0), true, ImGuiWindowFlags_NoScrollbar);
+        auto railButton = [&](const char* id, const char* tip, int icon, bool on) {
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 110, 160, 255));
+            const bool hit = ImGui::Button(id, ImVec2(24.0f, 24.0f));
+            if (on) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+            ImDrawList* rd = ImGui::GetWindowDrawList();
+            const ImU32 c = IM_COL32(225, 230, 240, 255);
+            if (icon == 0) {   // expand: a right-pointing triangle
+                rd->AddTriangleFilled(ImVec2(p.x + 9, p.y + 6), ImVec2(p.x + 9, p.y + 18), ImVec2(p.x + 16, p.y + 12), c);
+            } else if (icon == 1) {   // nodes: four boxes
+                for (int k = 0; k < 4; ++k) {
+                    const ImVec2 a(p.x + 5 + (k % 2) * 8, p.y + 5 + (k / 2) * 8);
+                    rd->AddRectFilled(a, ImVec2(a.x + 6, a.y + 6), c, 1.0f);
+                }
+            } else {   // outline: three lines
+                for (int k = 0; k < 3; ++k) rd->AddRectFilled(ImVec2(p.x + 5 + (k ? 3.0f : 0.0f), p.y + 6 + k * 5), ImVec2(p.x + 19, p.y + 8 + k * 5), c);
+            }
+            return hit;
+        };
+        if (railButton("##railexp", "Open the side panel", 0, false)) { lp.rail = false; VsSaveListPrefs(); }
+        if (railButton("##railnodes", "Nodes: search and add nodes (Ctrl+F)", 1, lp.tab == (int)VsSideTab::Nodes)) { lp.rail = false; lp.tab = (int)VsSideTab::Nodes; s_forceSideTab = true; VsSaveListPrefs(); }
+        if (railButton("##railout", "Outline: events, variables, parameters", 2, lp.tab == (int)VsSideTab::Outline)) { lp.rail = false; lp.tab = (int)VsSideTab::Outline; s_forceSideTab = true; VsSaveListPrefs(); }
+        ImGui::EndChild();
+        ImGui::SameLine();
+    } else if (st.showOutline) {
+        const float sideW = VsClampSideWidth(lp.width, ImGui::GetContentRegionAvail().x);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, sideW < 300.0f ? ImVec2(8.0f, 8.0f) : ImVec2(14.0f, 12.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
-        ImGui::BeginChild("vsoutline", ImVec2(268, 0), true);
+        ImGui::BeginChild("vsoutline", ImVec2(sideW, 0), true);
+        if (ImGui::SmallButton("<<##vsfold")) { lp.rail = true; VsSaveListPrefs(); }   // fold to icons
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fold the panel to icons (Ctrl+\\ hides it)");
+        ImGui::SameLine();
+        const bool tabsOpen = ImGui::BeginTabBar("##vssidetabs");
+        const bool forceTab = s_forceSideTab;
+        s_forceSideTab = false;
+        if (tabsOpen && ImGui::BeginTabItem("Nodes", nullptr, forceTab && lp.tab == (int)VsSideTab::Nodes ? ImGuiTabItemFlags_SetSelected : 0)) {
+            if (lp.tab != (int)VsSideTab::Nodes && !forceTab) { lp.tab = (int)VsSideTab::Nodes; VsSaveListPrefs(); }
+            DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { st.listAddType = d.type; st.listAddArg = arg; st.listAddAtDrop = false; }, true);
+            ImGui::EndTabItem();
+        }
+        if (tabsOpen && ImGui::BeginTabItem("Outline", nullptr, forceTab && lp.tab == (int)VsSideTab::Outline ? ImGuiTabItemFlags_SetSelected : 0)) {
+            if (lp.tab != (int)VsSideTab::Outline && !forceTab) { lp.tab = (int)VsSideTab::Outline; VsSaveListPrefs(); }
         ImGui::TextUnformatted("Events");
         ImGui::Separator();
         int shown = 0;
@@ -3695,9 +3762,22 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::PopID();
             }
         }
+            ImGui::EndTabItem();
+        }
+        if (tabsOpen) ImGui::EndTabBar();
         ImGui::EndChild();
         ImGui::PopStyleVar(2);
         ImGui::SameLine();
+        // The edge: drag to resize. Double-click puts it back to the default width.
+        ImGui::InvisibleButton("##vssplit", ImVec2(6.0f, ImGui::GetContentRegionAvail().y));
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag to resize the panel");
+        if (ImGui::IsItemActive() && io.MouseDelta.x != 0.0f) lp.width = VsClampSideWidth(sideW + io.MouseDelta.x, ImGui::GetContentRegionAvail().x + sideW);
+        if (ImGui::IsItemDeactivated() || (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))) {
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) lp.width = kVsSideDefaultW;
+            VsSaveListPrefs();
+        }
+        ImGui::SameLine(0.0f, 2.0f);
     }
 
     // Canvas (leaves room on the right for the OkayScript preview when open).
@@ -3728,9 +3808,15 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::IsItemClicked()) st.refHint.clear();
     }
     if (ImGui::BeginDragDropTarget()) {
-        const float kL = 1.4f;
-        const float wx = (io.MousePos.x - canvasMin.x - st.pan.x) / (st.zoom * kL);
-        const float wy = (io.MousePos.y - canvasMin.y - st.pan.y) / (st.zoom * kL);
+        float wx = 0.0f, wy = 0.0f;
+        VsScreenToGraph(io.MousePos.x, io.MousePos.y, canvasMin.x, canvasMin.y, st.pan.x, st.pan.y, st.zoom, 1.4f, wx, wy);
+        if (const ImGuiPayload* np = ImGui::AcceptDragDropPayload("VS_NODE")) {   // a row dragged from the Nodes tab
+            const VsDef* nd = nullptr; std::string narg;
+            if (np->Data && VsResolveListKey((const char*)np->Data, nd, narg)) {
+                st.listAddType = nd->type; st.listAddArg = narg; st.listAddKey = (const char*)np->Data;
+                st.listAddAtDrop = true; st.listAddX = wx; st.listAddY = wy;
+            }
+        }
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("VS_INSPECTOR"))
             VsPlaceInspectorDrop(g, st, wx, wy, (const char*)p->Data);
         if (const ImGuiPayload* gp = ImGui::AcceptDragDropPayload("GO_PTR")) {
@@ -4752,6 +4838,20 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
+    // A node picked or dropped from the Nodes tab: at the drop point, or the middle of the view.
+    if (!st.listAddType.empty()) {
+        const VsDef* ld = FindDef(st.listAddType.c_str());
+        if (ld && !st.missing) {
+            float x = st.listAddX, y = st.listAddY;
+            if (!st.listAddAtDrop) {
+                const ImVec2 c = S2W(ImVec2((canvasMin.x + canvasMax.x) * 0.5f - 100.0f, (canvasMin.y + canvasMax.y) * 0.5f - 40.0f));
+                x = c.x; y = c.y;
+            } else if (!st.listAddKey.empty()) VsNoteNodeUsed(st.listAddKey);
+            const int nid = VsAddListNode(g, *ld, st.listAddArg, x, y, !st.listAddAtDrop);
+            st.selected = nid; st.sel = {nid};
+        }
+        st.listAddType.clear(); st.listAddArg.clear(); st.listAddKey.clear(); st.listAddAtDrop = false;
+    }
     ImGui::SetNextWindowSize(ImVec2(1180, 760), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });
@@ -4773,7 +4873,7 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddRectFilled(c0, c1, IM_COL32(32, 36, 46, 245), 16.0f);
         dl->AddRect(c0, c1, IM_COL32(120, 140, 168, 160), 16.0f, 0, 1.5f);
         const char* title = "This graph is empty";
-        const char* hint = "Right-click the canvas, or press Space, to add a node.";
+        const char* hint = "Pick a node in the Nodes tab, or right-click the canvas / press Space.";
         const char* hint2 = "Start with an event such as On Start, then wire what happens next.";
         const ImVec2 ts = ImGui::CalcTextSize(title);
         dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 36.0f), IM_COL32(236, 240, 246, 255), title);

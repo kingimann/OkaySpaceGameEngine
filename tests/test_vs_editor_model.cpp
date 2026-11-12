@@ -376,6 +376,38 @@ int main() {
         }
     }
 
+    // ---- The Nodes tab: a node added by double-click or dropped on the graph ----
+    {
+        const VsDef* print = nullptr; std::string arg;
+        CHECK(VsResolveListKey("n:Print", print, arg) && print && std::string(print->type) == "Print" && arg.empty());
+        const VsDef* none = nullptr;
+        CHECK(!VsResolveListKey("n:NoSuchNodeAnywhere", none, arg) && !none);
+        CHECK(!VsResolveListKey("junk", none, arg));
+        const VsDef* act = nullptr; std::string stepArg;
+        CHECK(VsResolveListKey("a:move", act, stepArg) && std::string(act->type) == "Action" && !stepArg.empty());   // an Actions step: the Action node with its step
+        CHECK(VsResolveListKey("c:key_down", act, stepArg) && std::string(act->type) == "Condition");
+
+        VsEditGraph g;
+        // Drop: exactly where the cursor was let go, even on top of another node.
+        float gx = 0, gy = 0;
+        VsScreenToGraph(700, 400, 300, 100, 20, -10, 1.0f, 1.4f, gx, gy);
+        const int dropped = VsAddListNode(g, *print, "", gx, gy, false);
+        CHECK(g.find(dropped) && std::fabs(g.find(dropped)->x - gx) < 0.001f && std::fabs(g.find(dropped)->y - gy) < 0.001f);
+        const int dropped2 = VsAddListNode(g, *print, "", gx, gy, false);
+        CHECK(g.find(dropped2)->x == g.find(dropped)->x && g.find(dropped2)->y == g.find(dropped)->y);
+        // Double-click / Enter: the middle of the view; the second one steps aside.
+        const int a1 = VsAddListNode(g, *print, "", 40, 40, true);
+        const int a2 = VsAddListNode(g, *print, "", 40, 40, true);
+        CHECK(g.find(a1)->x == 40 && g.find(a1)->y == 40);
+        CHECK(g.find(a2)->x > 40 && g.find(a2)->y > 40);
+        // A step comes with its argument and survives save and load.
+        const int stepNode = VsAddListNode(g, *act, stepArg, 200, 200, true);
+        CHECK(g.find(stepNode)->arg == stepArg && g.find(stepNode)->type == "Condition");
+        VsEditGraph back; back.fromText(g.toText());
+        CHECK(back.nodes.size() == g.nodes.size() && back.find(stepNode) && back.find(stepNode)->arg == stepArg);
+        CHECK(back.find(dropped) && std::fabs(back.find(dropped)->x - gx) < 0.5f);
+    }
+
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

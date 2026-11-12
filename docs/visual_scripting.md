@@ -279,7 +279,39 @@ Spawn / Despawn, Set Ready, Start Match, Match Started, All Ready, Steam Name,
 Achievement Unlocked, Unlock Achievement, Get / Set Steam Stat, Store Stats,
 Submit Score.
 
-**Finding nodes:** right-click the canvas (or press **Space**) and start typing.
+**The Nodes tab (side panel):** the same node list stays open beside the graph, so
+nothing has to be opened first. The Visual Script window's left panel has two tabs,
+**Nodes** and **Outline**; the toolbar buttons *Nodes* and *Outline* bring one to
+the front.
+- **Search** sits at the top. **Ctrl+F** or **/** puts the cursor in it (and opens
+  the panel if it was hidden). **Esc** clears it. It is the same search as the
+  pop-up: type to search every topic, clear it to browse.
+- **Level** buttons (All, Basic, Inter, Adv) filter the list. The choice is shared
+  with the pop-up.
+- **Groups** fold: **Favourites** (always on top; click a node's star to pin it,
+  click again to remove it), **Recently used**, **Starter** (the 26 nodes a first
+  script is built from), then one group per topic. Topics start folded; open ones
+  stay open next time. A group's header shows how many nodes it holds.
+- **One line of help** sits under each node name (the same help text as the
+  tooltip, which adds an example and the level). A narrow panel drops it; a wide
+  panel (about 420 px and up) also shows the selected node's full description at
+  the bottom.
+- **Adding:** **drag** a row onto the graph and the node lands where you let go;
+  **double-click**, **Enter** or the **Add to graph** button put it in the middle
+  of the view (a second one steps aside so they do not stack). The new node is
+  selected.
+- **Keys:** **Up / Down** move through the list, **Enter** adds a node or opens or
+  folds a group, **Left / Right** fold and open a group.
+- **Width:** drag the panel's edge (double-click it to reset). **<<** folds the
+  panel to a strip of icons (Nodes, Outline); click an icon to open it again.
+  **Ctrl+\** hides or shows the whole panel (View menu: *Side panel*).
+- **Remembered:** width, tab, shown or folded, level, favourites, recently used and
+  which groups are open are saved in `okay_vsnodes.txt` next to the editor's other
+  settings, so they survive a restart.
+
+**Finding nodes in the pop-up:** right-click the canvas (or press **Space**) and start typing. The pop-up
+and the Nodes tab are one list component; a wire dragged into empty space still
+opens the pop-up, filtered to what fits.
 - **Search** is forgiving: `ply snd` finds Play Sound. Close matches come first,
   and the matched letters are highlighted.
 - **Keys:** **Up / Down** pick a result and **Enter** adds it.
@@ -368,7 +400,7 @@ Every N Times.
   first one using this file) lights up each node as it runs, and every data
   output shows its latest value beside the pin. A green *LIVE* tag in the
   toolbar names the object being watched.
-- **Space** opens the palette at the mouse, **Home** frames the whole graph.
+- **Space** opens the palette at the mouse, **Home** frames the whole graph. **Ctrl+F** or **/** searches the Nodes tab, **Ctrl+\** hides the side panel.
 
 ## One graph editor (Actions merged in)
 

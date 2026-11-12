@@ -1,7 +1,10 @@
 #pragma once
-// The add-node panel: search, collapsible categories, favourites, and a details
-// pane. Shared by the right-click menu, a wire dropped in empty space, and Add node.
+// The add-node list: search, topics, favourites, and a details pane. One
+// implementation, two places it is drawn: the pop-up (right-click, Space, a wire
+// dropped in empty space, Add node) and the Nodes tab of the side panel. The tab
+// is the same list laid out as one column of collapsible topics.
 #include "VisualScriptNodeDocs.hpp"
+#include "VisualScriptNodeList.hpp"
 #include "imgui.h"
 
 #include <algorithm>
@@ -229,20 +232,78 @@ inline bool VsPaletteStepIsDuplicate(const std::string& label) {
     return false;
 }
 
+/// What the node list remembers (favourites, recent, level, open groups, panel width and tab).
+/// One small file next to the editor's other settings; loaded the first time it is asked for.
+inline std::string& VsListPrefsPath() { static std::string path = "okay_vsnodes.txt"; return path; }
+inline VsNodeListPrefs& VsListPrefs() {
+    static VsNodeListPrefs prefs;
+    static bool loaded = false;
+    if (!loaded) { loaded = true; prefs = VsLoadNodeListPrefs(VsListPrefsPath()); }
+    return prefs;
+}
+inline void VsSaveListPrefs() { VsSaveNodeListPrefs(VsListPrefsPath(), VsListPrefs()); }
+/// Ctrl+F or '/': the Nodes tab puts the cursor in its search box on the next frame.
+inline bool& VsFocusNodeSearch() { static bool want = false; return want; }
+/// A node was added from the list: it moves to the top of Recently used.
+inline void VsNoteNodeUsed(const std::string& key) { VsPushRecent(VsListPrefs(), key); VsSaveListPrefs(); }
+
+/// "n:Type" / "a:op" / "c:op" (the list's keys) -> the node definition and its argument.
+/// False when the key names something that no longer exists.
+inline bool VsResolveListKey(const std::string& key, const VsDef*& def, std::string& arg) {
+    char kind = 0; std::string rest;
+    if (!VsSplitListKey(key, kind, rest)) return false;
+    arg.clear();
+    if (kind == 'n') { def = FindDef(rest.c_str()); return def != nullptr; }
+    def = FindDef(kind == 'c' ? "Condition" : "Action");
+    if (!def) return false;
+    arg = okay::ActionList::EncodeItem({rest, {}});
+    return true;
+}
+
+/// Put a node from the list on the graph. `nudge`: when a node is already exactly there (a
+/// double-click adds in the middle of the view every time), step aside so they do not stack.
+/// A drop passes false: the node goes exactly where it was let go. Returns the new node's id.
+inline int VsAddListNode(VsEditGraph& g, const VsDef& def, const std::string& arg, float x, float y, bool nudge) {
+    if (nudge) {
+        std::vector<std::pair<float, float>> taken;
+        for (const auto& n : g.nodes) taken.push_back({n.x, n.y});
+        VsFreeSpot(taken, x, y);
+    }
+    const int nid = g.add(def.type, x, y);
+    if (!arg.empty()) if (VsEditNode* nn = g.find(nid)) nn->arg = arg;
+    return nid;
+}
+
+/// A drawn star (the UI font has no star glyph). Filled when a favourite.
+inline void VsDrawFavStar(ImDrawList* dl, ImVec2 c, bool fav, bool hovered) {
+    ImVec2 pts[10];
+    for (int k = 0; k < 10; ++k) {
+        const float a = -1.5707963f + k * 0.6283185f, r = (k % 2) ? 2.6f : 6.0f;
+        pts[k] = ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r);
+    }
+    const ImU32 sc = fav ? IM_COL32(255, 204, 64, 255) : hovered ? IM_COL32(200, 200, 210, 200) : IM_COL32(120, 124, 134, 120);
+    if (fav) dl->AddConcavePolyFilled(pts, 10, sc); else dl->AddPolyline(pts, 10, sc, ImDrawFlags_Closed, 1.2f);
+}
+
 /// `addNode(def, arg)` places the node. `arg` is set for action steps.
-/// Topics (VisualScriptCategories.hpp) on the left, nodes in the middle, what the
+/// Pop-up: topics (VisualScriptCategories.hpp) on the left, nodes in the middle, what the
 /// highlighted node does on the right. Levels filter the list.
+/// `sidebar`: the Nodes tab. One column: search, level, then Favourites, Recently used,
+/// Starter and the topics as groups that fold. It ignores a wire being dragged (the
+/// pop-up owns that) and a row can also be dragged onto the graph.
 inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
-                            const std::function<void(const VsDef&, const std::string&)>& addNode) {
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 8.0f));
+                            const std::function<void(const VsDef&, const std::string&)>& addNode,
+                            bool sidebar = false) {
+    const bool linkActive = !sidebar && st.linkPending;   // a wire dragged from a pin: the pop-up suggests what fits
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, sidebar ? ImVec2(6.0f, 4.0f) : ImVec2(10.0f, 8.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 12.0f));
     okay::vs::PinType dragged = okay::vs::PinType::Any;
-    if (st.linkPending && !st.linkExec)
+    if (linkActive && !st.linkExec)
         dragged = st.linkFromOutput ? VsOutPinType(g, st.linkNode, st.linkPin)
                                      : VsInPinType(g, st.linkNode, st.linkPin);
     auto fits = [&](const VsDef& d) {
-        return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput, dragged);
+        return !linkActive || VsCompatible(d, st.linkExec, st.linkFromOutput, dragged);
     };
     auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
     auto bright = [](ImU32 c) {   // the category colour, lifted so a dot reads on the dark list
@@ -271,9 +332,16 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const int n = (int)(sizeof cols / sizeof cols[0]);
         return cols[(index >= 0 && index < n) ? index : 0];
     };
-    std::vector<Entry> all;
+    // Built once and kept: the tab is drawn every frame. Rebuilt when nodes or steps are added.
+    static std::vector<Entry> all;
+    static std::vector<VsNodeItem> allItems;   // the same rows for VsBuildListRows
+    static std::size_t builtFor = 0;
+    std::size_t stamp = Registry().size() * 1000003u;
+    if (StepCatalog) for (int cp = 0; cp < 2; ++cp) if (const auto* cat = StepCatalog(cp == 1)) stamp += cat->size() * (cp + 1);
+    const bool rebuild = all.empty() || stamp != builtFor;
+    if (rebuild) {
+    all.clear();
     for (const auto& d : Registry()) {
-        if (!fits(d)) continue;
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
         if (VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type)) continue;   // one row per job; untested nodes wait
@@ -318,7 +386,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     for (int pass = 0; pass < 2; ++pass) {
         const bool cond = pass == 1;
         const VsDef* sd = FindDef(cond ? "Condition" : "Action");
-        if (!StepCatalog || !sd || !fits(*sd)) continue;
+        if (!StepCatalog || !sd) continue;
         if (const auto* cat = StepCatalog(cond))
             for (const auto& si : *cat) {
                 if (si.listOnly) continue;
@@ -339,64 +407,66 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 all.push_back(std::move(e));
             }
     }
-    // Favourites and recently added, remembered between sessions.
-    static std::vector<std::string> s_fav, s_recent;
-    static int s_filter = 0;   // VsLevelFilter: 0 all, 1 basic, 2 intermediate, 3 advanced
-    static bool s_loaded = false;
-    auto saveLists = [&] {
-        std::ofstream f("okay_vsnodes.txt");
-        f << "lvl " << s_filter << "\n";
-        for (const auto& k : s_fav) f << "fav " << k << "\n";
-        for (const auto& k : s_recent) f << "rec " << k << "\n";
-    };
-    if (!s_loaded) {
-        s_loaded = true;
-        std::ifstream f("okay_vsnodes.txt"); std::string kind, k;
-        while (f >> kind >> k) {
-            if (kind == "lvl") s_filter = std::clamp(std::atoi(k.c_str()), 0, 3);
-            else (kind == "fav" ? s_fav : s_recent).push_back(k);
-        }
+    builtFor = stamp;
+    allItems.clear();
+    for (const auto& e : all) {
+        VsNodeItem it; it.key = e.key; it.topic = e.cat; it.topicIndex = e.catIndex;
+        it.starter = (e.def && !e.step) ? VsStarterIndex(e.def->type) : -1;
+        allItems.push_back(std::move(it));
     }
+    }
+    auto visible = [&](const Entry& e) { return fits(*e.def); };   // a wire being dragged hides what cannot take it
+    // Favourites and recently added, remembered between sessions.
+    VsNodeListPrefs& prefs = VsListPrefs();
+    std::vector<std::string>& s_fav = prefs.fav;
+    std::vector<std::string>& s_recent = prefs.recent;
+    int& s_filter = prefs.level;   // VsLevelFilter: 0 all, 1 basic, 2 intermediate, 3 advanced
+    auto saveLists = [&] { VsSaveListPrefs(); };
     const VsLevelFilter levelFilter = (VsLevelFilter)s_filter;
     auto passesLevel = [&](VsLevel level) { return VsLevelPasses(level, levelFilter); };
     auto isFav = [&](const std::string& k) { return std::find(s_fav.begin(), s_fav.end(), k) != s_fav.end(); };
     auto add = [&](const Entry& e) {
         if (e.step) addNode(*e.def, okay::ActionList::EncodeItem({e.step->op, {}}));
         else addNode(*e.def, std::string());
-        s_recent.erase(std::remove(s_recent.begin(), s_recent.end(), e.key), s_recent.end());
-        s_recent.insert(s_recent.begin(), e.key);
-        if (s_recent.size() > 12) s_recent.resize(12);
+        VsPushRecent(prefs, e.key);
         saveLists();
-        ImGui::CloseCurrentPopup();
+        if (!sidebar) ImGui::CloseCurrentPopup();
     };
 
     // Sidebar: -3 All, -2 Recent, -1 Favourites, otherwise a topic index. s_sub picks a subcategory.
-    static int s_side = -3;
-    static int s_sub = -1;
-    static std::string s_subName;
-    static int s_kb = 0;
-    static char search[64] = "";
-    if (ImGui::IsWindowAppearing()) {
+    // The pop-up and the tab each keep their own search text and place in the list.
+    struct View { int side = -3, sub = -1, kb = 0; std::string subName; char search[64] = ""; };
+    static View s_views[2];
+    View& vw = s_views[sidebar ? 1 : 0];
+    int& s_side = vw.side; int& s_sub = vw.sub; std::string& s_subName = vw.subName; int& s_kb = vw.kb;
+    char (&search)[64] = vw.search;
+    if (!sidebar && ImGui::IsWindowAppearing()) {
         search[0] = '\0'; s_kb = 0; ImGui::SetKeyboardFocusHere();
         // A wire dropped on empty space: start on the whole list, compatible nodes first.
-        if (st.linkPending) { s_side = -3; s_sub = -1; s_subName.clear(); }
+        if (linkActive) { s_side = -3; s_sub = -1; s_subName.clear(); }
     }
-    if (st.linkPending && st.linkExec)
+    if (linkActive && st.linkExec)
         ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit this flow pin");
-    else if (st.linkPending)
+    else if (linkActive)
         ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit a %s pin", okay::vs::PinTypeName(dragged));
     ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::InputTextWithHint("##vssearch", "Search nodes and actions...  (Up / Down, Enter to add)", search, sizeof search))
+    if (sidebar && VsFocusNodeSearch()) { VsFocusNodeSearch() = false; ImGui::SetKeyboardFocusHere(); }
+    if (ImGui::InputTextWithHint("##vssearch", sidebar ? "Search nodes...  (Ctrl+F or /)" : "Search nodes and actions...  (Up / Down, Enter to add)",
+                                 search, sizeof search, sidebar ? ImGuiInputTextFlags_EscapeClearsAll : 0))
         s_kb = 0;
+    const bool searchActive = ImGui::IsItemActive();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
     const float filterW = (ImGui::GetContentRegionAvail().x - 18.0f) / 4.0f;
     for (int fi = 0; fi < 4; ++fi) {
         if (fi) ImGui::SameLine();
         const bool on = s_filter == fi;
         if (on) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 110, 160, 255));
-        if (ImGui::Button(VsLevelFilterName((VsLevelFilter)fi), ImVec2(filterW, 0))) {
+        static const char* const shortName[] = {"All", "Basic", "Inter", "Adv"};   // a narrow tab cannot fit "Intermediate"
+        const bool shortLabels = sidebar && filterW < 70.0f;
+        if (ImGui::Button(shortLabels ? shortName[fi] : VsLevelFilterName((VsLevelFilter)fi), ImVec2(filterW, 0))) {
             s_filter = fi; s_kb = 0; saveLists();
         }
+        if (shortLabels && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", VsLevelFilterName((VsLevelFilter)fi));
         if (on) ImGui::PopStyleColor();
     }
     ImGui::PopStyleVar();
@@ -440,7 +510,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         return extra.find(needle) != std::string::npos ? 40 : 0;
     };
 
-    // ---- Sidebar ----
+    // ---- Topics (pop-up only: the tab shows them as groups in the list) ----
+    if (!sidebar) {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 1.0f));
     ImGui::BeginChild("##vspside", ImVec2(214, -4), ImGuiChildFlags_Borders);
@@ -478,14 +549,14 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     auto browseCount = [&](int cat, const std::string& sub, bool anySub) {
         int n = 0;
         for (const auto& e : all) {
-            if (!e.browse || !passesLevel(e.level) || e.catIndex != cat) continue;
+            if (!e.browse || !(passesLevel(e.level) && visible(e)) || e.catIndex != cat) continue;
             if (!anySub && e.sub != sub) continue;
             ++n;
         }
         return n;
     };
     int browseAll = 0, starterN = 0;
-    for (const auto& e : all) if (e.browse && passesLevel(e.level)) {
+    for (const auto& e : all) if (e.browse && passesLevel(e.level) && visible(e)) {
         ++browseAll;
         if (e.def && VsIsStarter(e.def->type)) ++starterN;
     }
@@ -503,7 +574,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (s_side != c) continue;   // expanded: the topic you are in shows its subcategories
         std::vector<std::pair<std::string, int>> subs;
         for (const auto& e : all) {
-            if (!e.browse || !passesLevel(e.level) || e.catIndex != c || e.sub.empty()) continue;
+            if (!e.browse || !(passesLevel(e.level) && visible(e)) || e.catIndex != c || e.sub.empty()) continue;
             bool found = false;
             for (auto& s : subs) if (s.first == e.sub) { ++s.second; found = true; break; }
             if (!found) subs.push_back({e.sub, 1});
@@ -523,6 +594,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
     ImGui::SameLine();
+    }
 
     // ---- Results ----
     struct Row { const Entry* e; int sc; std::vector<int> hits; };
@@ -532,7 +604,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         return it == s_recent.end() ? 10000 : (int)(it - s_recent.begin());
     };
     for (const auto& e : all) {
-        if (!passesLevel(e.level)) continue;
+        if (!(passesLevel(e.level) && visible(e))) continue;
         if (needle.empty() && !e.browse) continue;
         // Typing searches every topic, so a name is found wherever it lives.
         // Only the level filter still applies.
@@ -560,7 +632,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
             return VsStarterIndex(a.e->def ? a.e->def->type : "") < VsStarterIndex(b.e->def ? b.e->def->type : "");
         });
-    else if (st.linkPending)
+    else if (linkActive)
         std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
             if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
             if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
@@ -575,6 +647,173 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
             return a.e->rank < b.e->rank;
         });
+    if (sidebar) {
+        // ---- The tab: sections and topics as folding groups, one column ----
+        const bool searching = !needle.empty();
+        std::vector<int> order, rowOf(all.size(), -1);
+        order.reserve(rows.size());
+        for (int i = 0; i < (int)rows.size(); ++i) {
+            const int idx = (int)(rows[i].e - all.data());
+            order.push_back(idx); rowOf[(std::size_t)idx] = i;
+        }
+        const std::vector<VsListRow> disp = VsBuildListRows(allItems, order, searching, prefs);
+        const int n = (int)disp.size();
+        auto selectable = [&](int i) {
+            return i >= 0 && i < n && (disp[(std::size_t)i].kind == VsListRow::Item ||
+                                       (disp[(std::size_t)i].kind == VsListRow::Header && disp[(std::size_t)i].foldable));
+        };
+        const float panelW = ImGui::GetContentRegionAvail().x;
+        const bool showHelp = panelW >= kVsSideRoomyW, wide = panelW >= kVsSideWideW;
+        const float lh = ImGui::GetTextLineHeight();
+        const float itemH = lh + 10.0f + (showHelp ? lh + 2.0f : 0.0f), headH = lh + 10.0f;
+        const float footH = ImGui::GetFrameHeight() + (wide ? lh * 3.0f + 10.0f : 0.0f) + 16.0f;
+        // Keys act while the search box or the list has the focus.
+        const bool nav = (searchActive || ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) &&
+                         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+        int& kb = vw.kb;
+        bool scrollKb = false;
+        auto stepKb = [&](int dir) {
+            int j = kb;
+            do { j += dir; } while (j >= 0 && j < n && !selectable(j));
+            if (selectable(j)) { kb = j; scrollKb = true; }
+        };
+        if (!selectable(kb)) { int j = 0; while (j < n && !selectable(j)) ++j; kb = j < n ? j : 0; }
+        if (nav && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) stepKb(1);
+        if (nav && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) stepKb(-1);
+        auto toggleGroup = [&](const VsListRow& r, int want) {   // want: -1 flip, 0 fold, 1 open
+            const bool open = want < 0 ? !r.open : want == 1;
+            VsSetGroupOpen(prefs, r.id, open, VsGroupDefaultOpen(r.id));
+            saveLists();
+        };
+        if (nav && !searchActive && selectable(kb) && disp[(std::size_t)kb].kind == VsListRow::Header) {
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) && disp[(std::size_t)kb].open) toggleGroup(disp[(std::size_t)kb], 0);
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) && !disp[(std::size_t)kb].open) toggleGroup(disp[(std::size_t)kb], 1);
+        }
+        if (nav && !searchActive && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && search[0]) { search[0] = '\0'; kb = 0; }
+        const bool showSel = nav || searching;
+        const Entry* toAdd = nullptr;
+        if (nav && enter && selectable(kb)) {
+            const VsListRow& r = disp[(std::size_t)kb];
+            if (r.kind == VsListRow::Item) toAdd = &all[(std::size_t)r.item]; else toggleGroup(r, -1);
+        }
+
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 2.0f));
+        ImGui::BeginChild("##vsnodelist", ImVec2(0, -footH), ImGuiChildFlags_Borders);
+        const float viewTop = ImGui::GetScrollY(), viewBot = viewTop + ImGui::GetWindowHeight();
+        const float w = ImGui::GetContentRegionAvail().x;
+        for (int i = 0; i < n; ++i) {
+            const VsListRow& r = disp[(std::size_t)i];
+            const float h = r.kind == VsListRow::Header ? headH : itemH;
+            const float y = ImGui::GetCursorPosY();
+            if (r.kind != VsListRow::Hint && (y + h < viewTop - 60.0f || y > viewBot + 60.0f) && !(scrollKb && i == kb)) {
+                ImGui::Dummy(ImVec2(1.0f, h));   // off screen: only the space
+                continue;
+            }
+            ImGui::PushID(i);
+            ImDrawList* rdl = ImGui::GetWindowDrawList();
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (r.kind == VsListRow::Hint) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", r.label.c_str());
+                ImGui::PopTextWrapPos();
+            } else if (r.kind == VsListRow::Header) {
+                if (ImGui::Selectable("##grp", showSel && i == kb, 0, ImVec2(0, headH)) && r.foldable) { kb = i; toggleGroup(r, -1); }
+                if (ImGui::IsItemHovered() && r.foldable) ImGui::SetTooltip(r.open ? "Click to fold" : "Click to open");
+                const float cy = p.y + headH * 0.5f;
+                const ImU32 ac = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                if (r.foldable) {
+                    if (r.open) rdl->AddTriangleFilled(ImVec2(p.x + 4, cy - 2.5f), ImVec2(p.x + 12, cy - 2.5f), ImVec2(p.x + 8, cy + 3.5f), ac);
+                    else rdl->AddTriangleFilled(ImVec2(p.x + 5, cy - 4), ImVec2(p.x + 5, cy + 4), ImVec2(p.x + 11, cy), ac);
+                }
+                char cnt[16]; std::snprintf(cnt, sizeof cnt, "%d", r.count);
+                const float cw = ImGui::CalcTextSize(cnt).x;
+                rdl->PushClipRect(p, ImVec2(p.x + w - cw - 10.0f, p.y + headH), true);
+                rdl->AddText(ImVec2(p.x + 18, p.y + 5), IM_COL32(210, 218, 232, 255), r.label.c_str());
+                rdl->PopClipRect();
+                rdl->AddText(ImVec2(p.x + w - cw - 6.0f, p.y + 5), ac, cnt);
+            } else {
+                const Entry& e = all[(std::size_t)r.item];
+                const int ri = rowOf[(std::size_t)r.item];
+                static const std::vector<int> noHits;
+                const std::vector<int>& hits = ri >= 0 ? rows[(std::size_t)ri].hits : noHits;
+                if (ImGui::Selectable("##row", showSel && i == kb, ImGuiSelectableFlags_AllowOverlap | ImGuiSelectableFlags_AllowDoubleClick,
+                                      ImVec2(0, itemH))) kb = i;
+                const bool rowHover = ImGui::IsItemHovered();
+                if (rowHover && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) toAdd = &e;
+                if (ImGui::BeginDragDropSource()) {   // drop it on the graph where it should go
+                    ImGui::SetDragDropPayload("VS_NODE", e.key.c_str(), e.key.size() + 1);
+                    ImGui::TextUnformatted(e.title.c_str());
+                    ImGui::TextDisabled("Drop on the graph");
+                    ImGui::EndDragDropSource();
+                } else if (rowHover) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                    ImGui::TextUnformatted(e.helpLine.empty() ? "No description." : e.helpLine.c_str());
+                    if (!e.example.empty()) { ImGui::Spacing(); ImGui::TextDisabled("Example: %s", e.example.c_str()); }
+                    ImGui::TextDisabled("%s  -  double-click or drag onto the graph", VsLevelName(e.level));
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+                if (scrollKb && i == kb) ImGui::SetScrollHereY(0.5f);
+                rdl->AddCircleFilled(ImVec2(p.x + 12, p.y + (lh + 10.0f) * 0.5f), 4.5f, e.col);
+                float x = p.x + 22;
+                const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = IM_COL32(110, 180, 255, 255);
+                const float titleRight = p.x + w - 30.0f;
+                rdl->PushClipRect(ImVec2(p.x, p.y), ImVec2(titleRight, p.y + itemH), true);
+                for (int c = 0; c < (int)e.title.size(); ++c) {
+                    const char buf[2] = {e.title[c], 0};
+                    const bool hh = std::find(hits.begin(), hits.end(), c) != hits.end();
+                    rdl->AddText(ImVec2(x, p.y + 4), hh ? hit : normal, buf);
+                    x += ImGui::CalcTextSize(buf).x;
+                }
+                if (showHelp && !e.helpLine.empty())
+                    rdl->AddText(ImVec2(p.x + 22, p.y + lh + 6.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.helpLine.c_str());
+                rdl->PopClipRect();
+                if (w >= 300.0f) {   // level badge next to the star when there is room
+                    const char* badge = VsLevelBadge(e.level);
+                    const ImVec2 bs = ImGui::CalcTextSize(badge);
+                    const ImVec2 b0(p.x + w - 34.0f - bs.x - 8.0f, p.y + 5.0f), b1(b0.x + bs.x + 8.0f, b0.y + lh + 2.0f);
+                    if (b0.x > x + 6.0f) {
+                        const ImU32 bg = e.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
+                                       : e.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255) : IM_COL32(52, 78, 120, 255);
+                        rdl->AddRectFilled(b0, b1, bg, 3.0f);
+                        rdl->AddText(ImVec2(b0.x + 4.0f, b0.y + 1.0f), IM_COL32(230, 236, 244, 255), badge);
+                    }
+                }
+                ImGui::SameLine(w - 22.0f);
+                const bool fav = isFav(e.key);
+                const ImVec2 sp = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton("##fav", ImVec2(22.0f, itemH))) { VsToggleFav(prefs, e.key); saveLists(); }
+                const bool sh = ImGui::IsItemHovered();
+                if (sh) ImGui::SetTooltip(fav ? "Remove from favourites" : "Pin to the top (favourite)");
+                VsDrawFavStar(rdl, ImVec2(sp.x + 10, sp.y + (lh + 10.0f) * 0.5f), fav, sh);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+
+        // The selected node, and a button for anyone who would rather not double-click or drag.
+        const Entry* sel = (selectable(kb) && disp[(std::size_t)kb].kind == VsListRow::Item) ? &all[(std::size_t)disp[(std::size_t)kb].item] : nullptr;
+        ImGui::BeginChild("##vsnodefoot", ImVec2(0, 0), ImGuiChildFlags_None);
+        if (!sel) ImGui::BeginDisabled();
+        if (ImGui::Button("Add to graph") && sel) toAdd = sel;
+        if (!sel) ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adds the selected node in the middle of the view.\nEnter or a double-click does the same; you can also drag a node onto the graph.");
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        if (sel) { ImGui::TextUnformatted(sel->title.c_str()); ImGui::SameLine(); ImGui::TextDisabled("%s", VsLevelName(sel->level)); }
+        else ImGui::TextDisabled("Select a node, or drag one onto the graph.");
+        if (wide && sel) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", sel->desc.empty() ? sel->helpLine.c_str() : sel->desc.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndChild();
+        if (toAdd) add(*toAdd);
+        ImGui::PopStyleVar(3);
+        return;
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) s_kb = std::min(s_kb + 1, (int)rows.size() - 1);
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   s_kb = std::max(s_kb - 1, 0);
     if (s_kb >= (int)rows.size()) s_kb = std::max(0, (int)rows.size() - 1);
@@ -589,7 +828,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                           : s_side == -4 ? "Nothing at this level in the starter set."
                           : needle.empty() ? "Nothing here at this level."
                               : s_filter != 0 ? "No node matches that at this level. Try All." : "No node matches that.");
-    } else if (st.linkPending && needle.empty()) {
+    } else if (linkActive && needle.empty()) {
         ImGui::TextDisabled("Suggested for this pin");
     } else if (s_side == -4 && needle.empty()) {
         ImGui::TextDisabled("Start here");
@@ -599,7 +838,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     for (int i = 0; i < (int)rows.size(); ++i) {
         const Entry& e = *rows[i].e;
         // Topic headers while browsing (not while searching). Inside a topic, the header is the subcategory.
-        if (needle.empty() && !st.linkPending && s_side != -1 && s_side != -2 && s_side != -4 && s_sub < 0) {
+        if (needle.empty() && !linkActive && s_side != -1 && s_side != -2 && s_side != -4 && s_sub < 0) {
             const std::string header = s_side < 0 ? e.cat : e.sub;
             if (!header.empty() && header != lastHeader) {
                 lastHeader = header;
@@ -659,22 +898,12 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const bool fav = isFav(e.key);
         const ImVec2 sp = ImGui::GetCursorScreenPos();
         if (ImGui::InvisibleButton("##fav", ImVec2(22, lh + 14))) {
-            if (fav) s_fav.erase(std::remove(s_fav.begin(), s_fav.end(), e.key), s_fav.end());
-            else s_fav.push_back(e.key);
+            VsToggleFav(prefs, e.key);
             saveLists();
         }
         const bool sh = ImGui::IsItemHovered();
         if (sh) ImGui::SetTooltip(fav ? "Remove from favourites" : "Add to favourites");
-        {   // a drawn star (the UI font has no star glyph)
-            const ImVec2 c(sp.x + 10, sp.y + (lh + 14) * 0.5f);
-            ImVec2 pts[10];
-            for (int k = 0; k < 10; ++k) {
-                const float a = -1.5707963f + k * 0.6283185f, r = (k % 2) ? 2.6f : 6.0f;
-                pts[k] = ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r);
-            }
-            const ImU32 sc = fav ? IM_COL32(255, 204, 64, 255) : sh ? IM_COL32(200, 200, 210, 200) : IM_COL32(120, 124, 134, 120);
-            if (fav) rdl->AddConcavePolyFilled(pts, 10, sc); else rdl->AddPolyline(pts, 10, sc, ImDrawFlags_Closed, 1.2f);
-        }
+        VsDrawFavStar(rdl, ImVec2(sp.x + 10, sp.y + (lh + 14) * 0.5f), fav, sh);
         ImGui::PopID();
     }
     if (enter && !rows.empty()) toAdd = rows[std::clamp(s_kb, 0, (int)rows.size() - 1)].e;

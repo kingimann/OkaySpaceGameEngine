@@ -1957,6 +1957,34 @@ bool ToggleSwitch(const char* label, bool* value) {
     return ToggleSwitch(hashLabel(label), x, y + (h - sh) * 0.5f, sw, sh, label, value);
 }
 
+namespace {
+// Ctrl+click on a drag or slider box turns it into a text box for typing a number (Enter or a click elsewhere
+// commits, Escape cancels; a value that is not a finite number is dropped). 0 = not editing (draw the box as
+// usual), 1 = editing (this call drew the text box), 2 = a typed value was committed (*out holds it, clamped).
+int numberEdit(int id, float x, float y, float w, float h, bool inside, double cur, bool isInt, double minV, double maxV, double* out) {
+    if (g_editId != id && inside && g_pressed && g_in.ctrl && !g_in.blocked && g_disCount == 0) {
+        g_editId = id;
+        std::snprintf(g_editBuf, sizeof g_editBuf, isInt ? "%.0f" : "%.6g", cur);
+        g_focusNextField = true; g_focusSelectAll = true;
+    }
+    if (g_editId != id) return 0;
+    const bool entered = TextField(id ^ 0x3ed17, x, y, w, h, g_editBuf, (int)sizeof g_editBuf, InputText_EnterReturnsTrue);
+    const bool lost = g_focus != (id ^ 0x3ed17);
+    const bool clickedAway = g_pressed && !inside;
+    if (!(entered || lost || clickedAway)) return 1;
+    if (g_focus == (id ^ 0x3ed17)) g_focus = 0;
+    g_editId = 0;
+    if (g_in.escape) return 0;                                         // cancelled
+    char* end = nullptr;
+    const double v = std::strtod(g_editBuf, &end);
+    if (end == g_editBuf || !std::isfinite(v)) return 0;               // not a number: keep the old value
+    double r = isInt ? std::floor(v + 0.5) : v;
+    if (minV < maxV) r = r < minV ? minV : (r > maxV ? maxV : r);
+    *out = r;
+    return 2;
+}
+} // namespace
+
 bool SliderFloat(const char* label, float* value, float minV, float maxV) {
     if (!g_lay.active || !value) return false;
     const float h = rowH();
@@ -1964,6 +1992,15 @@ bool SliderFloat(const char* label, float* value, float minV, float maxV) {
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
+    {   // Ctrl+click: type a number
+        double typed = 0.0;
+        const int e = numberEdit(hashLabel(label), x, y, ctrlW, h, hit(x, y, ctrlW, h), (double)*value, false, (double)minV, (double)maxV, &typed);
+        if (e != 0) {
+            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+            if (e == 2 && (float)typed != *value) { *value = (float)typed; return true; }
+            return false;
+        }
+    }
     const bool ch = Slider(hashLabel(label), x, y, ctrlW, h, value, minV, maxV);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
     return ch;
@@ -2308,6 +2345,15 @@ bool DragFloat(const char* label, float* v, float speed, float minV, float maxV)
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
     const bool inside = hit(x, y, ctrlW, h);
+    {   // Ctrl+click: type a number
+        double typed = 0.0;
+        const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, false, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
+        if (e != 0) {
+            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+            if (e == 2 && (float)typed != *v) { *v = (float)typed; return true; }
+            return false;
+        }
+    }
     float delta; dragBox(id, x, y, ctrlW, h, inside, delta);
     bool changed = false;
     if (delta != 0.0f) {
@@ -2330,6 +2376,15 @@ bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
     const bool inside = hit(x, y, ctrlW, h);
+    {   // Ctrl+click: type a number
+        double typed = 0.0;
+        const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, true, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
+        if (e != 0) {
+            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+            if (e == 2 && (int)typed != *v) { *v = (int)typed; return true; }
+            return false;
+        }
+    }
     float delta; dragBox(id, x, y, ctrlW, h, inside, delta);
     bool changed = false;
     if (delta != 0.0f) {
@@ -2347,34 +2402,6 @@ bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return changed;
 }
-
-namespace {
-// Ctrl+click on a drag or slider box turns it into a text box for typing a number (Enter or a click elsewhere
-// commits, Escape cancels; a value that is not a finite number is dropped). 0 = not editing (draw the box as
-// usual), 1 = editing (this call drew the text box), 2 = a typed value was committed (*out holds it, clamped).
-int numberEdit(int id, float x, float y, float w, float h, bool inside, double cur, bool isInt, double minV, double maxV, double* out) {
-    if (g_editId != id && inside && g_pressed && g_in.ctrl && !g_in.blocked && g_disCount == 0) {
-        g_editId = id;
-        std::snprintf(g_editBuf, sizeof g_editBuf, isInt ? "%.0f" : "%.6g", cur);
-        g_focusNextField = true; g_focusSelectAll = true;
-    }
-    if (g_editId != id) return 0;
-    const bool entered = TextField(id ^ 0x3ed17, x, y, w, h, g_editBuf, (int)sizeof g_editBuf, InputText_EnterReturnsTrue);
-    const bool lost = g_focus != (id ^ 0x3ed17);
-    const bool clickedAway = g_pressed && !inside;
-    if (!(entered || lost || clickedAway)) return 1;
-    if (g_focus == (id ^ 0x3ed17)) g_focus = 0;
-    g_editId = 0;
-    if (g_in.escape) return 0;                                         // cancelled
-    char* end = nullptr;
-    const double v = std::strtod(g_editBuf, &end);
-    if (end == g_editBuf || !std::isfinite(v)) return 0;               // not a number: keep the old value
-    double r = isInt ? std::floor(v + 0.5) : v;
-    if (minV < maxV) r = r < minV ? minV : (r > maxV ? maxV : r);
-    *out = r;
-    return 2;
-}
-} // namespace
 
 namespace {
 // One row of `n` (1..4) drag cells side by side that share one label (the vector fields of an inspector:

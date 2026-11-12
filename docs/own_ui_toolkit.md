@@ -401,3 +401,5 @@ A bug found while testing: the press that starts the edit also reached the text 
 Tested (91 checks in `test_okayui_values.cpp`): typed value, clamp, Escape, non-number, integer rounding and clamp, slider cell, plain click still scrubs, click-away commits. Behaviour 149, fuzz 12, golden 15, drawlist 184, soft 18 unchanged.
 
 Not done: the single-value `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt` do not take Ctrl+click yet; a double click; the host sets `ctrl`.
+
+Step 10b: the single-value `DragFloat`, `DragInt`, `SliderFloat` and `SliderInt` take Ctrl+click typing too (same rules; `SliderInt` rounds). 99 checks in `test_okayui_values.cpp`; other suites unchanged. Still not done: the host does not set `Input::ctrl` yet.

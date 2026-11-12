@@ -393,6 +393,29 @@ void TypedNumberTests() {
     CHECK_NEAR(v[0], 9.0f, 1e-4);
 }
 
+void TypedSingleTests() {
+    Rig r; float f = 1.0f, sf = 0.5f; int i = 3, si = 4; UI::Rect rf, rsf, ri, rsi; bool cf = false, ci = false, csf = false, csi = false;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(240); cf = UI::DragFloat("", &f, 0.5f, 0.0f, 10.0f); rf = UI::GetItemRect(); UI::PopID();
+        UI::PushID(2); UI::SetNextItemWidth(240); ci = UI::DragInt("", &i, 1.0f, 0, 20); ri = UI::GetItemRect(); UI::PopID();
+        UI::PushID(3); UI::SetNextItemWidth(240); csf = UI::SliderFloat("", &sf, 0.0f, 1.0f); rsf = UI::GetItemRect(); UI::PopID();
+        UI::PushID(4); UI::SetNextItemWidth(240); csi = UI::SliderInt("", &si, 0, 10); rsi = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    auto typeInto = [&](const UI::Rect& rc, const char* text) {
+        r.sim.ctrl = true; r.MoveTo(CenterX(rc), CenterY(rc)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.ctrl = false;
+        r.sim.Type(text); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    };
+    typeInto(rf, "6.25");  CHECK_NEAR(f, 6.25f, 1e-4);              // DragFloat
+    typeInto(rf, "99");    CHECK_NEAR(f, 10.0f, 1e-4);              // clamped to its range
+    typeInto(ri, "12.4");  CHECK(i == 12);                          // DragInt rounds
+    typeInto(ri, "-5");    CHECK(i == 0);                           // and clamps
+    typeInto(rsf, "0.8");  CHECK_NEAR(sf, 0.8f, 1e-4);              // SliderFloat
+    typeInto(rsi, "7");    CHECK(si == 7);                          // SliderInt
+    typeInto(rsi, "x");    CHECK(si == 7);                          // not a number: unchanged
+    CHECK(!cf && !ci && !csf && !csi);                              // no change is reported while nothing is happening
+}
+
 }  // namespace
 
 int main() {
@@ -411,5 +434,6 @@ int main() {
     TreeTests();
     BeginComboTests();
     TypedNumberTests();
+    TypedSingleTests();
     TEST_MAIN_RESULT();
 }

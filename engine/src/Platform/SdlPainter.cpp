@@ -24,7 +24,9 @@ public:
     SdlPainter(SDL_Renderer* r, bool owns, SDL_Surface* surface = nullptr)
         : m_r(r), m_owns(owns), m_surface(surface) {}
     ~SdlPainter() override {
-        ReleaseCachedTextures();
+        // A wrapper over somebody else's renderer must not touch it when it dies: that renderer (and with it every
+        // texture it made, ours included) may already be gone, e.g. a static object destroyed after SDL_Quit.
+        if (m_owns) ReleaseCachedTextures();
         if (m_owns && m_r) SDL_DestroyRenderer(m_r);
         if (m_surface) SDL_FreeSurface(m_surface);
     }

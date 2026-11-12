@@ -10,6 +10,7 @@
 #include <SDL.h>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -71,7 +72,13 @@ struct OkayUIScriptBridge : ScriptUIBridge {
         return true;
     }
     okay::platform::Painter* painter = nullptr;   ///< set by the host; lets Image() make textures
+    /// For a host that only has an SDL_Renderer (the editor): the sdl2 painter over it, owned here.
+    void SetRenderer(SDL_Renderer* r) {
+        m_wrapped = okay::platform::WrapSdl2Renderer(r);
+        painter = m_wrapped.get();
+    }
 private:
+    std::unique_ptr<okay::platform::Painter> m_wrapped;
     struct Field { char buf[256] = ""; std::string lastOut; };
     std::map<std::string, Field> m_fields;
 };

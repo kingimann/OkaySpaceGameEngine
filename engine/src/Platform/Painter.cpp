@@ -50,4 +50,19 @@ ui2d::Tex Painter::FontAtlas(okay::TtfFont* f) {
     return u.tex;
 }
 
+ui2d::Tex Painter::UploadAtlas(const okay::Image& page, int pageIndex, ui2d::Tex tex) {
+    int w = 0, h = 0;
+    if (tex) QueryTexture(tex, &w, &h);
+    if (tex && (w != page.Width() || h != page.Height())) { DestroyTexture(tex); tex = nullptr; }
+    if (!tex) {
+        TextureDesc d;
+        d.width = page.Width(); d.height = page.Height();
+        d.scale = pageIndex == 0 ? ScaleMode::Linear : ScaleMode::Nearest;
+        tex = CreateTexture(d, nullptr);
+        if (!tex) return nullptr;
+    }
+    UpdateTexture(tex, nullptr, page.Data(), page.Width() * 4);
+    return tex;
+}
+
 } // namespace okay::platform

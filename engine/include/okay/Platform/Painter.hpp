@@ -82,6 +82,9 @@ public:
     ui2d::Tex LoadTexture(const std::string& path) override;
     /// The glyph atlas of a TTF font, uploaded again when the font baked new characters.
     ui2d::Tex FontAtlas(okay::TtfFont* font) override;
+    /// An atlas page of the UI batcher (ui2d::BatchPainter) as one painter texture, updated in place or replaced
+    /// when its size changed. Page 0 (font glyphs) is sampled linearly, page 1 (images) nearest.
+    ui2d::Tex UploadAtlas(const okay::Image& page, int pageIndex, ui2d::Tex existing) override;
     /// The texture bound to `path` in the cache (null when not loaded), without loading.
     ui2d::Tex CachedTexture(const std::string& path) const;
 

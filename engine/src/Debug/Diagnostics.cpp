@@ -51,7 +51,9 @@ ConsoleSource DiagSource::ToConsole() const {
 namespace {
 
 std::string RowKey(const Diagnostic& d) {
-    return d.owner + "\n" + d.code + "\n" + d.source.Key();
+    std::string key = d.owner + "\n" + d.code + "\n" + d.source.Key();
+    for (const std::string& r : d.relatedGuids) { key += '\n'; key += r; }   // two leaks on one box are two rows
+    return key;
 }
 
 std::string LogLine(const Diagnostic& d) {

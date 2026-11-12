@@ -21,6 +21,7 @@
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/SequencePlayer.hpp"
+#include "okay/Components/Spawner.hpp"
 #include "okay/Components/SplineMesh.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
@@ -52,6 +53,7 @@
 #include <sstream>
 
 namespace okay::testing {
+namespace detail { void RunLevelChecks(const Scene&, const ValidatorOptions&, ValidationReport&); }   // LevelChecks.cpp
 
 const char* SeverityName(Severity s) {
     switch (s) {
@@ -132,7 +134,13 @@ std::string ValidationReport::ToJson() const {
         if (n) j += ",";
         j += "{\"severity\":\"" + std::string(SeverityName(i.severity)) + "\",\"code\":\"" + JsonEscape(i.code) +
              "\",\"object\":\"" + JsonEscape(i.object) + "\",\"component\":\"" + JsonEscape(i.component) +
-             "\",\"message\":\"" + JsonEscape(i.message) + "\"}";
+             "\",\"message\":\"" + JsonEscape(i.message) + "\"";
+        if (!i.related.empty()) {
+            j += ",\"related\":[";
+            for (std::size_t k = 0; k < i.related.size(); ++k) j += (k ? ",\"" : "\"") + JsonEscape(i.related[k]) + "\"";
+            j += "]";
+        }
+        j += "}";
     }
     j += "]}";
     return j;
@@ -221,6 +229,7 @@ std::vector<AssetRef> SceneValidator::AssetReferences(const GameObject& go) {
     for (auto* c : go.GetComponents<SplineInstancer>()) add("SplineInstancer", "prefabPath", "prefab", c->prefabPath);
     for (auto* c : go.GetComponents<LineRenderer>()) add("LineRenderer", "texture", "texture", c->texture);
     for (auto* c : go.GetComponents<TrailRenderer>()) add("TrailRenderer", "texture", "texture", c->texture);
+    for (auto* c : go.GetComponents<Spawner>()) add("Spawner", "prefabPath", "prefab", c->prefabPath);
     return out;
 }
 
@@ -438,6 +447,7 @@ struct Checker {
             if (opt.checkPhysics) Physics(go, path);
             if (opt.checkInactive) Inactive(go, path);
         }
+        if (opt.checkLevel) detail::RunLevelChecks(scene, opt, rep);
         if (opt.checkAssets && !scene.uiFont.empty() && !SceneValidator::AssetExists(scene.uiFont, opt))
             Add(opt.missingAssetSeverity, "asset.missing", "", "Scene", "Missing font '" + scene.uiFont + "' (Scene.uiFont)");
         if (opt.checkCamera) Cameras();

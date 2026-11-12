@@ -151,13 +151,14 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Localization tools (`LocTable`, `LocCheck`, `LocPreview`, `LocScan`) not reachable from the editor | zero references in `editor/` or `player/` | Missing-key reports, placeholder mismatches and pseudo-locale preview cannot be used by a normal user (this sharpens 1.16 and 31.1 with the exact consumer count) | Medium | Medium |
 | Duplicate components of one type save only the first (except a few listed types) | `SceneSerializer.cpp` (feature map 1.7) | Two colliders or two lights on one object lose one on save | Medium | Medium |
 | Right-to-left languages unsupported (see section 9) | see above | | Medium | Large |
+| Level-design validation: what the new rules do not cover | `engine/src/Testing/LevelChecks.cpp` | Light leaks are a box-collider geometry test, not the lighting bake: holes in meshes, rotated or mesh-collider walls and non-static geometry are not judged, and an intended slit is flagged. Navigation reach ignores dynamic obstacles, jump links and doors, and with no agent in the scene only off-mesh is reported. A Mover is the only "moving object" the body rule knows (scripts, tweens and animation are not). Material asset paths do not exist as a field (materials are inline on the renderer), so only texture, mesh, audio, prefab, script and data paths are checked. Zero scale through a parent is not reported. The Problems panel has no automated UI test (the engine side has `level_validation`) | Low | Medium |
 | Lightmap baking has no test | `Render/Lightmap.hpp` (`BakeFaceLighting`); no test names it; editor calls it | Bake regressions invisible | Low | Small |
 | Other code with no test naming it | `UITouchScroll`, `ItemPresentation` (`DescribeItem`, `InventoryKeyWarning`), `LoadingScreenLayout`, `DeathLock` | Small features without any safety net | Low | Small |
 | Anti-cheat Windows probes vs Linux: stubbed clock probe | `shared/AntiCheatChecks.hpp:337` (`#else`) | Behaviour differs by OS | Low | Small |
 
 ## Counts
 
-High: 9. Medium: 57. Low: 26. Total rows: 92.
+High: 9. Medium: 57. Low: 27. Total rows: 93.
 
 ## Top 15 to tackle first
 

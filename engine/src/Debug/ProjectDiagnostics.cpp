@@ -2,6 +2,7 @@
 
 #include "okay/Core/AssetDatabase.hpp"
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -9,6 +10,7 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/Light.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
@@ -123,6 +125,28 @@ std::string HintFor(const std::string& code) {
         return "This build does not know that component. Remove the record or open the scene in a build that has it.";
     if (code == "physics.rigidbody_no_collider")
         return "Add a collider, or the body falls through everything.";
+    if (code == "transform.zero_scale")
+        return "A scale of 0 flattens the object. Fix sets the zero axes to 1.";
+    if (code == "transform.non_finite")
+        return "A NaN or infinite value breaks everything below this object. Fix resets those values.";
+    if (code == "geometry.zero_collider")
+        return "Give the collider a size above zero (or turn on Auto Fit). Fix resets it to the default size.";
+    if (code == "geometry.empty_mesh")
+        return "Assign a mesh, or remove the Mesh Renderer if the object is not meant to draw anything.";
+    if (code == "object.duplicate_overlap")
+        return "Delete one of the two, or move it. Fix deletes the copy when it has no children and the same components as the original.";
+    if (code == "lighting.light_leak")
+        return "Overlap the two boxes a little, or add a filler box in the seam, then bake lighting again.";
+    if (code == "nav.off_mesh")
+        return "Move it onto the walkable area, or bake the navigation mesh again if the floor changed.";
+    if (code == "nav.unreachable")
+        return "Connect the two walkable regions (a ramp, a wider doorway) or move it into the region the agents are in.";
+    if (code == "physics.moving_collider_no_rigidbody")
+        return "Add a Kinematic Rigidbody so physics follows the movement. Fix adds one.";
+    if (code == "scene.multiple_main_cameras")
+        return "Keep Main on one camera only. Fix turns it off on this one.";
+    if (code == "scene.no_light")
+        return "Add a Light, or switch the materials to Unlit. Fix adds a Directional Light.";
     if (code == "name.duplicate")
         return "Rename one of them so Find() is not ambiguous.";
     return "Open the object this row points at and correct what it describes.";
@@ -249,6 +273,27 @@ void MapSemantic(const Scene& scene, const testing::ValidationReport& report, co
         d.message = issue.message;
         d.source.component = issue.component;
         FillObject(d.source, scene, issue.object);
+        if (!issue.guid.empty()) {   // the validator knows the exact object: sibling names can repeat
+            if (GameObject* g = scene.FindByGuid(issue.guid)) {
+                d.source.objectGuid = g->Guid();
+                d.source.objectPath = testing::ObjectPath(g);
+            }
+        }
+        d.relatedGuids = issue.relatedGuids;
+        if (issue.code == "transform.zero_scale") d.fix.kind = DiagFixKind::ResetScale;
+        else if (issue.code == "transform.non_finite") d.fix.kind = DiagFixKind::ResetTransform;
+        else if (issue.code == "geometry.zero_collider") d.fix.kind = DiagFixKind::ResetColliderSize;
+        else if (issue.code == "physics.moving_collider_no_rigidbody") d.fix.kind = DiagFixKind::AddKinematicBody;
+        else if (issue.code == "scene.multiple_main_cameras") d.fix.kind = DiagFixKind::ClearMainCamera;
+        else if (issue.code == "scene.no_light") d.fix.kind = DiagFixKind::AddLight;
+        else if (issue.code == "object.duplicate_overlap") {
+            GameObject* dup = d.source.objectGuid.empty() ? nullptr : scene.FindByGuid(d.source.objectGuid);
+            GameObject* orig = issue.relatedGuids.empty() ? nullptr : scene.FindByGuid(issue.relatedGuids[0]);
+            // Only a copy that carries nothing the original lacks is safe to drop in one click.
+            if (dup && orig && dup->transform->Children().empty() && dup->Components().size() == orig->Components().size() &&
+                dup->prefabSource == orig->prefabSource)
+                d.fix.kind = DiagFixKind::DeleteObject;
+        }
         if (issue.code == "scene.no_camera") {
             d.severity = DiagSeverity::Error;
             d.message = "This scene has no main camera, so nothing is rendered.";
@@ -664,6 +709,7 @@ ProjectDiagResult CollectProjectDiagnostics(const Scene& scene, const ProjectDia
     ProjectDiagResult result;
     if (options.checkSemantic) {
         testing::ValidatorOptions vo;
+        vo.checkLevel = options.checkLevelDesign;
         vo.assetRoot = options.assetRoot;
         vo.fileExists = options.fileExists;
         vo.checkInactive = false;
@@ -702,6 +748,92 @@ bool ApplyDiagnosticFix(Scene& scene, const Diagnostic& d, std::string* error) {
             Camera* cam = go->GetComponent<Camera>();
             if (!cam) return fail("That object has no Camera.");
             cam->main = true;
+            return true;
+        }
+        case DiagFixKind::ClearMainCamera: {
+            if (!go) return fail("That object is no longer in the scene.");
+            Camera* cam = go->GetComponent<Camera>();
+            if (!cam) return fail("That object has no Camera.");
+            cam->main = false;
+            return true;
+        }
+        case DiagFixKind::AddLight: {
+            for (Light* l : scene.FindObjectsOfType<Light>()) {
+                // "No active light" with lights that exist: turn the first one back on instead of adding another.
+                if (l && l->gameObject) {
+                    l->enabled = true;
+                    l->gameObject->active = true;
+                    return true;
+                }
+            }
+            GameObject* sun = scene.CreateGameObject("Directional Light");
+            sun->AddComponent<Light>();
+            if (sun->transform) sun->transform->SetEulerAngles({50.0f, -30.0f, 0.0f});
+            return true;
+        }
+        case DiagFixKind::ResetScale: {
+            if (!go || !go->transform) return fail("That object is no longer in the scene.");
+            Vec3& sc = go->transform->localScale;
+            if (sc.x != 0 && sc.y != 0 && sc.z != 0) return fail("The scale is no longer zero.");
+            if (sc.x == 0) sc.x = 1.0f;
+            if (sc.y == 0) sc.y = 1.0f;
+            if (sc.z == 0) sc.z = 1.0f;
+            return true;
+        }
+        case DiagFixKind::ResetTransform: {
+            if (!go || !go->transform) return fail("That object is no longer in the scene.");
+            Transform& t = *go->transform;
+            auto fix = [](float& v, float def) { if (!std::isfinite(v)) { v = def; return true; } return false; };
+            bool any = false;
+            any |= fix(t.localPosition.x, 0); any |= fix(t.localPosition.y, 0); any |= fix(t.localPosition.z, 0);
+            any |= fix(t.localScale.x, 1); any |= fix(t.localScale.y, 1); any |= fix(t.localScale.z, 1);
+            if (!std::isfinite(t.localRotation.x) || !std::isfinite(t.localRotation.y) ||
+                !std::isfinite(t.localRotation.z) || !std::isfinite(t.localRotation.w)) {
+                t.localRotation = Quat::Identity;
+                any = true;
+            }
+            if (!any) return fail("The transform is already finite.");
+            return true;
+        }
+        case DiagFixKind::ResetColliderSize: {
+            if (!go) return fail("That object is no longer in the scene.");
+            bool any = false;
+            for (BoxCollider3D* b : go->GetComponents<BoxCollider3D>()) {
+                if (b->size.x <= 0) { b->size.x = 1; any = true; }
+                if (b->size.y <= 0) { b->size.y = 1; any = true; }
+                if (b->size.z <= 0) { b->size.z = 1; any = true; }
+            }
+            for (SphereCollider3D* b : go->GetComponents<SphereCollider3D>()) if (b->radius <= 0) { b->radius = 0.5f; any = true; }
+            for (CapsuleCollider3D* b : go->GetComponents<CapsuleCollider3D>()) {
+                if (b->radius <= 0) { b->radius = 0.5f; any = true; }
+                if (b->height <= 0) { b->height = 2.0f; any = true; }
+            }
+            for (BoxCollider2D* b : go->GetComponents<BoxCollider2D>()) {
+                if (b->size.x <= 0) { b->size.x = 1; any = true; }
+                if (b->size.y <= 0) { b->size.y = 1; any = true; }
+            }
+            for (CircleCollider2D* b : go->GetComponents<CircleCollider2D>()) if (b->radius <= 0) { b->radius = 0.5f; any = true; }
+            if (!any) return fail("The collider no longer has a zero size.");
+            return true;
+        }
+        case DiagFixKind::AddKinematicBody: {
+            if (!go) return fail("That object is no longer in the scene.");
+            bool solid3 = false;
+            for (Collider3D* c : go->GetComponents<Collider3D>()) if (!c->isTrigger) solid3 = true;
+            if (solid3) {
+                if (go->GetComponent<Rigidbody3D>()) return fail("That object already has a Rigidbody.");
+                go->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Kinematic;
+            } else {
+                if (go->GetComponent<Rigidbody2D>()) return fail("That object already has a Rigidbody.");
+                go->AddComponent<Rigidbody2D>()->bodyType = Rigidbody2D::BodyType::Kinematic;
+            }
+            return true;
+        }
+        case DiagFixKind::DeleteObject: {
+            if (!go) return fail("That object is no longer in the scene.");
+            if (!go->transform->Children().empty()) return fail("That object has children, so it is not deleted automatically.");
+            scene.Destroy(go);
+            scene.FlushDestroyed();
             return true;
         }
         case DiagFixKind::AddComponent: {

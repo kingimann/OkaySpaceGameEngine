@@ -124,6 +124,7 @@ int main() {
         hero->AddComponent<AudioSource>()->clipPath = "audio/boom.wav";
         auto* mr = s.CreateGameObject("Floor")->AddComponent<MeshRenderer>();
         mr->texture = "proc:grid";                         // built in: no file needed
+        s.CreateGameObject("Sun")->AddComponent<Light>();  // a lit mesh needs a light (scene.no_light)
         ValidationReport r = SceneValidator::Validate(s, base);
         CHECK(r.Clean());
         CHECK(r.sceneName == "Healthy");

@@ -199,6 +199,7 @@ add_library(okay_engine
     src/Testing/PlayTest.cpp
     src/Testing/ObjectPath.cpp
     src/Testing/SceneValidator.cpp
+    src/Testing/LevelChecks.cpp
     src/Testing/Regression.cpp
     src/Testing/GoldenImage.cpp
     third_party/ufbx/ufbx.c

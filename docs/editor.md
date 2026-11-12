@@ -557,6 +557,59 @@ unchanged.
   remembered between Play sessions. A built game does the same when it has no
   Pause Menu: Esc frees the cursor and a click captures it again.
 
+## Problems panel: the rules
+
+The Problems panel (docked with the Console) lists everything the project checks find in the open scene. It
+re-runs when the scene changes, in edit mode. The header shows three count pills (errors, warnings, notes); click
+a pill to show or hide that severity, and type in the search box to filter by text, code or object. Rows are sorted
+by severity, then object, then rule, so the list does not shuffle. **Click a row** to select the object and move the
+Scene view to it; a row about two objects (a duplicate and its original, the two boxes of a light leak) selects both
+and frames the pair. **Fix** appears only where the repair is safe, and it is one undo step (Ctrl+Z).
+
+Rules that were already there:
+
+| Rule (code) | Severity | What it reports | Fix |
+|---|---|---|---|
+| `scene.load_error`, `scene.missing_component`, `scene.unknown_field`, `scene.broken_parent`, `scene.duplicate_guid`, `scene.unknown_tag`, `scene.bad_layer` | error / warning | The scene file's integrity | none |
+| `asset.missing`, `scene.missing_asset`, `asset.db.missing` | error | A texture, mesh, audio clip, font, prefab or data file that is not on disk (also `Spawner.prefabPath`) | re-import / clear |
+| `asset.prefab_missing` | warning | An instance whose prefab file is gone | none |
+| `script.missing_file`, `script.empty`, `script.compile`, `script.backend` | error / warning | Broken script references | clear path |
+| `ref.missing_object` | warning | A follow target or teleporter that names an object that does not exist | clear |
+| `graph.*` | error / warning | Visual-script graph problems | add component |
+| `component.missing_requirement`, `player.missing_collider`, `player.missing_rigidbody`, `animator.no_controller` | error / warning | A component whose requirement is missing | add component |
+| `scene.no_camera`, `scene.no_active_camera`, `scene.no_main_camera` | error / warning | No camera, no usable camera, no Main camera | add / make Main |
+| `name.duplicate`, `component.duplicate_singleton` | warning | Sibling names that repeat; a second EventSystem and similar | none |
+| `transform.non_finite` | error | NaN or infinity in a transform | reset values |
+| `transform.zero_scale` | warning | A scale component of exactly 0 | set to 1 |
+| `transform.rotation_unnormalized`, `object.layer_range` | warning | A rotation that is not unit length; a layer outside 0..31 | none |
+| `transform.extreme_position` | warning | A coordinate beyond one million units (precision) | none |
+| `physics.rigidbody_no_collider` | warning | A Rigidbody with no collider on the object | none |
+| `navmesh.no_bake` | warning | An agent in a scene with no baked navigation mesh | none |
+
+Level-design rules added later (all in `Testing/SceneValidator`, mapped to rows by `Debug/ProjectDiagnostics`):
+
+| Rule (code) | Severity | What it checks | Fix |
+|---|---|---|---|
+| `geometry.zero_collider` | warning | A box side, sphere or circle radius, or capsule radius or height of 0 or less, with Auto Fit off | reset to the default size |
+| `geometry.empty_mesh` | warning | A Mesh Renderer with no triangles, unless Terrain, Voxel Terrain, Spline Mesh, Skinned Mesh, Water, Blend Shapes or Block Builder fills it at run time | none |
+| `object.duplicate_overlap` | warning | Two objects with the same mesh (or sprite) within 1 cm, the same rotation and size. A spatial hash keeps it linear | delete the copy, only when it has no children and the same number of components as the original |
+| `lighting.light_leak` | warning (info for a gap above or below) | Two static, axis-aligned, non-trigger Box Colliders whose facing sides are between 0.5 mm and 5 cm apart, overlapping by at least 10 cm on the other two axes, with no third static box in the seam | none |
+| `nav.off_mesh` | warning | An agent, an object tagged Spawn, SpawnPoint, PlayerStart, Respawn, Goal, Pickup, Checkpoint or Exit, or an Item Pickup with no navigation polygon within 1 unit sideways and 2 up | none |
+| `nav.unreachable` | warning | A spawn point, goal or pickup on a navigation region that has no agent in it | none |
+| `physics.moving_collider_no_rigidbody` | warning | A Mover with a velocity on a solid collider, with no Rigidbody on it or a parent | add a Kinematic Rigidbody |
+| `scene.multiple_main_cameras` | warning | More than one enabled, active camera flagged Main | turn Main off on the extra camera |
+| `scene.no_light` | warning | Lit 3D meshes (not Unlit) and no enabled, active Light | add a Directional Light, or switch the first light on |
+
+What the light-leak check is and is not: it is a geometric test of box colliders, not a run of the lighting bake. It
+cannot see holes in a mesh, rotated or mesh-collider walls, or geometry that is not marked static. It can
+flag an intended slit or a prop resting a centimetre above the floor. Closing the seam (overlap the boxes) and baking
+again is the cure. At most 200 leaks are listed, with one row for the remainder.
+
+Navigation rules need a baked mesh. With none baked they stay silent and the older `navmesh.no_bake` row speaks.
+Dynamic obstacles, jump links and doors are not modelled: a region is a set of polygons joined by portals.
+
+Budget: a 10,000-object scene validates in well under two seconds (the test `level_validation` measures it).
+
 ## Panel tabs & layouts
 
 - **Tabs**: every panel tab shows an icon before its name. The active tab of each

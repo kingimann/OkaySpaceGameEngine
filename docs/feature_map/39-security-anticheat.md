@@ -163,15 +163,15 @@ hardening items are merged; nobody is touching it now.
   - 39.8.2 Host secret - `Net/RelayProtocol` - a version-2 host gets a secret key; only a hello carrying it can host the code; version-1 keeps the old rule (voice calls)
   - 39.8.3 Address cookie - `Net/RelayServer` - a version-3 new peer first gets an HMAC cookie of its address and the minute and gets a slot only when it echoes it, so a spoofed source can't fill quotas
   - 39.8.4 Caps and rate limits - `Net/RelayServer` - 4,096 peers, 2,048 sessions, 32 peers per session, 64 peers and 16 sessions per address, 1,000 packets and 1 MB per second per peer, hellos 10 per second per address, random slots
-  - 39.8.5 Legacy hellos - `relay/main.cpp` - `--legacy-hello=off` refuses version-1 and -2 hellos; leave on until the log's legacy count is zero
+  - 39.8.5 Legacy hellos - `relay/main.cpp` - `--legacy-hello=off` refuses version-1 and -2 hellos; leave on until `LegacyPeers()` (logged once a minute with per-version counts) stays zero; the game and the launcher's voice calls both build version-4 hellos with `Net/RelayHello`
   - 39.8.6 Welcome nonce - `Net/RelayProtocol` - a version-4 game puts a random nonce in its hellos and ignores any welcome that doesn't echo it, so a forged welcome can't pair, redirect or end a session; an older relay needs `allowUnverifiedRelay`
-- **Code:** `Net/RelayServer`, `Net/RelayProtocol`, `relay/main.cpp`
-- **API:** `RelayServer::SetLegacyHello`, `kMaxPeers`, `kPacketsPerSecond`, `RelayRefused`, flag `--legacy-hello`
+- **Code:** `Net/RelayServer`, `Net/RelayProtocol`, `Net/RelayHello`, `relay/main.cpp`
+- **API:** `RelayServer::SetLegacyHello`, `LegacyPeers`, `HellosByVersion`, `BuildRelayHello`, `ParseRelayWelcome`, `kMaxPeers`, `kPacketsPerSecond`, `RelayRefused`, flag `--legacy-hello`
 - **Editor:** none
 - **Docs:** `docs/relay.md` (What the relay enforces), `docs/anticheat.md` (relay hosted games)
-- **Tests:** `relay_security`, `net_relay_hardening`, `net_anticheat_ph2`, `net_relay`
+- **Tests:** `relay_security`, `net_relay_hardening`, `net_anticheat_ph2`, `net_relay`, `net_relay_clients`
 - **Status:** Works - flood, isolation, cookie and slot cases are in `relay_security`; limits read in the header
-- **Open:** whether the live relay runs the cookie version can't be told from the repo (ROADMAP item 7); launcher voice calls now send v3 hellos with a fallback to v1 (read in `VoiceChat.hpp`), so `--legacy-hello=off` is possible once the log's legacy count is zero
+- **Open:** whether the live relay runs the cookie version can't be told from the repo (ROADMAP item 7); launcher voice calls now send v4 hellos (cookie and nonce, via `Net/RelayHello`) with a fallback to v1 only against a relay older than v3 (`VoiceChat.hpp` compiles; the voice UI was not run), so `--legacy-hello=off` is possible once `LegacyPeers()` is zero; the default stays on
 - **Related:** 16.14, 16.7
 - **Words:** relay, hardening, cookie, hello, slot, flood, rate limit, session isolation, legacy hello, spoofed source
 - **Seen as:** "relay refused"; a flood fills the relay; a stranger can't take over a code

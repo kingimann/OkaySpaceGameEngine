@@ -279,6 +279,13 @@ public:
     /// the same client can resume it (matched by a secret token the Welcome
     /// gave it). At most kMaxParked are kept. 0 = keep nothing.
     float resumeGraceSeconds = 30.0f;
+    /// Host: hand a resume token only to a client whose join was sealed, i.e. whose Welcome
+    /// (the one message that carries the token) travels encrypted. The token is a bearer secret:
+    /// on an unencrypted session anyone who can read the datagrams (same network, a router on the
+    /// path) sees it and can take the player's place, and no keyed proof can fix that because
+    /// there is no key. With this on, such a client gets no token and a rejoin is a new peer.
+    /// Off by default (LAN and tests without encryption keep resuming). See docs/multiplayer_audit.md.
+    bool resumeRequiresEncryption = false;
     /// What a reconnecting client reports to its handler.
     enum class ReconnectEvent { Lost, Attempt, Restored, GaveUp };
     /// Client: called on each step; `attempt` is the try number (1-based; 0 for Lost).
@@ -304,6 +311,17 @@ public:
     struct ResumedPeer { std::uint32_t id = 0; Vec3 position{}; bool hasPosition = false; int score = 0; bool ready = false; };
     void SetPeerResumedHandler(std::function<void(const ResumedPeer&)> f) { m_peerResumed = std::move(f); }
     static constexpr std::size_t kMaxParked = 64;
+    /// Reliable messages (SendReliable* and SendOrdered*) that were still unacked when a
+    /// session dropped are kept, up to kMaxResendMessages / kMaxResendBytes (payload bytes)
+    /// per drop, oldest first, and sent again once the rejoin is RESUMED: a client keeps
+    /// its own, the host keeps a dropped client's with its parked state. A rejoin that is
+    /// not a resume (grace over, host restarted) is a new peer and drops them. They go out as
+    /// new messages, so one the peer had already got whose ack was lost arrives twice:
+    /// handlers of reliable messages should be idempotent. Counts since this manager was made.
+    std::size_t ResentAfterResume() const { return m_resentTotal; }   ///< messages re-sent
+    std::size_t ResendDropped() const { return m_resendDropped; }     ///< a client's own, left out by the bounds or lost with a non-resumed rejoin; the host's, left out by the bounds
+    static constexpr std::size_t kMaxResendMessages = 256;
+    static constexpr std::size_t kMaxResendBytes = 256u * 1024u;
 
     /// Client: seconds to wait for the host to accept the join before giving up
     /// (JoinRejected() with the reason "the host did not answer"). A relay
@@ -956,8 +974,16 @@ private:
     void BeginReconnect();
     void FailReconnectTry();
     void ReannounceOwnSpawns();
+    // Reliable messages in flight when a session dropped, re-sent after a resume.
+    struct Unacked { bool ordered = false; std::string channel, data; };
+    std::size_t CollectUnacked(const std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& relOut,
+                               const net::OrderedEnd& ordered, std::vector<Unacked>& out) const;
+    void ResendUnacked(std::uint32_t target, std::vector<Unacked>& q);   // sends and empties `q`
+    std::vector<Unacked> m_resendQ;                   // client: kept across the drop, sent on Restored
+    std::size_t m_resentTotal = 0, m_resendDropped = 0;
     // Host: dropped clients' state, kept for resumeGraceSeconds.
     struct Parked {
+        std::vector<Unacked> resend;   // what it had not acked
         std::uint64_t token = 0; std::uint32_t id = 0; std::string userId;
         Vec3 pos{}; bool hasState = false; char glyph = '@'; int score = 0; bool ready = false; float age = 0.0f;
     };

@@ -101,6 +101,39 @@ Ranked by player-visible impact. Each has a regression test in
     without them, so a late, reordered one cannot remove someone who just joined). Test:
     `tests/test_net_rejoin.cpp`.
 
+12. **Relay clients sent hellos a relay could not trust (#733, step 1).** The launcher's voice
+    calls sent a version-3 hello with no welcome nonce (so a forged welcome could pair or end a
+    call) and fell back to the unauthenticated version-1 hello after only three unanswered
+    seconds, which a lossy link can cause. The game and the voice calls now build every hello
+    with one helper (`okay/Net/RelayHello.hpp`: version 4, cookie, nonce) and check every
+    welcome with it (the nonce must be echoed); the voice call falls back to version 1 only after
+    six unanswered hellos and says "update the launcher" when a relay refuses it. The relay
+    counts hellos per version and registered legacy peers (`HellosByVersion()`, `LegacyPeers()`),
+    logged once a minute while legacy hellos arrive. The relay default is unchanged (legacy hellos
+    stay on): flipping it is step 2, after players have updated and the log shows no legacy peer.
+    Tests: `tests/test_net_relay_clients.cpp` (a relay with legacy off serves a voice-style client and
+    a game host and client, with zero legacy hellos; forged and un-echoed welcomes are refused).
+    The launcher's `VoiceChat.hpp` change was compiled, not run.
+13. **Resume token: what is guaranteed.** The token is a bearer secret (64 random bits, single use,
+    bound to the account when signed in). In a sealed (encrypted) session the Welcome that carries it
+    and the Join that presents it are authenticated-encrypted, so it is never in a datagram in the
+    clear, and a captured rejoin replayed from another address resumes nothing and evicts nobody. On
+    an unencrypted session there is no key to bind it to: anyone who can read the datagrams has it, as
+    they have the session cookie and every other byte. A keyed proof cannot fix that, so the option
+    `resumeRequiresEncryption` (off by default) makes the host hand a token only to a sealed join;
+    an unencrypted client then gets none and rejoins as a new peer. An off-path sender cannot guess a
+    token, and a spent or invented one gives a new peer with none of the old state. Tests:
+    `tests/test_net_resume_token.cpp` (wire capture through a recording UDP middlebox).
+14. **Reliable messages in flight were lost when a session dropped.** A reliable or ordered message the
+    peer had not acked at the drop vanished with the session. Both ends now keep them (a client its
+    own, the host a dropped client's with its parked state) and send them again once the rejoin is a
+    resume, oldest first and ordered channels in order, bounded to 256 messages and 256 KiB each way;
+    what is cut is counted (`ResendDropped()`). A rejoin that is not a resume is a new peer and gets
+    none. They go out as new messages, so one the peer had already received whose ack was lost
+    arrives twice: reliable handlers should be idempotent. Tests: `tests/test_net_resume_resend.cpp`
+    (both directions, ordering, both bounds, no-resume and give-up cases; run against a NetSim
+    blackhole so every arrival is the re-send).
+
 Also covered by new tests with no bug found: loss, reordering and duplication through `NetSim`
 (`tests/test_net_lossy.cpp`: exactly-once reliable, in-order ordered, never-backwards sequenced,
 join, convergence of a synced object and a resume on a bad link), a deterministic fuzz of every
@@ -116,21 +149,21 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
 
 1. **Legacy (v1/v2) relay hellos are still accepted by default (#733).** They carry no
    address cookie, so an off-path attacker can register spoofed peers and squat session
-   codes. Turning the default off is a rollout decision (older games and the launcher's
-   voice calls speak them); the relay logs how many it sees (`LegacyHellos()`), and
-   `--legacy-hello=off` already refuses them. Left as it is on purpose; it needs a
-   release note, not a silent change.
+   codes. Step 1 is done (every client built here sends version-4 hellos, and the relay logs
+   legacy peers and per-version counts); turning the default off is a rollout decision for
+   when older games and launchers already out there have updated (`LegacyPeers()` zero),
+   and needs a release note, not a silent change. `--legacy-hello=off` already refuses them.
 2. **Build-mode placements and quest state are not synced**
    (`docs/unfinished_engine.md`, section 11 and neighbours), and a death that was not caused
    by a replicated hit (a kill volume, a script) is not sent to other players; only the respawn
    is. A one-shot animation event is not queued: two inside one sync interval play only the
    newest. Players still diverge in games that rely on these.
-3. **Reconnect limits.** Messages that were in flight (reliable, ordered) when the session dropped
-   are lost with it; a game that needs them resends from its own state after
-   `ReconnectEvent::Restored`. A rejoin that gets no resume (grace over, host restarted) is a
+3. **Reconnect limits.** Messages in flight when the session dropped are re-sent after a resume
+   (bounded, may arrive twice; see 14 above), not after a rejoin that is no resume. A rejoin that gets no resume (grace over, host restarted) is a
    new peer: objects made with `SpawnOwned` are not re-announced under the new id, the game
    respawns them (`Resumed()` says which case it is). Without encryption the resume token
-   travels in the clear, like the rest of an unencrypted session.
+   travels in the clear, like the rest of an unencrypted session (`resumeRequiresEncryption`
+   turns it off there; see 13 above).
 4. **Data races in `ServerBrowser::Game` and the voice session (PR #700,
    `claude/fix-thread-races`).** Already written and left to that branch so the two do
    not conflict.

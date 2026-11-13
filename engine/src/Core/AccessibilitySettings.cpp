@@ -80,6 +80,7 @@ float AimAssistStrength(AimAssist level) {
 void AccessibilitySettings::Clamp() {
     textScale = okay::Clamp(textScale, 0.75f, 2.0f);
     colorblindStrength = okay::Clamp(colorblindStrength, 0.0f, 1.0f);
+    focusThicknessScale = okay::Clamp(focusThicknessScale, 0.5f, 3.0f);
     subtitles.Clamp();
     for (auto it = toggleActions.begin(); it != toggleActions.end();)
         it = it->empty() ? toggleActions.erase(it) : std::next(it);
@@ -96,6 +97,8 @@ std::uint32_t AccessibilitySettings::Diff(const AccessibilitySettings& o) const 
     if (toggleAllHolds != o.toggleAllHolds || toggleActions != o.toggleActions) d |= kA11yHoldToggle;
     if (aimAssist != o.aimAssist) d |= kA11yAimAssist;
     if (screenReaderHints != o.screenReaderHints) d |= kA11yScreenReader;
+    if (focusHighVisibility != o.focusHighVisibility || focusThicknessScale != o.focusThicknessScale)
+        d |= kA11yFocusVisual;
     return d;
 }
 
@@ -110,6 +113,8 @@ void AccessibilitySettings::Load() {
     if (Prefs::Has("a11y.toggle")) toggleActions = SplitActions(Prefs::GetString("a11y.toggle"));
     if (Prefs::Has("a11y.aimAssist")) { AimAssist a; if (AimAssistFromName(Prefs::GetString("a11y.aimAssist"), a)) aimAssist = a; }
     if (Prefs::Has("a11y.screenReader")) screenReaderHints = Prefs::GetInt("a11y.screenReader") != 0;
+    if (Prefs::Has("a11y.focusHighVis")) focusHighVisibility = Prefs::GetInt("a11y.focusHighVis") != 0;
+    if (Prefs::Has("a11y.focusThickness")) focusThicknessScale = Prefs::GetFloat("a11y.focusThickness");
     subtitles.Load();
     Clamp();
 }
@@ -125,6 +130,8 @@ void AccessibilitySettings::Save() const {
     Prefs::SetString("a11y.toggle", JoinActions(toggleActions));
     Prefs::SetString("a11y.aimAssist", AimAssistName(aimAssist));
     Prefs::SetInt("a11y.screenReader", screenReaderHints ? 1 : 0);
+    Prefs::SetInt("a11y.focusHighVis", focusHighVisibility ? 1 : 0);
+    Prefs::SetFloat("a11y.focusThickness", focusThicknessScale);
     subtitles.Save();
 }
 
@@ -181,6 +188,8 @@ void Accessibility::SetToggleAction(const std::string& action, bool toggle) {
 }
 void Accessibility::SetAimAssist(AimAssist level) { OKAY_A11Y_EDIT(s.aimAssist = level); }
 void Accessibility::SetScreenReaderHints(bool on) { OKAY_A11Y_EDIT(s.screenReaderHints = on); }
+void Accessibility::SetFocusHighVisibility(bool on) { OKAY_A11Y_EDIT(s.focusHighVisibility = on); }
+void Accessibility::SetFocusThicknessScale(float scale) { OKAY_A11Y_EDIT(s.focusThicknessScale = scale); }
 #undef OKAY_A11Y_EDIT
 
 float Accessibility::ScaleText(float pixels) { return pixels * S().settings.textScale; }

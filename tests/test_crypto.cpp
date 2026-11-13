@@ -388,5 +388,32 @@ int main() {
         RandomBytes(nullptr, 0);
     }
 
+    RUN_SUITE("crypto Ed25519IsWeakKey");
+    {   // the key checks Ed25519Verify makes, exposed for vetting key lists (shared/AntiCheatCrypto.hpp)
+        const char* weak[] = {
+            "0000000000000000000000000000000000000000000000000000000000000000",   // order 4
+            "0100000000000000000000000000000000000000000000000000000000000000",   // identity
+            "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",   // order 8
+            "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",   // order 8
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p-1 (order 2)
+            "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p (non-canonical 0)
+            "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p+1 (non-canonical 1)
+        };
+        for (const char* h : weak)
+            for (int sign = 0; sign < 2; ++sign) {   // with the sign bit too (0100..80 and ecff..ff are not even decodable)
+                Bytes k = Hex(h);
+                if (sign) k[31] |= 0x80;
+                CHECK(Ed25519IsWeakKey(k.data()));
+                Bytes sig(64, 0); sig[0] = 1;
+                CHECK(!Ed25519Verify(sig.data(), nullptr, 0, k.data()));
+            }
+        for (int i = 0; i < 20; ++i) {
+            const Bytes seed = RndBytes(32);
+            std::uint8_t pk[32];
+            Ed25519PublicFromSeed(pk, seed.data());
+            CHECK(!Ed25519IsWeakKey(pk));
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -117,6 +117,20 @@ Nothing user-visible, nothing default.
 | Scripting | Copy and paste text in fields, scripts and visual script | #770 |
 | Visual script | Wait and Delay export as `after(seconds, fn)` | #764 |
 | Launcher | Kick/ban, blocks and privacy, password reset page, updater checks, account export and delete, reports | #668 #667 #647 #650 #651 #652 |
+| Localization | The Localization window calls the translation grid, the checker, the scanner and the preview | #765 |
+| Physics | A dynamic mesh collider uses the convex hull; landing raises collision callbacks | #766 |
+| Physics | 2D box and capsule casts, and a 2D explosion force | #771 |
+| Rendering | The editor names lighting switches a renderer ignores | #772 |
+| Visual script | Timer and every Actions step export as real script | #773 |
+| Scenes | Every component instance on an object is saved | #774 |
+| AI | Behavior trees can run a sub-tree, and a breakpoint pauses Play | #775 |
+| Cutscenes | Letterbox bars, camera shake, a coloured screen fade, nested sequences | #776 |
+| Settings | Monitor, display mode, resolution, refresh rate, and a 10-second revert | #777 |
+| Audio | Reverb, pitch that follows speed, quieter behind walls, dull with distance | #778 |
+| Input | On-screen touch controls and gestures | #779 |
+| UI | Frames can turn and scale | #780 |
+| UI | A focus ring for keyboard and gamepad menus | #781 |
+| Editor | Window for items, loot tables and recipes | #782 |
 
 ## Claimed (in progress)
 
@@ -131,34 +145,18 @@ Nothing user-visible, nothing default.
 | 2D grid paths: cell costs, smoothing, and moving obstacles | John | draft #783 `john/pathfinding2d-weights` |
 | Safety-net tests, plus the pause-menu input context and the death lock | John | draft #784 `john/untested-features-tests` |
 | Eight more UI widgets (search, date, file, accordion, breadcrumbs, pages, skeleton, sheet) | John | draft #785 `john/ui-widgets-more` |
-
-## In review (merged, not on main yet)
-
-These are merged into `john/release-2866-integration`. They are not on main, so they are not in the Done table. Do not start a second version.
-
-| Task | Who | PR |
-|---|---|---|
-| Localization window calls the localization tools | John | #765 |
-| A dynamic mesh collider uses the convex hull; landing raises collision callbacks | John | #766 |
-| 2D box and capsule casts, and a 2D explosion force | John | #771 |
-| The editor names lighting switches a renderer ignores | John | #772 |
-| Visual script export: Timer, and every Actions step | John | #773 |
-| Every component instance is saved | John | #774 |
-| Behavior trees: Run Sub-Tree, and breakpoints that pause Play | John | #775 |
-| Letterbox bars, camera shake, a coloured screen fade, nested sequences | John | #776 |
-| Settings screen: monitor, display mode, resolution, refresh, 10-second revert | John | #777 |
-| Spatial audio: reverb, pitch with speed, quieter behind walls, dull with distance | John | #778 |
-| On-screen touch controls and gestures | John | #779 |
-| UI frames can turn and scale | John | #780 |
-| A focus ring for keyboard and gamepad menus | John | #781 |
-| Editor for items, loot tables and recipes | John | #782 |
+| Audio import settings take effect, and FLAC files load | John | draft #786 `john/audio-import-flac` |
+| One shared AI perception check, and a minimap write-up | John | draft #789 `john/perception-dedupe` |
+| Data-driven weapon definitions for melee and guns | John | draft #791 `john/weapon-definitions` |
+| Physics step rate in the editor, and parented rigidbodies | John | draft #792 `john/rigidbody-step-parenting` |
+| In-game UI drawn crisp and smooth by default | John | draft #793 `john/crisp-ui` |
+| OkayUI widgets toward ImGui parity, and a code editor (off by default) | Claude | draft #794 `claude/okayui-values` |
+| Own 3DS and BVH readers; own FBX and COLLADA checked on real files (off by default) | Claude | draft #795 `claude/own-model-readers` |
 
 ## Free (unclaimed, safe small tasks)
 
 | Task | Notes |
 |---|---|
-| 3DS (.3ds) reader behind the import seam | Follow the COLLADA reader's structure; off by default |
-| BVH animation reader | Animation only; off by default |
 | `.off` and other simple mesh formats | One format per task |
 
 ## Queued next (do not start without asking)

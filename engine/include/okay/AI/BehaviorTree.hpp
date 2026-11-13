@@ -105,6 +105,7 @@ enum class BtNodeType {
     // ---- tasks ----
     Wait, MoveTo, Patrol, Wander, Chase, Flee, LookAt, PlayAnimation, Attack,
     SetBlackboard, SendEvent, RunScript, PlayAudio, StartDialogue, Custom,   // PlayAudio: windows.h defines PlaySound
+    RunSubtree,   // runs another .okaybt with its own blackboard
     // ---- services ----
     Perception, HealthWatcher,
     Count
@@ -126,7 +127,8 @@ struct BtParamDef {
         Waypoints,  ///< comma-separated scene object names
         Event,      ///< a script event name
         Function,   ///< a script function name
-        File        ///< an asset path
+        File,       ///< an asset path
+        Tree        ///< another behavior tree asset (picked, not typed)
     };
     const char* key;
     const char* label;
@@ -152,6 +154,18 @@ inline bool BtIsService(BtNodeType t) { return BtKindOf(t) == BtNodeKind::Servic
 /// The parameter a node of `type` takes under `key`, or null.
 const BtParamDef* BtParamOf(BtNodeType type, const std::string& key);
 
+/// One key shared between a tree and the sub-tree it runs.
+/// `way` is '>' (this tree into the sub-tree, before each tick),
+/// '<' (the sub-tree back into this tree, after each tick) or '=' (both).
+struct BtKeyLink {
+    std::string parent;   ///< key on the tree that owns the Run Sub-Tree node
+    std::string child;    ///< key on the sub-tree's own blackboard
+    char way = '=';
+};
+/// `parent>child`, `parent<child` or `parent=child`, separated by commas.
+std::vector<BtKeyLink> BtParseKeyMap(const std::string& text);
+std::string BtFormatKeyMap(const std::vector<BtKeyLink>& links);
+
 struct BtNode {
     int id = 0;
     BtNodeType type = BtNodeType::Sequence;
@@ -159,6 +173,7 @@ struct BtNode {
     int parent = -1;
     std::vector<int> children;        ///< flow children and services, in order
     float x = 0.0f, y = 0.0f;         ///< editor position (graph units)
+    bool breakpoint = false;         ///< pause Play when this node is reached (saved with the tree)
     std::map<std::string, std::string> params;   ///< parameters as text (the catalogue gives the defaults)
 
     /// Typed access with the catalogue's default when the parameter is unset.
@@ -223,8 +238,13 @@ public:
     struct Issue { int node = -1; int severity = 1; std::string text; };   ///< 1 warning, 2 error
     /// Problems: an empty composite, a decorator without a child, a task with
     /// children, a parameter naming a blackboard key the tree lacks, waypoints or
-    /// objects missing from `scene` (when one is given), no root.
-    std::vector<Issue> Validate(const Scene* scene = nullptr) const;
+    /// objects missing from `scene` (when one is given), a Run Sub-Tree whose file
+    /// is missing or which runs `selfPath` (this file) again, no root.
+    std::vector<Issue> Validate(const Scene* scene = nullptr, const std::string& selfPath = {}) const;
+
+    /// This tree file and every Run Sub-Tree it reaches (cycles stop). Paths are
+    /// as stored (project-relative); missing files are skipped.
+    static void CollectReferencedFiles(const std::string& path, std::vector<std::string>& out);
 
     std::string Serialize() const;
     bool Deserialize(const std::string& text, std::string* error = nullptr);

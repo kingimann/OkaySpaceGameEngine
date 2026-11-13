@@ -40,7 +40,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Docs:** `docs/physics.md`
 - **Tests:** `physics3d`, `meshcollider3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
 - **Status:** Works - Physics3D::Step, Rigidbody3D and the collider headers read; sleeping, terrain follow and spin covered by the tests above
-- **Open:** the header says bodies must be top-level (un-parented) Transforms; the navmesh bake still treats a MeshCollider3D as its bounds box
+- **Open:** the header says bodies must be top-level (un-parented) Transforms (in draft PR #792); the navmesh bake still treats a MeshCollider3D as its bounds box
 - **Related:** 6.1, 6.3, 6.4, 6.5, 6.8, 2.6, 4.1
 - **Words:** Rigidbody, Rigidbody3D, BoxCollider3D, SphereCollider3D, CapsuleCollider3D, CylinderCollider3D, MeshCollider3D, collider fit, autoFit, Fit to Object, SAT, gravity, terrain collision, sleeping, kinematic, triangle mesh, BVH, concave collider, static mesh, convex hull, ConvexContact
 - **Seen as:** objects fall through a thin floor; a box stands on its corner or never settles; a collider is bigger or smaller than the mesh; a character sinks into terrain; a parented object does not collide
@@ -75,7 +75,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Docs:** -
 - **Tests:** `fixed_step`
 - **Status:** Works - header comments read (player, editor Play and dedicated server use the fixed step; a bare Scene keeps one step per frame); covered by `fixed_step`
-- **Open:** a body moved by game code jumps with no blending (by design, per the header); no setting in the editor to change the step rate
+- **Open:** a body moved by game code jumps with no blending (by design, per the header); no setting in the editor to change the step rate (in draft PR #792, with parented rigidbodies)
 - **Related:** 1.1, 6.1, 6.2, 16.2
 - **Words:** fixed timestep, FixedUpdate, interpolation, physics rate, PoseHistory, PhysicsAlpha, catch-up, 50 Hz
 - **Seen as:** movement stutters or jitters when frame rate differs from the physics rate; the game plays faster or slower at 30 and 240 FPS; a teleported body smears

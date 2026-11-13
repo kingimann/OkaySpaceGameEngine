@@ -48,6 +48,10 @@ bool SequencePlayer::Load(std::string* error) {
     Sequence s;
     if (!Sequence::LoadFromFile(ResolvedPath(), s, error)) return false;
     m_seq = std::move(s);
+    m_lib.Clear();
+    std::string note;
+    m_lib.LoadFrom(m_seq, ResolvedPath(), &note);
+    if (!note.empty()) Log::Warning("[sequence] ", note);
     m_loaded = true;
     m_loadedPath = sequencePath;
     return true;
@@ -62,13 +66,13 @@ bool SequencePlayer::Play() {
     Scene* s = GetScene();
     if (!s) return false;
     if (m_playing) m_binding.RestoreCamera();   // a restart blends from the camera's own pose again
-    m_binding.Bind(*s, m_seq);
+    m_binding.Bind(*s, m_seq, &m_lib);
     m_playing = true; m_paused = false; m_waiting = false;
     m_time = 0.0f;
     m_last = -1.0f;                 // the first step fires what sits at 0
     m_savedTimeScale = Time::TimeScale();
     m_changedTimeScale = false;
-    m_binding.Apply(m_seq, 0.0f);
+    m_binding.Apply(m_seq, 0.0f, &m_lib);
     if (onStarted) onStarted();
     Deliver("on_sequence_started", nullptr, m_seq.name);
     return true;
@@ -93,32 +97,32 @@ void SequencePlayer::Stop() { Finish(); }
 
 void SequencePlayer::Skip() {
     if (!m_playing) return;
-    const float end = m_seq.Duration();
+    const float end = Length();
     m_waiting = false;
     m_skipping = true;
     FireBetween(m_last, end, false);
     m_skipping = false;
     m_time = end;
     m_last = end;
-    if (m_playing) m_binding.Apply(m_seq, end);   // an "end" action may have finished it already
+    if (m_playing) m_binding.Apply(m_seq, end, &m_lib);   // an "end" action may have finished it already
     Finish();
 }
 
 void SequencePlayer::Seek(float t) {
-    m_time = Mathf::Clamp(t, 0.0f, m_seq.Duration());
+    m_time = Mathf::Clamp(t, 0.0f, Length());
     m_last = m_time;
     m_waiting = false;
-    if (m_playing) m_binding.Apply(m_seq, m_time);
+    if (m_playing) m_binding.Apply(m_seq, m_time, &m_lib);
 }
 
 void SequencePlayer::Evaluate(float t) {
-    if (!m_binding.Bound()) { Scene* s = GetScene(); if (!s) return; m_binding.Bind(*s, m_seq); }
-    m_binding.Apply(m_seq, t);
+    if (!m_binding.Bound()) { Scene* s = GetScene(); if (!s) return; m_binding.Bind(*s, m_seq, &m_lib); }
+    m_binding.Apply(m_seq, t, &m_lib);
 }
 
 SeqOverlay SequencePlayer::Overlay() const {
     if (!m_playing) return {};
-    SeqOverlay o = m_seq.OverlayAt(m_time);
+    SeqOverlay o = m_seq.OverlayAt(m_time, &m_lib);
     o.waiting = m_waiting;
     return o;
 }
@@ -134,11 +138,11 @@ void SequencePlayer::Step(float dt) {
         m_waiting = false;
     }
     const bool looping = loop || m_seq.loop;
-    const float end = looping ? m_seq.LoopEndTime() : m_seq.Duration();
+    const float end = looping ? m_seq.LoopEndTime() : Length();
     const float next = m_time + dt * timeScale;
     FireBetween(m_last, std::min(next, end), false);
     if (!m_playing) return;                       // an "end" action or a script stopped it
-    if (m_waiting) { m_binding.Apply(m_seq, m_time); return; }
+    if (m_waiting) { m_binding.Apply(m_seq, m_time, &m_lib); return; }
     if (next >= end) {
         if (looping && end > m_seq.loopStart) {
             float over = next - end;
@@ -148,31 +152,32 @@ void SequencePlayer::Step(float dt) {
             FireBetween(m_seq.loopStart, m_time, true);   // what sits at the loop start fires again
             if (!m_playing) return;
             m_last = m_time;
-            m_binding.Apply(m_seq, m_time);
+            m_binding.Apply(m_seq, m_time, &m_lib);
             return;
         }
         m_time = end; m_last = end;
-        m_binding.Apply(m_seq, end);
+        m_binding.Apply(m_seq, end, &m_lib);
         Finish();
         return;
     }
     m_time = next; m_last = next;
-    m_binding.Apply(m_seq, m_time);
+    m_binding.Apply(m_seq, m_time, &m_lib);
 }
 
 // Fire everything with a time in (a, b] (or [a, b] with `includeA`), in time
 // order across the tracks. A wait-for-input holds the playhead there: the rest
 // of that instant still fires, later entries wait for the confirm key.
 void SequencePlayer::FireBetween(float a, float b, bool includeA) {
+    std::vector<SeqFired> fired;
+    m_seq.CollectFired(a, b, includeA, &m_lib, fired);
     std::vector<Due> due;
-    auto inRange = [&](float t) { return (t > a || (includeA && t >= a)) && t <= b; };
-    for (const auto& tr : m_seq.events)
-        for (const auto& e : tr.events) if (inRange(e.time)) due.push_back({e.time, 0, &e, nullptr, nullptr, nullptr, nullptr});
-    for (const auto& tr : m_seq.animations)
-        for (const auto& c : tr.cues) if (inRange(c.time)) due.push_back({c.time, 1, nullptr, &tr, &c, nullptr, nullptr});
-    for (const auto& tr : m_seq.audio)
-        for (const auto& c : tr.cues) if (inRange(c.time)) due.push_back({c.time, 2, nullptr, nullptr, nullptr, &tr, &c});
-    std::stable_sort(due.begin(), due.end(), [](const Due& x, const Due& y) { return x.time < y.time; });
+    for (const SeqFired& f : fired) {
+        Due d{}; d.time = f.time;
+        if (f.event) { d.kind = 0; d.event = f.event; }
+        else if (f.anim) { d.kind = 1; d.animTrack = f.animTrack; d.anim = f.anim; }
+        else { d.kind = 2; d.audioTrack = f.audioTrack; d.audio = f.audio; }
+        due.push_back(d);
+    }
     Scene* s = GetScene();
     float holdAt = -1.0f;
     for (const Due& d : due) {
@@ -240,7 +245,7 @@ void SequencePlayer::Fire(const SeqEvent& e) {
         break;
     case K::End:
         m_time = e.time;
-        m_binding.Apply(m_seq, e.time);   // where the cutscene leaves everything
+        m_binding.Apply(m_seq, e.time, &m_lib);   // where the cutscene leaves everything
         Finish();
         break;
     }
@@ -291,7 +296,7 @@ void SequencePlayer::Update(float dt) {
 
 void SequencePlayer::LateUpdate(float) {
     if (!m_playing || !ScriptsRun(gameObject)) return;
-    m_binding.Apply(m_seq, m_time);   // after the controllers placed the camera this frame
+    m_binding.Apply(m_seq, m_time, &m_lib);   // after the controllers placed the camera this frame
 }
 
 // ---- Scene-wide helpers ------------------------------------------------------------
@@ -359,10 +364,27 @@ std::vector<LoadingDrawCmd> SequencePlayer::BuildOverlay(const SeqOverlay& ov, f
     using K = LoadingDrawCmd::Kind;
     std::vector<LoadingDrawCmd> out;
     if (W <= 0.0f || H <= 0.0f) return out;
+    if (ov.screen.a > 0.001f) {
+        LoadingDrawCmd d; d.kind = K::Rect; d.x = 0; d.y = 0; d.w = W; d.h = H;
+        d.color = Color{ov.screen.r, ov.screen.g, ov.screen.b, 1.0f};
+        d.alpha = Mathf::Clamp01(ov.screen.a);
+        out.push_back(d);
+    }
     if (ov.fade > 0.001f) {
         LoadingDrawCmd d; d.kind = K::Rect; d.x = 0; d.y = 0; d.w = W; d.h = H;
         d.color = Color::FromBytes(0, 0, 0); d.alpha = Mathf::Clamp01(ov.fade);
         out.push_back(d);
+    }
+    if (ov.letterbox > 0.001f) {
+        const float bh = Mathf::Clamp(ov.letterbox, 0.0f, 0.45f) * H;
+        const float a = Mathf::Clamp01(ov.letterboxColor.a);
+        if (bh > 0.5f && a > 0.001f) {
+            LoadingDrawCmd top; top.kind = K::Rect; top.x = 0; top.y = 0; top.w = W; top.h = bh;
+            top.color = Color{ov.letterboxColor.r, ov.letterboxColor.g, ov.letterboxColor.b, 1.0f}; top.alpha = a;
+            out.push_back(top);
+            LoadingDrawCmd bot = top; bot.y = H - bh;
+            out.push_back(bot);
+        }
     }
     // The subtitle card: the launcher's slate panel with a hairline border, the
     // speaker in the accent colour above the line, low on the screen.

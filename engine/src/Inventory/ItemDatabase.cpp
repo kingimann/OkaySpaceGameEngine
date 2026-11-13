@@ -187,6 +187,20 @@ ItemDefinition* ItemDatabase::FindMutable(const std::string& id) {
     return nullptr;
 }
 
+bool ItemDatabase::IsDefined(const std::string& id) const {
+    const ItemDefinition* d = Find(id);
+    return d && !d->loose;
+}
+
+std::vector<std::string> ItemDatabase::Issues() const {
+    std::vector<std::string> out;
+    for (const std::string& id : DuplicateIds())
+        out.push_back("Two items use the id \"" + id + "\". Every item needs its own id.");
+    for (const std::string& pair : CaseConflicts())
+        out.push_back("These item ids only differ by case: " + pair + ". A lookup can pick the wrong item.");
+    return out;
+}
+
 namespace {
 std::string TrimCopy(const std::string& s) {
     std::size_t a = 0, b = s.size();

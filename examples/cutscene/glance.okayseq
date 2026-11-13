@@ -1,0 +1,9 @@
+okayseq 1
+sequence "Glance"
+length 1.2
+transform "Door"
+  rot 0 0 0 0 linear
+  rot 1.2 0 -80 0 sineinout
+shake
+  strength 0 0.35 linear
+  strength 0.8 0 sineinout

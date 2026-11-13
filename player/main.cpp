@@ -13,6 +13,7 @@
 #include "SdlClipboard.hpp"          // OS clipboard for games (SDL directly, not okay::platform)
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/Components/CaptionOverlay.hpp"
+#include "SdlDisplays.hpp"             // monitor list and display modes (SDL directly; not the platform seam)
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
 #include "okay/Core/Paths.hpp"
@@ -1575,6 +1576,19 @@ int main(int argc, char** argv) {
         if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon))
             window->SetIcon((const uint8_t*)ico.Data(), ico.Width(), ico.Height());
     }
+    // Monitors and the saved display choice. SDL lists the modes; the own platform backend is not used.
+    auto applyDisplay = [&]() {
+        if (!window) return;
+        if (window->Kind() == okay::platform::BackendKind::Sdl2)
+            okay::sdldisplay::Apply(static_cast<SDL_Window*>(window->NativeHandle()), okay::DisplaySettings::CurrentApply());
+        else
+            window->SetFullscreen(okay::DisplaySettings::Fullscreen());
+    };
+    if (window && window->Kind() == okay::platform::BackendKind::Sdl2) {
+        okay::DisplaySettings::SetMonitors(okay::sdldisplay::ListMonitors());
+        okay::DisplaySettings::ResolveSaved();
+    }
+    applyDisplay();
     // The 2D drawing goes through okay::platform::Painter: SDL_Renderer on an sdl2 window (as always),
     // or on the own backend the software painter, which draws into a frame buffer on the CPU and hands it to the
     // window. The software painter is own code and NOT READY: it is only reachable by choosing the own backend
@@ -1903,9 +1917,7 @@ int main(int argc, char** argv) {
             if (cfg.fullscreenToggle && keyDown && !e.repeat &&
                 (e.key == PK::F11 ||
                  ((e.key == PK::Return || e.key == PK::KpEnter) && (e.mods & okay::platform::ModAlt)))) {
-                const bool fs = window->IsFullscreen();
-                window->SetFullscreen(!fs);
-                okay::DisplaySettings::SetFullscreen(!fs);
+                okay::DisplaySettings::SetFullscreen(!window->IsFullscreen());
                 continue;
             }
             // Esc quits only when no input field is focused (otherwise it cancels it).
@@ -2044,20 +2056,26 @@ int main(int argc, char** argv) {
         if (mb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
         if (mb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
         Input::FeedMouse(s_virtualMouse, mask);
-        InputActions::Tick();   // after every device is fed: Jump, Move, Fire... for this frame
-
-        // The Settings screen asked for a window or quality change.
+        // On-screen controls and gestures read the SDL finger events already fed above
+        // (desktop and the web build). This stays on the SDL player path: it does not
+        // switch on the own platform backend.
         {
-            static int s_dispGen = 0;
-            const int gen = okay::DisplaySettings::Generation();
-            if (gen != s_dispGen) {
-                s_dispGen = gen;
-                window->SetFullscreen(okay::DisplaySettings::Fullscreen());
-                cfg.vsync = okay::DisplaySettings::VSync();
-                renderer->SetVSync((cfg.vsync ? 1 : 0) != 0);
-                okay::DisplaySettings::ApplyQuality();
-            }
+            int ow = 0, oh = 0;
+            renderer->OutputSize(&ow, &oh);
+            if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
+            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            TouchControls::Sample(scene);
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
+#else
+            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
+#endif
         }
+        InputActions::Tick();   // after every device is fed, including the on-screen controls
+
+        // The Settings screen (or a script) asked for a window or quality change.
+        // The confirm clock is ticked with this frame's time, just before the scene,
+        // so a revert is on the window before the Settings screen draws.
 
         Uint64 now = okay::platform::PerfCounter();
         const float measuredDt = (float)((now - last) / (double)okay::platform::PerfFrequency());
@@ -2178,6 +2196,18 @@ int main(int argc, char** argv) {
         // scaled delta (timeScale 0 = paused): the loop's OnUpdate does that unless the window is
         // unfocused and the game does not run in the background (that frame is a 0 s step, as before).
         loopTick = tick;
+        okay::DisplaySettings::TickTrial(measuredDt);
+        {
+            static int s_dispGen = -1;
+            const int gen = okay::DisplaySettings::Generation();
+            if (gen != s_dispGen) {
+                s_dispGen = gen;
+                applyDisplay();
+                cfg.vsync = okay::DisplaySettings::VSync();
+                if (renderer) renderer->SetVSync((cfg.vsync ? 1 : 0) != 0);
+                okay::DisplaySettings::ApplyQuality();
+            }
+        }
         if (!loop.BeginFrame(tick ? (double)measuredDt : 0.0)) running = false;   // false: a PauseMenu / script asked to quit
         if (acGuard.Tick()) {   // only ever true in enforce mode
             running = false;
@@ -2774,7 +2804,8 @@ int main(int argc, char** argv) {
             ui2d::SetUIDefaultFont(nullptr);
             break;
         }
-        // Cutscene overlay (the fade to black and the subtitle) of a playing sequence.
+        // Cutscene overlay (letterbox bars, coloured fade, fade to black, subtitle).
+        // Drawn here, after whichever renderer produced the frame, so it matches everywhere.
         if (SequencePlayer* sp = SequencePlayer::Playing(scene)) {
             int W = 0, H = 0; renderer->OutputSize(&W, &H);
             ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));

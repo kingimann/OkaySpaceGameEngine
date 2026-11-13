@@ -12,6 +12,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/UI/FocusGraph.hpp"
+#include "okay/UI/UIFocus.hpp"
 #include <algorithm>
 #include <vector>
 
@@ -65,6 +66,65 @@ inline std::vector<GameObject*> BuildFocusGraph(Scene& scene, FocusGraph& graph)
     return objects;
 }
 
+inline void SetWidgetFocused(GameObject* go, bool f) {
+    if (!go) return;
+    if (auto* b = go->GetComponent<UIButton>())        b->SetFocused(f);
+    if (auto* t = go->GetComponent<UIToggle>())        t->SetFocused(f);
+    if (auto* s = go->GetComponent<UISlider>())        s->SetFocused(f);
+    if (auto* d = go->GetComponent<UIDropdown>())      d->SetFocused(f);
+    if (auto* tb = go->GetComponent<UITabs>())         tb->SetFocused(f);
+    if (auto* kb = go->GetComponent<UIKeybindField>()) kb->SetFocused(f);
+    if (auto* st = go->GetComponent<UIStepper>())      st->SetFocused(f);
+    if (auto* rt = go->GetComponent<UIRating>())       rt->SetFocused(f);
+}
+
+/// Scroll the nearest Scroll View or List View just enough that `go` is on screen.
+inline void ScrollWidgetIntoView(GameObject* go) {
+    if (!go || !go->transform) return;
+    const float sw = UIWorld().screenW > 0.0f ? UIWorld().screenW : 1280.0f;
+    const float sh = UIWorld().screenH > 0.0f ? UIWorld().screenH : 720.0f;
+    auto screenRect = [&](GameObject* g, Vec2& o, Vec2& sz) {
+        return (UIWorld().rectOf && UIWorld().rectOf(g, o, sz)) || GetUIScreenRect(g, sw, sh, o, sz);
+    };
+    Vec2 fo, fs;
+    if (!screenRect(go, fo, fs)) return;
+    for (Transform* t = go->transform->Parent(); t; t = t->Parent()) {
+        GameObject* v = t->gameObject;
+        auto* sv = v ? v->GetComponent<UIScrollView>() : nullptr;
+        auto* lv = v ? v->GetComponent<UIListView>() : nullptr;
+        if (!sv && !lv) continue;
+        Vec2 vo, vs;
+        if (!screenRect(v, vo, vs) || vs.x <= 0.0f || vs.y <= 0.0f) break;
+        auto overhang = [](float a, float len, float va, float vlen) {
+            if (a < va) return a - va;
+            if (a + len > va + vlen) return Mathf::Min(a + len - (va + vlen), a - va);
+            return 0.0f;
+        };
+        const float oy = overhang(fo.y, fs.y, vo.y, vs.y);
+        const float ox = overhang(fo.x, fs.x, vo.x, vs.x);
+        if (sv) {
+            if (sv->ScrollsY() && oy != 0.0f) sv->ScrollBy(oy * sv->size.y / vs.y);
+            if (sv->ScrollsX() && ox != 0.0f) sv->ScrollByX(ox * sv->size.x / vs.x);
+        } else if (oy != 0.0f) {
+            lv->SetScroll(lv->scroll + oy * lv->size.y / vs.y);
+        }
+        break;
+    }
+}
+
+/// Move menu focus to `go`, scroll it into view, and show the focus ring.
+/// False when it is missing, hidden, or not something NavigateUI can focus.
+inline bool SetUIFocus(GameObject* go) {
+    if (!go || !go->scene()) return false;
+    if (!go->active || UIHidden(go) || UIModal::Blocks(go) || !IsNavFocusable(go)) return false;
+    for (const auto& o : go->scene()->Objects())
+        if (o.get() != go) SetWidgetFocused(o.get(), false);
+    SetWidgetFocused(go, true);
+    ScrollWidgetIntoView(go);
+    UIFocus::NoteScript();
+    return true;
+}
+
 /// Keyboard / gamepad menu navigation over a scene's interactive UI widgets.
 /// Call once per frame (the player does). Up/Down/Left/Right (WASD or arrows,
 /// D-pad) move focus to the nearest focusable widget on screen in that direction,
@@ -87,10 +147,16 @@ inline GameObject* NavigateUI(Scene& scene) {
     enum Kind { Button, Toggle, Slider, Dropdown, Tabs, Keybind, Stepper, Rating };
     struct Item { GameObject* go; Kind kind; Vec2 origin; Vec2 size; Vec2 centre; };
     std::vector<Item> items;
-    if (UITextFieldHasKeyboard(scene)) return nullptr;       // the player is typing
+    auto notePointer = []() {
+        if (Input::GetMouseButtonDown(0) || Input::GetMouseButtonDown(1) || Input::GetMouseButtonDown(2))
+            UIFocus::NotePointer();
+    };
+    if (UITextFieldHasKeyboard(scene)) { notePointer(); return nullptr; }   // the player is typing
     for (const auto& go : scene.Objects()) {
-        if (auto* kb = go->GetComponent<UIKeybindField>(); kb && kb->IsListening())
+        if (auto* kb = go->GetComponent<UIKeybindField>(); kb && kb->IsListening()) {
+            notePointer();
             return nullptr;                                  // the keys are being captured
+        }
     }
     for (const auto& go : scene.Objects()) {
         const bool hidden = !go->active || UIHidden(go.get());
@@ -119,7 +185,7 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* st = go->GetComponent<UIStepper>()) { if (st->enabled && st->focusable && st->interactable) items.push_back({go.get(), Stepper, {}, {}, {}}); continue; }
         if (auto* rt = go->GetComponent<UIRating>())  { if (rt->enabled && rt->focusable && !rt->readOnly) items.push_back({go.get(), Rating, {}, {}, {}}); continue; }
     }
-    if (items.empty()) return nullptr;
+    if (items.empty()) { notePointer(); return nullptr; }
 
     // Where each widget is on screen: the renderer's rect when it published one
     // (scaled canvases, world-space UI), else the resolved layout rect.
@@ -171,6 +237,9 @@ inline GameObject* NavigateUI(Scene& scene) {
     bool right = Input::GetKeyDown('d') || Input::GetGamepadButtonDown(11);
     bool activate = Input::GetKeyDown(' ') || Input::GetKeyDown('\r') ||
                     Input::GetKeyDown('\n') || Input::GetGamepadButtonDown(0);
+    // The ring follows the device. A click in the same frame as a key hides it.
+    if (down || up || left || right || activate) UIFocus::NoteKeyboard();
+    notePointer();
 
     auto asNode = [](const Item& it) {
         FocusNode f;
@@ -212,32 +281,7 @@ inline GameObject* NavigateUI(Scene& scene) {
 
     // Focus that moved onto a widget scrolled (partly) out of its Scroll View or List
     // View scrolls that view just enough to show it.
-    if (moved) {
-        const Item& f = items[focused];
-        for (Transform* t = f.go->transform ? f.go->transform->Parent() : nullptr; t; t = t->Parent()) {
-            GameObject* v = t->gameObject;
-            auto* sv = v ? v->GetComponent<UIScrollView>() : nullptr;
-            auto* lv = v ? v->GetComponent<UIListView>() : nullptr;
-            if (!sv && !lv) continue;
-            Vec2 vo, vs;
-            if (!screenRect(v, vo, vs) || vs.x <= 0.0f || vs.y <= 0.0f) break;
-            // How far the widget sticks out of the viewport, per axis (screen pixels).
-            auto overhang = [](float a, float len, float va, float vlen) {
-                if (a < va) return a - va;
-                if (a + len > va + vlen) return Mathf::Min(a + len - (va + vlen), a - va);
-                return 0.0f;
-            };
-            const float oy = overhang(f.origin.y, f.size.y, vo.y, vs.y);
-            const float ox = overhang(f.origin.x, f.size.x, vo.x, vs.x);
-            if (sv) {   // screen pixels -> the view's own pixels (canvas scale)
-                if (sv->ScrollsY() && oy != 0.0f) sv->ScrollBy(oy * sv->size.y / vs.y);
-                if (sv->ScrollsX() && ox != 0.0f) sv->ScrollByX(ox * sv->size.x / vs.x);
-            } else if (oy != 0.0f) {
-                lv->SetScroll(lv->scroll + oy * lv->size.y / vs.y);
-            }
-            break;
-        }
-    }
+    if (moved) ScrollWidgetIntoView(items[focused].go);
 
     for (int i = 0; i < n; ++i) setFocused(items[i], i == focused);
 

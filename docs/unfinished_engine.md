@@ -26,7 +26,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Mesh Collider 3D navmesh bake uses the bounding box | `engine/include/okay/Physics/Collider3D.hpp` (`MeshCollider3D`), `engine/src/Physics/Physics3D.cpp` | Exact per-triangle collision works for static and kinematic meshes. A dynamic Rigidbody3D on the same object collides as the convex hull of the mesh (concave gaps filled in), and a body landing on a solid mesh raises `OnCollisionEnter3D/Stay/Exit`. Still open: the navmesh bake treats a mesh collider as its bounding box | Medium | Small |
 | ~~3D hinge joint has no angle limits~~ Resolved: `Joint3D` hinge mode has `useLimits`, `minAngle` and `maxAngle` (degrees from the start pose). The solver clamps with `Math/JointLimit.hpp` (`HingeAngleDegrees`, `ClampHingeRotation`) and drops outward spin, so a door or lever stops. Off until Use Limits is set. Inspector, property registry and the scene file (trailing fields; older joint lines still load). See `docs/physics.md`. | `Components/Joint3D.hpp`, `Math/JointLimit.hpp`, `Physics/Physics3D.cpp` | Done. Still open on this row's neighbours: the 2D header still says "no angular/hinge yet"; joints still connect by body name | Medium | Small |
 | ~~No 2D box or capsule casts, no 2D explosion force~~ Resolved: `box_cast`, `capsule_cast`, `overlap_box`, `overlap_capsule` and `add_explosion_force`, plus the matching visual-script nodes. See `docs/physics.md`. | `Physics/Physics2D.hpp`, `Components/Rigidbody2D` | Done. Example: `examples/physics2d/casts_and_blast.okayscene` | Medium | Small |
-| Bodies must be un-parented; no step-rate setting in the editor | `Rigidbody3D.hpp` header comment; feature map 6.4 | A rigidbody under a moving parent is wrong; no UI for the fixed step | Low | Medium |
+| Bodies must be un-parented; no step-rate setting in the editor | `Rigidbody3D.hpp` header comment; feature map 6.4 | in draft PR #792. Not merged. A rigidbody under a moving parent is still wrong on main, and there is still no editor control for the fixed step | Low | Medium |
 | Destruction only on cube-grid blocks | `engine/include/okay/Components/Destructible.hpp:42, 175` (flood fill on `blockTag` grids) | Cannot break arbitrary meshes | Low | Large |
 | Vehicle has no get-in or driver seat | `Components/VehicleController.hpp` (no seat, enter or exit code) | A player cannot board a vehicle without custom script; the Seat component is for sitting only | Medium | Medium |
 
@@ -44,9 +44,9 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | ~~No reverb, doppler, occlusion or distance filtering~~ Resolved: a Schroeder reverb on Reverb volumes (room, hall, cave, outdoor, blended at the edges), doppler from listener and source speed, occlusion by a physics ray, and a distance low-pass curve. All off unless turned on, so existing scenes are unchanged. 2D and streamed clips stay as they were. See `docs/audio.md`. | `Audio/SpatialFx`, `Audio/AudioMixer`, `Components/Volume` kind Reverb | Done. Not done: only one listener; no per-source reverb send beyond the zone; occlusion is one ray, not a multi-bounce obstruction. | Medium | Medium |
-| Audio import settings stored but never read | `Core/ImportSidecar.hpp` is read only from `engine/src/Render/ModelImport.cpp`; nothing in `engine/src/Audio` | Import options for audio (and texture compress) have no effect. Already hidden in the UI, but the data path is dead | Low | Small |
+| Audio import settings stored but never read | `Core/ImportSidecar.hpp` is read only from `engine/src/Render/ModelImport.cpp`; nothing in `engine/src/Audio` | in draft PR #786. Not merged. Import options for audio have no effect on main | Low | Small |
 | Only four fixed buses, no effect chain or snapshots | `AudioMixer.hpp:40` (`SFX, Music, UI, Voice`) | Games cannot add an Ambience or Dialogue bus | Low | Medium |
-| Formats: WAV, OGG, MP3 only (no FLAC) | `AudioDecode.cpp:106` | Common asset format rejected with an error | Low | Small |
+| Formats: WAV, OGG, MP3 only (no FLAC) | `AudioDecode.cpp:106` | in draft PR #786. Not merged. A FLAC file is still rejected on main | Low | Small |
 | One listener only (main camera) | feature map 7.3 | No split-screen audio | Low | Medium |
 
 ## 5. Input
@@ -56,8 +56,8 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Editor Play mode does not feed function keys, Alt, Tab or left/right modifiers | `editor/main.cpp:47007-47027` builds keys by hand; the built game calls `okay::AppendSdlExtendedKeys(ks, down)` at `player/main.cpp:1890` | A game that binds F-keys, Alt or Tab works when built and silently fails in the editor Play button | High | Small |
 | Editor Play feeds one controller only | `editor/main.cpp:47025` (`FeedPad(g_pad.get(), down)`), player uses `pads.Feed` for all pads (`player/main.cpp:1891`) | Co-op controller games cannot be tested in the editor | Medium | Small |
 | ~~No on-screen virtual stick, D-pad, or touch buttons; no pinch, swipe, long-press recognisers~~ Resolved: a virtual joystick (fixed or floating), a D-pad and a touch button drive the action map, and a recogniser reports tap, double tap, long press, swipe, pinch and two-finger rotate. See `docs/input.md`. | `Input/GestureRecognizer`, `Components/TouchControls` | Done | Medium | Medium |
-| Input contexts (`PushContext`) have no consumer on main | no reference from `engine/include/okay/Components`, editor or player on main | in draft PR #784: the pause menu pushes a context named Pause while it is open, and drops it when the menu closes. Not merged | Low | Small |
-| `PlatformGamepad` has no test | no test names `FeedPad` or `PadSet` on main (the platform controller mapping is tested in `platform`, not this feed) | in draft PR #784. Not merged | Low | Small |
+| Input contexts (`PushContext`) have no consumer | no reference from `engine/include/okay/Components`, editor or player | in draft PR #784: the pause menu pushes a context named Pause while it is open, and drops it when the menu closes. Not merged | Low | Small |
+| `PlatformGamepad` has no test | no test names `FeedPad` or `PadSet` (the platform controller mapping is tested in `platform`, not this feed) | in draft PR #784. Not merged | Low | Small |
 
 ## 6. AI and navigation
 
@@ -65,9 +65,9 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 |---|---|---|---|---|
 | ~~Moving obstacles do not cut the mesh (no obstacle carving)~~ Resolved: a Nav Mesh Obstacle with Carve on cuts a hole in the baked mesh at run time (box or capsule, carve only when stationary after a settable time, or follow the obstacle); the path search goes around it and agents already walking replan at once. See `docs/navigation.md` (HAVE / GAP table). | `Components/NavMeshObstacle.hpp`, `AI/NavMeshCarve.cpp` | Done. Not done: carving does not run in the editor outside Play, and a carved obstacle is a hole in the mesh, not a per-agent cost. | Medium | Medium |
 | NavMesh polygons are axis-aligned rectangles, one agent radius per bake, one surface per scene | feature map 9.1 | Angled walls become staircases; two NPC sizes need two scenes | Medium | Large |
-| 2D grid pathfinder: no weights, smoothing or moving obstacles | `AI/Pathfinding.hpp` | in draft PR #783: a cell cost, a straightened route, and a moving obstacle that replans. Not merged. On main, 2D games still get jagged unweighted paths | Low | Medium |
+| 2D grid pathfinder: no weights, smoothing or moving obstacles | `AI/Pathfinding.hpp` | in draft PR #783: a cell cost, a straightened route, and a moving obstacle that replans. Not merged | Low | Medium |
 | ~~Behavior tree cannot run another tree; no breakpoints~~ Resolved: a Run Sub-Tree node runs another `.okaybt` with its own blackboard and optional key mapping, refuses a recursive run, and a breakpoint on a node pauses Play with that node highlighted. See `docs/behavior_trees.md`. | `AI/BehaviorTree.hpp` (`RunSubtree`), `Components/BehaviorTreeRunner` | Done. Not done: no step-over that stays inside the tree (the Play step button advances one frame). | Medium | Medium |
-| Perception code duplicated (component and tree service) | feature map 9.5 | Two systems to tune | Low | Medium |
+| Perception code duplicated (component and tree service) | feature map 9.5 | in draft PR #789. Not merged. Two systems to tune on main | Low | Medium |
 
 ## 7. Cinematics, dialogue, quests
 
@@ -82,17 +82,17 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | Four separate health models | `HealthStat`, `SurvivalStats`, RPG `Stats`, `NPCController.health` (feature map 11.4, 11.9, 9.5) | Damage from one system does not reach the others; scripts must know which one to hit | Medium | Large |
-| Melee only hits NPCs; no weapon definitions tied to items; no ranged weapon component except projectiles | feature map 11.x (`Open:` on combat row) | Weapons are hand-built every time | Medium | Large |
+| Melee only hits NPCs; no weapon definitions tied to items; no ranged weapon component except projectiles | feature map 11.x (`Open:` on combat row) | in draft PR #791. Not merged. Weapons are hand-built every time on main | Medium | Large |
 | ~~No loot-table, recipe-book or item editor windows~~ Resolved: **Window > Items, Loot & Recipes** (also **View > Editors & Tools**) lists, searches, adds, duplicates, deletes and edits items, loot tables and recipes. Loot entries have weight, a quantity range and a live roll preview. Recipes have inputs, outputs and crafting time. Item references are dropdowns of defined items; a missing one is a plain-English warning. Saves the existing `.okayitems`, `.okayloot` and `.okayrecipes` files, with undo while the window is focused. | `editor/ContentEditors.cpp`, `Inventory/ItemDatabase`, `Inventory/LootTable`, `Inventory/Recipe` | Done. | Medium | Medium |
 | Build mode placements are not synced between players | `docs/build_mode.md` "Not covered yet" | Multiplayer building diverges | Medium | Medium |
-| Minimap is 2D top-down only; Turn Manager and Minimap have no docs | feature map 11.x | No 3D or tilted minimap and no doc pages | Low | Medium |
+| Minimap is 2D top-down only; Turn Manager and Minimap have no docs | feature map 11.x | in draft PR #789 (a minimap write-up). Not merged. No 3D or tilted minimap on main | Low | Medium |
 
 ## 9. In-game UI
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | ~~UI frames have no rotation or scale~~ Resolved: a UI Frame has Rotation (degrees clockwise around its pivot) and Scale (width and height; 1, 1 is unchanged). Children inherit both, hit tests follow the turned and scaled shape, and scenes saved before this load with no turn and a scale of 1. | `Components/UIFrame.hpp`, `UI/UIFrameTransform.cpp` | Done | Medium | Medium |
-| Missing widgets: search bar, date and time picker, file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | `engine/include/okay/Components/UI*.hpp` file list has none of these on main | in draft PR #785. Not merged. App-style UI must still be assembled by hand | Medium | Large |
+| Missing widgets: search bar, date and time picker, file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | `engine/include/okay/Components/UI*.hpp` file list has none of these | in draft PR #785. Not merged. App-style UI must still be assembled by hand | Medium | Large |
 | ~~UI controller focus visuals not wired to accessibility~~ Resolved: the focused widget draws one ring. The colour, thickness, padding and optional pulse come from the UI theme. High-visibility focus and a thickness scale are on the Settings screen. The ring shows for keyboard, gamepad and script focus and hides on a mouse click. The focused widget scrolls into view. `ui_set_focus` and `UIButton.Focus` set it. | `UI/UIFocus`, `UI/UIRenderer`, `Components/UITheme`, `Components/UINavigation`, `Components/SettingsScreen` | Done. The navigation keys are still fixed, and `NavigateUI` still does not use `FocusGraph` links. | Medium | Medium |
 | UI scripting needs the OkayUI bridge; without it `ui_*` calls draw nothing | `Scripting/ScriptUI` has only the OkayUI implementation in `shared/` (feature map 13.x) | A build without OkayUI silently ignores UI script calls | Low | Medium |
 | Steeply tilted world-space UI draws as axis-aligned rectangles | `docs/ui_world_space.md` | In-world screens at an angle look wrong | Low | Medium |
@@ -158,7 +158,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 7. Medium: 58. Low: 29. Total rows: 94.
+High: 7. Medium: 57. Low: 29. Total rows: 94.
 
 ## Top 15 to tackle first
 

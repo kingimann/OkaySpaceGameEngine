@@ -10,6 +10,7 @@ _Last updated: 2026-11-12 01:30 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.863.0 | Updater hardening (checksums required, all-or-nothing swap, verified restart with rollback, no retry loop); ordered-queue overflow fix; hostile-input fixes; editor unsaved-check throttle; proprietary license |
 | 2.862.0 | Visual script: right-click a node > Connect to... lists what fits each pin; Print takes Text + Value; one flow output can have many wires |
 | 2.861.2 | Visual script Add Node menu: only the visible rows are drawn and the results are cached, so the menu stays fast while open |
 | 2.861.1 | Visual script Add Node menu: opening it and searching no longer lower the frame rate |

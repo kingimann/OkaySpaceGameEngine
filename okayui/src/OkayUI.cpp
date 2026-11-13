@@ -1984,8 +1984,8 @@ namespace {
 // Ctrl+click on a drag or slider box turns it into a text box for typing a number (Enter or a click elsewhere
 // commits, Escape cancels; a value that is not a finite number is dropped). 0 = not editing (draw the box as
 // usual), 1 = editing (this call drew the text box), 2 = a typed value was committed (*out holds it, clamped).
-int numberEdit(int id, float x, float y, float w, float h, bool inside, double cur, bool isInt, double minV, double maxV, double* out) {
-    if (g_editId != id && inside && g_pressed && g_in.ctrl && !g_in.blocked && g_disCount == 0) {
+int numberEdit(int id, float x, float y, float w, float h, bool inside, double cur, bool isInt, double minV, double maxV, double* out, bool needCtrl = true) {
+    if (g_editId != id && inside && g_pressed && (g_in.ctrl || !needCtrl) && !g_in.blocked && g_disCount == 0) {
         g_editId = id;
         std::snprintf(g_editBuf, sizeof g_editBuf, isInt ? "%.0f" : "%.6g", cur);
         g_focusNextField = true; g_focusSelectAll = true;
@@ -2228,13 +2228,15 @@ bool InputInt(const char* label, int* value, int step) {
     const float btnW = h;                 // square [-]/[+] steppers
     float fieldW = w - lw - btnW * 2.0f - 8.0f;
     if (fieldW < 24.0f) fieldW = 24.0f;
-    // Value box.
+    // Value box: a click on it types a number (Enter or clicking away applies it, Escape cancels).
     quad(x, y, fieldW, h, g_theme.track);
-    char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *value);
-    drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text);
+    bool ch = false;
+    double typed = 0.0;
+    const int ed = numberEdit(id ^ 0x1e, x, y, fieldW, h, hit(x, y, fieldW, h), (double)*value, true, -2147483648.0, 2147483647.0, &typed, false);
+    if (ed == 2) { const int nv = (int)typed; if (nv != *value) { *value = nv; ch = true; } }
+    if (ed == 0) { char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *value); drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text); }
     // Steppers (unique ids via the field id so they don't collide).
     const float bx = x + fieldW + 4.0f;
-    bool ch = false;
     if (Button(id ^ 0x2d, bx, y, btnW, h, "-"))              { *value -= step; ch = true; }
     if (Button(id ^ 0x2b, bx + btnW + 4.0f, y, btnW, h, "+")) { *value += step; ch = true; }
     if (lw > 0.0f) drawText(x + fieldW + btnW * 2.0f + 12.0f, y + (h - textH()) * 0.5f,
@@ -2556,10 +2558,12 @@ bool InputFloat(const char* label, float* value, float step) {
     float fieldW = w - lw - btnW * 2.0f - 8.0f;
     if (fieldW < 24.0f) fieldW = 24.0f;
     quad(x, y, fieldW, h, g_theme.track);
-    char buf[48]; std::snprintf(buf, sizeof(buf), "%.3f", (double)*value);
-    drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text);
-    const float bx = x + fieldW + 4.0f;
     bool ch = false;
+    double typed = 0.0;
+    const int ed = numberEdit(id ^ 0x1e, x, y, fieldW, h, hit(x, y, fieldW, h), (double)*value, false, 0.0, 0.0, &typed, false);
+    if (ed == 2 && std::isfinite((float)typed) && (float)typed != *value) { *value = (float)typed; ch = true; }
+    if (ed == 0) { char buf[48]; std::snprintf(buf, sizeof(buf), "%.3f", (double)*value); drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text); }
+    const float bx = x + fieldW + 4.0f;
     const bool okStep = std::isfinite(step);
     if (Button(id ^ 0x2d, bx, y, btnW, h, "-") && okStep && std::isfinite(*value - step))              { *value -= step; ch = true; }
     if (Button(id ^ 0x2b, bx + btnW + 4.0f, y, btnW, h, "+") && okStep && std::isfinite(*value + step)) { *value += step; ch = true; }

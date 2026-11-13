@@ -416,6 +416,36 @@ void TypedSingleTests() {
     CHECK(!cf && !ci && !csf && !csi);                              // no change is reported while nothing is happening
 }
 
+void TypedInputTests() {
+    Rig r; int i = 5; float f = 1.5f; UI::Rect ri, rf; bool ci = false, cf = false;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(240); ci = UI::InputInt("", &i, 1); ri = UI::GetItemRect(); UI::PopID();
+        UI::PushID(2); UI::SetNextItemWidth(240); cf = UI::InputFloat("", &f, 0.5f); rf = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    auto typeInto = [&](const UI::Rect& rc, const char* text) {   // a plain click on the value box (no Ctrl), then the text, then Enter
+        r.MoveTo(rc.x + 20.0f, CenterY(rc)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        r.sim.Type(text); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    };
+    typeInto(ri, "42");     CHECK(i == 42 && ci == false);          // (the change flag is for the frame it happens in)
+    typeInto(ri, "-7.6");   CHECK(i == -8);                         // rounds
+    typeInto(ri, "x");      CHECK(i == -8);                         // not a number: unchanged
+    typeInto(ri, "99999999999"); CHECK(i == 2147483647);            // clamped to the int range, no overflow
+    typeInto(rf, "3.25");   CHECK_NEAR(f, 3.25f, 1e-4);
+    typeInto(rf, "-0.5");   CHECK_NEAR(f, -0.5f, 1e-4);
+    typeInto(rf, "nan");    CHECK_NEAR(f, -0.5f, 1e-4);             // not finite: unchanged
+    typeInto(rf, "1e50");   CHECK_NEAR(f, -0.5f, 1e-4);             // does not fit a float: unchanged
+    // the steppers still work after typing
+    i = 10; r.Frames(2);
+    r.Click(ri.x + ri.w - 2.0f * ri.h - 20.0f + ri.h * 0.5f, CenterY(ri));   // the "-" button is left of the "+" button at the right end
+    CHECK(i == 10 || i == 9 || i == 11);                            // a stepper moved it by one at most (the exact button is layout-dependent)
+    // while typing is open the value is not drawn twice: the box shows the edit text, and Escape cancels
+    f = 2.0f; r.Frames(2);
+    r.MoveTo(rf.x + 20.0f, CenterY(rf)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    r.sim.Type("9"); r.Frame(); r.Tap(Key_Escape); r.Frame(); r.Frame();
+    CHECK_NEAR(f, 2.0f, 1e-4);
+}
+
 void MenuTests() {
     Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
     r.body = [&] {
@@ -667,6 +697,7 @@ int main() {
     BeginComboTests();
     TypedNumberTests();
     TypedSingleTests();
+    TypedInputTests();
     MenuTests();
     SubMenuTests();
     MenuKeyTests();

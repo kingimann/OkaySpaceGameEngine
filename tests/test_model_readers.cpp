@@ -234,6 +234,16 @@ int main() {
         CHECK(!dok && dr == nullptr);
         int meshes = 0; for (const auto& go : dup.Objects()) if (go->GetComponent<MeshRenderer>()) ++meshes;
         CHECK(meshes == 0);
+        // Assimp loads this file. The seam must still refuse it, including when
+        // Assimp is the backend the default choice would have used.
+        SetImportBackend(".ply", ImportBackend::Default);
+        Scene dupAssimp; dupAssimp.physicsEnabled = false;
+        bool aok = true; GameObject* ar = ImportModelScene(dupAssimp, "mr_dup_vertex.ply", &aok);
+        CHECK(!aok && ar == nullptr);
+        ImportedModel via; std::string ae;
+        CHECK(!ImportModelData("mr_dup_vertex.ply", via, ImportBackend::Assimp, false, &ae));
+        CHECK(ae.find("more than one vertex element") != std::string::npos);
+        CHECK(via.parts.empty());
         std::remove("mr_dup_vertex.ply");
         SetImportBackend(".ply", ImportBackend::Default);
     }

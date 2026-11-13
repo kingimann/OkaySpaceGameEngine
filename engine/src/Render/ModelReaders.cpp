@@ -664,4 +664,62 @@ bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err) 
     return ReadPlyBuffer(d, out, err);
 }
 
+bool PlyFileDeclaresDuplicateVertex(const std::string& path) {
+    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    if (!fp) return false;
+    std::string pending;
+    pending.reserve(8192);
+    char buf[4096];
+    int vertexElems = 0;
+    int headerLines = 0;
+    bool sawMagic = false;
+    bool done = false;
+    bool duplicate = false;
+    auto words = [](const std::string& l) {
+        std::vector<std::string> w; std::size_t i = 0;
+        while (i < l.size()) {
+            while (i < l.size() && IsSpace(l[i])) ++i;
+            std::size_t a = i;
+            while (i < l.size() && !IsSpace(l[i])) ++i;
+            if (i > a) w.push_back(l.substr(a, i - a));
+        }
+        return w;
+    };
+    auto take = [&](std::string line) {
+        while (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!sawMagic) {
+            if (Trim(line).empty()) return;
+            sawMagic = true;
+            if (Trim(line) != "ply") done = true;
+            return;
+        }
+        if (++headerLines > 4096) { done = true; return; }
+        std::vector<std::string> w = words(line);
+        if (w.empty() || w[0] == "comment" || w[0] == "obj_info") return;
+        if (w[0] == "end_header") { done = true; return; }
+        if (w[0] == "element" && w.size() == 3 && w[1] == "vertex" && ++vertexElems > 1) {
+            duplicate = true;
+            done = true;
+        }
+    };
+    std::size_t got = 0;
+    while (!done && got < 1024u * 1024u) {
+        std::size_t n = std::fread(buf, 1, sizeof(buf), fp);
+        if (n == 0) break;
+        got += n;
+        pending.append(buf, n);
+        std::size_t start = 0;
+        for (;;) {
+            std::size_t nl = pending.find('\n', start);
+            if (nl == std::string::npos) { pending.erase(0, start); break; }
+            take(pending.substr(start, nl - start));
+            start = nl + 1;
+            if (done) break;
+        }
+    }
+    if (!done && !pending.empty()) take(pending);
+    std::fclose(fp);
+    return duplicate;
+}
+
 } // namespace okay

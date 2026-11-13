@@ -53,6 +53,18 @@ public:
     // Colour state + untextured primitives (SDL_SetRenderDrawColor, SDL_RenderFillRect...).
     virtual void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) = 0;
     virtual void FillRect(const Rect* r) = 0;
+    /// Float rect in the same space as FillRect. The default covers it with an integer rect.
+    /// Painters that scale the UI (the batcher, the editor preview, SDL) override this so a
+    /// sub-pixel anti-aliased edge stays one device pixel wide.
+    virtual void FillRectF(const FRect* r) {
+        if (!r || r->w <= 0.0f || r->h <= 0.0f) return;
+        const int x0 = (int)r->x;
+        const int y0 = (int)r->y;
+        const int x1 = (int)(r->x + r->w + 0.999f);
+        const int y1 = (int)(r->y + r->h + 0.999f);
+        Rect q{x0, y0, x1 - x0, y1 - y0};
+        if (q.w > 0 && q.h > 0) FillRect(&q);
+    }
     virtual void DrawRect(const Rect* r) = 0;
     virtual void DrawLine(int x0, int y0, int x1, int y1) = 0;
     virtual void DrawPoint(int x, int y) = 0;

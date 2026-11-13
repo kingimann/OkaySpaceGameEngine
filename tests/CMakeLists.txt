@@ -251,6 +251,10 @@ add_executable(test_ttf test_ttf.cpp)
 target_link_libraries(test_ttf PRIVATE okay::engine)
 add_test(NAME ttf COMMAND test_ttf)
 
+add_executable(test_ui_font_policy test_ui_font_policy.cpp)
+target_link_libraries(test_ui_font_policy PRIVATE okay::engine)
+add_test(NAME ui_font_policy COMMAND test_ui_font_policy)
+
 # Our own TrueType reader / rasterizer: synthetic fonts, DejaVu references, fuzzed files.
 add_executable(test_ttf_rasterizer test_ttf_rasterizer.cpp)
 target_link_libraries(test_ttf_rasterizer PRIVATE okay::engine)
@@ -1859,6 +1863,11 @@ if(SDL2_FOUND)
     target_link_libraries(test_accessibility_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_accessibility_render PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME accessibility_render COMMAND test_accessibility_render)
+
+    # 1280x720 menu picture for the crisp-UI before/after. Not a ctest.
+    add_executable(crisp_ui_shot crisp_ui_shot.cpp)
+    target_link_libraries(crisp_ui_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(crisp_ui_shot PRIVATE ${SDL2_INCLUDE_DIRS})
 else()
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()

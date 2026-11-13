@@ -1,6 +1,7 @@
 // The in-game UI pass and its drawing helpers, moved verbatim from the player's main
 // loop (player/main.cpp) onto the ui2d::Painter interface. See UIRenderer.hpp.
 #include "okay/UI/UIRenderer.hpp"
+#include "okay/UI/UIFontPolicy.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include <Okay.hpp>
 #include "okay/Core/Utf8.hpp"
@@ -25,6 +26,10 @@ inline float UITextScale() { return Accessibility::Get().textScale; }
 // measured against. Thin pieces (borders, text pixels) don't count.
 Color g_backdrop{0.06f, 0.06f, 0.08f, 1.0f};
 bool g_inText = false;
+// Canvas pixels per logical pixel for the widget currently being drawn, and whether
+// edges are anti-aliased. "pixel" scenes keep the hard bitmap look.
+float g_uiDeviceScale = 1.0f;
+bool g_uiSmoothEdges = true;
 
 // Wraps the frame's painter so every flat colour and vertex colour the UI pass sets is shifted for the
 // player's colour vision (Accessibility::FilterColor). Images are drawn as they are.
@@ -39,6 +44,10 @@ public:
     void FillRect(const Rect* r) override {
         if (r && !g_inText && m_a >= 128 && std::min(r->w, r->h) >= 8) g_backdrop = m_c;
         m_in.FillRect(r);
+    }
+    void FillRectF(const FRect* r) override {
+        if (r && !g_inText && m_a >= 128 && std::min(r->w, r->h) >= 8.0f) g_backdrop = m_c;
+        m_in.FillRectF(r);
     }
     void DrawRect(const Rect* r) override { m_in.DrawRect(r); }
     void DrawLine(int x0, int y0, int x1, int y1) override { m_in.DrawLine(x0, y0, x1, y1); }
@@ -111,6 +120,195 @@ struct RowRuns {
 };
 } // namespace
 
+namespace {
+
+// How much of pixel [px, px+1) lies inside the span [a, b).
+float SpanOverlap(float a, float b, int px) {
+    const float x0 = (float)px, x1 = x0 + 1.0f;
+    const float lo = a > x0 ? a : x0;
+    const float hi = b < x1 ? b : x1;
+    return hi > lo ? hi - lo : 0.0f;
+}
+
+struct FloatRun {
+    Painter* ren = nullptr;
+    float x = 0, y = 0, w = 0, h = 0;
+    std::uint8_t c[4] = {};
+    bool on = false;
+    void Flush() {
+        if (!on || !ren || w <= 0.0f || h <= 0.0f || c[3] == 0) { on = false; return; }
+        ren->SetDrawColor(c[0], c[1], c[2], c[3]);
+        const bool whole = std::fabs(x - std::round(x)) < 0.01f && std::fabs(y - std::round(y)) < 0.01f &&
+                           std::fabs(w - std::round(w)) < 0.01f && std::fabs(h - std::round(h)) < 0.01f;
+        if (whole) {
+            Rect q{(int)std::lround(x), (int)std::lround(y), (int)std::lround(w), (int)std::lround(h)};
+            if (q.w > 0 && q.h > 0) ren->FillRect(&q);
+        } else {
+            FRect q{x, y, w, h};
+            ren->FillRectF(&q);
+        }
+        on = false;
+    }
+    void Add(float nx, float ny, float nw, float nh, const std::uint8_t col[4]) {
+        if (nw <= 0.0f || nh <= 0.0f || col[3] == 0) return;
+        if (on && std::fabs(nx - x) < 0.02f && std::fabs(nw - w) < 0.02f && std::fabs(ny - (y + h)) < 0.02f &&
+            col[0] == c[0] && col[1] == c[1] && col[2] == c[2] && col[3] == c[3]) {
+            h += nh;
+            return;
+        }
+        Flush();
+        x = nx; y = ny; w = nw; h = nh;
+        for (int i = 0; i < 4; ++i) c[i] = col[i];
+        on = true;
+    }
+};
+
+void PackCov(const Color& c, float op, float cov, std::uint8_t out[4]) {
+    float a = c.a * op * cov;
+    if (a < 0.0f) a = 0.0f;
+    if (a > 1.0f) a = 1.0f;
+    out[0] = (std::uint8_t)(c.r * 255.0f);
+    out[1] = (std::uint8_t)(c.g * 255.0f);
+    out[2] = (std::uint8_t)(c.b * 255.0f);
+    out[3] = (std::uint8_t)(a * 255.0f + 0.5f);
+}
+
+Color LerpC(const Color& a, const Color& b, float t) {
+    return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
+}
+
+// Anti-aliased fill in device pixels. `r` is in logical pixels; the canvas scale
+// turns each logical pixel into g_uiDeviceScale device pixels, so the curve is
+// resolved at the screen's resolution and the fringe is one device pixel.
+// Left fringe, solid middle, right fringe of span [a, b). At most three rects.
+void EmitSpan(FloatRun& run, float ox, float ly, float lh, float S, float a, float b,
+              const std::uint8_t solid[4], const Color& tint, float op, bool flat) {
+    if (!(b > a)) return;
+    const int i0 = (int)std::floor(a);
+    const int i1 = (int)std::ceil(b - 1e-4f);   // exclusive
+    if (i1 <= i0) return;
+    auto put = [&](int x, float cov, float wpx) {
+        if (cov <= 0.004f || wpx <= 0.0f) return;
+        if (flat && cov > 0.996f) {
+            run.Add(ox + (float)x / S, ly, wpx / S, lh, solid);
+            return;
+        }
+        std::uint8_t col[4];
+        PackCov(tint, op, cov > 1.0f ? 1.0f : cov, col);
+        run.Add(ox + (float)x / S, ly, wpx / S, lh, col);
+    };
+    if (!flat) {
+        for (int x = i0; x < i1; ++x) put(x, SpanOverlap(a, b, x), 1.0f);
+        return;
+    }
+    if (i1 == i0 + 1) { put(i0, SpanOverlap(a, b, i0), 1.0f); return; }
+    const float c0 = SpanOverlap(a, b, i0);
+    const float c1 = SpanOverlap(a, b, i1 - 1);
+    // A pixel that is mostly inside joins the solid run. Only a genuinely split
+    // pixel gets its own translucent rect, so a curve stays a handful of quads.
+    const int s0 = c0 >= 0.5f ? i0 : i0 + 1;
+    const int s1 = c1 >= 0.5f ? i1 : i1 - 1;   // exclusive end of the solid run
+    if (s0 == i0 + 1 && c0 >= 0.2f) put(i0, c0, 1.0f);
+    if (s1 > s0) put(s0, 1.0f, (float)(s1 - s0));
+    if (s1 == i1 - 1 && c1 >= 0.2f) put(i1 - 1, c1, 1.0f);
+}
+
+void FillUIShapeSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
+                       const Color& top, const Color& bottom, bool gradient, bool horizontal,
+                       float op, int diag, int cornerMask) {
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    const float dw = std::max(1.0f, (float)r.w * S);
+    const float dh = std::max(1.0f, (float)r.h * S);
+    const float rad = (shape == UIShape::Pill) ? std::min(dw, dh) * 0.5f : std::max(0.0f, radius * S);
+    const int rows = std::max(1, (int)std::ceil(dh - 1e-3f));
+    const bool varyX = gradient && (horizontal || diag != 0);
+    const bool sideRun = shape == UIShape::Rounded || shape == UIShape::Pill || shape == UIShape::TabTop;
+    const int cap = sideRun ? (int)std::ceil(rad) : rows;
+    const bool flat = !gradient;
+    std::uint8_t solid[4];
+    PackCov(top, op, 1.0f, solid);
+    FloatRun run;
+    run.ren = &ren;
+    for (int row = 0; row < rows; ++row) {
+        const float ly = (float)r.y + (float)row / S;
+        const float lh = 1.0f / S;
+        if (sideRun && flat && row >= cap && (shape == UIShape::TabTop || row < rows - cap)) {
+            run.Add((float)r.x, ly, (float)r.w, lh, solid);
+            continue;
+        }
+        float a, b;
+        if (!UIShapeSpanAt(shape, dw, dh, shape == UIShape::Pill ? 0.0f : rad, (float)row + 0.5f, a, b, cornerMask))
+            continue;
+        Color tint = top;
+        if (gradient && !varyX) {
+            const float fy = dh > 1.0f ? ((float)row + 0.5f) / (dh - 1.0f) : 0.0f;
+            tint = LerpC(top, bottom, fy < 0.0f ? 0.0f : (fy > 1.0f ? 1.0f : fy));
+            PackCov(tint, op, 1.0f, solid);
+        }
+        if (!varyX) {
+            EmitSpan(run, (float)r.x, ly, lh, S, a, b, solid, tint, op, true);
+            continue;
+        }
+        const int i0 = (int)std::floor(a), i1 = (int)std::ceil(b - 1e-4f);
+        for (int x = i0; x < i1; ++x) {
+            const float cov = SpanOverlap(a, b, x);
+            if (cov <= 0.004f) continue;
+            const float fy = dh > 1.0f ? ((float)row + 0.5f) / (dh - 1.0f) : 0.0f;
+            const float fx = dw > 1.0f ? ((float)x + 0.5f) / (dw - 1.0f) : 0.0f;
+            const float t = diag == 1 ? (fx + fy) * 0.5f : diag == 2 ? (fx + (1.0f - fy)) * 0.5f : fx;
+            const Color c = LerpC(top, bottom, t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t));
+            std::uint8_t col[4];
+            PackCov(c, op, cov, col);
+            run.Add((float)r.x + (float)x / S, ly, 1.0f / S, lh, col);
+        }
+    }
+    run.Flush();
+}
+
+void FillUIRingSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
+                      const Color& c, int width, float op, int cornerMask) {
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    const float dw = std::max(1.0f, (float)r.w * S);
+    const float dh = std::max(1.0f, (float)r.h * S);
+    const float rad = (shape == UIShape::Pill) ? std::min(dw, dh) * 0.5f : std::max(0.0f, radius * S);
+    const float inset = std::max(1.0f, (float)width * S);
+    const float iw = dw - 2.0f * inset, ih = dh - 2.0f * inset;
+    const float irad = std::max(0.0f, rad - inset);
+    const int rows = std::max(1, (int)std::ceil(dh - 1e-3f));
+    const bool sideRun = shape == UIShape::Rounded || shape == UIShape::Pill || shape == UIShape::TabTop;
+    const int cap = sideRun ? (int)std::ceil(std::max(rad, inset + 1.0f)) : rows;
+    FloatRun run;
+    run.ren = &ren;
+    std::uint8_t solid[4];
+    PackCov(c, op, 1.0f, solid);
+    for (int row = 0; row < rows; ++row) {
+        const float ly = (float)r.y + (float)row / S;
+        const float lh = 1.0f / S;
+        // Straight sides of a rounded ring: a strip on the left and the right.
+        if (sideRun && row >= cap && (shape == UIShape::TabTop || row < rows - cap)) {
+            const float band = inset / S;
+            run.Add((float)r.x, ly, band, lh, solid);
+            run.Add((float)r.x + (float)r.w - band, ly, band, lh, solid);
+            continue;
+        }
+        float ox0, ox1;
+        if (!UIShapeSpanAt(shape, dw, dh, shape == UIShape::Pill ? 0.0f : rad, (float)row + 0.5f, ox0, ox1, cornerMask))
+            continue;
+        float ix0 = 0.0f, ix1 = -1.0f;
+        const bool inner = iw > 0.5f && ih > 0.5f &&
+                           UIShapeSpanAt(shape, iw, ih, irad, (float)row + 0.5f - inset, ix0, ix1, cornerMask);
+        if (!inner) {
+            EmitSpan(run, (float)r.x, ly, lh, S, ox0, ox1, solid, c, op, true);
+            continue;
+        }
+        EmitSpan(run, (float)r.x, ly, lh, S, ox0, ix0 + inset, solid, c, op, true);
+        EmitSpan(run, (float)r.x, ly, lh, S, ix1 + inset, ox1, solid, c, op, true);
+    }
+    run.Flush();
+}
+
+} // namespace
+
 // Fill a UI shape (rectangle / rounded / circle / pill) into screen rect `r`,
 // scanline by scanline so any silhouette uses one code path (identical rows merge
 // into one rect). Supports a linear gradient (top->bottom, or left->right when
@@ -122,6 +320,12 @@ void FillUIShape(Painter& ren, const Rect& r, UIShape shape, float radius,
                  const Color& top, const Color& bottom, bool gradient, bool horizontal,
                  float op, int diag, int cornerMask) {
     if (r.w <= 0 || r.h <= 0) return;
+    // Rectangles already sit on the pixel grid. Curves get a one-pixel coverage fringe
+    // unless the scene asked for the pixel-art look.
+    if (g_uiSmoothEdges && shape != UIShape::Rectangle) {
+        FillUIShapeSmooth(ren, r, shape, radius, top, bottom, gradient, horizontal, op, diag, cornerMask);
+        return;
+    }
     auto lerp = [](const Color& a, const Color& b, float t) {
         return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
                      a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
@@ -169,6 +373,10 @@ void FillUIShape(Painter& ren, const Rect& r, UIShape shape, float radius,
 void FillUIRing(Painter& ren, const Rect& r, UIShape shape, float radius,
                 const Color& c, int width, float op, int cornerMask) {
     if (r.w <= 0 || r.h <= 0 || width <= 0) return;
+    if (g_uiSmoothEdges && shape != UIShape::Rectangle) {
+        FillUIRingSmooth(ren, r, shape, radius, c, width, op, cornerMask);
+        return;
+    }
     const std::uint8_t cb[4] = {(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255),
                                 (std::uint8_t)(c.a * 255 * op)};
     const int iw = r.w - 2 * width, ih = r.h - 2 * width;
@@ -284,23 +492,29 @@ void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
                  float ox, float oy, float px, RGBA col, float letterSp, float lineSp,
                  bool italic, float boldOffset) {
-    f->Prepare(text);   // bake new characters before the atlas is uploaded
-    Tex tex = r.FontAtlas(f);
+    // Bake at the on-screen pixel size (logical font size × canvas scale) so the
+    // atlas is not a fixed 64px face scaled up or down.
+    const float logicalH = px * (float)okay::Font8x8::Height;
+    const float deviceH = logicalH * (g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f);
+    okay::TtfFont* sized = f->ForPixelHeight(deviceH);
+    if (!sized || !sized->Valid()) sized = f;
+    sized->Prepare(text);   // bake new characters before the atlas is uploaded
+    Tex tex = r.FontAtlas(sized);
     if (!tex) return;
     r.SetTextureColorMod(tex, col.r, col.g, col.b);
     r.SetTextureAlphaMod(tex, col.a);
     int atlasW = 0, atlasH = 0;
     if (italic) r.QueryTexture(tex, &atlasW, &atlasH);
     const bool shear = italic && atlasW > 0 && atlasH > 0;
-    const float s = px * (float)okay::Font8x8::Height / f->BakeHeight();
-    const float baseline = f->Ascent((float)okay::Font8x8::Height) * px;
+    const float s = logicalH / sized->BakeHeight();
+    const float baseline = sized->Ascent(sized->BakeHeight()) * s;
     const float kSlant = 0.22f;                       // how far the top of a glyph leans, per unit of height
     const int taps = boldOffset > 0.0f ? 3 : 1;
     float penX = ox, penY = oy;
     for (std::size_t i = 0; i < text.size();) {
         const std::uint32_t ch = okay::utf8::Next(text, i);
-        if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
-        const okay::TtfFont::Glyph* g = f->GlyphFor(ch);
+        if (ch == '\n') { penY += sized->LineHeight(sized->BakeHeight()) * s + lineSp * px; penX = ox; continue; }
+        const okay::TtfFont::Glyph* g = sized->GlyphFor(ch);
         if (!g) { if (ch >= ' ') penX += px * 4.0f; continue; }
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
@@ -336,10 +550,21 @@ void SetUIDefaultFont(TtfFont* f) { g_uiDefaultFont = f; }
 TtfFont* UIDefaultFont() { return g_uiDefaultFont; }
 // Width of `text` in screen pixels at font-pixel size `px`, in the font DrawUIText will
 // use (the scene's UI font during the UI pass, else the 8x8 bitmap font).
+float UIMeasureText(TtfFont* font, const std::string& text, float px) {
+    TtfFont* f = FontForText(font ? font : g_uiDefaultFont, text);
+    if (px < 0.15f) px = 0.15f;
+    if (!(f && f->Valid())) {
+        if (px < 1.0f) px = 1.0f;
+        return (float)okay::utf8::Length(text) * (Font8x8::Width + 1) * px;
+    }
+    const float logicalH = px * (float)Font8x8::Height;
+    const float deviceH = logicalH * (g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f);
+    TtfFont* sized = f->ForPixelHeight(deviceH);
+    if (!sized || !sized->Valid()) sized = f;
+    return sized->Measure(text.c_str(), sized->BakeHeight()) * (logicalH / sized->BakeHeight());
+}
 float UITextW(const std::string& text, float px) {
-    TtfFont* f = FontForText(g_uiDefaultFont, text);
-    if (f && f->Valid()) return f->Measure(text.c_str(), (float)Font8x8::Height) * px;
-    return (float)okay::utf8::Length(text) * (Font8x8::Width + 1) * px;
+    return UIMeasureText(g_uiDefaultFont, text, px);
 }
 
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
@@ -383,6 +608,42 @@ static void DrawUITextImpl(Painter& r, const std::string& text, float ox, float 
     }
 }
 
+void DrawUICross(Painter& ren, float x, float y, float size, RGBA col) {
+    if (!(size >= 2.0f)) return;
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    const int n = std::max(2, (int)std::lround(size * S));
+    const float pad = (float)n * 0.18f;
+    const float ax = pad, ay = pad, bx = (float)n - pad, by = (float)n - pad;
+    const float thick = std::max(1.25f, (float)n * 0.14f);
+    auto dist = [](float px, float py, float x0, float y0, float x1, float y1) {
+        const float dx = x1 - x0, dy = y1 - y0;
+        const float len2 = dx * dx + dy * dy;
+        float t = len2 > 1e-6f ? ((px - x0) * dx + (py - y0) * dy) / len2 : 0.0f;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        const float qx = x0 + t * dx, qy = y0 + t * dy;
+        const float ex = px - qx, ey = py - qy;
+        return std::sqrt(ex * ex + ey * ey);
+    };
+    for (int py = 0; py < n; ++py) {
+        for (int px = 0; px < n; ++px) {
+            const float cx = (float)px + 0.5f, cy = (float)py + 0.5f;
+            const float d = std::min(dist(cx, cy, ax, ay, bx, by), dist(cx, cy, ax, by, bx, ay));
+            float cov = thick * 0.5f + 0.55f - d;
+            if (cov <= 0.0f) continue;
+            if (cov > 1.0f) cov = 1.0f;
+            ren.SetDrawColor(col.r, col.g, col.b, (std::uint8_t)(col.a * cov + 0.5f));
+            if (S <= 1.001f) {
+                Rect q{(int)std::lround(x) + px, (int)std::lround(y) + py, 1, 1};
+                ren.FillRect(&q);
+            } else {
+                FRect q{x + (float)px / S, y + (float)py / S, 1.0f / S, 1.0f / S};
+                ren.FillRectF(&q);
+            }
+        }
+    }
+}
+
 void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
                 float px, RGBA col, float letterSp, float lineSp,
                 bool italic, bool gradient, RGBA col2, TtfFont* ttf, bool bold) {
@@ -407,8 +668,12 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
                   float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,
                   bool bold, float boldOff, TtfFont* ttf) {
     TtfFont* f = FontForText(ttf ? ttf : g_uiDefaultFont, disp);
-    const float adv = (f && f->Valid()) ? f->LineHeight((float)Font8x8::Height) * px + lineSp * px
-                                        : (Font8x8::Height + 1 + lineSp) * px;
+    const float logicalH = px * (float)Font8x8::Height;
+    const float deviceH = logicalH * (g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f);
+    TtfFont* sized = (f && f->Valid()) ? f->ForPixelHeight(deviceH) : nullptr;
+    const float adv = (sized && sized->Valid())
+                          ? sized->LineHeight(sized->BakeHeight()) * (logicalH / sized->BakeHeight()) + lineSp * px
+                          : (Font8x8::Height + 1 + lineSp) * px;
     std::size_t glyph = 0, lineStart = 0;
     float y = oy;
     while (lineStart <= disp.size()) {
@@ -596,12 +861,16 @@ static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRe
     const int uiFullW = w, uiFullH = h;
     float uiScaleCur = 1.0f;
     auto uiUseScale = [&](float sc) {
+        if (sc < 0.05f) sc = 1.0f;
+        g_uiDeviceScale = sc;
         if (std::fabs(sc - uiScaleCur) < 1e-4f) return;
         uiScaleCur = sc;
         p.SetClipRect(nullptr);
         p.SetScale(sc, sc);
         w = (int)std::lround(uiFullW / sc); h = (int)std::lround(uiFullH / sc);
     };
+    g_uiSmoothEdges = scene.uiFont != "pixel";
+    g_uiDeviceScale = 1.0f;
     auto uiMouse = [&]() { Vec2 m = Input::MousePosition(); return Vec2{m.x / uiScaleCur, m.y / uiScaleCur}; };
     for (const UIItem& _it : cache.items) {
         const UISlot& _slot = cache.slots[_it.slot];
@@ -1598,8 +1867,7 @@ static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRe
         if (!UIButtonTextChild(up.get())) {
             float px = btn->fontScale * bk * UITextScale();   // accessibility text size
             okay::TtfFont* fnt = okay::FontForText(btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath), btn->label);
-            float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
-                           : UITextW(btn->label, px);
+            float tw = UIMeasureText(fnt, btn->label, px);
             float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f * bk : 0.0f);
             float right = o.x + bsz.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f * bk : 0.0f);
             float tx = left + ((right - left) - tw) * 0.5f;
@@ -1851,10 +2119,10 @@ static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRe
         if (!r.valid || !r.position) continue;
         Vec2 o, sz;   // where the widget actually is (parents, canvases, world space)
         if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) { o = UIResolveOrigin(up.get(), (float)w, (float)h); sz = r.size; }
-        const float x0 = o.x - 3.0f, y0 = o.y - 3.0f, x1 = o.x + sz.x + 3.0f, y1 = o.y + sz.y + 3.0f;
-        const RGBA fc{120, 182, 255, 230};   // launcher accent, lightened
-        MMThickLine(p, x0, y0, x1, y0, 2.0f, fc); MMThickLine(p, x1, y0, x1, y1, 2.0f, fc);
-        MMThickLine(p, x1, y1, x0, y1, 2.0f, fc); MMThickLine(p, x0, y1, x0, y0, 2.0f, fc);
+        Rect ring{(int)std::floor(o.x - 4.0f), (int)std::floor(o.y - 4.0f),
+                  (int)std::ceil(sz.x + 8.0f), (int)std::ceil(sz.y + 8.0f)};
+        const Color fc = Color::FromBytes(120, 182, 255, 230);
+        FillUIRing(p, ring, UIShape::Rounded, 8.0f, fc, 2, 1.0f);
     }
         else if (_it.kind == K_ModalDim) {   // an open modal's backdrop: dims the whole screen
         auto* md = up->GetComponent<UIModal>();
@@ -2006,6 +2274,8 @@ static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRe
     uiUseScale(1.0f);
     w = uiFullW; h = uiFullH;
     g_uiDefaultFont = nullptr;   // world text / FPS overlay keep the bitmap font
+    g_uiSmoothEdges = true;
+    g_uiDeviceScale = 1.0f;
     p.SetClipRect(nullptr);   // end any scroll clipping
 }
 

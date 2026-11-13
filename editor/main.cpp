@@ -12562,6 +12562,7 @@ void DrawScriptDocs() {
 
     if (sec("UI — drive scene widgets by name")) {
         fapi("ui_set_text(\"n\",\"s\") / ui_get_text(\"n\")", "text/button label/input text");
+        fapi("ui_set_focus(\"n\")", "move keyboard/gamepad focus to a widget and show its ring");
         fapi("ui_clicked(\"n\")", "true the frame a named button was clicked");
         fapi("ui_set_interactable(\"n\", on)", "enable / grey-out a button");
         fapi("ui_slider_value(\"n\") / ui_set_slider(\"n\", v)", "read / set a slider (0..1)");
@@ -13010,7 +13011,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         // networking
         "net_host","net_join","net_send","net_poll","net_is_server",
         // ui
-        "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
+        "ui_set_text","ui_get_text","ui_set_focus","ui_clicked","ui_slider_value","ui_set_slider",
         "ui_toggle_value","ui_set_progress",
         "set_swatch","swatch_value", // grok/ui-color
         "kick_spread","set_spread","set_spread_recover","set_radial","set_slot","slot_value", // grok/ui-hud
@@ -13127,6 +13128,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"ui_begin","ui_begin(\"Title\", x, y, w, h)"}, {"ui_text","ui_text(\"s\")"}, {"ui_button","ui_button(\"Label\")"},
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
         {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
+        {"ui_set_focus","ui_set_focus(\"n\")"},
         {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
         {"set_swatch","set_swatch(\"n\", i)"}, {"swatch_value","swatch_value(\"n\")"}, // grok/ui-color
         {"kick_spread","kick_spread(\"n\", px)"}, {"set_spread","set_spread(\"n\", px)"}, {"set_radial","set_radial(\"n\", v)"}, {"set_slot","set_slot(\"n\", i)"}, // grok/ui-hud
@@ -35853,6 +35855,15 @@ void DrawInspector(EditorState& ed) {
             col4("Border##uitheme", th->border);
             col4("Shadow##uitheme", th->shadowCol);
             col4("Glow##uithemeglow", th->glowColor);
+            ImGui::Separator();
+            ImGui::TextDisabled("Focus ring (keyboard and gamepad)");
+            col4("Focus##uithemefocus", th->focusColor);
+            if (ImGui::DragFloat("Focus Thickness##uitheme", &th->focusThickness, 0.05f, 1.0f, 16.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stroke width of the focus ring, in pixels. Accessibility can scale it.");
+            if (ImGui::DragFloat("Focus Padding##uitheme", &th->focusPadding, 0.05f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gap between the widget and the focus ring.");
+            if (ImGui::Checkbox("Focus Pulse##uitheme", &th->focusPulse)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The ring brightens and dims. Reduce motion and reduce flashing hold it still.");
             ImGui::TextDisabled("Bakes onto panels, buttons, sliders, toggles, bars, dropdowns, fields and screen text under this object.");
             if (ImGui::SmallButton("Remove##uitheme")) toRemove = th;
         }

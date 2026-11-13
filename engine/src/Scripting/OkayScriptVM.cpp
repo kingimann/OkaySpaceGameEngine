@@ -35,6 +35,7 @@
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/UINavigation.hpp"     // SetUIFocus
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/ModelAnimator.hpp"
@@ -4736,6 +4737,14 @@ struct OkayScriptVM::Impl {
                 else if (auto* in = g->GetComponent<UIInputField>()) in->text = a[1].AsString();
             }
             return Value{};
+        };
+        // ui_set_focus("Play"): keyboard/gamepad focus, the ring, and scroll into view. 1 if it took focus.
+        b["ui_set_focus"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{0.0f};
+            Scene* s = sceneOf();
+            if (!s) return Value{0.0f};
+            GameObject* g = s->Find(a[0].AsString());
+            return Value{g && SetUIFocus(g) ? 1.0f : 0.0f};
         };
         b["ui_get_text"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {

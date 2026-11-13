@@ -32,6 +32,7 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/UINavigation.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Components/SequencePlayer.hpp"
@@ -800,6 +801,13 @@ EngineApi Build() {
         bt.methods.push_back(method("Press", {}, {}, tVoid,
             [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Press(); return Value{}; },
             "Click the button. Fires OnClick."));
+        bt.methods.push_back(method("Focus", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) {
+                if (!SetUIFocus(of(s, c)->gameObject))
+                    throw RuntimeError("that button can't take focus (hidden, disabled, or not focusable)", c.loc);
+                return Value{};
+            },
+            "Move keyboard and gamepad focus here, show the focus ring, and scroll it into view."));
         api.types.push_back(std::move(bt));
     }
     // ---- Input ----

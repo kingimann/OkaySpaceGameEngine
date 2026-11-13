@@ -168,7 +168,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.8.1 Loading screen - `Components/LoadingScreen` - show-on-start or scene transition, progress, fade, rotating tips, bar and spinner styles, logo, slow zoom
   - 12.8.2 Loading layouts - `Components/LoadingScreenLayout` - one draw-command list (rect, gradient, image, text, arc) drawn identically by the player and the editor preview
   - 12.8.3 Pause menu - `Components/PauseMenu` - Escape toggle, freezes time, free cursor, builds editable UI objects in the scene, keyboard and gamepad
-  - 12.8.4 Settings screen - `Components/SettingsScreen` - Music, Effects, Fullscreen, VSync, Quality bound to mixer, window and render preset; Text size, Colour filter, High contrast, Reduce motion and Reduce flashing bound to `Accessibility` (applied live, saved to Prefs on Done); Done returns to the pause menu
+  - 12.8.4 Settings screen - `Components/SettingsScreen` - Music, Effects, Fullscreen, VSync, Quality bound to mixer, window and render preset; Text size, Colour filter, High contrast, Reduce motion, Reduce flashing, High-vis focus and Focus thickness bound to `Accessibility` (applied live, saved to Prefs on Done); Done returns to the pause menu
 - **Code:** `Components/LoadingScreen`, `Components/LoadingScreenLayout`, `Components/PauseMenu`, `Components/SettingsScreen`, `editor/main.cpp` (Loading Screen and Pause Menu inspectors ~31719, ~29517)
 - **API:** `LoadingScreen::Begin("Scene")`, `PauseMenu`, `SettingsScreen::AnyOpen`, `GameInputBlocked`
 - **Editor:** Inspector headers Loading Screen (live animated preview, Look buttons) and Pause Menu; Create > UI > Prebuilt Screens > Menus and Loading Screens; Localized switch (Localization window)
@@ -248,7 +248,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **What:** How the pointer, keyboard, gamepad and fingers reach widgets: top-most hit testing, hover and selection, 2-D focus movement, modal input blocking and the "game input blocked" guard.
 - **Parts:**
   - 12.12.1 Event System - `Components/EventSystem` - UIRaycast, Hovered, Pressed, Selected, IsPointerOverUI
-  - 12.12.2 Navigation - `Components/UINavigation` - nearest widget in the pressed direction, wrap, value widgets keep Left/Right, focus scrolls into view
+  - 12.12.2 Navigation - `Components/UINavigation` - nearest widget in the pressed direction, wrap, value widgets keep Left/Right, focus scrolls into view; the ring shows for keyboard, gamepad and script focus and hides on a mouse click
   - 12.12.3 Touch input - `Components/UITouchScroll` - finger drag, fling, tap fires on lift
   - 12.12.4 Input guards - `Components/UIModal`, `Components/SettingsScreen` - modals and open screens block game input (Input::UICaptured, GameInputBlocked)
   - 12.12.5 Hit testing contract - `Components/UIWorldContext`, `Components/UIElement` - one widget rect used for draw, click and drag in screen and world space
@@ -257,9 +257,9 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `NavigateUI`, `UIRaycast`, `SceneEventSystem`, `EventSystem::IsPointerOverUI`, `Input::UICaptured`
 - **Editor:** Event System inspector header; the UI view uses the same rects for click-to-select
 - **Docs:** -
-- **Tests:** `ui_nav_touch`, `ui_overlays`, `ui_input_guard`, `uicapture_look`, `ui_system`, `focus_remap`
+- **Tests:** `ui_nav_touch`, `ui_overlays`, `ui_input_guard`, `uicapture_look`, `ui_system`, `focus_remap`, `ui_focus`, `ui_focus_render`
 - **Status:** Works - navigation, touch and focus rules are implemented and tested; a focus graph with tab order, links and traps (`UI/FocusGraph`, `BuildFocusGraph` in `UINavigation.hpp`) merged in #574 but `NavigateUI` does not use it
-- **Open:** FocusGraph (#574, 32.1) is not used by `NavigateUI` or the widgets yet (the accessibility text size, colour filter and high contrast are applied by the UI renderer, 32.3); remapping all UI actions and screen-reader hints belong to area 32; no gesture recognisers (double-click, long press, swipe)
+- **Open:** FocusGraph (#574, 32.1) is not used by `NavigateUI` or the widgets yet (the accessibility text size, colour filter and high contrast are applied by the UI renderer, 32.3); the focus ring is themed and tied to high-visibility focus and a thickness scale (`UI/UIFocus`, tests `ui_focus`, `ui_focus_render`); remapping all UI actions and screen-reader hints belong to area 32; no gesture recognisers (double-click, long press, swipe)
 - **Related:** 8.3, 8.4, 32.1, 12.4
 - **Words:** event system, hover, pressed, selected, gamepad navigation, focus, D-pad, keyboard menu navigation, touch, tap, pointer over UI, input capture, UICaptured
 - **Seen as:** gamepad cannot move through a menu; focus ring stays on a hidden widget; clicks on the HUD also fire in the world; the camera keeps turning while a menu is open; the wrong widget gets the click

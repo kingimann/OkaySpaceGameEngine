@@ -201,6 +201,7 @@ add_library(okay_engine
     src/Core/Subtitles.cpp
     src/Core/AccessibilitySettings.cpp
     src/UI/FocusGraph.cpp
+    src/UI/UIFocus.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
     src/Render/ModelReaders.cpp

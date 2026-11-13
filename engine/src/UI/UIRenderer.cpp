@@ -5,6 +5,7 @@
 #include <Okay.hpp>
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/UI/UIFocus.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -1844,17 +1845,31 @@ static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRe
             }
         }
     }
-        else if (_it.kind == K_FocusRing) {   // keyboard/gamepad focus ring
+        else if (_it.kind == K_FocusRing) {   // keyboard/gamepad focus ring (hidden after a click)
         if (!UIShowsFocusRing(up.get())) continue;
         p.SetClipRect(nullptr);   // overlay — never scroll-clipped
         UIRect r = GetUIRect(up.get());
         if (!r.valid || !r.position) continue;
         Vec2 o, sz;   // where the widget actually is (parents, canvases, world space)
         if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) { o = UIResolveOrigin(up.get(), (float)w, (float)h); sz = r.size; }
-        const float x0 = o.x - 3.0f, y0 = o.y - 3.0f, x1 = o.x + sz.x + 3.0f, y1 = o.y + sz.y + 3.0f;
-        const RGBA fc{120, 182, 255, 230};   // launcher accent, lightened
-        MMThickLine(p, x0, y0, x1, y0, 2.0f, fc); MMThickLine(p, x1, y0, x1, y1, 2.0f, fc);
-        MMThickLine(p, x1, y1, x0, y1, 2.0f, fc); MMThickLine(p, x0, y1, x0, y0, 2.0f, fc);
+        const UIFocusStyle st = ResolveUIFocusStyle(up.get());
+        const float fade = UIFocusPulseAlpha(st);
+        auto toRgba = [fade](const Color& c) {
+            return RGBA{(std::uint8_t)(c.r * 255.0f + 0.5f), (std::uint8_t)(c.g * 255.0f + 0.5f),
+                        (std::uint8_t)(c.b * 255.0f + 0.5f),
+                        (std::uint8_t)std::min(255.0f, c.a * fade * 255.0f + 0.5f)};
+        };
+        auto stroke = [&](float pad, float width, RGBA col) {
+            if (width < 0.5f) return;
+            const float x0 = o.x - pad, y0 = o.y - pad, x1 = o.x + sz.x + pad, y1 = o.y + sz.y + pad;
+            MMThickLine(p, x0, y0, x1, y0, width, col);
+            MMThickLine(p, x1, y0, x1, y1, width, col);
+            MMThickLine(p, x1, y1, x0, y1, width, col);
+            MMThickLine(p, x0, y1, x0, y0, width, col);
+        };
+        if (st.highVisibility)
+            stroke(st.padding + st.thickness * 0.5f + 2.0f, std::max(3.0f, st.thickness * 0.55f), RGBA{0, 0, 0, 230});
+        stroke(st.padding, st.thickness, toRgba(st.color));
     }
         else if (_it.kind == K_ModalDim) {   // an open modal's backdrop: dims the whole screen
         auto* md = up->GetComponent<UIModal>();

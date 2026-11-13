@@ -381,7 +381,7 @@ inline GameObject* AddPauseMenu(Scene& scene) {
 inline GameObject* AddSettings(Scene& scene) {
     using namespace detail;
     GameObject* canvas = EnsureCanvas(scene);
-    GameObject* root = Panel(scene, canvas, "Settings", UIAnchor::Center, {0, 0}, {440, 680},
+    GameObject* root = Panel(scene, canvas, "Settings", UIAnchor::Center, {0, 0}, {440, 720},
                              slate::Panel(), 16.0f, true);
     Text(scene, root, "Title", "Settings", UIAnchor::TopLeft, {32, 24}, {376, 40}, 30.0f, slate::Text(), 0, true);
     Caption(scene, root, "AudioCaption", "AUDIO", UIAnchor::TopLeft, {32, 82}, 376);
@@ -422,7 +422,12 @@ inline GameObject* AddSettings(Scene& scene) {
     toggle("HighContrast", "High contrast", 484, false);
     toggle("ReduceMotion", "Reduce motion", 520, false);
     toggle("ReduceFlashing", "Reduce flashing", 556, false);
-    Button(scene, root, "BackButton", "Done", UIAnchor::BottomLeft, {32, -28}, {376, 48});
+    toggle("FocusHighVis", "High-vis focus", 588, false);
+    Text(scene, root, "FocusThicknessLabel", "Thickness", UIAnchor::TopLeft, {32, 620}, {140, 24}, 16.0f);
+    { GameObject* g = Child(scene, root, "FocusThicknessSlider"); auto* sl = g->AddComponent<UISlider>();
+      sl->anchor = UIAnchor::TopLeft; sl->position = {180, 626}; sl->size = {220, 12};
+      sl->minValue = 0.5f; sl->maxValue = 3.0f; sl->value = 1.0f; sl->step = 0.25f; }
+    Button(scene, root, "BackButton", "Done", UIAnchor::BottomLeft, {32, -16}, {376, 44});
     root->AddComponent<SettingsScreen>();
     return root;
 }

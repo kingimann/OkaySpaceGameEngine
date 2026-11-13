@@ -1859,6 +1859,11 @@ if(SDL2_FOUND)
     target_link_libraries(test_accessibility_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_accessibility_render PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME accessibility_render COMMAND test_accessibility_render)
+
+    add_executable(test_ui_focus_render test_ui_focus_render.cpp)
+    target_link_libraries(test_ui_focus_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_focus_render PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME ui_focus_render COMMAND test_ui_focus_render)
 else()
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()
@@ -2451,6 +2456,9 @@ add_test(NAME file_dialog COMMAND test_file_dialog)
 add_executable(test_accessibility_wired test_accessibility_wired.cpp)
 target_link_libraries(test_accessibility_wired PRIVATE okay::engine)
 add_test(NAME accessibility_wired COMMAND test_accessibility_wired)
+add_executable(test_ui_focus test_ui_focus.cpp)
+target_link_libraries(test_ui_focus PRIVATE okay::engine)
+add_test(NAME ui_focus COMMAND test_ui_focus)
 # okay::platform (engine/include/okay/Platform): the seam over SDL2 and our own backends.
 # platform: registry, timers, audio devices, controllers on each compiled-in backend (no
 # display needed; SDL's dummy audio driver, ALSA's null device) + the own evdev mapping.

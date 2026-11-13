@@ -6,6 +6,9 @@
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/UIPanel.hpp"
+#include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/UIElement.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/DisplaySettings.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
@@ -60,11 +63,78 @@ public:
         GameObject* root = scene.Find("Settings");
         if (!root) return;
         if (!root->GetComponent<SettingsScreen>()) root->AddComponent<SettingsScreen>();
+        EnsureFocusRows(root);
+    }
+
+    /// High-visibility focus and thickness, added under the last row when a saved
+    /// Settings screen does not have them yet. Grows the panel so Done stays clear.
+    static void EnsureFocusRows(GameObject* root) {
+        if (!root || !root->scene() || !root->transform) return;
+        auto named = [&](const char* name) -> GameObject* {
+            for (Transform* c : root->transform->Children())
+                if (c && c->gameObject && c->gameObject->name == name) return c->gameObject;
+            return nullptr;
+        };
+        if (named("FocusHighVisToggle") && named("FocusThicknessSlider")) return;
+        float bottom = 0.0f;
+        for (Transform* c : root->transform->Children()) {
+            if (!c || !c->gameObject || c->gameObject->name == "BackButton") continue;
+            UIRect r = GetUIRect(c->gameObject);
+            if (!r.valid || !r.position || !r.sizePtr) continue;
+            if (r.anchor != UIAnchor::TopLeft && r.anchor != UIAnchor::TopCenter && r.anchor != UIAnchor::TopRight)
+                continue;
+            bottom = std::max(bottom, r.position->y + r.sizePtr->y);
+        }
+        const float yToggle = bottom + 12.0f;
+        const float ySlider = yToggle + 36.0f;
+        Scene& scene = *root->scene();
+        auto add = [&](const char* name) {
+            GameObject* g = scene.CreateGameObject(name);
+            if (g->transform) g->transform->SetParent(root->transform, false);
+            return g;
+        };
+        if (!named("FocusHighVisLabel")) {
+            auto* t = add("FocusHighVisLabel")->AddComponent<TextRenderer>();
+            t->text = "High-vis focus"; t->screenSpace = true; t->anchor = UIAnchor::TopLeft;
+            t->screenPos = {32.0f, yToggle}; t->size = {300.0f, 24.0f}; t->pixelSize = 2.0f;
+        }
+        if (!named("FocusHighVisToggle")) {
+            auto* tg = add("FocusHighVisToggle")->AddComponent<UIToggle>();
+            tg->anchor = UIAnchor::TopLeft; tg->position = {364.0f, yToggle}; tg->size = {44.0f, 24.0f};
+            tg->style = UIToggle::Style::Switch; tg->label = ""; tg->on = false;
+        }
+        if (!named("FocusThicknessLabel")) {
+            auto* t = add("FocusThicknessLabel")->AddComponent<TextRenderer>();
+            t->text = "Thickness"; t->screenSpace = true; t->anchor = UIAnchor::TopLeft;
+            t->screenPos = {32.0f, ySlider}; t->size = {140.0f, 24.0f}; t->pixelSize = 2.0f;
+        }
+        if (!named("FocusThicknessSlider")) {
+            auto* sl = add("FocusThicknessSlider")->AddComponent<UISlider>();
+            sl->anchor = UIAnchor::TopLeft; sl->position = {180.0f, ySlider + 6.0f}; sl->size = {220.0f, 12.0f};
+            sl->minValue = 0.5f; sl->maxValue = 3.0f; sl->value = 1.0f; sl->step = 0.25f;
+        }
+        if (auto* panel = root->GetComponent<UIPanel>()) {
+            float parentH = panel->size.y;
+            float buttonTop = parentH - 76.0f;
+            if (GameObject* back = named("BackButton")) {
+                if (auto* b = back->GetComponent<UIButton>()) {
+                    if (b->anchor == UIAnchor::BottomLeft || b->anchor == UIAnchor::BottomCenter ||
+                        b->anchor == UIAnchor::BottomRight)
+                        buttonTop = b->position.y + parentH - b->size.y;
+                    else buttonTop = b->position.y;
+                }
+            }
+            const float needTop = ySlider + 28.0f + 8.0f;
+            if (buttonTop < needTop) panel->size.y = parentH + (needTop - buttonTop);
+        }
     }
 
     void Start() override {
+        EnsureFocusRows(gameObject);
         Bind();
+        BindFocusRows();
         Pull();
+        PullFocusRows();
         Scene* s = GetScene();
         if (!s || !gameObject) return;
         // A pause menu in the same scene is the screen the player sees first.
@@ -76,14 +146,17 @@ public:
 
     void Update(float) override {
         if (!gameObject || !gameObject->active) { m_open = false; return; }
+        EnsureFocusRows(gameObject);
         if (!m_open) {
             Bind();
+            BindFocusRows();
             const bool dragging = (m_music && m_music->IsDragging()) || (m_effects && m_effects->IsDragging());
-            if (!dragging) Pull();
+            if (!dragging) { Pull(); PullFocusRows(); }
             m_open = true;
         }
         Cursor::Capture(false);
         Push();
+        PushFocusRows();
     }
 
     void LateUpdate(float) override {
@@ -106,6 +179,8 @@ private:
     GameObject* m_returnTo = nullptr;
     bool        m_open = false;
     bool        m_bound = false;
+    UIToggle*   m_focusHigh = nullptr;
+    UISlider*   m_focusThick = nullptr;
 
     GameObject* Child(const char* name) const {
         if (!gameObject || !gameObject->transform) return nullptr;
@@ -178,6 +253,26 @@ private:
         if (m_contrast && m_contrast->on != a.highContrast) Accessibility::SetHighContrast(m_contrast->on);
         if (m_motion && m_motion->on != a.reduceMotion) Accessibility::SetReduceMotion(m_motion->on);
         if (m_flashing && m_flashing->on != a.reduceFlashing) Accessibility::SetReduceFlashing(m_flashing->on);
+    }
+
+    void BindFocusRows() {
+        m_focusHigh = nullptr;
+        m_focusThick = nullptr;
+        if (GameObject* g = Child("FocusHighVisToggle")) m_focusHigh = g->GetComponent<UIToggle>();
+        if (GameObject* g = Child("FocusThicknessSlider")) m_focusThick = g->GetComponent<UISlider>();
+    }
+    void PullFocusRows() {
+        const AccessibilitySettings& a = Accessibility::Get();
+        if (m_focusHigh) m_focusHigh->on = a.focusHighVisibility;
+        if (m_focusThick) m_focusThick->value = a.focusThicknessScale;
+    }
+    void PushFocusRows() {
+        const AccessibilitySettings& a = Accessibility::Get();
+        if (m_focusHigh && m_focusHigh->on != a.focusHighVisibility)
+            Accessibility::SetFocusHighVisibility(m_focusHigh->on);
+        const AccessibilitySettings& now = Accessibility::Get();
+        if (m_focusThick && std::fabs(m_focusThick->value - now.focusThicknessScale) > 1e-4f)
+            Accessibility::SetFocusThicknessScale(m_focusThick->value);
     }
 
     void Close() {

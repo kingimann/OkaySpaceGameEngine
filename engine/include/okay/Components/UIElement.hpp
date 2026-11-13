@@ -34,6 +34,7 @@
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/UIWorldContext.hpp"
+#include "okay/UI/UIFocus.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <vector>
@@ -335,6 +336,8 @@ inline bool UIHidden(GameObject* go) {
 /// (an inactive ancestor) or disabling the control drops the ring even when the
 /// focus flag was set the frame the widget closed.
 inline bool UIShowsFocusRing(GameObject* go) {
+    // A click hides the ring; keyboard, gamepad and script focus show it.
+    if (!UIFocus::RingVisible()) return false;
     if (!go || !go->active || UIHidden(go)) return false;
     auto on = [](auto* c) { return c && c->enabled && c->IsFocused(); };
     if (auto* b = go->GetComponent<UIButton>())   return on(b);

@@ -29,7 +29,7 @@ inline void Reset() {
     OkayUI::Style().caretBlink = false;
 }
 
-enum Key { Key_Backspace, Key_Delete, Key_Left, Key_Right, Key_Home, Key_End, Key_Enter, Key_Escape, Key_SelectAll, Key_COUNT };
+enum Key { Key_Backspace, Key_Delete, Key_Left, Key_Right, Key_Home, Key_End, Key_Enter, Key_Escape, Key_SelectAll, Key_Up, Key_Down, Key_COUNT };
 
 inline float CenterX(const OkayUI::Rect& r) { return r.x + r.w * 0.5f; }
 inline float CenterY(const OkayUI::Rect& r) { return r.y + r.h * 0.5f; }
@@ -53,7 +53,7 @@ struct Sim {
         in.wheel = wheel; in.text = text.empty() ? nullptr : text.c_str();
         in.backspace = edge[Key_Backspace]; in.del = edge[Key_Delete]; in.left = edge[Key_Left]; in.right = edge[Key_Right];
         in.home = edge[Key_Home]; in.end = edge[Key_End]; in.enter = edge[Key_Enter]; in.escape = edge[Key_Escape];
-        in.selectAll = edge[Key_SelectAll]; in.shift = shift; in.ctrl = ctrl; in.displayW = W; in.displayH = H;
+        in.selectAll = edge[Key_SelectAll]; in.up = edge[Key_Up]; in.down = edge[Key_Down]; in.shift = shift; in.ctrl = ctrl; in.displayW = W; in.displayH = H;
         OkayUI::BeginFrame(in);
         ui();
         OkayUI::EndFrameData();

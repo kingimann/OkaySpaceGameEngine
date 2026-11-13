@@ -455,6 +455,56 @@ void MenuTests() {
     CHECK(true);
 }
 
+void MenuKeyTests() {
+    Rig r; UI::Rect bar; bool fileOpen = false, subOpen = false; int picked = 0;
+    r.body = [&] {
+        UI::BeginMenuBar(); bar = UI::GetItemRect();
+        fileOpen = UI::BeginMenu("File");
+        if (fileOpen) {
+            if (UI::MenuItem("New")) picked = 1;
+            if (UI::MenuItem("Off", nullptr, false, false)) picked = 99;        // disabled: the highlight skips it
+            subOpen = UI::BeginMenu("Recent");
+            if (subOpen) { if (UI::MenuItem("One")) picked = 3; if (UI::MenuItem("Two")) picked = 4; UI::EndMenu(); }
+            if (UI::MenuItem("Quit")) picked = 5;
+            UI::EndMenu();
+        } else subOpen = false;
+        UI::EndMenuBar();
+    };
+    r.Frames(2);
+    const float h = bar.h;
+    auto openFile = [&] { r.Click(bar.x + 10, bar.y + h * 0.5f); r.sim.Move(650, 470); r.Frames(2); };   // open it, then park the pointer far away
+    auto key = [&](Key k) { r.Tap(k); r.Frame(); };
+    openFile(); CHECK(fileOpen);
+    key(Key_Down);  key(Key_Enter);                                           // first Down highlights "New", Enter runs it
+    CHECK(picked == 1 && !fileOpen);
+    picked = 0; openFile();
+    key(Key_Down); key(Key_Down); key(Key_Down);                              // New, (Off skipped), Recent, Quit
+    key(Key_Enter);
+    CHECK(picked == 5 && !fileOpen);                                          // landed on "Quit": the disabled row was skipped
+    picked = 0; openFile();
+    key(Key_Up);                                                              // Up from nothing wraps to the last enabled item
+    key(Key_Enter);
+    CHECK(picked == 5);
+    // Right opens the highlighted sub-menu, Down moves inside it, Enter runs and closes everything, Left closes just the sub-menu
+    picked = 0; openFile();
+    key(Key_Down); key(Key_Down);                                             // on "Recent"
+    key(Key_Right);
+    CHECK(fileOpen && subOpen);
+    key(Key_Down); key(Key_Down);                                             // "One", then "Two" (the highlight lives in the sub-menu now)
+    key(Key_Left);
+    CHECK(fileOpen && !subOpen);
+    key(Key_Right); CHECK(subOpen);
+    key(Key_Down); key(Key_Enter);
+    CHECK(picked == 3 && !fileOpen && !subOpen);                              // "One" ran and the whole chain closed
+    // Escape closes the innermost menu first
+    openFile(); key(Key_Down); key(Key_Down); key(Key_Right); CHECK(subOpen);
+    key(Key_Escape); CHECK(fileOpen && !subOpen);
+    key(Key_Escape); CHECK(!fileOpen);
+    // keys do nothing while no menu is open, and Enter with no highlight runs nothing
+    picked = 0; key(Key_Down); key(Key_Enter); CHECK(picked == 0 && !fileOpen);
+    openFile(); key(Key_Enter); CHECK(picked == 0 && fileOpen);
+}
+
 void SubMenuTests() {
     Rig r; UI::Rect bar; bool fileOpen = false, subOpen = false, subSubOpen = false, a = false, b = false, deep = false;
     r.body = [&] {
@@ -619,6 +669,7 @@ int main() {
     TypedSingleTests();
     MenuTests();
     SubMenuTests();
+    MenuKeyTests();
     TableTests();
     ModalTests();
     TEST_MAIN_RESULT();

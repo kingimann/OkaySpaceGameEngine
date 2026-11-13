@@ -435,3 +435,11 @@ Built: `BeginTable(id, columns, flags)` with `TableSetupColumn(label, columnFlag
 Tested (141 checks in `test_okayui_values.cpp`): cells land in their columns, also when set out of order, the fixed column keeps 100 px and the weighted ones split the rest 1:3 (95 and 285 px), a second row lands below the first, a missing column and calls outside a table are harmless, dragging a border resizes unless `Table_NoResize`, the band shows in the pixels. Older suites unchanged.
 
 Not done: sorting (clickable headers), hiding columns, scrolling a table with a fixed header, a band that follows a tall row (it is one text row tall), sizing a stretch column by content.
+
+### 4.19 Gap-closing step 15: keyboard navigation of menus (family 10)
+
+Built: while a menu is open, Down and Up move a highlight over its enabled items (wrapping; disabled items and separators are skipped), Enter runs the highlighted item and closes the whole chain, Right (or Enter) opens a highlighted sub-menu, Left closes a sub-menu, Escape closes the innermost open menu, and the mouse moves the same highlight so the two never disagree. Only the innermost open menu reacts to the keys. New `Input::up` / `Input::down` (key edges like the others). A sub-menu opened from the keyboard no longer closes under a parked pointer (leaving a sub-menu with the mouse only closes it while the mouse is moving).
+
+Tested (154 checks in `test_okayui_values.cpp`): Down highlights the first item and Enter runs it, a disabled row is skipped, Up from nothing wraps to the last, Right/Down/Enter inside a sub-menu runs its item and closes everything, Left closes just the sub-menu, Escape closes inner then outer, keys do nothing with no menu open, Enter with no highlight runs nothing. Fuzz now also sends random Up/Down edges.
+
+Not done: Left/Right moving between the menus of a menu bar, typing a letter to jump to an item, the editor host sending Up/Down (it does not set any key edges yet).

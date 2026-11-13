@@ -139,6 +139,13 @@ float    g_dragAccum = 0.0f;     // sub-unit accumulator for DragInt while dragg
 // Menu bar / open-menu state.
 bool  g_inMenuBar = false;
 float g_barX = 0.0f, g_barY = 0.0f, g_barH = 0.0f;
+struct MenuKb { int id = 0; int count = 0; unsigned long long mask = 0; int idx = -1; bool childOpen = false, childOpenNext = false; };
+MenuKb g_menuKbs[16];
+MenuKb* kbSlot(int id) {
+    for (auto& s : g_menuKbs) if (s.id == id) return &s;
+    for (auto& s : g_menuKbs) if (s.id == 0) { s = MenuKb(); s.id = id; return &s; }
+    g_menuKbs[0] = MenuKb(); g_menuKbs[0].id = id; return &g_menuKbs[0];   // table full: reuse the first slot
+}
 struct CurMenu {
     bool  active = false;
     int   menuId = 0;
@@ -146,6 +153,10 @@ struct CurMenu {
     float bx = 0, by = 0, bw = 0, bh = 0;        // the menu's button on the bar
     float itemStartY = 0, itemY = 0;             // dropdown item cursor
     float subX = 0, subY = 0, subW = 0, subH = 0;   // the open sub-menu's list this frame (a press inside it is not "outside")
+    struct MenuKb* kb = nullptr;                 // keyboard highlight state of this menu
+    int   n = 0;                                 // items seen so far this frame (the next item's ordinal)
+    unsigned long long mask = 0;                 // which of them are enabled
+    bool  activate = false;                      // Enter pressed for the highlighted item this frame
 };
 CurMenu g_curMenu;
 CurMenu g_menuStack[4];                          // the menus a nested BeginMenu came from (outermost first)
@@ -2757,6 +2768,28 @@ void BeginMenuBar() {
 
 void EndMenuBar() { g_inMenuBar = false; }
 
+
+namespace {
+// Per-menu keyboard handling at the start of its item list. Only the innermost open menu reacts (the one with no open child).
+void menuKeysBegin(int menuId, bool nestedMenu) {
+    MenuKb* kb = kbSlot(menuId);
+    kb->childOpen = kb->childOpenNext; kb->childOpenNext = false;
+    g_curMenu.kb = kb; g_curMenu.n = 0; g_curMenu.mask = 0; g_curMenu.activate = false;
+    if (kb->childOpen) return;
+    const int cnt = kb->count;
+    auto enabledAt = [&](int i) { return i >= 0 && i < cnt && i < 64 && ((kb->mask >> i) & 1ull); };
+    if ((g_in.down || g_in.up) && cnt > 0) {
+        int i = kb->idx;
+        for (int step = 0; step < cnt; ++step) {
+            i = g_in.down ? (i < 0 ? 0 : (i + 1) % cnt) : (i <= 0 ? cnt - 1 : i - 1);
+            if (enabledAt(i)) { kb->idx = i; break; }
+        }
+    }
+    if (g_in.enter && enabledAt(kb->idx)) g_curMenu.activate = true;
+    if (g_in.escape || (nestedMenu && g_in.left)) *openState(menuId, false) = false;
+}
+}
+
 bool BeginMenu(const char* label) {
     if (g_lay.active && g_curMenu.active && label) {   // a sub-menu: a row of the open menu that opens a list to its right
         if (g_menuDepth >= 4) return false;
@@ -2766,19 +2799,26 @@ bool BeginMenu(const char* label) {
         const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
         g_curMenu.itemY += h;
         const bool ih = hitOverlay(x, y, w, h);
-        if (ih) { g_hot = id; *open = true; }            // hovering the row opens it
+        const int ord = g_curMenu.n++;
+        if (ord < 64) g_curMenu.mask |= 1ull << ord;
+        MenuKb* pk = g_curMenu.kb;
+        if (ih) { g_hot = id; *open = true; if (pk) pk->idx = ord; }          // hovering the row opens it (and highlights it)
+        const bool ksel = pk && pk->idx == ord && !pk->childOpen;
+        if (ksel && (g_in.right || g_curMenu.activate)) *open = true;          // Right or Enter on the highlighted row opens it
         g_toOverlay = true;
-        quad(x, y, w, h, (ih || *open) ? g_theme.bgHover : g_theme.panel);
+        quad(x, y, w, h, (ih || *open || ksel) ? g_theme.bgHover : g_theme.panel);
         drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
         drawText(x + w - labelW(">") - 8.0f, y + (h - textH()) * 0.5f, ">", s, g_theme.textDim);
         g_toOverlay = false;
-        if (!*open) return false;
+        if (!*open) { kbSlot(id)->idx = -1; return false; }
+        if (pk) pk->childOpenNext = true;
         g_menuStack[g_menuDepth++] = g_curMenu;
         g_curMenu.menuId = id;
         g_curMenu.x = x + w; g_curMenu.w = 180.0f;
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
         g_curMenu.itemStartY = y; g_curMenu.itemY = y;
         g_curMenu.subX = g_curMenu.subY = g_curMenu.subW = g_curMenu.subH = 0.0f;
+        menuKeysBegin(id, true);
         return true;
     }
     if (!g_lay.active || !g_inMenuBar) return false;
@@ -2802,7 +2842,8 @@ bool BeginMenu(const char* label) {
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = bw; g_curMenu.bh = h;
         g_curMenu.itemStartY = y + h; g_curMenu.itemY = y + h;
         g_curMenu.subX = g_curMenu.subY = g_curMenu.subW = g_curMenu.subH = 0.0f;
-    }
+        menuKeysBegin(id, false);
+    } else kbSlot(id)->idx = -1;
     return *open;
 }
 
@@ -2815,13 +2856,22 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     const int iid = hashLabel(label) ^ g_curMenu.menuId;
     const bool ih = enabled && hitOverlay(x, y, w, h);
     if (ih) g_hot = iid;
+    const int ord = g_curMenu.n++;
+    if (enabled && ord < 64) g_curMenu.mask |= 1ull << ord;
+    MenuKb* kb = g_curMenu.kb;
+    if (ih && kb) kb->idx = ord;
+    const bool ksel = kb && kb->idx == ord && enabled && !kb->childOpen;
     bool clicked = false;
+    if (ksel && g_curMenu.activate) {   // Enter on the highlighted item
+        clicked = true; *openState(g_curMenu.menuId, false) = false;
+        for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false;
+    }
     if (g_active == iid) {
         if (g_released) { if (ih) { clicked = true; *openState(g_curMenu.menuId, false) = false; for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false; } g_active = 0; }
     } else if (ih && g_pressed) g_active = iid;
     const unsigned char* col = enabled ? g_theme.text : g_theme.textDim;
     g_toOverlay = true;
-    quad(x, y, w, h, ih ? g_theme.bgHover : g_theme.panel);
+    quad(x, y, w, h, (ih || ksel) ? g_theme.bgHover : g_theme.panel);
     if (selected) quad(x + 3.0f, y + (h - 6.0f) * 0.5f, 6.0f, 6.0f, col);   // a small filled square marks a checked item
     drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, col);
     if (shortcut && shortcut[0]) {   // right-aligned, dim; skipped when it would run into the label
@@ -2856,7 +2906,9 @@ void EndMenu() {
     const bool inSub  = g_curMenu.subW > 0.0f && pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.subX, g_curMenu.subY, g_curMenu.subW, g_curMenu.subH);
     if (g_pressed && !inBtn && !inList && !inSub) *openState(g_curMenu.menuId, false) = false;
     // A sub-menu also closes when the pointer leaves its row, its list and any list opened from it.
-    if (nested && !inBtn && !inList && !inSub) *openState(g_curMenu.menuId, false) = false;
+    // (only while the mouse is moving: a sub-menu opened from the keyboard stays open under a parked pointer)
+    if (nested && !inBtn && !inList && !inSub && (g_mouseDX != 0.0f || g_mouseDY != 0.0f)) *openState(g_curMenu.menuId, false) = false;
+    if (g_curMenu.kb) { g_curMenu.kb->count = g_curMenu.n; g_curMenu.kb->mask = g_curMenu.mask; }
     const bool hasItems = g_curMenu.itemY > g_curMenu.itemStartY;
     if (hasItems)
         registerOverlay(g_curMenu.x, g_curMenu.itemStartY, g_curMenu.w, g_curMenu.itemY - g_curMenu.itemStartY, false);

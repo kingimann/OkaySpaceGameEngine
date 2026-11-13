@@ -43,7 +43,9 @@ struct Input {
     bool        home      = false;     // Home
     bool        end       = false;     // End
     bool        enter     = false;     // Enter / Return
-    bool        escape    = false;     // Escape (drops keyboard focus)
+    bool        escape    = false;     // Escape (drops keyboard focus; closes the innermost open menu)
+    bool        up        = false;     // Up arrow (moves the highlight in an open menu)
+    bool        down      = false;     // Down arrow
     bool        selectAll = false;     // the select-all shortcut (Ctrl+A)
     bool        shift     = false;     // shift held
     bool        ctrl      = false;     // Ctrl held (Ctrl+click on a drag or slider box types a number into it)
@@ -421,6 +423,9 @@ void EndMenuBar();
 /// A menu on the bar; returns true while its dropdown is open (then add MenuItems).
 bool BeginMenu(const char* label);
 /// Close a BeginMenu() block (handles click-outside dismissal).
+/// Keyboard: while a menu is open, Down/Up move a highlight over its enabled items (wrapping), Enter runs the highlighted one,
+/// Right opens a highlighted sub-menu, Left closes a sub-menu, Escape closes the innermost open menu. The mouse moves the same
+/// highlight. The host sends Input::up / down / left / right / enter / escape as key edges.
 /// BeginMenu inside a BeginMenu block is a sub-menu: a row with an arrow that opens its list to the right while the pointer is
 /// on the row or the list (up to four levels); picking any item closes the whole chain. Call EndMenu() for it as well.
 void EndMenu();

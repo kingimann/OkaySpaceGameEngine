@@ -21,6 +21,9 @@ v2.864.0
     fast one address can send them, and will not downgrade the protocol
     version. Session codes no longer appear in logs, the relay checks its port
     range, and the per-address session count follows a host that moves.
+  - Games in this release speak relay protocol version 4. The live relay has
+    to be upgraded with this release. A game drops welcomes from an older
+    relay unless it sets allowUnverifiedRelay.
   - Position updates at the edge of the number range no longer overflow.
 
   Engine

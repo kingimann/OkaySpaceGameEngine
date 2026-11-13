@@ -605,7 +605,19 @@ inline int RunHelper(const Request& req) {
     if (!req.expectVersion.empty()) {
         // The new program must start and be the published version BEFORE it is started for real.
         log("running the self-check of the new program");
+#if defined(_WIN32)
+        // Windows can stall inside CreateProcess on a file that is not a program at all (a damaged download, a scanner's
+        // replacement), so a file without the "MZ" header is refused up front, the same as one that cannot be started.
+        bool looksLikeProgram = false;
+        {
+            std::ifstream f(req.executable, std::ios::binary);
+            char mz[2] = {0, 0};
+            looksLikeProgram = f.read(mz, 2) && mz[0] == 'M' && mz[1] == 'Z';
+        }
+        const int rc = looksLikeProgram ? RunAndWait({Utf8(req.executable), okay::selfupdate::kSelfCheckFlag, req.expectVersion}, 30000) : -1;
+#else
         const int rc = RunAndWait({Utf8(req.executable), okay::selfupdate::kSelfCheckFlag, req.expectVersion}, 30000);
+#endif
         log("self-check finished with code " + std::to_string(rc));
         const std::string problem = okay::selfupdate::SelfCheckProblem(rc, req.expectVersion);
         if (!problem.empty()) {

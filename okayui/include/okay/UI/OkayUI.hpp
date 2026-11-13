@@ -36,6 +36,9 @@ enum KeyId : int {
     KeyId_COUNT
 };
 
+struct Input;
+/// The most text the clipboard holds (bytes, with the end mark).
+inline constexpr int kClipboardMax = 4096;
 struct Input {
     float       mouseX    = 0.0f;
     float       mouseY    = 0.0f;
@@ -57,6 +60,9 @@ struct Input {
     bool        end       = false;     // End
     bool        enter     = false;     // Enter / Return
     bool        escape    = false;     // Escape (drops keyboard focus; closes the innermost open menu)
+    bool        copy      = false;     // the copy shortcut (Ctrl+C) was pressed this frame
+    bool        cut       = false;     // Ctrl+X
+    bool        paste     = false;     // Ctrl+V
     bool        up        = false;     // Up arrow (moves the highlight in an open menu)
     bool        down      = false;     // Down arrow
     bool        selectAll = false;     // the select-all shortcut (Ctrl+A)
@@ -672,6 +678,11 @@ bool IsItemHovered();
 /// True while a text field has keyboard focus: the host should send typed text and key edges
 /// to OkayUI and not to the game (ImGui's io.WantTextInput).
 bool WantsTextInput();
+/// Copy text to the clipboard / read it back (up to kClipboardMax - 1 bytes, never cut inside a character). It is also mirrored to the
+/// system clipboard when a window system is running; with none (tests, servers) the copy lives inside OkayUI. The text of
+/// GetClipboardText() is valid until the next call. Text fields copy (Input::copy), cut (Input::cut) and paste (Input::paste) with it.
+void SetClipboardText(const char* text);
+const char* GetClipboardText();
 /// Forget all remembered state: window positions and collapsed flags, tree / header / combo
 /// open flags, scroll offsets, popups, keyboard focus, text carets, toasts, the theme and font
 /// (back to the classic defaults). For tests and for returning to a clean slate.

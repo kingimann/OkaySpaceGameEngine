@@ -1245,17 +1245,37 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
             eraseBytes(buf, len, lo, hi);
             ts->caret = ts->anchor = lo; changed = true; return true;
         };
+        auto insertOne = [&](const char* p, int n) {
+            const int lo = selLo(), hi = selHi();
+            if (len - (hi - lo) + n > cap - 1) return;
+            deleteSelection();
+            for (int i = len; i >= ts->caret; --i) buf[i + n] = buf[i];   // moves the NUL too
+            for (int i = 0; i < n; ++i) buf[ts->caret + i] = p[i];
+            len += n; ts->caret += n; ts->anchor = ts->caret; changed = true;
+        };
         if (g_in.text && g_in.text[0] && !readOnly) {
             for (const char* p = g_in.text; *p;) {
                 const int n = printableUtf8Len(p);
                 if (!n) { ++p; continue; }
-                // Typing replaces the selection; a character that does not fit whole is dropped.
-                const int lo = selLo(), hi = selHi();
-                if (len - (hi - lo) + n > cap - 1) { p += n; continue; }
-                deleteSelection();
-                for (int i = len; i >= ts->caret; --i) buf[i + n] = buf[i];   // moves the NUL too
-                for (int i = 0; i < n; ++i) buf[ts->caret + i] = p[i];
-                len += n; ts->caret += n; ts->anchor = ts->caret; changed = true;
+                insertOne(p, n);
+                p += n;
+            }
+        }
+        // Clipboard: copy and cut take the selection, paste replaces it (new lines and tabs become spaces: it is a one-line field).
+        if ((g_in.copy || g_in.cut) && ts->caret != ts->anchor) {
+            const int lo = selLo(), hi = selHi();
+            char tmp[kClipboardMax]; int n = hi - lo; if (n > kClipboardMax - 1) n = kClipboardMax - 1;
+            for (int i = 0; i < n; ++i) tmp[i] = buf[lo + i];
+            tmp[n] = 0; trimPartialChar(tmp);
+            SetClipboardText(tmp);
+            if (g_in.cut && !readOnly) deleteSelection();
+        }
+        if (g_in.paste && !readOnly) {
+            const char* clip = GetClipboardText();
+            for (const char* p = clip; p && *p;) {
+                const int n = printableUtf8Len(p);
+                if (!n) { if (*p == '\n' || *p == '\r' || *p == '\t') insertOne(" ", 1); ++p; continue; }
+                insertOne(p, n);
                 p += n;
             }
         }
@@ -3973,6 +3993,26 @@ bool IsItemHovered() {
 }
 
 bool WantsTextInput() { return g_focus != 0; }
+
+// The clipboard: kept here, and mirrored to the system clipboard when a window system is up (so it works headless too).
+static char g_clip[kClipboardMax] = {0};
+void SetClipboardText(const char* text) {
+    if (!text) text = "";
+    std::size_t n = std::strlen(text); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
+    std::memcpy(g_clip, text, n); g_clip[n] = 0;
+    trimPartialChar(g_clip);
+    SDL_SetClipboardText(g_clip);                      // fails quietly with no video: the copy above is enough
+}
+const char* GetClipboardText() {
+    if (char* sys = SDL_GetClipboardText()) {          // someone else may have copied something since
+        if (sys[0] && std::strcmp(sys, g_clip) != 0) {
+            std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
+            std::memcpy(g_clip, sys, n); g_clip[n] = 0; trimPartialChar(g_clip);
+        }
+        SDL_free(sys);
+    }
+    return g_clip;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Public draw list, cursor and measurement, item state, disabled blocks (docs/own_ui_toolkit.md, section 4)

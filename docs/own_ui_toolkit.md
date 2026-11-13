@@ -507,3 +507,11 @@ Built: the ImGui way of dragging things around: `BeginDragDropSource` / `SetDrag
 Tested (`test_okayui_values.cpp`): a small move does not start a drag, a real drag starts and shows the preview, the target sees the payload while hovering with `AcceptBeforeDelivery` and gets it once on release, a mismatched type is refused and a null type is accepted, releasing over nothing delivers nothing, a payload of 300 bytes is refused, calls outside a drag are harmless. Fuzz throws random sources, targets, sizes, types and out-of-order calls at it.
 
 Not done: widgets drawn inside the source block are drawn in the window (not in a floating box that follows the pointer; use `SetDragDropPreview` instead), drag sources from the keyboard, dropping onto a window title, `AcceptNoDrawDefaultRect` and the other accept flags, several drags at once, a payload bigger than 256 bytes (pass an index or an id).
+
+### 4.28 Gap-closing step 24: clipboard and copy / cut / paste in text fields (family 6)
+
+Built: `SetClipboardText` / `GetClipboardText` (up to 4095 bytes, never cut inside a UTF-8 character; mirrored to the system clipboard when a window system is running, kept inside OkayUI when there is none, so it works in tests and on servers) and `Input::copy` / `cut` / `paste` (the host sends them for Ctrl+C / X / V). A focused text field copies its selection, cuts it (not when read-only) and pastes at the caret or over the selection; new lines, tabs and carriage returns in pasted text become spaces because the field is one line; what does not fit the buffer is dropped whole characters at a time; pasting an empty clipboard changes nothing. The editor calls `SetClipboardText` about 50 times.
+
+Tested (`test_okayui_values.cpp`): the plain clipboard (set, read, clear), copy leaves the field alone, paste at the end, cut empties the field, copy with no selection keeps the clipboard, paste replaces a selection and flattens lines, a read-only field copies but cannot cut or paste, a paste longer than the buffer is cut at the end, a 6000-byte clipboard is cut at a character boundary, an empty clipboard pastes nothing. Fuzz sends random copy / cut / paste edges.
+
+Not done: the host (shared/OkayUIHost.hpp, not on this branch) turning Ctrl+C / X / V into these edges, multi-line paste (there is no multi-line field), undo of a paste, images or other clipboard formats.

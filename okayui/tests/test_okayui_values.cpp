@@ -2,6 +2,7 @@
 // synthetic mouse across frames, asserting what each cell does and what the others keep.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
+#include <string>
 
 #include <cmath>
 #include <cstring>
@@ -793,6 +794,52 @@ void TypedDragDropTests() {
     CHECK(UI::AcceptDragDropPayload("ITEM") == nullptr);
 }
 
+void ClipboardTests() {
+    Rig r; char buf[64] = "hello world"; char ro[32] = "locked"; char tiny[8] = "ab"; UI::Rect rf, rro, rtiny; bool useRo = false;
+    r.body = [&] {
+        UI::SetNextItemWidth(260); UI::InputText("##a", buf, sizeof buf); rf = UI::GetItemRect();
+        UI::SetNextItemWidth(260); UI::InputText("##ro", ro, sizeof ro, UI::InputText_ReadOnly); rro = UI::GetItemRect();
+        UI::SetNextItemWidth(260); UI::InputText("##tiny", tiny, sizeof tiny); rtiny = UI::GetItemRect();
+        (void)useRo;
+    };
+    r.Frames(3);
+    auto focus = [&](const UI::Rect& rc) { r.Click(CenterX(rc), CenterY(rc)); r.Frame(); };
+    auto press = [&](Key k) { r.sim.Press(k); r.Frame(); r.Frame(); };
+    // the plain clipboard
+    UI::SetClipboardText("abc"); CHECK(std::strcmp(UI::GetClipboardText(), "abc") == 0);
+    UI::SetClipboardText(nullptr); CHECK(UI::GetClipboardText()[0] == 0);
+    // copy: select everything, copy; the clipboard holds the text, the field is unchanged
+    focus(rf); press(Key_SelectAll); press(Key_Copy);
+    CHECK(std::strcmp(UI::GetClipboardText(), "hello world") == 0 && std::strcmp(buf, "hello world") == 0);
+    // paste at the end (End key puts the caret there): the text doubles
+    r.sim.Press(Key_End); r.Frame(); press(Key_Paste);
+    CHECK(std::strcmp(buf, "hello worldhello world") == 0);
+    // cut: select all, cut -> field empty, clipboard has the old text
+    press(Key_SelectAll); press(Key_Cut);
+    CHECK(buf[0] == 0 && std::strcmp(UI::GetClipboardText(), "hello worldhello world") == 0);
+    // copy with nothing selected leaves the clipboard alone
+    UI::SetClipboardText("keep"); press(Key_Copy); CHECK(std::strcmp(UI::GetClipboardText(), "keep") == 0);
+    // paste replaces a selection, and new lines / tabs become spaces
+    std::snprintf(buf, sizeof buf, "xyz"); r.Frames(2);
+    focus(rf); press(Key_SelectAll);
+    UI::SetClipboardText("one\ntwo\tthree\r\nfour"); press(Key_Paste);
+    CHECK(std::strcmp(buf, "one two three  four") == 0);
+    // a read-only field copies but does not cut or paste
+    focus(rro); press(Key_SelectAll); UI::SetClipboardText("zzz"); press(Key_Cut); press(Key_Paste);
+    CHECK(std::strcmp(ro, "locked") == 0 && std::strcmp(UI::GetClipboardText(), "locked") == 0);
+    // a paste that does not fit is cut off at the end of the buffer (7 characters here) without splitting anything
+    focus(rtiny); press(Key_SelectAll); UI::SetClipboardText("0123456789"); press(Key_Paste);
+    CHECK(std::strcmp(tiny, "0123456") == 0);
+    // a clipboard longer than the limit is cut at a character boundary
+    std::string many; for (int i = 0; i < 3000; ++i) many += "\xC3\xA9";           // 3000 x e-acute = 6000 bytes
+    UI::SetClipboardText(many.c_str());
+    const char* got = UI::GetClipboardText(); const std::size_t gl = std::strlen(got);
+    CHECK(gl <= (std::size_t)UI::kClipboardMax - 1 && gl % 2 == 0);                   // whole characters only
+    // pasting nothing does nothing
+    UI::SetClipboardText(""); std::snprintf(buf, sizeof buf, "keepme"); r.Frames(2); focus(rf); press(Key_SelectAll); press(Key_Paste);
+    CHECK(std::strcmp(buf, "keepme") == 0);                                          // an empty clipboard changes nothing
+}
+
 void MenuTests() {
     Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
     r.body = [&] {
@@ -1052,6 +1099,7 @@ int main() {
     WindowApiTests();
     IoCursorFontTests();
     TypedDragDropTests();
+    ClipboardTests();
     MenuTests();
     SubMenuTests();
     MenuKeyTests();

@@ -129,12 +129,32 @@ inline void ApplyRemoteAction(Character* c, int id, float param = 0.0f) {
     }
 }
 
-/// "<anim> <punchSeq> [<speed> <angle> [<actionSeq> <actionId> <lookYaw> <lookPitch> [<actionParam>]]]".
+/// Play a replicated one-shot on a proxy: 5 dive, 6 hit (param = direction 0..3, +4 when
+/// heavy), 7 traverse (param = HumanoidActions::TraverseClip), 8 emote (param = which).
+/// An unknown id or a param that is not a number plays nothing; a param out of range is clamped.
+inline bool ApplyRemoteEvent(Character* c, int id, float param) {
+    if (!c || !c->gameObject || id < 5 || id > 8 || !std::isfinite(param)) return false;
+    GameObject* go = c->gameObject;
+    AnimStateMachine* sm = HumanoidLibrary::EnsureAnimator(go);
+    if (sm) HumanoidActions::MergeMissing(*sm, c, false);
+    auto clampi = [](float v, int lo, int hi) { return std::max(lo, std::min(hi, (int)std::lround(std::max(-1e6f, std::min(1e6f, v))))); };
+    switch (id) {
+        case 5: return HumanoidActions::BeginDive(go);
+        case 6: {
+            const int v = clampi(param, 0, 7);
+            return HumanoidActions::HitReact(go, v & 3, v >= 4);
+        }
+        case 7: return HumanoidActions::PlayTraverse(go, (HumanoidActions::TraverseClip)clampi(param, 0, 5));
+        default: return HumanoidActions::PlayEmote(go, clampi(param, 0, 2));
+    }
+}
+
+/// "<anim> <punchSeq> [<speed> <angle> [<actionSeq> <actionId> <lookYaw> <lookPitch> [<actionParam> [<eventSeq> <eventId> <eventParam>]]]]".
 /// Each later group is optional. An older peer stops when the stream runs out.
 struct AnimSyncView {
-    int anim = 0, punch = 0, actionSeq = 0, actionId = 0;
-    float speed = -1.0f, angle = 0.0f, lookYaw = 0.0f, lookPitch = 0.0f, actionParam = 0.0f;
-    bool haveGait = false, haveAction = false, haveParam = false;
+    int anim = 0, punch = 0, actionSeq = 0, actionId = 0, eventSeq = 0, eventId = 0;
+    float speed = -1.0f, angle = 0.0f, lookYaw = 0.0f, lookPitch = 0.0f, actionParam = 0.0f, eventParam = 0.0f;
+    bool haveGait = false, haveAction = false, haveParam = false, haveEvent = false;
 };
 
 /// False when `s` has no anim field. Gait, action and actionParam are optional.
@@ -152,7 +172,11 @@ inline bool ParseAnimSync(const std::string& s, AnimSyncView& o) {
     if (ss >> aseq >> aid >> ly >> lp && std::isfinite(ly) && std::isfinite(lp)) {
         o.actionSeq = aseq; o.actionId = aid; o.lookYaw = ly; o.lookPitch = lp; o.haveAction = true;
         float param = 0.0f;
-        if (ss >> param && std::isfinite(param)) { o.actionParam = param; o.haveParam = true; }
+        if (ss >> param && std::isfinite(param)) {
+            o.actionParam = param; o.haveParam = true;
+            int eseq = 0, eid = 0; float ep = 0.0f;
+            if (ss >> eseq >> eid >> ep && std::isfinite(ep)) { o.eventSeq = eseq; o.eventId = eid; o.eventParam = ep; o.haveEvent = true; }
+        }
     }
     return true;
 }
@@ -243,6 +267,7 @@ private:
     int             m_punchSeq = 0;       // owner: bumped on each new punch
     int             m_lastPunchSeq = -1;  // remote: last punch replayed
     int             m_lastActionSeq = -1; // remote: last action sequence applied
+    int             m_lastEventSeq = -1;  // remote: last one-shot (dive / hit / traverse / emote) played
     int             m_wantAction = 0;     // remote: action to hold until the proxy is in it
     bool            m_actionSeen = false; // remote: the proxy has held m_wantAction (don't replay it)
     int             m_actionFrames = 0;   // remote: consecutive frames the proxy has been in it
@@ -310,7 +335,8 @@ private:
                     o << c->anim << ' ' << self->m_punchSeq << ' ' << c->moveSpeed << ' ' << c->moveAngle
                       << ' ' << c->netActionSeq << ' ' << c->netActionId
                       << ' ' << c->lookYaw << ' ' << c->lookPitch
-                      << ' ' << c->netActionParam;
+                      << ' ' << c->netActionParam
+                      << ' ' << c->netEventSeq << ' ' << c->netEventId << ' ' << c->netEventParam;
                     return o.str();
                 },
                 [c, self](const std::string& s) {
@@ -343,6 +369,13 @@ private:
                         self->m_lastActionSeq = v.actionSeq;
                         c->lookYaw = ly;
                         c->lookPitch = lp;
+                    }
+                    // A one-shot (dive, hit, traverse, emote) plays once per new sequence number.
+                    // The first sample only syncs the counter, so joining mid-session replays nothing.
+                    if (v.haveEvent) {
+                        if (self->m_lastEventSeq >= 0 && v.eventSeq != self->m_lastEventSeq)
+                            ApplyRemoteEvent(c, v.eventId, v.eventParam);
+                        self->m_lastEventSeq = v.eventSeq;
                     }
                 });
         }

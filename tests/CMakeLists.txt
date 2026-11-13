@@ -2567,3 +2567,24 @@ add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
 add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
+
+add_executable(test_net_reconnect test_net_reconnect.cpp)
+target_link_libraries(test_net_reconnect PRIVATE okay::engine)
+add_test(NAME net_reconnect COMMAND test_net_reconnect)
+
+add_executable(test_net_respawn_anim test_net_respawn_anim.cpp)
+target_link_libraries(test_net_respawn_anim PRIVATE okay::engine)
+add_test(NAME net_respawn_anim COMMAND test_net_respawn_anim)
+
+add_executable(test_net_lossy test_net_lossy.cpp)
+target_link_libraries(test_net_lossy PRIVATE okay::engine)
+add_test(NAME net_lossy COMMAND test_net_lossy)
+
+add_executable(test_net_fuzz test_net_fuzz.cpp)
+target_link_libraries(test_net_fuzz PRIVATE okay::engine)
+add_test(NAME net_fuzz COMMAND test_net_fuzz)
+
+add_executable(test_net_rejoin test_net_rejoin.cpp)
+target_link_libraries(test_net_rejoin PRIVATE okay::engine)
+add_test(NAME net_rejoin COMMAND test_net_rejoin)
+

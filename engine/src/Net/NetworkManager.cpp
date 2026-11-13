@@ -257,7 +257,12 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     m_mode = Mode::Client;
     m_joined = false;
     m_kicked = false; m_kickReason.clear();
-    m_connectionLost = false; m_connectionLostReason.clear();
+    if (!m_keepResume) {   // a new session of the game's own, not one of our retries
+        m_connectionLost = false; m_connectionLostReason.clear();
+        m_lastConn = ConnTarget{1, host, port, std::string()};
+        m_reconnectGaveUp = false; m_reconnectCount = 0; m_resumed = false;
+        m_ownSpawns.clear();
+    }
     m_serverSilence = 0.0f; m_joinWait = 0.0f;
     m_localUserId.clear();
     UseNextSessionKeys();
@@ -298,7 +303,12 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     } else {
         m_mode = Mode::Client;
         m_joined = false;
-        m_connectionLost = false; m_connectionLostReason.clear();
+        if (!m_keepResume) {
+            m_connectionLost = false; m_connectionLostReason.clear();
+            m_lastConn = ConnTarget{2, relayHost, relayPort, code};
+            m_reconnectGaveUp = false; m_reconnectCount = 0; m_resumed = false;
+            m_ownSpawns.clear();
+        }
         m_serverSilence = 0.0f; m_joinWait = 0.0f;
         m_localUserId.clear();
         UseNextSessionKeys();
@@ -366,12 +376,13 @@ void NetworkManager::Stop() {
     std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayCode.clear();
     m_relayEp = net::Endpoint{};
+    net::ResetSimulator(m_socket);
     m_socket.Close();
-    net::ResetSimulator();
     if (m_netStarted) { net::Shutdown(); m_netStarted = false; }
     m_clients.clear();
     m_remotes.clear();
     m_remoteTarget.clear();
+    m_remoteMissing.clear();
     m_inbox.clear();
     m_rpcObserver = nullptr;
     m_syncVars.clear();
@@ -415,6 +426,8 @@ void NetworkManager::Stop() {
     m_statesSent = 0;
     m_acClockMs = 0.0;
     m_gameClockMs = 0.0;
+    m_parked.clear();
+    if (!m_keepResume) { m_reconnecting = false; m_reconnectTrying = false; m_resumeToken = 0; }
     m_pendingJoins.clear();
     m_joinLimits.clear();
     m_kickBans.clear();
@@ -920,6 +933,7 @@ void NetworkManager::Update(float dt) {
     net::ProfileAdvance(dt);
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
+    else if (m_reconnecting) ReconnectTick(dt);
     InterpolateRemotes(dt);
     SyncTick(dt);
 }
@@ -965,6 +979,37 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
         if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
         if (auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>())
             hs->SetHealthFromServer(std::strtof(data.c_str() + a + 1, nullptr));
+        return;
+    }
+    if (channel == "__respawn") {   // "<health>|<x>|<y>|<z>|<netId>": the server respawned an object
+        if (m_mode != Mode::Client || from != 0) return;
+        float v[4] = {0, 0, 0, 0};
+        std::size_t at = 0;
+        for (int i = 0; i < 4; ++i) {
+            const std::size_t bar = data.find('|', at);
+            if (bar == std::string::npos) return;
+            const std::string num = data.substr(at, bar - at);
+            char* end = nullptr;
+            v[i] = std::strtof(num.c_str(), &end);
+            if (num.empty() || end != num.c_str() + num.size() || !std::isfinite(v[i])) return;
+            at = bar + 1;
+        }
+        const std::string netId = data.substr(at);
+        auto obj = m_syncObjs.find(netId);
+        if (netId.empty() || obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
+        // Positions far outside any world are not a respawn point (the same bound as a snapshot's).
+        for (int i = 1; i < 4; ++i) if (std::fabs(v[i]) > 1.0e7f) return;
+        const Vec3 pos(v[1], v[2], v[3]);
+        SyncObj& o = obj->second;
+        GameObject* go = o.t->gameObject;
+        if (auto* hs = go->GetComponent<HealthStat>()) hs->RespawnFromServer(v[0]);
+        // Stand there now: no glide from where it died, nothing older in the interpolation buffer.
+        o.t->SetPosition(pos);
+        o.targetPos = pos;
+        o.samples.clear();
+        o.history.clear();
+        if (netId == m_pawnId) ResetPawnPrediction();   // our own pawn: what was predicted is void
+        else if (o.owned && o.t == m_localAvatar) m_predPending = Vec3(0.0f, 0.0f, 0.0f);
         return;
     }
     if (channel == "__despawn") {   // remove a SpawnOwned object on this peer
@@ -1050,6 +1095,7 @@ GameObject* NetworkManager::SpawnOwned(const std::string& prefabPath, const Vec3
             auto* ns = g->GetComponent<NetworkSync>();
             if (!ns) ns = g->AddComponent<NetworkSync>();
             ns->netId = id; ns->authority = NetworkSync::Authority::Manual; ns->owned = true;
+            m_ownSpawns[id] = prefabPath;
         }
     }
     std::ostringstream os;
@@ -1069,6 +1115,7 @@ void NetworkManager::DespawnPeerObjects(std::uint32_t id) {
 }
 
 void NetworkManager::DestroyLocalSync(const std::string& id) {
+    m_ownSpawns.erase(id);
     ReleasePawn(id);   // before the sync entry (and its history) goes
     auto it = m_syncObjs.find(id);
     if (it != m_syncObjs.end()) {
@@ -1855,23 +1902,154 @@ void NetworkManager::ApplyHit(HitClaim& claim) {
     SendReliable("__dmg", claim.target + buf);
 }
 
+void NetworkManager::NoteRespawn(GameObject* go) {
+    if (m_mode != Mode::Server || !go || !go->transform || go->scene() != GetScene()) return;
+    NetworkSync* ns = go->GetComponent<NetworkSync>();
+    if (!ns) return;
+    const std::string id = ns->netId.empty() ? go->name : ns->netId;
+    auto it = m_syncObjs.find(id);
+    if (it == m_syncObjs.end() || it->second.t != go->transform) return;
+    const Vec3 pos = go->transform->Position();
+    auto* hs = go->GetComponent<HealthStat>();
+    anticheat.AllowTeleport(id);
+    it->second.history.clear();   // lag compensation must not rewind across the jump
+    it->second.samples.clear();
+    // A player's own object: the position it reports next is far from the last one, once.
+    std::uint32_t owner = anticheat.OwnerOf(id);
+    if (auto po = m_pawnOwner.find(id); po != m_pawnOwner.end()) owner = po->second;
+    if (id.compare(0, 3, "sp/") == 0) {   // a SpawnOwned id names the peer that made it
+        const std::size_t slash = id.find('/', 3);
+        if (slash != std::string::npos && slash > 3 && slash <= 13 &&
+            id.find_first_not_of("0123456789", 3) == slash)
+            owner = static_cast<std::uint32_t>(std::strtoull(id.c_str() + 3, nullptr, 10));
+    }
+    if (owner != 0)
+        for (auto& [ep, c] : m_clients)
+            if (c.id == owner) c.teleportUntil = m_serverTime + 1.0f;
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%.9g|%.9g|%.9g|%.9g|", hs ? hs->health : 0.0f, pos.x, pos.y, pos.z);
+    SendReliable("__respawn", std::string(buf) + id);
+}
+
+void NetNoteRespawn(GameObject* go) {
+    std::vector<NetworkManager*> live;
+    {
+        std::lock_guard<std::mutex> l(g_liveMutex);
+        for (const NetworkManager* nm : LiveManagers()) live.push_back(const_cast<NetworkManager*>(nm));
+    }
+    for (NetworkManager* nm : live) nm->NoteRespawn(go);
+}
+
+// A client leaves the table (Leave, timeout, kick, or taken over by its own
+// reconnect): its objects go, and its state is kept for a while so the same
+// client can resume it.
+void NetworkManager::ReleaseClient(std::unordered_map<net::Endpoint, Client, net::EndpointHash>::iterator it) {
+    const std::uint32_t id = it->second.id;
+    if (auto r = m_remotes.find(id); r != m_remotes.end()) {
+        if (GetScene() && r->second) GetScene()->Destroy(r->second);
+        m_remotes.erase(r);
+    }
+    anticheat.ParkPeer(id, it->second.ident);
+    ParkClient(it->second);
+    m_clients.erase(it);
+    anticheat.ForgetPeer(id);
+    DespawnPeerObjects(id);
+    m_recentCheats.erase(id);
+    for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
+    if (m_peerLeft) m_peerLeft(id);
+}
+
+void NetworkManager::ParkClient(const Client& c) {
+    if (resumeGraceSeconds <= 0.0f || c.resumeToken == 0) return;
+    for (auto it = m_parked.begin(); it != m_parked.end();)
+        it = (it->token == c.resumeToken || it->id == c.id) ? m_parked.erase(it) : std::next(it);
+    if (m_parked.size() >= kMaxParked) m_parked.erase(m_parked.begin());   // the oldest
+    Parked p;
+    p.token = c.resumeToken; p.id = c.id; p.userId = c.userId;
+    p.pos = Vec3{c.state.x, c.state.y, c.state.z}; p.hasState = c.hasState; p.glyph = c.state.glyph;
+    p.score = c.score; p.ready = c.ready;
+    m_parked.push_back(p);
+}
+
+// The host went silent (or the relay session ended) and autoReconnect is on:
+// keep what the game owns, drop what only the session knew, and start retrying.
+void NetworkManager::BeginReconnect() {
+    m_wasReady = m_ready;
+    // Other players' proxies describe a session that is gone; the new one makes
+    // them again from its snapshots.
+    for (auto& [id, go] : m_remotes)
+        if (GetScene() && go) GetScene()->Destroy(go);
+    m_remotes.clear();
+    m_keepResume = true;
+    Stop();
+    m_keepResume = false;
+    m_reconnecting = true; m_reconnectTrying = false; m_reconnectGaveUp = false;
+    m_reconnectAttempt = 0;
+    m_reconnectTimer = std::max(0.0f, reconnectDelaySeconds);
+    if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::Lost, 0);
+}
+
+void NetworkManager::ReconnectTick(float dt) {
+    if (!m_reconnecting || m_reconnectTrying) return;
+    if ((m_reconnectTimer -= dt) > 0.0f) return;
+    ++m_reconnectAttempt;
+    m_reconnectTrying = true;
+    OKAY_INFO("net: reconnect try ", m_reconnectAttempt, " of ", reconnectMaxAttempts);
+    m_keepResume = true;
+    const bool ok = m_lastConn.kind == 2
+        ? StartRelay(m_lastConn.host, m_lastConn.port, m_lastConn.code, /*asHost=*/false)
+        : StartClient(m_lastConn.host, m_lastConn.port);
+    m_keepResume = false;
+    if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::Attempt, m_reconnectAttempt);
+    if (!ok) FailReconnectTry();
+}
+
+// A try ended without a session (refused, no answer, relay gone): back off and
+// try again, or give up.
+void NetworkManager::FailReconnectTry() {
+    const std::string why = m_joinRejectReason;
+    bool final = m_reconnectAttempt >= reconnectMaxAttempts;
+    for (const char* hard : {"wrong password", "authentication failed", "kicked by", "session ticket refused", "encryption required"})
+        if (why.find(hard) != std::string::npos) final = true;
+    if (m_kicked) final = true;
+    m_keepResume = true;
+    Stop();
+    m_keepResume = false;
+    m_reconnectTrying = false;
+    if (final) {
+        m_reconnecting = false; m_reconnectGaveUp = true; m_resumeToken = 0;
+        OKAY_WARN("net: giving up on reconnecting after ", m_reconnectAttempt, " tries");
+        if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::GaveUp, m_reconnectAttempt);
+        return;
+    }
+    float d = std::max(0.0f, reconnectDelaySeconds);
+    for (int i = 0; i < m_reconnectAttempt && d < reconnectMaxDelaySeconds; ++i) d *= 2.0f;
+    m_reconnectTimer = std::min(d, std::max(reconnectMaxDelaySeconds, reconnectDelaySeconds));
+}
+
+// After a rejoin that got its old peer id back, tell the host about the
+// objects this player had made (it removed them when the connection dropped).
+void NetworkManager::ReannounceOwnSpawns() {
+    if (!m_resumed) { return; }   // a new peer id: the old netIds are not ours; the game respawns
+    for (auto it = m_ownSpawns.begin(); it != m_ownSpawns.end();) {
+        GameObject* g = ObjectByNetId(it->first);
+        if (!g || !g->transform) { it = m_ownSpawns.erase(it); continue; }
+        const Vec3 pos = g->transform->localPosition;
+        std::ostringstream os;
+        os << it->second << '|' << pos.x << '|' << pos.y << '|' << pos.z << '|' << it->first;
+        Send("__spawn", os.str());
+        ++it;
+    }
+}
+
 void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
     if (m_mode != Mode::Server) return;
     for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
         if (it->second.id != id) continue;
         net::Packet p(Kicked); p.Write(reason);
         SendDatagram(it->second.endpoint, p.Data(), p.Size());
-        if (auto r = m_remotes.find(id); r != m_remotes.end()) {
-            if (GetScene() && r->second) GetScene()->Destroy(r->second);
-            m_remotes.erase(r);
-        }
-        anticheat.ParkPeer(id, it->second.ident);
-        m_clients.erase(it);
-        anticheat.ForgetPeer(id);
-        DespawnPeerObjects(id);
-        m_recentCheats.erase(id);
-        for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
-        if (m_peerLeft) m_peerLeft(id);
+        it->second.resumeToken = 0;   // a kicked player does not get its state back
+        ReleaseClient(it);
         OKAY_INFO("net: kicked peer ", id, reason.empty() ? "" : (" (" + reason + ")"));
         return;
     }
@@ -2628,6 +2806,13 @@ void NetworkManager::ServerTick(float dt) {
             // A sealed join arrives encrypted under its key exchange's session.
             auto pendingIt = (!existed && sealed) ? m_pendingJoins.find(from) : m_pendingJoins.end();
             const bool viaPending = pendingIt != m_pendingJoins.end();
+            // Trailing: the join version byte (sealed joins only), then, from a client
+            // that is rejoining, the resume token its last Welcome gave it.
+            std::uint64_t resumeToken = 0;
+            if (!existed && p.Ok()) {
+                if (viaPending) p.ReadU8();
+                if (p.Remaining() >= 8) { const std::uint64_t t = ReadU64(p); if (p.Ok()) resumeToken = t; }
+            }
             std::string userId;
             const bool acOn = anticheat.settings.enabled;
             const bool needCrypto = acOn && anticheat.settings.requireEncryption;
@@ -2656,8 +2841,14 @@ void NetworkManager::ServerTick(float dt) {
                     banWhy = "kicked by the anti-cheat; try again in " + std::to_string((int)std::ceil(left)) + " s";
                     return true;
                 };
+                // A rejoin that replaces a connection the host still holds needs no free slot.
+                auto holdsToken = [&](std::uint64_t t) {
+                    if (t == 0 || resumeGraceSeconds <= 0.0f) return false;
+                    for (const auto& [ep2, other] : m_clients) if (other.resumeToken == t) return true;
+                    return false;
+                };
                 if (!anticheat.configError.empty()) why = "server misconfigured (its anti-cheat rules didn't load)";
-                else if ((int)m_clients.size() >= maxPlayers) why = "server is full";
+                else if ((int)m_clients.size() >= maxPlayers && !holdsToken(resumeToken)) why = "server is full";
                 else if (needCrypto && !viaPending)
                     // The password and ticket must not travel in the clear.
                     why = net::SecureChannel::Available() ? kNeedsEncryption
@@ -2711,14 +2902,40 @@ void NetworkManager::ServerTick(float dt) {
                 // One connection per account: a new sign-in replaces the old one.
                 if (!userId.empty())
                     for (auto& [ep, other] : m_clients)
-                        if (!(ep == from) && other.userId == userId) { Kick(other.id, "signed in elsewhere"); break; }
+                        if (!(ep == from) && other.userId == userId && !(resumeToken != 0 && other.resumeToken == resumeToken)) { Kick(other.id, "signed in elsewhere"); break; }
+            }
+            // A client that is rejoining after a drop takes its state back: the
+            // token must match, and (for a signed-in account) so must the account.
+            // If the host has not noticed the drop yet, the old connection is
+            // released first (same cleanup as a timeout).
+            Parked resumed; bool haveResumed = false;
+            if (!existed && resumeToken != 0 && resumeGraceSeconds > 0.0f) {
+                for (auto old = m_clients.begin(); old != m_clients.end(); ++old)
+                    if (old->second.resumeToken == resumeToken && old->second.userId == userId) { ReleaseClient(old); break; }
+                for (auto pk = m_parked.begin(); pk != m_parked.end(); ++pk)
+                    if (pk->token == resumeToken) {
+                        if (pk->userId == userId && pk->age <= resumeGraceSeconds) { resumed = *pk; haveResumed = true; }
+                        m_parked.erase(pk);   // one use: a token that failed is dead too
+                        break;
+                    }
             }
             auto& c = m_clients[from];
             bool isNew = (c.id == 0);
             if (isNew) {
                 c.endpoint = from;
-                c.id = m_nextId++;
+                c.id = haveResumed ? resumed.id : m_nextId++;
                 c.state = {c.id, 0, 0, 0, '@'};
+                if (haveResumed) {
+                    c.state = {c.id, resumed.pos.x, resumed.pos.y, resumed.pos.z, resumed.glyph};
+                    c.hasState = resumed.hasState;
+                    c.stateAge = resumed.age;   // the move check allows for the time away
+                    c.score = resumed.score;
+                    c.ready = resumed.ready;
+                }
+                if (resumeGraceSeconds > 0.0f) {
+                    std::random_device rdt;
+                    do { c.resumeToken = (static_cast<std::uint64_t>(rdt()) << 32) | rdt(); } while (c.resumeToken == 0);
+                }
                 c.name = name.empty() ? ("Player" + std::to_string(c.id)) : name;
                 c.room = room;
                 c.joinedAt = m_serverTime;
@@ -2767,14 +2984,22 @@ void NetworkManager::ServerTick(float dt) {
             if (HostTickRate() > 0.0f) welcomeFlags |= 2;
             if (authoritativeMovement) welcomeFlags |= 4 | 8;   // bit 2: send inputs, not positions; bit 3: PawnAcks (predict)
             if (c.cookie) welcomeFlags |= 16;                    // bit 4: a session cookie (u64) follows
+            if (c.resumeToken) welcomeFlags |= 32;               // bit 5: a resume token (u64) follows
+            if (haveResumed) welcomeFlags |= 64;                 // bit 6: your old state was restored
             if (welcomeFlags) w.Write(welcomeFlags);
             if (welcomeFlags & 2) w.Write(HostTickRate());
             if (welcomeFlags & 16) WriteU64(w, c.cookie);
+            if (welcomeFlags & 32) WriteU64(w, c.resumeToken);
             // A sealed joiner already has the keys; a plaintext joiner gets them here.
             SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/c.sealedJoin);
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
                 if (m_peerJoined) m_peerJoined(c.id, c.name);
+                if (haveResumed && m_peerResumed) {
+                    ResumedPeer rp; rp.id = c.id; rp.position = resumed.pos; rp.hasPosition = resumed.hasState;
+                    rp.score = c.score; rp.ready = c.ready;
+                    m_peerResumed(rp);
+                }
                 // Full sync: send every current synced variable to the newcomer.
                 for (auto& [k, v] : m_syncVars) {
                     net::Packet sv(SyncVar); sv.Write(k); sv.Write(v);
@@ -2984,7 +3209,7 @@ void NetworkManager::ServerTick(float dt) {
                 }
                 c.lastSeen = 0.0f;
                 if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z)) continue;   // garbage
-                if (maxMoveSpeed > 0.0f && c.hasState) {   // too fast? keep the last good spot
+                if (maxMoveSpeed > 0.0f && c.hasState && m_serverTime >= c.teleportUntil) {   // too fast? keep the last good spot
                     const float dx = s.x - c.state.x, dy = s.y - c.state.y, dz = s.z - c.state.z;
                     // At most a quarter second of travel, however long it was quiet:
                     // going silent mustn't bank a long jump (a bigger gap is
@@ -3008,18 +3233,7 @@ void NetworkManager::ServerTick(float dt) {
             auto it = m_clients.find(from);
             p.ReadU32();   // sender-reported id (ignored)
             if (it != m_clients.end() && CookieOk(it->second, p)) {
-                std::uint32_t id = it->second.id;
-                if (auto r = m_remotes.find(id); r != m_remotes.end()) {
-                    if (GetScene() && r->second) GetScene()->Destroy(r->second);
-                    m_remotes.erase(r);
-                }
-                anticheat.ParkPeer(id, it->second.ident);
-                m_clients.erase(it);
-                anticheat.ForgetPeer(id);
-                DespawnPeerObjects(id);
-                m_recentCheats.erase(id);
-                for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
-                if (m_peerLeft) m_peerLeft(id);
+                ReleaseClient(it);
             }
         } else if (type == Message) {
             auto it = m_clients.find(from);
@@ -3050,6 +3264,9 @@ void NetworkManager::ServerTick(float dt) {
     for (auto it = m_pendingJoins.begin(); it != m_pendingJoins.end();)   // key exchanges never finished
         it = (it->second.age += dt) > kPendingJoinTtl ? m_pendingJoins.erase(it) : std::next(it);
 
+    for (auto pk = m_parked.begin(); pk != m_parked.end();)
+        pk = (pk->age += dt) > resumeGraceSeconds ? m_parked.erase(pk) : std::next(pk);
+
     // Time out silent clients (and age the move-check / rate-limit windows).
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
@@ -3057,18 +3274,8 @@ void NetworkManager::ServerTick(float dt) {
         if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.msgBytes = 0; it->second.hitClaims = 0; }
         if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
-            std::uint32_t id = it->second.id;
-            if (auto r = m_remotes.find(id); r != m_remotes.end()) {
-                if (GetScene() && r->second) GetScene()->Destroy(r->second);
-                m_remotes.erase(r);
-            }
-            anticheat.ParkPeer(id, it->second.ident);
-            it = m_clients.erase(it);
-            anticheat.ForgetPeer(id);
-            DespawnPeerObjects(id);
-            m_recentCheats.erase(id);
-            for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
-            if (m_peerLeft) m_peerLeft(id);
+            auto dead = it++;
+            ReleaseClient(dead);
         } else {
             ++it;
         }
@@ -3268,6 +3475,7 @@ void NetworkManager::ClientTick(float dt) {
                 p.Write(std::string(pk.begin(), pk.end()));
             }
             if (m_keyed) p.Write(kJoinVersion);
+            if (m_resumeToken) WriteU64(p, m_resumeToken);   // rejoining: take our old state back
             // Step 2 of the sealed join goes encrypted; the plaintext Join is pre-handshake.
             SendDatagram(m_serverEp, p.Data(), p.Size(), /*allowEncrypt=*/m_keyed);
             m_joinTimer = 0.5f;
@@ -3400,6 +3608,11 @@ void NetworkManager::ClientTick(float dt) {
                 const std::uint64_t cookie = ReadU64(p);
                 if (p.Ok()) m_sessionCookie = cookie;
             }
+            if (p.Ok() && (welcomeFlags & 32)) {   // a token to resume with if we drop
+                const std::uint64_t t = ReadU64(p);
+                if (p.Ok()) m_resumeToken = t;
+            }
+            m_resumed = p.Ok() && (welcomeFlags & 64) != 0;
             if (p.Ok() && (welcomeFlags & 4) && m_hostTickRate > 0.0f) m_hostAuthoritative = true;
             m_hostAcksPawn = m_hostAuthoritative && (welcomeFlags & 8);   // an older 5b host doesn't: follow it instead
             m_joined = true;
@@ -3424,7 +3637,9 @@ void NetworkManager::ClientTick(float dt) {
             m_kickReason = p.ReadString();
             m_kicked = true;
             OKAY_WARN("net: kicked by server: ", m_kickReason);
+            const bool wasTrying = m_reconnecting;
             Stop();
+            if (wasTrying) { m_reconnectGaveUp = true; if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::GaveUp, m_reconnectAttempt); }
             return;
         } else if (type == ReliableMsg) {
             std::uint32_t seq = p.ReadU32();
@@ -3501,7 +3716,22 @@ void NetworkManager::ClientTick(float dt) {
                 e.score = p.ReadI32(); e.seconds = p.ReadF32();
                 list.push_back(e);
             }
-            if (p.Ok()) m_roster = std::move(list);
+            if (p.Ok()) {
+                m_roster = std::move(list);
+                // A player who left is no longer in the roster the host sends every second:
+                // its stand-in goes too (after two rosters without it, so one that arrives
+                // late and out of order can't remove somebody who just joined).
+                for (auto r = m_remotes.begin(); r != m_remotes.end();) {
+                    bool listed = false;
+                    for (const auto& e : m_roster) if (e.id == r->first) { listed = true; break; }
+                    if (listed) { m_remoteMissing.erase(r->first); ++r; continue; }
+                    if (++m_remoteMissing[r->first] < 2) { ++r; continue; }
+                    if (GetScene() && r->second) GetScene()->Destroy(r->second);
+                    m_remoteTarget.erase(r->first);
+                    m_remoteMissing.erase(r->first);
+                    r = m_remotes.erase(r);
+                }
+            }
         } else if (type == ClockPing) {
             // The server's clock heartbeat: answer with our game clock.
             const std::uint64_t nonce = ReadU64(p);
@@ -3519,7 +3749,17 @@ void NetworkManager::ClientTick(float dt) {
             if (m_rtt < 0.0f) m_rtt = 0.0f;
         }
     }
-    if (m_relayLost) { Stop(); return; }   // host gone or changed, or refused (RelayError())
+    if (m_relayLost) {   // host gone or changed, or refused (RelayError())
+        if (m_reconnectTrying) { FailReconnectTry(); return; }
+        if (m_joined && autoReconnect && m_lastConn.kind) {
+            m_connectionLost = true;
+            m_connectionLostReason = m_relayError.empty() ? "the relay session ended" : m_relayError;
+            BeginReconnect();
+            return;
+        }
+        Stop();
+        return;
+    }
 
     // A server that stops answering ends the session instead of leaving a
     // frozen world; the join gives up the same way. A hitch on this machine
@@ -3533,7 +3773,8 @@ void NetworkManager::ClientTick(float dt) {
             m_connectionLost = true;
             m_connectionLostReason = "the host stopped responding";
             OKAY_WARN("net: no word from ", m_serverEp.ToString(), " for ", serverTimeoutSeconds, " s; leaving the session");
-            Stop();
+            if (autoReconnect && m_lastConn.kind) BeginReconnect();
+            else Stop();
             return;
         }
     } else if (!awaitingRelay && !m_joinRejected) {
@@ -3543,6 +3784,21 @@ void NetworkManager::ClientTick(float dt) {
             m_joinRejectReason = "the host did not answer";
             m_joinTimer = 1e9f;   // stop retrying
             OKAY_WARN("net: no answer from ", m_serverEp.ToString(), " after ", joinTimeoutSeconds, " s");
+        }
+    }
+
+    if (m_reconnectTrying) {
+        if (m_joined) {
+            m_reconnecting = false; m_reconnectTrying = false;
+            m_connectionLost = false; m_connectionLostReason.clear();
+            ++m_reconnectCount;
+            OKAY_INFO("net: rejoined '", m_serverName, "' as peer ", m_localId, m_resumed ? " (state resumed)" : "");
+            if (m_wasReady) SetReady(true);
+            ReannounceOwnSpawns();
+            if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::Restored, m_reconnectAttempt);
+        } else if (m_joinRejected) {
+            FailReconnectTry();
+            return;
         }
     }
 

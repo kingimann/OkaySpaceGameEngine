@@ -58,6 +58,56 @@ Ranked by player-visible impact. Each has a regression test in
    protected session's host moved to a new address, the per-address session count
    stayed charged to the old address; it now follows the host.
 
+6. **No automatic reconnect or state resume.** A dropped session was reported
+   (`ConnectionLost()`) but nothing rejoined, and a player who came back was a stranger:
+   new peer id, score zero, no ready flag, position unknown to the move check. With
+   `autoReconnect` on (off by default) a client that lost its host retries with bounded
+   attempts and a doubling delay (`reconnectMaxAttempts`, `reconnectDelaySeconds`,
+   `reconnectMaxDelaySeconds`); a refusal that cannot change ends it at once. The host keeps
+   a dropped client's state for `resumeGraceSeconds` under a secret token its Welcome
+   gave it, and a rejoin with that token gets the same peer id, score, ready flag and last
+   position back; a connection the host has not yet noticed is dead is replaced, even on a
+   full host. Objects the player made with `SpawnOwned` are announced again. Tests:
+   `tests/test_net_reconnect.cpp` (direct, relay, encrypted, parked, no-grace, bounded tries,
+   hard refusal, cancel) and `tests/test_net_rejoin.cpp` (single-use, account-bound, not after
+   a kick, bounded parked states).
+7. **Respawns were not replicated.** The host respawned a player; other peers' copies stayed
+   dead (a client-side copy of a Health Stat with respawn on also ran its own timer, at its own
+   start point and on its own clock). The host now sends the respawn (health and position,
+   reliable `__respawn`) when a Health Stat respawns or is revived; the copy comes back and
+   snaps there (no glide, nothing older in the interpolation buffer), a client copy that died by
+   the host's word waits for it, the owner's next position is allowed to jump once, and a client
+   cannot forge one. Test: `tests/test_net_respawn_anim.cpp` (fails before, passes after).
+8. **Dive, hit, vault and emotes were not sent to other players.** Death, roll, sit and swim were;
+   the rest played only on the owner. The owner's Character now carries a one-shot event
+   (`netEventSeq` / `netEventId` / `netEventParam`) appended to the animation sync message
+   (an older peer stops reading before it); each proxy plays a new sequence once, with unknown
+   ids and non-finite values dropped and out-of-range ones clamped. Hit direction and heavy,
+   the traverse clip (vault, mantle low/high, ledge grab, climb up, let go) and the emote
+   index travel with it. `HumanoidActions::PlayTraverse` plays a traverse clip without a probe.
+   Test: `tests/test_net_respawn_anim.cpp`. If two events start between two sync sends only the
+   newest plays.
+9. **Launcher voice clips leaked their sound buffer (#718).** The buffer `SDL_LoadWAV` returns
+   was never freed, and a clip converted to 16-bit dropped its only pointer to it. The clip
+   now copies the samples into its own storage and frees SDL's buffer at once, so no path can
+   leave it behind. The launcher target compiles; the UI was not run (see below).
+10. **NetSim shared one queue between all sockets.** Held and delayed datagrams were not tied to
+    a socket, so with two managers in a process (a test, a listen server with a local client) one
+    manager's delayed packets were sent through the other's socket, and `Stop()` dropped
+    everybody's. They are now keyed by socket. Test: `tests/test_net_lossy.cpp`.
+11. **A player who left stayed on the others' screens.** A client never removed the stand-in
+    it made for a remote peer (`SetRemoteFactory`); it froze where the player left. The roster the
+    host sends every second now prunes stand-ins of peers it no longer lists (after two rosters
+    without them, so a late, reordered one cannot remove someone who just joined). Test:
+    `tests/test_net_rejoin.cpp`.
+
+Also covered by new tests with no bug found: loss, reordering and duplication through `NetSim`
+(`tests/test_net_lossy.cpp`: exactly-once reliable, in-order ordered, never-backwards sequenced,
+join, convergence of a synced object and a resume on a bad link), a deterministic fuzz of every
+decoder that parses network bytes plus random and mutated datagrams at a live host, client and
+relay (`tests/test_net_fuzz.cpp`), and replayed Leave / duplicated Join datagrams
+(`tests/test_net_rejoin.cpp`).
+
 Also merged from `claude/fix-net-issues`: the relay protocol v4 welcome nonce and
 timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #705,
 #721) with their tests (`net_relay_hardening`, `net_packet_layout`).
@@ -70,20 +120,21 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
    voice calls speak them); the relay logs how many it sees (`LegacyHellos()`), and
    `--legacy-hello=off` already refuses them. Left as it is on purpose; it needs a
    release note, not a silent change.
-2. **Respawns are not replicated**, and **dive, hit, vault and emotes are not sent to
-   other players**; build-mode placements and quest state are not synced
-   (`docs/unfinished_engine.md`, section 11 and neighbours). Players see each other
-   diverge in games that use these.
-3. **The client does not reconnect.** With this branch a dropped session is reported
-   (`ConnectionLost()`), but nothing rejoins automatically or keeps the player's state;
-   a game has to call `StartClient` again.
-4. **Voice-clip memory leak in the launcher (#718):** `SDL_LoadWAV` buffers are never
-   freed. Not touched here: the launcher UI is not built or testable in this
-   environment.
-5. **Data races in `ServerBrowser::Game` and the voice session (PR #700,
+2. **Build-mode placements and quest state are not synced**
+   (`docs/unfinished_engine.md`, section 11 and neighbours), and a death that was not caused
+   by a replicated hit (a kill volume, a script) is not sent to other players; only the respawn
+   is. A one-shot animation event is not queued: two inside one sync interval play only the
+   newest. Players still diverge in games that rely on these.
+3. **Reconnect limits.** Messages that were in flight (reliable, ordered) when the session dropped
+   are lost with it; a game that needs them resends from its own state after
+   `ReconnectEvent::Restored`. A rejoin that gets no resume (grace over, host restarted) is a
+   new peer: objects made with `SpawnOwned` are not re-announced under the new id, the game
+   respawns them (`Resumed()` says which case it is). Without encryption the resume token
+   travels in the clear, like the rest of an unencrypted session.
+4. **Data races in `ServerBrowser::Game` and the voice session (PR #700,
    `claude/fix-thread-races`).** Already written and left to that branch so the two do
    not conflict.
-6. **No Web networking** (browser builds have no matchmaking, server browser or
+5. **No Web networking** (browser builds have no matchmaking, server browser or
    transport) and **no replay or spectator stream**.
 
 ## What could not be verified

@@ -4895,11 +4895,11 @@ static void FinishVoiceRecord(bool send) {
 static constexpr int kVoiceBars = 30;
 struct VoiceClip {
     bool ok = false;                 // decoded (false = unplayable; don't retry)
-    Uint8* pcm = nullptr; Uint32 len = 0;
+    Uint8* pcm = nullptr; Uint32 len = 0;   // points into `owned` (never into an SDL buffer)
     SDL_AudioSpec spec{};
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
-    std::vector<Uint8> owned;        // the converted samples when the file was not native 16-bit / float
+    std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
 };
 static std::map<std::string, VoiceClip> g_voiceClips;
@@ -5008,7 +5008,17 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     std::error_code ec;
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
-        if (!failed && SDL_LoadWAV(cache.string().c_str(), &c.spec, &c.pcm, &c.len)) {
+        // SDL hands back a buffer that only SDL_FreeWAV may release. Copy the samples into the
+        // clip's own storage and free SDL's at once, so no path (a converted clip, an
+        // unsupported width, a replaced entry) can leave it behind (#718).
+        Uint8* wavBuf = nullptr; Uint32 wavLen = 0; SDL_AudioSpec wavSpec{};
+        if (!failed && SDL_LoadWAV(cache.string().c_str(), &wavSpec, &wavBuf, &wavLen)) {
+            c.spec = wavSpec;
+            if (wavBuf && wavLen) c.owned.assign(wavBuf, wavBuf + wavLen);
+            else c.owned.clear();
+            SDL_FreeWAV(wavBuf);
+            c.pcm = c.owned.empty() ? nullptr : c.owned.data();
+            c.len = (Uint32)c.owned.size();
             VoiceClipToPlayable(c);
             const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
             c.bytesPerSec = (float)c.spec.freq * bps;

@@ -262,6 +262,49 @@ public:
     /// sends nothing for this many seconds. The client pings once a second and
     /// the host answers, so a live host is never this quiet. 0 never gives up.
     float serverTimeoutSeconds = 10.0f;
+    /// Client: rejoin by itself after ConnectionLost() (the host went silent).
+    /// Off by default. Each try waits reconnectDelaySeconds, doubling per failed
+    /// try up to reconnectMaxDelaySeconds, for at most reconnectMaxAttempts tries
+    /// (a try that gets "wrong password", "authentication failed" or a kick ends
+    /// it at once). Needs a session started with StartClient / JoinViaRelay /
+    /// JoinByLink: the target is remembered. The name, room, password and
+    /// account token are kept; the host hands back the peer id, score, ready flag
+    /// and last position if it still holds them (resumeGraceSeconds), and objects
+    /// this player made with SpawnOwned are announced again. See Resumed().
+    bool autoReconnect = false;
+    int   reconnectMaxAttempts = 5;
+    float reconnectDelaySeconds = 1.0f;
+    float reconnectMaxDelaySeconds = 15.0f;
+    /// Host: how long (seconds) the state of a client that dropped is kept so
+    /// the same client can resume it (matched by a secret token the Welcome
+    /// gave it). At most kMaxParked are kept. 0 = keep nothing.
+    float resumeGraceSeconds = 30.0f;
+    /// What a reconnecting client reports to its handler.
+    enum class ReconnectEvent { Lost, Attempt, Restored, GaveUp };
+    /// Client: called on each step; `attempt` is the try number (1-based; 0 for Lost).
+    void SetReconnectHandler(std::function<void(ReconnectEvent, int attempt)> f) { m_reconnectHandler = std::move(f); }
+    /// Client: waiting to retry, or mid-try.
+    bool Reconnecting() const { return m_reconnecting; }
+    int ReconnectAttempt() const { return m_reconnectAttempt; }
+    /// Client: every try failed (ConnectionLost() stays true).
+    bool ReconnectGaveUp() const { return m_reconnectGaveUp; }
+    /// Client: how many times a lost session has been rejoined.
+    int Reconnects() const { return m_reconnectCount; }
+    /// Client: the last rejoin got the old peer id back with score and position.
+    bool Resumed() const { return m_resumed; }
+    /// Client: the secret the host's Welcome gave this session (0 before joining). Whoever
+    /// has it can take this player's place after a drop, so never log or share it. A game
+    /// that wants to resume after its own restart saves it and calls SetResumeToken(token)
+    /// right after StartClient (before the join completes).
+    std::uint64_t ResumeToken() const { return m_resumeToken; }
+    void SetResumeToken(std::uint64_t token) { if (m_mode == Mode::Client && !m_joined) m_resumeToken = token; }
+    /// Host: how many dropped clients' states are being kept (at most kMaxParked).
+    std::size_t ParkedCount() const { return m_parked.size(); }
+    /// Host: a client that rejoined with its old state.
+    struct ResumedPeer { std::uint32_t id = 0; Vec3 position{}; bool hasPosition = false; int score = 0; bool ready = false; };
+    void SetPeerResumedHandler(std::function<void(const ResumedPeer&)> f) { m_peerResumed = std::move(f); }
+    static constexpr std::size_t kMaxParked = 64;
+
     /// Client: seconds to wait for the host to accept the join before giving up
     /// (JoinRejected() with the reason "the host did not answer"). A relay
     /// session counts from when the relay pairs it. 0 waits forever.
@@ -606,6 +649,11 @@ public:
     /// Game rules for hit claims (server): false refuses one; it may change
     /// claim.damage. The same hook as anticheat.validateHit.
     void ValidateHit(std::function<bool(HitClaim& claim)> rule) { anticheat.validateHit = std::move(rule); }
+    /// Server: `go` (a networked object with a Health Stat) just respawned. Every other peer
+    /// is told ("__respawn": health and position, reliable) so its copy comes back too, the
+    /// movement check lets the owner's next position jump, and lag-compensation history
+    /// before the jump is dropped. Health Stat calls this itself on a respawn or Revive().
+    void NoteRespawn(GameObject* go);
     /// A player the anti-cheat kicked (it reached kickAfterViolations), with its
     /// verified account ("" if anonymous) and its last refusals, oldest first.
     struct AntiCheatKick {
@@ -742,6 +790,8 @@ private:
         // own. Required once it has sent one (an older client never does).
         std::uint64_t cookie = 0;
         bool cookieSeen = false;
+        std::uint64_t resumeToken = 0;   // secret that lets this client take its state back after a drop
+        float teleportUntil = -1.0f;     // server time until which its positions skip the move check (a respawn)
         // Anti-cheat clock heartbeat (maxClockDrift): the check, when to ask
         // next, how long since a good answer, and since its last drift report.
         std::shared_ptr<net::ClockCheck> clock;
@@ -890,6 +940,28 @@ private:
     std::string m_connectionLostReason;
     float m_serverSilence = 0.0f;    // client: seconds since the host last sent anything
     float m_joinWait = 0.0f;         // client: seconds spent waiting for the join to be accepted
+    // Reconnect (client): where we joined, and the retry schedule.
+    struct ConnTarget { int kind = 0; std::string host; std::uint16_t port = 0; std::string code; };   // 1 direct, 2 relay
+    ConnTarget m_lastConn;
+    bool m_reconnecting = false, m_reconnectGaveUp = false, m_resumed = false, m_keepResume = false;
+    bool m_reconnectTrying = false;      // a try is in flight (joining)
+    int m_reconnectAttempt = 0, m_reconnectCount = 0;
+    float m_reconnectTimer = 0.0f;
+    bool m_wasReady = false;
+    std::uint64_t m_resumeToken = 0;     // client: what the host's Welcome gave us
+    std::map<std::string, std::string> m_ownSpawns;   // SpawnOwned objects of this player: netId -> prefab
+    std::function<void(ReconnectEvent, int)> m_reconnectHandler;
+    void ReconnectTick(float dt);
+    void BeginReconnect();
+    void FailReconnectTry();
+    void ReannounceOwnSpawns();
+    // Host: dropped clients' state, kept for resumeGraceSeconds.
+    struct Parked {
+        std::uint64_t token = 0; std::uint32_t id = 0; std::string userId;
+        Vec3 pos{}; bool hasState = false; char glyph = '@'; int score = 0; bool ready = false; float age = 0.0f;
+    };
+    std::vector<Parked> m_parked;
+    std::function<void(const ResumedPeer&)> m_peerResumed;
     // Client-side reliable channel (to the server).
     std::uint32_t m_relSeq = 0;
     std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;
@@ -989,6 +1061,7 @@ private:
 
     // Smooth remote avatars toward their latest received position.
     std::unordered_map<std::uint32_t, Vec3> m_remoteTarget;
+    std::unordered_map<std::uint32_t, int> m_remoteMissing;   // client: consecutive rosters a remote was absent from
     void InterpolateRemotes(float dt);
 
     // Server-only
@@ -1017,6 +1090,8 @@ private:
     std::vector<RosterEntry> m_roster;
     std::uint32_t m_corrections = 0;
     std::unordered_map<net::Endpoint, Client, net::EndpointHash> m_clients;
+    void ParkClient(const Client& c);
+    void ReleaseClient(std::unordered_map<net::Endpoint, Client, net::EndpointHash>::iterator it);
     std::uint32_t m_nextId = 1;
     float m_snapshotTimer = 0.0f;
     float m_snapshotInterval = 0.05f; // 20 Hz
